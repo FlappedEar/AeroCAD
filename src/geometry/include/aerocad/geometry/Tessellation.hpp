@@ -4,6 +4,8 @@
 #include "aerocad/core/Mesh.hpp"
 #include "aerocad/geometry/Shape.hpp"
 
+#include <vector>
+
 namespace aerocad::geometry {
 
 struct TessellationParams {
@@ -16,5 +18,9 @@ struct TessellationParams {
 /// Triangulates all faces of the shape. Face orientation is respected, so triangle
 /// winding is counter-clockwise when seen from outside a solid.
 [[nodiscard]] core::TriangleMesh tessellate(const Shape& shape, const TessellationParams& params = {});
+
+/// Approximates all edges of the shape by line segments, returned as pairs of points
+/// (start, end, start, end, ...). Used to draw sketch curves and body edges.
+[[nodiscard]] std::vector<core::Vec3> edgeSegments(const Shape& shape, const TessellationParams& params = {});
 
 } // namespace aerocad::geometry

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "aerocad/cad/Design.hpp"
 #include "aerocad/model/Document.hpp"
 #include "aerocad/model/UndoStack.hpp"
 
@@ -24,6 +25,7 @@ struct CommandContext {
     model::Document& document;
     model::UndoStack& undoStack;
     const CommandRegistry* registry = nullptr; ///< For introspection (commands.list).
+    cad::Design* design = nullptr;             ///< Parametric timeline (sketch.*, feature.*).
 };
 
 /// Static description of a command. `params` is a JSON Schema (subset, see

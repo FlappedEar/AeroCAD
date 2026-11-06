@@ -36,6 +36,13 @@ std::optional<std::string> validateParams(const nlohmann::json& schema, const nl
     if (auto it = schema.find("type"); it != schema.end() && it->is_string()) {
         if (!matchesType(it->get<std::string>(), value))
             return path + ": expected " + it->get<std::string>();
+    } else if (it != schema.end() && it->is_array()) {
+        // Union type, e.g. ["number", "string"] for a number or an expression.
+        const bool any = std::any_of(it->begin(), it->end(), [&](const nlohmann::json& t) {
+            return t.is_string() && matchesType(t.get<std::string>(), value);
+        });
+        if (!any)
+            return path + ": expected " + it->dump();
     }
 
     if (auto it = schema.find("enum"); it != schema.end() && it->is_array()) {
