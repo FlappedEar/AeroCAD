@@ -29,6 +29,40 @@ ApplicationWindow {
     width: 1400
     height: 860
     visible: true
+
+    // Preferences > Theme: explicit light / dark colours, or the platform's palette.
+    // Popups and dialogs inherit the window palette. Groups are set one by one, because
+    // setting palette.<role> would also overwrite the disabled colours.
+    SystemPalette { id: systemPalette; colorGroup: SystemPalette.Active }
+    SystemPalette { id: disabledPalette; colorGroup: SystemPalette.Disabled }
+    readonly property var paletteRoles: ["window", "windowText", "base", "alternateBase", "toolTipBase",
+        "toolTipText", "placeholderText", "text", "button", "buttonText", "brightText", "light", "midlight",
+        "mid", "dark", "shadow", "highlight", "highlightedText", "link"]
+    readonly property var dimmedRoles: ["windowText", "text", "buttonText"]
+
+    function applyTheme(initial) {
+        const c = Preferences.colors
+        const system = c.window === undefined
+        if (system && initial)
+            return // keep the platform palette untouched
+        for (const role of paletteRoles) {
+            const active = system ? systemPalette[role] : c[role]
+            const disabled = system ? disabledPalette[role]
+                                    : (dimmedRoles.includes(role) ? c.disabledText : c[role])
+            if (active === undefined)
+                continue
+            palette.active[role] = active
+            palette.inactive[role] = active
+            if (disabled !== undefined)
+                palette.disabled[role] = disabled
+        }
+    }
+
+    Component.onCompleted: applyTheme(true)
+    Connections {
+        target: Preferences
+        function onThemeChanged() { window.applyTheme(false) }
+    }
     title: qsTr("AeroCAD %1").arg(controller.version)
 
     function selectPart(id) {
@@ -234,6 +268,19 @@ ApplicationWindow {
         onTriggered: window.openExport([])
     }
     Action {
+        id: preferencesAction
+        text: qsTr("&Preferences...")
+        // Cmd+, on macOS (Qt moves the item into the application menu there).
+        shortcut: StandardKey.Preferences
+        onTriggered: preferencesDialog.open()
+    }
+    Action {
+        id: shortcutsAction
+        text: qsTr("&Keyboard Shortcuts...")
+        shortcut: "Ctrl+/"
+        onTriggered: shortcutsDialog.open()
+    }
+    Action {
         id: undoAction
         text: window.controller.canUndo ? qsTr("&Undo %1").arg(window.controller.undoText) : qsTr("&Undo")
         enabled: window.controller.canUndo
@@ -369,6 +416,8 @@ ApplicationWindow {
             MenuSeparator {}
             MenuItem { action: visibilityAction }
             MenuItem { action: deleteAction }
+            MenuSeparator {}
+            MenuItem { action: preferencesAction }
         }
         Menu {
             title: qsTr("&Create")
@@ -476,6 +525,10 @@ ApplicationWindow {
                 shortcut: "Ctrl+Alt+R" // Fusion: Ctrl+Alt+R / Option+Cmd+R
                 onTriggered: window.resetLayout()
             }
+        }
+        Menu {
+            title: qsTr("&Help")
+            MenuItem { action: shortcutsAction }
         }
     }
 
@@ -697,11 +750,39 @@ ApplicationWindow {
                 elide: Text.ElideRight
             }
             Label {
-                text: qsTr("Pan: middle drag · Orbit: Shift+middle drag · Zoom: wheel · Touchpad: two-finger pan, Shift+two-finger orbit, pinch zoom · Fit: F6")
+                text: Preferences.mouseProfile === "solidworks"
+                      ? qsTr("Orbit: middle drag · Pan: Ctrl+middle drag · Zoom: wheel, Shift+middle drag · Shortcuts: %1").arg(Preferences.shortcutText(shortcutsAction.shortcut))
+                      : Preferences.mouseProfile === "blender"
+                        ? qsTr("Orbit: middle drag · Pan: Shift+middle drag · Zoom: wheel, Ctrl+middle drag · Shortcuts: %1").arg(Preferences.shortcutText(shortcutsAction.shortcut))
+                        : qsTr("Pan: middle drag · Orbit: Shift+middle drag · Zoom: wheel · Touchpad: two-finger pan, Shift+two-finger orbit, pinch zoom · Fit: F6 · Shortcuts: %1").arg(Preferences.shortcutText(shortcutsAction.shortcut))
                 opacity: 0.6
                 elide: Text.ElideLeft
             }
         }
+        }
+    }
+
+    PreferencesDialog {
+        id: preferencesDialog
+        anchors.centerIn: Overlay.overlay
+    }
+
+    ShortcutsDialog {
+        id: shortcutsDialog
+        anchors.centerIn: Overlay.overlay
+        menuBar: window.menuBar
+        extraRows: {
+            const g = qsTr("Viewport")
+            const rows = [
+                { group: g, name: qsTr("Cancel tool / clear selection"), keys: "Esc" },
+                { group: g, name: qsTr("Region select tool"), keys: "1" },
+                { group: g, name: qsTr("Lasso select tool"), keys: "2" },
+                { group: g, name: qsTr("Brush select tool"), keys: "3" },
+                { group: g, name: qsTr("Brush smaller / larger"), keys: "[  /  ]" }
+            ]
+            if (window.isMac)
+                rows.push({ group: g, name: qsTr("Delete"), keys: "⌫" })
+            return rows
         }
     }
 
