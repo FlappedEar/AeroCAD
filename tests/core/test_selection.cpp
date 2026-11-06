@@ -169,3 +169,22 @@ TEST_CASE("Adjacency cache returns the same object for the same mesh", "[core][s
     auto other = std::make_shared<const TriangleMesh>(cube(2));
     CHECK(adjacencyFor(other) != a);
 }
+
+TEST_CASE("Lasso with an orthographic view", "[core][selection]")
+{
+    MeshBuilder b;
+    addGrid(b, 10, 10.0, 0.0);
+    addGrid(b, 10, 10.0, -5.0);
+    const TriangleMesh m = b.take();
+    ViewParams view;
+    view.eye = {5, 5, 50};
+    view.forward = {0, 0, -1};
+    view.up = {0, 1, 0};
+    view.aspect = 1;
+    view.orthographic = true;
+    view.height = 20; // viewport shows x, y in [-5, 15]
+    // Centre quarter of the viewport = [0, 10]^2, the whole visible sheet.
+    const std::vector<std::array<double, 2>> centre{{0.25, 0.25}, {0.75, 0.25}, {0.75, 0.75}, {0.25, 0.75}};
+    CHECK(selectInLasso(m, view, centre).size() == 200);
+    CHECK(selectInLasso(m, view, centre, {false}).size() == 400);
+}

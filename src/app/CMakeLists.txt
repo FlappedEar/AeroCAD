@@ -28,6 +28,8 @@ qt_add_qml_module(aerocad
         qml/CameraController.qml
         qml/PartsPanel.qml
         qml/PropertiesPanel.qml
+        qml/ViewCube.qml
+        qml/NavigationBar.qml
 )
 
 set_target_properties(aerocad PROPERTIES

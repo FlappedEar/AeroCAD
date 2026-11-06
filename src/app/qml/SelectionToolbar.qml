@@ -127,7 +127,7 @@ Pane {
 
         Label {
             visible: root.viewport.tool !== "navigate"
-            text: qsTr("Option/Alt + drag: orbit")
+            text: qsTr("Shift + middle drag: orbit · middle drag: pan")
             opacity: 0.6
             font.pixelSize: 11
         }

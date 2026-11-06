@@ -28,7 +28,7 @@ cmake --build --preset release
 open build/release/bin/AeroCAD.app
 ```
 
-Details, the prebuilt download and troubleshooting: [docs/macos.md](docs/macos.md).
+Details and troubleshooting: [docs/macos.md](docs/macos.md).
 
 ## License
 

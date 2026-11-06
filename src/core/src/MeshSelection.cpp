@@ -300,7 +300,9 @@ TriangleSet selectInLasso(const TriangleMesh& mesh, const ViewParams& view,
         return {};
     const double tanHalf = std::tan(std::clamp(view.fovYDeg, 1.0, 179.0) * std::numbers::pi / 360.0);
     const double aspect = view.aspect > 0.0 ? view.aspect : 1.0;
-    const double nearZ = 1e-9;
+    const bool ortho = view.orthographic && view.height > 0.0;
+    // An orthographic camera also sees what is behind its position.
+    const double nearZ = ortho ? -std::numeric_limits<double>::max() : 1e-9;
 
     struct Projected {
         double x; // normalized viewport, 0..1 left to right
@@ -312,8 +314,9 @@ TriangleSet selectInLasso(const TriangleMesh& mesh, const ViewParams& view,
         const double z = d.dot(f);
         if (z <= nearZ)
             return Projected{0.0, 0.0, z};
-        const double ndcX = d.dot(r) / (z * tanHalf * aspect);
-        const double ndcY = d.dot(u) / (z * tanHalf);
+        const double halfHeight = ortho ? view.height * 0.5 : z * tanHalf;
+        const double ndcX = d.dot(r) / (halfHeight * aspect);
+        const double ndcY = d.dot(u) / halfHeight;
         return Projected{(ndcX + 1.0) * 0.5, (1.0 - ndcY) * 0.5, z};
     };
 
@@ -398,7 +401,8 @@ TriangleSet selectInLasso(const TriangleMesh& mesh, const ViewParams& view,
                                                     static_cast<std::size_t>(xx)]);
                     }
                 }
-                const double tolerance = sizeTolerance + 4.0 * p.z * pixelAngle;
+                const double tolerance =
+                    sizeTolerance + 4.0 * (ortho ? view.height / height : p.z * pixelAngle);
                 if (nearest < std::numeric_limits<float>::max() && p.z > nearest + tolerance)
                     continue;
             }

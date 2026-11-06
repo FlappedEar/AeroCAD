@@ -1,25 +1,10 @@
 # Running AeroCAD on a Mac (Apple Silicon)
 
-There are two ways: download the app that CI builds, or build it yourself.
-Both are checked by CI on every pull request (`macOS Apple Silicon` and
-`macOS Apple Silicon (Homebrew)` jobs).
+Build it from source with Homebrew. This exact path is checked on every pull request
+by the `CI` workflow (`macOS Apple Silicon (Homebrew)` job). No prebuilt app is
+published for now.
 
-## Option A: download the CI build (no tools needed)
-
-1. Open the repository's **Actions** tab, pick the latest green **CI** run on `main`
-   (or on a pull request), scroll to **Artifacts** and download
-   **AeroCAD-macOS-ARM64**. You must be signed in to GitHub.
-2. Unzip it and open `AeroCAD.dmg`, then drag **AeroCAD** to **Applications**.
-3. The build is not notarized by Apple, so the first start is blocked by Gatekeeper.
-   Either right-click AeroCAD in Applications, choose **Open** and confirm, or run once:
-
-   ```sh
-   xattr -dr com.apple.quarantine /Applications/AeroCAD.app
-   ```
-
-Artifacts are kept for 14 days.
-
-## Option B: build from source with Homebrew (recommended for development)
+## Build from source with Homebrew
 
 Requirements: macOS 13 or newer on Apple Silicon, Xcode Command Line Tools
 (`xcode-select --install`) and [Homebrew](https://brew.sh).
@@ -48,10 +33,10 @@ To update later: `git pull`, then repeat step 3.
 Use `--preset dev` instead of `--preset release` for a debug build
 (output in `build/dev/`).
 
-## Option C: the exact CI toolchain (vcpkg + Qt 6.8)
+## Alternative: pinned toolchain (vcpkg + Qt 6.8)
 
-Use this only if you need to reproduce the release build. The first configure
-compiles Open CASCADE and takes a while.
+Only needed to test against Qt 6.8 / Open CASCADE 8 or an older macOS deployment
+target. Not run in CI. The first configure compiles Open CASCADE (~25 min).
 
 ```sh
 brew install cmake ninja
@@ -70,9 +55,13 @@ open build/vcpkg-macos/bin/AeroCAD.app
 
 - **Import:** File > Import (Cmd+O), or drag a file onto the 3D view.
   Formats: STL, OBJ, 3MF, STEP/STP, IGES/IGS, BREP.
-- **Orbit:** left drag. **Pan:** right or middle drag, or Shift + left drag
-  (on a trackpad: Shift + click-drag). **Zoom:** scroll wheel, two-finger swipe or pinch.
-- **Fit all:** F or double-click. Standard views in the View menu.
+- **Navigation** follows Autodesk Fusion's defaults (see [ui.md](ui.md)):
+  **pan** = middle drag or two-finger swipe, **orbit** = Shift + middle drag or
+  Shift + two-finger swipe, **zoom** = scroll wheel or pinch. Without a middle button,
+  the Orbit / Pan / Zoom tools in the navigation bar (bottom of the view) map left drag.
+- **ViewCube** (top right of the view): click a face, edge or corner to look from there,
+  drag it to orbit, click the house for the Home view, right-click for projection and Home
+  settings. **Fit all:** F6 or the Fit button. Standard views in the View menu.
 - **Select:** click a part in the view or in the Parts list. The Properties panel
   shows its size and lets you rename, scale or remove it.
 - **Region selection** (the toolbar at the top left of the 3D view; the selection is
@@ -85,16 +74,14 @@ open build/vcpkg-macos/bin/AeroCAD.app
     *Connected only* keeps the brush from going through thin walls.
   - *New / Add / Remove* decides how the new selection combines with the old one.
     Grow, Shrink, Invert and Clear are in the Properties panel.
-  - While a selection tool is active, Option + left drag orbits. `Esc` goes back to
-    *Navigate*.
+  - Navigation stays on the middle button and touchpad (see [ui.md](ui.md)). `Esc` goes
+    back to *Navigate*.
 - **Undo / redo:** Cmd+Z / Cmd+Shift+Z (also for selection changes).
 
 ## Troubleshooting
 
 - *"Could not find a package configuration file provided by Qt6"*: pass
-  `-DCMAKE_PREFIX_PATH="$(brew --prefix qt)"` (Option B) or set `CMAKE_PREFIX_PATH`
-  to your Qt install (Option C).
-- *"AeroCAD is damaged and can't be opened"* for a downloaded build: remove the
-  quarantine flag with the `xattr` command above.
+  `-DCMAKE_PREFIX_PATH="$(brew --prefix qt)"`, or for the vcpkg setup set
+  `CMAKE_PREFIX_PATH` to your Qt install.
 - To check the renderer without clicking around, run the smoke test:
   `build/release/bin/AeroCAD.app/Contents/MacOS/AeroCAD --smoke-test tests/data/tetrahedron.stl --screenshot /tmp/aerocad.png`

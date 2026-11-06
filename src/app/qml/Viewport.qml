@@ -13,6 +13,18 @@ Item {
 
     property bool fitPending: false
 
+    /// Camera projection (Fusion ViewCube menu: Orthographic / Perspective).
+    property bool orthographic: false
+    property bool viewCubeVisible: true
+    property bool navigationBarVisible: true
+    /// Home view orientation; "Set current view as Home" changes it, "Reset Home" restores it.
+    readonly property real defaultHomePitch: -30
+    readonly property real defaultHomeYaw: 45
+    property real homePitch: defaultHomePitch
+    property real homeYaw: defaultHomeYaw
+    readonly property alias pitch: cameraInput.pitch
+    readonly property alias yaw: cameraInput.yaw
+    property alias leftDragMode: cameraInput.leftDragMode
     // Region selection tools (see SelectionToolbar.qml). Keys: 1 smooth region (click),
     // 2 lasso, 3 brush, Esc navigate; [ and ] change the brush size.
     property string tool: "navigate" // navigate | region | lasso | brush
@@ -80,19 +92,25 @@ Item {
             controller.showStatus(qsTr("Lasso: select a part first."))
             return
         }
-        const eye = modelSpace.mapPositionFromScene(camera.scenePosition)
-        const forward = modelSpace.mapDirectionFromScene(camera.forward)
-        const up = modelSpace.mapDirectionFromScene(camera.up)
+        const active = view.camera
+        const eye = modelSpace.mapPositionFromScene(active.scenePosition)
+        const forward = modelSpace.mapDirectionFromScene(active.forward)
+        const up = modelSpace.mapDirectionFromScene(active.up)
+        const viewParams = {
+            eye: [eye.x, eye.y, eye.z],
+            forward: [forward.x, forward.y, forward.z],
+            up: [up.x, up.y, up.z],
+            fov: camera.fieldOfView,
+            aspect: view.width / Math.max(1, view.height)
+        }
+        if (root.orthographic) {
+            viewParams.orthographic = true
+            viewParams.height = view.height / orthoCamera.verticalMagnification
+        }
         controller.execute("selection.lasso", {
             id: id,
             polygon: points.map(p => [p.x / view.width, p.y / view.height]),
-            view: {
-                eye: [eye.x, eye.y, eye.z],
-                forward: [forward.x, forward.y, forward.z],
-                up: [up.x, up.y, up.z],
-                fov: camera.fieldOfView,
-                aspect: view.width / Math.max(1, view.height)
-            },
+            view: viewParams,
             visibleOnly: !lassoThrough,
             mode: selectMode
         })
@@ -118,10 +136,35 @@ Item {
     onWidthChanged: if (fitPending) fitAll()
     onHeightChanged: if (fitPending) fitAll()
 
+    /// Standard view (degrees, CameraController convention), framed to fit everything.
     function setView(pitch, yaw) {
-        cameraInput.pitch = pitch
-        cameraInput.yaw = yaw
+        cameraInput.animateTo(pitch, yaw)
         fitAll()
+    }
+
+    /// Looks at the model from `direction` (model space, Z up): the ViewCube's face, edge and
+    /// corner views. Keeps the current target and zoom.
+    function setViewDirection(direction) {
+        // Model (x, y, z) is (x, z, -y) in Qt Quick 3D's Y-up scene; the camera sits on the
+        // pivot's +Z axis, i.e. at (cos p sin y, -sin p, cos p cos y) for pitch p and yaw y.
+        const d = Qt.vector3d(direction.x, direction.z, -direction.y).normalized()
+        const pitch = -Math.asin(Math.max(-1, Math.min(1, d.y))) * 180 / Math.PI
+        const yaw = Math.abs(d.y) > 0.9999 ? 0 : Math.atan2(d.x, d.z) * 180 / Math.PI
+        cameraInput.animateTo(pitch, yaw)
+    }
+
+    function goHome() {
+        setView(homePitch, homeYaw)
+    }
+
+    function setCurrentViewAsHome() {
+        homePitch = cameraInput.pitch
+        homeYaw = cameraInput.yaw
+    }
+
+    function resetHome() {
+        homePitch = defaultHomePitch
+        homeYaw = defaultHomeYaw
     }
 
     function updateClipping() {
@@ -133,15 +176,16 @@ Item {
     Rectangle {
         anchors.fill: parent
         gradient: Gradient {
-            GradientStop { position: 0.0; color: "#3b4452" }
-            GradientStop { position: 1.0; color: "#15181d" }
+            // Light top-to-bottom gradient, as in Fusion and most CAD applications.
+            GradientStop { position: 0.0; color: "#fbfcfd" }
+            GradientStop { position: 1.0; color: "#c3cbd4" }
         }
     }
 
     View3D {
         id: view
         anchors.fill: parent
-        camera: camera
+        camera: root.orthographic ? orthoCamera : camera
 
         environment: SceneEnvironment {
             backgroundMode: SceneEnvironment.Transparent
@@ -162,6 +206,18 @@ Item {
                     brightness: 1.0
                     ambientColor: Qt.rgba(0.35, 0.35, 0.38, 1)
                 }
+            }
+            // Same pose as the perspective camera; the magnification matches its framing at the pivot.
+            OrthographicCamera {
+                id: orthoCamera
+                z: cameraInput.distance
+                clipNear: Math.max(1e-4, camera.clipNear * 0.5)
+                clipFar: camera.clipFar
+                horizontalMagnification: {
+                    const w = cameraInput.worldPerPixel()
+                    return isFinite(w) && w > 0 ? 1 / w : 1
+                }
+                verticalMagnification: horizontalMagnification
             }
         }
 
@@ -223,8 +279,36 @@ Item {
         anchors.fill: parent
         pivot: pivot
         camera: camera
-        leftOrbit: root.tool === "navigate"
         onDistanceChanged: root.updateClipping()
+    }
+
+    ViewCube {
+        anchors.top: parent.top
+        anchors.right: parent.right
+        anchors.margins: 8
+        visible: root.viewCubeVisible
+        pitch: cameraInput.pitch
+        yaw: cameraInput.yaw
+        orthographic: root.orthographic
+        onViewRequested: direction => root.setViewDirection(direction)
+        onHomeRequested: root.goHome()
+        onOrbitRequested: (dx, dy) => cameraInput.orbit(dx, dy)
+        onSetHomeRequested: root.setCurrentViewAsHome()
+        onResetHomeRequested: root.resetHome()
+        onProjectionRequested: ortho => root.orthographic = ortho
+    }
+
+    NavigationBar {
+        anchors.bottom: parent.bottom
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.bottomMargin: 8
+        visible: root.navigationBarVisible
+        mode: cameraInput.leftDragMode
+        orthographic: root.orthographic
+        onModeSelected: mode => cameraInput.leftDragMode = mode
+        onFitRequested: root.fitAll()
+        onHomeRequested: root.goHome()
+        onProjectionRequested: ortho => root.orthographic = ortho
     }
 
     TapHandler {
@@ -252,7 +336,8 @@ Item {
     DragHandler {
         id: selectionDrag
         target: null
-        enabled: root.tool === "brush" || root.tool === "lasso"
+        // Off while a navigation bar tool (orbit / pan / zoom) owns the left button.
+        enabled: (root.tool === "brush" || root.tool === "lasso") && root.leftDragMode === ""
         acceptedButtons: Qt.LeftButton
         acceptedModifiers: Qt.NoModifier
         property var strokePartId: 0
@@ -319,7 +404,9 @@ Item {
                 brushCursor.visible = false
                 return
             }
-            const worldPerPixel = 2 * hit.distance * Math.tan(camera.fieldOfView * Math.PI / 360) / Math.max(1, view.height)
+            const worldPerPixel = root.orthographic
+                ? 1 / orthoCamera.verticalMagnification
+                : 2 * hit.distance * Math.tan(camera.fieldOfView * Math.PI / 360) / Math.max(1, view.height)
             brushCursor.radius = root.brushRadius / worldPerPixel
             brushCursor.x = point.position.x - brushCursor.radius
             brushCursor.y = point.position.y - brushCursor.radius

@@ -72,13 +72,16 @@ struct SmoothRegionOptions {
 [[nodiscard]] TriangleSet selectBrushDab(const TriangleMesh& mesh, const MeshAdjacency* adjacency, const Vec3& point,
                                          double radius);
 
-/// Pinhole camera in model coordinates (mm, Z up), as seen in the viewport.
+/// Camera (pinhole or orthographic) in model coordinates (mm, Z up), as seen in the viewport.
 struct ViewParams {
     Vec3 eye;
     Vec3 forward;          ///< Viewing direction.
     Vec3 up;               ///< Approximate up direction of the screen.
     double fovYDeg = 40.0; ///< Vertical field of view.
     double aspect = 1.0;   ///< Viewport width / height.
+    /// Parallel projection; `height` is then the viewport height in mm and fovYDeg is unused.
+    bool orthographic = false;
+    double height = 0.0;
 };
 
 struct LassoOptions {

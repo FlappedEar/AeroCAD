@@ -218,7 +218,13 @@ void registerSelectionCommands(CommandRegistry& r)
                         {"exclusiveMaximum", 180},
                         {"description", "Vertical field of view in degrees."}}},
                       {"aspect",
-                       {{"type", "number"}, {"exclusiveMinimum", 0}, {"description", "Viewport width / height."}}}},
+                       {{"type", "number"}, {"exclusiveMinimum", 0}, {"description", "Viewport width / height."}}},
+                      {"orthographic",
+                       {{"type", "boolean"}, {"description", "Parallel projection (fov unused). Default false."}}},
+                      {"height",
+                       {{"type", "number"},
+                        {"exclusiveMinimum", 0},
+                        {"description", "Orthographic only: viewport height in mm."}}}},
                      {"eye", "forward", "up", "fov", "aspect"})},
                 {"visibleOnly",
                  {{"type", "boolean"},
@@ -236,6 +242,10 @@ void registerSelectionCommands(CommandRegistry& r)
               view.up = toVec(v.at("up"));
               view.fovYDeg = v.at("fov").get<double>();
               view.aspect = v.at("aspect").get<double>();
+              view.orthographic = v.value("orthographic", false);
+              view.height = v.value("height", 0.0);
+              if (view.orthographic && view.height <= 0.0)
+                  throw CommandError("view.height is required for an orthographic view");
               std::vector<std::array<double, 2>> polygon;
               for (const auto& pt : params.at("polygon"))
                   polygon.push_back({pt[0].get<double>(), pt[1].get<double>()});
