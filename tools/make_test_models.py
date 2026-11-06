@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
+import random
 import struct
 import subprocess
 import sys
@@ -37,6 +39,48 @@ MODELS = {
         {"name": "feature.revolve", "params": {"sketch": 1, "axis": "Z"}},
     ],
 }
+
+
+def dome_height(r: float) -> float:
+    """Top of the dome at radius r (mm): the profile arc through (120, 15), (70, 38), (0, 45)."""
+    cx, cz, radius = 16.416666666667, -144.3333333333, 190.0437266935
+    return cz + math.sqrt(radius * radius - (r - cx) ** 2)
+
+
+def write_scan(path: Path) -> None:
+    """dome_scan.stl: the top of the dome as a scanner sees it. Open (no rim or bottom),
+    a 3 mm grid with a ragged outline, 0.05 mm Gaussian noise and a hole where a
+    reflection was lost. Seeded, so the file is reproducible."""
+    rng = random.Random(22)
+    step, reach = 3.0, 118.0
+    n = int(reach // step)
+    points: dict[tuple[int, int], tuple[float, float, float]] = {}
+    for i in range(-n, n + 1):
+        for j in range(-n, n + 1):
+            x, y = i * step, j * step
+            r = math.hypot(x, y)
+            if r <= reach:
+                points[(i, j)] = (x, y, dome_height(r) + rng.gauss(0.0, 0.05))
+    triangles = []
+    for (i, j) in points:
+        quad = [(i, j), (i + 1, j), (i + 1, j + 1), (i, j + 1)]
+        if not all(q in points for q in quad):
+            continue
+        a, b, c, d = (points[q] for q in quad)
+        for tri in ((a, b, c), (a, c, d)):
+            cx = sum(p[0] for p in tri) / 3
+            cy = sum(p[1] for p in tri) / 3
+            if math.hypot(cx - 70.0, cy - 20.0) < 8.0:
+                continue  # the hole
+            triangles.append(tri)
+    data = bytearray(b"dome_scan: tools/make_test_models.py, units mm".ljust(80, b" "))
+    data += struct.pack("<I", len(triangles))
+    for tri in triangles:
+        data += struct.pack("<3f", 0.0, 0.0, 0.0)
+        for v in tri:
+            data += struct.pack("<3f", *v)
+        data += b"\0\0"
+    path.write_bytes(bytes(data))
 
 
 def run_script(cmd: Path, steps: list[dict]) -> None:
@@ -89,6 +133,8 @@ def main() -> int:
         run_script(args.cmd, steps + exports)
         write_obj(read_binary_stl(OUT / f"{name}.stl"), OUT / f"{name}.obj", name)
         print(f"{name}: " + ", ".join(sorted(p.name for p in OUT.glob(f"{name}.*"))))
+    write_scan(OUT / "dome_scan.stl")
+    print("dome_scan: dome_scan.stl")
     return 0
 
 

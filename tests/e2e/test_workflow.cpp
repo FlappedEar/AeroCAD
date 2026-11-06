@@ -195,3 +195,38 @@ TEST_CASE("Workflow: import, select, fit, offset, thicken, cut, export, save, re
     CHECK(body(reopened, bodyId).at("volume").get<double>() == Approx(cutVolume).epsilon(1e-6));
     CHECK(body(reopened, bodyId).at("partId").get<std::uint64_t>() == bodyPart);
 }
+
+TEST_CASE("Workflow on an imperfect scan: open, noisy mesh with a hole", "[e2e][commands][scan]")
+{
+    TempDir dir;
+    commands::Session s;
+    const Json scan = run(s, "document.import", {{"path", modelFile("dome_scan.stl")}});
+    const auto scanId = scan.at("id").get<std::uint64_t>();
+    CHECK(scan.at("triangles").get<std::size_t>() > 8000);
+
+    // The check reports the scan as open (outline and hole), so it is not exported as a solid.
+    const Json check = run(s, "part.check", {{"id", scanId}});
+    CHECK_FALSE(check.at("closed").get<bool>());
+    CHECK(check.at("boundaryEdges").get<std::size_t>() > 100);
+    const auto refused = s.execute("document.export", {{"path", dir.file("scan.stl")}, {"requireValid", true}});
+    CHECK_FALSE(refused.ok);
+
+    // A region around the hole: the fit averages the 0.05 mm noise and bridges the gap.
+    // Over the hole the nearest scan point is up to 8 mm away, so surfaceToMeshMax is
+    // larger there; the fit itself (mesh to surface) stays at noise level.
+    const double top = scan.at("bounds").at("max")[2].get<double>();
+    run(s, "selection.brush", {{"id", scanId}, {"points", Json::array({{40, 10, top}})}, {"radius", 40}});
+    const Json fitted = run(s, "surface.fit_selection", {{"id", scanId}, {"tolerance", 0.5}});
+    INFO(fitted.dump());
+    CHECK(fitted.at("fit").at("meshToSurfaceMax").get<double>() < 0.5);
+    CHECK(fitted.at("fit").at("meshToSurfaceRms").get<double>() < 0.1);
+
+    // From there on it is a clean B-rep: thicken and export a watertight part.
+    const Json solid = run(s, "surface.thicken", {{"id", fitted.at("id")}, {"thickness", 2.5}});
+    CHECK(solid.at("volume").get<double>() > 1000);
+    const std::string out = dir.file("patch.3mf");
+    const Json exported =
+        run(s, "document.export", {{"path", out}, {"ids", Json::array({solid.at("id")})}, {"requireValid", true}});
+    CHECK(exported.at("warnings").empty());
+    CHECK(reimportCheck(out).at("watertight").get<bool>());
+}
