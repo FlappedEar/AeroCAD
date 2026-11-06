@@ -57,6 +57,11 @@ Qt maps Ctrl to Command and Alt to Option on macOS, so "Ctrl+Alt+V" is Option+Co
 | Show/hide Browser | Ctrl+Alt+B | Option+Cmd+B | yes |
 | Show/hide navigation bar | Ctrl+Alt+N | Option+Cmd+N | yes |
 | Reset to default layout | Ctrl+Alt+R | Option+Cmd+R | yes |
+| Region selection: smooth region (click) | 1 | 1 | Fusion: Window selection |
+| Region selection: lasso (freeform) | 2 | 2 | yes (Freeform selection) |
+| Region selection: brush (paint) | 3 | 3 | yes (Paint selection) |
+| Back to Navigate (leave a selection tool) | Esc | Esc | yes (Esc cancels) |
+| Brush smaller / larger | [ / ] | [ / ] | no |
 
 Modelling tools (single letters are Fusion's defaults; they do not fire while a text field
 has focus):
@@ -73,7 +78,8 @@ has focus):
 | Cancel the current curve / dialog, then leave the sketch | Esc | yes |
 
 Not mapped yet: Press Pull (Q), Move (M), Trim (T), Offset (O), Project (P),
-Construction (X), Measure (I) and selection modes 1/2/3.
+Construction (X) and Measure (I). 1/2/3 select the region selection tools on meshes,
+see "Region selection" in [macos.md](macos.md).
 
 ## Modelling
 

@@ -8,7 +8,7 @@ commands                      Named commands with JSON Schema parameters and JSO
   |                           server, so an AI agent can do everything the user can.
 model                         Document (parts), undo stack, change notifications.
   |
-io        geometry            io: import (STL, OBJ, 3MF, STEP, IGES, BREP), later export.
+io        geometry            io: import (STL, OBJ, 3MF, STEP, IGES, BREP), export (STL, 3MF, STEP).
   |         |                 geometry: Open CASCADE wrapper (B-rep shapes, tessellation,
 core -------+                 transforms, primitives).
                               core: math, triangle meshes. No dependencies.
@@ -31,6 +31,14 @@ core -------+                 transforms, primitives).
   node to Qt Quick 3D's Y-up.
 - **Rendering:** each part is a `QQuick3DGeometry` (`MeshGeometry`). Plain meshes are
   flat shaded so facets stay visible; tessellated B-rep parts are smooth shaded.
+
+- **Region selection** is a sorted list of triangle indices stored in the part
+  (`Part::selection`), so it is undone and redone like any other part change. The
+  algorithms (smooth region, brush, lasso with a software depth buffer, grow / shrink)
+  live in `core/MeshSelection` and are exposed as `selection.*` commands. Triangle
+  adjacency is matched by vertex position, so tessellated B-rep faces are connected
+  across their seams; it is computed once per mesh and cached. The brush preview while
+  dragging is kept in `AppController`; releasing the button runs one `selection.brush`.
 
 ## Not yet decided / next steps
 

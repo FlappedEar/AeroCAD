@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "aerocad/core/Mesh.hpp"
+
 #include <QPointer>
 #include <QQuick3DGeometry>
 #include <QtQml/qqmlregistration.h>
+
+#include <memory>
 
 namespace aerocad::app {
 
@@ -36,7 +40,9 @@ private:
 
     QPointer<AppController> m_controller;
     quint64 m_partId = 0;
-    quint64 m_builtRevision = ~0ULL;
+    /// Held (not just its address) so a new mesh can never alias a freed one.
+    std::shared_ptr<const core::TriangleMesh> m_builtMesh;
+    bool m_builtWithShape = false;
     QMetaObject::Connection m_connection;
 };
 
