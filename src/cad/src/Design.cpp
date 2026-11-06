@@ -441,11 +441,15 @@ void Design::evaluateFeature(const Feature& f)
         }
         std::vector<FeatureId> targets;
         if (has(p, "bodies")) {
-            for (const auto& ref : p.at("bodies"))
-                targets.push_back(bodyRef(ref).id);
+            for (const auto& ref : p.at("bodies")) {
+                const FeatureId id = bodyRef(ref).id;
+                // The same body may be given twice (by id and by name).
+                if (std::find(targets.begin(), targets.end(), id) == targets.end())
+                    targets.push_back(id);
+            }
         } else {
             for (const auto& [id, b] : m_bodies) {
-                if (geometry::boundsOverlap(b.shape, tool))
+                if (geometry::touches(b.shape, tool))
                     targets.push_back(id);
             }
         }
@@ -654,7 +658,8 @@ void Design::evaluateFeature(const Feature& f)
             const Body& t = bodyRef(ref);
             if (t.id == target.id)
                 throw DesignError("A body cannot be combined with itself");
-            tools.push_back(t.id);
+            if (std::find(tools.begin(), tools.end(), t.id) == tools.end())
+                tools.push_back(t.id);
         }
         if (tools.empty())
             throw DesignError("Select at least one tool body");
@@ -739,8 +744,13 @@ void Design::syncDocument(model::Document& document)
     };
     std::map<FeatureId, Wanted> wanted;
     for (const auto& [id, b] : m_bodies) {
-        wanted[id] = {id, model::PartKind::Body, b.name, b.shape,
-                      std::make_shared<const core::TriangleMesh>(geometry::tessellate(b.shape)), {}, false};
+        wanted[id] = {id,
+                      model::PartKind::Body,
+                      b.name,
+                      b.shape,
+                      std::make_shared<const core::TriangleMesh>(geometry::tessellate(b.shape)),
+                      geometry::edgeSegments(b.shape),
+                      false};
     }
     for (const auto& [id, s] : m_sketches) {
         const geometry::Shape profiles = geometry::makeCompound(s.geometry.profiles);
@@ -751,6 +761,13 @@ void Design::syncDocument(model::Document& document)
                       std::make_shared<const core::TriangleMesh>(geometry::tessellate(profiles)),
                       geometry::edgeSegments(s.geometry.curves),
                       s.consumed};
+    }
+
+    // Remember user-controlled settings of every timeline part, so a part that disappears
+    // (suppress, roll back, delete) comes back with them (unsuppress, undo, ...).
+    for (const auto& part : document.parts()) {
+        if (part.kind != model::PartKind::Imported)
+            m_partMeta[part.featureId] = {part.name, part.visible};
     }
 
     // Remove parts whose feature output disappeared.
@@ -778,7 +795,7 @@ void Design::syncDocument(model::Document& document)
             document.modifyPart(existing->id, [&](model::Part& part) {
                 part.mesh = w.mesh;
                 part.shape = w.shape;
-                part.curveSegments = w.segments;
+                part.edgeSegments = w.segments;
                 if (w.kind == model::PartKind::Sketch && w.consumed && !wasConsumed)
                     part.visible = false; // Fusion hides a sketch once a feature uses it
             });
@@ -791,8 +808,12 @@ void Design::syncDocument(model::Document& document)
             part.featureId = fid;
             part.mesh = w.mesh;
             part.shape = w.shape;
-            part.curveSegments = std::move(w.segments);
+            part.edgeSegments = std::move(w.segments);
             part.visible = !(w.kind == model::PartKind::Sketch && w.consumed);
+            if (auto meta = m_partMeta.find(fid); meta != m_partMeta.end()) {
+                part.name = meta->second.name;
+                part.visible = meta->second.visible;
+            }
             m_partIds[fid] = document.addPart(std::move(part));
         }
         m_sketchConsumed[fid] = w.consumed;

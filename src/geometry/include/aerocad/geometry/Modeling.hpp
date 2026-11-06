@@ -48,6 +48,10 @@ enum class BooleanOp { Union, Cut, Intersect };
 /// True when both shapes' bounding boxes overlap (with a small tolerance).
 [[nodiscard]] bool boundsOverlap(const Shape& a, const Shape& b);
 
+/// True when the shapes touch or overlap: their minimum distance is within `tolerance`,
+/// or one solid lies inside the other. Bounding boxes are checked first.
+[[nodiscard]] bool touches(const Shape& a, const Shape& b, double tolerance = 1e-6);
+
 struct FaceInfo {
     std::size_t index = 0;
     std::string type; ///< plane, cylinder, cone, sphere, torus, bspline, other

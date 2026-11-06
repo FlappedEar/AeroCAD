@@ -326,6 +326,18 @@ bool boundsOverlap(const Shape& a, const Shape& b)
     return !ba.IsOut(bb);
 }
 
+bool touches(const Shape& a, const Shape& b, double tolerance)
+{
+    if (!boundsOverlap(a, b))
+        return false;
+    return guarded("Contact check", [&] {
+        // Distance between solids is 0 when one is inside the other, so this also covers
+        // containment.
+        BRepExtrema_DistShapeShape dist(a.impl()->shape, b.impl()->shape);
+        return dist.IsDone() && dist.Value() <= tolerance;
+    });
+}
+
 std::vector<FaceInfo> faces(const Shape& shape)
 {
     std::vector<FaceInfo> out;

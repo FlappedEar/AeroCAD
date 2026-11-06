@@ -145,6 +145,11 @@ private:
     /// Body / sketch feature id -> document part id (kept across undo).
     std::map<FeatureId, model::PartId> m_partIds;
     std::map<FeatureId, bool> m_sketchConsumed;
+    struct PartMeta {
+        std::string name;
+        bool visible = true;
+    };
+    std::map<FeatureId, PartMeta> m_partMeta;
     int m_bodyCounter = 0;
 };
 

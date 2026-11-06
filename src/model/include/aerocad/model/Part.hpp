@@ -34,8 +34,9 @@ struct Part {
     PartKind kind = PartKind::Imported;
     /// For bodies and sketches: id of the timeline feature that owns this part.
     std::uint64_t featureId = 0;
-    /// For sketches: the curves as polylines (pairs of points: segment start, end), mm.
-    std::vector<core::Vec3> curveSegments;
+    /// Lines drawn in the viewport (sketch curves, body edges) as pairs of points
+    /// (segment start, end), mm.
+    std::vector<core::Vec3> edgeSegments;
     bool visible = true;
     /// Incremented on every change, so views can cheaply detect stale caches.
     std::uint64_t revision = 0;

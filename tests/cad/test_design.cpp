@@ -227,7 +227,7 @@ TEST_CASE("Document sync keeps part ids, names and visibility", "[cad][design]")
     const auto sketchPart = doc.parts()[0].id;
     CHECK(doc.parts()[0].kind == model::PartKind::Sketch);
     CHECK(doc.parts()[0].visible);
-    CHECK_FALSE(doc.parts()[0].curveSegments.empty());
+    CHECK_FALSE(doc.parts()[0].edgeSegments.empty());
 
     const auto ex = d.addFeature("extrude", {{"sketch", sk}, {"distance", 10}});
     d.syncDocument(doc);
@@ -256,4 +256,33 @@ TEST_CASE("Document sync keeps part ids, names and visibility", "[cad][design]")
     d.syncDocument(doc);
     REQUIRE(doc.part(bodyPart) != nullptr); // same id after undo
     CHECK(doc.part(bodyPart)->shape->volume() == Approx(2000));
+    CHECK(doc.part(bodyPart)->name == "Bracket"); // user settings come back too
+
+    doc.modifyPart(bodyPart, [](model::Part& p) { p.visible = false; });
+    d.setSuppressed(ex, true);
+    d.syncDocument(doc);
+    CHECK(doc.part(bodyPart) == nullptr);
+    d.setSuppressed(ex, false);
+    d.syncDocument(doc);
+    REQUIRE(doc.part(bodyPart) != nullptr);
+    CHECK_FALSE(doc.part(bodyPart)->visible);
+}
+
+TEST_CASE("Automatic targets need real contact; duplicate targets are merged", "[cad][design]")
+{
+    Design d;
+    // Bounding boxes overlap, the cylinders do not touch.
+    const auto a = d.addFeature("cylinder", {{"center", {0, 0, 0}}, {"radius", 1}, {"height", 10}});
+    CHECK_THROWS_AS(d.addFeature("cylinder", {{"center", {1.5, 1.5, 0}}, {"radius", 1}, {"height", 10},
+                                              {"operation", "intersect"}}),
+                    cad::DesignError);
+    const auto b = d.addFeature("cylinder", {{"center", {1.5, 1.5, 0}}, {"radius", 1}, {"height", 10},
+                                             {"operation", "join"}});
+    CHECK(d.bodies().size() == 2); // not touching: join made a new body
+    CHECK(d.bodies().contains(b));
+
+    const auto box = d.addFeature("box", {{"corner", {-2, -2, 9}}, {"size", {5, 5, 2}}, {"operation", "join"},
+                                          {"bodies", Json::array({a, "Body1"})}});
+    CHECK_FALSE(d.bodies().contains(box));
+    CHECK(d.bodies().at(a).shape.volume() > 50 - 1e-6);
 }
