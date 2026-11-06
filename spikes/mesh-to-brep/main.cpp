@@ -230,16 +230,24 @@ Deviation measure(const Handle(Geom_Surface) & s, const LocalCloud& lc, const st
             gp_Vec dv(fr.Location(), p);
             double u = dv.Dot(X), v = dv.Dot(Y), w = dv.Dot(Z);
             if (std::hypot(u, v) > regionRadius) continue;
+            // Exact nearest neighbour: visit bucket rings outward. After ring R, every unvisited
+            // point lies at least R * cell away in the plane (so also in 3D), so stop once best <= R * cell.
             double best = 1e300;
+            const double cell = 2 * b.half / b.n;
             int iu = b.idx(u), iv = b.idx(v);
-            for (int r = 1; r <= b.n && best == 1e300; ++r)
-                for (int bj = std::max(0, iv - r); bj <= std::min(b.n - 1, iv + r); ++bj)
-                    for (int bi = std::max(0, iu - r); bi <= std::min(b.n - 1, iu + r); ++bi)
+            for (int r = 0; r < b.n; ++r) {
+                for (int bj = iv - r; bj <= iv + r; ++bj)
+                    for (int bi = iu - r; bi <= iu + r; ++bi) {
+                        if (std::max(std::abs(bj - iv), std::abs(bi - iu)) != r) continue;  // ring only
+                        if (bj < 0 || bi < 0 || bj >= b.n || bi >= b.n) continue;
                         for (int k : b.cells[bj * b.n + bi]) {
                             const auto& q = lc.uvw[k];
                             best = std::min(best, std::sqrt((q[0] - u) * (q[0] - u) + (q[1] - v) * (q[1] - v) +
                                                             (q[2] - w) * (q[2] - w)));
                         }
+                    }
+                if (best <= r * cell) break;
+            }
             d.surfToDataMax = std::max(d.surfToDataMax, best);
             if (gSynthetic) d.truthMax = std::max(d.truthMax, std::abs(p.Z() - truthZ(p.X(), p.Y())));
         }

@@ -48,7 +48,7 @@ wiggles and folds that the first one misses.
 |---|---|---|---|---|---|
 | A faceted | sew 11.2 s, one boolean split 2.7 s | 34,271 faces | exact (copies noise) | – | – |
 | B tolerance 25², tol 0.5 | 63 ms | 18×7 poles | 0.57 / 0.13 mm | 1.57 mm | 1.75 mm |
-| B tolerance 30², tol 0.25 | 276 ms | 32×9 poles | 0.47 / 0.11 mm | **17.8 mm** | **18.1 mm** |
+| B tolerance 30², tol 0.25 | 276 ms | 32×9 poles | 0.47 / 0.11 mm | **17.5 mm** | **18.1 mm** |
 | B tolerance 40², tol 0.1 | 1.9 s | 42×39 poles | 0.66 / 0.11 mm | 1.35 mm | 1.55 mm |
 | **B smoothing 30², tol 0.25** | **15 ms** | 51×9 poles | 0.48 / 0.11 mm | **0.43 mm** | **0.12 mm** |
 | B smoothing 40², tol 0.1 | 26 ms | 99×9 poles | 0.43 / 0.11 mm | 0.44 mm | 0.12 mm |
