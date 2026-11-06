@@ -22,6 +22,8 @@ Pane {
     property var alignPoints: []
     property var stats: null
     property string message: ""
+    /// Bumped when a display level of detail finishes, so the "Displayed" count updates.
+    property int lodRevision: 0
 
     readonly property var info: partId ? controller.partInfo(partId) : ({})
     readonly property bool editable: !!info.id && info.kind === "imported"
@@ -147,7 +149,7 @@ Pane {
                 Label { text: qsTr("Displayed") }
                 Label {
                     text: {
-                        root.stats; root.scan.triangleBudget
+                        root.stats; root.scan.triangleBudget; root.lodRevision
                         const n = root.info.id ? root.scan.displayedTriangles(root.partId) : 0
                         return n ? root.fmt(n) : qsTr("computing…")
                     }
@@ -317,6 +319,14 @@ Pane {
                 color: "#c0392b"
                 text: root.message
             }
+        }
+    }
+
+    Connections {
+        target: root.scan
+        function onDisplayMeshReady(id) {
+            if (Number(id) === Number(root.partId))
+                root.lodRevision++
         }
     }
 
