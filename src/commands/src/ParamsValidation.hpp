@@ -9,7 +9,7 @@
 namespace aerocad::commands {
 
 /// Validates `value` against a JSON Schema subset: type (object, array, string, number,
-/// integer, boolean, null), properties, required, additionalProperties (bool), items,
+/// integer, boolean, null, or an array of these), properties, required, additionalProperties (bool), items,
 /// enum, minimum, maximum, exclusiveMinimum, exclusiveMaximum, minItems, maxItems,
 /// minLength. Returns an error message or std::nullopt when valid.
 [[nodiscard]] std::optional<std::string> validateParams(const nlohmann::json& schema, const nlohmann::json& value,

@@ -1,0 +1,802 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#include "aerocad/cad/Design.hpp"
+
+#include "aerocad/cad/Expression.hpp"
+#include "aerocad/geometry/Modeling.hpp"
+#include "aerocad/geometry/Tessellation.hpp"
+
+#include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <memory>
+#include <numbers>
+#include <set>
+#include <utility>
+
+namespace aerocad::cad {
+
+using geometry::Plane;
+using geometry::SketchCurve;
+using geometry::Vec2;
+
+namespace {
+
+constexpr double kDegToRad = std::numbers::pi / 180.0;
+constexpr int kMaxParameterDepth = 32;
+
+const Json& required(const Json& params, const char* key)
+{
+    auto it = params.find(key);
+    if (it == params.end() || it->is_null())
+        throw DesignError(std::string("Missing parameter '") + key + "'");
+    return *it;
+}
+
+bool has(const Json& params, const char* key)
+{
+    auto it = params.find(key);
+    return it != params.end() && !it->is_null();
+}
+
+std::string lower(std::string s)
+{
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return s;
+}
+
+bool isReservedName(const std::string& n)
+{
+    static const std::set<std::string> reserved{"pi", "mm", "cm", "m", "in", "deg", "sqrt", "sin",
+                                                "cos", "tan", "abs", "min", "max"};
+    return reserved.contains(n);
+}
+
+bool isValidParameterName(const std::string& n)
+{
+    if (n.empty() || std::isdigit(static_cast<unsigned char>(n[0])))
+        return false;
+    return std::all_of(n.begin(), n.end(), [](unsigned char c) { return std::isalnum(c) || c == '_'; });
+}
+
+} // namespace
+
+std::string_view toString(FeatureStatus::State state)
+{
+    switch (state) {
+    case FeatureStatus::State::Ok: return "ok";
+    case FeatureStatus::State::Error: return "error";
+    case FeatureStatus::State::Suppressed: return "suppressed";
+    case FeatureStatus::State::RolledBack: return "rolled_back";
+    }
+    return "unknown";
+}
+
+const std::vector<std::string>& Design::featureTypes()
+{
+    static const std::vector<std::string> types{"sketch", "extrude", "revolve", "fillet", "chamfer",
+                                                "shell",  "combine", "box",     "cylinder"};
+    return types;
+}
+
+// ---------------------------------------------------------------------------------------
+// Parameters and expressions
+
+std::optional<double> Design::parameterValue(std::string_view name) const
+{
+    auto it = std::find_if(m_state.parameters.begin(), m_state.parameters.end(),
+                           [&](const Parameter& p) { return p.name == name; });
+    if (it == m_state.parameters.end())
+        return std::nullopt;
+    thread_local int depth = 0;
+    if (depth > kMaxParameterDepth)
+        throw ExpressionError("Parameter '" + std::string(name) + "' refers to itself (cycle)");
+    ++depth;
+    struct Guard {
+        ~Guard() { --depth; }
+    } guard;
+    return evaluateExpression(it->expression, [this](std::string_view n) { return parameterValue(n); });
+}
+
+double Design::evaluate(const Json& value) const
+{
+    if (value.is_number())
+        return value.get<double>();
+    if (value.is_string())
+        return evaluateExpression(value.get<std::string>(), [this](std::string_view n) { return parameterValue(n); });
+    throw DesignError("Expected a number or an expression, got " + value.dump());
+}
+
+void Design::setParameter(const std::string& name, const std::string& expression, const std::string& comment)
+{
+    if (!isValidParameterName(name) || isReservedName(name))
+        throw DesignError("Invalid parameter name '" + name + "'");
+    const State before = m_state;
+    auto it = std::find_if(m_state.parameters.begin(), m_state.parameters.end(),
+                           [&](const Parameter& p) { return p.name == name; });
+    if (it == m_state.parameters.end())
+        m_state.parameters.push_back({name, expression, comment});
+    else
+        *it = {name, expression, comment.empty() ? it->comment : comment};
+    try {
+        // Validates syntax, names and cycles of this and all dependent parameters.
+        for (const auto& p : m_state.parameters)
+            (void)parameterValue(p.name);
+    } catch (const std::exception& e) {
+        m_state = before;
+        throw DesignError(e.what());
+    }
+    regenerate();
+}
+
+void Design::removeParameter(const std::string& name)
+{
+    const auto n = std::erase_if(m_state.parameters, [&](const Parameter& p) { return p.name == name; });
+    if (n == 0)
+        throw DesignError("No parameter '" + name + "'");
+    regenerate();
+}
+
+// ---------------------------------------------------------------------------------------
+// Timeline editing
+
+const Feature* Design::feature(FeatureId id) const
+{
+    auto it = std::find_if(m_state.features.begin(), m_state.features.end(), [id](const Feature& f) { return f.id == id; });
+    return it == m_state.features.end() ? nullptr : &*it;
+}
+
+std::size_t Design::indexOf(FeatureId id) const
+{
+    for (std::size_t i = 0; i < m_state.features.size(); ++i) {
+        if (m_state.features[i].id == id)
+            return i;
+    }
+    throw DesignError("No feature with id " + std::to_string(id));
+}
+
+std::string Design::defaultName(const std::string& type) const
+{
+    std::string base = type;
+    base[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(base[0])));
+    for (int n = 1;; ++n) {
+        const std::string candidate = base + std::to_string(n);
+        if (std::none_of(m_state.features.begin(), m_state.features.end(),
+                         [&](const Feature& f) { return f.name == candidate; }))
+            return candidate;
+    }
+}
+
+void Design::restore(State state)
+{
+    m_state = std::move(state);
+    regenerate();
+}
+
+void Design::regenerateChecked(FeatureId id, const State& rollback)
+{
+    regenerate();
+    const FeatureStatus st = status(id);
+    if (st.state == FeatureStatus::State::Error) {
+        m_state = rollback;
+        regenerate();
+        throw DesignError(st.message);
+    }
+}
+
+FeatureId Design::addFeature(std::string type, Json params, std::string name)
+{
+    const auto& types = featureTypes();
+    if (std::find(types.begin(), types.end(), type) == types.end())
+        throw DesignError("Unknown feature type '" + type + "'");
+    if (!params.is_object())
+        throw DesignError("Feature parameters must be an object");
+    const State before = m_state;
+    Feature f;
+    f.id = m_state.nextId++;
+    f.name = name.empty() ? defaultName(type) : std::move(name);
+    f.type = std::move(type);
+    f.params = std::move(params);
+    const FeatureId id = f.id;
+    m_state.features.insert(m_state.features.begin() + static_cast<std::ptrdiff_t>(m_state.marker), std::move(f));
+    ++m_state.marker;
+    regenerateChecked(id, before);
+    return id;
+}
+
+void Design::editFeature(FeatureId id, const Json& patch)
+{
+    if (!patch.is_object())
+        throw DesignError("Feature parameters must be an object");
+    const State before = m_state;
+    Feature& f = m_state.features[indexOf(id)];
+    f.params.merge_patch(patch);
+    regenerateChecked(id, before);
+}
+
+void Design::renameFeature(FeatureId id, std::string name)
+{
+    if (name.empty())
+        throw DesignError("Feature name must not be empty");
+    m_state.features[indexOf(id)].name = std::move(name);
+    regenerate();
+}
+
+void Design::setSuppressed(FeatureId id, bool suppressed)
+{
+    m_state.features[indexOf(id)].suppressed = suppressed;
+    regenerate();
+}
+
+void Design::removeFeature(FeatureId id)
+{
+    const std::size_t i = indexOf(id);
+    m_state.features.erase(m_state.features.begin() + static_cast<std::ptrdiff_t>(i));
+    if (i < m_state.marker)
+        --m_state.marker;
+    regenerate();
+}
+
+void Design::setMarker(std::size_t marker)
+{
+    if (marker > m_state.features.size())
+        throw DesignError("Marker position " + std::to_string(marker) + " is past the end of the timeline (" +
+                          std::to_string(m_state.features.size()) + " features)");
+    m_state.marker = marker;
+    regenerate();
+}
+
+FeatureStatus Design::status(FeatureId id) const
+{
+    auto it = m_statuses.find(id);
+    return it == m_statuses.end() ? FeatureStatus{FeatureStatus::State::Error, "Unknown feature"} : it->second;
+}
+
+// ---------------------------------------------------------------------------------------
+// Regeneration
+
+namespace {
+
+/// Evaluation helpers bound to one design.
+struct Eval {
+    const Design& design;
+
+    double num(const Json& v) const { return design.evaluate(v); }
+    double num(const Json& params, const char* key) const { return num(required(params, key)); }
+    double num(const Json& params, const char* key, double fallback) const
+    {
+        return has(params, key) ? num(params.at(key)) : fallback;
+    }
+
+    Vec2 vec2(const Json& v) const
+    {
+        if (!v.is_array() || v.size() != 2)
+            throw DesignError("Expected a 2D point [u, v], got " + v.dump());
+        return {num(v[0]), num(v[1])};
+    }
+    Vec2 vec2(const Json& params, const char* key) const { return vec2(required(params, key)); }
+
+    core::Vec3 vec3(const Json& v) const
+    {
+        if (!v.is_array() || v.size() != 3)
+            throw DesignError("Expected a 3D point [x, y, z], got " + v.dump());
+        return {num(v[0]), num(v[1]), num(v[2])};
+    }
+    core::Vec3 vec3(const Json& params, const char* key, core::Vec3 fallback) const
+    {
+        return has(params, key) ? vec3(params.at(key)) : fallback;
+    }
+};
+
+SketchCurve lineCurve(Vec2 a, Vec2 b, bool construction)
+{
+    SketchCurve c{SketchCurve::Kind::Line, {a, b}};
+    c.construction = construction;
+    return c;
+}
+
+void appendCurves(const Eval& ev, const Json& item, std::vector<SketchCurve>& out)
+{
+    if (!item.is_object())
+        throw DesignError("Sketch curve must be an object");
+    const std::string type = lower(required(item, "type").get<std::string>());
+    const bool construction = item.value("construction", false);
+    auto push = [&](SketchCurve c) {
+        c.construction = construction;
+        out.push_back(std::move(c));
+    };
+    if (type == "line") {
+        push(lineCurve(ev.vec2(item, "start"), ev.vec2(item, "end"), construction));
+    } else if (type == "rectangle" || type == "center_rectangle") {
+        Vec2 a;
+        Vec2 b;
+        if (type == "center_rectangle") {
+            const Vec2 c = ev.vec2(item, "center");
+            const double w = ev.num(item, "width") / 2;
+            const double h = ev.num(item, "height") / 2;
+            a = {c.x - w, c.y - h};
+            b = {c.x + w, c.y + h};
+        } else {
+            a = ev.vec2(item, "corner");
+            b = has(item, "opposite") ? ev.vec2(item, "opposite")
+                                      : Vec2{a.x + ev.num(item, "width"), a.y + ev.num(item, "height")};
+        }
+        if (std::abs(a.x - b.x) < 1e-9 || std::abs(a.y - b.y) < 1e-9)
+            throw DesignError("Rectangle has zero width or height");
+        push(lineCurve(a, {b.x, a.y}, construction));
+        push(lineCurve({b.x, a.y}, b, construction));
+        push(lineCurve(b, {a.x, b.y}, construction));
+        push(lineCurve({a.x, b.y}, a, construction));
+    } else if (type == "circle") {
+        SketchCurve c{SketchCurve::Kind::Circle, {ev.vec2(item, "center")}};
+        c.radius = has(item, "diameter") ? ev.num(item, "diameter") / 2 : ev.num(item, "radius");
+        push(c);
+    } else if (type == "arc") {
+        push({SketchCurve::Kind::Arc, {ev.vec2(item, "start"), ev.vec2(item, "through"), ev.vec2(item, "end")}});
+    } else if (type == "center_arc") {
+        const Vec2 c = ev.vec2(item, "center");
+        const double r = ev.num(item, "radius");
+        const double a0 = ev.num(item, "startAngle") * kDegToRad;
+        double a1 = ev.num(item, "endAngle") * kDegToRad;
+        if (a1 <= a0)
+            a1 += 2 * std::numbers::pi;
+        const double am = (a0 + a1) / 2;
+        auto at = [&](double a) { return Vec2{c.x + r * std::cos(a), c.y + r * std::sin(a)}; };
+        push({SketchCurve::Kind::Arc, {at(a0), at(am), at(a1)}});
+    } else if (type == "polygon") {
+        const Vec2 c = ev.vec2(item, "center");
+        const double r = ev.num(item, "radius");
+        const int sides = static_cast<int>(std::lround(ev.num(item, "sides")));
+        const double rot = ev.num(item, "angle", 0.0) * kDegToRad;
+        if (sides < 3 || sides > 256)
+            throw DesignError("Polygon needs 3 to 256 sides");
+        auto at = [&](int i) {
+            const double a = rot + 2 * std::numbers::pi * i / sides;
+            return Vec2{c.x + r * std::cos(a), c.y + r * std::sin(a)};
+        };
+        for (int i = 0; i < sides; ++i)
+            push(lineCurve(at(i), at(i + 1), construction));
+    } else if (type == "slot") {
+        // Center-to-center slot: two parallel lines joined by half circles.
+        const Vec2 a = ev.vec2(item, "start");
+        const Vec2 b = ev.vec2(item, "end");
+        const double r = ev.num(item, "width") / 2;
+        const double len = std::hypot(b.x - a.x, b.y - a.y);
+        if (len < 1e-9 || r <= 0)
+            throw DesignError("Slot needs distinct centres and a positive width");
+        const Vec2 d{(b.x - a.x) / len, (b.y - a.y) / len};
+        const Vec2 n{-d.y, d.x};
+        push(lineCurve(a + n * r, b + n * r, construction));
+        push({SketchCurve::Kind::Arc, {b + n * r, b + d * r, b - n * r}});
+        push(lineCurve(b - n * r, a - n * r, construction));
+        push({SketchCurve::Kind::Arc, {a - n * r, a - d * r, a + n * r}});
+    } else if (type == "spline") {
+        SketchCurve c{SketchCurve::Kind::Spline, {}};
+        for (const auto& p : required(item, "points"))
+            c.points.push_back(ev.vec2(p));
+        c.closed = item.value("closed", false);
+        push(c);
+    } else {
+        throw DesignError("Unknown sketch curve type '" + type + "'");
+    }
+}
+
+} // namespace
+
+void Design::evaluateFeature(const Feature& f)
+{
+    const Eval ev{*this};
+    const Json& p = f.params;
+
+    auto bodyRef = [&](const Json& ref) -> Body& {
+        if (ref.is_number_integer()) {
+            auto it = m_bodies.find(ref.get<FeatureId>());
+            if (it != m_bodies.end())
+                return it->second;
+        } else if (ref.is_string()) {
+            for (auto& [_, b] : m_bodies) {
+                if (b.name == ref.get<std::string>())
+                    return b;
+            }
+        }
+        throw DesignError("No body " + ref.dump() + " at this point of the timeline");
+    };
+
+    auto resolveIndices = [&](const geometry::Shape& shape, const Json& list, bool edgesWanted) {
+        std::vector<std::size_t> out;
+        if (!list.is_array() || list.empty())
+            throw DesignError(edgesWanted ? "Select at least one edge" : "Select at least one face");
+        for (const auto& item : list) {
+            if (item.is_number_integer()) {
+                out.push_back(item.get<std::size_t>());
+            } else if (item.is_object() && item.contains("point")) {
+                const auto idx = edgesWanted ? geometry::nearestEdge(shape, ev.vec3(item.at("point")))
+                                             : geometry::nearestFace(shape, ev.vec3(item.at("point")));
+                if (!idx)
+                    throw DesignError("No edge or face near " + item.dump());
+                out.push_back(*idx);
+            } else {
+                throw DesignError("Expected an index or {\"point\": [x, y, z]}, got " + item.dump());
+            }
+        }
+        return out;
+    };
+
+    auto newBody = [&](geometry::Shape shape) {
+        if (shape.isNull())
+            throw DesignError("The feature produced no solid");
+        Body b;
+        b.id = f.id;
+        b.name = "Body" + std::to_string(++m_bodyCounter);
+        b.shape = std::move(shape);
+        m_bodies[f.id] = std::move(b);
+    };
+
+    /// Applies a tool solid to the bodies: new body / join / cut / intersect (Fusion's
+    /// "Operation" option of Extrude, Revolve, Box, ...).
+    auto applyOperation = [&](const geometry::Shape& tool) {
+        const std::string op = lower(p.value("operation", std::string("new_body")));
+        if (op == "new_body") {
+            newBody(tool);
+            return;
+        }
+        std::vector<FeatureId> targets;
+        if (has(p, "bodies")) {
+            for (const auto& ref : p.at("bodies"))
+                targets.push_back(bodyRef(ref).id);
+        } else {
+            for (const auto& [id, b] : m_bodies) {
+                if (geometry::boundsOverlap(b.shape, tool))
+                    targets.push_back(id);
+            }
+        }
+        if (op == "join") {
+            if (targets.empty()) {
+                newBody(tool);
+                return;
+            }
+            Body& first = m_bodies.at(targets.front());
+            geometry::Shape result = geometry::boolean(first.shape, tool, geometry::BooleanOp::Union);
+            for (std::size_t i = 1; i < targets.size(); ++i) {
+                result = geometry::boolean(result, m_bodies.at(targets[i]).shape, geometry::BooleanOp::Union);
+                m_bodies.erase(targets[i]);
+            }
+            first.shape = result;
+            return;
+        }
+        geometry::BooleanOp bop;
+        if (op == "cut")
+            bop = geometry::BooleanOp::Cut;
+        else if (op == "intersect")
+            bop = geometry::BooleanOp::Intersect;
+        else
+            throw DesignError("Unknown operation '" + op + "' (new_body, join, cut, intersect)");
+        if (targets.empty())
+            throw DesignError("No body to " + op + " (the result does not touch any body)");
+        for (const FeatureId id : targets) {
+            geometry::Shape r = geometry::boolean(m_bodies.at(id).shape, tool, bop);
+            if (r.isNull() || r.volume() <= 1e-9)
+                m_bodies.erase(id);
+            else
+                m_bodies.at(id).shape = std::move(r);
+        }
+    };
+
+    /// Selected profiles of a sketch (all by default) as separate faces.
+    auto profiles = [&](SketchResult*& sketchOut) {
+        const FeatureId sid = required(p, "sketch").get<FeatureId>();
+        auto it = m_sketches.find(sid);
+        if (it == m_sketches.end())
+            throw DesignError("No sketch " + std::to_string(sid) + " at this point of the timeline");
+        SketchResult& sk = it->second;
+        sketchOut = &sk;
+        const auto& all = sk.geometry.profiles;
+        if (all.empty())
+            throw DesignError(sk.name + " has no closed profile");
+        std::vector<geometry::Shape> chosen;
+        if (has(p, "profiles")) {
+            for (const auto& i : p.at("profiles")) {
+                const auto idx = i.get<std::size_t>();
+                if (idx >= all.size())
+                    throw DesignError(sk.name + " has no profile " + std::to_string(idx) + " (it has " +
+                                      std::to_string(all.size()) + ")");
+                chosen.push_back(all[idx]);
+            }
+        } else if (has(p, "points")) {
+            for (const auto& pt : p.at("points")) {
+                const core::Vec3 w = sk.plane.toWorld(ev.vec2(pt));
+                bool found = false;
+                for (const auto& prof : all) {
+                    if (geometry::faceContains(prof, w)) {
+                        chosen.push_back(prof);
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found)
+                    throw DesignError("No profile of " + sk.name + " contains point " + pt.dump());
+            }
+        } else {
+            chosen = all;
+        }
+        if (chosen.empty())
+            throw DesignError("No profile selected");
+        sk.consumed = true;
+        return chosen;
+    };
+
+    auto unionAll = [](const std::vector<geometry::Shape>& solids) {
+        geometry::Shape result = solids.front();
+        for (std::size_t i = 1; i < solids.size(); ++i)
+            result = geometry::boolean(result, solids[i], geometry::BooleanOp::Union);
+        return result;
+    };
+
+    if (f.type == "sketch") {
+        SketchResult sk;
+        sk.id = f.id;
+        sk.name = f.name;
+        if (has(p, "face")) {
+            const Json& face = p.at("face");
+            const Body& b = bodyRef(required(face, "body"));
+            std::size_t idx = 0;
+            if (has(face, "index")) {
+                idx = face.at("index").get<std::size_t>();
+            } else {
+                const auto found = geometry::nearestFace(b.shape, ev.vec3(required(face, "point")));
+                if (!found)
+                    throw DesignError("No face found on " + b.name);
+                idx = *found;
+            }
+            const auto plane = geometry::facePlane(b.shape, idx);
+            if (!plane)
+                throw DesignError("Face " + std::to_string(idx) + " of " + b.name + " is not planar");
+            sk.plane = *plane;
+        } else {
+            const Json plane = p.value("plane", Json("XY"));
+            if (plane.is_string()) {
+                const std::string name = lower(plane.get<std::string>());
+                if (name == "xy")
+                    sk.plane = Plane::xy();
+                else if (name == "xz")
+                    sk.plane = Plane::xz();
+                else if (name == "yz")
+                    sk.plane = Plane::yz();
+                else
+                    throw DesignError("Unknown plane '" + plane.get<std::string>() + "' (XY, XZ, YZ)");
+            } else {
+                sk.plane.origin = ev.vec3(plane, "origin", {});
+                sk.plane.normal = ev.vec3(plane, "normal", {0, 0, 1});
+                sk.plane.xDir = ev.vec3(plane, "xDir", {1, 0, 0});
+            }
+        }
+        sk.plane = sk.plane.normalized();
+        sk.plane.origin = sk.plane.origin + sk.plane.normal * ev.num(p, "offset", 0.0);
+        if (has(p, "curves")) {
+            for (const auto& c : p.at("curves"))
+                appendCurves(ev, c, sk.curves);
+        }
+        sk.geometry = geometry::buildSketch(sk.plane, sk.curves);
+        m_sketches[f.id] = std::move(sk);
+    } else if (f.type == "extrude") {
+        SketchResult* sk = nullptr;
+        const auto faces = profiles(sk);
+        const std::string extent = lower(p.value("extent", std::string("one_side")));
+        double d1 = ev.num(p, "distance");
+        double d2 = 0.0;
+        if (extent == "symmetric")
+            d2 = d1;
+        else if (extent == "two_sides")
+            d2 = ev.num(p, "distance2");
+        else if (extent != "one_side")
+            throw DesignError("Unknown extent '" + extent + "' (one_side, symmetric, two_sides)");
+        core::Vec3 dir = sk->plane.normal;
+        if (p.value("flip", false))
+            dir = dir * -1.0;
+        std::vector<geometry::Shape> solids;
+        for (const auto& face : faces)
+            solids.push_back(geometry::extrude(face, dir, d1, d2));
+        applyOperation(unionAll(solids));
+    } else if (f.type == "revolve") {
+        SketchResult* sk = nullptr;
+        const auto faces = profiles(sk);
+        core::Vec3 origin{};
+        core::Vec3 dir{0, 0, 1};
+        const Json axis = p.value("axis", Json("Z"));
+        if (axis.is_string()) {
+            const std::string a = lower(axis.get<std::string>());
+            if (a == "x")
+                dir = {1, 0, 0};
+            else if (a == "y")
+                dir = {0, 1, 0};
+            else if (a == "z")
+                dir = {0, 0, 1};
+            else
+                throw DesignError("Unknown axis '" + axis.get<std::string>() + "' (X, Y, Z)");
+        } else if (has(axis, "line")) {
+            const auto idx = axis.at("line").get<std::size_t>();
+            if (idx >= sk->curves.size() || sk->curves[idx].kind != SketchCurve::Kind::Line)
+                throw DesignError("Curve " + std::to_string(idx) + " of " + sk->name + " is not a line");
+            origin = sk->plane.toWorld(sk->curves[idx].points[0]);
+            dir = sk->plane.toWorld(sk->curves[idx].points[1]) - origin;
+        } else {
+            origin = ev.vec3(axis, "origin", {});
+            dir = ev.vec3(axis, "direction", {0, 0, 1});
+        }
+        const double angle = ev.num(p, "angle", 360.0);
+        std::vector<geometry::Shape> solids;
+        for (const auto& face : faces)
+            solids.push_back(geometry::revolve(face, origin, dir, angle));
+        applyOperation(unionAll(solids));
+    } else if (f.type == "fillet" || f.type == "chamfer") {
+        Body& b = bodyRef(required(p, "body"));
+        const auto idx = resolveIndices(b.shape, required(p, "edges"), true);
+        b.shape = f.type == "fillet" ? geometry::fillet(b.shape, idx, ev.num(p, "radius"))
+                                     : geometry::chamfer(b.shape, idx, ev.num(p, "distance"));
+    } else if (f.type == "shell") {
+        Body& b = bodyRef(required(p, "body"));
+        const auto idx = has(p, "faces") ? resolveIndices(b.shape, p.at("faces"), false) : std::vector<std::size_t>{};
+        b.shape = geometry::shell(b.shape, idx, ev.num(p, "thickness"));
+    } else if (f.type == "combine") {
+        Body& target = bodyRef(required(p, "target"));
+        const std::string op = lower(p.value("operation", std::string("join")));
+        geometry::BooleanOp bop;
+        if (op == "join")
+            bop = geometry::BooleanOp::Union;
+        else if (op == "cut")
+            bop = geometry::BooleanOp::Cut;
+        else if (op == "intersect")
+            bop = geometry::BooleanOp::Intersect;
+        else
+            throw DesignError("Unknown operation '" + op + "' (join, cut, intersect)");
+        const bool keepTools = p.value("keepTools", false);
+        std::vector<FeatureId> tools;
+        for (const auto& ref : required(p, "tools")) {
+            const Body& t = bodyRef(ref);
+            if (t.id == target.id)
+                throw DesignError("A body cannot be combined with itself");
+            tools.push_back(t.id);
+        }
+        if (tools.empty())
+            throw DesignError("Select at least one tool body");
+        geometry::Shape result = target.shape;
+        for (const FeatureId t : tools)
+            result = geometry::boolean(result, m_bodies.at(t).shape, bop);
+        const FeatureId targetId = target.id;
+        if (!keepTools) {
+            for (const FeatureId t : tools)
+                m_bodies.erase(t);
+        }
+        if (result.isNull() || result.volume() <= 1e-9)
+            m_bodies.erase(targetId);
+        else
+            m_bodies.at(targetId).shape = result;
+    } else if (f.type == "box") {
+        const core::Vec3 corner = ev.vec3(p, "corner", {});
+        const core::Vec3 size = ev.vec3(required(p, "size"));
+        if (size.x <= 0 || size.y <= 0 || size.z <= 0)
+            throw DesignError("Box size must be positive");
+        Plane base = Plane::xy();
+        base.origin = corner;
+        const auto g = geometry::buildSketch(
+            base, {lineCurve({0, 0}, {size.x, 0}, false), lineCurve({size.x, 0}, {size.x, size.y}, false),
+                   lineCurve({size.x, size.y}, {0, size.y}, false), lineCurve({0, size.y}, {0, 0}, false)});
+        applyOperation(geometry::extrude(g.profiles.at(0), {0, 0, 1}, size.z));
+    } else if (f.type == "cylinder") {
+        const core::Vec3 center = ev.vec3(p, "center", {});
+        const double r = has(p, "diameter") ? ev.num(p, "diameter") / 2 : ev.num(p, "radius");
+        const double h = ev.num(p, "height");
+        if (r <= 0)
+            throw DesignError("Cylinder radius must be positive");
+        Plane base = Plane::xy();
+        base.origin = center;
+        SketchCurve c{SketchCurve::Kind::Circle, {{0, 0}}};
+        c.radius = r;
+        const auto g = geometry::buildSketch(base, {c});
+        applyOperation(geometry::extrude(g.profiles.at(0), {0, 0, 1}, h));
+    } else {
+        throw DesignError("Unknown feature type '" + f.type + "'");
+    }
+}
+
+void Design::regenerate()
+{
+    m_bodies.clear();
+    m_sketches.clear();
+    m_statuses.clear();
+    m_bodyCounter = 0;
+    for (std::size_t i = 0; i < m_state.features.size(); ++i) {
+        const Feature& f = m_state.features[i];
+        FeatureStatus st;
+        if (i >= m_state.marker) {
+            st.state = FeatureStatus::State::RolledBack;
+        } else if (f.suppressed) {
+            st.state = FeatureStatus::State::Suppressed;
+        } else {
+            try {
+                evaluateFeature(f);
+            } catch (const std::exception& e) {
+                st.state = FeatureStatus::State::Error;
+                st.message = e.what();
+            }
+        }
+        m_statuses[f.id] = st;
+    }
+}
+
+// ---------------------------------------------------------------------------------------
+// Document mirror
+
+void Design::syncDocument(model::Document& document)
+{
+    struct Wanted {
+        FeatureId id;
+        model::PartKind kind;
+        std::string name;
+        std::optional<geometry::Shape> shape;
+        std::shared_ptr<const core::TriangleMesh> mesh;
+        std::vector<core::Vec3> segments;
+        bool consumed = false;
+    };
+    std::map<FeatureId, Wanted> wanted;
+    for (const auto& [id, b] : m_bodies) {
+        wanted[id] = {id, model::PartKind::Body, b.name, b.shape,
+                      std::make_shared<const core::TriangleMesh>(geometry::tessellate(b.shape)), {}, false};
+    }
+    for (const auto& [id, s] : m_sketches) {
+        const geometry::Shape profiles = geometry::makeCompound(s.geometry.profiles);
+        wanted[id] = {id,
+                      model::PartKind::Sketch,
+                      s.name,
+                      std::nullopt,
+                      std::make_shared<const core::TriangleMesh>(geometry::tessellate(profiles)),
+                      geometry::edgeSegments(s.geometry.curves),
+                      s.consumed};
+    }
+
+    // Remove parts whose feature output disappeared.
+    std::vector<model::PartId> stale;
+    for (const auto& part : document.parts()) {
+        if (part.kind == model::PartKind::Imported)
+            continue;
+        auto it = wanted.find(part.featureId);
+        if (it == wanted.end() || it->second.kind != part.kind)
+            stale.push_back(part.id);
+    }
+    for (const auto id : stale)
+        document.removePart(id);
+
+    for (auto& [fid, w] : wanted) {
+        const model::Part* existing = nullptr;
+        for (const auto& part : document.parts()) {
+            if (part.kind == w.kind && part.featureId == fid) {
+                existing = &part;
+                break;
+            }
+        }
+        const bool wasConsumed = m_sketchConsumed[fid];
+        if (existing != nullptr) {
+            document.modifyPart(existing->id, [&](model::Part& part) {
+                part.mesh = w.mesh;
+                part.shape = w.shape;
+                part.curveSegments = w.segments;
+                if (w.kind == model::PartKind::Sketch && w.consumed && !wasConsumed)
+                    part.visible = false; // Fusion hides a sketch once a feature uses it
+            });
+        } else {
+            model::Part part;
+            auto known = m_partIds.find(fid);
+            part.id = known == m_partIds.end() ? 0 : known->second;
+            part.name = w.name;
+            part.kind = w.kind;
+            part.featureId = fid;
+            part.mesh = w.mesh;
+            part.shape = w.shape;
+            part.curveSegments = std::move(w.segments);
+            part.visible = !(w.kind == model::PartKind::Sketch && w.consumed);
+            m_partIds[fid] = document.addPart(std::move(part));
+        }
+        m_sketchConsumed[fid] = w.consumed;
+    }
+}
+
+} // namespace aerocad::cad
