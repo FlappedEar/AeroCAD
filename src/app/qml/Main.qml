@@ -133,6 +133,7 @@ ApplicationWindow {
 
     /// Opens a feature dialog, pre-filled from the selection (Fusion: select, then press E).
     function openFeature(type) {
+        closeInspectPanels()
         const initial = {}
         const info = selectedInfo()
         if (activeSketch) {
@@ -325,12 +326,78 @@ ApplicationWindow {
     Action { id: fixAction; text: qsTr("Fix/Unfix"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "fix"; onTriggered: window.sketchTool_("fix") }
     Action { id: slotAction; text: qsTr("Sl&ot"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "slot"; onTriggered: window.sketchTool_("slot") }
 
+    // Inspect (Fusion: I = Measure).
+    function closeInspectPanels() {
+        measurePanel.close()
+        heatMapPanel.close()
+    }
+    Action {
+        id: measureAction
+        text: qsTr("&Measure")
+        shortcut: "I"
+        onTriggered: {
+            featureDialog.close()
+            heatMapPanel.close()
+            measurePanel.open("auto")
+        }
+    }
+    Action {
+        id: clearanceAction
+        text: qsTr("&Interference / Clearance")
+        onTriggered: {
+            featureDialog.close()
+            heatMapPanel.close()
+            measurePanel.open("body")
+        }
+    }
+    Action {
+        id: sectionAction
+        text: qsTr("&Section Analysis")
+        checkable: true
+        checked: sectionPanel.active
+        onTriggered: {
+            if (sectionPanel.active)
+                sectionPanel.close()
+            else
+                sectionPanel.open()
+            checked = Qt.binding(() => sectionPanel.active)
+        }
+    }
+    Action {
+        id: deviationAction
+        text: qsTr("&Deviation Map (Scan vs Part)")
+        onTriggered: {
+            measurePanel.close()
+            heatMapPanel.open("deviation", window.selectedPartId)
+        }
+    }
+    Action {
+        id: thicknessAction
+        text: qsTr("&Thickness Map")
+        onTriggered: {
+            measurePanel.close()
+            heatMapPanel.open("thickness", window.selectedPartId)
+        }
+    }
+    Action {
+        id: clearAnalysesAction
+        text: qsTr("&Clear Analyses")
+        onTriggered: {
+            sectionPanel.close()
+            window.controller.execute("inspect.clear")
+        }
+    }
+
     Shortcut {
         sequence: "Esc"
         onActivated: {
             if (viewport.leaveSelectionTool())
                 return
-            if (featureDialog.visible)
+            if (measurePanel.active)
+                measurePanel.close()
+            else if (heatMapPanel.active)
+                heatMapPanel.close()
+            else if (featureDialog.visible)
                 featureDialog.close()
             else if (window.pickingSketchPlane)
                 window.pickingSketchPlane = false
@@ -416,6 +483,17 @@ ApplicationWindow {
             }
             MenuSeparator {}
             MenuItem { action: finishSketchAction }
+        }
+        Menu {
+            title: qsTr("&Inspect")
+            MenuItem { action: measureAction }
+            MenuItem { action: clearanceAction }
+            MenuSeparator {}
+            MenuItem { action: sectionAction }
+            MenuItem { action: deviationAction }
+            MenuItem { action: thicknessAction }
+            MenuSeparator {}
+            MenuItem { action: clearAnalysesAction }
         }
         Menu {
             title: qsTr("&View")
@@ -561,6 +639,15 @@ ApplicationWindow {
             }
             ToolSeparator {}
             ToolGroup {
+                caption: qsTr("INSPECT")
+                ToolCommand { action: measureAction; text: qsTr("Measure") }
+                ToolCommand { action: clearanceAction; text: qsTr("Clearance") }
+                ToolCommand { action: sectionAction; text: qsTr("Section") }
+                ToolCommand { action: deviationAction; text: qsTr("Deviation") }
+                ToolCommand { action: thicknessAction; text: qsTr("Thickness") }
+            }
+            ToolSeparator {}
+            ToolGroup {
                 caption: qsTr("VIEW")
                 ToolCommand { action: fitAction; text: qsTr("Fit") }
                 ToolCommand { action: homeAction; text: qsTr("Home") }
@@ -592,10 +679,12 @@ ApplicationWindow {
             selectedPartId: window.selectedPartId
             sketch: window.activeSketch
             sketchTool: window.sketchTool
-            selectionToolsEnabled: !featureDialog.visible && !window.pickingSketchPlane
-            markers: featureDialog.visible ? featureDialog.pickedPoints : []
+            selectionToolsEnabled: !featureDialog.visible && !window.pickingSketchPlane && !measurePanel.active
+            markers: featureDialog.visible ? featureDialog.pickedPoints : measurePanel.markers
             pickKind: featureDialog.visible ? featureDialog.pickKind : ""
             shownSketch: featureDialog.shownSketch
+            overlayLines: measurePanel.overlayLines
+            onSectionDragged: delta => sectionPanel.moveBy(delta)
             onPartPicked: id => window.selectPart(id)
             onPointPicked: (id, point) => {
                 const info = window.controller.partInfo(id)
@@ -604,6 +693,8 @@ ApplicationWindow {
                         window.createSketch({ face: { body: info.featureId, point: [point.x, point.y, point.z] } })
                 } else if (featureDialog.visible) {
                     featureDialog.addPick(info, point)
+                } else if (measurePanel.active) {
+                    measurePanel.addPick(info, point)
                 }
             }
             onCurveDrawn: curve => {
@@ -635,6 +726,36 @@ ApplicationWindow {
                 id: featureDialog
                 anchors.left: parent.left
                 anchors.top: parent.top
+                anchors.margins: 8
+                controller: window.controller
+            }
+
+            MeasurePanel {
+                id: measurePanel
+                anchors.left: parent.left
+                anchors.top: parent.top
+                anchors.margins: 8
+                controller: window.controller
+                pickTolerance: () => viewport.pickTolerance()
+            }
+            HeatMapPanel {
+                id: heatMapPanel
+                anchors.left: parent.left
+                anchors.top: parent.top
+                anchors.margins: 8
+                controller: window.controller
+            }
+            SectionPanel {
+                id: sectionPanel
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.topMargin: 150 // below the ViewCube
+                anchors.rightMargin: 8
+                controller: window.controller
+            }
+            HeatMapLegend {
+                anchors.left: parent.left
+                anchors.bottom: parent.bottom
                 anchors.margins: 8
                 controller: window.controller
             }

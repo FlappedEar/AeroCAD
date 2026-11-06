@@ -40,6 +40,8 @@ struct HeatMap {
     /// The mesh the values belong to (values[i] is vertex i); a part whose mesh is no longer
     /// this one shows no heat map until the analysis is run again.
     std::shared_ptr<const core::TriangleMesh> mesh;
+    /// Deviation: the reference mesh the values were computed against.
+    std::shared_ptr<const core::TriangleMesh> referenceMesh;
     std::shared_ptr<const std::vector<double>> values; ///< NaN = no value.
     /// Colour scale: rangeMin is blue, rangeMax red (deviation: green at 0).
     double rangeMin = 0.0;

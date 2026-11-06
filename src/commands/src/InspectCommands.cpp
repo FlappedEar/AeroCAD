@@ -678,6 +678,7 @@ void registerHeatMaps(CommandRegistry& r)
               h.part = measuredId;
               h.reference = referenceId;
               h.mesh = measured.mesh;
+              h.referenceMesh = reference.mesh;
               h.stats = core::valueStats(*values);
               if (h.stats.count == 0)
                   throw CommandError("No point of '" + measured.name + "' is within maxDistance of '" + reference.name + "'");

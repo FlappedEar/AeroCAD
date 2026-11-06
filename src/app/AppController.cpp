@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "AppController.hpp"
 
+#include "InspectGeometry.hpp"
 #include "JsonBridge.hpp"
 
 #include "aerocad/core/Path.hpp"
@@ -21,7 +22,93 @@ AppController::AppController(QObject* parent) : QObject(parent), m_parts(m_sessi
             return;
         emit partChanged(id);
         emit boundsChanged();
+        // A heat map belongs to a mesh: recompute it when its parts change. Queued, because
+        // this runs inside the command that changed the part.
+        const commands::HeatMap& h = m_session.inspect().heatMap();
+        if (h.enabled && (id == h.part || id == h.reference) && !m_heatMapRefreshQueued) {
+            m_heatMapRefreshQueued = true;
+            QMetaObject::invokeMethod(this, &AppController::refreshHeatMap, Qt::QueuedConnection);
+        }
     });
+    m_session.inspect().setListener([this]() { emit inspectChanged(); });
+}
+
+void AppController::refreshHeatMap()
+{
+    m_heatMapRefreshQueued = false;
+    commands::InspectState& inspect = m_session.inspect();
+    const commands::HeatMap h = inspect.heatMap();
+    if (!h.enabled)
+        return;
+    const model::Part* measured = part(h.part);
+    const bool referenceGone = h.kind == commands::HeatMap::Kind::Deviation && part(h.reference) == nullptr;
+    if (measured == nullptr || referenceGone) {
+        inspect.setHeatMap({});
+        return;
+    }
+    // Visibility or name changes keep the meshes: nothing to recompute.
+    const model::Part* reference = part(h.reference);
+    if (measured->mesh == h.mesh &&
+        (h.kind != commands::HeatMap::Kind::Deviation || (reference != nullptr && reference->mesh == h.referenceMesh)))
+        return;
+    const char* name = h.kind == commands::HeatMap::Kind::Deviation ? "inspect.deviation" : "inspect.thickness";
+    const commands::CommandResult r = m_session.execute(name, h.params);
+    if (!r.ok) {
+        inspect.setHeatMap({});
+        setStatusMessage(tr("Heat map cleared: %1").arg(QString::fromStdString(r.error)));
+    }
+}
+
+int AppController::inspectRevision() const
+{
+    return static_cast<int>(m_session.inspect().revision() & 0x7fffffff);
+}
+
+QVariantMap AppController::inspectInfo() const
+{
+    const commands::InspectState& st = m_session.inspect();
+    const auto& s = st.section();
+    auto vec = [](const core::Vec3& v) { return QVariantList{v.x, v.y, v.z}; };
+    QVariantMap section{{QStringLiteral("enabled"), s.enabled},
+                        {QStringLiteral("origin"), vec(s.plane.origin)},
+                        {QStringLiteral("normal"), vec(s.plane.normal)},
+                        {QStringLiteral("cap"), s.cap}};
+    const auto& h = st.heatMap();
+    QVariantMap heat{{QStringLiteral("enabled"), h.enabled}};
+    if (h.enabled) {
+        heat.insert({{QStringLiteral("kind"), h.kind == commands::HeatMap::Kind::Deviation ? QStringLiteral("deviation")
+                                                                                             : QStringLiteral("thickness")},
+                     {QStringLiteral("part"), QVariant::fromValue<quint64>(h.part)},
+                     {QStringLiteral("reference"), QVariant::fromValue<quint64>(h.reference)},
+                     {QStringLiteral("rangeMin"), h.rangeMin},
+                     {QStringLiteral("rangeMax"), h.rangeMax},
+                     {QStringLiteral("min"), h.stats.min},
+                     {QStringLiteral("max"), h.stats.max},
+                     {QStringLiteral("mean"), h.stats.mean},
+                     {QStringLiteral("rms"), h.stats.rms},
+                     {QStringLiteral("stddev"), h.stats.stddev}});
+    }
+    return {{QStringLiteral("section"), section}, {QStringLiteral("heatMap"), heat}};
+}
+
+bool AppController::sectionCuts(quint64 id) const
+{
+    const model::Part* p = part(id);
+    return p != nullptr && p->kind != model::PartKind::Sketch && m_session.inspect().section().cuts(id);
+}
+
+bool AppController::showsHeatMap(quint64 id) const
+{
+    const auto& h = m_session.inspect().heatMap();
+    const model::Part* p = part(id);
+    return h.enabled && h.part == id && p != nullptr && p->mesh == h.mesh;
+}
+
+QColor AppController::heatColor(double t) const
+{
+    float c[4];
+    InspectGeometry::heatColor(t, c);
+    return QColor::fromRgbF(c[0], c[1], c[2], c[3]);
 }
 
 QVector3D AppController::sceneCenter() const

@@ -76,14 +76,21 @@ has focus):
 | Center Diameter Circle (in a sketch) | C | yes |
 | Sketch Dimension (in a sketch) | D | yes |
 | Cancel the current curve / dialog, then leave the sketch | Esc | yes |
+| Measure (Inspect) | I | yes |
 
 Not mapped yet: Press Pull (Q), Move (M), Trim (T), Offset (O), Project (P),
-Construction (X) and Measure (I). 1/2/3 select the region selection tools on meshes,
+Construction (X). 1/2/3 select the region selection tools on meshes,
 see "Region selection" in [macos.md](macos.md).
 
 ## Modelling
 
 See [cad.md](cad.md) for the timeline and the commands behind the tools.
+
+## Inspect
+
+The **Inspect** menu and toolbar group hold Measure (I), Interference / Clearance, Section
+Analysis, Deviation Map (scan vs part), Thickness Map and Clear Analyses. See
+[inspect.md](inspect.md).
 
 - **Create Sketch**: click a planar face of a body, or pick XY / XZ / YZ. The view turns to
   look at the sketch. Tools: Line (chains; right-click or Esc ends), Rectangle, Circle, Arc

@@ -14,6 +14,8 @@ set(AEROCAD_APP_SOURCES
     SelectionGeometry.hpp
     LineGeometry.cpp
     LineGeometry.hpp
+    InspectGeometry.cpp
+    InspectGeometry.hpp
     JsonBridge.cpp
     JsonBridge.hpp
 )
@@ -37,6 +39,10 @@ qt_add_qml_module(aerocad
         qml/FeatureDialog.qml
         qml/TimelineBar.qml
         qml/ParametersDialog.qml
+        qml/MeasurePanel.qml
+        qml/SectionPanel.qml
+        qml/HeatMapPanel.qml
+        qml/HeatMapLegend.qml
 )
 
 set_target_properties(aerocad PROPERTIES

@@ -64,9 +64,26 @@ where the extremes are, and a 10-bin histogram over the colour range.
 distance to the opposite wall; a vertex shows the thinnest value of its triangles. Red is thin,
 blue thick; `min` / `max` set the scale. Open meshes give no value where the ray leaves the part.
 
-Only one heat map is active at a time. It applies to the mesh it was computed for
-(`HeatMap::mesh`); once the part's mesh changes, it no longer applies until the analysis runs
-again.
+Only one heat map is active at a time. It applies to the meshes it was computed for
+(`HeatMap::mesh`, `HeatMap::referenceMesh`); when one of them changes (an edit, undo), the app
+runs the analysis again with the same parameters, or clears it when a part is gone.
+
+## User interface
+
+- **Measure** (Inspect menu, toolbar, key **I**): a panel like Fusion's. Click a first and a
+  second selection; a third click starts over. *Selection filter*: Face / Edge / Vertex (picks
+  within ~8 px of a vertex or edge, otherwise the face), Body (clearance between parts, with
+  interference for B-rep solids) or Point. The closest points are joined by a dashed line with
+  the distance. *Precision* sets the decimals.
+- **Interference / Clearance**: Measure with the Body filter.
+- **Section Analysis**: plane (XY / XZ / YZ), offset (slider, value, or drag the blue arrow in
+  the view), Flip, Cap. Caps are red for bodies and blue for imported meshes / scans; the inside
+  of cut meshes is drawn in a darker cap colour so open scans still read as cut. The panel lists
+  the section area and curve length of every part. Closing it turns the section off.
+- **Deviation Map** / **Thickness Map**: choose the parts, tolerance and range, then Compute.
+  A legend with the colour scale appears in the bottom-left corner. Clear removes the map.
+- **Clear Analyses** turns off the section and the heat map (also set by an agent through
+  `inspect.*`).
 
 ## Implementation
 
@@ -77,3 +94,5 @@ again.
 - `geometry/Inspect`: exact B-rep picking and distances, angles, properties, interference
   volume, and section caps (planar faces with holes, triangulated by Open CASCADE).
 - `commands/InspectCommands`: the commands and `InspectState` (the active analyses).
+- `app/InspectGeometry`: GPU geometry for the clipped part, the cap, the section curves and the
+  heat map colours; `MeasurePanel`, `SectionPanel`, `HeatMapPanel`, `HeatMapLegend` (QML).
