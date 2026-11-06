@@ -64,7 +64,15 @@ core -------+                 transforms, primitives).
   Selected vertices that project outside the trimmed face are reported separately
   (`outsideTrimMax`, outline fidelity: mesh staircase, rounded corners) with a warning
   above the tolerance. Not yet: analytic primitives (plane, cylinder) before free-form
-  fitting, several patches stitched with G1 continuity.
+  fitting.
+- **Scan to solid** (`geometry/RegionFit`, command `surface.fit_regions`): the mesh (or its
+  selection) is split into smooth patches at creases (`core::segmentSmoothRegions`, small
+  patches join a neighbour), each patch is fit as above with its exact mesh border (no
+  outline smoothing) split into edges where the neighbour changes, and the faces are sewn
+  (`BRepBuilderAPI_Sewing`); a closed shell becomes a solid. Patches that miss the
+  tolerance or cannot be unfolded (tubes) are cut in two across the direction their
+  normals turn most and fit again (up to 3 times). Neighbouring patches meet with C0
+  continuity (each fits its own side of the shared border); G1 matching is not done.
 - **Offset / thicken** (`geometry/Offset`, commands `surface.offset`, `surface.thicken`):
   `BRepOffset_MakeSimpleOffset`, which offsets each face on its own surface (exact for
   the single-face base surfaces); with the solid flag it adds side walls and caps. The

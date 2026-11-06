@@ -3,9 +3,11 @@
 #include "CommandHelpers.hpp"
 
 #include "aerocad/geometry/Offset.hpp"
+#include "aerocad/geometry/RegionFit.hpp"
 #include "aerocad/geometry/SurfaceFit.hpp"
 #include "aerocad/geometry/Tessellation.hpp"
 
+#include <algorithm>
 #include <memory>
 #include <string>
 
@@ -49,8 +51,8 @@ void registerSurfaceCommands(CommandRegistry& r)
     r.add({"surface.fit_selection", "Fit surface to selection",
            "Fits one smooth B-spline (NURBS) surface to the region selection of a mesh part and adds it as a new "
            "part with exact geometry, trimmed to the selection outline. Reports the deviation both ways (mesh to "
-           "surface and surface to mesh) in mm. The region must be a height field over its best-fit plane (no "
-           "folds, less than about 180 degrees of wrap).",
+           "surface and surface to mesh) in mm. Holes of the selection are cut out. Any amount of wrap works as "
+           "long as the region is a simple sheet (no handles); see method.",
            objectSchema(
                {{"id", idParam()},
                 {"tolerance",
@@ -114,6 +116,79 @@ void registerSurfaceCommands(CommandRegistry& r)
                                {"method", rep.method},
                                {"milliseconds", rep.milliseconds}};
               result["warnings"] = rep.warnings;
+              return result;
+          });
+    r.add({"surface.fit_regions", "Fit surfaces to mesh",
+           "Turns a scanned mesh (or its region selection) into exact geometry: splits it into smooth patches at "
+           "creases, fits a B-spline surface to each and sews them into one shell, a solid when it closes up "
+           "(a watertight scan becomes a solid body). Tubes and strongly bent patches are split further. Adds "
+           "the result as a new part and reports each patch's deviation.",
+           objectSchema(
+               {{"id", idParam()},
+                {"creaseAngle",
+                 {{"type", "number"},
+                  {"exclusiveMinimum", 0},
+                  {"maximum", 180},
+                  {"description", "Angle between neighbouring triangles (degrees) that splits patches. Default 30."}}},
+                {"tolerance",
+                 {{"type", "number"}, {"exclusiveMinimum", 0}, {"description", "Fit tolerance in mm. Default 0.25."}}},
+                {"useSelection",
+                 {{"type", "boolean"},
+                  {"description", "Only the region selection (default when there is one); false: the whole mesh."}}},
+                {"name", {{"type", "string"}, {"description", "Name of the new part."}}}},
+               {"id"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              const model::Part& source = requirePart(ctx.document, params);
+              if (!source.mesh || source.mesh->triangleCount() == 0)
+                  throw CommandError("Part " + std::to_string(source.id) + " has no mesh");
+              const bool hasSelection = source.selection && !source.selection->empty();
+              const bool useSelection = params.value("useSelection", hasSelection);
+              if (useSelection && !hasSelection)
+                  throw CommandError("Select a region on part " + std::to_string(source.id) + " first");
+
+              geometry::RegionFitOptions options;
+              options.creaseAngleDeg = params.value("creaseAngle", options.creaseAngleDeg);
+              options.fit.tolerance = params.value("tolerance", options.fit.tolerance);
+              geometry::RegionFitResult fit;
+              try {
+                  fit = geometry::fitRegions(*source.mesh, useSelection ? *source.selection : core::TriangleSet{},
+                                             options);
+              } catch (const geometry::SurfaceFitError& e) {
+                  throw CommandError(e.what());
+              }
+              Json result = addShapePart(ctx, source, fit.shape,
+                                         params.value("name", source.name + (fit.solid ? " solid" : " surfaces")),
+                                         "surface.fit_regions", "Fit surfaces");
+              Json patches = Json::array();
+              double worst = 0.0;
+              bool allWithin = true;
+              for (const auto& p : fit.patches) {
+                  Json j{{"triangles", p.triangles.size()}};
+                  if (p.error.empty()) {
+                      j["meshToSurfaceMax"] = p.report.meshToSurfaceMax;
+                      j["surfaceToMeshMax"] = p.report.surfaceToMeshMax;
+                      j["withinTolerance"] = p.report.withinTolerance;
+                      j["method"] = p.report.method;
+                      worst = std::max(worst, p.report.meshToSurfaceMax);
+                      allWithin = allWithin && p.report.withinTolerance;
+                  } else {
+                      j["error"] = p.error;
+                      allWithin = false;
+                  }
+                  patches.push_back(std::move(j));
+              }
+              result["fit"] = {{"patches", patches},
+                               {"faces", fit.faces},
+                               {"freeEdges", fit.freeEdges},
+                               {"solid", fit.solid},
+                               {"volume", fit.volume},
+                               {"meshToSurfaceMax", worst},
+                               {"withinTolerance", allWithin},
+                               {"tolerance", options.fit.tolerance},
+                               {"sewTolerance", fit.sewTolerance},
+                               {"milliseconds", fit.milliseconds}};
+              result["warnings"] = fit.warnings;
               return result;
           });
     r.add({"surface.offset", "Offset surface",
