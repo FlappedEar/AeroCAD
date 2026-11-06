@@ -177,29 +177,27 @@ Shape meshToBrep(const core::TriangleMesh& mesh, std::size_t maxTriangles)
             throw ModelingError("Mesh to B-rep: no valid triangles");
         sewing.Perform();
         TopoDS_Shape sewn = sewing.SewedShape();
-        // Closed shells become solids, so booleans and volumes work.
+        // Closed shells become solids, so booleans and volumes work. Open shells and
+        // standalone faces are kept as they are, so no part of the mesh is dropped.
         BRep_Builder builder;
-        TopoDS_Compound solids;
-        builder.MakeCompound(solids);
-        bool anySolid = false;
-        bool allClosed = true;
+        TopoDS_Compound parts;
+        builder.MakeCompound(parts);
         for (TopExp_Explorer ex(sewn, TopAbs_SHELL); ex.More(); ex.Next()) {
             const TopoDS_Shell& shell = TopoDS::Shell(ex.Current());
-            if (!BRep_Tool::IsClosed(shell)) {
-                allClosed = false;
-                continue;
+            if (BRep_Tool::IsClosed(shell)) {
+                BRepBuilderAPI_MakeSolid mk(shell);
+                if (mk.IsDone()) {
+                    ShapeFix_Solid fix(mk.Solid());
+                    fix.Perform();
+                    builder.Add(parts, fix.Solid());
+                    continue;
+                }
             }
-            BRepBuilderAPI_MakeSolid mk(shell);
-            if (!mk.IsDone()) {
-                allClosed = false;
-                continue;
-            }
-            ShapeFix_Solid fix(mk.Solid());
-            fix.Perform();
-            builder.Add(solids, fix.Solid());
-            anySolid = true;
+            builder.Add(parts, shell);
         }
-        TopoDS_Shape result = anySolid && allClosed ? TopoDS_Shape(solids) : sewn;
+        for (TopExp_Explorer ex(sewn, TopAbs_FACE, TopAbs_SHELL); ex.More(); ex.Next())
+            builder.Add(parts, ex.Current());
+        TopoDS_Shape result = parts;
         return wrapShape(unify(result));
     });
 }

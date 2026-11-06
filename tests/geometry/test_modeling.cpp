@@ -230,3 +230,17 @@ TEST_CASE("Mesh to B-rep: a closed mesh becomes a solid with merged planar faces
     CHECK_THROWS_AS(meshToBrep(mesh, 2), ModelingError);
     CHECK_THROWS_AS(meshToBrep(core::TriangleMesh{}), ModelingError);
 }
+
+TEST_CASE("Mesh to B-rep: standalone faces next to a closed component are kept", "[geometry][modeling]")
+{
+    core::TriangleMesh mesh = tessellate(makeBox(10, 10, 10));
+    const auto a = mesh.addVertex({50, 0, 0});
+    const auto b = mesh.addVertex({60, 0, 0});
+    const auto c = mesh.addVertex({50, 10, 0});
+    mesh.addTriangle(a, b, c);
+    const auto brep = meshToBrep(mesh);
+    CHECK(brep.solidCount() == 1);
+    CHECK(brep.volume() == Approx(1000).epsilon(1e-6));
+    CHECK(brep.faceCount() == 7);
+    CHECK(brep.bounds().max.x == Approx(60.0));
+}

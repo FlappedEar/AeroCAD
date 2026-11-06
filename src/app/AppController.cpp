@@ -111,7 +111,13 @@ bool AppController::runScript(const QString& path)
     }
     bool ok = true;
     for (const auto& step : script) {
-        const std::string name = step.value("name", std::string());
+        if (!step.is_object() || !step.contains("name") || !step["name"].is_string()) {
+            setStatusMessage(tr("Script step is not an object with a string \"name\": %1")
+                                 .arg(QString::fromStdString(step.dump())));
+            ok = false;
+            break;
+        }
+        const std::string name = step["name"].get<std::string>();
         const commands::CommandResult r = m_session.execute(name, step.value("params", commands::Json::object()));
         if (!r.ok) {
             setStatusMessage(tr("Script step %1 failed: %2")

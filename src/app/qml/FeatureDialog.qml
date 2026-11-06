@@ -130,6 +130,13 @@ Pane {
             for (const k in initial)
                 v[k] = initial[k]
         }
+        if (featureType === "cylinder" && v.radius !== undefined) {
+            // The dialog edits the diameter; a radius given through the API is converted
+            // (and removed on apply) so that it does not compete with the default diameter.
+            if (!(initial && initial.diameter !== undefined))
+                v.diameter = typeof v.radius === "number" ? v.radius * 2 : "(" + v.radius + ") * 2"
+            delete v.radius
+        }
         if (!featureId) {
             if (s.fields.some(f => f.key === "sketch") && v.sketch === undefined) {
                 const sk = sketches()
@@ -232,6 +239,8 @@ Pane {
                     if (!(k in params) && spec.fields.some(f => f.key === k))
                         patch[k] = null
                 }
+                if (type === "cylinder" && feature.params.radius !== undefined)
+                    patch.radius = null
             }
             r = controller.execute("feature.edit", { id: editId, params: patch })
         } else {
