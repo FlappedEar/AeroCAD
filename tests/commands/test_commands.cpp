@@ -464,3 +464,105 @@ TEST_CASE("Sketch over a curved surface, trim it with the outline and thicken", 
     REQUIRE(session.execute("edit.undo").ok);
     CHECK(session.document().partCount() == 3); // scan, surface, sketch
 }
+
+TEST_CASE("Part on surface: one step from an outline over a scan to a solid", "[commands][fit]")
+{
+    commands::Session session;
+    std::vector<core::Vec3> v;
+    std::vector<core::TriangleMesh::Triangle> t;
+    const int nx = 60;
+    const int ny = 30;
+    for (int j = 0; j <= ny; ++j)
+        for (int i = 0; i <= nx; ++i)
+            v.push_back({double(i), double(j), -0.005 * (i - 30) * (i - 30)});
+    auto idx = [](int i, int j) { return static_cast<std::uint32_t>(j * (nx + 1) + i); };
+    for (int j = 0; j < ny; ++j)
+        for (int i = 0; i < nx; ++i) {
+            t.push_back({idx(i, j), idx(i + 1, j), idx(i + 1, j + 1)});
+            t.push_back({idx(i, j), idx(i + 1, j + 1), idx(i, j + 1)});
+        }
+    model::Part sheet;
+    sheet.name = "Wing";
+    sheet.mesh = std::make_shared<const core::TriangleMesh>(core::TriangleMesh(std::move(v), std::move(t)));
+    const auto scanId = session.document().addPart(sheet);
+    const Json rect = Json::array({{{"type", "center_rectangle"}, {"center", {0, 0}}, {"width", 30}, {"height", 12}}});
+
+    SECTION("Straight on the scan, no selection or fit first")
+    {
+        auto sk = session.execute("sketch.create",
+                                  {{"surface", {{"part", scanId}, {"point", {30, 15, 0}}}}, {"curves", rect}});
+        INFO(sk.toJson().dump());
+        REQUIRE(sk.ok);
+        const auto sketchId = sk.data.at("id").get<std::uint64_t>();
+        auto profiles = session.execute("sketch.profiles", {{"sketch", sketchId}});
+        REQUIRE(profiles.ok);
+        CHECK(profiles.data.at("onSurface").at("part") == scanId);
+
+        auto part = session.execute("surface.part_from_sketch", {{"sketch", sketchId}, {"thickness", 2.0}});
+        INFO(part.toJson().dump());
+        REQUIRE(part.ok);
+        CHECK(part.data.at("fit").at("withinTolerance") == true);
+        // Edges exactly where the outline is: 30 x 12 seen from above.
+        const auto& box = part.data.at("bounds");
+        CHECK(box.at("size").at(0).get<double>() == Approx(30.0).margin(0.3));
+        CHECK(box.at("size").at(1).get<double>() == Approx(12.0).margin(0.3));
+        const double area = part.data.at("area").get<double>();
+        CHECK(area == Approx(30.0 * 12.0).epsilon(0.02));
+        CHECK(part.data.at("volume").get<double>() == Approx(2.0 * area).epsilon(0.03));
+        // Inward: below the scan surface, which peaks at z = 0.
+        CHECK(box.at("max").at(2).get<double>() == Approx(0.0).margin(0.1));
+
+        REQUIRE(session.execute("edit.undo").ok);
+        CHECK(session.document().partCount() == 2); // scan and sketch
+    }
+
+    SECTION("An arc that bulges far past its defining points is covered")
+    {
+        // 270 degree arc of radius 12 around the sketch origin, closed by a line.
+        auto sk = session.execute("sketch.create",
+                                  {{"surface", {{"part", scanId}, {"point", {30, 15, 0}}}},
+                                   {"curves", Json::array({{{"type", "arc"}, {"start", {12, 0}}, {"through", {0, 12}}, {"end", {0, -12}}},
+                                                           {{"type", "line"}, {"start", {0, -12}}, {"end", {12, 0}}}})}});
+        REQUIRE(sk.ok);
+        auto part = session.execute("surface.part_from_sketch",
+                                    {{"sketch", sk.data.at("id")}, {"thickness", 1.0}});
+        INFO(part.toJson().dump());
+        REQUIRE(part.ok);
+        CHECK(part.data.at("bounds").at("size").at(0).get<double>() == Approx(24.0).margin(0.3));
+        CHECK(part.data.at("bounds").at("size").at(1).get<double>() == Approx(24.0).margin(0.3));
+    }
+
+    SECTION("On a surface fitted to a ragged brushed region, the outline sets the edges")
+    {
+        // A round brushed region, smaller than the outline drawn over it.
+        REQUIRE(session.execute("selection.brush", {{"id", scanId}, {"points", {{30, 15, 0}}}, {"radius", 9.0}}).ok);
+        auto fit = session.execute("surface.fit_selection", {{"id", scanId}, {"tolerance", 0.05}});
+        REQUIRE(fit.ok);
+        const auto surfaceId = fit.data.at("id").get<model::PartId>();
+        auto sk = session.execute("sketch.create",
+                                  {{"surface", {{"part", surfaceId}}}, {"curves", Json::array({{{"type", "center_rectangle"},
+                                                                                                  {"center", {0, 0}},
+                                                                                                  {"width", 20},
+                                                                                                  {"height", 16}}})}});
+        REQUIRE(sk.ok);
+        const auto sketchId = sk.data.at("id").get<std::uint64_t>();
+
+        auto trimmed = session.execute("surface.trim_by_sketch", {{"id", surfaceId}, {"sketch", sketchId}});
+        INFO(trimmed.toJson().dump());
+        REQUIRE(trimmed.ok);
+        CHECK(trimmed.data.at("bounds").at("size").at(0).get<double>() == Approx(20.0).margin(0.3));
+        CHECK(trimmed.data.at("bounds").at("size").at(1).get<double>() == Approx(16.0).margin(0.3));
+        // Without extend, the ragged round border of the fit is kept.
+        auto clipped = session.execute("surface.trim_by_sketch", {{"id", surfaceId}, {"sketch", sketchId}, {"extend", false}});
+        REQUIRE(clipped.ok);
+        CHECK(clipped.data.at("area").get<double>() < trimmed.data.at("area").get<double>() - 10.0);
+
+        auto part = session.execute("surface.part_from_sketch", {{"sketch", sketchId}, {"thickness", 1.5}, {"side", "outside"}});
+        INFO(part.toJson().dump());
+        REQUIRE(part.ok);
+        CHECK_FALSE(part.data.contains("fit")); // the fitted surface is used as it is
+        CHECK(part.data.at("volume").get<double>() == Approx(1.5 * trimmed.data.at("area").get<double>()).epsilon(0.03));
+    }
+
+    CHECK_FALSE(session.execute("surface.part_from_sketch", {{"sketch", 99}, {"thickness", 2.0}}).ok);
+}

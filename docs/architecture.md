@@ -85,8 +85,13 @@ core -------+                 transforms, primitives).
   along its long side, lifted to its highest point. The plane is only a drawing base:
   `surface.trim_by_sketch` (`geometry::trimSurface`) sweeps the closed profiles both
   ways along the sketch normal into prisms and keeps the common part (or the cut) of
-  the surface, so the result lies exactly on the original curved surface. Thicken it
-  into the solid.
+  the surface, so the result lies exactly on the original curved surface. A single-face
+  surface is trimmed on its whole underlying B-spline (`extend`), so the edges are the
+  outline's and not the ragged border of the brushed region it was fitted to.
+  `surface.part_from_sketch` does it in one step from the sketch (it remembers its part
+  in `onSurface`): on a scan it first fits a surface to the triangles under the outline
+  (connected, facing the sketch, inside the outline's rectangle plus a margin), then
+  trims and thickens.
 
 ## Not yet decided / next steps
 

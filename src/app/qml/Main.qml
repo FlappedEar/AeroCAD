@@ -25,6 +25,8 @@ ApplicationWindow {
     property string sketchTool: ""
     /// True while Create Sketch waits for a plane or a face.
     property bool pickingSketchPlane: false
+    /// Sketch drawn over a surface or scan, just finished: offers "Part on surface".
+    property var partOnSurfaceSketch: null
 
     width: 1400
     height: 860
@@ -100,6 +102,7 @@ ApplicationWindow {
     // --- Modelling ----------------------------------------------------------------------
 
     function startCreateSketch() {
+        partOnSurfaceSketch = null
         finishSketch()
         featureDialog.close()
         pickingSketchPlane = true
@@ -157,7 +160,16 @@ ApplicationWindow {
         viewport.fitAll()
     }
 
-    function finishSketch() {
+    /// Ends sketch editing. With `offerPart` (the user finished it), a closed outline drawn
+    /// over a surface or scan offers to make the part on that surface right away.
+    function finishSketch(offerPart) {
+        // Any other way out (new project, variant switch, a feature dialog) drops the offer.
+        partOnSurfaceSketch = null
+        if (offerPart && activeSketch) {
+            const r = controller.execute("sketch.profiles", { sketch: activeSketch.id })
+            if (r.ok && r.result.onSurface && r.result.profiles.length > 0)
+                partOnSurfaceSketch = { id: activeSketch.id, part: r.result.onSurface.part }
+        }
         activeSketch = null
         sketchTool = ""
         viewport.sketchCurves = []
@@ -508,7 +520,7 @@ ApplicationWindow {
     // (https://www.autodesk.com/shortcuts/fusion-360): E Extrude, F Fillet, L Line,
     // R 2-point Rectangle, C Center Diameter Circle.
     Action { id: createSketchAction; text: qsTr("Create &Sketch"); onTriggered: window.startCreateSketch() }
-    Action { id: finishSketchAction; text: qsTr("Finish Sketch"); enabled: !!window.activeSketch; onTriggered: window.finishSketch() }
+    Action { id: finishSketchAction; text: qsTr("Finish Sketch"); enabled: !!window.activeSketch; onTriggered: window.finishSketch(true) }
     Action { id: extrudeAction; text: qsTr("&Extrude"); shortcut: "E"; onTriggered: window.openFeature("extrude") }
     Action { id: revolveAction; text: qsTr("Re&volve"); onTriggered: window.openFeature("revolve") }
     Action { id: boxAction; text: qsTr("&Box"); onTriggered: window.openFeature("box") }
@@ -556,7 +568,9 @@ ApplicationWindow {
             else if (window.activeSketch && viewport.sketchOverlay.points.length > 0)
                 viewport.sketchOverlay.reset()
             else if (window.activeSketch)
-                window.finishSketch()
+                window.finishSketch(true)
+            else if (window.partOnSurfaceSketch)
+                window.partOnSurfaceSketch = null
         }
     }
 
@@ -1032,6 +1046,67 @@ ApplicationWindow {
                         onClicked: window.createSketch({ surface: { part: window.selectedPartId, useSelection: true } })
                     }
                     Button { text: qsTr("Cancel"); onClicked: window.pickingSketchPlane = false }
+                }
+            }
+
+            // After a sketch over a surface or scan: cut the outline out of the surface and
+            // thicken it, in one step.
+            Pane {
+                objectName: "partOnSurfacePane"
+                anchors.left: parent.left
+                anchors.top: parent.top
+                anchors.margins: 8
+                visible: !!window.partOnSurfaceSketch && !window.activeSketch && !window.pickingSketchPlane
+                         && !featureDialog.visible
+                padding: Theme.space3
+                background: Rectangle {
+                    color: Theme.overlay
+                    border.color: Theme.border
+                    radius: Theme.radius
+                }
+                ColumnLayout {
+                    Label { text: qsTr("Part on surface"); font.weight: Font.DemiBold; font.pixelSize: Theme.fontTitle }
+                    Label {
+                        text: qsTr("Cuts the outline out of the surface under it and gives it a thickness.\nThe edges follow the outline; the part follows the surface.")
+                        color: Theme.textMuted
+                    }
+                    RowLayout {
+                        Label { text: qsTr("Thickness") }
+                        TextField {
+                            id: partThickness
+                            Layout.preferredWidth: 56
+                            text: "2"
+                            validator: DoubleValidator { bottom: 0.001; decimals: 3; notation: DoubleValidator.StandardNotation }
+                        }
+                        Label { text: qsTr("mm") }
+                        ComboBox {
+                            id: partSide
+                            Layout.preferredWidth: 120
+                            model: [qsTr("Inward"), qsTr("Outward"), qsTr("Both sides")]
+                        }
+                    }
+                    RowLayout {
+                        Button {
+                            text: qsTr("Create")
+                            highlighted: true
+                            onClicked: {
+                                let t = NaN
+                                try { t = Number.fromLocaleString(Qt.locale(), partThickness.text) } catch (e) { t = Number(partThickness.text.replace(",", ".")) }
+                                if (!(t > 0))
+                                    return window.controller.showStatus(qsTr("Enter the thickness in mm"))
+                                const r = window.controller.execute("surface.part_from_sketch",
+                                    { sketch: window.partOnSurfaceSketch.id, thickness: t,
+                                      side: ["inside", "outside", "both"][partSide.currentIndex] })
+                                if (!r.ok)
+                                    return
+                                window.partOnSurfaceSketch = null
+                                window.selectPart(r.result.id)
+                                window.controller.showStatus(qsTr("Part \"%1\": %2 mm thick, %3 cm²")
+                                    .arg(r.result.name).arg(t).arg((r.result.area / 100).toFixed(1)))
+                            }
+                        }
+                        Button { text: qsTr("Not now"); onClicked: window.partOnSurfaceSketch = null }
+                    }
                 }
             }
 

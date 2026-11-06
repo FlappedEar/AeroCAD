@@ -54,6 +54,9 @@ struct Plane {
     /// Unit direction of the largest spread of the points, in the plane (the long side
     /// of a patch), e.g. the X axis of a sketch drawn on it.
     Vec3 major{1, 0, 0};
+    /// How clearly `major` stands out: 1 - (second largest spread / largest spread). Near
+    /// 0 for round or square patches, where the major direction is arbitrary.
+    double elongation = 0.0;
 };
 
 /// Fits a plane to at least three non-collinear points. Returns std::nullopt otherwise.

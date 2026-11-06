@@ -418,7 +418,12 @@ std::pair<Json, Json> surfaceSketchPlane(const model::Document& doc, const Json&
     for (const auto& p : points)
         top = std::max(top, (p - fit->origin).dot(normal));
     const core::Vec3 origin = fit->origin + normal * top;
-    core::Vec3 xDir = fit->major - normal * fit->major.dot(normal);
+    // X along the long side; for a roundish area (no clear long side) along world X, or
+    // world Y when X is nearly along the normal.
+    core::Vec3 xHint = fit->major;
+    if (fit->elongation < 0.2)
+        xHint = std::abs(normal.x) < 0.9 ? core::Vec3{1, 0, 0} : core::Vec3{0, 1, 0};
+    core::Vec3 xDir = xHint - normal * xHint.dot(normal);
     if (xDir.length() < 1e-9)
         xDir = std::abs(normal.z) < 0.9 ? core::Vec3{0, 0, 1}.cross(normal) : core::Vec3{1, 0, 0};
     xDir = xDir.normalized();
@@ -647,6 +652,12 @@ void registerSketchCommands(CommandRegistry& r)
                   auto [plane, report] = surfaceSketchPlane(ctx.document, params.at("surface"));
                   feature.erase("surface");
                   feature["plane"] = std::move(plane);
+                  // Remembered for "part from sketch" (surface.part_from_sketch), which cuts
+                  // the part out of this surface or scan; sketch evaluation ignores it.
+                  Json on{{"part", params.at("surface").at("part")}};
+                  if (params.at("surface").contains("point"))
+                      on["point"] = params.at("surface").at("point");
+                  feature["onSurface"] = std::move(on);
                   surfaceReport = std::move(report);
               }
               cad::FeatureId id = 0;
@@ -699,7 +710,11 @@ void registerSketchCommands(CommandRegistry& r)
                                  {"centroid", Json::array({uv.x, uv.y})},
                                  {"centroidWorld", vec(c)}});
               }
+              Json onSurface;
+              if (const cad::Feature* f = design(ctx).feature(id); f != nullptr && f->params.contains("onSurface"))
+                  onSurface = f->params.at("onSurface");
               return Json{{"sketch", id},
+                          {"onSurface", onSurface},
                           {"plane", {{"origin", vec(sk.plane.origin)},
                                      {"normal", vec(sk.plane.normal)},
                                      {"xDir", vec(sk.plane.xDir)},

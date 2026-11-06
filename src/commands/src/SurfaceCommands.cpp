@@ -3,12 +3,15 @@
 #include "CommandHelpers.hpp"
 
 #include "aerocad/cad/Design.hpp"
+#include "aerocad/core/MeshSelection.hpp"
 #include "aerocad/geometry/Offset.hpp"
 #include "aerocad/geometry/RegionFit.hpp"
 #include "aerocad/geometry/SurfaceFit.hpp"
 #include "aerocad/geometry/Tessellation.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
@@ -44,6 +47,108 @@ Json addShapePart(CommandContext& ctx, const model::Part& source, const geometry
     ctx.undoStack.push({undoTitle + " " + part.name, [&doc, id]() { doc.removePart(id); },
                         [&doc, part]() { doc.addPart(part); }});
     return partToJson(*doc.part(id));
+}
+
+/// Diagonal of the outlines' bounding box (mm).
+double outlinesDiagonal(const std::vector<geometry::Shape>& outlines)
+{
+    core::BoundingBox box;
+    for (const auto& o : outlines)
+        box.merge(o.bounds());
+    return box.diagonal();
+}
+
+const cad::SketchResult& requireSketch(CommandContext& ctx, const Json& id)
+{
+    if (ctx.design == nullptr)
+        throw CommandError("No design in this session");
+    const auto sketchId = id.get<cad::FeatureId>();
+    const auto& sketches = ctx.design->sketches();
+    const auto it = sketches.find(sketchId);
+    if (it == sketches.end())
+        throw CommandError("No evaluated sketch with id " + std::to_string(sketchId));
+    return it->second;
+}
+
+/// The sketch's closed profiles (all, or the given indices).
+std::vector<geometry::Shape> sketchOutlines(const cad::SketchResult& sk, const Json& params)
+{
+    std::vector<geometry::Shape> outlines;
+    if (params.contains("profiles")) {
+        for (const auto& i : params.at("profiles")) {
+            const auto index = i.get<std::size_t>();
+            if (index >= sk.geometry.profiles.size())
+                throw CommandError("Sketch " + sk.name + " has no profile " + std::to_string(index));
+            outlines.push_back(sk.geometry.profiles[index]);
+        }
+    } else {
+        outlines = sk.geometry.profiles;
+    }
+    if (outlines.empty())
+        throw CommandError("Sketch " + sk.name + " has no closed profile; close the outline first");
+    return outlines;
+}
+
+/// Triangles of a scan under a sketch outline: connected to the triangle nearest `seed`,
+/// facing the sketch, and inside the outline's rectangle (sketch coordinates) grown by
+/// `margin`. Enough area around the outline for a smooth fit; the outline cuts it later.
+core::TriangleSet meshUnderSketch(const core::TriangleMesh& mesh, const cad::SketchResult& sk,
+                                  const std::vector<geometry::Shape>& outlines, const core::Vec3& seed, double margin)
+{
+    // Bounds of the evaluated outline (arcs bulge past their defining points).
+    double u0 = std::numeric_limits<double>::max(), v0 = u0, u1 = -u0, v1 = -u0;
+    for (const auto& o : outlines) {
+        const auto t = geometry::tessellate(o);
+        for (const auto& p : t.vertices()) {
+            const auto uv = sk.plane.toLocal(p);
+            u0 = std::min(u0, uv.x);
+            u1 = std::max(u1, uv.x);
+            v0 = std::min(v0, uv.y);
+            v1 = std::max(v1, uv.y);
+        }
+    }
+    if (u0 > u1)
+        throw CommandError("The sketch outline is empty");
+    u0 -= margin;
+    v0 -= margin;
+    u1 += margin;
+    v1 += margin;
+
+    const auto& v = mesh.vertices();
+    auto inside = [&](std::uint32_t t) {
+        const auto& tri = mesh.triangles()[t];
+        const core::Vec3 c = (v[tri[0]] + v[tri[1]] + v[tri[2]]) * (1.0 / 3.0);
+        const auto uv = sk.plane.toLocal(c);
+        return uv.x >= u0 && uv.x <= u1 && uv.y >= v0 && uv.y <= v1 && mesh.faceNormal(t).dot(sk.plane.normal) > 0.2;
+    };
+    std::uint32_t start = core::MeshAdjacency::none;
+    double best = std::numeric_limits<double>::max();
+    for (std::uint32_t t = 0; t < mesh.triangleCount(); ++t) {
+        if (!inside(t))
+            continue;
+        const auto& tri = mesh.triangles()[t];
+        const double d = ((v[tri[0]] + v[tri[1]] + v[tri[2]]) * (1.0 / 3.0) - seed).length();
+        if (d < best) {
+            best = d;
+            start = t;
+        }
+    }
+    if (start == core::MeshAdjacency::none)
+        throw CommandError("No part of the mesh faces the sketch under its outline");
+    const core::MeshAdjacency adjacency(mesh);
+    std::vector<char> seen(mesh.triangleCount(), 0);
+    core::TriangleSet out{start};
+    seen[start] = 1;
+    for (std::size_t i = 0; i < out.size(); ++i) {
+        for (const auto n : adjacency.neighbours(out[i])) {
+            if (n != core::MeshAdjacency::none && !seen[n] && inside(n)) {
+                seen[n] = 1;
+                out.push_back(n);
+            }
+        }
+    }
+    std::sort(out.begin(), out.end());
+    return out;
 }
 
 } // namespace
@@ -206,36 +311,23 @@ void registerSurfaceCommands(CommandRegistry& r)
                            {"items", {{"type", "integer"}, {"minimum", 0}}},
                            {"description", "Profile indices (sketch.profiles); default all."}}},
                          {"keep", {{"type", "string"}, {"enum", {"inside", "outside"}}}},
+                         {"extend",
+                          {{"type", "boolean"},
+                           {"description",
+                            "Use the whole fitted surface, past its own (ragged) trim outline and holes, so the "
+                            "edges are the sketch outline's (default true; single-face surfaces)."}}},
                          {"name", {{"type", "string"}, {"description", "Name of the new part."}}}},
                         {"id", "sketch"}),
            true},
           [](CommandContext& ctx, const Json& params) {
               const model::Part& source = requireSurfacePart(ctx.document, params);
-              if (ctx.design == nullptr)
-                  throw CommandError("No design in this session");
-              const auto sketchId = params.at("sketch").get<cad::FeatureId>();
-              const auto& sketches = ctx.design->sketches();
-              const auto it = sketches.find(sketchId);
-              if (it == sketches.end())
-                  throw CommandError("No evaluated sketch with id " + std::to_string(sketchId));
-              const auto& sk = it->second;
-              std::vector<geometry::Shape> outlines;
-              if (params.contains("profiles")) {
-                  for (const auto& i : params.at("profiles")) {
-                      const auto index = i.get<std::size_t>();
-                      if (index >= sk.geometry.profiles.size())
-                          throw CommandError("Sketch " + sk.name + " has no profile " + std::to_string(index));
-                      outlines.push_back(sk.geometry.profiles[index]);
-                  }
-              } else {
-                  outlines = sk.geometry.profiles;
-              }
-              if (outlines.empty())
-                  throw CommandError("Sketch " + sk.name + " has no closed profile; close the outline first");
+              const auto& sk = requireSketch(ctx, params.at("sketch"));
+              const auto outlines = sketchOutlines(sk, params);
               const std::string keep = params.value("keep", std::string("inside"));
               geometry::Shape shape;
               try {
-                  shape = geometry::trimSurface(*source.shape, outlines, sk.plane.normal, keep != "outside");
+                  shape = geometry::trimSurface(*source.shape, outlines, sk.plane.normal, keep != "outside",
+                                                params.value("extend", true));
               } catch (const geometry::OffsetError& e) {
                   throw CommandError(e.what());
               }
@@ -244,6 +336,102 @@ void registerSurfaceCommands(CommandRegistry& r)
               result["area"] = geometry::surfaceArea(shape);
               result["faces"] = shape.faceCount();
               result["keep"] = keep;
+              return result;
+          });
+    r.add({"surface.part_from_sketch", "Part on surface",
+           "One step from a sketch outline to a solid part that follows a curved surface or scan, e.g. an aileron "
+           "or flap drawn over a scanned wing: the outline is projected onto the surface along the sketch normal, "
+           "the surface inside it is cut out and thickened. On a scan (mesh) a smooth surface is first fitted to "
+           "the area under the outline, so no region selection or separate fit is needed. The edges follow the "
+           "sketch outline exactly. The sketch should be made with sketch.create surface: {part}; that part is "
+           "used unless `id` is given.",
+           objectSchema({{"sketch", {{"type", "integer"}, {"minimum", 1}, {"description", "Sketch feature id."}}},
+                         {"id", idParam()},
+                         {"thickness", {{"type", "number"}, {"exclusiveMinimum", 0}, {"description", "mm."}}},
+                         {"side",
+                          {{"type", "string"},
+                           {"enum", {"inside", "outside", "both"}},
+                           {"description", "inside (default): from the surface into the object, against the way "
+                                           "the surface faces; outside: away from it; both: half each way."}}},
+                         {"profiles",
+                          {{"type", "array"},
+                           {"items", {{"type", "integer"}, {"minimum", 0}}},
+                           {"description", "Profile indices (sketch.profiles); default all."}}},
+                         {"tolerance",
+                          {{"type", "number"}, {"exclusiveMinimum", 0}, {"description", "Fit tolerance (scan), mm. Default 0.25."}}},
+                         {"name", {{"type", "string"}, {"description", "Name of the new part."}}}},
+                        {"sketch", "thickness"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              const auto& sk = requireSketch(ctx, params.at("sketch"));
+              const auto outlines = sketchOutlines(sk, params);
+              Json on;
+              if (const cad::Feature* f = ctx.design->feature(sk.id); f != nullptr)
+                  on = f->params.value("onSurface", Json::object());
+              model::PartId partId = 0;
+              if (params.contains("id"))
+                  partId = params.at("id").get<model::PartId>();
+              else if (on.contains("part"))
+                  partId = on.at("part").get<model::PartId>();
+              else
+                  throw CommandError("Sketch " + sk.name + " was not made over a surface; give the surface part `id`");
+              const model::Part* source = ctx.document.part(partId);
+              if (source == nullptr)
+                  throw CommandError("No part with id " + std::to_string(partId));
+              if (source->kind == model::PartKind::Sketch)
+                  throw CommandError("Part " + std::to_string(partId) + " is a sketch");
+
+              const double thickness = params.at("thickness").get<double>();
+              const std::string sideName = params.value("side", std::string("inside"));
+              const geometry::ThickenSide side = sideName == "outside" ? geometry::ThickenSide::Outside
+                                                 : sideName == "both"  ? geometry::ThickenSide::Both
+                                                                       : geometry::ThickenSide::Inside;
+              Json fitReport;
+              geometry::Shape surface;
+              if (source->shape && !source->shape->isNull()) {
+                  surface = *source->shape;
+              } else {
+                  if (!source->mesh || source->mesh->triangleCount() == 0)
+                      throw CommandError("Part " + std::to_string(partId) + " has no surface");
+                  core::Vec3 seed = sk.plane.origin;
+                  if (on.contains("point") && on.value("part", Json()) == partId) {
+                      const auto& p = on.at("point");
+                      seed = {p.at(0).get<double>(), p.at(1).get<double>(), p.at(2).get<double>()};
+                  }
+                  const auto box = outlinesDiagonal(outlines);
+                  const double margin = std::max(5.0, 0.15 * box);
+                  const auto region = meshUnderSketch(*source->mesh, sk, outlines, seed, margin);
+                  geometry::SurfaceFitOptions options;
+                  options.tolerance = params.value("tolerance", options.tolerance);
+                  try {
+                      auto fit = geometry::fitSurface(*source->mesh, region, options);
+                      surface = fit.face;
+                      fitReport = {{"triangles", region.size()},
+                                   {"meshToSurfaceMax", fit.report.meshToSurfaceMax},
+                                   {"meshToSurfaceRms", fit.report.meshToSurfaceRms},
+                                   {"withinTolerance", fit.report.withinTolerance},
+                                   {"method", fit.report.method}};
+                  } catch (const geometry::SurfaceFitError& e) {
+                      throw CommandError(std::string("Could not fit a surface under the outline: ") + e.what());
+                  }
+              }
+              geometry::Shape solid;
+              double area = 0.0;
+              try {
+                  const auto skin = geometry::trimSurface(surface, outlines, sk.plane.normal, true, true);
+                  area = geometry::surfaceArea(skin);
+                  solid = geometry::thickenSurface(skin, thickness, side);
+              } catch (const geometry::OffsetError& e) {
+                  throw CommandError(e.what());
+              }
+              Json result = addShapePart(ctx, *source, solid, params.value("name", sk.name + " part"),
+                                         "surface.part_from_sketch", "Part on surface");
+              result["thickness"] = thickness;
+              result["side"] = sideName;
+              result["area"] = area;
+              result["volume"] = solid.volume();
+              if (!fitReport.is_null())
+                  result["fit"] = fitReport;
               return result;
           });
     r.add({"surface.offset", "Offset surface",
