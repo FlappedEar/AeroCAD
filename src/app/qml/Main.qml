@@ -163,6 +163,8 @@ ApplicationWindow {
     /// Ends sketch editing. With `offerPart` (the user finished it), a closed outline drawn
     /// over a surface or scan offers to make the part on that surface right away.
     function finishSketch(offerPart) {
+        // Any other way out (new project, variant switch, a feature dialog) drops the offer.
+        partOnSurfaceSketch = null
         if (offerPart && activeSketch) {
             const r = controller.execute("sketch.profiles", { sketch: activeSketch.id })
             if (r.ok && r.result.onSurface && r.result.profiles.length > 0)

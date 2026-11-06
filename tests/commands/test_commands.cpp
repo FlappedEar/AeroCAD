@@ -516,6 +516,22 @@ TEST_CASE("Part on surface: one step from an outline over a scan to a solid", "[
         CHECK(session.document().partCount() == 2); // scan and sketch
     }
 
+    SECTION("An arc that bulges far past its defining points is covered")
+    {
+        // 270 degree arc of radius 12 around the sketch origin, closed by a line.
+        auto sk = session.execute("sketch.create",
+                                  {{"surface", {{"part", scanId}, {"point", {30, 15, 0}}}},
+                                   {"curves", Json::array({{{"type", "arc"}, {"start", {12, 0}}, {"through", {0, 12}}, {"end", {0, -12}}},
+                                                           {{"type", "line"}, {"start", {0, -12}}, {"end", {12, 0}}}})}});
+        REQUIRE(sk.ok);
+        auto part = session.execute("surface.part_from_sketch",
+                                    {{"sketch", sk.data.at("id")}, {"thickness", 1.0}});
+        INFO(part.toJson().dump());
+        REQUIRE(part.ok);
+        CHECK(part.data.at("bounds").at("size").at(0).get<double>() == Approx(24.0).margin(0.3));
+        CHECK(part.data.at("bounds").at("size").at(1).get<double>() == Approx(24.0).margin(0.3));
+    }
+
     SECTION("On a surface fitted to a ragged brushed region, the outline sets the edges")
     {
         // A round brushed region, smaller than the outline drawn over it.

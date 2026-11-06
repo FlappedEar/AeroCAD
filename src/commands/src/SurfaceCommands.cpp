@@ -92,22 +92,23 @@ std::vector<geometry::Shape> sketchOutlines(const cad::SketchResult& sk, const J
 /// Triangles of a scan under a sketch outline: connected to the triangle nearest `seed`,
 /// facing the sketch, and inside the outline's rectangle (sketch coordinates) grown by
 /// `margin`. Enough area around the outline for a smooth fit; the outline cuts it later.
-core::TriangleSet meshUnderSketch(const core::TriangleMesh& mesh, const cad::SketchResult& sk, const core::Vec3& seed,
-                                  double margin)
+core::TriangleSet meshUnderSketch(const core::TriangleMesh& mesh, const cad::SketchResult& sk,
+                                  const std::vector<geometry::Shape>& outlines, const core::Vec3& seed, double margin)
 {
+    // Bounds of the evaluated outline (arcs bulge past their defining points).
     double u0 = std::numeric_limits<double>::max(), v0 = u0, u1 = -u0, v1 = -u0;
-    for (const auto& c : sk.curves) {
-        if (c.construction)
-            continue;
-        const double r = c.kind == geometry::SketchCurve::Kind::Circle ? c.radius : 0.0;
-        for (const auto& p : c.points) {
-            u0 = std::min(u0, p.x - r);
-            u1 = std::max(u1, p.x + r);
-            v0 = std::min(v0, p.y - r);
-            v1 = std::max(v1, p.y + r);
+    for (const auto& o : outlines) {
+        const auto t = geometry::tessellate(o);
+        for (const auto& p : t.vertices()) {
+            const auto uv = sk.plane.toLocal(p);
+            u0 = std::min(u0, uv.x);
+            u1 = std::max(u1, uv.x);
+            v0 = std::min(v0, uv.y);
+            v1 = std::max(v1, uv.y);
         }
     }
-    // Arcs bulge past their points; the margin covers that.
+    if (u0 > u1)
+        throw CommandError("The sketch outline is empty");
     u0 -= margin;
     v0 -= margin;
     u1 += margin;
@@ -399,7 +400,7 @@ void registerSurfaceCommands(CommandRegistry& r)
                   }
                   const auto box = outlinesDiagonal(outlines);
                   const double margin = std::max(5.0, 0.15 * box);
-                  const auto region = meshUnderSketch(*source->mesh, sk, seed, margin);
+                  const auto region = meshUnderSketch(*source->mesh, sk, outlines, seed, margin);
                   geometry::SurfaceFitOptions options;
                   options.tolerance = params.value("tolerance", options.tolerance);
                   try {
