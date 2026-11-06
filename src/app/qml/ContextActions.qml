@@ -74,6 +74,12 @@ QtObject {
         return r.ok && r.result.onSurface ? (r.result.onSurface.part ?? 0) : 0
     }
 
+    /// True for a sketch drawn across a surface (a fin).
+    function sketchAcross(featureId) {
+        const r = controller.execute("sketch.profiles", { sketch: featureId })
+        return r.ok && !!r.result.onSurface && !!r.result.onSurface.across
+    }
+
     function sketchHasProfiles(featureId) {
         const r = controller.execute("sketch.profiles", { sketch: featureId })
         return r.ok && (r.result.profiles ?? []).length > 0
@@ -144,6 +150,9 @@ QtObject {
         case "sketchOnScan":
             return { id: id, text: qsTr("Sketch on the scan"), icon: "sketch", enabled: true, primary: !selected,
                      tip: qsTr("Starts a sketch on a plane fitted to the scan where you click (or over the selected area). Draw the outline of the part, then click Finish Sketch.") }
+        case "sketchFin":
+            return { id: id, text: qsTr("Sketch a fin"), icon: "sketch", enabled: true,
+                     tip: qsTr("Starts a sketch standing across the surface where you click, for a fin such as a canard or a winglet. The orange line shows the surface; draw the fin with its root a little past it.") }
         case "toBody":
             return { id: id, text: qsTr("Convert to body"), icon: "mesh-to-body", enabled: true,
                      tip: qsTr("Uses the whole mesh as a solid body in the timeline, so fillets, holes and cuts work on it. Best for clean, closed meshes; for a raw scan fit a surface instead.") }
@@ -193,6 +202,13 @@ QtObject {
                      params: [_num("distance", qsTr("Distance"), 2, "mm", qsTr("Negative values go to the other side."))] }
 
         // Sketch
+        case "finOnSurface": {
+            const ok = sketchHasProfiles(info.featureId)
+            return { id: id, text: qsTr("Fin on surface"), icon: "thickness", enabled: ok, primary: true,
+                     reason: qsTr("The sketch needs a closed outline."),
+                     tip: qsTr("Gives the fin outline a thickness (half each side of the sketch) and cuts its root to the surface, so it sits flush on it."),
+                     params: [_num("thickness", qsTr("Thickness"), 2, "mm")] }
+        }
         case "editSketch":
             return { id: id, text: qsTr("Edit sketch"), icon: "sketch", enabled: true,
                      tip: qsTr("Opens the sketch again to change curves and dimensions.") }
@@ -305,6 +321,13 @@ QtObject {
                                { title: qsTr("Create the part"), done: false,
                                  text: qsTr("Select the sketch and choose Part on surface: it is cut out of the scan's shape and thickened."),
                                  actions: [] }] },
+                         { title: qsTr("Fin on the scan (e.g. a canard)"), steps: [
+                               { title: qsTr("Sketch the fin"), done: false,
+                                 text: qsTr("Click the button, then click the scan where the fin stands. Draw its outline with the root a little past the orange surface line and click Finish Sketch."),
+                                 actions: [a("sketchFin")] },
+                               { title: qsTr("Create the fin"), done: false,
+                                 text: qsTr("Set the thickness and click Create: the root is cut to the scan's shape."),
+                                 actions: [] }] },
                          { title: qsTr("Smooth surface from an area"), steps: [
                                { title: qsTr("Select the area"), done: selected,
                                  text: selected
@@ -338,12 +361,17 @@ QtObject {
                                { title: qsTr("Thicken"), done: false,
                                  text: qsTr("Turns the piece into a solid with the thickness you type."),
                                  actions: [a("thicken")] }] },
-                         { title: qsTr("More"), steps: [], actions: [a("offset"), a("scale"), a("export"), a("hide"), a("delete")] }] }
+                         { title: qsTr("More"), steps: [], actions: [a("sketchFin"), a("offset"), a("scale"), a("export"), a("hide"), a("delete")] }] }
         }
         if (r === "sketch") {
             const onSurface = sketchSurface(info.featureId) > 0
+            const fin = onSurface && sketchAcross(info.featureId)
             const steps = []
-            if (onSurface)
+            if (fin)
+                steps.push({ title: qsTr("Create the fin on the surface"), done: false,
+                             text: qsTr("The sketch stands across a surface or scan. This gives the outline a thickness and cuts its root to the surface."),
+                             actions: [a("finOnSurface")] })
+            else if (onSurface)
                 steps.push({ title: qsTr("Create the part on the surface"), done: false,
                              text: qsTr("The sketch was drawn on a surface or scan. This cuts the outline out of it and thickens it in one step."),
                              actions: [a("partOnSurface")] })
@@ -460,9 +488,11 @@ QtObject {
         case "sketchOnScan":
             if ((info.selectedTriangles ?? 0) > 0)
                 return host.createSketch({ surface: { part: pid, useSelection: true } })
-            return host.startCreateSketch()
+            return host.startCreateSketch(false)
         case "sketchOnSurface":
             return host.createSketch({ surface: { part: pid } })
+        case "sketchFin":
+            return host.startCreateSketch(true)
         case "toBody":
         case "solidToBody": {
             const r = controller.execute("feature.base_body", { part: pid })
@@ -495,6 +525,13 @@ QtObject {
             if (r.ok)
                 controller.showStatus(qsTr("Part \"%1\" created on the surface. Hide the scan (eye icon in the Browser) to see it on its own. Next: export it.")
                                       .arg(r.result.name))
+            return _selectResult(r)
+        }
+        case "finOnSurface": {
+            const r = controller.execute("surface.fin_from_sketch", { sketch: info.featureId, thickness: v.thickness })
+            if (r.ok)
+                controller.showStatus(qsTr("Fin \"%1\": %2 mm thick, %3 cm³. Next: export it.")
+                                      .arg(r.result.name).arg(v.thickness).arg((r.result.volume / 1000).toFixed(1)))
             return _selectResult(r)
         }
         case "finishSketch": return host.finishSketch(true)
