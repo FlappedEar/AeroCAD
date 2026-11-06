@@ -283,8 +283,8 @@ Item {
             if (root.sketch === null)
                 return
             ctx.lineWidth = 1.5
-            ctx.strokeStyle = "#1f5fbf"
-            ctx.fillStyle = "#1f5fbf"
+            ctx.strokeStyle = Theme.sketchColor
+            ctx.fillStyle = Theme.sketchColor
             const pts = root.hover ? root.points.concat([root.hover]) : root.points
             const s = pts.map(p => root.toScreen(p))
             if (root.active && pts.length >= 2) {
@@ -359,7 +359,7 @@ Item {
                 else if (root.tool === "polygon")
                     text = "R " + Preferences.formatLength(root.dist(a, b), Preferences.lengthUnit)
                 ctx.font = "12px sans-serif"
-                ctx.fillStyle = "#123a75"
+                ctx.fillStyle = Theme.text
                 const last = s[s.length - 1]
                 ctx.fillText(text, last.x + 12, last.y - 10)
             }
@@ -382,9 +382,13 @@ Item {
         anchors.left: parent.left
         anchors.top: parent.top
         anchors.margins: 8
-        padding: 8
-        opacity: 0.95
+        padding: Theme.space3
         visible: root.sketch !== null
+        background: Rectangle {
+            color: Theme.overlay
+            border.color: Theme.border
+            radius: Theme.radius
+        }
 
         ColumnLayout {
             spacing: 4
@@ -397,7 +401,7 @@ Item {
                     : root.tool === "arc" ? qsTr("Arc: click start, end, then a point on the arc")
                     : root.tool === "polygon" ? qsTr("Polygon: click centre and a corner; type the radius")
                     : qsTr("Slot: click both centres, then the width")
-                font.bold: true
+                font.weight: Font.DemiBold
             }
             // Constraint tools, like Fusion's sketch palette.
             Flow {
@@ -417,14 +421,14 @@ Item {
                         { tool: "collinear", text: "≡", tip: qsTr("Collinear") },
                         { tool: "fix", text: "⚓", tip: qsTr("Fix") }
                     ]
-                    delegate: ToolButton {
+                    delegate: IconButton {
                         required property var modelData
-                        text: modelData.text
-                        checkable: true
+                        iconName: modelData.tool
+                        iconSize: Theme.iconMedium
+                        implicitWidth: 30
+                        implicitHeight: 30
+                        tip: modelData.tip
                         checked: root.tool === modelData.tool
-                        implicitWidth: 26
-                        ToolTip.visible: hovered
-                        ToolTip.text: modelData.tip
                         onClicked: root.toolRequested(modelData.tool)
                     }
                 }
@@ -452,7 +456,7 @@ Item {
                 visible: root.degreesOfFreedom >= 0
                 text: root.degreesOfFreedom === 0 ? qsTr("Fully constrained")
                     : qsTr("%n degree(s) of freedom", "", root.degreesOfFreedom)
-                color: root.degreesOfFreedom === 0 ? "#2f7d32" : "#555"
+                color: root.degreesOfFreedom === 0 ? Theme.success : Theme.textMuted
             }
             Label {
                 visible: root.sketchConstraints.length > 0

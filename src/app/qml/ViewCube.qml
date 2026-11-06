@@ -6,6 +6,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick3D
+import AeroCAD
 
 Item {
     id: root
@@ -123,20 +124,21 @@ Item {
                             pickable: true
                             materials: PrincipledMaterial {
                                 roughness: 1
-                                baseColor: root.hovered === faceNode.index ? "#8fbcff" : "#ffffff"
+                                baseColor: root.hovered === faceNode.index ? Theme.hoverColor : "#ffffff"
                                 baseColorMap: Texture {
                                     sourceItem: Rectangle {
                                         width: 128
                                         height: 128
-                                        color: "#e9ecef"
-                                        border.color: "#9aa3ad"
+                                        color: Theme.dark ? "#4a5059" : "#f1f3f6"
+                                        border.color: Theme.dark ? "#6a717b" : "#a9b1bb"
                                         border.width: 2
                                         Text {
                                             anchors.centerIn: parent
                                             text: faceNode.modelData.label
-                                            color: "#2b3138"
-                                            font.pixelSize: 30
-                                            font.bold: true
+                                            color: Theme.dark ? "#e7e9ec" : "#3a414b"
+                                            font.pixelSize: 26
+                                            font.weight: Font.DemiBold
+                                            font.letterSpacing: 1
                                         }
                                     }
                                 }
@@ -160,7 +162,7 @@ Item {
                     pickable: true
                     materials: PrincipledMaterial {
                         roughness: 1
-                        baseColor: root.hovered === block.pieceIndex ? "#8fbcff" : "#cfd4da"
+                        baseColor: root.hovered === block.pieceIndex ? Theme.hoverColor : (Theme.dark ? "#5a6069" : "#d3d8de")
                     }
                 }
             }
@@ -215,24 +217,14 @@ Item {
         width: 26
         height: 26
         padding: 4
+        horizontalPadding: 4
         ToolTip.visible: hovered
         ToolTip.text: qsTr("Home")
         onClicked: root.homeRequested()
-        contentItem: Canvas {
-            onPaint: {
-                const ctx = getContext("2d")
-                const w = width, h = height
-                ctx.reset()
-                ctx.strokeStyle = "#3a4250"
-                ctx.fillStyle = "#3a4250"
-                ctx.lineWidth = 1.6
-                ctx.beginPath()
-                ctx.moveTo(w * 0.08, h * 0.52)
-                ctx.lineTo(w * 0.5, h * 0.12)
-                ctx.lineTo(w * 0.92, h * 0.52)
-                ctx.stroke()
-                ctx.fillRect(w * 0.24, h * 0.5, w * 0.52, h * 0.4)
-            }
+        contentItem: AppIcon {
+            name: "home"
+            size: 18
+            color: homeButton.hovered ? Theme.accent : Theme.icon
         }
     }
 

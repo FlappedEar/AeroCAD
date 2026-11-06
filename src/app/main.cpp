@@ -7,6 +7,8 @@
 #include <QImage>
 #include <QQmlApplicationEngine>
 #include <QQuickItem>
+#include <QQuickStyle>
+#include <QtQml/qqmlextensionplugin.h>
 #include <QQuickWindow>
 #include <QTimer>
 #include <QUrl>
@@ -14,6 +16,9 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cstdio>
+
+// The application style (src/app/style), linked statically.
+Q_IMPORT_QML_PLUGIN(AeroCADStylePlugin)
 
 namespace {
 
@@ -124,6 +129,11 @@ int main(int argc, char* argv[])
     parser.addPositionalArgument(QStringLiteral("files"), QStringLiteral("Projects (.aerocad) or 3D files to open."),
                                  QStringLiteral("[files...]"));
     parser.process(app);
+
+    // AeroCAD's own style (src/app/style, falling back to Basic) draws every control with
+    // the Theme.qml tokens, so light and dark look the same on every platform. The native
+    // macOS and Windows styles ignore parts of the palette and mix system colours in.
+    QQuickStyle::setStyle(QStringLiteral("AeroCADStyle"));
 
     aerocad::app::AppController controller;
 

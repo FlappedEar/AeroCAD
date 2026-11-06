@@ -30,38 +30,34 @@ ApplicationWindow {
     height: 860
     visible: true
 
-    // Preferences > Theme: explicit light / dark colours, or the platform's palette.
-    // Popups and dialogs inherit the window palette. Groups are set one by one, because
-    // setting palette.<role> would also overwrite the disabled colours.
-    SystemPalette { id: systemPalette; colorGroup: SystemPalette.Active }
-    SystemPalette { id: disabledPalette; colorGroup: SystemPalette.Disabled }
-    readonly property var paletteRoles: ["window", "windowText", "base", "alternateBase", "toolTipBase",
-        "toolTipText", "placeholderText", "text", "button", "buttonText", "brightText", "light", "midlight",
-        "mid", "dark", "shadow", "highlight", "highlightedText", "link"]
-    readonly property var dimmedRoles: ["windowText", "text", "buttonText"]
-
-    function applyTheme(initial) {
-        const c = Preferences.colors
-        const system = c.window === undefined
-        if (system && initial)
-            return // keep the platform palette untouched
-        for (const role of paletteRoles) {
-            const active = system ? systemPalette[role] : c[role]
-            const disabled = system ? disabledPalette[role]
-                                    : (dimmedRoles.includes(role) ? c.disabledText : c[role])
-            if (active === undefined)
-                continue
-            palette.active[role] = active
-            palette.inactive[role] = active
-            if (disabled !== undefined)
-                palette.disabled[role] = disabled
+    // One palette for every control, built from the Theme tokens (Preferences > Theme:
+    // follow the system, light or dark). The Basic style draws everything from the palette,
+    // so menus, dialogs, fields and panels all switch together. Popups inherit it.
+    // Groups are set one by one, because palette.<role> would also overwrite the disabled
+    // colours.
+    function applyTheme() {
+        const c = {
+            window: Theme.surface, windowText: Theme.text, base: Theme.field,
+            alternateBase: Theme.surfaceRaised, toolTipBase: Theme.tooltip, toolTipText: Theme.tooltipText,
+            placeholderText: Theme.textFaint, text: Theme.text, button: Theme.surfaceRaised,
+            buttonText: Theme.text, brightText: Theme.accentText, light: Theme.surfaceRaised,
+            midlight: Theme.border, mid: Theme.borderStrong, dark: Theme.borderStrong, shadow: Theme.shadow,
+            highlight: Theme.accent, highlightedText: Theme.accentText, link: Theme.accent
+        }
+        const dimmed = ["windowText", "text", "buttonText"]
+        for (const role in c) {
+            palette.active[role] = c[role]
+            palette.inactive[role] = c[role]
+            palette.disabled[role] = dimmed.includes(role) ? Theme.textFaint : c[role]
         }
     }
 
-    Component.onCompleted: applyTheme(true)
+    font.pixelSize: Theme.fontBody
+    color: Theme.chrome
+    Component.onCompleted: applyTheme()
     Connections {
-        target: Preferences
-        function onThemeChanged() { window.applyTheme(false) }
+        target: Theme
+        function onDarkChanged() { window.applyTheme() }
     }
 
     title: (controller.projectDirty ? "*" : "") + controller.projectName
@@ -735,79 +731,131 @@ ApplicationWindow {
         }
     }
 
-    // --- Toolbar: grouped commands with captions, as in Fusion's toolbar ---------------
+    // --- Toolbar: tabs and grouped commands, as in Fusion's toolbar -------------------
+    // ToolGroup / ToolCommand are the ribbon's building blocks (RibbonGroup.qml,
+    // RibbonButton.qml): a group has a caption with a drop-down of all its commands and
+    // belongs to a tab (tab: "solid" by default). See docs/ui.md, "Toolbar".
 
-    component ToolGroup: ColumnLayout {
-        property string caption
-        default property alias buttons: row.data
-        spacing: 0
+    component ToolGroup: RibbonGroup {}
+    component ToolCommand: RibbonButton {}
+    component ToolSeparator: Rectangle {
+        property string tab: "solid"
+        visible: !parent || parent.currentTab === undefined || parent.currentTab === tab
+        Layout.fillHeight: true
+        Layout.topMargin: 6
+        Layout.bottomMargin: 6
+        implicitWidth: 1
+        color: Theme.separator
+    }
+
+    /// Ribbon tab the user picked; the SKETCH tab shows while a sketch is edited.
+    property string ribbonTab: "solid"
+    readonly property string currentRibbonTab: activeSketch ? "sketch" : ribbonTab
+
+    header: Rectangle {
+        implicitHeight: tabRow.height + ribbon.implicitHeight + 1
+        color: Theme.chrome
+
+        // Tabs and quick-access commands.
         RowLayout {
-            id: row
+            id: tabRow
+            anchors.left: parent.left
+            anchors.right: parent.right
+            height: 32
             spacing: 0
-        }
-        Label {
-            Layout.alignment: Qt.AlignHCenter
-            text: parent.caption
-            font.pixelSize: 10
-            font.bold: true
-            opacity: 0.6
-        }
-    }
 
-    component ToolCommand: ToolButton {
-        display: AbstractButton.TextOnly
-    }
+            Repeater {
+                model: [
+                    { tab: "solid", text: qsTr("SOLID") },
+                    { tab: "sketch", text: qsTr("SKETCH") }
+                ]
+                delegate: RibbonTab {
+                    required property var modelData
+                    Layout.fillHeight: true
+                    Layout.leftMargin: index === 0 ? Theme.space2 : 0
+                    required property int index
+                    text: modelData.text
+                    // The SKETCH tab is contextual: shown only while editing a sketch.
+                    visible: modelData.tab !== "sketch" || !!window.activeSketch
+                    current: window.currentRibbonTab === modelData.tab
+                    onClicked: {
+                        // SKETCH is contextual (it follows activeSketch), so it is never
+                        // stored: the ribbon returns to the user's tab when the sketch ends.
+                        if (modelData.tab === "sketch")
+                            return
+                        if (window.activeSketch)
+                            window.finishSketch()
+                        window.ribbonTab = modelData.tab
+                    }
+                }
+            }
 
-    header: ToolBar {
+            Item { Layout.fillWidth: true }
+
+            IconButton { action: undoAction; iconName: "undo"; tip: undoAction.text.replace("&", "") }
+            IconButton { action: redoAction; iconName: "redo"; tip: redoAction.text.replace("&", "") }
+            Rectangle { implicitWidth: 1; implicitHeight: 16; color: Theme.separator; Layout.leftMargin: 4; Layout.rightMargin: 4 }
+            IconButton {
+                iconName: Theme.dark ? "theme-light" : "theme-dark"
+                tip: Theme.dark ? qsTr("Switch to light theme") : qsTr("Switch to dark theme")
+                onClicked: Preferences.theme = Theme.dark ? "light" : "dark"
+            }
+            IconButton {
+                Layout.rightMargin: Theme.space2
+                action: preferencesAction
+                iconName: "settings"
+                tip: qsTr("Preferences")
+            }
+        }
+
+        Rectangle {
+            id: ribbonBackground
+            anchors.top: tabRow.bottom
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: 1
+            color: Theme.surface
+            Rectangle { anchors.top: parent.top; width: parent.width; height: 1; color: Theme.border }
+        }
+
         RowLayout {
-            anchors.fill: parent
-            anchors.leftMargin: 6
-            spacing: 6
-            ToolGroup {
-                caption: qsTr("EDIT")
-                ToolCommand { action: undoAction; text: qsTr("Undo") }
-                ToolCommand { action: redoAction; text: qsTr("Redo") }
-            }
-            ToolSeparator {}
-            ToolGroup {
-                caption: qsTr("INSERT")
-                ToolCommand { action: importAction; text: qsTr("Import") }
-                ToolCommand { action: convertAction; text: qsTr("To Body") }
-            }
-            ToolSeparator {}
+            id: ribbon
+            /// Read by RibbonGroup to show the groups of the current tab only.
+            property string currentTab: window.currentRibbonTab
+            anchors.top: tabRow.bottom
+            anchors.left: parent.left
+            anchors.leftMargin: Theme.space2
+            height: implicitHeight
+            spacing: Theme.space1
+
             ToolGroup {
                 caption: qsTr("CREATE")
-                visible: !window.activeSketch
-                ToolCommand { action: createSketchAction; text: qsTr("Sketch") }
-                ToolCommand { action: extrudeAction; text: qsTr("Extrude") }
-                ToolCommand { action: revolveAction; text: qsTr("Revolve") }
-                ToolCommand { action: boxAction; text: qsTr("Box") }
-                ToolCommand { action: cylinderAction; text: qsTr("Cylinder") }
-                ToolCommand { action: holeAction; text: qsTr("Hole") }
-            }
-            ToolGroup {
-                caption: qsTr("SKETCH")
-                visible: !!window.activeSketch
-                ToolCommand { action: lineAction; text: qsTr("Line") }
-                ToolCommand { action: rectangleAction; text: qsTr("Rectangle") }
-                ToolCommand { action: circleAction; text: qsTr("Circle") }
-                ToolCommand { action: arcAction; text: qsTr("Arc") }
-                ToolCommand { action: polygonAction; text: qsTr("Polygon") }
-                ToolCommand { action: slotAction; text: qsTr("Slot") }
-                ToolCommand { action: dimensionAction; text: qsTr("Dimension") }
-                ToolCommand { action: extrudeAction; text: qsTr("Extrude") }
-                ToolCommand { action: finishSketchAction; text: qsTr("Finish Sketch") }
+                maxVisible: 6
+                ToolCommand { action: createSketchAction; text: qsTr("Sketch"); iconName: "sketch" }
+                ToolCommand { action: extrudeAction; text: qsTr("Extrude"); iconName: "extrude" }
+                ToolCommand { action: revolveAction; text: qsTr("Revolve"); iconName: "revolve" }
+                ToolCommand { action: holeAction; text: qsTr("Hole"); iconName: "hole" }
+                ToolCommand { action: boxAction; text: qsTr("Box"); iconName: "box" }
+                ToolCommand { action: cylinderAction; text: qsTr("Cylinder"); iconName: "cylinder" }
             }
             ToolSeparator {}
             ToolGroup {
                 caption: qsTr("MODIFY")
-                ToolCommand { action: filletAction; text: qsTr("Fillet") }
-                ToolCommand { action: chamferAction; text: qsTr("Chamfer") }
-                ToolCommand { action: shellAction; text: qsTr("Shell") }
-                ToolCommand { action: combineAction; text: qsTr("Combine") }
-                ToolCommand { action: parametersAction; text: qsTr("Parameters") }
-                ToolCommand { action: visibilityAction; text: qsTr("Show/Hide") }
-                ToolCommand { action: deleteAction; text: qsTr("Delete") }
+                maxVisible: 6
+                ToolCommand { action: filletAction; text: qsTr("Fillet"); iconName: "fillet" }
+                ToolCommand { action: chamferAction; text: qsTr("Chamfer"); iconName: "chamfer" }
+                ToolCommand { action: shellAction; text: qsTr("Shell"); iconName: "shell" }
+                ToolCommand { action: combineAction; text: qsTr("Combine"); iconName: "combine" }
+                ToolCommand { action: parametersAction; text: qsTr("Parameters"); iconName: "parameters" }
+                ToolCommand { action: deleteAction; text: qsTr("Delete"); iconName: "delete" }
+                ToolCommand { action: visibilityAction; text: qsTr("Show/Hide"); iconName: "visible" }
+            }
+            ToolSeparator {}
+            ToolGroup {
+                caption: qsTr("INSERT")
+                ToolCommand { action: importAction; text: qsTr("Import"); iconName: "import" }
+                ToolCommand { action: convertAction; text: qsTr("To Body"); iconName: "mesh-to-body" }
             }
             ToolSeparator {}
             ToolGroup {
@@ -829,18 +877,55 @@ ApplicationWindow {
             ToolSeparator {}
             ToolGroup {
                 caption: qsTr("EXPORT")
-                ToolCommand { action: exportSelectedAction; text: qsTr("Selected") }
-                ToolCommand { action: exportAllAction; text: qsTr("All") }
+                ToolCommand { action: exportSelectedAction; text: qsTr("Selected"); iconName: "export" }
+                ToolCommand { action: exportAllAction; text: qsTr("All Visible"); iconName: "export" }
             }
-            ToolSeparator {}
+
+            // SKETCH tab (contextual, while a sketch is edited).
             ToolGroup {
-                caption: qsTr("VIEW")
-                ToolCommand { action: fitAction; text: qsTr("Fit") }
-                ToolCommand { action: homeAction; text: qsTr("Home") }
-                ToolCommand { action: orthoAction; text: qsTr("Ortho") }
+                tab: "sketch"
+                caption: qsTr("CREATE")
+                ToolCommand { action: lineAction; text: qsTr("Line"); iconName: "line" }
+                ToolCommand { action: rectangleAction; text: qsTr("Rectangle"); iconName: "rectangle" }
+                ToolCommand { action: circleAction; text: qsTr("Circle"); iconName: "circle" }
+                ToolCommand { action: arcAction; text: qsTr("Arc"); iconName: "arc" }
+                ToolCommand { action: polygonAction; text: qsTr("Polygon"); iconName: "polygon" }
+                ToolCommand { action: slotAction; text: qsTr("Slot"); iconName: "slot" }
+                ToolCommand { action: dimensionAction; text: qsTr("Dimension"); iconName: "dimension" }
             }
-            Item { Layout.fillWidth: true }
+            ToolSeparator { tab: "sketch" }
+            ToolGroup {
+                tab: "sketch"
+                caption: qsTr("CONSTRAINTS")
+                maxVisible: 6
+                ToolCommand { action: horizontalAction; text: qsTr("Horizontal"); iconName: "horizontal" }
+                ToolCommand { action: verticalAction; text: qsTr("Vertical"); iconName: "vertical" }
+                ToolCommand { action: coincidentAction; text: qsTr("Coincident"); iconName: "coincident" }
+                ToolCommand { action: tangentAction; text: qsTr("Tangent"); iconName: "tangent" }
+                ToolCommand { action: perpendicularAction; text: qsTr("Perpendicular"); iconName: "perpendicular" }
+                ToolCommand { action: parallelAction; text: qsTr("Parallel"); iconName: "parallel" }
+                ToolCommand { action: equalAction; text: qsTr("Equal"); iconName: "equal" }
+                ToolCommand { action: concentricAction; text: qsTr("Concentric"); iconName: "concentric" }
+                ToolCommand { action: midpointAction; text: qsTr("Midpoint"); iconName: "midpoint" }
+                ToolCommand { action: collinearAction; text: qsTr("Collinear"); iconName: "collinear" }
+                ToolCommand { action: fixAction; text: qsTr("Fix/Unfix"); iconName: "fix" }
+            }
+            ToolSeparator { tab: "sketch" }
+            ToolGroup {
+                tab: "sketch"
+                caption: qsTr("SOLID")
+                ToolCommand { action: extrudeAction; text: qsTr("Extrude"); iconName: "extrude" }
+                ToolCommand { action: revolveAction; text: qsTr("Revolve"); iconName: "revolve" }
+            }
+            ToolSeparator { tab: "sketch" }
+            ToolGroup {
+                tab: "sketch"
+                caption: qsTr("FINISH")
+                ToolCommand { action: finishSketchAction; text: qsTr("Finish Sketch"); iconName: "finish-sketch"; primary: true }
+            }
         }
+
+        Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.border }
     }
 
     SplitView {
@@ -918,10 +1003,15 @@ ApplicationWindow {
                 anchors.top: parent.top
                 anchors.margins: 8
                 visible: window.pickingSketchPlane
-                padding: 12
+                padding: Theme.space3
+                background: Rectangle {
+                    color: Theme.overlay
+                    border.color: Theme.border
+                    radius: Theme.radius
+                }
                 ColumnLayout {
-                    Label { text: qsTr("Create Sketch"); font.bold: true; font.pixelSize: 15 }
-                    Label { text: qsTr("Click a planar face of a body, or pick an origin plane:"); opacity: 0.75 }
+                    Label { text: qsTr("Create Sketch"); font.weight: Font.DemiBold; font.pixelSize: Theme.fontTitle }
+                    Label { text: qsTr("Click a planar face of a body, or pick an origin plane:"); color: Theme.textMuted }
                     RowLayout {
                         Button { text: qsTr("XY (Top)"); onClicked: window.createSketch({ plane: "XY" }) }
                         Button { text: qsTr("XZ (Front)"); onClicked: window.createSketch({ plane: "XZ" }) }
@@ -958,27 +1048,62 @@ ApplicationWindow {
             controller: window.controller
             onEditRequested: feature => window.editFeature(feature)
         }
-        ToolBar {
-        Layout.fillWidth: true
-        RowLayout {
-            anchors.fill: parent
-            anchors.leftMargin: 8
-            anchors.rightMargin: 8
-            Label {
-                Layout.fillWidth: true
-                text: window.controller.statusMessage
-                elide: Text.ElideRight
+        // Status bar: last command result on the left, navigation hint and units on the right.
+        Rectangle {
+            Layout.fillWidth: true
+            implicitHeight: Theme.statusBarHeight
+            color: Theme.chrome
+            Rectangle { width: parent.width; height: 1; color: Theme.border }
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: Theme.space3
+                anchors.rightMargin: Theme.space3
+                spacing: Theme.space3
+                Rectangle {
+                    implicitWidth: 6
+                    implicitHeight: 6
+                    radius: 3
+                    color: window.controller.statusMessage.length > 0 ? Theme.success : Theme.textFaint
+                }
+                Text {
+                    Layout.fillWidth: true
+                    text: window.controller.statusMessage
+                    color: Theme.textMuted
+                    font.pixelSize: Theme.fontSmall
+                    elide: Text.ElideRight
+                }
+                Text {
+                    Layout.maximumWidth: window.width * 0.5
+                    text: Preferences.mouseProfile === "solidworks"
+                          ? qsTr("Orbit: middle drag · Pan: Ctrl+middle · Zoom: wheel")
+                          : Preferences.mouseProfile === "blender"
+                            ? qsTr("Orbit: middle drag · Pan: Shift+middle · Zoom: wheel")
+                            : qsTr("Pan: middle drag · Orbit: Shift+middle · Zoom: wheel · Fit: F6")
+                    color: Theme.textFaint
+                    font.pixelSize: Theme.fontSmall
+                    elide: Text.ElideLeft
+                }
+                Rectangle { implicitWidth: 1; implicitHeight: 14; color: Theme.border }
+                AbstractButton {
+                    implicitWidth: shortcutsLabel.implicitWidth
+                    implicitHeight: shortcutsLabel.implicitHeight
+                    hoverEnabled: true
+                    onClicked: shortcutsAction.trigger()
+                    contentItem: Text {
+                        id: shortcutsLabel
+                        text: qsTr("Shortcuts %1").arg(Preferences.shortcutText(shortcutsAction.shortcut))
+                        color: parent.hovered ? Theme.accent : Theme.textFaint
+                        font.pixelSize: Theme.fontSmall
+                    }
+                }
+                Rectangle { implicitWidth: 1; implicitHeight: 14; color: Theme.border }
+                Text {
+                    text: Preferences.lengthUnit
+                    color: Theme.textMuted
+                    font.pixelSize: Theme.fontSmall
+                    font.weight: Font.DemiBold
+                }
             }
-            Label {
-                text: Preferences.mouseProfile === "solidworks"
-                      ? qsTr("Orbit: middle drag · Pan: Ctrl+middle drag · Zoom: wheel, Shift+middle drag · Shortcuts: %1").arg(Preferences.shortcutText(shortcutsAction.shortcut))
-                      : Preferences.mouseProfile === "blender"
-                        ? qsTr("Orbit: middle drag · Pan: Shift+middle drag · Zoom: wheel, Ctrl+middle drag · Shortcuts: %1").arg(Preferences.shortcutText(shortcutsAction.shortcut))
-                        : qsTr("Pan: middle drag · Orbit: Shift+middle drag · Zoom: wheel · Touchpad: two-finger pan, Shift+two-finger orbit, pinch zoom · Fit: F6 · Shortcuts: %1").arg(Preferences.shortcutText(shortcutsAction.shortcut))
-                opacity: 0.6
-                elide: Text.ElideLeft
-            }
-        }
         }
     }
 

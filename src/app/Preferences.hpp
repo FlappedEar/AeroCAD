@@ -22,9 +22,6 @@ class Preferences : public QObject {
     Q_PROPERTY(QString lengthUnit READ lengthUnit WRITE setLengthUnit NOTIFY lengthUnitChanged)
     Q_PROPERTY(QString lengthSymbol READ lengthSymbol NOTIFY lengthUnitChanged)
     Q_PROPERTY(QString theme READ theme WRITE setTheme NOTIFY themeChanged)
-    /// Palette colours of the light / dark theme by role name ("window", "text", ...);
-    /// empty for "system". Main.qml binds the window palette to it.
-    Q_PROPERTY(QVariantMap colors READ colors NOTIFY themeChanged)
     Q_PROPERTY(QString mouseProfile READ mouseProfile WRITE setMouseProfile NOTIFY mouseProfileChanged)
     Q_PROPERTY(bool invertZoom READ invertZoom WRITE setInvertZoom NOTIFY invertZoomChanged)
     Q_PROPERTY(int autosaveSeconds READ autosaveSeconds WRITE setAutosaveSeconds NOTIFY autosaveSecondsChanged)
@@ -39,11 +36,9 @@ public:
     void setLengthUnit(const QString& unit);
     [[nodiscard]] QString lengthSymbol() const;
 
-    /// "system", "light" or "dark".
+    /// "system", "light" or "dark". The colours themselves live in Theme.qml.
     [[nodiscard]] QString theme() const { return m_theme; }
     void setTheme(const QString& theme);
-
-    [[nodiscard]] QVariantMap colors() const;
 
     /// Mouse navigation: "fusion", "solidworks" or "blender".
     [[nodiscard]] QString mouseProfile() const { return m_mouseProfile; }
