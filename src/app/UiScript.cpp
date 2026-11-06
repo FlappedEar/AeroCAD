@@ -107,7 +107,11 @@ public:
     /// Clicks the visible, enabled item showing exactly this text.
     Q_INVOKABLE bool clickText(const QString& text)
     {
-        QQuickItem* item = find(m_window->contentItem(), text);
+        // From the top: popups live in an overlay beside the content item.
+        QQuickItem* top = m_window->contentItem();
+        while (top->parentItem() != nullptr)
+            top = top->parentItem();
+        QQuickItem* item = find(top, text);
         if (item == nullptr) {
             fail("no visible item with text \"" + text + "\"");
             return false;

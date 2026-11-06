@@ -233,24 +233,6 @@ ApplicationWindow {
             sketchTool = tool
     }
 
-    /// Hides the sketch and, when the part was made over one, the fitted surface it replaces.
-    function hideUsedForPart(made) {
-        const parts = controller.execute("document.parts")
-        if (!parts.ok)
-            return
-        const sketchPart = parts.result.parts.find(p => p.kind === "sketch" && p.featureId === made.id)
-        if (sketchPart)
-            controller.execute("part.set_visible", { id: sketchPart.id, visible: false })
-        const surface = parts.result.parts.find(p => p.id === made.part)
-        if (surface && surface.hasBrep) {
-            controller.execute("part.set_visible", { id: surface.id, visible: false })
-            // Fitting a surface hid the scan: bring it back to see the part on it.
-            const scan = /^surface\.fit_selection of part (\d+)$/.exec(surface.source || "")
-            if (scan)
-                controller.execute("part.set_visible", { id: Number(scan[1]), visible: true })
-        }
-    }
-
     /// Opens a feature dialog, pre-filled from the selection (Fusion: select, then press E).
     function openFeature(type) {
         const initial = {}
@@ -1042,7 +1024,12 @@ ApplicationWindow {
             markers: featureDialog.visible ? featureDialog.pickedPoints : []
             pickKind: featureDialog.visible ? featureDialog.pickKind : ""
             shownSketch: featureDialog.shownSketch
-            onPartPicked: id => window.selectPart(id)
+            onPartPicked: id => {
+                window.selectPart(id)
+                // A click through a hole of a scan, or next to the model, while choosing where to sketch.
+                if (!id && window.pickingSketchPlane)
+                    window.controller.showStatus(qsTr("Nothing there to sketch on: click on the surface, not a hole in it"))
+            }
             onPartContextRequested: (id, x, y) => {
                 partMenu.info = id ? window.controller.partInfo(id) : ({})
                 partMenu.popup(viewport, x, y)
@@ -1239,14 +1226,13 @@ ApplicationWindow {
                                           side: ["inside", "outside", "both"][partSide.currentIndex] })
                                 if (!r.ok)
                                     return
-                                // The part replaces what it was made from on screen (Fusion
-                                // hides a used sketch); both stay in the browser.
-                                window.hideUsedForPart(window.partOnSurfaceSketch)
                                 window.partOnSurfaceSketch = null
                                 window.selectPart(r.result.id)
                                 if (fin)
                                     window.controller.showStatus(qsTr("Fin \"%1\": %2 mm thick, %3 cm³")
                                         .arg(r.result.name).arg(t).arg((r.result.volume / 1000).toFixed(1)))
+                                else if (r.result.warnings.length > 0)
+                                    window.controller.showStatus(qsTr("Part \"%1\": %2").arg(r.result.name).arg(r.result.warnings[0]))
                                 else
                                     window.controller.showStatus(qsTr("Part \"%1\": %2 mm thick, %3 cm²")
                                         .arg(r.result.name).arg(t).arg((r.result.area / 100).toFixed(1)))

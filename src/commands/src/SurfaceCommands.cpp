@@ -33,9 +33,33 @@ const model::Part& requireSurfacePart(model::Document& doc, const Json& params)
     return source;
 }
 
-/// Adds a part built from `shape` and pushes an undo entry that removes it again.
+/// A part to show or hide along with adding a new one.
+struct VisibilityChange {
+    model::PartId id;
+    bool visible;
+};
+
+/// What a part made from a sketch replaces on screen: the sketch (Fusion hides used sketches)
+/// and a surface fitted just to draw on, whose scan comes back so the part is seen on it. All
+/// stay in the browser.
+std::vector<VisibilityChange> replacedByPart(const model::Document& doc, cad::FeatureId sketch, const model::Part& source)
+{
+    std::vector<VisibilityChange> changes;
+    for (const auto& p : doc.parts())
+        if (p.kind == model::PartKind::Sketch && p.featureId == sketch)
+            changes.push_back({p.id, false});
+    if (const model::PartId scan = model::fittedScanId(source); scan != 0) {
+        changes.push_back({source.id, false});
+        changes.push_back({scan, true});
+    }
+    return changes;
+}
+
+/// Adds a part built from `shape` and pushes an undo entry that removes it again, so one undo
+/// takes back the part and the `changes` that came with it.
 Json addShapePart(CommandContext& ctx, const model::Part& source, const geometry::Shape& shape,
-                  const std::string& name, const std::string& origin, const std::string& undoTitle)
+                  const std::string& name, const std::string& origin, const std::string& undoTitle,
+                  const std::vector<VisibilityChange>& changes = {})
 {
     model::Part part;
     part.name = name;
@@ -46,8 +70,24 @@ Json addShapePart(CommandContext& ctx, const model::Part& source, const geometry
     model::Document& doc = ctx.document;
     const model::PartId id = doc.addPart(part);
     part.id = id;
-    ctx.undoStack.push({undoTitle + " " + part.name, [&doc, id]() { doc.removePart(id); },
-                        [&doc, part]() { doc.addPart(part); }});
+    std::vector<VisibilityChange> before;
+    for (const auto& c : changes) {
+        if (const model::Part* p = doc.part(c.id); p != nullptr && p->visible != c.visible) {
+            before.push_back({c.id, p->visible});
+            doc.modifyPart(c.id, [&](model::Part& q) { q.visible = c.visible; });
+        }
+    }
+    ctx.undoStack.push({undoTitle + " " + part.name,
+                        [&doc, id, before]() {
+                            doc.removePart(id);
+                            for (const auto& c : before)
+                                doc.modifyPart(c.id, [&](model::Part& q) { q.visible = c.visible; });
+                        },
+                        [&doc, part, before]() {
+                            doc.addPart(part);
+                            for (const auto& c : before)
+                                doc.modifyPart(c.id, [&](model::Part& q) { q.visible = !c.visible; });
+                        }});
     return partToJson(*doc.part(id));
 }
 
@@ -506,7 +546,8 @@ void registerSurfaceCommands(CommandRegistry& r)
                   }
               }
               Json result = addShapePart(ctx, *source, solid, params.value("name", sk.name + " part"),
-                                         "surface.part_from_sketch", "Part on surface");
+                                         "surface.part_from_sketch", "Part on surface",
+                                         replacedByPart(ctx.document, sk.id, *source));
               result["thickness"] = thickness;
               result["side"] = sideName;
               result["area"] = area;
@@ -603,7 +644,8 @@ void registerSurfaceCommands(CommandRegistry& r)
                   throw CommandError(e.what());
               }
               Json result = addShapePart(ctx, *source, solid, params.value("name", sk.name + " fin"),
-                                         "surface.fin_from_sketch", "Fin on surface");
+                                         "surface.fin_from_sketch", "Fin on surface",
+                                         replacedByPart(ctx.document, sk.id, *source));
               result["thickness"] = thickness;
               result["volume"] = solid.volume();
               if (!fitReport.is_null())

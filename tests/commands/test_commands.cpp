@@ -709,6 +709,23 @@ TEST_CASE("Part on surface: one step from an outline over a scan to a solid", "[
         auto part = session.execute("surface.part_from_sketch", {{"sketch", first.data.at("id")}, {"thickness", 1.0}});
         REQUIRE(part.ok);
         const auto solidId = part.data.at("id").get<model::PartId>();
+        // The sketch is hidden with the part, and one undo brings it back and removes the part.
+        auto visibleSketch = [&]() {
+            const auto parts = session.execute("document.parts");
+            for (const auto& p : parts.data.at("parts"))
+                if (p.at("kind") == "sketch" && p.at("featureId") == first.data.at("id"))
+                    return p.at("visible").get<bool>();
+            FAIL("no sketch part");
+            return false;
+        };
+        CHECK_FALSE(visibleSketch());
+        REQUIRE(session.execute("edit.undo").ok);
+        CHECK(visibleSketch());
+        CHECK(session.document().part(solidId) == nullptr);
+        REQUIRE(session.execute("edit.redo").ok);
+        CHECK_FALSE(visibleSketch());
+        REQUIRE(session.document().part(solidId) != nullptr);
+
         auto second = session.execute("sketch.create",
                                       {{"surface", {{"part", solidId}}},
                                        {"curves", Json::array({{{"type", "center_rectangle"},
