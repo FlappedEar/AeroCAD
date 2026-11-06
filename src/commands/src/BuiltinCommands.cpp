@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "aerocad/commands/Session.hpp"
 
+#include "CommandHelpers.hpp"
+
 #include "aerocad/core/Path.hpp"
 #include "aerocad/geometry/Transform.hpp"
 #include "aerocad/io/Import.hpp"
@@ -13,63 +15,6 @@
 namespace aerocad::commands {
 
 namespace {
-
-Json vecToJson(const core::Vec3& v)
-{
-    return Json::array({v.x, v.y, v.z});
-}
-
-Json boundsToJson(const core::BoundingBox& box)
-{
-    if (box.isEmpty())
-        return nullptr;
-    return Json{{"min", vecToJson(box.min)}, {"max", vecToJson(box.max)}, {"size", vecToJson(box.size())}};
-}
-
-Json partToJson(const model::Part& p)
-{
-    return Json{
-        {"id", p.id},
-        {"name", p.name},
-        {"source", p.source},
-        {"visible", p.visible},
-        {"vertices", p.mesh ? p.mesh->vertexCount() : 0},
-        {"triangles", p.mesh ? p.mesh->triangleCount() : 0},
-        {"hasBrep", p.shape.has_value()},
-        {"bounds", boundsToJson(p.mesh ? p.mesh->bounds() : core::BoundingBox{})},
-    };
-}
-
-const model::Part& requirePart(const model::Document& doc, const Json& params)
-{
-    const auto id = params.at("id").get<model::PartId>();
-    const model::Part* p = doc.part(id);
-    if (p == nullptr)
-        throw CommandError("No part with id " + std::to_string(id));
-    return *p;
-}
-
-Json idParam()
-{
-    return Json{{"type", "integer"}, {"minimum", 1}, {"description", "Part id (see document.parts)."}};
-}
-
-Json objectSchema(Json properties, Json required = Json::array())
-{
-    return Json{{"type", "object"},
-                {"properties", std::move(properties)},
-                {"required", std::move(required)},
-                {"additionalProperties", false}};
-}
-
-/// Records a part-level change in the undo stack: swaps the part state.
-void pushPartStateUndo(CommandContext& ctx, std::string label, model::PartId id, model::Part before, model::Part after)
-{
-    model::Document& doc = ctx.document;
-    ctx.undoStack.push({std::move(label),
-                        [&doc, id, before]() { doc.modifyPart(id, [&](model::Part& p) { p = before; }); },
-                        [&doc, id, after]() { doc.modifyPart(id, [&](model::Part& p) { p = after; }); }});
-}
 
 void registerIntrospection(CommandRegistry& r)
 {
@@ -239,6 +184,7 @@ void registerBuiltinCommands(CommandRegistry& registry)
     registerDocumentCommands(registry);
     registerPartCommands(registry);
     registerEditCommands(registry);
+    registerSelectionCommands(registry);
 }
 
 } // namespace aerocad::commands

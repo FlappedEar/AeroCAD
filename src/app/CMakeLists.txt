@@ -10,6 +10,8 @@ set(AEROCAD_APP_SOURCES
     PartListModel.hpp
     MeshGeometry.cpp
     MeshGeometry.hpp
+    SelectionGeometry.cpp
+    SelectionGeometry.hpp
     JsonBridge.cpp
     JsonBridge.hpp
 )
@@ -22,6 +24,7 @@ qt_add_qml_module(aerocad
     QML_FILES
         qml/Main.qml
         qml/Viewport.qml
+        qml/SelectionToolbar.qml
         qml/CameraController.qml
         qml/PartsPanel.qml
         qml/PropertiesPanel.qml

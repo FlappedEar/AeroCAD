@@ -25,7 +25,7 @@ void MeshGeometry::setController(AppController* controller)
     m_controller = controller;
     if (m_controller)
         m_connection = connect(m_controller, &AppController::partChanged, this, &MeshGeometry::onPartChanged);
-    m_builtRevision = ~0ULL;
+    m_builtMesh = nullptr;
     rebuild();
     emit controllerChanged();
 }
@@ -35,7 +35,7 @@ void MeshGeometry::setPartId(quint64 id)
     if (m_partId == id)
         return;
     m_partId = id;
-    m_builtRevision = ~0ULL;
+    m_builtMesh = nullptr;
     rebuild();
     emit partIdChanged();
 }
@@ -49,12 +49,14 @@ void MeshGeometry::onPartChanged(quint64 id)
 void MeshGeometry::rebuild()
 {
     const model::Part* part = m_controller ? m_controller->part(m_partId) : nullptr;
-    if (part != nullptr && part->revision == m_builtRevision)
+    // Only the mesh (and whether it is a B-rep tessellation) affects the GPU data; other
+    // part changes such as the selection or the name do not need a re-upload.
+    if (part != nullptr && part->mesh == m_builtMesh && part->shape.has_value() == m_builtWithShape)
         return;
 
     clear();
     if (part == nullptr || !part->mesh || part->mesh->isEmpty()) {
-        m_builtRevision = ~0ULL;
+        m_builtMesh = nullptr;
         update();
         return;
     }
@@ -82,13 +84,15 @@ void MeshGeometry::rebuild()
             for (const std::uint32_t vi : t)
                 normals[vi] = normals[vi] + n; // area weighted
         }
-        QByteArray vertexBuffer(static_cast<qsizetype>(vertices.size()) * floatsPerVertex * static_cast<qsizetype>(sizeof(float)),
+        QByteArray vertexBuffer(static_cast<qsizetype>(vertices.size()) * floatsPerVertex *
+                                    static_cast<qsizetype>(sizeof(float)),
                                 Qt::Uninitialized);
         auto* out = reinterpret_cast<float*>(vertexBuffer.data());
         for (std::size_t i = 0; i < vertices.size(); ++i)
             put(out, vertices[i], normals[i].normalized());
 
-        QByteArray indexBuffer(static_cast<qsizetype>(mesh.triangleCount()) * 3 * static_cast<qsizetype>(sizeof(quint32)),
+        QByteArray indexBuffer(static_cast<qsizetype>(mesh.triangleCount()) * 3 *
+                                   static_cast<qsizetype>(sizeof(quint32)),
                                Qt::Uninitialized);
         std::memcpy(indexBuffer.data(), mesh.triangles().data(), static_cast<std::size_t>(indexBuffer.size()));
         setVertexData(vertexBuffer);
@@ -115,7 +119,8 @@ void MeshGeometry::rebuild()
                  QQuick3DGeometry::Attribute::F32Type);
     setBounds(QVector3D(static_cast<float>(box.min.x), static_cast<float>(box.min.y), static_cast<float>(box.min.z)),
               QVector3D(static_cast<float>(box.max.x), static_cast<float>(box.max.y), static_cast<float>(box.max.z)));
-    m_builtRevision = part->revision;
+    m_builtMesh = part->mesh;
+    m_builtWithShape = part->shape.has_value();
     update();
 }
 

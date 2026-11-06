@@ -92,6 +92,50 @@ Pane {
             }
         }
 
+        GroupBox {
+            Layout.fillWidth: true
+            visible: !!root.info.id
+            title: qsTr("Region selection")
+            ColumnLayout {
+                anchors.fill: parent
+                Label {
+                    text: (root.info.selectedTriangles ?? 0) > 0
+                          ? qsTr("%1 triangles, %2 mm²")
+                                .arg(Number(root.info.selectedTriangles).toLocaleString(Qt.locale(), "f", 0))
+                                .arg(Number(root.info.selectedArea ?? 0).toLocaleString(Qt.locale(), "f", 1))
+                          : qsTr("Nothing selected. Use Region (1), Lasso (2) or Brush (3) in the view.")
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
+                    opacity: (root.info.selectedTriangles ?? 0) > 0 ? 1.0 : 0.6
+                }
+                GridLayout {
+                    columns: 2
+                    Layout.fillWidth: true
+                    enabled: (root.info.selectedTriangles ?? 0) > 0
+                    Button {
+                        Layout.fillWidth: true
+                        text: qsTr("Grow")
+                        onClicked: root.controller.execute("selection.grow", { id: root.partId, steps: 1 })
+                    }
+                    Button {
+                        Layout.fillWidth: true
+                        text: qsTr("Shrink")
+                        onClicked: root.controller.execute("selection.grow", { id: root.partId, steps: -1 })
+                    }
+                    Button {
+                        Layout.fillWidth: true
+                        text: qsTr("Invert")
+                        onClicked: root.controller.execute("selection.invert", { id: root.partId })
+                    }
+                    Button {
+                        Layout.fillWidth: true
+                        text: qsTr("Clear")
+                        onClicked: root.controller.execute("selection.clear", { id: root.partId })
+                    }
+                }
+            }
+        }
+
         Button {
             visible: !!root.info.id
             text: qsTr("Remove part")

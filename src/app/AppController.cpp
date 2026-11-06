@@ -83,8 +83,8 @@ QVariantMap AppController::execute(const QString& name, const QVariantMap& param
 bool AppController::importFile(const QUrl& url)
 {
     const QString path = url.isLocalFile() ? url.toLocalFile() : url.toString();
-    const QVariantMap r = execute(QStringLiteral("document.import"),
-                                  {{QStringLiteral("path"), QDir::toNativeSeparators(path)}});
+    const QVariantMap r =
+        execute(QStringLiteral("document.import"), {{QStringLiteral("path"), QDir::toNativeSeparators(path)}});
     if (!r.value(QStringLiteral("ok")).toBool())
         return false;
 
@@ -114,7 +114,86 @@ QVariantMap AppController::partInfo(quint64 id) const
         {QStringLiteral("sizeX"), size.x},
         {QStringLiteral("sizeY"), size.y},
         {QStringLiteral("sizeZ"), size.z},
+        {QStringLiteral("diagonal"), box.diagonal()},
+        {QStringLiteral("selectedTriangles"), QVariant::fromValue<qulonglong>(p->selection ? p->selection->size() : 0)},
+        {QStringLiteral("selectedArea"), p->mesh && p->selection ? core::selectionArea(*p->mesh, *p->selection) : 0.0},
     };
+}
+
+bool AppController::brushBegin(quint64 id, double radius, bool connected, const QString& mode)
+{
+    brushCancel();
+    const model::Part* p = part(id);
+    if (p == nullptr || !p->mesh || p->mesh->isEmpty() || radius <= 0.0)
+        return false;
+    BrushStroke b;
+    b.partId = id;
+    b.radius = radius;
+    b.connected = connected;
+    b.mode = mode == QStringLiteral("subtract") ? mode : QStringLiteral("add");
+    b.mesh = p->mesh;
+    if (connected)
+        b.adjacency = core::adjacencyFor(p->mesh);
+    if (p->selection)
+        b.base = *p->selection;
+    b.preview = b.base;
+    m_brush = std::move(b);
+    return true;
+}
+
+void AppController::brushAdd(const QVector3D& point)
+{
+    if (!m_brush)
+        return;
+    BrushStroke& b = *m_brush;
+    b.points.push_back(point);
+    const core::TriangleSet dab =
+        core::selectBrushDab(*b.mesh, b.adjacency.get(), {point.x(), point.y(), point.z()}, b.radius);
+    b.stroke = core::combineSelection(b.stroke, dab, core::SelectionMode::Add);
+    b.preview = core::combineSelection(b.base, b.stroke,
+                                       b.mode == QStringLiteral("subtract") ? core::SelectionMode::Subtract
+                                                                            : core::SelectionMode::Add);
+    emit selectionPreviewChanged(b.partId);
+}
+
+QVariantMap AppController::brushEnd()
+{
+    if (!m_brush)
+        return {};
+    BrushStroke b = std::move(*m_brush);
+    m_brush.reset();
+    if (b.points.isEmpty()) {
+        emit selectionPreviewChanged(b.partId);
+        return {};
+    }
+    QVariantList points;
+    for (const auto& p : std::as_const(b.points))
+        points.push_back(QVariantList{p.x(), p.y(), p.z()});
+    const QVariantMap r =
+        execute(QStringLiteral("selection.brush"), {{QStringLiteral("id"), QVariant::fromValue<quint64>(b.partId)},
+                                                    {QStringLiteral("points"), points},
+                                                    {QStringLiteral("radius"), b.radius},
+                                                    {QStringLiteral("connected"), b.connected},
+                                                    {QStringLiteral("mode"), b.mode}});
+    emit selectionPreviewChanged(b.partId); // back to the stored selection
+    return r;
+}
+
+void AppController::brushCancel()
+{
+    if (!m_brush)
+        return;
+    const quint64 id = m_brush->partId;
+    m_brush.reset();
+    emit selectionPreviewChanged(id);
+}
+
+const core::TriangleSet* AppController::displayedSelection(quint64 id) const
+{
+    if (m_brush && m_brush->partId == id)
+        return &m_brush->preview;
+    const model::Part* p = part(id);
+    return p != nullptr && p->selection ? p->selection.get() : nullptr;
 }
 
 const model::Part* AppController::part(quint64 id) const

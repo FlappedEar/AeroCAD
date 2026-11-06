@@ -1,0 +1,171 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#include "aerocad/core/MeshSelection.hpp"
+
+#include <catch2/catch_approx.hpp>
+#include <catch2/catch_test_macros.hpp>
+
+#include <array>
+#include <memory>
+#include <vector>
+
+using namespace aerocad::core;
+using Catch::Approx;
+
+namespace {
+
+/// Square grid in the plane z = height, from (0,0) to (size,size), n x n cells.
+void addGrid(MeshBuilder& b, int n, double size, double height, bool flip = false)
+{
+    const double s = size / n;
+    for (int i = 0; i < n; ++i) {
+        for (int j = 0; j < n; ++j) {
+            const Vec3 p00{i * s, j * s, height}, p10{(i + 1) * s, j * s, height};
+            const Vec3 p01{i * s, (j + 1) * s, height}, p11{(i + 1) * s, (j + 1) * s, height};
+            if (flip) {
+                b.addTriangle(p00, p11, p10);
+                b.addTriangle(p00, p01, p11);
+            } else {
+                b.addTriangle(p00, p10, p11);
+                b.addTriangle(p00, p11, p01);
+            }
+        }
+    }
+}
+
+/// Closed cube [0,10]^3, each face an n x n grid (2 n^2 triangles per face).
+TriangleMesh cube(int n)
+{
+    MeshBuilder b;
+    const double s = 10.0 / n;
+    // Each face: origin, two edge directions.
+    const std::array<std::array<Vec3, 3>, 6> faces{{
+        {{{0, 0, 0}, {0, 1, 0}, {1, 0, 0}}},  // z = 0
+        {{{0, 0, 10}, {1, 0, 0}, {0, 1, 0}}}, // z = 10
+        {{{0, 0, 0}, {1, 0, 0}, {0, 0, 1}}},  // y = 0
+        {{{0, 10, 0}, {0, 0, 1}, {1, 0, 0}}}, // y = 10
+        {{{0, 0, 0}, {0, 0, 1}, {0, 1, 0}}},  // x = 0
+        {{{10, 0, 0}, {0, 1, 0}, {0, 0, 1}}}, // x = 10
+    }};
+    for (const auto& f : faces) {
+        for (int i = 0; i < n; ++i) {
+            for (int j = 0; j < n; ++j) {
+                const Vec3 p00 = f[0] + f[1] * (i * s) + f[2] * (j * s);
+                const Vec3 p10 = f[0] + f[1] * ((i + 1) * s) + f[2] * (j * s);
+                const Vec3 p01 = f[0] + f[1] * (i * s) + f[2] * ((j + 1) * s);
+                const Vec3 p11 = f[0] + f[1] * ((i + 1) * s) + f[2] * ((j + 1) * s);
+                b.addTriangle(p00, p10, p11);
+                b.addTriangle(p00, p11, p01);
+            }
+        }
+    }
+    return b.take();
+}
+
+} // namespace
+
+TEST_CASE("Adjacency connects triangles by shared edge positions", "[core][selection]")
+{
+    // Two triangles sharing an edge but not vertex indices (like tessellated B-rep faces).
+    TriangleMesh m;
+    const auto a = m.addVertex({0, 0, 0});
+    const auto b = m.addVertex({1, 0, 0});
+    const auto c = m.addVertex({0, 1, 0});
+    const auto b2 = m.addVertex({1, 0, 0});
+    const auto c2 = m.addVertex({0, 1, 0});
+    const auto d = m.addVertex({1, 1, 0});
+    m.addTriangle(a, b, c);
+    m.addTriangle(b2, d, c2);
+    const MeshAdjacency adj(m);
+    CHECK(adj.neighbours(0)[1] == 1);
+    CHECK(adj.neighbours(1)[2] == 0);
+    CHECK(adj.neighbours(0)[0] == MeshAdjacency::none);
+}
+
+TEST_CASE("Smooth region stops at sharp edges", "[core][selection]")
+{
+    const TriangleMesh m = cube(4);
+    REQUIRE(m.triangleCount() == 6 * 32);
+    const MeshAdjacency adj(m);
+    const auto seed = nearestTriangle(m, {5, 5, 10.1});
+    REQUIRE(seed);
+    const TriangleSet top = selectSmoothRegion(m, adj, *seed, {});
+    CHECK(top.size() == 32);
+    CHECK(selectionArea(m, top) == Approx(100.0));
+
+    SmoothRegionOptions loose;
+    loose.maxNeighbourAngleDeg = 95.0;
+    CHECK(selectSmoothRegion(m, adj, *seed, loose).size() == m.triangleCount());
+    loose.maxSeedAngleDeg = 45.0;
+    CHECK(selectSmoothRegion(m, adj, *seed, loose).size() == 32);
+}
+
+TEST_CASE("Connected brush does not go through thin walls", "[core][selection]")
+{
+    MeshBuilder b;
+    addGrid(b, 20, 10.0, 0.0);
+    addGrid(b, 20, 10.0, 0.5, true); // second sheet 0.5 mm above
+    const TriangleMesh m = b.take();
+    const MeshAdjacency adj(m);
+    const Vec3 point{5, 5, 0.5};
+
+    const TriangleSet through = selectBrushDab(m, nullptr, point, 2.0);
+    const TriangleSet connected = selectBrushDab(m, &adj, point, 2.0);
+    CHECK(through.size() > connected.size());
+    for (const auto t : connected)
+        CHECK(t >= 800); // only triangles of the upper sheet
+}
+
+TEST_CASE("Lasso selects visible triangles inside the polygon", "[core][selection]")
+{
+    MeshBuilder b;
+    addGrid(b, 10, 10.0, 0.0);
+    addGrid(b, 10, 10.0, -5.0); // hidden sheet below
+    const TriangleMesh m = b.take();
+
+    ViewParams view;
+    view.eye = {5, 5, 50};
+    view.forward = {0, 0, -1};
+    view.up = {0, 1, 0};
+    view.fovYDeg = 40;
+    view.aspect = 1;
+    // Whole viewport.
+    const std::vector<std::array<double, 2>> all{{0, 0}, {1, 0}, {1, 1}, {0, 1}};
+    const TriangleSet visible = selectInLasso(m, view, all);
+    CHECK(visible.size() == 200);
+    for (const auto t : visible)
+        CHECK(t < 200);
+    CHECK(selectInLasso(m, view, all, {false}).size() == 400);
+
+    // Right half of the screen = x > 5 (camera looks down -Z with +Y up, so +X is right).
+    const std::vector<std::array<double, 2>> right{{0.5, 0}, {1, 0}, {1, 1}, {0.5, 1}};
+    const TriangleSet half = selectInLasso(m, view, right);
+    CHECK(half.size() == 100);
+    for (const auto t : half) {
+        const auto& tri = m.triangles()[t];
+        CHECK(m.vertices()[tri[0]].x + m.vertices()[tri[1]].x + m.vertices()[tri[2]].x > 15.0);
+    }
+}
+
+TEST_CASE("Grow, shrink, invert and combine", "[core][selection]")
+{
+    const TriangleMesh m = cube(4);
+    const MeshAdjacency adj(m);
+    const TriangleSet top = selectSmoothRegion(m, adj, *nearestTriangle(m, {5, 5, 10}), {});
+    const TriangleSet grown = growSelection(adj, top, 1);
+    CHECK(grown.size() > top.size());
+    CHECK(growSelection(adj, grown, -1) == top);
+    CHECK(invertSelection(m.triangleCount(), top).size() == m.triangleCount() - top.size());
+    CHECK(combineSelection(grown, top, SelectionMode::Subtract).size() == grown.size() - top.size());
+    CHECK(combineSelection(top, grown, SelectionMode::Subtract).empty());
+    CHECK(combineSelection(top, grown, SelectionMode::Add) == grown);
+    CHECK(combineSelection(top, grown, SelectionMode::Replace) == grown);
+}
+
+TEST_CASE("Adjacency cache returns the same object for the same mesh", "[core][selection]")
+{
+    auto mesh = std::make_shared<const TriangleMesh>(cube(2));
+    const auto a = adjacencyFor(mesh);
+    CHECK(adjacencyFor(mesh) == a);
+    auto other = std::make_shared<const TriangleMesh>(cube(2));
+    CHECK(adjacencyFor(other) != a);
+}

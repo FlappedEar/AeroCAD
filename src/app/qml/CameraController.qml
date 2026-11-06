@@ -16,6 +16,9 @@ Item {
     property real orbitSpeed: 0.3 // degrees per pixel
     property real zoomStep: 1.0015 // per wheel angle unit (1/8 degree)
 
+    /// Left drag orbits. Selection tools turn it off; then Alt (Option) + left drag orbits.
+    property bool leftOrbit: true
+
     property real pitch: -30
     property real yaw: 45
 
@@ -41,7 +44,7 @@ Item {
         id: orbitHandler
         target: null
         acceptedButtons: Qt.LeftButton
-        acceptedModifiers: Qt.NoModifier
+        acceptedModifiers: root.leftOrbit ? Qt.NoModifier : Qt.AltModifier
         property point last
         onActiveChanged: last = centroid.position
         onCentroidChanged: {
