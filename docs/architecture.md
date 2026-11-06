@@ -45,7 +45,9 @@ core -------+                 transforms, primitives).
   by moving least squares (quadratic inside, plane at the border, thin-plate fill outside
   the data), `GeomAPI_PointsToBSplineSurface` in smoothing mode, trimmed to the outer
   selection outline (projected to the surface's parameter space). Deviation is checked
-  both ways; mesh to surface uses a local projection seeded from surface samples.
+  both ways; mesh to surface uses a local projection seeded from surface samples. Selected
+  vertices that project outside the trimmed face are reported separately (`outsideTrimMax`,
+  outline fidelity: mesh staircase, rounded corners) with a warning above the tolerance.
   Not yet: holes in the selection, regions that fold over their mean plane, analytic
   primitives (plane, cylinder) before free-form fitting.
 - **Offset / thicken** (`geometry/Offset`, commands `surface.offset`, `surface.thicken`):

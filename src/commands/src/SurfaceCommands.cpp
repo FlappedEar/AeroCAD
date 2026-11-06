@@ -95,6 +95,7 @@ void registerSurfaceCommands(CommandRegistry& r)
               result["fit"] = {{"meshToSurfaceMax", rep.meshToSurfaceMax},
                                {"meshToSurfaceRms", rep.meshToSurfaceRms},
                                {"surfaceToMeshMax", rep.surfaceToMeshMax},
+                               {"outsideTrimMax", rep.outsideTrimMax},
                                {"tolerance", options.tolerance},
                                {"withinTolerance", rep.withinTolerance},
                                {"poles", {rep.uPoles, rep.vPoles}},

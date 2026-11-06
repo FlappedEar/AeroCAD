@@ -22,9 +22,13 @@ struct SurfaceFitOptions {
 /// Fit quality, both ways: mesh to surface catches a surface that misses the mesh,
 /// surface to mesh catches wiggles and folds between mesh points.
 struct SurfaceFitReport {
-    double meshToSurfaceMax = 0.0; ///< mm, selected mesh vertices projected on the surface.
+    double meshToSurfaceMax = 0.0; ///< mm, selected mesh vertices that project inside the trimmed face.
     double meshToSurfaceRms = 0.0; ///< mm.
-    double surfaceToMeshMax = 0.0; ///< mm, surface samples to the nearest selected vertex.
+    double surfaceToMeshMax = 0.0; ///< mm, face triangulation nodes to the selected mesh.
+    /// mm, how far selected vertices that project outside the trimmed face are from its
+    /// boundary: the outline fidelity (staircase of mesh edges, rounded corners). Not part
+    /// of `withinTolerance`; a warning is added when it exceeds the tolerance.
+    double outsideTrimMax = 0.0;
     bool withinTolerance = false;
     int uPoles = 0;
     int vPoles = 0;

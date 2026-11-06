@@ -8,7 +8,9 @@
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepCheck_Analyzer.hxx>
 #include <BRepLib.hxx>
+#include <BRepAdaptor_Curve.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
+#include <BRepTopAdaptor_FClass2d.hxx>
 #include <BRep_Tool.hxx>
 #include <Extrema_GenLocateExtPS.hxx>
 #include <Extrema_POnSurf.hxx>
@@ -25,6 +27,8 @@
 #include <TColgp_Array1OfPnt2d.hxx>
 #include <TColgp_Array2OfPnt.hxx>
 #include <TopExp_Explorer.hxx>
+#include <TopAbs_State.hxx>
+#include <gp_Pnt2d.hxx>
 #include <TopLoc_Location.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Face.hxx>
@@ -315,13 +319,16 @@ TopoDS_Face trimmedFace(const Handle(Geom_BSplineSurface) & surface, const std::
     if (uv.size() < 8)
         return {};
 
-    // Light smoothing of the staircase that mesh border edges make.
-    for (int iter = 0; iter < 3; ++iter) {
+    // Light smoothing of the staircase that mesh border edges make. Taubin's lambda/mu
+    // steps, so the outline does not shrink the way plain Laplacian smoothing does.
+    for (int iter = 0; iter < 6; ++iter) {
+        const double w = iter % 2 == 0 ? 0.5 : -0.53;
         std::vector<gp_Pnt2d> s(uv.size());
         for (std::size_t i = 0; i < uv.size(); ++i) {
             const gp_Pnt2d& a = uv[(i + uv.size() - 1) % uv.size()];
             const gp_Pnt2d& b = uv[(i + 1) % uv.size()];
-            s[i] = gp_Pnt2d(0.5 * uv[i].X() + 0.25 * (a.X() + b.X()), 0.5 * uv[i].Y() + 0.25 * (a.Y() + b.Y()));
+            s[i] = gp_Pnt2d(uv[i].X() + w * (0.5 * (a.X() + b.X()) - uv[i].X()),
+                            uv[i].Y() + w * (0.5 * (a.Y() + b.Y()) - uv[i].Y()));
         }
         uv = std::move(s);
     }
@@ -590,7 +597,7 @@ SurfaceFitResult fitSurface(const core::TriangleMesh& mesh, const core::Triangle
                                   "rectangle.");
     }
 
-    // Mesh -> surface.
+    // Mesh -> face.
     // Each point is projected with a local search (Extrema_GenLocateExtPS) started from
     // the nearest of a grid of surface samples: exact and much faster than a global
     // projection per point.
@@ -619,14 +626,49 @@ SurfaceFitResult fitSurface(const core::TriangleMesh& mesh, const core::Triangle
     const std::size_t stride = std::max<std::size_t>(1, pts.size() / 20000);
     double sum = 0.0;
     std::size_t count = 0;
+
+    // A point whose projection falls outside the trim is not on the created face: it is
+    // measured to the face boundary (densely sampled polyline) and reported separately.
+    std::optional<BRepTopAdaptor_FClass2d> classifier;
+    std::vector<Vec3> boundary;
+    if (report.trimmed) {
+        classifier.emplace(face, 1e-7);
+        for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
+            const BRepAdaptor_Curve curve(TopoDS::Edge(ex.Current()));
+            constexpr int n = 2000;
+            for (int i = 0; i <= n; ++i) {
+                const gp_Pnt p = curve.Value(curve.FirstParameter() +
+                                             (curve.LastParameter() - curve.FirstParameter()) * i / n);
+                boundary.push_back({p.X(), p.Y(), p.Z()});
+            }
+        }
+    }
+    auto boundaryDistance = [&](const Vec3& q) {
+        double best = std::numeric_limits<double>::max();
+        for (std::size_t i = 1; i < boundary.size(); ++i) {
+            const Vec3 a = boundary[i - 1];
+            const Vec3 ab = boundary[i] - a;
+            const double len2 = ab.dot(ab);
+            const double t = len2 > 0.0 ? std::clamp((q - a).dot(ab) / len2, 0.0, 1.0) : 0.0;
+            best = std::min(best, (q - (a + ab * t)).length());
+        }
+        return best;
+    };
     for (std::size_t i = 0; i < pts.size(); i += stride) {
         const auto l = frame.toLocal(pts[i]);
         double d = 0.0;
         const auto k = seeds.nearest(l[0], l[1], l[2], d);
         try {
             locate.Perform(gp_Pnt(pts[i].x, pts[i].y, pts[i].z), seedParams[k][0], seedParams[k][1]);
-            if (locate.IsDone())
+            double pu = seedParams[k][0], pv = seedParams[k][1];
+            if (locate.IsDone()) {
                 d = std::min(d, std::sqrt(locate.SquareDistance()));
+                locate.Point().Parameter(pu, pv);
+            }
+            if (classifier && classifier->Perform(gp_Pnt2d(pu, pv)) == TopAbs_OUT) {
+                report.outsideTrimMax = std::max(report.outsideTrimMax, boundaryDistance(pts[i]));
+                continue; // not on the created face; reported as outsideTrimMax
+            }
         } catch (const Standard_Failure&) {
             // keep the sample distance
         }
@@ -694,6 +736,11 @@ SurfaceFitResult fitSurface(const core::TriangleMesh& mesh, const core::Triangle
 
     report.withinTolerance =
         report.meshToSurfaceMax <= options.tolerance && report.surfaceToMeshMax <= options.tolerance;
+    if (report.outsideTrimMax > options.tolerance) {
+        report.warnings.push_back("The smoothed outline leaves selected mesh up to " +
+                                  std::to_string(report.outsideTrimMax) +
+                                  " mm outside the face (rounded corners or a coarse mesh edge).");
+    }
     if (!report.withinTolerance)
         report.warnings.push_back("Deviation exceeds the tolerance; try a smaller or more compact region, or a "
                                   "larger tolerance.");

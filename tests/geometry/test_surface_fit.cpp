@@ -105,3 +105,20 @@ TEST_CASE("Offset and thicken a fitted surface", "[geometry][offset]")
     CHECK_THROWS_AS(geometry::offsetSurface(geometry::Shape{}, 1.0), geometry::OffsetError);
     CHECK_THROWS_AS(geometry::offsetSurface(solidOf(fit.face), 1.0), geometry::OffsetError);
 }
+
+TEST_CASE("Fit reports selected mesh left outside the trimmed face", "[geometry][fit]")
+{
+    // Whole 100 x 100 mm flat field: the smoothed outline rounds the four corners.
+    const core::TriangleMesh mesh = noisyField(40, 0.0);
+    core::TriangleSet all(mesh.triangleCount());
+    for (std::uint32_t t = 0; t < all.size(); ++t)
+        all[t] = t;
+    const auto fit = geometry::fitSurface(mesh, all, {});
+    REQUIRE(fit.report.trimmed);
+    INFO("outsideTrimMax " << fit.report.outsideTrimMax);
+    CHECK(fit.report.outsideTrimMax > 0.0);
+    bool warned = false;
+    for (const auto& w : fit.report.warnings)
+        warned = warned || w.find("outside the face") != std::string::npos;
+    CHECK(warned == (fit.report.outsideTrimMax > 0.25));
+}
