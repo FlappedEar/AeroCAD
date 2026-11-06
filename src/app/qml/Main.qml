@@ -316,6 +316,8 @@ ApplicationWindow {
     Shortcut {
         sequence: "Esc"
         onActivated: {
+            if (viewport.leaveSelectionTool())
+                return
             if (featureDialog.visible)
                 featureDialog.close()
             else if (window.pickingSketchPlane)
@@ -561,6 +563,7 @@ ApplicationWindow {
             selectedPartId: window.selectedPartId
             sketch: window.activeSketch
             sketchTool: window.sketchTool
+            selectionToolsEnabled: !featureDialog.visible && !window.pickingSketchPlane
             markers: featureDialog.visible ? featureDialog.pickedPoints : []
             onPartPicked: id => window.selectPart(id)
             onPointPicked: (id, point) => {

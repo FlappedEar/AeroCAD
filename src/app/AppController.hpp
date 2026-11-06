@@ -4,13 +4,17 @@
 #include "PartListModel.hpp"
 
 #include "aerocad/commands/Session.hpp"
+#include "aerocad/core/MeshSelection.hpp"
 
 #include <QObject>
 #include <QStringList>
 #include <QUrl>
 #include <QVariantMap>
 #include <QVector3D>
+#include <QVector>
+
 #include <QtQml/qqmlregistration.h>
+#include <optional>
 
 namespace aerocad::app {
 
@@ -65,6 +69,26 @@ public:
     /// Part details for the properties panel ({} for unknown ids).
     Q_INVOKABLE QVariantMap partInfo(quint64 id) const;
 
+    /// Nearest hit of a ray (model coordinates) with the visible parts' meshes:
+    /// {partId, point (QVector3D), triangle}, or {} when nothing is hit.
+    Q_INVOKABLE QVariantMap pickSurface(const QVector3D& origin, const QVector3D& direction) const;
+
+    /// Shows a message in the status bar.
+    Q_INVOKABLE void showStatus(const QString& message) { setStatusMessage(message); }
+
+    /// Brush stroke with live preview. brushBegin starts a stroke on a part, brushAdd adds
+    /// a dab at a point in model coordinates (mm), brushEnd runs selection.brush with all
+    /// points as one undoable command. mode: "replace", "add" or "subtract".
+    Q_INVOKABLE bool brushBegin(quint64 id, double radius, bool connected, const QString& mode);
+    Q_INVOKABLE void brushAdd(const QVector3D& point);
+    Q_INVOKABLE QVariantMap brushEnd();
+    Q_INVOKABLE void brushCancel();
+    [[nodiscard]] Q_INVOKABLE bool brushActive() const { return m_brush.has_value(); }
+
+    /// Selection to draw for a part: the brush preview during a stroke, else the part's
+    /// selection. nullptr when there is none.
+    [[nodiscard]] const core::TriangleSet* displayedSelection(quint64 id) const;
+
     /// Access for C++ views (MeshGeometry).
     [[nodiscard]] const model::Part* part(quint64 id) const;
     [[nodiscard]] commands::Session& session() { return m_session; }
@@ -76,13 +100,29 @@ signals:
     void statusMessageChanged();
     /// Emitted after a successful import so the view can frame the new model.
     void partImported(quint64 id);
+    /// The displayed selection of a part changed without a document change (brush preview).
+    void selectionPreviewChanged(quint64 id);
     /// Emitted after runScript() so the view can frame the result.
     void scriptFinished();
 
 private:
     void setStatusMessage(const QString& message);
 
+    struct BrushStroke {
+        quint64 partId = 0;
+        double radius = 1.0;
+        bool connected = true;
+        QString mode;
+        std::shared_ptr<const core::TriangleMesh> mesh;
+        std::shared_ptr<const core::MeshAdjacency> adjacency;
+        core::TriangleSet base;    ///< Part selection when the stroke started.
+        core::TriangleSet stroke;  ///< Union of all dabs.
+        core::TriangleSet preview; ///< base combined with stroke.
+        QVector<QVector3D> points;
+    };
+
     commands::Session m_session;
+    std::optional<BrushStroke> m_brush;
     PartListModel m_parts;
     QString m_statusMessage;
 };

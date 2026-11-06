@@ -110,6 +110,18 @@ TEST_CASE("Design commands: body parts cannot be scaled or removed directly", "[
     CHECK(parts.at("parts")[0].at("kind") == "body");
 }
 
+TEST_CASE("Design commands: a region selection is dropped when the body's tessellation changes", "[commands][cad]")
+{
+    commands::Session s;
+    run(s, "feature.box", {{"size", {10, 10, 10}}});
+    const auto partId = s.document().parts().at(0).id;
+    run(s, "selection.set", {{"id", partId}, {"triangles", {0, 1}}});
+    CHECK(run(s, "selection.get", {{"id", partId}}).at("selectedTriangles") == 2);
+
+    run(s, "feature.cylinder", {{"center", {5, 5, -1}}, {"radius", 2}, {"height", 12}, {"operation", "cut"}});
+    CHECK(run(s, "selection.get", {{"id", partId}}).at("selectedTriangles") == 0);
+}
+
 TEST_CASE("Design commands: timeline marker, suppress, delete, edit", "[commands][cad]")
 {
     commands::Session s;
