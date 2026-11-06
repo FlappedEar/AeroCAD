@@ -6,6 +6,8 @@
 
 #include "aerocad/geometry/Modeling.hpp"
 
+#include <cmath>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -93,6 +95,53 @@ Json curveSchema()
           {"construction", {{"type", "boolean"}}}}},
         {"required", {"type"}},
         {"additionalProperties", false}};
+}
+
+Json constraintPointSchema()
+{
+    return Json{{"type", Json::array({"string", "object"})},
+                {"description", "\"origin\" (sketch origin) or {curve: index, point: start | end | center}."},
+                {"properties", {{"curve", {{"type", "integer"}, {"minimum", 0}}},
+                                {"point", {{"type", "string"}, {"enum", {"start", "end", "center"}}}}}}};
+}
+
+Json constraintSchema()
+{
+    return Json{
+        {"type", "object"},
+        {"description",
+         "A sketch constraint or dimension. Curves are referred to by index in sketch.curves (a rectangle is four "
+         "lines, a slot two lines and two arcs). Geometric: coincident {points: 2}; point_on_curve {point, curve}; "
+         "midpoint {point, curve: line}; horizontal / vertical {curve: line} or {points: 2}; parallel, "
+         "perpendicular, collinear {curves: 2 lines}; tangent {curves: line/arc/circle + arc/circle}; equal "
+         "{curves: 2 lines or 2 arcs/circles}; concentric {curves: 2}; symmetric {points: 2, curve: line}; fix "
+         "{points and/or curves}. Dimensions (value: number or expression): distance {points: 2} or {point, "
+         "curve: line}; horizontal_distance / vertical_distance {points: 2}; length {curve: line}; radius / "
+         "diameter {curve}; angle {curves: 2 lines} (degrees)."},
+        {"properties",
+         {{"type",
+           {{"type", "string"},
+            {"enum", {"coincident", "point_on_curve", "midpoint", "horizontal", "vertical", "parallel",
+                      "perpendicular", "collinear", "tangent", "equal", "concentric", "symmetric", "fix",
+                      "distance", "horizontal_distance", "vertical_distance", "length", "radius", "diameter",
+                      "angle"}}}},
+          {"curve", {{"type", "integer"}, {"minimum", 0}}},
+          {"curves", {{"type", "array"}, {"items", {{"type", "integer"}, {"minimum", 0}}}}},
+          {"point", constraintPointSchema()},
+          {"points", {{"type", "array"}, {"items", constraintPointSchema()}}},
+          {"value", numberOrExpr("Dimension value (mm, or degrees for angle).")},
+          {"at", {{"type", "array"},
+                  {"items", point2("Position.")},
+                  {"description", "fix: positions to hold the points at. sketch.add_constraints fills it with the "
+                                  "current positions."}}}}},
+        {"required", {"type"}},
+        {"additionalProperties", false}};
+}
+
+Json constraintsSchema()
+{
+    return Json{{"type", "array"}, {"items", constraintSchema()},
+                {"description", "Sketch constraints and dimensions (solved after the curves)."}};
 }
 
 Json curvesSchema()
@@ -276,8 +325,10 @@ Json addedFeature(cad::Design& d, const model::Document& doc, cad::FeatureId id)
             break;
     Json j = featureToJson(d, *f, index);
     j["bodies"] = bodiesToJson(d, doc);
-    if (auto it = d.sketches().find(id); it != d.sketches().end())
+    if (auto it = d.sketches().find(id); it != d.sketches().end()) {
         j["profiles"] = it->second.geometry.profiles.size();
+        j["degreesOfFreedom"] = it->second.degreesOfFreedom;
+    }
     return j;
 }
 
@@ -318,6 +369,96 @@ const cad::Body& requireBody(const cad::Design& d, const Json& ref)
     throw CommandError("No body " + ref.dump());
 }
 
+const cad::Feature& sketchFeature(const cad::Design& d, cad::FeatureId id)
+{
+    const cad::Feature* f = d.feature(id);
+    if (f == nullptr || f->type != "sketch")
+        throw cad::DesignError("No sketch with id " + std::to_string(id));
+    return *f;
+}
+
+/// Centre of a three-point arc (circumcentre), std::nullopt for degenerate arcs.
+std::optional<geometry::Vec2> arcCenter(const geometry::SketchCurve& c)
+{
+    if (c.kind != geometry::SketchCurve::Kind::Arc || c.points.size() != 3)
+        return std::nullopt;
+    const auto& a = c.points[0];
+    const auto& b = c.points[1];
+    const auto& e = c.points[2];
+    const double den = 2 * (a.x * (b.y - e.y) + b.x * (e.y - a.y) + e.x * (a.y - b.y));
+    if (std::abs(den) < 1e-12)
+        return std::nullopt;
+    const double aa = a.x * a.x + a.y * a.y;
+    const double bb = b.x * b.x + b.y * b.y;
+    const double ee = e.x * e.x + e.y * e.y;
+    return geometry::Vec2{(aa * (b.y - e.y) + bb * (e.y - a.y) + ee * (a.y - b.y)) / den,
+                          (aa * (e.x - b.x) + bb * (a.x - e.x) + ee * (b.x - a.x)) / den};
+}
+
+/// Position of a constraint point reference ("origin" or {curve, point}) in solved curves.
+geometry::Vec2 pointPosition(const std::vector<geometry::SketchCurve>& curves, const Json& ref)
+{
+    if (ref.is_string())
+        return {0, 0};
+    const auto i = ref.at("curve").get<std::size_t>();
+    if (i >= curves.size())
+        throw CommandError("No curve " + std::to_string(i) + " in the sketch");
+    const auto& c = curves[i];
+    const std::string which = ref.value("point", std::string("start"));
+    using K = geometry::SketchCurve::Kind;
+    if (which == "center") {
+        if (c.kind == K::Circle)
+            return c.points[0];
+        if (const auto ctr = arcCenter(c))
+            return *ctr;
+    } else if (c.kind != K::Circle && !c.points.empty()) {
+        return which == "end" ? c.points.back() : c.points.front();
+    }
+    throw CommandError("Curve " + std::to_string(i) + " has no point '" + which + "'");
+}
+
+/// A new fix constraint holds the geometry where it is now (after earlier dimensions),
+/// not where it was drawn: curves are expanded to their points and the solved positions
+/// are stored in "at". A fixed circle also keeps its radius.
+Json resolveFix(const std::vector<geometry::SketchCurve>& curves, const Json& c)
+{
+    Json out = Json::array();
+    if (c.value("type", std::string()) != "fix" || c.contains("at")) {
+        out.push_back(c);
+        return out;
+    }
+    Json points = c.value("points", Json::array());
+    if (c.contains("point"))
+        points.push_back(c.at("point"));
+    std::vector<std::size_t> ids;
+    if (c.contains("curve"))
+        ids.push_back(c.at("curve").get<std::size_t>());
+    for (const auto& i : c.value("curves", Json::array()))
+        ids.push_back(i.get<std::size_t>());
+    using K = geometry::SketchCurve::Kind;
+    for (const std::size_t i : ids) {
+        if (i >= curves.size())
+            throw CommandError("No curve " + std::to_string(i) + " in the sketch");
+        const auto& k = curves[i];
+        if (k.kind == K::Circle) {
+            points.push_back({{"curve", i}, {"point", "center"}});
+            out.push_back({{"type", "radius"}, {"curve", i}, {"value", k.radius}});
+        } else {
+            points.push_back({{"curve", i}, {"point", "start"}});
+            points.push_back({{"curve", i}, {"point", "end"}});
+            if (k.kind == K::Arc)
+                points.push_back({{"curve", i}, {"point", "center"}});
+        }
+    }
+    Json at = Json::array();
+    for (const auto& ref : points) {
+        const auto pos = pointPosition(curves, ref);
+        at.push_back(Json::array({pos.x, pos.y}));
+    }
+    out.insert(out.begin(), Json{{"type", "fix"}, {"points", points}, {"at", at}});
+    return out;
+}
+
 // --- Registration -----------------------------------------------------------------------
 
 void registerSketchCommands(CommandRegistry& r)
@@ -331,6 +472,7 @@ void registerSketchCommands(CommandRegistry& r)
                          {"face", faceRefSchema()},
                          {"offset", numberOrExpr("Offset of the plane along its normal (mm).")},
                          {"curves", curvesSchema()},
+                         {"constraints", constraintsSchema()},
                          {"name", {{"type", "string"}, {"description", "Optional name, default SketchN."}}}}),
            true},
           [](CommandContext& ctx, const Json& params) {
@@ -390,6 +532,108 @@ void registerSketchCommands(CommandRegistry& r)
                                      {"yDir", vec(sk.plane.yDir())}}},
                           {"curves", sk.curves.size()},
                           {"profiles", out}};
+          });
+
+    r.add({"sketch.add_constraints", "Add Sketch Constraints",
+           "Adds geometric constraints and dimensions to a sketch (Fusion: Sketch > Constraints, Sketch "
+           "Dimension, shortcut D). The curves move as little as possible to satisfy them; constraints that "
+           "conflict are rejected. Dimension values can be expressions using user parameters.",
+           objectSchema({{"sketch", featureIdSchema("Sketch feature id.")}, {"constraints", constraintsSchema()}},
+                        {"sketch", "constraints"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              const auto id = params.at("sketch").get<cad::FeatureId>();
+              designChange(ctx, "Add Constraint", [&](cad::Design& d) {
+                  Json list = sketchFeature(d, id).params.value("constraints", Json::array());
+                  auto solved = d.sketches().find(id);
+                  for (const auto& c : params.at("constraints")) {
+                      if (solved == d.sketches().end()) {
+                          list.push_back(c);
+                          continue;
+                      }
+                      for (const auto& resolved : resolveFix(solved->second.curves, c))
+                          list.push_back(resolved);
+                  }
+                  d.editFeature(id, {{"constraints", list}});
+                  return Json{};
+              });
+              return addedFeature(design(ctx), ctx.document, id);
+          });
+
+    r.add({"sketch.edit_constraint", "Edit Sketch Constraint",
+           "Changes the value of a sketch dimension, or removes a constraint (remove: true). index is the "
+           "position in sketch.curves' constraints list.",
+           objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
+                         {"index", {{"type", "integer"}, {"minimum", 0}}},
+                         {"value", numberOrExpr("New dimension value.")},
+                         {"remove", {{"type", "boolean"}}}},
+                        {"sketch", "index"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              const auto id = params.at("sketch").get<cad::FeatureId>();
+              const auto index = params.at("index").get<std::size_t>();
+              const bool remove = params.value("remove", false);
+              designChange(ctx, remove ? "Delete Constraint" : "Edit Dimension", [&](cad::Design& d) {
+                  Json list = sketchFeature(d, id).params.value("constraints", Json::array());
+                  if (index >= list.size())
+                      throw cad::DesignError("Sketch has no constraint " + std::to_string(index));
+                  if (remove) {
+                      list.erase(list.begin() + static_cast<std::ptrdiff_t>(index));
+                  } else {
+                      if (!params.contains("value"))
+                          throw cad::DesignError("Give value or remove");
+                      list[index]["value"] = params.at("value");
+                  }
+                  d.editFeature(id, {{"constraints", list}});
+                  return Json{};
+              });
+              return addedFeature(design(ctx), ctx.document, id);
+          });
+
+    r.add({"sketch.curves", "Sketch curves",
+           "Lists the solved curves of a sketch (index, kind, points in sketch coordinates) and its constraints, "
+           "with the remaining degrees of freedom. Use the indices in sketch.add_constraints.",
+           objectSchema({{"sketch", featureIdSchema("Sketch feature id.")}}, {"sketch"})},
+          [](CommandContext& ctx, const Json& params) {
+              const auto id = params.at("sketch").get<cad::FeatureId>();
+              const cad::Design& d = design(ctx);
+              const cad::Feature& f = sketchFeature(d, id);
+              auto it = d.sketches().find(id);
+              if (it == d.sketches().end())
+                  throw CommandError("No evaluated sketch with id " + std::to_string(id));
+              const auto& sk = it->second;
+              Json curves = Json::array();
+              for (std::size_t i = 0; i < sk.curves.size(); ++i) {
+                  const auto& c = sk.curves[i];
+                  static const char* kinds[] = {"line", "arc", "circle", "spline"};
+                  Json pts = Json::array();
+                  for (const auto& p : c.points)
+                      pts.push_back(Json::array({p.x, p.y}));
+                  Json cj{{"index", i}, {"kind", kinds[static_cast<int>(c.kind)]}, {"points", pts},
+                          {"construction", c.construction}};
+                  if (c.kind == geometry::SketchCurve::Kind::Circle)
+                      cj["radius"] = c.radius;
+                  if (const auto ctr = arcCenter(c))
+                      cj["center"] = Json::array({ctr->x, ctr->y});
+                  curves.push_back(cj);
+              }
+              Json constraints = Json::array();
+              const Json list = f.params.value("constraints", Json::array());
+              for (std::size_t i = 0; i < list.size(); ++i) {
+                  Json cj = list[i];
+                  cj["index"] = i;
+                  if (cj.contains("value")) {
+                      try {
+                          cj["resolved"] = d.evaluate(cj.at("value"));
+                      } catch (const std::exception&) {
+                      }
+                  }
+                  constraints.push_back(cj);
+              }
+              return Json{{"sketch", id},
+                          {"curves", curves},
+                          {"constraints", constraints},
+                          {"degreesOfFreedom", sk.degreesOfFreedom}};
           });
 }
 
