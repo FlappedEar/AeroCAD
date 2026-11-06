@@ -63,6 +63,40 @@ Qt maps Ctrl to Command and Alt to Option on macOS, so "Ctrl+Alt+V" is Option+Co
 | Back to Navigate (leave a selection tool) | Esc | Esc | yes (Esc cancels) |
 | Brush smaller / larger | [ / ] | [ / ] | no |
 
-Single-letter keys follow Fusion so that they stay free for the matching tools later
-(for example E = Extrude, F = Fillet, L = Line). 1/2/3 select the region selection tools,
-see "Region selection" in [macos.md](macos.md).
+Modelling tools (single letters are Fusion's defaults; they do not fire while a text field
+has focus):
+
+| Command | Key | Fusion default? |
+|---|---|---|
+| Extrude | E | yes |
+| Fillet | F | yes |
+| Hole | H | yes |
+| Line (in a sketch) | L | yes |
+| 2-point Rectangle (in a sketch) | R | yes |
+| Center Diameter Circle (in a sketch) | C | yes |
+| Cancel the current curve / dialog, then leave the sketch | Esc | yes |
+
+Not mapped yet: Press Pull (Q), Move (M), Trim (T), Offset (O), Project (P),
+Sketch Dimension (D), Construction (X) and Measure (I). 1/2/3 select the region
+selection tools on meshes, see "Region selection" in [macos.md](macos.md).
+
+## Modelling
+
+See [cad.md](cad.md) for the timeline and the commands behind the tools.
+
+- **Create Sketch**: click a planar face of a body, or pick XY / XZ / YZ. The view turns to
+  look at the sketch. Tools: Line (chains; right-click or Esc ends), Rectangle, Circle, Arc
+  (start, end, point on arc), Polygon, Slot. Points snap to existing points and to a grid
+  that follows the zoom. While drawing, type a number (or `width, height` for rectangles)
+  and press Enter to set the size; expressions such as `w / 2` keep the sketch parametric.
+  **Finish Sketch** or Esc leaves the sketch.
+- **Extrude (E)**, Revolve, Box, Cylinder, **Fillet (F)**, Chamfer, Shell, Combine open a
+  dialog in the top-left corner. Selections are made in the view while the dialog is open:
+  click inside sketch profiles (Extrude/Revolve; default: all profiles), near edges
+  (Fillet/Chamfer), on faces (Shell) or at the hole position (Hole). Numbers accept expressions.
+- **Timeline** (bottom): features in order; double-click to edit (sketches reopen in the
+  sketch environment), right-click for Rename, Suppress, Roll Back To Here and Delete; the
+  playback buttons move the marker. Failed features are red with the reason in the tooltip.
+- **Parameters**: Modify > Change Parameters, user parameters used in expressions.
+- Command scripts: `AeroCAD --run script.json` runs a JSON array of `{name, params}`
+  commands at start-up, the same calls an AI agent makes through MCP.

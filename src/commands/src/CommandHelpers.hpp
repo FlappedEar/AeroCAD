@@ -31,6 +31,8 @@ inline Json partToJson(const model::Part& p)
         {"vertices", p.mesh ? p.mesh->vertexCount() : 0},
         {"triangles", p.mesh ? p.mesh->triangleCount() : 0},
         {"hasBrep", p.shape.has_value()},
+        {"kind", p.kind == model::PartKind::Body ? "body" : p.kind == model::PartKind::Sketch ? "sketch" : "imported"},
+        {"featureId", p.featureId},
         {"selectedTriangles", p.selection ? p.selection->size() : 0},
         {"bounds", boundsToJson(p.mesh ? p.mesh->bounds() : core::BoundingBox{})},
     };
@@ -43,6 +45,15 @@ inline const model::Part& requirePart(const model::Document& doc, const Json& pa
     if (p == nullptr)
         throw CommandError("No part with id " + std::to_string(id));
     return *p;
+}
+
+/// Bodies and sketches are produced by the timeline; geometry edits must go through it.
+inline void requireImported(const model::Part& p, const char* what)
+{
+    if (p.kind != model::PartKind::Imported)
+        throw CommandError(std::string("Cannot ") + what + " '" + p.name +
+                           "': it is produced by the design timeline (feature " + std::to_string(p.featureId) +
+                           "); use feature.delete / feature.edit instead");
 }
 
 inline Json idParam()

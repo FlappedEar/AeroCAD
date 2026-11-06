@@ -93,7 +93,9 @@ void registerPartCommands(CommandRegistry& r)
            true},
           [](CommandContext& ctx, const Json& params) {
               model::Document& doc = ctx.document;
-              model::Part removed = *doc.removePart(requirePart(doc, params).id);
+              const model::Part& target = requirePart(doc, params);
+              requireImported(target, "remove");
+              model::Part removed = *doc.removePart(target.id);
               ctx.undoStack.push({"Remove " + removed.name,
                                   [&doc, removed]() { doc.addPart(removed); },
                                   [&doc, id = removed.id]() { doc.removePart(id); }});
@@ -131,6 +133,7 @@ void registerPartCommands(CommandRegistry& r)
            true},
           [](CommandContext& ctx, const Json& params) {
               const model::Part before = requirePart(ctx.document, params);
+              requireImported(before, "scale");
               const double factor = params.at("factor").get<double>();
               core::Vec3 origin = before.mesh ? before.mesh->bounds().center() : core::Vec3{};
               if (params.contains("origin")) {
