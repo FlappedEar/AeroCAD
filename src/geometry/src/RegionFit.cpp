@@ -6,14 +6,19 @@
 #include <BRepBuilderAPI_MakeSolid.hxx>
 #include <BRepBuilderAPI_Sewing.hxx>
 #include <BRepCheck_Analyzer.hxx>
+#include <BRepClass3d_SolidClassifier.hxx>
 #include <BRepGProp.hxx>
+#include <BRep_Builder.hxx>
+#include <BRep_Tool.hxx>
 #include <GProp_GProps.hxx>
 #include <ShapeFix_Solid.hxx>
 #include <Standard_Failure.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
+#include <TopoDS_Compound.hxx>
 #include <TopoDS_Shell.hxx>
 #include <TopoDS_Solid.hxx>
+#include <TopoDS_Vertex.hxx>
 
 #include <math_Jacobi.hxx>
 #include <math_Matrix.hxx>
@@ -249,28 +254,82 @@ RegionFitResult fitRegions(const core::TriangleMesh& mesh, const core::TriangleS
     if (shape.IsNull())
         throw SurfaceFitError("Sewing the fitted patches failed");
 
-    // A closed shell becomes a solid, oriented to a positive volume.
+    // Closed shells become solids: each one outward (positive volume); a shell inside
+    // another one is a cavity of it. Separate parts give a compound of solids.
     if (result.freeEdges == 0) {
         try {
-            TopExp_Explorer shells(shape, TopAbs_SHELL);
-            if (shells.More()) {
-                BRepBuilderAPI_MakeSolid make(TopoDS::Shell(shells.Current()));
-                if (make.IsDone()) {
-                    ShapeFix_Solid fix(make.Solid());
-                    fix.Perform();
-                    TopoDS_Shape solid = fix.Solid();
-                    GProp_GProps props;
-                    BRepGProp::VolumeProperties(solid, props, 1e-6);
-                    if (props.Mass() < 0.0) {
-                        solid.Reverse();
-                        BRepGProp::VolumeProperties(solid, props, 1e-6);
-                    }
-                    if (BRepCheck_Analyzer(solid).IsValid() && props.Mass() > 0.0) {
-                        shape = solid;
-                        result.solid = true;
-                        result.volume = props.Mass();
+            struct Closed {
+                TopoDS_Shell shell; // oriented outward
+                TopoDS_Solid solid;
+                double volume = 0.0;
+                gp_Pnt point;
+                std::vector<TopoDS_Shell> cavities;
+                bool cavity = false;
+            };
+            std::vector<Closed> closed;
+            bool ok = true;
+            for (TopExp_Explorer ex(shape, TopAbs_SHELL); ex.More() && ok; ex.Next()) {
+                Closed c;
+                c.shell = TopoDS::Shell(ex.Current());
+                BRepBuilderAPI_MakeSolid make(c.shell);
+                ok = make.IsDone();
+                if (!ok)
+                    break;
+                GProp_GProps props;
+                BRepGProp::VolumeProperties(make.Solid(), props, 1e-6);
+                if (props.Mass() < 0.0)
+                    c.shell.Reverse();
+                c.volume = std::abs(props.Mass());
+                c.solid = BRepBuilderAPI_MakeSolid(c.shell).Solid();
+                TopExp_Explorer vertex(c.shell, TopAbs_VERTEX);
+                ok = vertex.More();
+                if (ok)
+                    c.point = BRep_Tool::Pnt(TopoDS::Vertex(vertex.Current()));
+                closed.push_back(std::move(c));
+            }
+            ok = ok && !closed.empty();
+            std::sort(closed.begin(), closed.end(),
+                      [](const Closed& x, const Closed& y) { return x.volume > y.volume; });
+            for (std::size_t k = 1; ok && k < closed.size(); ++k)
+                for (std::size_t outer = 0; outer < k; ++outer) {
+                    if (closed[outer].cavity)
+                        continue;
+                    BRepClass3d_SolidClassifier inside(closed[outer].solid, closed[k].point, result.sewTolerance);
+                    if (inside.State() == TopAbs_IN) {
+                        closed[k].cavity = true;
+                        closed[outer].cavities.push_back(TopoDS::Shell(closed[k].shell.Reversed()));
+                        break;
                     }
                 }
+            BRep_Builder builder;
+            TopoDS_Compound compound;
+            builder.MakeCompound(compound);
+            int solids = 0;
+            TopoDS_Shape single;
+            double volume = 0.0;
+            for (const auto& c : closed) {
+                if (!ok || c.cavity)
+                    continue;
+                BRepBuilderAPI_MakeSolid make(c.shell);
+                for (const auto& cavity : c.cavities)
+                    make.Add(cavity);
+                ShapeFix_Solid fix(make.Solid());
+                fix.Perform();
+                const TopoDS_Shape solid = fix.Solid();
+                GProp_GProps props;
+                BRepGProp::VolumeProperties(solid, props, 1e-6);
+                ok = BRepCheck_Analyzer(solid).IsValid() && props.Mass() > 0.0;
+                volume += props.Mass();
+                builder.Add(compound, solid);
+                single = solid;
+                ++solids;
+            }
+            if (ok && solids > 0) {
+                shape = solids == 1 ? single : TopoDS_Shape(compound);
+                result.solid = true;
+                result.volume = volume;
+                if (solids > 1)
+                    result.warnings.push_back("The mesh closes into " + std::to_string(solids) + " separate solids.");
             }
         } catch (const Standard_Failure&) {
             result.solid = false;

@@ -1015,7 +1015,7 @@ Handle(Geom_BSplineSurface) fitUnfolded(const Unfolded& u, double spacing, int m
 TopoDS_Wire uvWire(const Handle(Geom_BSplineSurface) & surface, std::vector<gp_Pnt2d> uv, double tolerance,
                    bool counterClockwise, int smoothing, std::vector<char> corners = {})
 {
-    if (uv.size() < 4)
+    if (uv.size() < 3)
         return {};
     if (corners.size() != uv.size())
         corners.assign(uv.size(), 0);

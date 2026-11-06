@@ -157,3 +157,34 @@ TEST_CASE("Part of a mesh gives an open shell", "[geometry][fit]")
     CHECK(fit.shape.faceCount() == 3);
     CHECK(fit.shape.solidCount() == 0);
 }
+
+TEST_CASE("Separate closed parts and cavities are all kept", "[geometry][fit]")
+{
+    // Two boxes apart: two solids.
+    const auto a = box(30, 20, 10, 8);
+    std::vector<Vec3> v = a.vertices();
+    auto t = a.triangles();
+    const auto offset = static_cast<std::uint32_t>(v.size());
+    for (const auto& p : a.vertices())
+        v.push_back(p + Vec3{50, 0, 0});
+    for (const auto& tri : a.triangles())
+        t.push_back({tri[0] + offset, tri[1] + offset, tri[2] + offset});
+    const auto two = geometry::fitRegions(core::TriangleMesh(v, t), {});
+    REQUIRE(two.solid);
+    CHECK(two.shape.solidCount() == 2);
+    CHECK(std::abs(two.volume - 2 * 6000.0) < 2.0);
+
+    // A box with a box-shaped cavity (inner faces point inward): one solid with a void.
+    std::vector<Vec3> w = box(60, 40, 30, 10).vertices();
+    auto u = box(60, 40, 30, 10).triangles();
+    const auto inner = box(20, 10, 10, 6);
+    const auto base = static_cast<std::uint32_t>(w.size());
+    for (const auto& p : inner.vertices())
+        w.push_back(p + Vec3{20, 15, 10});
+    for (const auto& tri : inner.triangles())
+        u.push_back({tri[0] + base, tri[2] + base, tri[1] + base});
+    const auto hollow = geometry::fitRegions(core::TriangleMesh(w, u), {});
+    REQUIRE(hollow.solid);
+    CHECK(hollow.shape.solidCount() == 1);
+    CHECK(std::abs(hollow.volume - (72000.0 - 2000.0)) < 5.0);
+}
