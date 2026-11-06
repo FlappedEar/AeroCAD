@@ -134,6 +134,104 @@ Pane {
                         onClicked: root.controller.execute("selection.clear", { id: root.partId })
                     }
                 }
+                RowLayout {
+                    Layout.fillWidth: true
+                    enabled: (root.info.selectedTriangles ?? 0) > 0
+                    Label { text: qsTr("Tolerance") }
+                    TextField {
+                        id: fitTolerance
+                        Layout.preferredWidth: 56
+                        text: "0.25"
+                        validator: DoubleValidator { bottom: 0.001; decimals: 3; notation: DoubleValidator.StandardNotation }
+                    }
+                    Label { text: qsTr("mm") }
+                }
+                Button {
+                    Layout.fillWidth: true
+                    enabled: (root.info.selectedTriangles ?? 0) > 0
+                    text: qsTr("Fit surface to selection")
+                    ToolTip.visible: hovered
+                    ToolTip.delay: 500
+                    ToolTip.text: qsTr("Creates a smooth NURBS surface (new part) from the selected area and checks how far it deviates from the mesh")
+                    onClicked: {
+                        const tol = Number.fromLocaleString(Qt.locale(), fitTolerance.text)
+                        const r = root.controller.execute("surface.fit_selection",
+                                                          { id: root.partId, tolerance: tol > 0 ? tol : 0.25 })
+                        if (!r.ok)
+                            return
+                        const f = r.result.fit
+                        let msg = qsTr("Surface \"%1\": deviation mesh→surface max %2 mm (RMS %3), surface→mesh max %4 mm, %5")
+                            .arg(r.result.name)
+                            .arg(Number(f.meshToSurfaceMax).toFixed(3))
+                            .arg(Number(f.meshToSurfaceRms).toFixed(3))
+                            .arg(Number(f.surfaceToMeshMax).toFixed(3))
+                            .arg(f.withinTolerance ? qsTr("within tolerance") : qsTr("OUT OF TOLERANCE"))
+                        if (r.result.warnings.length > 0)
+                            msg += " · " + r.result.warnings.join(" ")
+                        root.controller.showStatus(msg)
+                    }
+                }
+            }
+        }
+
+        GroupBox {
+            Layout.fillWidth: true
+            // Exact surfaces only (for example a fitted base surface); solids have their own tools.
+            visible: !!root.info.hasBrep && root.info.kind !== "sketch" && (root.info.faces ?? 0) > 0
+                     && (root.info.solids ?? 0) === 0
+            title: qsTr("Surface")
+            GridLayout {
+                anchors.fill: parent
+                columns: 3
+                Label { text: qsTr("Offset") }
+                TextField {
+                    id: offsetDistance
+                    Layout.preferredWidth: 56
+                    text: "2"
+                    validator: DoubleValidator { decimals: 3; notation: DoubleValidator.StandardNotation }
+                }
+                Button {
+                    Layout.fillWidth: true
+                    text: qsTr("Offset")
+                    ToolTip.visible: hovered
+                    ToolTip.delay: 500
+                    ToolTip.text: qsTr("New surface moved along the normal by this distance (mm, negative: the other side), e.g. a clearance")
+                    onClicked: {
+                        const d = Number.fromLocaleString(Qt.locale(), offsetDistance.text)
+                        const r = root.controller.execute("surface.offset", { id: root.partId, distance: d })
+                        if (r.ok)
+                            root.controller.showStatus(qsTr("Offset surface \"%1\" at %2 mm").arg(r.result.name).arg(d))
+                    }
+                }
+                Label { text: qsTr("Thickness") }
+                TextField {
+                    id: thickness
+                    Layout.preferredWidth: 56
+                    text: "2"
+                    validator: DoubleValidator { bottom: 0.001; decimals: 3; notation: DoubleValidator.StandardNotation }
+                }
+                ComboBox {
+                    id: thickenSide
+                    Layout.fillWidth: true
+                    model: [qsTr("Outside"), qsTr("Inside"), qsTr("Both")]
+                }
+                Button {
+                    Layout.columnSpan: 3
+                    Layout.fillWidth: true
+                    text: qsTr("Thicken to solid")
+                    ToolTip.visible: hovered
+                    ToolTip.delay: 500
+                    ToolTip.text: qsTr("New closed solid of this thickness (mm) from the surface")
+                    onClicked: {
+                        const t = Number.fromLocaleString(Qt.locale(), thickness.text)
+                        const side = ["outside", "inside", "both"][thickenSide.currentIndex]
+                        const r = root.controller.execute("surface.thicken", { id: root.partId, thickness: t, side: side })
+                        if (r.ok)
+                            root.controller.showStatus(qsTr("Solid \"%1\": %2 mm thick, volume %3 cm³")
+                                                       .arg(r.result.name).arg(t)
+                                                       .arg((r.result.volume / 1000).toFixed(2)))
+                    }
+                }
             }
         }
 

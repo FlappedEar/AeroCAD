@@ -17,7 +17,7 @@ aerocad_add_test(test_core
     LIBS AeroCAD::core)
 
 aerocad_add_test(test_geometry
-    SOURCES geometry/test_geometry.cpp geometry/test_modeling.cpp
+    SOURCES geometry/test_geometry.cpp geometry/test_modeling.cpp geometry/test_surface_fit.cpp
     LIBS AeroCAD::geometry)
 
 aerocad_add_test(test_io

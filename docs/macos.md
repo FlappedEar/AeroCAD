@@ -78,6 +78,18 @@ open build/vcpkg-macos/bin/AeroCAD.app
     Grow, Shrink, Invert and Clear are in the Properties panel.
   - Navigation stays on the middle button and touchpad (see [ui.md](ui.md)). `Esc` goes
     back to *Navigate*.
+- **Base surface from the selection:** in the Properties panel, set a tolerance and click
+  *Fit surface to selection*. A new part with one smooth NURBS surface (exact B-rep),
+  trimmed to the selection outline, is added. The status bar shows the deviation both
+  ways (mesh to surface and surface to mesh) and whether it is within the tolerance.
+  Works best on compact regions that do not fold over (less than about 180 degrees of
+  wrap); long curved strips get a warning.
+- **Offset and thicken:** select a surface part (for example the fitted one). The
+  *Surface* group in the Properties panel has *Offset* (a new surface moved along the
+  normal by the distance, negative for the other side; use it for clearances) and
+  *Thicken to solid* (a closed solid of the given thickness, outside / inside / both
+  sides of the surface). The fitted surface's normal points the way the mesh faces.
+  *Convert to Body* turns the solid into a timeline body for sketches, fillets, combine.
 - **Undo / redo:** Cmd+Z / Cmd+Shift+Z (also for selection changes).
 
 ## Troubleshooting

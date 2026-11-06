@@ -261,3 +261,61 @@ TEST_CASE("Brush, lasso and set selection", "[commands][selection]")
     CHECK_FALSE(session.execute("selection.set", {{"id", id}, {"triangles", {99}}}).ok);
     CHECK_FALSE(session.execute("selection.brush", {{"id", id}, {"points", {{0, 0, 0}}}, {"radius", 0}}).ok);
 }
+
+TEST_CASE("Fit a surface to a selection and undo it", "[commands][fit]")
+{
+    commands::Session session;
+    // 40 x 40 mm gently curved sheet.
+    std::vector<core::Vec3> v;
+    std::vector<core::TriangleMesh::Triangle> t;
+    const int n = 40;
+    for (int j = 0; j <= n; ++j)
+        for (int i = 0; i <= n; ++i)
+            v.push_back({double(i), double(j), 0.01 * (i - 20) * (i - 20)});
+    auto idx = [](int i, int j) { return static_cast<std::uint32_t>(j * (n + 1) + i); };
+    for (int j = 0; j < n; ++j)
+        for (int i = 0; i < n; ++i) {
+            t.push_back({idx(i, j), idx(i + 1, j), idx(i + 1, j + 1)});
+            t.push_back({idx(i, j), idx(i + 1, j + 1), idx(i, j + 1)});
+        }
+    model::Part sheet;
+    sheet.name = "Sheet";
+    sheet.mesh = std::make_shared<const core::TriangleMesh>(core::TriangleMesh(std::move(v), std::move(t)));
+    const auto id = session.document().addPart(sheet);
+
+    CHECK_FALSE(session.execute("surface.fit_selection", {{"id", id}}).ok); // nothing selected
+
+    REQUIRE(session.execute("selection.brush", {{"id", id}, {"points", {{20, 20, 0}}}, {"radius", 12.0}}).ok);
+    auto r = session.execute("surface.fit_selection", {{"id", id}, {"tolerance", 0.1}});
+    REQUIRE(r.ok);
+    CHECK(r.data.at("hasBrep") == true);
+    CHECK(r.data.at("fit").at("withinTolerance") == true);
+    CHECK(r.data.at("fit").at("meshToSurfaceMax").get<double>() < 0.1);
+    CHECK(session.document().partCount() == 2);
+
+    REQUIRE(session.execute("edit.undo").ok);
+    CHECK(session.document().partCount() == 1);
+    REQUIRE(session.execute("edit.redo").ok);
+    CHECK(session.document().partCount() == 2);
+
+    const auto surfaceId = r.data.at("id").get<model::PartId>();
+    CHECK_FALSE(session.execute("surface.thicken", {{"id", id}, {"thickness", 2.0}}).ok); // mesh only
+
+    auto offset = session.execute("surface.offset", {{"id", surfaceId}, {"distance", 2.0}});
+    REQUIRE(offset.ok);
+    CHECK(offset.data.at("hasBrep") == true);
+
+    auto solid = session.execute("surface.thicken", {{"id", surfaceId}, {"thickness", 2.0}, {"side", "both"}});
+    REQUIRE(solid.ok);
+    CHECK(solid.data.at("volume").get<double>() > 0.0);
+    CHECK(session.document().partCount() == 4);
+
+    // The solid can become a timeline body for the modelling tools.
+    auto body = session.execute("feature.base_body", {{"part", solid.data.at("id")}});
+    INFO(body.toJson().dump());
+    REQUIRE(body.ok);
+    REQUIRE(session.execute("edit.undo").ok);
+
+    REQUIRE(session.execute("edit.undo").ok);
+    CHECK(session.document().partCount() == 3);
+}
