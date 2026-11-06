@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// CAD-style camera input: orbit around a pivot, pan in the view plane, zoom with the wheel.
+// CAD camera input with the Autodesk Fusion default mouse scheme
+// (https://www.autodesk.com/shortcuts/fusion-360, "Fusion 360 Camera Controls" in Autodesk help):
+//   middle drag = pan, Shift + middle drag = orbit, wheel = zoom;
+//   touchpad / Magic Mouse: two-finger drag = pan, Shift + two-finger drag = orbit, pinch = zoom.
+// The left button is left free for selection; the navigation bar can temporarily map it to
+// orbit, pan or zoom (`leftDragMode`).
 import QtQuick
 import QtQuick3D
 
@@ -15,21 +20,50 @@ Item {
     property real maxDistance: 1e7
     property real orbitSpeed: 0.3 // degrees per pixel
     property real zoomStep: 1.0015 // per wheel angle unit (1/8 degree)
+    property real dragZoomStep: 1.005 // per pixel of vertical drag
 
     property real pitch: -30
     property real yaw: 45
+
+    /// What a plain left-button drag does: "" (nothing, left is for selection), "orbit", "pan", "zoom".
+    property string leftDragMode: ""
 
     function updateTransform() {
         pivot.eulerRotation = Qt.vector3d(pitch, yaw, 0)
         camera.z = distance
     }
 
+    /// World units per screen pixel at the pivot depth.
+    function worldPerPixel() {
+        return 2 * distance * Math.tan(camera.fieldOfView * Math.PI / 360) / Math.max(1, height)
+    }
+
     function pan(dx, dy) {
-        // World units per pixel at the pivot depth.
-        const worldPerPixel = 2 * distance * Math.tan(camera.fieldOfView * Math.PI / 360) / Math.max(1, height)
-        const right = pivot.right
-        const up = pivot.up
-        pivot.position = pivot.position.minus(right.times(dx * worldPerPixel)).plus(up.times(dy * worldPerPixel))
+        const s = worldPerPixel()
+        pivot.position = pivot.position.minus(pivot.right.times(dx * s)).plus(pivot.up.times(dy * s))
+    }
+
+    function orbit(dx, dy) {
+        viewAnimation.stop()
+        yaw -= dx * orbitSpeed
+        pitch = Math.max(-90, Math.min(90, pitch - dy * orbitSpeed))
+    }
+
+    function zoomBy(factor) {
+        distance = Math.max(minDistance, Math.min(maxDistance, distance * factor))
+    }
+
+    /// Rotates to the given view along the shortest path.
+    function animateTo(targetPitch, targetYaw) {
+        viewAnimation.stop()
+        let delta = (targetYaw - yaw) % 360
+        if (delta > 180)
+            delta -= 360
+        else if (delta < -180)
+            delta += 360
+        pitchAnimation.to = targetPitch
+        yawAnimation.to = yaw + delta
+        viewAnimation.start()
     }
 
     onPitchChanged: updateTransform()
@@ -37,51 +71,51 @@ Item {
     onDistanceChanged: updateTransform()
     Component.onCompleted: updateTransform()
 
-    DragHandler {
-        id: orbitHandler
+    ParallelAnimation {
+        id: viewAnimation
+        NumberAnimation { id: pitchAnimation; target: root; property: "pitch"; duration: 250; easing.type: Easing.InOutQuad }
+        NumberAnimation { id: yawAnimation; target: root; property: "yaw"; duration: 250; easing.type: Easing.InOutQuad }
+    }
+
+    component DeltaDragHandler: DragHandler {
         target: null
-        acceptedButtons: Qt.LeftButton
+        signal moved(real dx, real dy)
+        property point last
+        onActiveChanged: last = centroid.position
+        onCentroidChanged: {
+            if (!active)
+                return
+            const p = centroid.position
+            moved(p.x - last.x, p.y - last.y)
+            last = p
+        }
+    }
+
+    // Fusion: middle drag = pan.
+    DeltaDragHandler {
+        acceptedButtons: Qt.MiddleButton
         acceptedModifiers: Qt.NoModifier
-        property point last
-        onActiveChanged: last = centroid.position
-        onCentroidChanged: {
-            if (!active)
-                return
-            const p = centroid.position
-            root.yaw -= (p.x - last.x) * root.orbitSpeed
-            root.pitch = Math.max(-90, Math.min(90, root.pitch - (p.y - last.y) * root.orbitSpeed))
-            last = p
-        }
+        onMoved: (dx, dy) => root.pan(dx, dy)
     }
 
-    DragHandler {
-        id: panHandler
-        target: null
-        acceptedButtons: Qt.MiddleButton | Qt.RightButton
-        property point last
-        onActiveChanged: last = centroid.position
-        onCentroidChanged: {
-            if (!active)
-                return
-            const p = centroid.position
-            root.pan(p.x - last.x, p.y - last.y)
-            last = p
-        }
-    }
-
-    DragHandler {
-        id: shiftPanHandler
-        target: null
-        acceptedButtons: Qt.LeftButton
+    // Fusion: Shift + middle drag = orbit.
+    DeltaDragHandler {
+        acceptedButtons: Qt.MiddleButton
         acceptedModifiers: Qt.ShiftModifier
-        property point last
-        onActiveChanged: last = centroid.position
-        onCentroidChanged: {
-            if (!active)
-                return
-            const p = centroid.position
-            root.pan(p.x - last.x, p.y - last.y)
-            last = p
+        onMoved: (dx, dy) => root.orbit(dx, dy)
+    }
+
+    // Navigation bar tools (Orbit / Pan / Zoom) map the left button temporarily.
+    DeltaDragHandler {
+        enabled: root.leftDragMode !== ""
+        acceptedButtons: Qt.LeftButton
+        onMoved: (dx, dy) => {
+            if (root.leftDragMode === "orbit")
+                root.orbit(dx, dy)
+            else if (root.leftDragMode === "pan")
+                root.pan(dx, dy)
+            else if (root.leftDragMode === "zoom")
+                root.zoomBy(Math.pow(root.dragZoomStep, dy))
         }
     }
 
@@ -96,8 +130,21 @@ Item {
         target: null
         acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
         onWheel: event => {
-            const factor = Math.pow(root.zoomStep, -event.angleDelta.y)
-            root.distance = Math.max(root.minDistance, Math.min(root.maxDistance, root.distance * factor))
+            // Trackpads (and the Magic Mouse) deliver pixel deltas; classic wheels only angle deltas.
+            const touchpad = (event.device && event.device.type === PointerDevice.TouchPad)
+                || event.pixelDelta.x !== 0 || event.pixelDelta.y !== 0
+            if (touchpad) {
+                const d = event.pixelDelta.x !== 0 || event.pixelDelta.y !== 0
+                    ? event.pixelDelta : Qt.point(event.angleDelta.x / 8, event.angleDelta.y / 8)
+                if (event.modifiers & Qt.ShiftModifier)
+                    root.orbit(-d.x, -d.y)
+                else
+                    root.pan(d.x, d.y)
+                return
+            }
+            if (event.modifiers & Qt.ShiftModifier)
+                return
+            root.zoomBy(Math.pow(root.zoomStep, -event.angleDelta.y))
         }
     }
 }

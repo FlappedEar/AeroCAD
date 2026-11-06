@@ -55,9 +55,13 @@ open build/vcpkg-macos/bin/AeroCAD.app
 
 - **Import:** File > Import (Cmd+O), or drag a file onto the 3D view.
   Formats: STL, OBJ, 3MF, STEP/STP, IGES/IGS, BREP.
-- **Orbit:** left drag. **Pan:** right or middle drag, or Shift + left drag
-  (on a trackpad: Shift + click-drag). **Zoom:** scroll wheel, two-finger swipe or pinch.
-- **Fit all:** F or double-click. Standard views in the View menu.
+- **Navigation** follows Autodesk Fusion's defaults (see [ui.md](ui.md)):
+  **pan** = middle drag or two-finger swipe, **orbit** = Shift + middle drag or
+  Shift + two-finger swipe, **zoom** = scroll wheel or pinch. Without a middle button,
+  the Orbit / Pan / Zoom tools in the navigation bar (bottom of the view) map left drag.
+- **ViewCube** (top right of the view): click a face, edge or corner to look from there,
+  drag it to orbit, click the house for the Home view, right-click for projection and Home
+  settings. **Fit all:** F6 or the Fit button. Standard views in the View menu.
 - **Select:** click a part in the view or in the Parts list. The Properties panel
   shows its size and lets you rename, scale or remove it.
 - **Undo / redo:** Cmd+Z / Cmd+Shift+Z.
