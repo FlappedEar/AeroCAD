@@ -314,6 +314,31 @@ TEST_CASE("Fit cuts holes of the selection out of the surface", "[geometry][fit]
     }
 }
 
+TEST_CASE("Fit keeps the outer outline when a wiggly hole is longer", "[geometry][fit]")
+{
+    // Flat disc of radius 50 with a star-shaped hole (radii 15..40, 24 points): the hole's
+    // border is longer than the outer circle.
+    const core::TriangleMesh field = noisyField(200, 0.0);
+    const auto star = [](double x, double y) {
+        const double a = std::atan2(y, x), r = std::hypot(x, y);
+        const double t = std::abs(std::fmod(a / (2.0 * std::numbers::pi) * 24.0 + 24.0, 2.0) - 1.0);
+        return r < 15.0 + 25.0 * t;
+    };
+    const auto sheet = selectWhere(field, [&](const core::Vec3& c) {
+        const double x = c.x - 50.0, y = c.y - 50.0;
+        return std::hypot(x, y) < 48.0 && !star(x, y);
+    });
+    for (const auto method : {geometry::SurfaceFitMethod::Plane, geometry::SurfaceFitMethod::Unfold}) {
+        geometry::SurfaceFitOptions options;
+        options.method = method;
+        const auto fit = geometry::fitSurface(field, sheet, options);
+        INFO("method " << fit.report.method);
+        CHECK(fit.report.holes == 1);
+        CHECK(std::abs(geometry::surfaceArea(fit.face) - core::selectionArea(field, sheet)) <
+              0.05 * core::selectionArea(field, sheet));
+    }
+}
+
 TEST_CASE("Unfold needs an open sheet; auto falls back to the plane", "[geometry][fit]")
 {
     const core::TriangleMesh sphere = ellipsoid(40.0, 40.0, 40.0, 30, 60);

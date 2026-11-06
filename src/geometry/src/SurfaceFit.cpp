@@ -768,6 +768,31 @@ Unfolded unfoldPatch(const core::TriangleMesh& mesh, const core::TriangleSet& se
         p = {p[0] - u0, p[1] - v0};
     u.length = u1 - u0;
     u.width = v1 - v0;
+
+    // The outer border encloses the largest area in the plane (a wiggly hole can be the
+    // longest loop, so the length used above does not decide it).
+    {
+        auto enclosed = [&](const std::vector<std::uint32_t>& loop) {
+            double a = 0.0;
+            for (std::size_t i = 0; i < loop.size(); ++i) {
+                const auto& p = u.uv[loop[i]];
+                const auto& q = u.uv[loop[(i + 1) % loop.size()]];
+                a += p[0] * q[1] - q[0] * p[1];
+            }
+            return std::abs(a);
+        };
+        std::size_t best = u.holes.size();
+        double bestArea = enclosed(u.outer);
+        for (std::size_t h = 0; h < u.holes.size(); ++h) {
+            const double a = enclosed(u.holes[h]);
+            if (a > bestArea) {
+                bestArea = a;
+                best = h;
+            }
+        }
+        if (best < u.holes.size())
+            std::swap(u.outer, u.holes[best]);
+    }
     return u;
 }
 
@@ -1300,7 +1325,21 @@ SurfaceFitResult fitSurface(const core::TriangleMesh& mesh, const core::Triangle
                     for (const auto& hole : unfolded->holes)
                         holeWires.push_back(uvWire(surface, uvLoop(hole), options.tolerance, false, 6));
             } else {
-                const auto outlines = selectionOutlines(mesh, adjacency, selection);
+                auto outlines = selectionOutlines(mesh, adjacency, selection);
+                // The outer outline encloses the largest area over the plane (a wiggly
+                // hole can be the longest loop).
+                auto enclosed = [&](const std::vector<Vec3>& loop) {
+                    double a = 0.0;
+                    for (std::size_t i = 0; i < loop.size(); ++i) {
+                        const auto p = frame.toLocal(loop[i]);
+                        const auto q = frame.toLocal(loop[(i + 1) % loop.size()]);
+                        a += p[0] * q[1] - q[0] * p[1];
+                    }
+                    return std::abs(a);
+                };
+                for (std::size_t k = 1; k < outlines.size(); ++k)
+                    if (enclosed(outlines[k]) > enclosed(outlines.front()))
+                        std::swap(outlines[k], outlines.front());
                 if (!outlines.empty()) {
                     const std::size_t samples = std::clamp<std::size_t>(outlines.front().size(), 16, 2000);
                     face = faceFromWire(surface, loopWire(surface, resampleLoop(outlines.front(), samples),
