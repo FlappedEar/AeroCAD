@@ -132,3 +132,27 @@ TEST_CASE("Fit rejects a selection of separate patches", "[geometry][fit]")
     core::normalizeSelection(two);
     CHECK_THROWS_AS(geometry::fitSurface(mesh, two, {}), geometry::SurfaceFitError);
 }
+
+TEST_CASE("Fit works on a sparse selection", "[geometry][fit]")
+{
+    // 4 x 4 vertices (16, the minimum), planar: the neighbourhood radius adapts.
+    std::vector<core::Vec3> v;
+    for (int j = 0; j < 4; ++j)
+        for (int i = 0; i < 4; ++i)
+            v.push_back({i * 10.0, j * 10.0, 0.1 * i});
+    std::vector<core::TriangleMesh::Triangle> tris;
+    for (std::uint32_t j = 0; j < 3; ++j)
+        for (std::uint32_t i = 0; i < 3; ++i) {
+            tris.push_back({j * 4 + i, j * 4 + i + 1, j * 4 + i + 5});
+            tris.push_back({j * 4 + i, j * 4 + i + 5, j * 4 + i + 4});
+        }
+    const core::TriangleMesh mesh(std::move(v), std::move(tris));
+    core::TriangleSet all(mesh.triangleCount());
+    for (std::uint32_t t = 0; t < all.size(); ++t)
+        all[t] = t;
+    const auto fit = geometry::fitSurface(mesh, all, {});
+    CHECK_FALSE(fit.face.isNull());
+    CHECK(fit.report.meshToSurfaceMax < 0.05);
+    // The smoothed outline may pass a little beyond the open mesh border (10 mm cells).
+    CHECK(fit.report.surfaceToMeshMax < 1.0);
+}

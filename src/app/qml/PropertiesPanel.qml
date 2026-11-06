@@ -11,6 +11,17 @@ Pane {
     property var partId: 0
     property var info: ({})
 
+    /// Number typed in a field: the locale's format (DoubleValidator accepts it), or a
+    /// plain "0.25" (default texts, pasted values). NaN when neither parses.
+    function parseNumber(text) {
+        try {
+            return Number.fromLocaleString(Qt.locale(), text)
+        } catch (e) {
+            const n = Number(String(text).replace(",", "."))
+            return isNaN(n) ? NaN : n
+        }
+    }
+
     function refresh() {
         info = partId ? controller.partInfo(partId) : ({})
     }
@@ -141,7 +152,7 @@ Pane {
                     TextField {
                         id: fitTolerance
                         Layout.preferredWidth: 56
-                        text: "0.25"
+                        text: Number(0.25).toLocaleString(Qt.locale(), "f", 2)
                         validator: DoubleValidator { bottom: 0.001; decimals: 3; notation: DoubleValidator.StandardNotation }
                     }
                     Label { text: qsTr("mm") }
@@ -154,7 +165,7 @@ Pane {
                     ToolTip.delay: 500
                     ToolTip.text: qsTr("Creates a smooth NURBS surface (new part) from the selected area and checks how far it deviates from the mesh")
                     onClicked: {
-                        const tol = Number.fromLocaleString(Qt.locale(), fitTolerance.text)
+                        const tol = root.parseNumber(fitTolerance.text)
                         const r = root.controller.execute("surface.fit_selection",
                                                           { id: root.partId, tolerance: tol > 0 ? tol : 0.25 })
                         if (!r.ok)
@@ -197,7 +208,9 @@ Pane {
                     ToolTip.delay: 500
                     ToolTip.text: qsTr("New surface moved along the normal by this distance (mm, negative: the other side), e.g. a clearance")
                     onClicked: {
-                        const d = Number.fromLocaleString(Qt.locale(), offsetDistance.text)
+                        const d = root.parseNumber(offsetDistance.text)
+                        if (isNaN(d))
+                            return root.controller.showStatus(qsTr("Enter the offset distance in mm"))
                         const r = root.controller.execute("surface.offset", { id: root.partId, distance: d })
                         if (r.ok)
                             root.controller.showStatus(qsTr("Offset surface \"%1\" at %2 mm").arg(r.result.name).arg(d))
@@ -223,7 +236,9 @@ Pane {
                     ToolTip.delay: 500
                     ToolTip.text: qsTr("New closed solid of this thickness (mm) from the surface")
                     onClicked: {
-                        const t = Number.fromLocaleString(Qt.locale(), thickness.text)
+                        const t = root.parseNumber(thickness.text)
+                        if (isNaN(t))
+                            return root.controller.showStatus(qsTr("Enter the thickness in mm"))
                         const side = ["outside", "inside", "both"][thickenSide.currentIndex]
                         const r = root.controller.execute("surface.thicken", { id: root.partId, thickness: t, side: side })
                         if (r.ok)

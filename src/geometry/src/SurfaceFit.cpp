@@ -41,6 +41,7 @@
 #include <cmath>
 #include <functional>
 #include <limits>
+#include <numbers>
 #include <optional>
 #include <unordered_map>
 
@@ -488,6 +489,11 @@ SurfaceFitResult fitSurface(const core::TriangleMesh& mesh, const core::Triangle
     // Each node: moving least squares, a weighted quadratic through the points within 2
     // cells, evaluated at the node. Averages noise without flattening slopes or
     // curvature. Near the border the neighbourhood is one-sided and a plane is used.
+    // Radius: two cells, or larger for sparse points (a forced fine grid, a small
+    // selection) so that a disc holds about 12 points on average.
+    const double sparseRadius =
+        1.3 * std::sqrt(12.0 * spanU * spanV / (std::numbers::pi * static_cast<double>(pts.size())));
+    const double baseRadius = std::max(2.0 * std::max(hu, hv), sparseRadius);
     std::vector<double> heights(static_cast<std::size_t>(nu) * static_cast<std::size_t>(nv), 0.0);
     std::vector<char> known(heights.size(), 0);
     std::size_t covered = 0; // nodes with data all around
@@ -498,7 +504,7 @@ SurfaceFitResult fitSurface(const core::TriangleMesh& mesh, const core::Triangle
         for (int i = 0; i < nu; ++i) {
             const double u = u0 + i * hu;
             const double v = v0 + j * hv;
-            const double r0 = 2.0 * std::max(hu, hv);
+            const double r0 = baseRadius;
             for (double r = r0; r < 2.3 * r0; r *= 1.5) {
                 const bool first = r == r0;
                 std::array<std::array<double, 6>, 6> m{};
@@ -724,7 +730,6 @@ SurfaceFitResult fitSurface(const core::TriangleMesh& mesh, const core::Triangle
     std::unordered_map<Vec3, std::uint32_t, PositionHash> refIndex;
     std::vector<Vec3> refPts;
     std::vector<std::array<double, 3>> refLocal;
-    std::vector<std::vector<std::uint32_t>> refIncident;
     double ru0 = 1e300, ru1 = -1e300, rv0 = 1e300, rv1 = -1e300;
     for (const auto t : reference) {
         for (const auto vi : mesh.triangles()[t]) {
@@ -733,16 +738,38 @@ SurfaceFitResult fitSurface(const core::TriangleMesh& mesh, const core::Triangle
             if (inserted) {
                 refPts.push_back(p);
                 refLocal.push_back(frame.toLocal(p));
-                refIncident.emplace_back();
                 ru0 = std::min(ru0, refLocal.back()[0]);
                 ru1 = std::max(ru1, refLocal.back()[0]);
                 rv0 = std::min(rv0, refLocal.back()[1]);
                 rv1 = std::max(rv1, refLocal.back()[1]);
             }
-            refIncident[it->second].push_back(t);
         }
     }
     const Buckets refBuckets(refLocal, ru0, ru1 + 1e-9, rv0, rv1 + 1e-9, std::clamp(grid, 8, 128));
+    // Reference triangles by their (u, v) bounding boxes.
+    const int triGrid = std::clamp(grid, 8, 128);
+    const double triCellU = std::max(ru1 - ru0, 1e-9) / triGrid;
+    const double triCellV = std::max(rv1 - rv0, 1e-9) / triGrid;
+    auto triCell = [triGrid](double x, double x0, double cell) {
+        return std::clamp(static_cast<int>((x - x0) / cell), 0, triGrid - 1);
+    };
+    std::vector<std::vector<std::uint32_t>> triCells(static_cast<std::size_t>(triGrid * triGrid));
+    for (std::uint32_t k = 0; k < reference.size(); ++k) {
+        const auto& tv = mesh.triangles()[reference[k]];
+        double a0 = 1e300, a1 = -1e300, b0 = 1e300, b1 = -1e300;
+        for (const auto vi : tv) {
+            const auto lp = frame.toLocal(mesh.vertices()[vi]);
+            a0 = std::min(a0, lp[0]);
+            a1 = std::max(a1, lp[0]);
+            b0 = std::min(b0, lp[1]);
+            b1 = std::max(b1, lp[1]);
+        }
+        for (int cj = triCell(b0, rv0, triCellV); cj <= triCell(b1, rv0, triCellV); ++cj)
+            for (int ci = triCell(a0, ru0, triCellU); ci <= triCell(a1, ru0, triCellU); ++ci)
+                triCells[static_cast<std::size_t>(cj * triGrid + ci)].push_back(k);
+    }
+    std::vector<std::uint32_t> triStamp(reference.size(), 0);
+    std::uint32_t stamp = 0;
     const double diag = std::hypot(spanU, spanV);
     BRepMesh_IncrementalMesh mesher(face, std::max(diag * 2e-3, 1e-4), false, 0.3, false);
     TopLoc_Location loc;
@@ -754,20 +781,25 @@ SurfaceFitResult fitSurface(const core::TriangleMesh& mesh, const core::Triangle
             const gp_Pnt p = tri->Node(i).Transformed(loc.Transformation());
             const Vec3 q{p.X(), p.Y(), p.Z()};
             const auto l = frame.toLocal(q);
-            // Distance to the mesh surface: the triangles around the vertices that are at
-            // most as far as the nearest vertex (exact unless triangles are very uneven).
-            double vertexDistance = 0.0;
-            refBuckets.nearest(l[0], l[1], l[2], vertexDistance);
-            double d = vertexDistance;
-            refBuckets.visit(l[0], l[1], vertexDistance, [&](std::uint32_t k) {
-                if ((refPts[k] - q).length() > vertexDistance + 1e-9)
-                    return;
-                for (const auto t : refIncident[k]) {
-                    const auto& tv = mesh.triangles()[t];
-                    d = std::min(d, core::pointTriangleDistance(q, mesh.vertices()[tv[0]], mesh.vertices()[tv[1]],
-                                                                mesh.vertices()[tv[2]]));
+            // Distance to the mesh surface: the nearest vertex bounds it from above; every
+            // triangle that could be closer has its (u, v) box within that bound.
+            double d = 0.0;
+            refBuckets.nearest(l[0], l[1], l[2], d);
+            ++stamp;
+            const int i0 = triCell(l[0] - d, ru0, triCellU), i1 = triCell(l[0] + d, ru0, triCellU);
+            const int j0 = triCell(l[1] - d, rv0, triCellV), j1 = triCell(l[1] + d, rv0, triCellV);
+            for (int cj = j0; cj <= j1; ++cj) {
+                for (int ci = i0; ci <= i1; ++ci) {
+                    for (const auto t : triCells[static_cast<std::size_t>(cj * triGrid + ci)]) {
+                        if (triStamp[t] == stamp)
+                            continue;
+                        triStamp[t] = stamp;
+                        const auto& tv = mesh.triangles()[reference[t]];
+                        d = std::min(d, core::pointTriangleDistance(q, mesh.vertices()[tv[0]], mesh.vertices()[tv[1]],
+                                                                    mesh.vertices()[tv[2]]));
+                    }
                 }
-            });
+            }
             report.surfaceToMeshMax = std::max(report.surfaceToMeshMax, d);
         }
     }
