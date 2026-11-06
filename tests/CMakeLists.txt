@@ -33,5 +33,5 @@ aerocad_add_test(test_commands
     LIBS AeroCAD::commands)
 
 aerocad_add_test(test_cad
-    SOURCES cad/test_design.cpp
+    SOURCES cad/test_design.cpp cad/test_sketch_solver.cpp
     LIBS AeroCAD::cad)
