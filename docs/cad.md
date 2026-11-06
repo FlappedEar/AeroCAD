@@ -74,6 +74,10 @@ stay closed. Shapes keep their implicit constraints: rectangle sides stay horizo
 vertical, polygon sides equal, slot ends tangent. Conflicting constraints are rejected with
 the index of the failing constraint. `degreesOfFreedom` (0 = fully constrained) is returned
 by `sketch.create`, `sketch.add_constraints` and `sketch.curves`.
+`fix` holds points where they are when the constraint is added (`sketch.add_constraints`
+stores the solved positions in `at`; a fixed circle also keeps its radius). Lines that must
+turn far (horizontal on a vertical line, perpendicular on parallel lines) are turned in the
+start guess, so they rotate instead of collapsing.
 
 ```json
 {"name": "sketch.add_constraints", "params": {"sketch": 1, "constraints": [

@@ -4,6 +4,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <cmath>
 #include <numbers>
 
 using namespace aerocad;
@@ -228,4 +229,25 @@ TEST_CASE("Design commands: a slot keeps its shape when dimensioned", "[commands
     // Both ends follow the radius (tangent lines), the length between centres stays free but unchanged.
     const double v = ex.at("bodies")[0].at("volume").get<double>();
     CHECK(v == Approx(pi * 64 + 16 * 30).epsilon(1e-3));
+}
+
+TEST_CASE("Design commands: fixing a dimensioned line keeps its solved position", "[commands][cad][solver]")
+{
+    commands::Session s;
+    const Json sk = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {10, 0}}},
+                                                 {{"type", "circle"}, {"center", {30, 0}}, {"radius", 3}}})},
+                         {"constraints", Json::array({{{"type", "length"}, {"curve", 0}, {"value", 20}},
+                                                      {{"type", "radius"}, {"curve", 1}, {"value", 5}}})}});
+    const auto id = sk.at("id").get<std::uint64_t>();
+    run(s, "sketch.add_constraints",
+        {{"sketch", id}, {"constraints", Json::array({{{"type", "fix"}, {"curves", Json::array({0, 1})}}})}});
+    const Json c = run(s, "sketch.curves", {{"sketch", id}});
+    const double len = std::hypot(
+        c.at("curves")[0].at("points")[1][0].get<double>() - c.at("curves")[0].at("points")[0][0].get<double>(),
+        c.at("curves")[0].at("points")[1][1].get<double>() - c.at("curves")[0].at("points")[0][1].get<double>());
+    CHECK(len == Approx(20));
+    CHECK(c.at("curves")[1].at("radius").get<double>() == Approx(5));
+    CHECK(c.at("degreesOfFreedom") == 0);
 }

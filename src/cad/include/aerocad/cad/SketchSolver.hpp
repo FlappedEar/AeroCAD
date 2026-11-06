@@ -54,6 +54,8 @@ struct SketchConstraint {
     std::vector<std::size_t> curves;
     std::vector<SketchPointRef> points;
     double value = 0.0;
+    /// Fix: positions to hold `points` at (same order). Empty = where they were drawn.
+    std::vector<geometry::Vec2> at = {};
 };
 
 struct SketchSolveResult {

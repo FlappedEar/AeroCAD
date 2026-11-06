@@ -335,6 +335,9 @@ SketchConstraint parseConstraint(const Eval& ev, const Json& j)
     if (has(j, "points"))
         for (const auto& p : j.at("points"))
             c.points.push_back(parsePointRef(p));
+    if (has(j, "at"))
+        for (const auto& p : j.at("at"))
+            c.at.push_back(ev.vec2(p));
     if (isDimension(c.type)) {
         c.value = ev.num(j, "value");
         if (c.type != SketchConstraint::Type::Angle && c.value < 0)

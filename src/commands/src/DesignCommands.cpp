@@ -6,6 +6,8 @@
 
 #include "aerocad/geometry/Modeling.hpp"
 
+#include <cmath>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -127,7 +129,11 @@ Json constraintSchema()
           {"curves", {{"type", "array"}, {"items", {{"type", "integer"}, {"minimum", 0}}}}},
           {"point", constraintPointSchema()},
           {"points", {{"type", "array"}, {"items", constraintPointSchema()}}},
-          {"value", numberOrExpr("Dimension value (mm, or degrees for angle).")}}},
+          {"value", numberOrExpr("Dimension value (mm, or degrees for angle).")},
+          {"at", {{"type", "array"},
+                  {"items", point2("Position.")},
+                  {"description", "fix: positions to hold the points at. sketch.add_constraints fills it with the "
+                                  "current positions."}}}}},
         {"required", {"type"}},
         {"additionalProperties", false}};
 }
@@ -371,6 +377,88 @@ const cad::Feature& sketchFeature(const cad::Design& d, cad::FeatureId id)
     return *f;
 }
 
+/// Centre of a three-point arc (circumcentre), std::nullopt for degenerate arcs.
+std::optional<geometry::Vec2> arcCenter(const geometry::SketchCurve& c)
+{
+    if (c.kind != geometry::SketchCurve::Kind::Arc || c.points.size() != 3)
+        return std::nullopt;
+    const auto& a = c.points[0];
+    const auto& b = c.points[1];
+    const auto& e = c.points[2];
+    const double den = 2 * (a.x * (b.y - e.y) + b.x * (e.y - a.y) + e.x * (a.y - b.y));
+    if (std::abs(den) < 1e-12)
+        return std::nullopt;
+    const double aa = a.x * a.x + a.y * a.y;
+    const double bb = b.x * b.x + b.y * b.y;
+    const double ee = e.x * e.x + e.y * e.y;
+    return geometry::Vec2{(aa * (b.y - e.y) + bb * (e.y - a.y) + ee * (a.y - b.y)) / den,
+                          (aa * (e.x - b.x) + bb * (a.x - e.x) + ee * (b.x - a.x)) / den};
+}
+
+/// Position of a constraint point reference ("origin" or {curve, point}) in solved curves.
+geometry::Vec2 pointPosition(const std::vector<geometry::SketchCurve>& curves, const Json& ref)
+{
+    if (ref.is_string())
+        return {0, 0};
+    const auto i = ref.at("curve").get<std::size_t>();
+    if (i >= curves.size())
+        throw CommandError("No curve " + std::to_string(i) + " in the sketch");
+    const auto& c = curves[i];
+    const std::string which = ref.value("point", std::string("start"));
+    using K = geometry::SketchCurve::Kind;
+    if (which == "center") {
+        if (c.kind == K::Circle)
+            return c.points[0];
+        if (const auto ctr = arcCenter(c))
+            return *ctr;
+    } else if (c.kind != K::Circle && !c.points.empty()) {
+        return which == "end" ? c.points.back() : c.points.front();
+    }
+    throw CommandError("Curve " + std::to_string(i) + " has no point '" + which + "'");
+}
+
+/// A new fix constraint holds the geometry where it is now (after earlier dimensions),
+/// not where it was drawn: curves are expanded to their points and the solved positions
+/// are stored in "at". A fixed circle also keeps its radius.
+Json resolveFix(const std::vector<geometry::SketchCurve>& curves, const Json& c)
+{
+    Json out = Json::array();
+    if (c.value("type", std::string()) != "fix" || c.contains("at")) {
+        out.push_back(c);
+        return out;
+    }
+    Json points = c.value("points", Json::array());
+    if (c.contains("point"))
+        points.push_back(c.at("point"));
+    std::vector<std::size_t> ids;
+    if (c.contains("curve"))
+        ids.push_back(c.at("curve").get<std::size_t>());
+    for (const auto& i : c.value("curves", Json::array()))
+        ids.push_back(i.get<std::size_t>());
+    using K = geometry::SketchCurve::Kind;
+    for (const std::size_t i : ids) {
+        if (i >= curves.size())
+            throw CommandError("No curve " + std::to_string(i) + " in the sketch");
+        const auto& k = curves[i];
+        if (k.kind == K::Circle) {
+            points.push_back({{"curve", i}, {"point", "center"}});
+            out.push_back({{"type", "radius"}, {"curve", i}, {"value", k.radius}});
+        } else {
+            points.push_back({{"curve", i}, {"point", "start"}});
+            points.push_back({{"curve", i}, {"point", "end"}});
+            if (k.kind == K::Arc)
+                points.push_back({{"curve", i}, {"point", "center"}});
+        }
+    }
+    Json at = Json::array();
+    for (const auto& ref : points) {
+        const auto pos = pointPosition(curves, ref);
+        at.push_back(Json::array({pos.x, pos.y}));
+    }
+    out.insert(out.begin(), Json{{"type", "fix"}, {"points", points}, {"at", at}});
+    return out;
+}
+
 // --- Registration -----------------------------------------------------------------------
 
 void registerSketchCommands(CommandRegistry& r)
@@ -457,8 +545,15 @@ void registerSketchCommands(CommandRegistry& r)
               const auto id = params.at("sketch").get<cad::FeatureId>();
               designChange(ctx, "Add Constraint", [&](cad::Design& d) {
                   Json list = sketchFeature(d, id).params.value("constraints", Json::array());
-                  for (const auto& c : params.at("constraints"))
-                      list.push_back(c);
+                  auto solved = d.sketches().find(id);
+                  for (const auto& c : params.at("constraints")) {
+                      if (solved == d.sketches().end()) {
+                          list.push_back(c);
+                          continue;
+                      }
+                      for (const auto& resolved : resolveFix(solved->second.curves, c))
+                          list.push_back(resolved);
+                  }
                   d.editFeature(id, {{"constraints", list}});
                   return Json{};
               });
@@ -518,6 +613,8 @@ void registerSketchCommands(CommandRegistry& r)
                           {"construction", c.construction}};
                   if (c.kind == geometry::SketchCurve::Kind::Circle)
                       cj["radius"] = c.radius;
+                  if (const auto ctr = arcCenter(c))
+                      cj["center"] = Json::array({ctr->x, ctr->y});
                   curves.push_back(cj);
               }
               Json constraints = Json::array();

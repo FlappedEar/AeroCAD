@@ -7,6 +7,7 @@
 #include <functional>
 #include <limits>
 #include <numbers>
+#include <optional>
 #include <utility>
 
 namespace aerocad::cad {
@@ -100,7 +101,7 @@ struct P {
 /// Circle-like curve: centre plus a radius variable (circle) or start point (arc).
 struct Circ {
     P center;
-    P start;                 ///< arcs: radius = |start - center|
+    P start;                  ///< arcs: radius = |start - center|
     std::size_t rvar = kNone; ///< circles
     [[nodiscard]] double radius(const std::vector<double>& x) const
     {
@@ -123,8 +124,7 @@ struct CurveVars {
 
 class Model {
 public:
-    Model(const std::vector<SketchCurve>& curves, const std::vector<SketchConstraint>& constraints)
-        : m_curves(curves)
+    Model(const std::vector<SketchCurve>& curves, const std::vector<SketchConstraint>& constraints) : m_curves(curves)
     {
         buildVariables();
         m_x0 = m_x;
@@ -139,6 +139,7 @@ public:
         }
         for (std::size_t i = 0; i < constraints.size(); ++i)
             addConstraint(i, constraints[i]);
+        preAlign(constraints);
     }
 
     [[nodiscard]] std::size_t variableCount() const { return m_x.size(); }
@@ -389,6 +390,61 @@ private:
         throw ModelingError("Curve " + std::to_string(ref.curve) + " has no such point");
     }
 
+    // --- Start guess -------------------------------------------------------------------
+
+    /// Turning a line by 90 degrees is a singular configuration for the orientation
+    /// residuals (their gradient vanishes, the solver would rather collapse the line).
+    /// Lines whose orientation constraint is far from satisfied are therefore turned
+    /// about their midpoint in the start guess first.
+    void preAlign(const std::vector<SketchConstraint>& constraints)
+    {
+        for (const auto& c : constraints) {
+            std::size_t target = kNone;
+            std::optional<double> angle; // wanted direction of the line `target` (radians)
+            auto dirOf = [this](std::size_t i) {
+                const auto& v = m_vars[i];
+                const Vec2 d = v.pts[1].at(m_x) - v.pts[0].at(m_x);
+                return std::atan2(d.y, d.x);
+            };
+            const bool lines =
+                !c.curves.empty() && std::all_of(c.curves.begin(), c.curves.end(), [this](std::size_t i) {
+                    return i < m_curves.size() && m_curves[i].kind == Kind::Line;
+                });
+            if (!lines)
+                continue;
+            if ((c.type == Type::Horizontal || c.type == Type::Vertical) && c.curves.size() == 1) {
+                target = c.curves[0];
+                angle = c.type == Type::Horizontal ? 0.0 : std::numbers::pi / 2;
+            } else if ((c.type == Type::Parallel || c.type == Type::Perpendicular || c.type == Type::Collinear) &&
+                       c.curves.size() == 2) {
+                target = c.curves[1];
+                angle = dirOf(c.curves[0]) + (c.type == Type::Perpendicular ? std::numbers::pi / 2 : 0.0);
+            }
+            if (target == kNone || !angle)
+                continue;
+            const double current = dirOf(target);
+            // Lines have no direction for these constraints: compare modulo 180 degrees.
+            double delta = std::remainder(*angle - current, std::numbers::pi);
+            if (std::abs(delta) < std::numbers::pi / 6)
+                continue;
+            const auto& v = m_vars[target];
+            const Vec2 a = v.pts[0].at(m_x);
+            const Vec2 b = v.pts[1].at(m_x);
+            const Vec2 mid = (a + b) * 0.5;
+            const double cs = std::cos(delta);
+            const double sn = std::sin(delta);
+            auto turn = [&](P p, Vec2 q) {
+                if (p.var == kNone)
+                    return;
+                const Vec2 d = q - mid;
+                m_x[p.var] = mid.x + cs * d.x - sn * d.y;
+                m_x[p.var + 1] = mid.y + sn * d.x + cs * d.y;
+            };
+            turn(v.pts[0], a);
+            turn(v.pts[1], b);
+        }
+    }
+
     // --- Constraints -------------------------------------------------------------------
 
     void add(std::size_t constraint, std::vector<std::size_t> vars, std::size_t count,
@@ -409,11 +465,11 @@ private:
             throw ModelingError(std::string(toString(c.type)) + " needs " + std::to_string(n) + " curve(s)");
     }
 
-    void fixPoint(std::size_t ci, P p)
+    void fixPoint(std::size_t ci, P p, std::optional<Vec2> target = std::nullopt)
     {
         if (p.var == kNone)
             return;
-        const Vec2 at = p.at(m_x0);
+        const Vec2 at = target ? *target : p.at(m_x0);
         add(ci, varsOf({p}), 2, [p, at](const std::vector<double>& x, double* r) {
             const Vec2 q = p.at(x);
             r[0] = q.x - at.x;
@@ -446,7 +502,9 @@ private:
                     r[0] = len(p.at(x) - k.center.at(x)) - k.radius(x);
                 });
             } else {
-                const auto [a, b] = line(c.curves[0]);
+                const auto sega = line(c.curves[0]);
+                const P a = sega.first;
+                const P b = sega.second;
                 add(ci, varsOf({p, a, b}), 1, [p, a, b](const std::vector<double>& x, double* r) {
                     const Vec2 d = b.at(x) - a.at(x);
                     r[0] = cross(d, p.at(x) - a.at(x)) / safe(len(d));
@@ -458,7 +516,9 @@ private:
             needPoints(c, 1);
             needCurves(c, 1);
             const P p = point(c.points[0]);
-            const auto [a, b] = line(c.curves[0]);
+            const auto sega = line(c.curves[0]);
+            const P a = sega.first;
+            const P b = sega.second;
             add(ci, varsOf({p, a, b}), 2, [p, a, b](const std::vector<double>& x, double* r) {
                 const Vec2 m = (a.at(x) + b.at(x)) * 0.5;
                 r[0] = p.at(x).x - m.x;
@@ -471,7 +531,9 @@ private:
             P a;
             P b;
             if (!c.curves.empty()) {
-                std::tie(a, b) = line(c.curves[0]);
+                const auto seg = line(c.curves[0]);
+                a = seg.first;
+                b = seg.second;
             } else {
                 needPoints(c, 2);
                 a = point(c.points[0]);
@@ -488,8 +550,12 @@ private:
         case Type::Perpendicular:
         case Type::Collinear: {
             needCurves(c, 2);
-            const auto [a1, b1] = line(c.curves[0]);
-            const auto [a2, b2] = line(c.curves[1]);
+            const auto sega1 = line(c.curves[0]);
+            const P a1 = sega1.first;
+            const P b1 = sega1.second;
+            const auto sega2 = line(c.curves[1]);
+            const P a2 = sega2.first;
+            const P b2 = sega2.second;
             const bool perp = c.type == Type::Perpendicular;
             add(ci, varsOf({a1, b1, a2, b2}), 1, [=](const std::vector<double>& x, double* r) {
                 const Vec2 d1 = b1.at(x) - a1.at(x);
@@ -528,8 +594,10 @@ private:
                     r[0] = external ? d - (k.radius(x) + l.radius(x)) : d - s * (k.radius(x) - l.radius(x));
                 });
             } else {
-                const auto [a, b] = line(j);
-                auto signedDist = [k, a = a, b = b](const std::vector<double>& x) {
+                const auto sega = line(j);
+                const P a = sega.first;
+                const P b = sega.second;
+                auto signedDist = [k, a, b](const std::vector<double>& x) {
                     const Vec2 d = b.at(x) - a.at(x);
                     return cross(d, k.center.at(x) - a.at(x)) / safe(len(d));
                 };
@@ -550,8 +618,12 @@ private:
                     vars.push_back(v);
                 add(ci, vars, 1, [k, l](const std::vector<double>& x, double* r) { r[0] = k.radius(x) - l.radius(x); });
             } else {
-                const auto [a1, b1] = line(c.curves[0]);
-                const auto [a2, b2] = line(c.curves[1]);
+                const auto sega1 = line(c.curves[0]);
+                const P a1 = sega1.first;
+                const P b1 = sega1.second;
+                const auto sega2 = line(c.curves[1]);
+                const P a2 = sega2.first;
+                const P b2 = sega2.second;
                 add(ci, varsOf({a1, b1, a2, b2}), 1, [=](const std::vector<double>& x, double* r) {
                     r[0] = len(b1.at(x) - a1.at(x)) - len(b2.at(x) - a2.at(x));
                 });
@@ -574,7 +646,9 @@ private:
             needCurves(c, 1);
             const P p = point(c.points[0]);
             const P q = point(c.points[1]);
-            const auto [a, b] = line(c.curves[0]);
+            const auto sega = line(c.curves[0]);
+            const P a = sega.first;
+            const P b = sega.second;
             add(ci, varsOf({p, q, a, b}), 2, [=](const std::vector<double>& x, double* r) {
                 const Vec2 d = b.at(x) - a.at(x);
                 const Vec2 m = (p.at(x) + q.at(x)) * 0.5;
@@ -586,8 +660,10 @@ private:
         case Type::Fix: {
             if (c.points.empty() && c.curves.empty())
                 throw ModelingError("fix needs points or curves");
-            for (const auto& ref : c.points)
-                fixPoint(ci, point(ref));
+            if (!c.at.empty() && c.at.size() != c.points.size())
+                throw ModelingError("fix: 'at' needs one position per point");
+            for (std::size_t k = 0; k < c.points.size(); ++k)
+                fixPoint(ci, point(c.points[k]), c.at.empty() ? std::nullopt : std::optional<Vec2>(c.at[k]));
             for (const std::size_t i : c.curves) {
                 (void)curve(i);
                 for (const P& p : m_vars[i].pts)
@@ -605,13 +681,14 @@ private:
             const double v = c.value;
             if (c.points.size() >= 2) {
                 const P q = point(c.points[1]);
-                add(ci, varsOf({p, q}), 1, [p, q, v](const std::vector<double>& x, double* r) {
-                    r[0] = len(q.at(x) - p.at(x)) - v;
-                });
+                add(ci, varsOf({p, q}), 1,
+                    [p, q, v](const std::vector<double>& x, double* r) { r[0] = len(q.at(x) - p.at(x)) - v; });
             } else {
                 needCurves(c, 1);
-                const auto [a, b] = line(c.curves[0]);
-                auto signedDist = [p, a = a, b = b](const std::vector<double>& x) {
+                const auto sega = line(c.curves[0]);
+                const P a = sega.first;
+                const P b = sega.second;
+                auto signedDist = [p, a, b](const std::vector<double>& x) {
                     const Vec2 d = b.at(x) - a.at(x);
                     return cross(d, p.at(x) - a.at(x)) / safe(len(d));
                 };
@@ -638,10 +715,12 @@ private:
         }
         case Type::Length: {
             needCurves(c, 1);
-            const auto [a, b] = line(c.curves[0]);
+            const auto sega = line(c.curves[0]);
+            const P a = sega.first;
+            const P b = sega.second;
             const double v = c.value;
             add(ci, varsOf({a, b}), 1,
-                [a = a, b = b, v](const std::vector<double>& x, double* r) { r[0] = len(b.at(x) - a.at(x)) - v; });
+                [a, b, v](const std::vector<double>& x, double* r) { r[0] = len(b.at(x) - a.at(x)) - v; });
             break;
         }
         case Type::Radius:
@@ -654,8 +733,12 @@ private:
         }
         case Type::Angle: {
             needCurves(c, 2);
-            const auto [a1, b1] = line(c.curves[0]);
-            const auto [a2, b2] = line(c.curves[1]);
+            const auto sega1 = line(c.curves[0]);
+            const P a1 = sega1.first;
+            const P b1 = sega1.second;
+            const auto sega2 = line(c.curves[1]);
+            const P a2 = sega2.first;
+            const P b2 = sega2.second;
             auto angle = [=](const std::vector<double>& x) {
                 const Vec2 d1 = b1.at(x) - a1.at(x);
                 const Vec2 d2 = b2.at(x) - a2.at(x);
@@ -886,9 +969,8 @@ SketchSolveResult solveSketch(std::vector<SketchCurve>& curves, const std::vecto
         row += res.count;
         if (bad) {
             result.solved = false;
-            if (res.constraint != kNone &&
-                std::find(result.unsatisfied.begin(), result.unsatisfied.end(), res.constraint) ==
-                    result.unsatisfied.end())
+            if (res.constraint != kNone && std::find(result.unsatisfied.begin(), result.unsatisfied.end(),
+                                                     res.constraint) == result.unsatisfied.end())
                 result.unsatisfied.push_back(res.constraint);
         }
     }

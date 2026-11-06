@@ -174,3 +174,37 @@ TEST_CASE("Solver: malformed constraints throw", "[cad][solver]")
     CHECK_THROWS_AS(constraintType("glue"), geometry::ModelingError);
     CHECK(constraintType("horizontal_distance") == T::HorizontalDistance);
 }
+
+TEST_CASE("Solver: turning a line by 90 degrees does not collapse it", "[cad][solver]")
+{
+    std::vector<SketchCurve> curves{line({0, 0}, {10, 0})};
+    auto r = solveSketch(curves, {{T::Vertical, {0}, {}}});
+    REQUIRE(r.solved);
+    CHECK(length(curves[0]) == Approx(10).epsilon(1e-6));
+    CHECK(curves[0].points[0].x == Approx(curves[0].points[1].x).margin(1e-6));
+
+    curves = {line({0, 0}, {0, 10})};
+    r = solveSketch(curves, {{T::Horizontal, {0}, {}}, {T::Length, {0}, {}, 10}});
+    REQUIRE(r.solved);
+    CHECK(curves[0].points[0].y == Approx(curves[0].points[1].y).margin(1e-6));
+
+    // Perpendicular on parallel lines, and parallel on perpendicular lines.
+    curves = {line({0, 0}, {10, 0}), line({0, 5}, {10, 5})};
+    r = solveSketch(curves, {{T::Perpendicular, {0, 1}, {}}});
+    REQUIRE(r.solved);
+    CHECK(length(curves[1]) == Approx(10).epsilon(1e-6));
+    curves = {line({0, 0}, {10, 0}), line({20, 0}, {20, 10})};
+    r = solveSketch(curves, {{T::Parallel, {0, 1}, {}}});
+    REQUIRE(r.solved);
+    CHECK(length(curves[1]) == Approx(10).epsilon(1e-6));
+}
+
+TEST_CASE("Solver: fix holds explicit positions", "[cad][solver]")
+{
+    std::vector<SketchCurve> curves{line({0, 0}, {10, 0})};
+    SketchConstraint fix{T::Fix, {}, {{PK::Start, 0}, {PK::End, 0}}};
+    fix.at = {{0, 0}, {20, 0}};
+    const auto r = solveSketch(curves, {{T::Length, {0}, {}, 20}, fix});
+    REQUIRE(r.solved);
+    CHECK(curves[0].points[1].x == Approx(20));
+}
