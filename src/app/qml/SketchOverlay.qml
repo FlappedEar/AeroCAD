@@ -8,6 +8,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import AeroCAD
 
 Item {
     id: root
@@ -328,13 +329,13 @@ Item {
                 const a = pts[0], b = pts[1]
                 let text = ""
                 if (root.tool === "line" || root.tool === "arc" || root.tool === "slot")
-                    text = root.dist(a, b).toFixed(2) + " mm"
+                    text = Preferences.formatLength(root.dist(a, b))
                 else if (root.tool === "rectangle")
-                    text = Math.abs(b[0] - a[0]).toFixed(2) + " × " + Math.abs(b[1] - a[1]).toFixed(2) + " mm"
+                    text = Preferences.formatLength(Math.abs(b[0] - a[0])) + " × " + Preferences.formatLength(Math.abs(b[1] - a[1]))
                 else if (root.tool === "circle")
-                    text = "⌀ " + (2 * root.dist(a, b)).toFixed(2) + " mm"
+                    text = "⌀ " + Preferences.formatLength(2 * root.dist(a, b))
                 else if (root.tool === "polygon")
-                    text = "R " + root.dist(a, b).toFixed(2) + " mm"
+                    text = "R " + Preferences.formatLength(root.dist(a, b))
                 ctx.font = "12px sans-serif"
                 ctx.fillStyle = "#123a75"
                 const last = s[s.length - 1]

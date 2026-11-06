@@ -27,8 +27,35 @@ The left button is reserved for selection. The navigation bar's **Orbit**, **Pan
 tools temporarily map left drag to that navigation (useful without a middle button); click the
 tool again to turn it off.
 
-Not implemented yet: Fusion's "orbit around point" (Shift + click + middle drag) and the
-alternative navigation schemes in Fusion's preferences.
+The table is the default (Fusion) scheme. **Edit › Preferences › Mouse** switches the
+middle button to other common schemes; the status bar and Help › Keyboard Shortcuts follow
+the choice:
+
+| Scheme | Orbit | Pan | Zoom |
+|---|---|---|---|
+| Fusion (default) | Shift + middle drag | Middle drag | Wheel |
+| SolidWorks | Middle drag | Ctrl + middle drag | Wheel, Shift + middle drag |
+| Blender | Middle drag | Shift + middle drag | Wheel, Ctrl + middle drag |
+
+On macOS, Ctrl here is the Command key (Qt's mapping). "Reverse zoom direction" flips the
+wheel and drag zoom.
+
+Not implemented yet: Fusion's "orbit around point" (Shift + click + middle drag).
+
+## Preferences
+
+Edit › Preferences (⌘, on macOS; on macOS Qt moves it into the application menu). Changes
+apply immediately and are stored per user (QSettings, organisation "FlappedEar").
+
+- **Length unit**: mm, cm, m or in for displayed lengths (properties panel, sketch
+  dimensions while drawing). Input fields, files and commands always use millimetres.
+- **Theme**: follow the system, light or dark. The 3D view keeps its own background.
+- **Mouse**: navigation scheme, see above.
+- **Autosave**: interval in minutes, or off. Stored as `project/autosaveSeconds`, the key
+  the project autosave reads.
+
+Help › Keyboard Shortcuts (Ctrl+/) lists every menu command with a shortcut, read from
+the menus when it opens, plus the viewport keys and the mouse scheme. It has a search field.
 
 ## ViewCube
 

@@ -16,6 +16,8 @@ set(AEROCAD_APP_SOURCES
     LineGeometry.hpp
     JsonBridge.cpp
     JsonBridge.hpp
+    Preferences.cpp
+    Preferences.hpp
 )
 qt_add_executable(aerocad ${AEROCAD_APP_SOURCES})
 
@@ -36,6 +38,8 @@ qt_add_qml_module(aerocad
         qml/FeatureDialog.qml
         qml/TimelineBar.qml
         qml/ParametersDialog.qml
+        qml/PreferencesDialog.qml
+        qml/ShortcutsDialog.qml
 )
 
 set_target_properties(aerocad PROPERTIES
