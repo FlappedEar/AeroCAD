@@ -39,7 +39,9 @@ jobs:
             qt_arch: clang_64
 
     env:
-      VCPKG_ROOT: ${{ github.workspace }}/../vcpkg
+      # VCPKG_ROOT is set in the "Check out vcpkg" step: ilammy/msvc-dev-cmd exports
+      # VCPKG_ROOT pointing at Visual Studio's bundled vcpkg, which must not be used.
+      AEROCAD_VCPKG_DIR: ${{ github.workspace }}/../vcpkg
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/../vcpkg-cache
 
     steps:
@@ -66,10 +68,12 @@ jobs:
       - name: Check out vcpkg
         shell: bash
         run: |
+          VCPKG_ROOT="$AEROCAD_VCPKG_DIR"
           git clone --filter=tree:0 https://github.com/microsoft/vcpkg.git "$VCPKG_ROOT"
           git -C "$VCPKG_ROOT" checkout "$VCPKG_COMMIT"
           mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
           if [ "$RUNNER_OS" = "Windows" ]; then "$VCPKG_ROOT/bootstrap-vcpkg.bat" -disableMetrics; else "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics; fi
+          echo "VCPKG_ROOT=$VCPKG_ROOT" >> "$GITHUB_ENV"
 
       # Restore and save are separate steps so the (slow) vcpkg build of Open CASCADE is
       # cached as soon as configure succeeds, even if a later build or test step fails.

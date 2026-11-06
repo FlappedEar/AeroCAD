@@ -70,9 +70,8 @@ open build/vcpkg-macos/bin/AeroCAD.app
 
 - **Import:** File > Import (Cmd+O), or drag a file onto the 3D view.
   Formats: STL, OBJ, 3MF, STEP/STP, IGES/IGS, BREP.
-- **Orbit:** left drag. **Pan:** right or middle drag, or Shift + left drag (trackpad:
-  two-finger drag with Shift held, or a click-drag with Shift).
-  **Zoom:** scroll / two-finger swipe, or pinch.
+- **Orbit:** left drag. **Pan:** right or middle drag, or Shift + left drag
+  (on a trackpad: Shift + click-drag). **Zoom:** scroll wheel, two-finger swipe or pinch.
 - **Fit all:** F or double-click. Standard views in the View menu.
 - **Select:** click a part in the view or in the Parts list. The Properties panel
   shows its size and lets you rename, scale or remove it.
