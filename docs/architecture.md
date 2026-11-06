@@ -15,7 +15,8 @@ model                         Document (parts), undo stack, change notifications
 io        geometry            io: import (STL, OBJ, 3MF, STEP, IGES, BREP), export (STL, 3MF, STEP).
   |         |                 geometry: Open CASCADE wrapper (B-rep shapes, tessellation,
 core -------+                 transforms, primitives).
-                              core: math, triangle meshes. No dependencies.
+                              core: math, triangle meshes, mesh repair / decimation /
+                              alignment (docs/scans.md). No dependencies.
 ```
 
 ## Key decisions

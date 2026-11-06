@@ -13,7 +13,7 @@ function(aerocad_add_test name)
 endfunction()
 
 aerocad_add_test(test_core
-    SOURCES core/test_mesh.cpp core/test_selection.cpp core/test_mesh_check.cpp
+    SOURCES core/test_mesh.cpp core/test_selection.cpp core/test_mesh_check.cpp core/test_scan.cpp
     LIBS AeroCAD::core)
 
 aerocad_add_test(test_geometry
@@ -30,7 +30,7 @@ aerocad_add_test(test_model
 
 aerocad_add_test(test_commands
     SOURCES commands/test_commands.cpp commands/test_export_commands.cpp commands/test_design_commands.cpp
-        commands/test_project_commands.cpp
+        commands/test_project_commands.cpp commands/test_scan_commands.cpp
     LIBS AeroCAD::commands)
 
 aerocad_add_test(test_cad
