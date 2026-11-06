@@ -29,9 +29,16 @@ aerocad_add_test(test_model
     LIBS AeroCAD::model)
 
 aerocad_add_test(test_commands
-    SOURCES commands/test_commands.cpp commands/test_design_commands.cpp
+    SOURCES commands/test_commands.cpp commands/test_design_commands.cpp commands/test_simulation_commands.cpp
     LIBS AeroCAD::commands)
 
 aerocad_add_test(test_cad
     SOURCES cad/test_design.cpp
     LIBS AeroCAD::cad)
+
+aerocad_add_test(test_cfd
+    SOURCES cfd/test_cfd.cpp
+    LIBS AeroCAD::cfd)
+# Real OpenFOAM run (needs Docker or a local OpenFOAM; skipped otherwise). Not in CI.
+add_test(NAME cfd_openfoam_wind_tunnel COMMAND test_cfd "[openfoam]")
+set_tests_properties(cfd_openfoam_wind_tunnel PROPERTIES LABELS openfoam TIMEOUT 1500 SKIP_RETURN_CODE 4)

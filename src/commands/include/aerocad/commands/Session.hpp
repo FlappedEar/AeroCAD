@@ -3,6 +3,8 @@
 
 #include "aerocad/commands/CommandRegistry.hpp"
 
+#include <memory>
+
 namespace aerocad::commands {
 
 /// Registers the built-in commands (document.*, part.*, edit.*, commands.list).
@@ -11,11 +13,15 @@ void registerBuiltinCommands(CommandRegistry& registry);
 /// Registers the CAD commands (sketch.*, feature.*, timeline.*, parameter.*, body.*).
 void registerDesignCommands(CommandRegistry& registry);
 
+/// Registers the wind tunnel commands (simulation.*).
+void registerSimulationCommands(CommandRegistry& registry);
+
 /// One open project with its command registry: the single entry point used by the UI
 /// and (later) the MCP server.
 class Session {
 public:
     Session();
+    ~Session();
     Session(const Session&) = delete;
     Session& operator=(const Session&) = delete;
 
@@ -27,6 +33,8 @@ public:
     [[nodiscard]] const model::UndoStack& undoStack() const { return m_undoStack; }
     [[nodiscard]] cad::Design& design() { return m_design; }
     [[nodiscard]] const cad::Design& design() const { return m_design; }
+    /// Simulation runs; stored in cfd::RunManager::defaultRoot().
+    [[nodiscard]] cfd::RunManager& simulations() { return *m_simulations; }
     [[nodiscard]] CommandRegistry& registry() { return m_registry; }
     [[nodiscard]] const CommandRegistry& registry() const { return m_registry; }
 
@@ -35,6 +43,7 @@ private:
     model::UndoStack m_undoStack;
     cad::Design m_design;
     CommandRegistry m_registry;
+    std::unique_ptr<cfd::RunManager> m_simulations;
     CommandContext m_context;
 };
 

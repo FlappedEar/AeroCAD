@@ -6,7 +6,9 @@ app (Qt Quick, QML)          UI: viewport, panels, menus. Calls commands only.
 commands                      Named commands with JSON Schema parameters and JSON
   |                           results, undo/redo. Shared by the UI and (later) the MCP
   |                           server, so an AI agent can do everything the user can.
-model                         Document (parts), undo stack, change notifications.
+model   cfd                   Document (parts), undo stack, change notifications.
+  |                           cfd: wind tunnel (OpenFOAM case generation, background
+  |                           runs, results), see cfd.md.
   |
 io        geometry            io: import (STL, OBJ, 3MF, STEP, IGES, BREP), later export.
   |         |                 geometry: Open CASCADE wrapper (B-rep shapes, tessellation,

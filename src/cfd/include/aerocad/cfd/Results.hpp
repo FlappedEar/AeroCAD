@@ -1,0 +1,74 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#pragma once
+
+#include "aerocad/core/Math.hpp"
+
+#include <nlohmann/json.hpp>
+
+#include <cstdint>
+#include <filesystem>
+#include <map>
+#include <optional>
+#include <string>
+#include <vector>
+
+namespace aerocad::cfd {
+
+using Json = nlohmann::json;
+
+/// A whitespace separated OpenFOAM function object table (`# Time  col1  col2 ...`):
+/// one row per iteration. Columns are looked up by the names in the last header line.
+struct Table {
+    std::vector<std::string> columns; ///< Without the leading "Time".
+    std::vector<double> time;
+    std::vector<std::vector<double>> values; ///< values[column][row]
+
+    [[nodiscard]] const std::vector<double>* column(std::string_view name) const;
+    [[nodiscard]] bool empty() const { return time.empty(); }
+};
+
+/// Reads a table; missing file = empty table. Non-numeric cells (solver names, true/false)
+/// become NaN. Restarted runs append rows with repeated times; the later row wins.
+[[nodiscard]] Table readTable(const std::filesystem::path& path);
+
+/// Legacy ASCII VTK polydata as written by OpenFOAM's surface and set writers.
+struct PolyData {
+    std::vector<core::Vec3> points;
+    std::vector<std::vector<std::uint32_t>> polygons;
+    std::vector<std::vector<std::uint32_t>> lines;
+    std::map<std::string, std::vector<double>, std::less<>> scalars;     ///< Per point.
+    std::map<std::string, std::vector<core::Vec3>, std::less<>> vectors; ///< Per point.
+
+    [[nodiscard]] bool empty() const { return points.empty(); }
+};
+
+/// Throws std::runtime_error on a malformed file.
+[[nodiscard]] PolyData readVtk(const std::filesystem::path& path);
+
+/// Directories that OpenFOAM writes a function object's output into, sorted by time.
+[[nodiscard]] std::vector<std::filesystem::path> timeDirectories(const std::filesystem::path& functionObjectDir);
+
+/// Quality checks of a run (CAD-53).
+struct QualityReport {
+    std::optional<bool> meshOk;          ///< checkMesh verdict, empty when not run yet.
+    std::optional<std::int64_t> cells;   ///< Volume mesh cells.
+    int failedMeshChecks = 0;
+    bool solverConverged = false;        ///< Residual targets reached before the iteration limit.
+    std::optional<double> continuityError; ///< Last "sum local" time step continuity error.
+    std::map<std::string, double> finalResiduals; ///< Initial residual of the last iteration.
+    /// Relative band (max - min) / |mean| of Cd over the last 20 % of the iterations.
+    std::optional<double> cdFluctuation;
+    std::vector<std::string> warnings;
+    /// "ok", "warning" or "unknown" (not enough data).
+    std::string status = "unknown";
+
+    [[nodiscard]] Json toJson() const;
+};
+
+/// Reads the logs and function object output of a case and assesses the run.
+[[nodiscard]] QualityReport assessQuality(const std::filesystem::path& caseDir);
+
+/// Iteration the solver last reported in log.simpleFoam (0 when not started).
+[[nodiscard]] int lastSolverIteration(const std::filesystem::path& caseDir);
+
+} // namespace aerocad::cfd
