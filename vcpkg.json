@@ -1,0 +1,18 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "aerocad",
+  "version": "0.1.0",
+  "description": "Dependencies of AeroCAD except Qt (Qt comes from the Qt installer / aqtinstall).",
+  "license": "GPL-3.0-or-later",
+  "builtin-baseline": "9eec002df1cd109f8f104cd966a763daf9751489",
+  "dependencies": [
+    {
+      "name": "opencascade",
+      "default-features": false
+    },
+    "nlohmann-json",
+    "pugixml",
+    "miniz",
+    "catch2"
+  ]
+}
