@@ -64,6 +64,11 @@ QStringList AppController::importNameFilters() const
     return {tr("3D files (%1)").arg(patterns.join(QLatin1Char(' '))), tr("All files (*)")};
 }
 
+QStringList AppController::exportNameFilters() const
+{
+    return {tr("STL, binary (*.stl)"), tr("3MF (*.3mf)"), tr("STEP (*.step *.stp)")};
+}
+
 QString AppController::version() const
 {
     return QStringLiteral(AEROCAD_VERSION);
@@ -95,6 +100,30 @@ bool AppController::importFile(const QUrl& url)
                               QLocale().toString(data.value(QStringLiteral("triangles")).toLongLong())));
     emit partImported(data.value(QStringLiteral("id")).toULongLong());
     return true;
+}
+
+QVariantMap AppController::exportFile(const QUrl& url, const QVariantList& ids)
+{
+    const QString path = url.isLocalFile() ? url.toLocalFile() : url.toString();
+    QVariantMap params{{QStringLiteral("path"), QDir::toNativeSeparators(path)}};
+    if (!ids.isEmpty())
+        params.insert(QStringLiteral("ids"), ids);
+    const QVariantMap r = execute(QStringLiteral("document.export"), params);
+    if (!r.value(QStringLiteral("ok")).toBool())
+        return {{QStringLiteral("ok"), false}, {QStringLiteral("error"), r.value(QStringLiteral("error"))}};
+
+    const QVariantMap data = r.value(QStringLiteral("result")).toMap();
+    const QVariantList warnings = data.value(QStringLiteral("warnings")).toList();
+    const QString name = QFileInfo(path).fileName();
+    const QString format = data.value(QStringLiteral("format")).toString();
+    const qsizetype count = data.value(QStringLiteral("ids")).toList().size();
+    if (warnings.isEmpty())
+        setStatusMessage(tr("Exported %n part(s) to %1 (%2)", nullptr, static_cast<int>(count)).arg(name, format));
+    else
+        setStatusMessage(tr("Exported %n part(s) to %1 (%2) with %3 mesh warning(s)", nullptr, static_cast<int>(count))
+                             .arg(name, format)
+                             .arg(warnings.size()));
+    return {{QStringLiteral("ok"), true}, {QStringLiteral("warnings"), warnings}};
 }
 
 bool AppController::runScript(const QString& path)

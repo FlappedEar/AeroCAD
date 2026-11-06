@@ -29,6 +29,7 @@ class AppController : public QObject {
     Q_PROPERTY(QString redoText READ redoText NOTIFY historyChanged)
     Q_PROPERTY(QString statusMessage READ statusMessage NOTIFY statusMessageChanged)
     Q_PROPERTY(QStringList importNameFilters READ importNameFilters CONSTANT)
+    Q_PROPERTY(QStringList exportNameFilters READ exportNameFilters CONSTANT)
     Q_PROPERTY(QString version READ version CONSTANT)
 
 public:
@@ -45,12 +46,18 @@ public:
     [[nodiscard]] QString redoText() const;
     [[nodiscard]] QString statusMessage() const { return m_statusMessage; }
     [[nodiscard]] QStringList importNameFilters() const;
+    /// Save dialog filters, one per format, each "<label> (*.ext)".
+    [[nodiscard]] QStringList exportNameFilters() const;
     [[nodiscard]] QString version() const;
 
     /// Runs a command. Returns {ok: bool, result: object} or {ok: false, error: string}.
     Q_INVOKABLE QVariantMap execute(const QString& name, const QVariantMap& params = {});
     /// Convenience wrapper around document.import for file dialogs and drag & drop.
     Q_INVOKABLE bool importFile(const QUrl& url);
+    /// Convenience wrapper around document.export for the save dialog. `ids` empty means
+    /// all visible parts. Returns {ok, error?, warnings: [string]}; the status bar shows
+    /// the outcome.
+    Q_INVOKABLE QVariantMap exportFile(const QUrl& url, const QVariantList& ids = {});
     /// Runs a JSON command script: an array of {"name": ..., "params": {...}} objects (the
     /// same calls an MCP client makes). Stops at the first failing command. Returns false
     /// and sets the status message on errors.
