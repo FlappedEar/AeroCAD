@@ -958,8 +958,13 @@ ApplicationWindow {
             onPointPicked: (id, point) => {
                 const info = window.controller.partInfo(id)
                 if (window.pickingSketchPlane) {
+                    const at = [point.x, point.y, point.z]
                     if (info.kind === "body")
-                        window.createSketch({ face: { body: info.featureId, point: [point.x, point.y, point.z] } })
+                        window.createSketch({ face: { body: info.featureId, point: at } })
+                    else if (info.kind === "imported")
+                        // A fitted surface or a scan: sketch over its best-fit plane, then
+                        // trim the surface with the outline (Properties > Surface).
+                        window.createSketch({ surface: { part: id, point: at } })
                 } else if (featureDialog.visible) {
                     featureDialog.addPick(info, point)
                 }
@@ -1011,11 +1016,20 @@ ApplicationWindow {
                 }
                 ColumnLayout {
                     Label { text: qsTr("Create Sketch"); font.weight: Font.DemiBold; font.pixelSize: Theme.fontTitle }
-                    Label { text: qsTr("Click a planar face of a body, or pick an origin plane:"); color: Theme.textMuted }
+                    Label {
+                        text: qsTr("Click a planar face of a body, a fitted surface or a scan\n(sketch over its best-fit plane), or pick an origin plane:")
+                        color: Theme.textMuted
+                    }
                     RowLayout {
                         Button { text: qsTr("XY (Top)"); onClicked: window.createSketch({ plane: "XY" }) }
                         Button { text: qsTr("XZ (Front)"); onClicked: window.createSketch({ plane: "XZ" }) }
                         Button { text: qsTr("YZ (Right)"); onClicked: window.createSketch({ plane: "YZ" }) }
+                    }
+                    Button {
+                        readonly property var info: window.pickingSketchPlane ? window.selectedInfo() : ({})
+                        visible: (info.selectedTriangles ?? 0) > 0
+                        text: qsTr("Over selection on %1").arg(info.name ?? "")
+                        onClicked: window.createSketch({ surface: { part: window.selectedPartId, useSelection: true } })
                     }
                     Button { text: qsTr("Cancel"); onClicked: window.pickingSketchPlane = false }
                 }

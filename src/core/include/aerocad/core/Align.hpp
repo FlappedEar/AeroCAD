@@ -51,10 +51,19 @@ struct Plane {
     Vec3 normal; ///< Unit normal.
     /// Root mean square distance of the points from the plane (fit quality, mm).
     double rms = 0.0;
+    /// Unit direction of the largest spread of the points, in the plane (the long side
+    /// of a patch), e.g. the X axis of a sketch drawn on it.
+    Vec3 major{1, 0, 0};
 };
 
 /// Fits a plane to at least three non-collinear points. Returns std::nullopt otherwise.
 [[nodiscard]] std::optional<Plane> fitPlane(const std::vector<Vec3>& points);
+
+/// Area-weighted best-fit plane of the given triangles (a surface patch, independent of
+/// how finely it is meshed). rms is the area-weighted RMS distance. std::nullopt when
+/// the triangles have no area or lie along a line.
+[[nodiscard]] std::optional<Plane> fitPlaneToTriangles(const TriangleMesh& mesh,
+                                                       const std::vector<std::size_t>& triangles);
 
 /// Vertices of the given triangles (each vertex once), e.g. for fitting a plane to a
 /// selected region. Out-of-range triangle indices are ignored.

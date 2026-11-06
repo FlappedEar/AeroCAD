@@ -2,6 +2,7 @@
 // surface.*: base surfaces built from a region selection.
 #include "CommandHelpers.hpp"
 
+#include "aerocad/cad/Design.hpp"
 #include "aerocad/geometry/Offset.hpp"
 #include "aerocad/geometry/RegionFit.hpp"
 #include "aerocad/geometry/SurfaceFit.hpp"
@@ -10,6 +11,7 @@
 #include <algorithm>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace aerocad::commands {
 
@@ -189,6 +191,59 @@ void registerSurfaceCommands(CommandRegistry& r)
                                {"sewTolerance", fit.sewTolerance},
                                {"milliseconds", fit.milliseconds}};
               result["warnings"] = fit.warnings;
+              return result;
+          });
+    r.add({"surface.trim_by_sketch", "Trim surface by sketch",
+           "Projects the closed profiles of a sketch onto a curved surface part along the sketch normal and keeps "
+           "the part of the surface inside them (keep: inside, default) or outside, as a new surface part that "
+           "lies exactly on the original surface. Typical use: fit a surface to a scan (surface.fit_selection), "
+           "sketch the outline of a part over it (sketch.create with surface: {part}), trim, then thicken "
+           "(surface.thicken) into a solid that follows the scan, e.g. an aileron or a flap.",
+           objectSchema({{"id", idParam()},
+                         {"sketch", {{"type", "integer"}, {"minimum", 1}, {"description", "Sketch feature id."}}},
+                         {"profiles",
+                          {{"type", "array"},
+                           {"items", {{"type", "integer"}, {"minimum", 0}}},
+                           {"description", "Profile indices (sketch.profiles); default all."}}},
+                         {"keep", {{"type", "string"}, {"enum", {"inside", "outside"}}}},
+                         {"name", {{"type", "string"}, {"description", "Name of the new part."}}}},
+                        {"id", "sketch"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              const model::Part& source = requireSurfacePart(ctx.document, params);
+              if (ctx.design == nullptr)
+                  throw CommandError("No design in this session");
+              const auto sketchId = params.at("sketch").get<cad::FeatureId>();
+              const auto& sketches = ctx.design->sketches();
+              const auto it = sketches.find(sketchId);
+              if (it == sketches.end())
+                  throw CommandError("No evaluated sketch with id " + std::to_string(sketchId));
+              const auto& sk = it->second;
+              std::vector<geometry::Shape> outlines;
+              if (params.contains("profiles")) {
+                  for (const auto& i : params.at("profiles")) {
+                      const auto index = i.get<std::size_t>();
+                      if (index >= sk.geometry.profiles.size())
+                          throw CommandError("Sketch " + sk.name + " has no profile " + std::to_string(index));
+                      outlines.push_back(sk.geometry.profiles[index]);
+                  }
+              } else {
+                  outlines = sk.geometry.profiles;
+              }
+              if (outlines.empty())
+                  throw CommandError("Sketch " + sk.name + " has no closed profile; close the outline first");
+              const std::string keep = params.value("keep", std::string("inside"));
+              geometry::Shape shape;
+              try {
+                  shape = geometry::trimSurface(*source.shape, outlines, sk.plane.normal, keep != "outside");
+              } catch (const geometry::OffsetError& e) {
+                  throw CommandError(e.what());
+              }
+              Json result = addShapePart(ctx, source, shape, params.value("name", source.name + " " + sk.name),
+                                         "surface.trim_by_sketch", "Trim surface");
+              result["area"] = geometry::surfaceArea(shape);
+              result["faces"] = shape.faceCount();
+              result["keep"] = keep;
               return result;
           });
     r.add({"surface.offset", "Offset surface",

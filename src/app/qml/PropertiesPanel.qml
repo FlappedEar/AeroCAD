@@ -22,8 +22,19 @@ Pane {
         }
     }
 
+    /// Sketches with closed profiles, for "Trim by sketch": [{name, featureId}], newest first.
+    property var sketches: []
+
     function refresh() {
         info = partId ? controller.partInfo(partId) : ({})
+        const list = []
+        if (info.hasBrep && info.kind === "imported") {
+            const r = controller.execute("document.parts")
+            for (const p of (r.ok ? r.result.parts : []))
+                if (p.kind === "sketch")
+                    list.unshift({ name: p.name, featureId: p.featureId })
+        }
+        sketches = list
     }
 
     onPartIdChanged: refresh()
@@ -252,6 +263,39 @@ Pane {
                         const r = root.controller.execute("surface.offset", { id: root.partId, distance: d })
                         if (r.ok)
                             root.controller.showStatus(qsTr("Offset surface \"%1\" at %2 mm").arg(r.result.name).arg(d))
+                    }
+                }
+                Label { text: qsTr("Sketch") }
+                ComboBox {
+                    id: trimSketch
+                    Layout.columnSpan: 2
+                    Layout.fillWidth: true
+                    model: root.sketches.map(s => s.name)
+                    // Sketches made after the panel opened (e.g. the outline just drawn).
+                    onPressedChanged: if (pressed) root.refresh()
+                }
+                ComboBox {
+                    id: trimKeep
+                    Layout.preferredWidth: 90
+                    model: [qsTr("Inside"), qsTr("Outside")]
+                }
+                Button {
+                    Layout.columnSpan: 2
+                    Layout.fillWidth: true
+                    enabled: root.sketches.length > 0
+                    text: qsTr("Trim by sketch")
+                    ToolTip.visible: hovered
+                    ToolTip.delay: 500
+                    ToolTip.text: qsTr("Projects the sketch outline onto this curved surface and keeps the part inside (or outside) it, as a new surface; thicken it next")
+                    onClicked: {
+                        const sk = root.sketches[Math.max(0, trimSketch.currentIndex)]
+                        const r = root.controller.execute("surface.trim_by_sketch",
+                                                          { id: root.partId, sketch: sk.featureId,
+                                                            keep: trimKeep.currentIndex === 1 ? "outside" : "inside" })
+                        if (r.ok)
+                            root.controller.showStatus(qsTr("Surface \"%1\": %2 cm² trimmed by %3")
+                                                       .arg(r.result.name).arg((r.result.area / 100).toFixed(2))
+                                                       .arg(sk.name))
                     }
                 }
                 Label { text: qsTr("Thickness") }

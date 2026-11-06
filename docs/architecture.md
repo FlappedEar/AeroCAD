@@ -78,6 +78,15 @@ core -------+                 transforms, primitives).
   the single-face base surfaces); with the solid flag it adds side walls and caps. The
   solid is reversed when it comes out inside out. Offsets larger than the concave radius
   of curvature fail with an error.
+- **Designing on a curved surface** (an aileron or flap on a scanned wing): `sketch.create`
+  with `surface: {part}` puts the sketch on the area-weighted best-fit plane
+  (`core::fitPlaneToTriangles`) of the part's selection, of the area around the clicked
+  point (a scan) or of the whole fitted surface, normal the way the surface faces, X
+  along its long side, lifted to its highest point. The plane is only a drawing base:
+  `surface.trim_by_sketch` (`geometry::trimSurface`) sweeps the closed profiles both
+  ways along the sketch normal into prisms and keeps the common part (or the cut) of
+  the surface, so the result lies exactly on the original curved surface. Thicken it
+  into the solid.
 
 ## Not yet decided / next steps
 

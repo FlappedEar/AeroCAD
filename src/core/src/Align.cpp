@@ -116,22 +116,11 @@ void symmetricEigen(double a[3][3], double values[3], double v[3][3])
 
 } // namespace
 
-std::optional<Plane> fitPlane(const std::vector<Vec3>& points)
-{
-    if (points.size() < 3)
-        return std::nullopt;
-    Vec3 c;
-    for (const auto& p : points)
-        c = c + p;
-    c = c * (1.0 / static_cast<double>(points.size()));
+namespace {
 
-    double cov[3][3] = {{0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
-    for (const auto& p : points) {
-        const double d[3] = {p.x - c.x, p.y - c.y, p.z - c.z};
-        for (int i = 0; i < 3; ++i)
-            for (int j = 0; j < 3; ++j)
-                cov[i][j] += d[i] * d[j];
-    }
+/// Plane from the (weighted) covariance of a point distribution about its centroid.
+std::optional<Plane> planeFromCovariance(double cov[3][3], const Vec3& centroid, double weight)
+{
     double values[3];
     double vectors[3][3];
     symmetricEigen(cov, values, vectors);
@@ -151,10 +140,72 @@ std::optional<Plane> fitPlane(const std::vector<Vec3>& points)
         return std::nullopt;
 
     Plane plane;
-    plane.origin = c;
+    plane.origin = centroid;
     plane.normal = Vec3{vectors[0][smallest], vectors[1][smallest], vectors[2][smallest]}.normalized();
-    plane.rms = std::sqrt(std::max(0.0, values[smallest]) / static_cast<double>(points.size()));
+    plane.rms = std::sqrt(std::max(0.0, values[smallest]) / weight);
+    plane.major = Vec3{vectors[0][largest], vectors[1][largest], vectors[2][largest]}.normalized();
     return plane;
+}
+
+} // namespace
+
+std::optional<Plane> fitPlane(const std::vector<Vec3>& points)
+{
+    if (points.size() < 3)
+        return std::nullopt;
+    Vec3 c;
+    for (const auto& p : points)
+        c = c + p;
+    c = c * (1.0 / static_cast<double>(points.size()));
+
+    double cov[3][3] = {{0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
+    for (const auto& p : points) {
+        const double d[3] = {p.x - c.x, p.y - c.y, p.z - c.z};
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j)
+                cov[i][j] += d[i] * d[j];
+    }
+    return planeFromCovariance(cov, c, static_cast<double>(points.size()));
+}
+
+std::optional<Plane> fitPlaneToTriangles(const TriangleMesh& mesh, const std::vector<std::size_t>& triangles)
+{
+    // Area-weighted, so the result does not depend on how finely each part is meshed.
+    double total = 0.0;
+    Vec3 c;
+    const auto& v = mesh.vertices();
+    for (const std::size_t t : triangles) {
+        if (t >= mesh.triangleCount())
+            continue;
+        const auto& tri = mesh.triangles()[t];
+        const double a = 0.5 * (v[tri[1]] - v[tri[0]]).cross(v[tri[2]] - v[tri[0]]).length();
+        total += a;
+        c = c + (v[tri[0]] + v[tri[1]] + v[tri[2]]) * (a / 3.0);
+    }
+    if (!(total > 0.0))
+        return std::nullopt;
+    c = c * (1.0 / total);
+    // Exact second moment of each triangle about c: A/12 (sum d_i d_i^T + 9 g g^T),
+    // with d_i the corners and g the triangle's centroid relative to c.
+    double cov[3][3] = {{0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
+    for (const std::size_t t : triangles) {
+        if (t >= mesh.triangleCount())
+            continue;
+        const auto& tri = mesh.triangles()[t];
+        const Vec3 d[3] = {v[tri[0]] - c, v[tri[1]] - c, v[tri[2]] - c};
+        const double a = 0.5 * (d[1] - d[0]).cross(d[2] - d[0]).length();
+        const Vec3 g = (d[0] + d[1] + d[2]) * (1.0 / 3.0);
+        auto add = [&](const Vec3& p, double w) {
+            const double q[3] = {p.x, p.y, p.z};
+            for (int i = 0; i < 3; ++i)
+                for (int j = 0; j < 3; ++j)
+                    cov[i][j] += w * q[i] * q[j];
+        };
+        for (const auto& p : d)
+            add(p, a / 12.0);
+        add(g, 9.0 * a / 12.0);
+    }
+    return planeFromCovariance(cov, c, total);
 }
 
 std::vector<Vec3> triangleVertices(const TriangleMesh& mesh, const std::vector<std::size_t>& triangles)

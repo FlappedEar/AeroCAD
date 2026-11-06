@@ -4,8 +4,11 @@
 // restores the previous timeline state.
 #include "aerocad/commands/Session.hpp"
 
+#include "aerocad/core/Align.hpp"
+#include "aerocad/core/MeshSelection.hpp"
 #include "aerocad/geometry/Modeling.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <optional>
 #include <string>
@@ -335,6 +338,102 @@ Json addedFeature(cad::Design& d, const model::Document& doc, cad::FeatureId id)
     return j;
 }
 
+Json surfaceRefSchema()
+{
+    return Json{
+        {"type", "object"},
+        {"description",
+         "Sketch over a curved part (a fitted surface or a scanned mesh): the sketch plane is the best-fit plane "
+         "of {part}'s region selection when it has one, else of the area within `radius` of `point` (a scan), "
+         "else of the whole part (a fitted surface). The plane's normal points the way the surface faces, its "
+         "X axis along the long side of the area, and it sits just above the area so the whole outline is "
+         "visible. Project the outline back onto the curved surface with surface.trim_by_sketch. The resolved "
+         "plane is stored, so the sketch does not move when the part changes."},
+        {"properties",
+         {{"part", {{"type", "integer"}, {"minimum", 1}, {"description", "Part id (document.parts)."}}},
+          {"point", point3("Clicked point on the part.")},
+          {"radius",
+           {{"type", "number"},
+            {"exclusiveMinimum", 0},
+            {"description", "Size of the area around `point` (mm). Default: a tenth of the part's size."}}},
+          {"useSelection", {{"type", "boolean"}, {"description", "Use the region selection (default when set)."}}}}},
+        {"required", {"part"}},
+        {"additionalProperties", false}};
+}
+
+/// The sketch plane over (an area of) a curved part, see surfaceRefSchema. Returns the
+/// plane object for the sketch params plus a short report.
+std::pair<Json, Json> surfaceSketchPlane(const model::Document& doc, const Json& ref)
+{
+    const auto partId = ref.at("part").get<model::PartId>();
+    const model::Part* part = doc.part(partId);
+    if (part == nullptr)
+        throw CommandError("No part with id " + std::to_string(partId));
+    if (part->kind == model::PartKind::Sketch)
+        throw CommandError("Part " + std::to_string(partId) + " is a sketch");
+    if (!part->mesh || part->mesh->triangleCount() == 0)
+        throw CommandError("Part " + std::to_string(partId) + " has no surface");
+    const core::TriangleMesh& mesh = *part->mesh;
+
+    std::vector<std::size_t> triangles;
+    std::string area;
+    const bool hasSelection = part->selection && !part->selection->empty();
+    if (ref.value("useSelection", hasSelection) && hasSelection) {
+        triangles.assign(part->selection->begin(), part->selection->end());
+        area = "selection";
+    } else if (ref.contains("point") && !part->shape) {
+        // A scan: only the area around the click. A fitted surface is used whole.
+        const auto& pt = ref.at("point");
+        const core::Vec3 point{pt.at(0).get<double>(), pt.at(1).get<double>(), pt.at(2).get<double>()};
+        const double radius = ref.value("radius", std::max(mesh.bounds().diagonal() * 0.1, 1e-3));
+        const core::MeshAdjacency adjacency(mesh);
+        for (const auto t : core::selectBrushDab(mesh, &adjacency, point, radius))
+            triangles.push_back(t);
+        area = "area around the point";
+    } else {
+        triangles.resize(mesh.triangleCount());
+        for (std::size_t i = 0; i < triangles.size(); ++i)
+            triangles[i] = i;
+        area = "whole part";
+    }
+    const auto points = core::triangleVertices(mesh, triangles);
+    const auto fit = core::fitPlaneToTriangles(mesh, triangles);
+    if (!fit)
+        throw CommandError("The " + area + " of part " + std::to_string(partId) +
+                           " is too small or flat in one direction to fit a sketch plane");
+
+    // Orient the normal the way the triangles face (area-weighted average normal).
+    core::Vec3 facing;
+    for (const std::size_t t : triangles) {
+        const auto& tri = mesh.triangles()[t];
+        const auto& v = mesh.vertices();
+        facing = facing + (v[tri[1]] - v[tri[0]]).cross(v[tri[2]] - v[tri[0]]);
+    }
+    core::Vec3 normal = fit->normal;
+    if (facing.dot(normal) < 0.0)
+        normal = normal * -1.0;
+    // Lift the plane to the highest point of the area, so no part of the outline hides
+    // under the surface.
+    double top = 0.0;
+    for (const auto& p : points)
+        top = std::max(top, (p - fit->origin).dot(normal));
+    const core::Vec3 origin = fit->origin + normal * top;
+    core::Vec3 xDir = fit->major - normal * fit->major.dot(normal);
+    if (xDir.length() < 1e-9)
+        xDir = std::abs(normal.z) < 0.9 ? core::Vec3{0, 0, 1}.cross(normal) : core::Vec3{1, 0, 0};
+    xDir = xDir.normalized();
+
+    Json plane{{"origin", Json::array({origin.x, origin.y, origin.z})},
+               {"normal", Json::array({normal.x, normal.y, normal.z})},
+               {"xDir", Json::array({xDir.x, xDir.y, xDir.z})}};
+    Json report{{"part", partId},
+                {"area", area},
+                {"triangles", triangles.size()},
+                {"rms", fit->rms},
+                {"height", top}};
+    return {plane, report};
+}
+
 /// Copies the command params into feature params, without the command-only keys.
 Json featureParams(const Json& params)
 {
@@ -524,26 +623,41 @@ Json resolveFix(const std::vector<geometry::SketchCurve>& curves, const Json& c)
 void registerSketchCommands(CommandRegistry& r)
 {
     r.add({"sketch.create", "Create Sketch",
-           "Creates a 2D sketch on a standard plane, an arbitrary plane or a planar face of a body, with curves "
+           "Creates a 2D sketch on a standard plane, an arbitrary plane, a planar face of a body or over a curved "
+           "surface or scan (surface: best-fit plane), with curves "
            "(lines, rectangles, circles, arcs, polygons, slots, splines). Closed regions become profiles for "
            "extrude/revolve. Dimensions can be expressions using user parameters (parameter.set), so editing a "
            "parameter updates the model.",
            objectSchema({{"plane", planeSchema()},
                          {"face", faceRefSchema()},
+                         {"surface", surfaceRefSchema()},
                          {"offset", numberOrExpr("Offset of the plane along its normal (mm).")},
                          {"curves", curvesSchema()},
                          {"constraints", constraintsSchema()},
                          {"name", {{"type", "string"}, {"description", "Optional name, default SketchN."}}}}),
            true},
           [](CommandContext& ctx, const Json& params) {
-              if (params.contains("plane") && params.contains("face"))
-                  throw CommandError("Give either plane or face, not both");
+              const int refs = static_cast<int>(params.contains("plane")) + static_cast<int>(params.contains("face")) +
+                               static_cast<int>(params.contains("surface"));
+              if (refs > 1)
+                  throw CommandError("Give one of plane, face or surface");
+              Json feature = featureParams(params);
+              Json surfaceReport;
+              if (params.contains("surface")) {
+                  auto [plane, report] = surfaceSketchPlane(ctx.document, params.at("surface"));
+                  feature.erase("surface");
+                  feature["plane"] = std::move(plane);
+                  surfaceReport = std::move(report);
+              }
               cad::FeatureId id = 0;
               designChange(ctx, "Create Sketch", [&](cad::Design& d) {
-                  id = d.addFeature("sketch", featureParams(params), params.value("name", std::string()));
+                  id = d.addFeature("sketch", feature, params.value("name", std::string()));
                   return Json{};
               });
-              return addedFeature(design(ctx), ctx.document, id);
+              Json result = addedFeature(design(ctx), ctx.document, id);
+              if (!surfaceReport.is_null())
+                  result["surface"] = surfaceReport;
+              return result;
           });
 
     r.add({"sketch.add_curves", "Add Sketch Curves", "Appends curves to an existing sketch.",
