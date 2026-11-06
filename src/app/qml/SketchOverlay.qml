@@ -329,13 +329,13 @@ Item {
                 const a = pts[0], b = pts[1]
                 let text = ""
                 if (root.tool === "line" || root.tool === "arc" || root.tool === "slot")
-                    text = Preferences.formatLength(root.dist(a, b))
+                    text = Preferences.formatLength(root.dist(a, b), Preferences.lengthUnit)
                 else if (root.tool === "rectangle")
-                    text = Preferences.formatLength(Math.abs(b[0] - a[0])) + " × " + Preferences.formatLength(Math.abs(b[1] - a[1]))
+                    text = Preferences.formatLength(Math.abs(b[0] - a[0]), Preferences.lengthUnit) + " × " + Preferences.formatLength(Math.abs(b[1] - a[1]), Preferences.lengthUnit)
                 else if (root.tool === "circle")
-                    text = "⌀ " + Preferences.formatLength(2 * root.dist(a, b))
+                    text = "⌀ " + Preferences.formatLength(2 * root.dist(a, b), Preferences.lengthUnit)
                 else if (root.tool === "polygon")
-                    text = "R " + Preferences.formatLength(root.dist(a, b))
+                    text = "R " + Preferences.formatLength(root.dist(a, b), Preferences.lengthUnit)
                 ctx.font = "12px sans-serif"
                 ctx.fillStyle = "#123a75"
                 const last = s[s.length - 1]

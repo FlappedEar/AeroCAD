@@ -54,11 +54,11 @@ Pane {
                 }
             }
             Label { text: qsTr("Size X"); opacity: 0.7 }
-            Label { text: Preferences.formatLength(Number(root.info.sizeX ?? 0)) }
+            Label { text: Preferences.formatLength(Number(root.info.sizeX ?? 0), Preferences.lengthUnit) }
             Label { text: qsTr("Size Y"); opacity: 0.7 }
-            Label { text: Preferences.formatLength(Number(root.info.sizeY ?? 0)) }
+            Label { text: Preferences.formatLength(Number(root.info.sizeY ?? 0), Preferences.lengthUnit) }
             Label { text: qsTr("Size Z"); opacity: 0.7 }
-            Label { text: Preferences.formatLength(Number(root.info.sizeZ ?? 0)) }
+            Label { text: Preferences.formatLength(Number(root.info.sizeZ ?? 0), Preferences.lengthUnit) }
             Label { text: qsTr("Triangles"); opacity: 0.7 }
             Label { text: Number(root.info.triangles ?? 0).toLocaleString(Qt.locale(), "f", 0) }
             Label { text: qsTr("Exact (B-rep)"); opacity: 0.7 }

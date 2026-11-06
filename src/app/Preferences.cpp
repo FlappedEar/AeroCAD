@@ -210,14 +210,15 @@ double Preferences::fromDisplay(double value) const
     return value * millimetresPer(m_lengthUnit);
 }
 
-QString Preferences::formatLength(double mm, int decimals) const
+QString Preferences::formatLength(double mm, const QString& unit, int decimals) const
 {
+    const QString u = millimetresPer(unit) > 0.0 ? unit : m_lengthUnit;
+    const double per = millimetresPer(u);
     if (decimals < 0) {
         // About 0.01 mm resolution in every unit.
-        const double per = millimetresPer(m_lengthUnit);
         decimals = std::clamp(static_cast<int>(std::ceil(std::log10(per / 0.01))), 0, 6);
     }
-    return QLocale().toString(toDisplay(mm), 'f', decimals) + QLatin1Char(' ') + lengthSymbol();
+    return QLocale().toString(mm / per, 'f', decimals) + QLatin1Char(' ') + u;
 }
 
 QString Preferences::shortcutText(const QVariant& shortcut)

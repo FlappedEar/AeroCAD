@@ -65,9 +65,11 @@ public:
     /// Millimetres to the display unit and back.
     Q_INVOKABLE [[nodiscard]] double toDisplay(double mm) const;
     Q_INVOKABLE [[nodiscard]] double fromDisplay(double value) const;
-    /// "12.50 mm", "1.25 cm", "0.492 in": value in the display unit with its symbol.
-    /// decimals < 0 picks a precision suited to the unit.
-    Q_INVOKABLE [[nodiscard]] QString formatLength(double mm, int decimals = -1) const;
+    /// "12.50 mm", "1.25 cm", "0.492 in": value in `unit` (empty = the display unit) with
+    /// its symbol. decimals < 0 picks a precision suited to the unit.
+    /// QML bindings pass Preferences.lengthUnit so they re-evaluate when the unit changes:
+    /// `Preferences.formatLength(size, Preferences.lengthUnit)`.
+    Q_INVOKABLE [[nodiscard]] QString formatLength(double mm, const QString& unit = QString(), int decimals = -1) const;
 
     /// Human-readable shortcut, as shown in menus on this platform (e.g. "⌘O" on macOS).
     /// Accepts a QKeySequence::StandardKey value or a key sequence string.
