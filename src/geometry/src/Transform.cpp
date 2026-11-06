@@ -15,7 +15,7 @@ Shape apply(const Shape& shape, const gp_Trsf& trsf)
 {
     if (shape.isNull())
         return shape;
-    BRepBuilderAPI_Transform op(shape.impl()->shape, trsf, Standard_True);
+    BRepBuilderAPI_Transform op(shape.impl()->shape, trsf, true);
     return wrapShape(op.Shape());
 }
 } // namespace

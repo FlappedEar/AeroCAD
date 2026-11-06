@@ -24,12 +24,12 @@ core::TriangleMesh tessellate(const Shape& shape, const TessellationParams& para
     const TopoDS_Shape& s = shape.impl()->shape;
     const double diag = shape.bounds().diagonal();
     const double linear = std::max(diag * params.relativeLinearDeflection, 1e-4);
-    BRepMesh_IncrementalMesh mesher(s, linear, Standard_False, params.angularDeflection, Standard_True);
+    BRepMesh_IncrementalMesh mesher(s, linear, false, params.angularDeflection, true);
 
     for (TopExp_Explorer ex(s, TopAbs_FACE); ex.More(); ex.Next()) {
         const TopoDS_Face& face = TopoDS::Face(ex.Current());
         TopLoc_Location loc;
-        const Handle(Poly_Triangulation) tri = BRep_Tool::Triangulation(face, loc);
+        const opencascade::handle<Poly_Triangulation> tri = BRep_Tool::Triangulation(face, loc);
         if (tri.IsNull())
             continue;
 
@@ -37,12 +37,12 @@ core::TriangleMesh tessellate(const Shape& shape, const TessellationParams& para
         const bool reversed = face.Orientation() == TopAbs_REVERSED;
         const auto base = static_cast<std::uint32_t>(mesh.vertexCount());
 
-        for (Standard_Integer i = 1; i <= tri->NbNodes(); ++i) {
+        for (int i = 1; i <= tri->NbNodes(); ++i) {
             const gp_Pnt p = tri->Node(i).Transformed(trsf);
             mesh.addVertex({p.X(), p.Y(), p.Z()});
         }
-        for (Standard_Integer i = 1; i <= tri->NbTriangles(); ++i) {
-            Standard_Integer n1 = 0, n2 = 0, n3 = 0;
+        for (int i = 1; i <= tri->NbTriangles(); ++i) {
+            int n1 = 0, n2 = 0, n3 = 0;
             tri->Triangle(i).Get(n1, n2, n3);
             if (reversed)
                 std::swap(n2, n3);
