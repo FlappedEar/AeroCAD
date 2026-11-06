@@ -368,7 +368,8 @@ QString AppController::autosavePath() const
 
 bool AppController::autosaveNow()
 {
-    if (!m_session.project().dirty())
+    // Saving ends a live feature preview; try again on the next tick instead.
+    if (!m_session.project().dirty() || m_session.previewActive())
         return false;
     const QString target = autosavePath();
     if (!QDir().mkpath(autosaveDir()))

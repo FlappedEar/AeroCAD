@@ -5,6 +5,7 @@
 #include "aerocad/core/Path.hpp"
 #include "aerocad/project/ProjectFile.hpp"
 
+#include <algorithm>
 #include <filesystem>
 #include <map>
 #include <set>
@@ -67,12 +68,12 @@ project::ProjectData snapshot(CommandContext& ctx)
     // the live document parts, which are newer.
     std::map<cad::FeatureId, project::TimelinePart> timeline;
     for (const auto& info : ctx.design->partInfos())
-        timeline[info.feature] = {info.feature, std::nullopt, info.part, info.name, info.visible};
+        timeline[info.feature] = {info.feature, std::nullopt, info.part, info.name, info.visible, nullptr};
     for (const auto& part : ctx.document.parts()) {
         if (part.kind == model::PartKind::Imported)
             data.parts.push_back(part);
         else
-            timeline[part.featureId] = {part.featureId, part.kind, part.id, part.name, part.visible};
+            timeline[part.featureId] = {part.featureId, part.kind, part.id, part.name, part.visible, part.selection};
     }
     for (auto& [_, t] : timeline)
         data.timelineParts.push_back(std::move(t));
@@ -92,12 +93,25 @@ void applyProject(CommandContext& ctx, project::ProjectData data)
     ctx.document.clear();
     for (auto& part : data.parts)
         ctx.document.addPart(std::move(part));
+    std::vector<std::pair<model::PartId, std::shared_ptr<const core::TriangleSet>>> selections;
     for (auto& t : data.timelineParts) {
         ctx.document.reserveIds(t.id); // also ids of parts that are not regenerated now
+        if (t.selection)
+            selections.emplace_back(t.id, t.selection);
         d.setPartInfo(t.feature, t.id, std::move(t.name), t.visible);
     }
     d.restore(std::move(data.design));
     d.syncDocument(ctx.document);
+    // Region selections on regenerated parts: indices are kept only while they fit the
+    // regenerated mesh (same rule as Design::syncDocument when geometry changes).
+    for (auto& [id, selection] : selections) {
+        const model::Part* part = ctx.document.part(id);
+        if (part == nullptr || !part->mesh)
+            continue;
+        const std::size_t n = part->mesh->triangleCount();
+        if (std::all_of(selection->begin(), selection->end(), [n](std::uint32_t t) { return t < n; }))
+            ctx.document.modifyPart(id, [&](model::Part& p) { p.selection = selection; });
+    }
     ProjectState& p = projectState(ctx);
     p.variants = std::move(data.variants);
     p.view = std::move(data.view);

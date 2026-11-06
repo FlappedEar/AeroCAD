@@ -15,13 +15,14 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
-#include <cstdint>
 #include <vector>
 
 namespace aerocad::project {
@@ -48,6 +49,8 @@ struct TimelinePart {
     model::PartId id = 0;
     std::string name;
     bool visible = true;
+    /// Region selection on the regenerated part; restored only if the indices still fit.
+    std::shared_ptr<const core::TriangleSet> selection;
 };
 
 /// Everything a project file holds.

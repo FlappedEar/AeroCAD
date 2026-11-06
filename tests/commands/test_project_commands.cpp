@@ -282,6 +282,21 @@ TEST_CASE("Names of suppressed bodies survive save and open", "[commands][projec
     CHECK(bodyPart(u, box)->id != partId);
 }
 
+TEST_CASE("Region selections on bodies survive save and open", "[commands][project]")
+{
+    TempDir dir;
+    commands::Session s;
+    const auto bodyFeature = buildBlock(s);
+    const auto partId = bodyPart(s, bodyFeature)->id;
+    run(s, "selection.set", {{"id", partId}, {"triangles", {0, 1}}});
+    run(s, "project.save", {{"path", dir.file("sel.aerocad")}});
+
+    commands::Session t;
+    run(t, "project.open", {{"path", dir.file("sel.aerocad")}});
+    REQUIRE(bodyPart(t, bodyFeature)->selection);
+    CHECK(*bodyPart(t, bodyFeature)->selection == core::TriangleSet{0, 1});
+}
+
 TEST_CASE("Imported parts can be duplicated", "[commands][project]")
 {
     commands::Session s;

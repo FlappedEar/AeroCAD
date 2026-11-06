@@ -168,6 +168,11 @@ std::string encodeProject(const ProjectData& data)
         Json j{{"feature", t.feature}, {"id", t.id}, {"name", t.name}, {"visible", t.visible}};
         if (t.kind)
             j["kind"] = kindName(*t.kind);
+        if (t.selection && !t.selection->empty()) {
+            const std::string entry = "selections/timeline-" + std::to_string(t.id) + ".u32";
+            blobs.emplace_back(entry, encodeIndices(*t.selection));
+            j["selection"] = entry;
+        }
         timelineParts.push_back(std::move(j));
     }
 
@@ -281,6 +286,10 @@ ProjectData decodeImpl(std::string_view bytes)
         t.id = field<model::PartId>(j, "id", "timeline part");
         t.name = j.value("name", "");
         t.visible = j.value("visible", true);
+        if (j.contains("selection")) {
+            t.selection = std::make_shared<const core::TriangleSet>(
+                decodeIndices(zip.read(field<std::string>(j, "selection", "timeline part"))));
+        }
         if (t.kind == model::PartKind::Imported || t.id == 0)
             throw ProjectError("Invalid timeline part " + std::to_string(t.id));
         if (!ids.insert(t.id).second)

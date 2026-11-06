@@ -96,7 +96,7 @@ TEST_CASE("Project data round-trips through the file format", "[project]")
     part.shape = geometry::makeBox(10, 20, 30);
     part.selection = std::make_shared<const core::TriangleSet>(core::TriangleSet{1, 3});
     data.parts.push_back(part);
-    data.timelineParts.push_back({3, model::PartKind::Body, 9, "Wing", true});
+    data.timelineParts.push_back({3, model::PartKind::Body, 9, "Wing", true, nullptr});
     data.design.features.push_back({3, "box", "Box1", {{"corner", {0, 0, 0}}, {"size", {"w", 1, 1}}}, false});
     data.design.parameters.push_back({"w", "12 mm", "span"});
     data.design.frames.push_back({"Scan frame", {1, 2, 3}, {0, 0, 1}, {1, 0, 0}, "from scan"});
