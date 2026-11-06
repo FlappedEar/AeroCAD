@@ -291,7 +291,15 @@ TEST_CASE("Fit a surface to a selection and undo it", "[commands][fit]")
     CHECK(r.data.at("hasBrep") == true);
     CHECK(r.data.at("fit").at("withinTolerance") == true);
     CHECK(r.data.at("fit").at("meshToSurfaceMax").get<double>() < 0.1);
+    CHECK(r.data.at("fit").at("method") == "unfold");
+    CHECK(r.data.at("fit").at("holes") == 0);
     CHECK(session.document().partCount() == 2);
+    // The plane method on request; anything else is refused by the schema.
+    auto plane = session.execute("surface.fit_selection", {{"id", id}, {"tolerance", 0.1}, {"method", "plane"}});
+    REQUIRE(plane.ok);
+    CHECK(plane.data.at("fit").at("method") == "plane");
+    CHECK_FALSE(session.execute("surface.fit_selection", {{"id", id}, {"method", "cylinder"}}).ok);
+    REQUIRE(session.execute("edit.undo").ok);
 
     REQUIRE(session.execute("edit.undo").ok);
     CHECK(session.document().partCount() == 1);

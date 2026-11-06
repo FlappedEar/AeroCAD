@@ -60,6 +60,12 @@ void registerSurfaceCommands(CommandRegistry& r)
                   {"minimum", 4},
                   {"maximum", 200},
                   {"description", "Resampling grid nodes along the longer side. Default: from the point count."}}},
+                {"method",
+                 {{"type", "string"},
+                  {"enum", {"auto", "plane", "unfold"}},
+                  {"description", "unfold: region flattened by a conformal map, any amount of wrap (mirror "
+                                  "housings, long curved strips), needs a simple sheet; plane: height field over "
+                                  "the best-fit plane, no folds; auto (default): unfold, else plane."}}},
                 {"name", {{"type", "string"}, {"description", "Name of the new part."}}}},
                {"id"}),
            true},
@@ -71,6 +77,10 @@ void registerSurfaceCommands(CommandRegistry& r)
               geometry::SurfaceFitOptions options;
               options.tolerance = params.value("tolerance", options.tolerance);
               options.gridSize = params.value("gridSize", options.gridSize);
+              const std::string method = params.value("method", std::string("auto"));
+              options.method = method == "plane"    ? geometry::SurfaceFitMethod::Plane
+                               : method == "unfold" ? geometry::SurfaceFitMethod::Unfold
+                                                    : geometry::SurfaceFitMethod::Auto;
               geometry::SurfaceFitResult fit;
               try {
                   fit = geometry::fitSurface(*source.mesh, *source.selection, options);
@@ -100,6 +110,8 @@ void registerSurfaceCommands(CommandRegistry& r)
                                {"withinTolerance", rep.withinTolerance},
                                {"poles", {rep.uPoles, rep.vPoles}},
                                {"trimmed", rep.trimmed},
+                               {"holes", rep.holes},
+                               {"method", rep.method},
                                {"milliseconds", rep.milliseconds}};
               result["warnings"] = rep.warnings;
               return result;

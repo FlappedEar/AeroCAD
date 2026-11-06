@@ -107,7 +107,9 @@ double surfaceArea(const Shape& shape)
     if (shape.isNull())
         return 0.0;
     GProp_GProps props;
-    BRepGProp::SurfaceProperties(shape.impl()->shape, props);
+    // Adaptive integration: the fixed Gauss rule is off by several % on faces trimmed by
+    // long polylines in parameter space.
+    BRepGProp::SurfaceProperties(shape.impl()->shape, props, 1e-6);
     return props.Mass();
 }
 
