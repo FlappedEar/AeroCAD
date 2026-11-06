@@ -430,6 +430,60 @@ std::vector<std::vector<std::uint32_t>> borderLoops(const std::vector<std::array
     return loops;
 }
 
+/// Flips triangles so that neighbours run along their shared edge in opposite
+/// directions (STL files are often wound inconsistently). Throws for a non-orientable
+/// patch. Each edge-connected part keeps the winding of its first triangle.
+void orientConsistently(std::vector<std::array<std::uint32_t, 3>>& tris)
+{
+    auto key = [](std::uint32_t a, std::uint32_t b) {
+        return (static_cast<std::uint64_t>(std::min(a, b)) << 32) | std::max(a, b);
+    };
+    std::unordered_map<std::uint64_t, std::vector<std::uint32_t>> byEdge;
+    for (std::uint32_t t = 0; t < tris.size(); ++t)
+        for (int s = 0; s < 3; ++s)
+            byEdge[key(tris[t][static_cast<std::size_t>(s)], tris[t][static_cast<std::size_t>((s + 1) % 3)])].push_back(
+                t);
+    // True when triangle t runs from a to b.
+    auto runs = [&](std::uint32_t t, std::uint32_t a, std::uint32_t b) {
+        for (int s = 0; s < 3; ++s)
+            if (tris[t][static_cast<std::size_t>(s)] == a && tris[t][static_cast<std::size_t>((s + 1) % 3)] == b)
+                return true;
+        return false;
+    };
+    std::vector<char> done(tris.size(), 0);
+    std::vector<std::uint32_t> stack;
+    for (std::uint32_t start = 0; start < tris.size(); ++start) {
+        if (done[start] != 0)
+            continue;
+        done[start] = 1;
+        stack.push_back(start);
+        while (!stack.empty()) {
+            const auto t = stack.back();
+            stack.pop_back();
+            for (int s = 0; s < 3; ++s) {
+                const auto a = tris[t][static_cast<std::size_t>(s)], b = tris[t][static_cast<std::size_t>((s + 1) % 3)];
+                const auto& sharing = byEdge[key(a, b)];
+                if (sharing.size() != 2)
+                    continue; // border or non-manifold (reported by sheetLoops)
+                for (const auto nb : sharing) {
+                    if (nb == t)
+                        continue;
+                    const bool same = runs(nb, a, b); // same direction: inconsistent
+                    if (done[nb] != 0) {
+                        if (same)
+                            throw SurfaceFitError("The selection is not orientable (like a Moebius strip)");
+                        continue;
+                    }
+                    if (same)
+                        std::swap(tris[nb][1], tris[nb][2]);
+                    done[nb] = 1;
+                    stack.push_back(nb);
+                }
+            }
+        }
+    }
+}
+
 /// Border loops of a welded patch, or an error when it is not a simple sheet.
 std::vector<std::vector<std::uint32_t>> sheetLoops(const std::vector<std::array<std::uint32_t, 3>>& tris,
                                                    const std::vector<Vec3>& pos)
@@ -456,8 +510,10 @@ std::vector<std::vector<std::uint32_t>> sheetLoops(const std::vector<std::array<
 }
 
 /// Vertex clustering on a cubic grid of `cell` mm: vertices in one cell merge (at their
-/// mean), collapsed and repeated triangles are dropped.
-void clusterVertices(std::vector<Vec3>& pos, std::vector<std::array<std::uint32_t, 3>>& tris, double cell)
+/// mean), collapsed and repeated triangles are dropped. Vertices flagged in `keep` are not
+/// merged.
+void clusterVertices(std::vector<Vec3>& pos, std::vector<std::array<std::uint32_t, 3>>& tris, double cell,
+                     const std::vector<char>& keep)
 {
     std::unordered_map<std::uint64_t, std::uint32_t> clusterOf;
     std::vector<std::uint32_t> remap(pos.size());
@@ -467,7 +523,8 @@ void clusterVertices(std::vector<Vec3>& pos, std::vector<std::array<std::uint32_
         auto c = [&](double x) {
             return static_cast<std::uint64_t>(static_cast<std::int64_t>(std::floor(x / cell)) + (1 << 20)) & 0x1FFFFF;
         };
-        const std::uint64_t key = c(pos[i].x) << 42 | c(pos[i].y) << 21 | c(pos[i].z);
+        // Kept vertices (the border) stay exactly where they are, each its own cluster.
+        const std::uint64_t key = keep[i] != 0 ? (1ull << 63) | i : c(pos[i].x) << 42 | c(pos[i].y) << 21 | c(pos[i].z);
         const auto [it, inserted] = clusterOf.try_emplace(key, static_cast<std::uint32_t>(sum.size()));
         if (inserted) {
             sum.push_back({0.0, 0.0, 0.0});
@@ -525,6 +582,7 @@ Unfolded unfoldPatch(const core::TriangleMesh& mesh, const core::TriangleSet& se
             continue; // degenerate
         u.triangles.push_back(local);
     }
+    orientConsistently(u.triangles);
     auto loops = sheetLoops(u.triangles, u.positions);
 
     // Large selections are unfolded on a coarser copy (the fit needs far fewer points
@@ -536,7 +594,12 @@ Unfolded unfoldPatch(const core::TriangleMesh& mesh, const core::TriangleSet& se
             area += 0.5 * (u.positions[t[1]] - u.positions[t[0]]).cross(u.positions[t[2]] - u.positions[t[0]]).length();
         auto pos = u.positions;
         auto tris = u.triangles;
-        clusterVertices(pos, tris, std::sqrt(area / static_cast<double>(maxVertices)));
+        // The border stays exact: neighbouring patches share it when sewn.
+        std::vector<char> border(pos.size(), 0);
+        for (const auto& loop : loops)
+            for (const auto v : loop)
+                border[v] = 1;
+        clusterVertices(pos, tris, std::sqrt(area / static_cast<double>(maxVertices)), border);
         try {
             auto coarseLoops = sheetLoops(tris, pos);
             if (coarseLoops.size() == loops.size()) {
@@ -945,13 +1008,17 @@ Handle(Geom_BSplineSurface) fitUnfolded(const Unfolded& u, double spacing, int m
     return new Geom_BSplineSurface(poles, uk, vk, um, vm, 3, 3);
 }
 
-/// Closed 2D polyline edge on `surface` through `uv` (parameter space), as a wire, or a
-/// null wire. `counterClockwise` selects the orientation; `smoothing` Taubin steps.
+/// Closed 2D polyline on `surface` through `uv` (parameter space), as a wire, or a null
+/// wire. `counterClockwise` selects the orientation; `smoothing` Taubin steps. Points
+/// flagged in `corners` (same size as `uv`, or empty) start a new edge, so neighbouring
+/// faces can share edges when sewn.
 TopoDS_Wire uvWire(const Handle(Geom_BSplineSurface) & surface, std::vector<gp_Pnt2d> uv, double tolerance,
-                   bool counterClockwise, int smoothing)
+                   bool counterClockwise, int smoothing, std::vector<char> corners = {})
 {
-    if (uv.size() < 4)
+    if (uv.size() < 3)
         return {};
+    if (corners.size() != uv.size())
+        corners.assign(uv.size(), 0);
     // Light smoothing of the staircase that mesh border edges make. Taubin's lambda/mu
     // steps, so the outline does not shrink the way plain Laplacian smoothing does.
     for (int iter = 0; iter < smoothing; ++iter) {
@@ -960,8 +1027,9 @@ TopoDS_Wire uvWire(const Handle(Geom_BSplineSurface) & surface, std::vector<gp_P
         for (std::size_t i = 0; i < uv.size(); ++i) {
             const gp_Pnt2d& a = uv[(i + uv.size() - 1) % uv.size()];
             const gp_Pnt2d& b = uv[(i + 1) % uv.size()];
-            s[i] = gp_Pnt2d(uv[i].X() + w * (0.5 * (a.X() + b.X()) - uv[i].X()),
-                            uv[i].Y() + w * (0.5 * (a.Y() + b.Y()) - uv[i].Y()));
+            s[i] = corners[i] != 0 ? uv[i]
+                                   : gp_Pnt2d(uv[i].X() + w * (0.5 * (a.X() + b.X()) - uv[i].X()),
+                                              uv[i].Y() + w * (0.5 * (a.Y() + b.Y()) - uv[i].Y()));
         }
         uv = std::move(s);
     }
@@ -971,41 +1039,67 @@ TopoDS_Wire uvWire(const Handle(Geom_BSplineSurface) & surface, std::vector<gp_P
         const gp_Pnt2d& b = uv[(i + 1) % uv.size()];
         area += a.X() * b.Y() - b.X() * a.Y();
     }
-    if ((area < 0.0) == counterClockwise)
+    if ((area < 0.0) == counterClockwise) {
         std::reverse(uv.begin(), uv.end());
-
-    // Closed degree-1 B-spline through the points (a polyline as one edge).
-    const int n = static_cast<int>(uv.size()) + 1;
-    TColgp_Array1OfPnt2d poles(1, n);
-    TColStd_Array1OfReal knots(1, n);
-    TColStd_Array1OfInteger mults(1, n);
-    for (int i = 1; i <= n; ++i) {
-        poles(i) = uv[static_cast<std::size_t>((i - 1) % (n - 1))];
-        knots(i) = i - 1;
-        mults(i) = (i == 1 || i == n) ? 2 : 1;
+        std::reverse(corners.begin(), corners.end());
     }
-    Handle(Geom2d_BSplineCurve) curve = new Geom2d_BSplineCurve(poles, knots, mults, 1);
-    TopoDS_Edge edge = BRepBuilderAPI_MakeEdge(curve, surface);
-    BRepLib::BuildCurves3d(edge, std::max(tolerance * 0.1, 1e-5));
-    BRepBuilderAPI_MakeWire wire(edge);
+
+    // Start at a corner; each run of points up to the next corner is one degree-1
+    // B-spline edge (a polyline), the whole loop one edge without corners.
+    const std::size_t count = uv.size();
+    std::size_t start = 0;
+    while (start < count && corners[start] == 0)
+        ++start;
+    if (start == count)
+        start = 0;
+    std::vector<std::vector<gp_Pnt2d>> runs{{uv[start]}};
+    for (std::size_t k = 1; k <= count; ++k) {
+        const std::size_t i = (start + k) % count;
+        runs.back().push_back(uv[i]);
+        if (k < count && corners[i] != 0)
+            runs.push_back({uv[i]});
+    }
+    BRepBuilderAPI_MakeWire wire;
+    for (const auto& run : runs) {
+        if (run.size() < 2)
+            continue;
+        const int n = static_cast<int>(run.size());
+        TColgp_Array1OfPnt2d poles(1, n);
+        TColStd_Array1OfReal knots(1, n);
+        TColStd_Array1OfInteger mults(1, n);
+        for (int i = 1; i <= n; ++i) {
+            poles(i) = run[static_cast<std::size_t>(i - 1)];
+            knots(i) = i - 1;
+            mults(i) = (i == 1 || i == n) ? 2 : 1;
+        }
+        Handle(Geom2d_BSplineCurve) curve = new Geom2d_BSplineCurve(poles, knots, mults, 1);
+        TopoDS_Edge edge = BRepBuilderAPI_MakeEdge(curve, surface);
+        BRepLib::BuildCurves3d(edge, std::max(tolerance * 0.1, 1e-5));
+        wire.Add(edge);
+        if (!wire.IsDone())
+            return {};
+    }
     return wire.IsDone() ? wire.Wire() : TopoDS_Wire{};
 }
 
 /// uvWire() through the projections of `loop` (points near the surface).
 TopoDS_Wire loopWire(const Handle(Geom_BSplineSurface) & surface, const std::vector<Vec3>& loop, double tolerance,
-                     bool counterClockwise, int smoothing)
+                     bool counterClockwise, int smoothing, const std::vector<char>& corners = {})
 {
     GeomAPI_ProjectPointOnSurf projector;
     std::vector<gp_Pnt2d> uv;
-    for (const auto& p : loop) {
+    std::vector<char> kept;
+    for (std::size_t i = 0; i < loop.size(); ++i) {
+        const auto& p = loop[i];
         projector.Init(gp_Pnt(p.x, p.y, p.z), surface);
         if (projector.NbPoints() == 0)
             continue;
         double u = 0.0, v = 0.0;
         projector.LowerDistanceParameters(u, v);
         uv.emplace_back(u, v);
+        kept.push_back(i < corners.size() ? corners[i] : 0);
     }
-    return uvWire(surface, std::move(uv), tolerance, counterClockwise, smoothing);
+    return uvWire(surface, std::move(uv), tolerance, counterClockwise, smoothing, std::move(kept));
 }
 
 /// Valid face on `surface` bounded by the outer `wire`, or a null face.
@@ -1308,22 +1402,47 @@ SurfaceFitResult fitSurface(const core::TriangleMesh& mesh, const core::Triangle
         // Trim to the outer outline of the selection and cut the holes; fall back to the
         // whole fit rectangle.
         std::vector<TopoDS_Wire> holeWires;
-        auto uvLoop = [&](const std::vector<std::uint32_t>& loop) {
-            // Two samples per border edge, so the smoothing only rounds the staircase.
-            std::vector<Vec3> flat;
-            for (const auto id : loop)
+        // Exact mesh border (no smoothing) with corners where neighbouring patches meet,
+        // for sewing; else a smoothed, resampled outline.
+        const int smoothing = std::max(0, options.outlineSmoothing);
+        std::unordered_map<Vec3, char, PositionHash> cornerSet;
+        for (const auto& c : options.outlineCorners)
+            cornerSet.emplace(c, 1);
+        auto cornersOf = [&](const std::vector<Vec3>& loop) {
+            std::vector<char> flags(loop.size(), 0);
+            for (std::size_t i = 0; i < loop.size(); ++i)
+                flags[i] = cornerSet.count(loop[i]) != 0 ? 1 : 0;
+            return flags;
+        };
+        auto uvLoopWire = [&](const std::vector<std::uint32_t>& loop, bool outer) {
+            std::vector<Vec3> flat, at;
+            for (const auto id : loop) {
                 flat.push_back({unfolded->uv[id][0], unfolded->uv[id][1], 0.0});
+                at.push_back(unfolded->positions[id]);
+            }
+            std::vector<char> corners;
+            if (smoothing > 0) // two samples per border edge, so smoothing only rounds the staircase
+                flat = resampleLoop(flat, std::clamp<std::size_t>(2 * loop.size(), 32, 4000));
+            else
+                corners = cornersOf(at);
             std::vector<gp_Pnt2d> uv;
-            for (const auto& p : resampleLoop(flat, std::clamp<std::size_t>(2 * loop.size(), 32, 4000)))
+            for (const auto& p : flat)
                 uv.emplace_back(p.x, p.y);
-            return uv;
+            return uvWire(surface, std::move(uv), options.tolerance, outer, smoothing, std::move(corners));
+        };
+        auto meshLoopWire = [&](const std::vector<Vec3>& loop, bool outer, std::size_t minSamples,
+                                std::size_t maxSamples) {
+            if (smoothing == 0)
+                return loopWire(surface, loop, options.tolerance, outer, 0, cornersOf(loop));
+            const std::size_t samples = std::clamp<std::size_t>(loop.size(), minSamples, maxSamples);
+            return loopWire(surface, resampleLoop(loop, samples), options.tolerance, outer, smoothing);
         };
         try {
             if (unfolded) {
-                face = faceFromWire(surface, uvWire(surface, uvLoop(unfolded->outer), options.tolerance, true, 6));
+                face = faceFromWire(surface, uvLoopWire(unfolded->outer, true));
                 if (!face.IsNull())
                     for (const auto& hole : unfolded->holes)
-                        holeWires.push_back(uvWire(surface, uvLoop(hole), options.tolerance, false, 6));
+                        holeWires.push_back(uvLoopWire(hole, false));
             } else {
                 auto outlines = selectionOutlines(mesh, adjacency, selection);
                 // The outer outline encloses the largest area over the plane (a wiggly
@@ -1340,17 +1459,11 @@ SurfaceFitResult fitSurface(const core::TriangleMesh& mesh, const core::Triangle
                 for (std::size_t k = 1; k < outlines.size(); ++k)
                     if (enclosed(outlines[k]) > enclosed(outlines.front()))
                         std::swap(outlines[k], outlines.front());
-                if (!outlines.empty()) {
-                    const std::size_t samples = std::clamp<std::size_t>(outlines.front().size(), 16, 2000);
-                    face = faceFromWire(surface, loopWire(surface, resampleLoop(outlines.front(), samples),
-                                                          options.tolerance, true, 6));
-                }
+                if (!outlines.empty())
+                    face = faceFromWire(surface, meshLoopWire(outlines.front(), true, 16, 2000));
                 // The selection is one connected patch, so every other loop is a hole.
-                for (std::size_t k = 1; !face.IsNull() && k < outlines.size(); ++k) {
-                    const std::size_t samples = std::clamp<std::size_t>(outlines[k].size(), 8, 1000);
-                    holeWires.push_back(
-                        loopWire(surface, resampleLoop(outlines[k], samples), options.tolerance, false, 6));
-                }
+                for (std::size_t k = 1; !face.IsNull() && k < outlines.size(); ++k)
+                    holeWires.push_back(meshLoopWire(outlines[k], false, 8, 1000));
             }
         } catch (const Standard_Failure&) {
             face.Nullify();

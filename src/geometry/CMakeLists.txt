@@ -9,6 +9,7 @@ add_library(aerocad_geometry STATIC
     src/Sketch.cpp
     src/Modeling.cpp
     src/SurfaceFit.cpp
+    src/RegionFit.cpp
     src/Offset.cpp
 )
 add_library(AeroCAD::geometry ALIAS aerocad_geometry)

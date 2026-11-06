@@ -32,6 +32,12 @@ struct SurfaceFitOptions {
     /// side; 0 picks one from the point count and mesh resolution.
     int gridSize = 0;
     SurfaceFitMethod method = SurfaceFitMethod::Auto;
+    /// Taubin smoothing steps for the outline (the staircase of mesh border edges). 0
+    /// keeps the exact mesh border, so neighbouring patches can be sewn.
+    int outlineSmoothing = 6;
+    /// Mesh vertex positions on the outline where the boundary is split into separate
+    /// edges (where neighbouring patches meet). Used with outlineSmoothing 0.
+    std::vector<core::Vec3> outlineCorners;
 };
 
 /// Fit quality, both ways: mesh to surface catches a surface that misses the mesh,

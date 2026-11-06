@@ -5,6 +5,7 @@
 #include <cmath>
 #include <functional>
 #include <limits>
+#include <map>
 #include <numbers>
 #include <unordered_map>
 
@@ -478,6 +479,122 @@ TriangleSet selectInLasso(const TriangleMesh& mesh, const ViewParams& view,
         }
         out.push_back(static_cast<std::uint32_t>(t));
     }
+    return out;
+}
+
+std::vector<TriangleSet> segmentSmoothRegions(const TriangleMesh& mesh, const MeshAdjacency& adjacency,
+                                              const TriangleSet& selection, double creaseAngleDeg, double minArea)
+{
+    const std::size_t count = mesh.triangleCount();
+    if (adjacency.triangleCount() != count)
+        return {};
+    constexpr std::int64_t outside = -1, unlabelled = -2;
+    std::vector<std::int64_t> label(count, selection.empty() ? unlabelled : outside);
+    for (const auto t : selection)
+        if (t < count)
+            label[t] = unlabelled;
+
+    // Flood fill per region, orienting normals by edge traversal as selectSmoothRegion does.
+    const double creaseCos = cosDeg(creaseAngleDeg);
+    std::vector<Vec3> oriented(count);
+    std::vector<char> flipped(count, 0);
+    std::vector<double> regionArea;
+    std::vector<std::uint32_t> stack;
+    for (std::uint32_t seed = 0; seed < count; ++seed) {
+        if (label[seed] != unlabelled)
+            continue;
+        const auto id = static_cast<std::int64_t>(regionArea.size());
+        regionArea.push_back(0.0);
+        label[seed] = id;
+        oriented[seed] = mesh.faceNormal(seed);
+        stack.push_back(seed);
+        while (!stack.empty()) {
+            const std::uint32_t t = stack.back();
+            stack.pop_back();
+            const auto& tri = mesh.triangles()[t];
+            const auto& v = mesh.vertices();
+            regionArea.back() += 0.5 * (v[tri[1]] - v[tri[0]]).cross(v[tri[2]] - v[tri[0]]).length();
+            for (int slot = 0; slot < 3; ++slot) {
+                const std::uint32_t nb = adjacency.neighbours(t)[static_cast<std::size_t>(slot)];
+                if (nb == MeshAdjacency::none || label[nb] != unlabelled)
+                    continue;
+                const bool nbFlipped = (flipped[t] != 0) != adjacency.windingFlipped(t, slot);
+                Vec3 nn = mesh.faceNormal(nb);
+                if (nbFlipped)
+                    nn = nn * -1.0;
+                if (oriented[t].dot(nn) < creaseCos)
+                    continue;
+                label[nb] = id;
+                oriented[nb] = nn;
+                flipped[nb] = nbFlipped ? 1 : 0;
+                stack.push_back(nb);
+            }
+        }
+    }
+
+    // Merge small regions (noise, thin chamfers) into the neighbour sharing most edges,
+    // smallest first; repeated while merges grow regions past the size limit of others.
+    std::vector<std::int64_t> parent(regionArea.size());
+    for (std::size_t r = 0; r < parent.size(); ++r)
+        parent[r] = static_cast<std::int64_t>(r);
+    auto find = [&](std::int64_t r) {
+        while (parent[static_cast<std::size_t>(r)] != r)
+            r = parent[static_cast<std::size_t>(r)] =
+                parent[static_cast<std::size_t>(parent[static_cast<std::size_t>(r)])];
+        return r;
+    };
+    for (bool merged = true; merged;) {
+        merged = false;
+        // Shared edge counts between current regions.
+        std::map<std::pair<std::int64_t, std::int64_t>, int> shared;
+        for (std::uint32_t t = 0; t < count; ++t) {
+            if (label[t] < 0)
+                continue;
+            const auto a = find(label[t]);
+            for (const auto nb : adjacency.neighbours(t)) {
+                if (nb == MeshAdjacency::none || label[nb] < 0)
+                    continue;
+                const auto b = find(label[nb]);
+                if (a != b)
+                    ++shared[{a, b}];
+            }
+        }
+        std::vector<std::int64_t> order;
+        for (std::size_t r = 0; r < parent.size(); ++r)
+            if (find(static_cast<std::int64_t>(r)) == static_cast<std::int64_t>(r) && regionArea[r] < minArea)
+                order.push_back(static_cast<std::int64_t>(r));
+        std::sort(order.begin(), order.end(), [&](auto x, auto y) {
+            return regionArea[static_cast<std::size_t>(x)] < regionArea[static_cast<std::size_t>(y)];
+        });
+        for (const auto r : order) {
+            if (find(r) != r)
+                continue;
+            std::int64_t best = -1;
+            int bestCount = 0;
+            for (auto it = shared.lower_bound({r, std::numeric_limits<std::int64_t>::min()});
+                 it != shared.end() && it->first.first == r; ++it) {
+                const auto b = find(it->first.second);
+                if (b != r && it->second > bestCount) {
+                    bestCount = it->second;
+                    best = b;
+                }
+            }
+            if (best < 0)
+                continue;
+            parent[static_cast<std::size_t>(r)] = best;
+            regionArea[static_cast<std::size_t>(best)] += regionArea[static_cast<std::size_t>(r)];
+            merged = true; // counts are per original region pair; find() maps them
+        }
+    }
+
+    std::map<std::int64_t, TriangleSet> regions;
+    for (std::uint32_t t = 0; t < count; ++t)
+        if (label[t] >= 0)
+            regions[find(label[t])].push_back(t);
+    std::vector<TriangleSet> out;
+    for (auto& [r, tris] : regions)
+        out.push_back(std::move(tris));
+    std::sort(out.begin(), out.end(), [](const auto& x, const auto& y) { return x.size() > y.size(); });
     return out;
 }
 

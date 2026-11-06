@@ -327,3 +327,49 @@ TEST_CASE("Fit a surface to a selection and undo it", "[commands][fit]")
     REQUIRE(session.execute("edit.undo").ok);
     CHECK(session.document().partCount() == 3);
 }
+
+TEST_CASE("Fit surfaces to a whole mesh gives a solid part", "[commands][fit]")
+{
+    commands::Session session;
+    // 30 x 20 x 10 mm box, 8 x 8 cells per face.
+    std::vector<core::Vec3> v;
+    std::vector<core::TriangleMesh::Triangle> t;
+    auto face = [&](core::Vec3 o, core::Vec3 a, core::Vec3 b) {
+        const auto base = static_cast<std::uint32_t>(v.size());
+        for (int j = 0; j <= 8; ++j)
+            for (int i = 0; i <= 8; ++i)
+                v.push_back(o + a * (i / 8.0) + b * (j / 8.0));
+        auto id = [base](int i, int j) { return base + static_cast<std::uint32_t>(j * 9 + i); };
+        for (int j = 0; j < 8; ++j)
+            for (int i = 0; i < 8; ++i) {
+                t.push_back({id(i, j), id(i + 1, j), id(i + 1, j + 1)});
+                t.push_back({id(i, j), id(i + 1, j + 1), id(i, j + 1)});
+            }
+    };
+    face({0, 0, 0}, {0, 20, 0}, {30, 0, 0});
+    face({0, 0, 10}, {30, 0, 0}, {0, 20, 0});
+    face({0, 0, 0}, {30, 0, 0}, {0, 0, 10});
+    face({0, 20, 0}, {0, 0, 10}, {30, 0, 0});
+    face({0, 0, 0}, {0, 0, 10}, {0, 20, 0});
+    face({30, 0, 0}, {0, 20, 0}, {0, 0, 10});
+    model::Part scan;
+    scan.name = "Scan";
+    scan.mesh = std::make_shared<const core::TriangleMesh>(core::TriangleMesh(std::move(v), std::move(t)));
+    const auto id = session.document().addPart(scan);
+
+    CHECK_FALSE(session.execute("surface.fit_regions", {{"id", id}, {"useSelection", true}}).ok); // none
+    auto r = session.execute("surface.fit_regions", {{"id", id}});
+    INFO(r.toJson().dump());
+    REQUIRE(r.ok);
+    CHECK(r.data.at("fit").at("solid") == true);
+    CHECK(r.data.at("fit").at("faces") == 6);
+    CHECK(r.data.at("fit").at("volume").get<double>() == Approx(6000.0).epsilon(0.001));
+    CHECK(r.data.at("fit").at("withinTolerance") == true);
+    CHECK(r.data.at("hasBrep") == true);
+    CHECK(session.document().partCount() == 2);
+    // The solid can become a timeline body.
+    CHECK(session.execute("feature.base_body", {{"part", r.data.at("id")}}).ok);
+    REQUIRE(session.execute("edit.undo").ok);
+    REQUIRE(session.execute("edit.undo").ok);
+    CHECK(session.document().partCount() == 1);
+}

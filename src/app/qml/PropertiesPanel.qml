@@ -193,6 +193,33 @@ Pane {
                         root.controller.showStatus(msg)
                     }
                 }
+                Button {
+                    Layout.fillWidth: true
+                    readonly property bool hasSelection: (root.info.selectedTriangles ?? 0) > 0
+                    text: hasSelection ? qsTr("Fit surfaces to selection (patches)") : qsTr("Fit surfaces to whole mesh")
+                    ToolTip.visible: hovered
+                    ToolTip.delay: 500
+                    ToolTip.text: qsTr("Splits the mesh at creases, fits a NURBS surface to each patch and sews them together; a closed scan becomes a solid (new part)")
+                    onClicked: {
+                        const tol = root.parseNumber(fitTolerance.text)
+                        const r = root.controller.execute("surface.fit_regions",
+                                                          { id: root.partId, tolerance: tol > 0 ? tol : 0.25,
+                                                            useSelection: hasSelection })
+                        if (!r.ok)
+                            return
+                        const f = r.result.fit
+                        let msg = qsTr("\"%1\": %2 patches sewn, %3, max deviation %4 mm, %5")
+                            .arg(r.result.name)
+                            .arg(f.faces)
+                            .arg(f.solid ? qsTr("closed solid, volume %1 mm³").arg(Number(f.volume).toFixed(0))
+                                         : qsTr("open shell (%1 free edges)").arg(f.freeEdges))
+                            .arg(Number(f.meshToSurfaceMax).toFixed(3))
+                            .arg(f.withinTolerance ? qsTr("within tolerance") : qsTr("OUT OF TOLERANCE"))
+                        if (r.result.warnings.length > 0)
+                            msg += " · " + r.result.warnings.join(" ")
+                        root.controller.showStatus(msg)
+                    }
+                }
             }
         }
 

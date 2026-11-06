@@ -78,6 +78,14 @@ struct SmoothRegionOptions {
 [[nodiscard]] TriangleSet selectSmoothRegion(const TriangleMesh& mesh, const MeshAdjacency& adjacency,
                                              std::uint32_t seed, const SmoothRegionOptions& options);
 
+/// Splits `selection` (all triangles when empty) into smooth regions: edge-connected
+/// patches without a crease sharper than `creaseAngleDeg` between neighbours. Regions
+/// smaller than `minArea` (mm^2) are merged into the neighbour they share most edges with.
+/// Largest region first; each region sorted.
+[[nodiscard]] std::vector<TriangleSet> segmentSmoothRegions(const TriangleMesh& mesh, const MeshAdjacency& adjacency,
+                                                            const TriangleSet& selection, double creaseAngleDeg,
+                                                            double minArea);
+
 /// Triangles with their centroid within `radius` of `center`. With `adjacency`, only the
 /// ones connected to `seed` inside the sphere (so a brush does not go through thin walls).
 [[nodiscard]] TriangleSet selectInSphere(const TriangleMesh& mesh, const Vec3& center, double radius,
