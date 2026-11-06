@@ -38,13 +38,6 @@ jobs:
             triplet: arm64-osx-release
             qt_arch: clang_64
 
-    env:
-      # VCPKG_ROOT is set in the "Check out vcpkg" step: ilammy/msvc-dev-cmd exports
-      # VCPKG_ROOT pointing at Visual Studio's bundled vcpkg, which must not be used.
-      AEROCAD_VCPKG_DIR: ${{ runner.temp }}/vcpkg
-      # actions/cache rejects paths containing "..", so keep these under runner.temp.
-      VCPKG_DEFAULT_BINARY_CACHE: ${{ runner.temp }}/vcpkg-cache
-
     steps:
       - uses: actions/checkout@v4
 
@@ -69,7 +62,12 @@ jobs:
       - name: Check out vcpkg
         shell: bash
         run: |
-          VCPKG_ROOT="$AEROCAD_VCPKG_DIR"
+          # Paths live under RUNNER_TEMP: actions/cache rejects paths containing "..".
+          # VCPKG_ROOT is exported here, after ilammy/msvc-dev-cmd, which would otherwise
+          # point it at Visual Studio's bundled vcpkg.
+          VCPKG_ROOT="$RUNNER_TEMP/vcpkg"
+          VCPKG_DEFAULT_BINARY_CACHE="$RUNNER_TEMP/vcpkg-cache"
+          echo "VCPKG_DEFAULT_BINARY_CACHE=$VCPKG_DEFAULT_BINARY_CACHE" >> "$GITHUB_ENV"
           git clone --filter=tree:0 https://github.com/microsoft/vcpkg.git "$VCPKG_ROOT"
           git -C "$VCPKG_ROOT" checkout "$VCPKG_COMMIT"
           mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
@@ -82,7 +80,7 @@ jobs:
         id: vcpkg-cache
         uses: actions/cache/restore@v4
         with:
-          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          path: ${{ runner.temp }}/vcpkg-cache
           key: vcpkg-${{ matrix.triplet }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'cmake/triplets/**') }}
           restore-keys: vcpkg-${{ matrix.triplet }}-${{ env.VCPKG_COMMIT }}-
 
@@ -93,7 +91,7 @@ jobs:
         if: steps.vcpkg-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
-          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          path: ${{ runner.temp }}/vcpkg-cache
           key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
 
       - name: Build
