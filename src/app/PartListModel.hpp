@@ -24,6 +24,8 @@ public:
         HasBrepRole,
         SourceRole,
         RevisionRole,
+        KindRole,      ///< "imported", "body" or "sketch"
+        FeatureIdRole, ///< Timeline feature of a body / sketch (0 for imported parts)
     };
     Q_ENUM(Role)
 

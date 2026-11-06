@@ -67,7 +67,8 @@ Pane {
 
         GroupBox {
             Layout.fillWidth: true
-            visible: !!root.info.id
+            // Timeline bodies and sketches change through their features, not directly.
+            visible: !!root.info.id && root.info.kind === "imported"
             title: qsTr("Scale")
             RowLayout {
                 anchors.fill: parent
@@ -93,7 +94,7 @@ Pane {
         }
 
         Button {
-            visible: !!root.info.id
+            visible: !!root.info.id && root.info.kind === "imported"
             text: qsTr("Remove part")
             onClicked: root.controller.execute("part.remove", { id: root.partId })
         }

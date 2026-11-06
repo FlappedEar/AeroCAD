@@ -58,6 +58,10 @@ public:
     /// all visible parts. Returns {ok, error?, warnings: [string]}; the status bar shows
     /// the outcome.
     Q_INVOKABLE QVariantMap exportFile(const QUrl& url, const QVariantList& ids = {});
+    /// Runs a JSON command script: an array of {"name": ..., "params": {...}} objects (the
+    /// same calls an MCP client makes). Stops at the first failing command. Returns false
+    /// and sets the status message on errors.
+    Q_INVOKABLE bool runScript(const QString& path);
     /// Part details for the properties panel ({} for unknown ids).
     Q_INVOKABLE QVariantMap partInfo(quint64 id) const;
 
@@ -72,6 +76,8 @@ signals:
     void statusMessageChanged();
     /// Emitted after a successful import so the view can frame the new model.
     void partImported(quint64 id);
+    /// Emitted after runScript() so the view can frame the result.
+    void scriptFinished();
 
 private:
     void setStatusMessage(const QString& message);

@@ -28,15 +28,19 @@ struct MeshCheck {
     std::size_t degenerateTriangles = 0;
     /// Edge-connected components.
     std::size_t shells = 0;
-    /// Signed enclosed volume in mm^3 (divergence theorem). Positive when a closed,
-    /// consistently oriented mesh has outward-facing normals. Meaningless if not closed.
+    /// Closed shells whose normals point the wrong way: inwards for an outer surface, or
+    /// outwards for a cavity (a shell nested inside an odd number of other shells).
+    /// Only computed for closed meshes.
+    std::size_t invertedShells = 0;
+    /// Signed enclosed volume in mm^3 (divergence theorem, per shell). Positive when a
+    /// closed mesh has outward-facing normals; cavities subtract. Meaningless if not closed.
     double signedVolume = 0.0;
 
     /// Every edge is shared by exactly two triangles.
     [[nodiscard]] bool closed() const { return boundaryEdges == 0 && nonManifoldEdges == 0 && triangles > 0; }
     [[nodiscard]] bool manifold() const { return nonManifoldEdges == 0; }
     /// Neighbouring triangles agree on winding, and for closed meshes normals point outwards.
-    [[nodiscard]] bool oriented() const { return inconsistentEdges == 0 && (!closed() || signedVolume > 0.0); }
+    [[nodiscard]] bool oriented() const { return inconsistentEdges == 0 && invertedShells == 0; }
     /// Closed, manifold, consistently and outward oriented, without degenerate triangles:
     /// a watertight solid suitable for slicing or volume meshing.
     [[nodiscard]] bool watertight() const { return closed() && oriented() && degenerateTriangles == 0; }

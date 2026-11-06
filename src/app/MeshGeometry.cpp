@@ -54,6 +54,11 @@ void MeshGeometry::rebuild()
 
     clear();
     if (part == nullptr || !part->mesh || part->mesh->isEmpty()) {
+        // Keep a valid (empty) layout: Qt Quick 3D rejects a zero stride, and sketches
+        // without closed profiles have no triangles.
+        setStride(6 * static_cast<int>(sizeof(float)));
+        setPrimitiveType(QQuick3DGeometry::PrimitiveType::Triangles);
+        addAttribute(QQuick3DGeometry::Attribute::PositionSemantic, 0, QQuick3DGeometry::Attribute::F32Type);
         m_builtRevision = ~0ULL;
         update();
         return;

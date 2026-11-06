@@ -11,6 +11,29 @@ using Catch::Approx;
 
 namespace {
 
+/// Axis-aligned cube [lo, hi]^3 with outward normals (or inward when `inward`).
+TriangleMesh cube(double lo, double hi, bool inward = false)
+{
+    std::vector<Vec3> v;
+    for (int i = 0; i < 8; ++i)
+        v.push_back({i & 1 ? hi : lo, i & 2 ? hi : lo, i & 4 ? hi : lo});
+    std::vector<TriangleMesh::Triangle> t{{0, 2, 3}, {0, 3, 1}, {4, 5, 7}, {4, 7, 6}, {0, 1, 5}, {0, 5, 4},
+                                          {2, 6, 7}, {2, 7, 3}, {0, 4, 6}, {0, 6, 2}, {1, 3, 7}, {1, 7, 5}};
+    if (inward) {
+        for (auto& tri : t)
+            std::swap(tri[1], tri[2]);
+    }
+    return TriangleMesh(std::move(v), std::move(t));
+}
+
+TriangleMesh translated(const TriangleMesh& m, const Vec3& d)
+{
+    std::vector<Vec3> v;
+    for (const auto& p : m.vertices())
+        v.push_back(p + d);
+    return TriangleMesh(std::move(v), m.triangles());
+}
+
 /// Closed tetrahedron with outward normals, volume 1000/6 mm^3.
 TriangleMesh tetrahedron()
 {
@@ -63,7 +86,7 @@ TEST_CASE("Mesh check finds holes, flipped and inverted triangles", "[core][chec
         CHECK(c.signedVolume < 0.0);
         CHECK_FALSE(c.oriented());
         REQUIRE(c.problems().size() == 1);
-        CHECK(c.problems()[0] == "normals point inwards (negative volume)");
+        CHECK(c.problems()[0] == "normals point inwards: 1 inside-out shell");
     }
     SECTION("non-manifold edge: three triangles on one edge")
     {
@@ -126,4 +149,57 @@ TEST_CASE("Separate bodies are counted as shells", "[core][check]")
     CHECK(c.shells == 2);
     CHECK(c.watertight());
     CHECK(c.signedVolume == Approx(2000.0 / 6.0));
+}
+
+TEST_CASE("Orientation is checked per shell, cavities must point inwards", "[core][check]")
+{
+    SECTION("inverted small body next to a large one")
+    {
+        TriangleMesh m = tetrahedron();
+        TriangleMesh small({{0, 0, 0}, {1, 0, 0}, {0, 1, 0}, {0, 0, 1}}, {{0, 1, 2}, {0, 3, 1}, {0, 2, 3}, {1, 3, 2}});
+        m.append(translated(small, {50, 0, 0}));
+        const MeshCheck c = checkMesh(m);
+        CHECK(c.signedVolume > 0.0); // the total alone would hide the inverted body
+        CHECK(c.invertedShells == 1);
+        CHECK_FALSE(c.oriented());
+        CHECK_FALSE(c.watertight());
+    }
+    SECTION("hollow cube with an inward-facing cavity is valid")
+    {
+        TriangleMesh m = cube(0, 10);
+        m.append(cube(3, 7, true));
+        const MeshCheck c = checkMesh(m);
+        CHECK(c.shells == 2);
+        CHECK(c.invertedShells == 0);
+        CHECK(c.watertight());
+        CHECK(c.signedVolume == Approx(1000.0 - 64.0));
+    }
+    SECTION("cavity facing outwards is inverted")
+    {
+        TriangleMesh m = cube(0, 10);
+        m.append(cube(3, 7));
+        const MeshCheck c = checkMesh(m);
+        CHECK(c.invertedShells == 1);
+        CHECK_FALSE(c.watertight());
+    }
+    SECTION("solid inside a cavity is an outer shell again")
+    {
+        TriangleMesh m = cube(0, 10);
+        m.append(cube(2, 8, true));
+        m.append(cube(4, 6));
+        const MeshCheck c = checkMesh(m);
+        CHECK(c.shells == 3);
+        CHECK(c.watertight());
+        CHECK(c.signedVolume == Approx(1000.0 - 216.0 + 8.0));
+    }
+}
+
+TEST_CASE("Volume of a tiny body far from the origin keeps its sign", "[core][check]")
+{
+    const TriangleMesh far = translated(
+        TriangleMesh({{0, 0, 0}, {0.1, 0, 0}, {0, 0.1, 0}, {0, 0, 0.1}}, {{0, 2, 1}, {0, 1, 3}, {0, 3, 2}, {1, 2, 3}}),
+        {100000, 100000, 100000});
+    const MeshCheck c = checkMesh(far);
+    CHECK(c.watertight());
+    CHECK(c.signedVolume == Approx(0.001 / 6.0).epsilon(1e-6));
 }

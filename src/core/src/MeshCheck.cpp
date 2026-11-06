@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "aerocad/core/MeshCheck.hpp"
 
+#include <cmath>
 #include <cstdint>
 #include <functional>
 #include <numeric>
@@ -62,6 +63,100 @@ std::size_t canonicalVertices(const TriangleMesh& mesh, std::vector<std::uint32_
     return first.size();
 }
 
+/// Number of crossings of the ray origin + s * dir (s > 0) with the given triangles.
+std::size_t rayCrossings(const Vec3& origin, const Vec3& dir, const std::vector<Vec3>& verts,
+                         const std::vector<TriangleMesh::Triangle>& tris, const std::vector<std::uint32_t>& remap,
+                         const std::vector<std::uint32_t>& triangles)
+{
+    std::size_t crossings = 0;
+    for (const std::uint32_t t : triangles) {
+        // Moller-Trumbore, coordinates relative to the ray origin.
+        const Vec3 a = verts[remap[tris[t][0]]] - origin;
+        const Vec3 e1 = verts[remap[tris[t][1]]] - origin - a;
+        const Vec3 e2 = verts[remap[tris[t][2]]] - origin - a;
+        const Vec3 p = dir.cross(e2);
+        const double det = e1.dot(p);
+        if (std::abs(det) < 1e-300)
+            continue;
+        const double inv = 1.0 / det;
+        const Vec3 s = a * -1.0;
+        const double u = s.dot(p) * inv;
+        if (u < 0.0 || u > 1.0)
+            continue;
+        const Vec3 q = s.cross(e1);
+        const double v = dir.dot(q) * inv;
+        if (v < 0.0 || u + v > 1.0)
+            continue;
+        if (e2.dot(q) * inv > 0.0)
+            ++crossings;
+    }
+    return crossings;
+}
+
+bool boxContains(const BoundingBox& outer, const BoundingBox& inner)
+{
+    return outer.min.x <= inner.min.x && outer.min.y <= inner.min.y && outer.min.z <= inner.min.z &&
+           outer.max.x >= inner.max.x && outer.max.y >= inner.max.y && outer.max.z >= inner.max.z;
+}
+
+/// Splits the mesh into edge-connected shells, sums their signed volumes and, for closed
+/// meshes, checks each shell's orientation against its nesting depth: outer shells must
+/// enclose positive volume, cavities (inside an odd number of other shells) negative.
+void analyseShells(MeshCheck& check, const std::vector<Vec3>& verts, const std::vector<TriangleMesh::Triangle>& tris,
+                   const std::vector<std::uint32_t>& remap, DisjointSets& components)
+{
+    struct Shell {
+        std::vector<std::uint32_t> triangles;
+        double volume6 = 0.0;
+        BoundingBox box;
+    };
+    std::vector<Shell> shells;
+    std::unordered_map<std::uint32_t, std::size_t> shellOfRoot;
+    for (std::size_t t = 0; t < tris.size(); ++t) {
+        const std::uint32_t root = components.find(static_cast<std::uint32_t>(t));
+        const auto [it, inserted] = shellOfRoot.try_emplace(root, shells.size());
+        if (inserted)
+            shells.emplace_back();
+        shells[it->second].triangles.push_back(static_cast<std::uint32_t>(t));
+    }
+
+    for (Shell& shell : shells) {
+        // Volume relative to a point on the shell: translation does not cost precision.
+        const Vec3 ref = verts[remap[tris[shell.triangles.front()][0]]];
+        for (const std::uint32_t t : shell.triangles) {
+            const Vec3 a = verts[remap[tris[t][0]]] - ref;
+            const Vec3 b = verts[remap[tris[t][1]]] - ref;
+            const Vec3 c = verts[remap[tris[t][2]]] - ref;
+            shell.volume6 += a.dot(b.cross(c));
+            for (const auto idx : tris[t])
+                shell.box.extend(verts[remap[idx]]);
+        }
+        check.signedVolume += shell.volume6 / 6.0;
+    }
+    check.shells = shells.size();
+
+    if (!check.closed())
+        return;
+    // Fixed, non axis-aligned direction so rays rarely hit edges or vertices exactly.
+    const Vec3 dir = Vec3{0.5772156649, 0.6180339887, 0.5319577884}.normalized();
+    for (std::size_t i = 0; i < shells.size(); ++i) {
+        std::size_t depth = 0;
+        if (shells.size() > 1) {
+            // Centroid of one triangle: a point on this shell, inside or outside the others.
+            const auto& t = tris[shells[i].triangles.front()];
+            const Vec3 probe = (verts[remap[t[0]]] + verts[remap[t[1]]] + verts[remap[t[2]]]) * (1.0 / 3.0);
+            for (std::size_t j = 0; j < shells.size(); ++j) {
+                if (j != i && boxContains(shells[j].box, shells[i].box) &&
+                    rayCrossings(probe, dir, verts, tris, remap, shells[j].triangles) % 2 == 1)
+                    ++depth;
+            }
+        }
+        const bool cavity = depth % 2 == 1;
+        if (cavity ? shells[i].volume6 >= 0.0 : shells[i].volume6 <= 0.0)
+            ++check.invertedShells;
+    }
+}
+
 std::string plural(std::size_t n, const char* singular, const char* pluralForm)
 {
     return std::to_string(n) + " " + (n == 1 ? singular : pluralForm);
@@ -89,14 +184,12 @@ MeshCheck checkMesh(const TriangleMesh& mesh)
     std::unordered_map<std::uint64_t, EdgeUse> edges;
     edges.reserve(tris.size() * 2);
     DisjointSets components(tris.size());
-    double volume6 = 0.0;
 
     for (std::size_t t = 0; t < tris.size(); ++t) {
         const TriangleMesh::Triangle tri{remap[tris[t][0]], remap[tris[t][1]], remap[tris[t][2]]};
         const Vec3& a = verts[tri[0]];
         const Vec3& b = verts[tri[1]];
         const Vec3& c = verts[tri[2]];
-        volume6 += a.dot(b.cross(c));
 
         if (tri[0] == tri[1] || tri[1] == tri[2] || tri[0] == tri[2] ||
             (b - a).cross(c - a).length() <= minDoubleArea) {
@@ -133,11 +226,7 @@ MeshCheck checkMesh(const TriangleMesh& mesh)
             ++check.inconsistentEdges;
     }
 
-    for (std::size_t t = 0; t < tris.size(); ++t) {
-        if (components.find(static_cast<std::uint32_t>(t)) == t)
-            ++check.shells;
-    }
-    check.signedVolume = volume6 / 6.0;
+    analyseShells(check, verts, tris, remap, components);
     return check;
 }
 
@@ -183,8 +272,8 @@ std::vector<std::string> MeshCheck::problems() const
     if (inconsistentEdges > 0)
         out.push_back("inconsistent orientation: " +
                       plural(inconsistentEdges, "edge between flipped triangles", "edges between flipped triangles"));
-    else if (closed() && signedVolume <= 0.0)
-        out.emplace_back("normals point inwards (negative volume)");
+    else if (invertedShells > 0)
+        out.push_back("normals point inwards: " + plural(invertedShells, "inside-out shell", "inside-out shells"));
     if (degenerateTriangles > 0)
         out.push_back(plural(degenerateTriangles, "degenerate triangle", "degenerate triangles"));
     return out;

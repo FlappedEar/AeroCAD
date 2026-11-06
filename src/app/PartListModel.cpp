@@ -42,6 +42,15 @@ QVariant PartListModel::data(const QModelIndex& index, int role) const
         return QString::fromStdString(p.source);
     case RevisionRole:
         return QVariant::fromValue<qulonglong>(p.revision);
+    case KindRole:
+        switch (p.kind) {
+        case model::PartKind::Body: return QStringLiteral("body");
+        case model::PartKind::Sketch: return QStringLiteral("sketch");
+        case model::PartKind::Imported: break;
+        }
+        return QStringLiteral("imported");
+    case FeatureIdRole:
+        return QVariant::fromValue<qulonglong>(p.featureId);
     default:
         return {};
     }
@@ -52,7 +61,7 @@ QHash<int, QByteArray> PartListModel::roleNames() const
     return {
         {PartIdRole, "partId"},       {NameRole, "name"},       {VisibleRole, "partVisible"},
         {TrianglesRole, "triangles"}, {HasBrepRole, "hasBrep"}, {SourceRole, "source"},
-        {RevisionRole, "revision"},
+        {RevisionRole, "revision"},   {KindRole, "kind"},       {FeatureIdRole, "featureId"},
     };
 }
 

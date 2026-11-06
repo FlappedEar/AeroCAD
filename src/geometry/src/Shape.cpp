@@ -61,9 +61,14 @@ double Shape::volume() const
 {
     if (isNull() || solidCount() == 0)
         return 0.0;
-    GProp_GProps props;
-    BRepGProp::VolumeProperties(m_impl->shape, props);
-    return props.Mass();
+    // Only solids have a volume; free faces or shells in a compound would distort it.
+    double total = 0.0;
+    for (TopExp_Explorer ex(m_impl->shape, TopAbs_SOLID); ex.More(); ex.Next()) {
+        GProp_GProps props;
+        BRepGProp::VolumeProperties(ex.Current(), props);
+        total += props.Mass();
+    }
+    return total;
 }
 
 } // namespace aerocad::geometry
