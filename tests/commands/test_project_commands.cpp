@@ -244,6 +244,25 @@ TEST_CASE("Variants are saved with the project", "[commands][project][variants]"
     CHECK(t.design().bodies().at(bodyFeature).shape.volume() == Approx(18000));
 }
 
+TEST_CASE("Names of suppressed bodies survive save and open", "[commands][project]")
+{
+    TempDir dir;
+    commands::Session s;
+    const auto bodyFeature = buildBlock(s);
+    const auto partId = bodyPart(s, bodyFeature)->id;
+    run(s, "part.rename", {{"id", partId}, {"name", "Spar"}});
+    run(s, "feature.suppress", {{"id", bodyFeature}, {"suppressed", true}});
+    REQUIRE(bodyPart(s, bodyFeature) == nullptr);
+    run(s, "project.save", {{"path", dir.file("s.aerocad")}});
+
+    commands::Session t;
+    run(t, "project.open", {{"path", dir.file("s.aerocad")}});
+    run(t, "feature.suppress", {{"id", bodyFeature}, {"suppressed", false}});
+    REQUIRE(bodyPart(t, bodyFeature) != nullptr);
+    CHECK(bodyPart(t, bodyFeature)->name == "Spar");
+    CHECK(bodyPart(t, bodyFeature)->id == partId);
+}
+
 TEST_CASE("Imported parts can be duplicated", "[commands][project]")
 {
     commands::Session s;

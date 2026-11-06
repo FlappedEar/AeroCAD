@@ -160,11 +160,10 @@ std::string encodeProject(const ProjectData& data)
 
     Json timelineParts = Json::array();
     for (const auto& t : data.timelineParts) {
-        timelineParts.push_back({{"feature", t.feature},
-                                 {"kind", kindName(t.kind)},
-                                 {"id", t.id},
-                                 {"name", t.name},
-                                 {"visible", t.visible}});
+        Json j{{"feature", t.feature}, {"id", t.id}, {"name", t.name}, {"visible", t.visible}};
+        if (t.kind)
+            j["kind"] = kindName(*t.kind);
+        timelineParts.push_back(std::move(j));
     }
 
     Json variants = Json::array();
@@ -263,12 +262,15 @@ ProjectData decodeImpl(std::string_view bytes)
     for (const auto& j : m.value("timelineParts", Json::array())) {
         TimelinePart t;
         t.feature = field<cad::FeatureId>(j, "feature", "timeline part");
-        t.kind = kindFromName(field<std::string>(j, "kind", "timeline part"));
+        if (j.contains("kind"))
+            t.kind = kindFromName(field<std::string>(j, "kind", "timeline part"));
         t.id = field<model::PartId>(j, "id", "timeline part");
         t.name = j.value("name", "");
         t.visible = j.value("visible", true);
-        if (t.kind == model::PartKind::Imported || t.id == 0 || !ids.insert(t.id).second)
+        if (t.kind == model::PartKind::Imported || t.id == 0)
             throw ProjectError("Invalid timeline part " + std::to_string(t.id));
+        if (!ids.insert(t.id).second)
+            continue; // id taken: the part gets a new id when it is regenerated
         data.timelineParts.push_back(std::move(t));
     }
 

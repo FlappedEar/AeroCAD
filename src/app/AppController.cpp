@@ -241,17 +241,16 @@ bool AppController::openProject(const QString& path, bool recover)
     const QVariantMap data = r.value(QStringLiteral("result")).toMap();
     if (recover) {
         // The recovered copy is re-written under the project's own autosave name.
-        QFile::remove(path);
+        removeAutosave(path);
         setStatusMessage(tr("Recovered unsaved changes of %1").arg(projectName()));
     } else {
-        QFile::remove(previousAutosave);
+        removeAutosave(previousAutosave);
         addRecent(path);
         const int errors = static_cast<int>(data.value(QStringLiteral("featureErrors")).toList().size());
         const QString file = QFileInfo(path).fileName();
         setStatusMessage(errors == 0 ? tr("Opened %1").arg(file)
                                      : tr("Opened %1 (%2 features with errors)").arg(file).arg(errors));
     }
-    m_autosaveLock.reset();
     emit historyChanged();
     emit projectOpened(data.value(QStringLiteral("view")).toMap());
     return true;
@@ -263,8 +262,7 @@ void AppController::newProject()
     const QVariantMap r = execute(QStringLiteral("project.new"));
     if (!r.value(QStringLiteral("ok")).toBool())
         return;
-    QFile::remove(previousAutosave);
-    m_autosaveLock.reset();
+    removeAutosave(previousAutosave);
     setStatusMessage(tr("New design"));
     emit historyChanged();
 }
@@ -294,9 +292,8 @@ bool AppController::saveTo(const QString& path, const QVariantMap& view)
     if (!r.value(QStringLiteral("ok")).toBool())
         return false;
     const QString saved = r.value(QStringLiteral("result")).toMap().value(QStringLiteral("savedTo")).toString();
-    QFile::remove(previousAutosave);
-    QFile::remove(autosavePath());
-    m_autosaveLock.reset();
+    removeAutosave(previousAutosave);
+    removeAutosave(autosavePath());
     addRecent(saved);
     setStatusMessage(tr("Saved %1").arg(QDir::toNativeSeparators(saved)));
     emit projectChanged();
@@ -372,12 +369,28 @@ bool AppController::recoverAutosave(const QString& path)
 void AppController::discardAutosaves(bool currentOnly)
 {
     if (currentOnly) {
-        QFile::remove(autosavePath());
-        m_autosaveLock.reset();
+        removeAutosave(autosavePath());
         return;
     }
     for (const QString& file : autosaveFiles())
-        QFile::remove(file);
+        removeAutosave(file);
+}
+
+void AppController::removeAutosave(const QString& path)
+{
+    const QString lockPath = path + QStringLiteral(".lock");
+    if (m_autosaveLock && m_autosaveLock->fileName() == lockPath) {
+        QFile::remove(path);
+        m_autosaveLock.reset(); // unlocks and deletes the lock file
+        return;
+    }
+    // Owned by another running instance (same project open twice): leave it alone.
+    QLockFile lock(lockPath);
+    lock.setStaleLockTime(0);
+    if (!lock.tryLock(0))
+        return;
+    QFile::remove(path);
+    lock.unlock();
 }
 
 void AppController::addRecent(const QString& path)

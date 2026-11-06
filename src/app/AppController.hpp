@@ -128,6 +128,8 @@ private:
     bool openProject(const QString& path, bool recover);
     bool saveTo(const QString& path, const QVariantMap& view);
     void addRecent(const QString& path);
+    /// Deletes an autosave copy unless another running instance holds its lock.
+    void removeAutosave(const QString& path);
     /// Autosave file of the open project (per project path, or per process if untitled).
     [[nodiscard]] QString autosavePath() const;
     [[nodiscard]] static QString autosaveDir();

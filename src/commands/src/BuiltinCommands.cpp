@@ -178,13 +178,15 @@ void registerPartCommands(CommandRegistry& r)
               model::Document& doc = ctx.document;
               const model::Part& source = requirePart(doc, params);
               requireImported(source, "duplicate");
+              // `source` dangles once addPart() reallocates the part list.
+              const std::string label = "Duplicate " + source.name;
               model::Part copy = source;
               copy.id = 0;
               copy.revision = 0;
               copy.name = params.contains("name") ? params["name"].get<std::string>() : source.name + " (copy)";
               const model::PartId id = doc.addPart(copy);
               copy.id = id;
-              ctx.undoStack.push({"Duplicate " + source.name,
+              ctx.undoStack.push({label,
                                   [&doc, id]() { doc.removePart(id); },
                                   [&doc, copy]() { doc.addPart(copy); }});
               return partToJson(*doc.part(id));

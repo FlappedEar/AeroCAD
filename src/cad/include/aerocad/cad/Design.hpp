@@ -161,6 +161,17 @@ public:
     /// loaded project, so parts keep their saved ids, names and visibility.
     void setPartInfo(FeatureId feature, model::PartId part, std::string name, bool visible);
 
+    /// Part bookkeeping retained by syncDocument(): every timeline feature that had a
+    /// document part in this session, including features that are now suppressed, rolled
+    /// back or only exist in an inactive variant. Name / visibility are as of the last sync.
+    struct PartInfo {
+        FeatureId feature = 0;
+        model::PartId part = 0;
+        std::string name;
+        bool visible = true;
+    };
+    [[nodiscard]] std::vector<PartInfo> partInfos() const;
+
     /// Gives the timeline access to document parts (for "base_body" features that turn an
     /// imported part into a body). Not part of the undoable state.
     using PartLookup = std::function<const model::Part*(model::PartId)>;

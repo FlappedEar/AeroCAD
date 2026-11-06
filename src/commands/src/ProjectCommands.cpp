@@ -63,12 +63,19 @@ project::ProjectData snapshot(CommandContext& ctx)
 {
     ProjectState& p = projectState(ctx);
     project::ProjectData data;
+    // Retained bookkeeping first (parts of suppressed features or other variants), then
+    // the live document parts, which are newer.
+    std::map<cad::FeatureId, project::TimelinePart> timeline;
+    for (const auto& info : ctx.design->partInfos())
+        timeline[info.feature] = {info.feature, std::nullopt, info.part, info.name, info.visible};
     for (const auto& part : ctx.document.parts()) {
         if (part.kind == model::PartKind::Imported)
             data.parts.push_back(part);
         else
-            data.timelineParts.push_back({part.featureId, part.kind, part.id, part.name, part.visible});
+            timeline[part.featureId] = {part.featureId, part.kind, part.id, part.name, part.visible};
     }
+    for (auto& [_, t] : timeline)
+        data.timelineParts.push_back(std::move(t));
     data.design = ctx.design->state();
     data.variants = p.variants;
     data.view = p.view;

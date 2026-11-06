@@ -905,6 +905,20 @@ void Design::setPartInfo(FeatureId feature, model::PartId part, std::string name
     m_partMeta[feature] = {std::move(name), visible};
 }
 
+std::vector<Design::PartInfo> Design::partInfos() const
+{
+    std::vector<PartInfo> out;
+    for (const auto& [feature, part] : m_partIds) {
+        PartInfo info{feature, part, {}, true};
+        if (auto meta = m_partMeta.find(feature); meta != m_partMeta.end()) {
+            info.name = meta->second.name;
+            info.visible = meta->second.visible;
+        }
+        out.push_back(std::move(info));
+    }
+    return out;
+}
+
 void Design::regenerate()
 {
     m_bodies.clear();

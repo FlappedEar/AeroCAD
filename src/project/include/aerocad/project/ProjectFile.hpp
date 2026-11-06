@@ -16,6 +16,7 @@
 
 #include <filesystem>
 #include <functional>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -40,7 +41,8 @@ public:
 /// Saved settings of a document part produced by the timeline (body or sketch).
 struct TimelinePart {
     cad::FeatureId feature = 0;
-    model::PartKind kind = model::PartKind::Body;
+    /// Unknown for features without a part right now (suppressed, rolled back, other variant).
+    std::optional<model::PartKind> kind;
     model::PartId id = 0;
     std::string name;
     bool visible = true;
