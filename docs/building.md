@@ -63,3 +63,25 @@ ctest --preset dev
   `--smoke-test <file>`, imports the file through the command layer, renders a few frames
   and checks that the model is visible in the viewport. Add `--screenshot out.png` when
   running it by hand to save the frame.
+
+## Command scripts and export validation
+
+`aerocad-cmd` (built next to the app, no Qt needed) runs a JSON array of commands, the
+same calls the UI and the MCP server make, and prints one JSON result per line:
+
+```sh
+echo '[{"name": "feature.box", "params": {"size": [30, 20, 10]}},
+       {"name": "document.export", "params": {"path": "/tmp/box.step"}}]' | ./build/release/bin/aerocad-cmd -
+```
+
+`tools/validate_exports.py` builds a few models with it, exports STL, 3MF and STEP, and
+reads them back with independent tools: lib3mf (3MF Consortium reference library, strict
+mode), trimesh (watertightness, winding, volume, bounds) and gmsh (STEP solids, volume,
+bounds). It is not part of CI; run it after changing an exporter:
+
+```sh
+python3 -m venv .venv && .venv/bin/pip install lib3mf trimesh numpy networkx lxml gmsh
+.venv/bin/python tools/validate_exports.py --cmd build/release/bin/aerocad-cmd
+```
+
+Missing packages are skipped with a notice. `--keep DIR` keeps the exported files.

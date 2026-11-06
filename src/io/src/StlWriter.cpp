@@ -42,9 +42,20 @@ void writeStl(const std::filesystem::path& path, const std::vector<ExportItem>& 
 {
     detail::requireMeshes(items, "STL");
 
+    // Triangles collapsed to an edge or a point carry no surface; slicers report them as
+    // errors, so they are not written.
+    const auto collapsed = [](const core::TriangleMesh& mesh, std::size_t t) {
+        const auto& tri = mesh.triangles()[t];
+        const auto& v = mesh.vertices();
+        return v[tri[0]] == v[tri[1]] || v[tri[1]] == v[tri[2]] || v[tri[0]] == v[tri[2]];
+    };
     std::size_t total = 0;
-    for (const auto& item : items)
-        total += item.mesh->triangleCount();
+    for (const auto& item : items) {
+        for (std::size_t t = 0; t < item.mesh->triangleCount(); ++t)
+            total += collapsed(*item.mesh, t) ? 0 : 1;
+    }
+    if (total == 0)
+        throw ExportError("Nothing to export: every triangle is degenerate");
     if (total > std::numeric_limits<std::uint32_t>::max())
         throw ExportError("Too many triangles for STL");
 
@@ -60,6 +71,8 @@ void writeStl(const std::filesystem::path& path, const std::vector<ExportItem>& 
         const auto& verts = mesh.vertices();
         const auto& tris = mesh.triangles();
         for (std::size_t t = 0; t < tris.size(); ++t) {
+            if (collapsed(mesh, t))
+                continue;
             const core::Vec3 n = mesh.faceNormal(t);
             appendVec(data, n);
             for (const std::uint32_t idx : tris[t]) {

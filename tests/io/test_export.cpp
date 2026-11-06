@@ -194,3 +194,15 @@ TEST_CASE("Export replaces an existing file", "[io][export]")
     io::exportFile(path, {{"t", &tet, nullptr}});
     CHECK(fs::file_size(path) == 84 + 4 * 50);
 }
+
+TEST_CASE("STL export drops triangles collapsed to an edge", "[io][export][stl]")
+{
+    TempDir dir;
+    core::TriangleMesh tet = tetrahedron();
+    const auto dup = tet.addVertex({0, 0, 0});
+    tet.addTriangle(0, dup, 1);
+    const fs::path path = dir.file("t.stl");
+    io::exportFile(path, {{"t", &tet, nullptr}});
+    CHECK(fs::file_size(path) == 84 + 4 * 50);
+    CHECK(core::checkMesh(io::importFile(path).mesh).watertight());
+}
