@@ -76,6 +76,38 @@ ApplicationWindow {
         selectedPartId = id
     }
 
+    // --- Guided actions (ContextActions.qml) --------------------------------------------
+
+    function openImport() { importDialog.open() }
+
+    /// Region selection tool: "region", "lasso", "brush" or "navigate".
+    function setSelectionTool(tool) { viewport.tool = tool }
+
+    /// Selects the body a timeline feature made (e.g. after Convert to body).
+    function selectBodyOfFeature(featureId) {
+        const r = controller.execute("document.parts")
+        const part = r.ok ? r.result.parts.find(p => p.kind === "body" && p.featureId === featureId) : null
+        if (part)
+            selectPart(part.id)
+    }
+
+    ContextActions {
+        id: contextActions
+        controller: window.controller
+        host: window
+    }
+
+    ActionPopup {
+        id: actionPopup
+        registry: contextActions
+    }
+
+    PartContextMenu {
+        id: partMenu
+        registry: contextActions
+        popupHelper: actionPopup
+    }
+
     function toggleSelectedVisibility() {
         if (!selectedPartId)
             return
@@ -954,6 +986,11 @@ ApplicationWindow {
             controller: window.controller
             selectedPartId: window.selectedPartId
             onPartSelected: id => window.selectPart(id)
+            onPartContextRequested: (id, item, x, y) => {
+                window.selectPart(id)
+                partMenu.info = window.controller.partInfo(id)
+                partMenu.popup(item, x, y)
+            }
         }
 
         Viewport {
@@ -969,6 +1006,10 @@ ApplicationWindow {
             pickKind: featureDialog.visible ? featureDialog.pickKind : ""
             shownSketch: featureDialog.shownSketch
             onPartPicked: id => window.selectPart(id)
+            onPartContextRequested: (id, x, y) => {
+                partMenu.info = id ? window.controller.partInfo(id) : ({})
+                partMenu.popup(viewport, x, y)
+            }
             onPointPicked: (id, point) => {
                 const info = window.controller.partInfo(id)
                 if (window.pickingSketchPlane) {
@@ -1006,6 +1047,30 @@ ApplicationWindow {
                 if (window.activeSketch)
                     window.controller.execute("sketch.edit_constraint", { sketch: window.activeSketch.id, index: index, remove: true })
                 window.refreshSketchSnaps()
+            }
+
+            // What can be done with the selection, next to it (ContextActions.qml).
+            ContextBar {
+                id: contextBar
+                // Above the navigation bar, clear of the selection tools and ViewCube.
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: 60
+                maximumWidth: parent.width - 2 * Theme.space4
+                width: Math.min(implicitWidth, maximumWidth)
+                visible: !!window.selectedPartId && !window.activeSketch && !featureDialog.visible
+                         && !window.pickingSketchPlane
+                registry: contextActions
+                popup: actionPopup
+                info: { void contextActions.revision; return window.selectedPartId ? window.controller.partInfo(window.selectedPartId) : ({}) }
+            }
+
+            StartCard {
+                anchors.centerIn: parent
+                visible: window.controller.parts.count === 0 && !window.activeSketch && !featureDialog.visible
+                         && !window.pickingSketchPlane
+                registry: contextActions
+                popup: actionPopup
             }
 
             FeatureDialog {
@@ -1125,6 +1190,8 @@ ApplicationWindow {
             SplitView.preferredWidth: 280
             SplitView.minimumWidth: 200
             controller: window.controller
+            registry: contextActions
+            popup: actionPopup
             partId: window.selectedPartId
         }
     }

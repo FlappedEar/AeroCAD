@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Properties of the selected part: a step-by-step guide of what can be done with it
+// (GuidePanel, from ContextActions) and its details (name, size, ...).
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -8,33 +10,13 @@ Pane {
     id: root
 
     required property AppController controller
+    required property ContextActions registry
+    required property ActionPopup popup
     property var partId: 0
     property var info: ({})
 
-    /// Number typed in a field: the locale's format (DoubleValidator accepts it), or a
-    /// plain "0.25" (default texts, pasted values). NaN when neither parses.
-    function parseNumber(text) {
-        try {
-            return Number.fromLocaleString(Qt.locale(), text)
-        } catch (e) {
-            const n = Number(String(text).replace(",", "."))
-            return isNaN(n) ? NaN : n
-        }
-    }
-
-    /// Sketches with closed profiles, for "Trim by sketch": [{name, featureId}], newest first.
-    property var sketches: []
-
     function refresh() {
         info = partId ? controller.partInfo(partId) : ({})
-        const list = []
-        if (info.hasBrep && info.kind === "imported") {
-            const r = controller.execute("document.parts")
-            for (const p of (r.ok ? r.result.parts : []))
-                if (p.kind === "sketch")
-                    list.unshift({ name: p.name, featureId: p.featureId })
-        }
-        sketches = list
     }
 
     onPartIdChanged: refresh()
@@ -44,6 +26,8 @@ Pane {
             if (id === root.partId)
                 root.refresh()
         }
+        // A part removed elsewhere (undo, delete) leaves the panel on a stale id.
+        function onHistoryChanged() { root.refresh() }
     }
 
     padding: 0
@@ -51,293 +35,83 @@ Pane {
     PanelHeader {
         id: header
         width: parent.width
-        title: root.info.id ? qsTr("PROPERTIES · %1").arg(String(root.info.kind ?? "").toUpperCase()) : qsTr("PROPERTIES")
+        title: qsTr("PROPERTIES")
     }
 
-    ColumnLayout {
+    ScrollView {
+        id: scroll
         anchors.fill: parent
-        anchors.topMargin: header.height + Theme.space2
-        anchors.leftMargin: Theme.space3
-        anchors.rightMargin: Theme.space3
-        anchors.bottomMargin: Theme.space3
-        spacing: Theme.space2
+        anchors.topMargin: header.height
+        contentWidth: availableWidth
+        clip: true
 
-        Label {
-            visible: !root.info.id
-            Layout.fillWidth: true
-            text: qsTr("Select a part in the Browser or the view.")
-            color: Theme.textFaint
-            wrapMode: Text.WordWrap
-        }
+        ColumnLayout {
+            width: scroll.availableWidth
+            spacing: Theme.space2
 
-        GridLayout {
-            visible: !!root.info.id
-            columns: 2
-            columnSpacing: 12
-            rowSpacing: 6
-            Label { text: qsTr("Name"); color: Theme.textMuted }
-            TextField {
+            GuidePanel {
                 Layout.fillWidth: true
-                text: root.info.name ?? ""
-                onEditingFinished: {
-                    if (text.length > 0 && text !== root.info.name)
-                        root.controller.execute("part.rename", { id: root.partId, name: text })
-                }
+                Layout.margins: Theme.space3
+                registry: root.registry
+                popup: root.popup
+                info: root.info
             }
-            Label { text: qsTr("Size X"); color: Theme.textMuted }
-            Label { text: Preferences.formatLength(Number(root.info.sizeX ?? 0), Preferences.lengthUnit) }
-            Label { text: qsTr("Size Y"); color: Theme.textMuted }
-            Label { text: Preferences.formatLength(Number(root.info.sizeY ?? 0), Preferences.lengthUnit) }
-            Label { text: qsTr("Size Z"); color: Theme.textMuted }
-            Label { text: Preferences.formatLength(Number(root.info.sizeZ ?? 0), Preferences.lengthUnit) }
-            Label { text: qsTr("Triangles"); color: Theme.textMuted }
-            Label { text: Number(root.info.triangles ?? 0).toLocaleString(Qt.locale(), "f", 0) }
-            Label { text: qsTr("Exact (B-rep)"); color: Theme.textMuted }
-            Label { text: root.info.hasBrep ? qsTr("yes") : qsTr("no (mesh)") }
-        }
 
-        GroupBox {
-            Layout.fillWidth: true
-            // Timeline bodies and sketches change through their features, not directly.
-            visible: !!root.info.id && root.info.kind === "imported"
-            title: qsTr("Scale")
-            RowLayout {
-                anchors.fill: parent
-                SpinBox {
-                    id: scalePercent
-                    Layout.fillWidth: true
-                    from: 1
-                    to: 100000
-                    value: 100
-                    editable: true
-                    textFromValue: (value, locale) => value + " %"
-                    valueFromText: (text, locale) => parseInt(text)
-                }
-                Button {
-                    text: qsTr("Apply")
-                    enabled: scalePercent.value !== 100
-                    onClicked: {
-                        root.controller.execute("part.scale", { id: root.partId, factor: scalePercent.value / 100 })
-                        scalePercent.value = 100
-                    }
-                }
+            Rectangle {
+                visible: !!root.info.id
+                Layout.fillWidth: true
+                implicitHeight: 1
+                color: Theme.separator
             }
-        }
 
-        GroupBox {
-            Layout.fillWidth: true
-            visible: !!root.info.id
-            title: qsTr("Region selection")
-            ColumnLayout {
-                anchors.fill: parent
-                Label {
-                    text: (root.info.selectedTriangles ?? 0) > 0
-                          ? qsTr("%1 triangles, %2 mm²")
-                                .arg(Number(root.info.selectedTriangles).toLocaleString(Qt.locale(), "f", 0))
-                                .arg(Number(root.info.selectedArea ?? 0).toLocaleString(Qt.locale(), "f", 1))
-                          : qsTr("Nothing selected. Use Region (1), Lasso (2) or Brush (3) in the view.")
-                    wrapMode: Text.WordWrap
-                    Layout.fillWidth: true
-                    opacity: (root.info.selectedTriangles ?? 0) > 0 ? 1.0 : 0.6
-                }
-                GridLayout {
-                    columns: 2
-                    Layout.fillWidth: true
-                    enabled: (root.info.selectedTriangles ?? 0) > 0
-                    Button {
-                        Layout.fillWidth: true
-                        text: qsTr("Grow")
-                        onClicked: root.controller.execute("selection.grow", { id: root.partId, steps: 1 })
-                    }
-                    Button {
-                        Layout.fillWidth: true
-                        text: qsTr("Shrink")
-                        onClicked: root.controller.execute("selection.grow", { id: root.partId, steps: -1 })
-                    }
-                    Button {
-                        Layout.fillWidth: true
-                        text: qsTr("Invert")
-                        onClicked: root.controller.execute("selection.invert", { id: root.partId })
-                    }
-                    Button {
-                        Layout.fillWidth: true
-                        text: qsTr("Clear")
-                        onClicked: root.controller.execute("selection.clear", { id: root.partId })
-                    }
-                }
-                RowLayout {
-                    Layout.fillWidth: true
-                    enabled: (root.info.selectedTriangles ?? 0) > 0
-                    Label { text: qsTr("Tolerance") }
-                    TextField {
-                        id: fitTolerance
-                        Layout.preferredWidth: 56
-                        text: Number(0.25).toLocaleString(Qt.locale(), "f", 2)
-                        validator: DoubleValidator { bottom: 0.001; decimals: 3; notation: DoubleValidator.StandardNotation }
-                    }
-                    Label { text: qsTr("mm") }
-                }
-                Button {
-                    Layout.fillWidth: true
-                    enabled: (root.info.selectedTriangles ?? 0) > 0
-                    text: qsTr("Fit surface to selection")
-                    ToolTip.visible: hovered
-                    ToolTip.delay: 500
-                    ToolTip.text: qsTr("Creates a smooth NURBS surface (new part) from the selected area and checks how far it deviates from the mesh")
-                    onClicked: {
-                        const tol = root.parseNumber(fitTolerance.text)
-                        const r = root.controller.execute("surface.fit_selection",
-                                                          { id: root.partId, tolerance: tol > 0 ? tol : 0.25 })
-                        if (!r.ok)
-                            return
-                        const f = r.result.fit
-                        let msg = qsTr("Surface \"%1\": deviation mesh→surface max %2 mm (RMS %3), surface→mesh max %4 mm, %5")
-                            .arg(r.result.name)
-                            .arg(Number(f.meshToSurfaceMax).toFixed(3))
-                            .arg(Number(f.meshToSurfaceRms).toFixed(3))
-                            .arg(Number(f.surfaceToMeshMax).toFixed(3))
-                            .arg(f.withinTolerance ? qsTr("within tolerance") : qsTr("OUT OF TOLERANCE"))
-                        if (f.holes > 0)
-                            msg += " · " + qsTr("%1 hole(s) cut out").arg(f.holes)
-                        if (r.result.warnings.length > 0)
-                            msg += " · " + r.result.warnings.join(" ")
-                        root.controller.showStatus(msg)
-                    }
-                }
-                Button {
-                    Layout.fillWidth: true
-                    readonly property bool hasSelection: (root.info.selectedTriangles ?? 0) > 0
-                    text: hasSelection ? qsTr("Fit surfaces to selection (patches)") : qsTr("Fit surfaces to whole mesh")
-                    ToolTip.visible: hovered
-                    ToolTip.delay: 500
-                    ToolTip.text: qsTr("Splits the mesh at creases, fits a NURBS surface to each patch and sews them together; a closed scan becomes a solid (new part)")
-                    onClicked: {
-                        const tol = root.parseNumber(fitTolerance.text)
-                        const r = root.controller.execute("surface.fit_regions",
-                                                          { id: root.partId, tolerance: tol > 0 ? tol : 0.25,
-                                                            useSelection: hasSelection })
-                        if (!r.ok)
-                            return
-                        const f = r.result.fit
-                        let msg = qsTr("\"%1\": %2 patches sewn, %3, max deviation %4 mm, %5")
-                            .arg(r.result.name)
-                            .arg(f.faces)
-                            .arg(f.solid ? qsTr("closed solid, volume %1 mm³").arg(Number(f.volume).toFixed(0))
-                                         : qsTr("open shell (%1 free edges)").arg(f.freeEdges))
-                            .arg(Number(f.meshToSurfaceMax).toFixed(3))
-                            .arg(f.withinTolerance ? qsTr("within tolerance") : qsTr("OUT OF TOLERANCE"))
-                        if (r.result.warnings.length > 0)
-                            msg += " · " + r.result.warnings.join(" ")
-                        root.controller.showStatus(msg)
-                    }
-                }
+            Text {
+                visible: !!root.info.id
+                Layout.leftMargin: Theme.space3
+                Layout.topMargin: Theme.space1
+                text: qsTr("DETAILS")
+                color: Theme.textMuted
+                font.pixelSize: Theme.fontCaption
+                font.weight: Font.DemiBold
+                font.letterSpacing: Theme.captionSpacing
             }
-        }
 
-        GroupBox {
-            Layout.fillWidth: true
-            // Exact surfaces only (for example a fitted base surface); solids have their own tools.
-            visible: !!root.info.hasBrep && root.info.kind !== "sketch" && (root.info.faces ?? 0) > 0
-                     && (root.info.solids ?? 0) === 0
-            title: qsTr("Surface")
             GridLayout {
-                anchors.fill: parent
-                columns: 3
-                Label { text: qsTr("Offset") }
+                visible: !!root.info.id
+                Layout.fillWidth: true
+                Layout.leftMargin: Theme.space3
+                Layout.rightMargin: Theme.space3
+                Layout.bottomMargin: Theme.space3
+                columns: 2
+                columnSpacing: 12
+                rowSpacing: 6
+                Label { text: qsTr("Name"); color: Theme.textMuted }
                 TextField {
-                    id: offsetDistance
-                    Layout.preferredWidth: 56
-                    text: "2"
-                    validator: DoubleValidator { decimals: 3; notation: DoubleValidator.StandardNotation }
-                }
-                Button {
                     Layout.fillWidth: true
-                    text: qsTr("Offset")
-                    ToolTip.visible: hovered
-                    ToolTip.delay: 500
-                    ToolTip.text: qsTr("New surface moved along the normal by this distance (mm, negative: the other side), e.g. a clearance")
-                    onClicked: {
-                        const d = root.parseNumber(offsetDistance.text)
-                        if (isNaN(d))
-                            return root.controller.showStatus(qsTr("Enter the offset distance in mm"))
-                        const r = root.controller.execute("surface.offset", { id: root.partId, distance: d })
-                        if (r.ok)
-                            root.controller.showStatus(qsTr("Offset surface \"%1\" at %2 mm").arg(r.result.name).arg(d))
+                    text: root.info.name ?? ""
+                    onEditingFinished: {
+                        if (text.length > 0 && text !== root.info.name)
+                            root.controller.execute("part.rename", { id: root.partId, name: text })
                     }
                 }
-                Label { text: qsTr("Sketch") }
-                ComboBox {
-                    id: trimSketch
-                    Layout.columnSpan: 2
+                Label { text: qsTr("Size X"); color: Theme.textMuted }
+                Label { text: Preferences.formatLength(Number(root.info.sizeX ?? 0), Preferences.lengthUnit) }
+                Label { text: qsTr("Size Y"); color: Theme.textMuted }
+                Label { text: Preferences.formatLength(Number(root.info.sizeY ?? 0), Preferences.lengthUnit) }
+                Label { text: qsTr("Size Z"); color: Theme.textMuted }
+                Label { text: Preferences.formatLength(Number(root.info.sizeZ ?? 0), Preferences.lengthUnit) }
+                Label { visible: root.info.kind === "imported" && !root.info.hasBrep; text: qsTr("Triangles"); color: Theme.textMuted }
+                Label { visible: root.info.kind === "imported" && !root.info.hasBrep; text: Number(root.info.triangles ?? 0).toLocaleString(Qt.locale(), "f", 0) }
+                Label { text: qsTr("Type"); color: Theme.textMuted }
+                Label {
                     Layout.fillWidth: true
-                    model: root.sketches.map(s => s.name)
-                    // Sketches made after the panel opened (e.g. the outline just drawn).
-                    onPressedChanged: if (pressed) root.refresh()
-                }
-                ComboBox {
-                    id: trimKeep
-                    Layout.preferredWidth: 90
-                    model: [qsTr("Inside"), qsTr("Outside")]
-                }
-                Button {
-                    Layout.columnSpan: 2
-                    Layout.fillWidth: true
-                    enabled: root.sketches.length > 0
-                    text: qsTr("Trim by sketch")
-                    ToolTip.visible: hovered
-                    ToolTip.delay: 500
-                    ToolTip.text: qsTr("Projects the sketch outline onto this curved surface and keeps the part inside (or outside) it, as a new surface; thicken it next")
-                    onClicked: {
-                        const sk = root.sketches[Math.max(0, trimSketch.currentIndex)]
-                        const r = root.controller.execute("surface.trim_by_sketch",
-                                                          { id: root.partId, sketch: sk.featureId,
-                                                            keep: trimKeep.currentIndex === 1 ? "outside" : "inside" })
-                        if (r.ok)
-                            root.controller.showStatus(qsTr("Surface \"%1\": %2 cm² trimmed by %3")
-                                                       .arg(r.result.name).arg((r.result.area / 100).toFixed(2))
-                                                       .arg(sk.name))
-                    }
-                }
-                Label { text: qsTr("Thickness") }
-                TextField {
-                    id: thickness
-                    Layout.preferredWidth: 56
-                    text: "2"
-                    validator: DoubleValidator { bottom: 0.001; decimals: 3; notation: DoubleValidator.StandardNotation }
-                }
-                ComboBox {
-                    id: thickenSide
-                    Layout.fillWidth: true
-                    model: [qsTr("Outside"), qsTr("Inside"), qsTr("Both")]
-                }
-                Button {
-                    Layout.columnSpan: 3
-                    Layout.fillWidth: true
-                    text: qsTr("Thicken to solid")
-                    ToolTip.visible: hovered
-                    ToolTip.delay: 500
-                    ToolTip.text: qsTr("New closed solid of this thickness (mm) from the surface")
-                    onClicked: {
-                        const t = root.parseNumber(thickness.text)
-                        if (isNaN(t))
-                            return root.controller.showStatus(qsTr("Enter the thickness in mm"))
-                        const side = ["outside", "inside", "both"][thickenSide.currentIndex]
-                        const r = root.controller.execute("surface.thicken", { id: root.partId, thickness: t, side: side })
-                        if (r.ok)
-                            root.controller.showStatus(qsTr("Solid \"%1\": %2 mm thick, volume %3 cm³")
-                                                       .arg(r.result.name).arg(t)
-                                                       .arg((r.result.volume / 1000).toFixed(2)))
-                    }
+                    wrapMode: Text.WordWrap
+                    text: root.info.kind === "sketch" ? qsTr("Sketch")
+                          : root.info.kind === "body" ? qsTr("Body (editable, from the timeline)")
+                          : root.info.hasBrep
+                          ? ((root.info.solids ?? 0) > 0 ? qsTr("Exact solid") : ((root.info.faces ?? 0) === 1 ? qsTr("Exact surface (1 face)") : qsTr("Exact surface (%1 faces)").arg(root.info.faces ?? 0)))
+                          : qsTr("Triangle mesh")
                 }
             }
         }
-
-        Button {
-            visible: !!root.info.id && root.info.kind === "imported"
-            text: qsTr("Remove part")
-            onClicked: root.controller.execute("part.remove", { id: root.partId })
-        }
-
-        Item { Layout.fillHeight: true }
     }
 }

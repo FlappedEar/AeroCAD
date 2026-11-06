@@ -141,6 +141,46 @@ QtObject {
         return commandIcons[key] || "tool"
     }
 
+    /// One-line explanation of a toolbar command by its label, shown in its tooltip under
+    /// the name, so the ribbon explains itself. Commands not listed show only their name.
+    readonly property var commandHelps: ({
+        "sketch": qsTr("Draw a 2D outline on a plane, a flat face, a surface or a scan."),
+        "extrude": qsTr("Pull a closed sketch outline straight out into a solid, or cut with it."),
+        "revolve": qsTr("Spin a closed sketch outline around an axis into a solid."),
+        "hole": qsTr("Drill a round hole into a body at a point on a face."),
+        "box": qsTr("Add a block whose size you type in."),
+        "cylinder": qsTr("Add a cylinder whose size you type in."),
+        "fillet": qsTr("Round the selected edges of a body."),
+        "chamfer": qsTr("Bevel (cut off at an angle) the selected edges of a body."),
+        "shell": qsTr("Hollow out a body, leaving walls of the thickness you type."),
+        "combine": qsTr("Join, cut or intersect two bodies."),
+        "parameters": qsTr("Named values (e.g. wall = 2 mm) that dimensions can use; change one to update the design."),
+        "delete": qsTr("Delete the selected part. Undo brings it back."),
+        "import": qsTr("Open a scan or model: STL, OBJ, PLY, 3MF or STEP."),
+        "to body": qsTr("Turn the selected scan or solid into an editable body in the timeline."),
+        "selected": qsTr("Export the selected part to STL, 3MF or STEP."),
+        "all visible": qsTr("Export every visible part to one file."),
+        "a/b": qsTr("Switch between two design variants to compare them."),
+        "new": qsTr("Start a new design variant from the current one."),
+        "finish sketch": qsTr("Close the sketch and go back to the 3D design."),
+        "line": qsTr("Click points to draw connected lines; click the first point to close the outline."),
+        "rectangle": qsTr("Drag two corners."),
+        "circle": qsTr("Click the centre, then the radius."),
+        "arc": qsTr("Click start, end and a point on the arc."),
+        "polygon": qsTr("Regular polygon: click the centre, then a corner."),
+        "slot": qsTr("Rounded slot: click the two centres, then the width."),
+        "dimension": qsTr("Click a line, circle or two points to fix a size; type the value."),
+        "measure": qsTr("Measure distances and angles between points, edges and faces."),
+        "section": qsTr("Cut the view with a plane to look inside."),
+        "deviation": qsTr("Colour a part by its distance from the scan."),
+        "thickness": qsTr("Colour a part by its wall thickness."),
+        "clearance": qsTr("Colour where two parts come closer than a gap you choose.")
+    })
+
+    function commandHelp(label) {
+        return commandHelps[String(label).toLowerCase().replace(/&/g, "")] || ""
+    }
+
     /// Icon of a timeline feature type or Browser part kind.
     function featureIcon(type) {
         const map = {

@@ -12,6 +12,8 @@ Pane {
     required property AppController controller
     property var selectedPartId: 0
     signal partSelected(var id)
+    /// Right-click on a row: open the part's context menu at x, y in `item`.
+    signal partContextRequested(var id, Item item, real x, real y)
 
     padding: 0
     background: Rectangle { color: Theme.surface }
@@ -47,6 +49,7 @@ Pane {
                 required property bool partVisible
                 required property var triangles
                 required property string kind
+                required property bool hasBrep
 
                 readonly property bool selected: row.partId === root.selectedPartId
 
@@ -55,6 +58,10 @@ Pane {
                 leftPadding: Theme.space3
                 rightPadding: Theme.space1
                 onClicked: root.partSelected(row.partId)
+                TapHandler {
+                    acceptedButtons: Qt.RightButton
+                    onTapped: eventPoint => root.partContextRequested(row.partId, row, eventPoint.position.x, eventPoint.position.y)
+                }
 
                 background: Rectangle {
                     anchors.fill: parent
@@ -67,7 +74,7 @@ Pane {
                 contentItem: RowLayout {
                     spacing: Theme.space2
                     AppIcon {
-                        name: Theme.featureIcon(row.kind)
+                        name: row.kind === "imported" && row.hasBrep ? "surface" : Theme.featureIcon(row.kind)
                         size: Theme.iconSmall
                         color: row.selected ? Theme.accent : Theme.icon
                         opacity: row.partVisible ? 1 : 0.45
@@ -87,6 +94,7 @@ Pane {
                             Layout.fillWidth: true
                             text: row.kind === "body" ? qsTr("Body")
                                 : row.kind === "sketch" ? qsTr("Sketch")
+                                : row.hasBrep ? qsTr("Smooth shape")
                                 : qsTr("Mesh · %1 triangles").arg(Number(row.triangles).toLocaleString(Qt.locale(), "f", 0))
                             color: Theme.textFaint
                             font.pixelSize: Theme.fontSmall
