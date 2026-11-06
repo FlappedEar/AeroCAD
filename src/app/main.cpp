@@ -12,6 +12,7 @@
 #include <QUrl>
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstdio>
 
 namespace {
@@ -32,8 +33,9 @@ int runSmokeTest(QGuiApplication& app, QQmlApplicationEngine& engine, aerocad::a
     }
 
     // Keep requesting frames (nothing animates, so the window would otherwise go idle),
-    // then grab the window and check that the model is actually on screen: the
-    // viewport background is dark (all channels < 90), a lit part is not.
+    // then grab the window and check that the model is actually on screen. The viewport
+    // background is a vertical gradient, so each row is compared with the viewport's
+    // leftmost pixel in that row.
     int frames = 0;
     int rc = -1;
     QObject::connect(window, &QQuickWindow::frameSwapped, &app, [&] {
@@ -58,10 +60,18 @@ int runSmokeTest(QGuiApplication& app, QQmlApplicationEngine& engine, aerocad::a
                                    QPoint(qRound(area.right() * dpr) - 1, qRound(area.bottom() * dpr) - 1))
                                  .intersected(image.rect());
         qsizetype bright = 0;
-        for (int y = pixels.top(); y <= pixels.bottom(); y += 2) {
-            for (int x = pixels.left(); x <= pixels.right(); x += 2) {
+        // Only the central part is checked: the model is framed there (fit on import),
+        // while the ViewCube and navigation bar overlays live near the edges.
+        const QRect centre = pixels.adjusted(pixels.width() / 5, pixels.height() / 5, -pixels.width() / 5,
+                                             -pixels.height() / 5);
+        const int referenceX = std::min(pixels.left() + 2, pixels.right());
+        for (int y = centre.top(); y <= centre.bottom(); y += 2) {
+            const QColor bg = image.pixelColor(referenceX, y);
+            for (int x = centre.left(); x <= centre.right(); x += 2) {
                 const QColor c = image.pixelColor(x, y);
-                if (std::max({c.red(), c.green(), c.blue()}) > 110)
+                const int diff = std::abs(c.red() - bg.red()) + std::abs(c.green() - bg.green()) +
+                                 std::abs(c.blue() - bg.blue());
+                if (diff > 60)
                     ++bright;
             }
         }
