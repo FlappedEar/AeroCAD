@@ -779,7 +779,11 @@ ApplicationWindow {
                     visible: modelData.tab !== "sketch" || !!window.activeSketch
                     current: window.currentRibbonTab === modelData.tab
                     onClicked: {
-                        if (modelData.tab !== "sketch" && window.activeSketch)
+                        // SKETCH is contextual (it follows activeSketch), so it is never
+                        // stored: the ribbon returns to the user's tab when the sketch ends.
+                        if (modelData.tab === "sketch")
+                            return
+                        if (window.activeSketch)
                             window.finishSketch()
                         window.ribbonTab = modelData.tab
                     }
