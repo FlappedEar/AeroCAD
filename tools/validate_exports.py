@@ -58,15 +58,16 @@ def run_script(cmd: Path, steps: list[dict]) -> list[dict]:
 
 # --- Models -----------------------------------------------------------------------------
 
-# Each model: commands that build it, expected solid volume (mm^3), bounds size and part
-# count, and which formats it can be exported to.
+# Each model: commands that build it, expected solid volume (mm^3, None = take the exact
+# B-rep volume the feature commands report), bounds size and part count, and which
+# formats it can be exported to.
 def models() -> list[dict]:
     tetra = REPO / "tests" / "data" / "tetrahedron.stl"
     return [
         {
             "name": "tetrahedron_mesh",
             "steps": [{"name": "document.import", "params": {"path": str(tetra)}}],
-            "volume": None,  # measured from the import below
+            "volume": 1000.0 / 6.0,  # right tetrahedron with 10 mm legs
             "size": None,
             "parts": 1,
             "formats": ["stl", "3mf"],
@@ -89,7 +90,7 @@ def models() -> list[dict]:
                 {"name": "feature.box", "params": {"size": [40, 40, 20]}},
                 {"name": "feature.fillet", "params": {"body": 1, "edges": list(range(12)), "radius": 3}},
             ],
-            "volume": None,  # taken from the B-rep (document.parts) below
+            "volume": None,  # exact B-rep volume, reported by the fillet feature below
             "size": [40, 40, 20],
             "parts": 1,
             "formats": ["stl", "3mf", "step"],
@@ -143,10 +144,12 @@ def validate_mesh_trimesh(path: Path, model: dict) -> None:
     check(mesh.is_watertight, "trimesh: watertight")
     check(mesh.is_winding_consistent, "trimesh: consistent winding")
     check(mesh.volume > 0, f"trimesh: positive volume ({mesh.volume:.3f} mm^3)")
-    if model["volume"] is not None:
-        # Tessellated curved surfaces are slightly smaller than the exact solid.
-        check(close(mesh.volume, model["volume"], rel=2e-2),
-              f"trimesh: volume {mesh.volume:.2f} ~ {model['volume']:.2f} mm^3")
+    # Same mesh as AeroCAD measured before writing (float32 coordinates in STL).
+    check(close(mesh.volume, model["mesh_volume"], rel=1e-5),
+          f"trimesh: volume {mesh.volume:.3f} == AeroCAD's mesh volume {model['mesh_volume']:.3f} mm^3")
+    # Tessellated curved surfaces are slightly smaller than the exact solid.
+    check(close(mesh.volume, model["volume"], rel=2e-2),
+          f"trimesh: volume {mesh.volume:.2f} ~ exact {model['volume']:.2f} mm^3")
     if model["size"] is not None:
         size = mesh.bounds[1] - mesh.bounds[0]
         check(all(close(a, b, rel=1e-3, abs_tol=1e-2) for a, b in zip(size, model["size"])),
@@ -177,10 +180,7 @@ def validate_step_gmsh(path: Path, model: dict) -> None:
         solids = gmsh.model.getEntities(3)
         check(len(solids) == model["parts"], f"gmsh: {len(solids)} solids (expected {model['parts']})")
         volume = sum(gmsh.model.occ.getMass(3, tag) for _, tag in solids)
-        if model["volume"] is not None:
-            check(close(volume, model["volume"], rel=1e-6), f"gmsh: volume {volume:.3f} == {model['volume']:.3f} mm^3")
-        else:
-            check(volume > 0, f"gmsh: positive volume ({volume:.3f} mm^3)")
+        check(close(volume, model["volume"], rel=1e-6), f"gmsh: volume {volume:.3f} == {model['volume']:.3f} mm^3")
         if model["size"] is not None:
             xmin, ymin, zmin, xmax, ymax, zmax = gmsh.model.getBoundingBox(-1, -1)
             size = [xmax - xmin, ymax - ymin, zmax - zmin]
@@ -202,7 +202,8 @@ def main() -> int:
         print(f"aerocad-cmd not found at {args.cmd}; build target aerocad_cmd first", file=sys.stderr)
         return 2
 
-    out = args.keep if args.keep else Path(tempfile.mkdtemp(prefix="aerocad_validate_"))
+    # document.export only accepts absolute paths.
+    out = args.keep.resolve() if args.keep else Path(tempfile.mkdtemp(prefix="aerocad_validate_"))
     out.mkdir(parents=True, exist_ok=True)
     try:
         for model in models():
@@ -218,11 +219,22 @@ def main() -> int:
             if model["size"] is None:
                 box = [p["bounds"]["size"] for p in parts][0]
                 model["size"] = box
-            if model["volume"] is None and all("volume" in p for p in parts):
-                model["volume"] = sum(p["volume"] for p in parts)
+            # Exact volumes: the latest volume each feature command reported per body.
+            brep = {}
+            for r in results:
+                for body in r["result"].get("bodies", []) if r["command"].startswith("feature.") else []:
+                    brep[body["id"]] = body["volume"]
+            if model["volume"] is None:
+                check(bool(brep), "feature commands reported exact body volumes")
+                model["volume"] = sum(brep.values())
+            elif brep:
+                check(close(sum(brep.values()), model["volume"], rel=1e-9),
+                      f"AeroCAD B-rep volume {sum(brep.values()):.3f} == expected {model['volume']:.3f} mm^3")
             for r in results:
                 if r["command"] == "document.export":
                     check(not r["result"]["warnings"], f"{r['result']['format']}: no mesh warnings from AeroCAD")
+                    if r["result"]["checks"]:
+                        model["mesh_volume"] = sum(c["volume"] for c in r["result"]["checks"])
 
             for fmt in model["formats"]:
                 path = out / f"{model['name']}.{fmt}"
