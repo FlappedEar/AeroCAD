@@ -164,3 +164,68 @@ TEST_CASE("Design commands: imported mesh becomes a body that can be cut", "[com
     CHECK(s.design().bodies().empty());
     CHECK(s.document().part(partId)->visible);
 }
+
+TEST_CASE("Design commands: sketch constraints drive the model through parameters", "[commands][cad][solver]")
+{
+    commands::Session s;
+    run(s, "parameter.set", {{"name", "len"}, {"expression", "50 mm"}});
+    // A free-hand rectangle (as drawn with the mouse), then dimensioned.
+    const Json sk = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "rectangle"}, {"corner", {3, 2}}, {"opposite", {41, 19}}}})}});
+    const auto id = sk.at("id").get<std::uint64_t>();
+    CHECK(sk.at("degreesOfFreedom") == 4); // position + width + height
+    const Json c = run(s, "sketch.add_constraints",
+                       {{"sketch", id},
+                        {"constraints", Json::array({{{"type", "coincident"},
+                                                      {"points", Json::array({{{"curve", 0}, {"point", "start"}},
+                                                                              "origin"})}},
+                                                     {{"type", "length"}, {"curve", 0}, {"value", "len"}},
+                                                     {{"type", "length"}, {"curve", 1}, {"value", 20}}})}});
+    CHECK(c.at("degreesOfFreedom") == 0);
+    const Json ex = run(s, "feature.extrude", {{"sketch", id}, {"distance", 10}});
+    CHECK(ex.at("bodies")[0].at("volume").get<double>() == Approx(50 * 20 * 10));
+
+    // Changing the parameter moves the sketch and the body.
+    run(s, "parameter.set", {{"name", "len"}, {"expression", "80 mm"}});
+    Json tl = run(s, "timeline.list");
+    CHECK(tl.at("bodies")[0].at("volume").get<double>() == Approx(80 * 20 * 10));
+
+    // Curves and constraints are listed with the solved geometry.
+    const Json curves = run(s, "sketch.curves", {{"sketch", id}});
+    REQUIRE(curves.at("curves").size() == 4);
+    CHECK(curves.at("curves")[0].at("points")[1][0].get<double>() == Approx(80));
+    CHECK(curves.at("constraints").size() == 3);
+    CHECK(curves.at("constraints")[1].at("resolved").get<double>() == Approx(80));
+
+    // Editing a dimension, undo and conflicting constraints.
+    run(s, "sketch.edit_constraint", {{"sketch", id}, {"index", 2}, {"value", 30}});
+    tl = run(s, "timeline.list");
+    CHECK(tl.at("bodies")[0].at("volume").get<double>() == Approx(80 * 30 * 10));
+    run(s, "edit.undo");
+    tl = run(s, "timeline.list");
+    CHECK(tl.at("bodies")[0].at("volume").get<double>() == Approx(80 * 20 * 10));
+
+    const auto bad = s.execute("sketch.add_constraints",
+                               {{"sketch", id},
+                                {"constraints", Json::array({{{"type", "length"}, {"curve", 2}, {"value", 10}}})}});
+    CHECK_FALSE(bad.ok);
+    CHECK(bad.error.find("conflict") != std::string::npos);
+    run(s, "sketch.edit_constraint", {{"sketch", id}, {"index", 0}, {"remove", true}});
+    CHECK(run(s, "sketch.curves", {{"sketch", id}}).at("degreesOfFreedom") == 2);
+}
+
+TEST_CASE("Design commands: a slot keeps its shape when dimensioned", "[commands][cad][solver]")
+{
+    commands::Session s;
+    const Json sk = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "slot"}, {"start", {0, 0}}, {"end", {30, 0}}, {"width", 10}}})},
+                         {"constraints", Json::array({{{"type", "radius"}, {"curve", 1}, {"value", 8}}})}});
+    const auto id = sk.at("id").get<std::uint64_t>();
+    const Json ex = run(s, "feature.extrude", {{"sketch", id}, {"distance", 1}});
+    const double pi = std::numbers::pi;
+    // Both ends follow the radius (tangent lines), the length between centres stays free but unchanged.
+    const double v = ex.at("bodies")[0].at("volume").get<double>();
+    CHECK(v == Approx(pi * 64 + 16 * 30).epsilon(1e-3));
+}

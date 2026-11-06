@@ -95,6 +95,49 @@ Json curveSchema()
         {"additionalProperties", false}};
 }
 
+Json constraintPointSchema()
+{
+    return Json{{"type", Json::array({"string", "object"})},
+                {"description", "\"origin\" (sketch origin) or {curve: index, point: start | end | center}."},
+                {"properties", {{"curve", {{"type", "integer"}, {"minimum", 0}}},
+                                {"point", {{"type", "string"}, {"enum", {"start", "end", "center"}}}}}}};
+}
+
+Json constraintSchema()
+{
+    return Json{
+        {"type", "object"},
+        {"description",
+         "A sketch constraint or dimension. Curves are referred to by index in sketch.curves (a rectangle is four "
+         "lines, a slot two lines and two arcs). Geometric: coincident {points: 2}; point_on_curve {point, curve}; "
+         "midpoint {point, curve: line}; horizontal / vertical {curve: line} or {points: 2}; parallel, "
+         "perpendicular, collinear {curves: 2 lines}; tangent {curves: line/arc/circle + arc/circle}; equal "
+         "{curves: 2 lines or 2 arcs/circles}; concentric {curves: 2}; symmetric {points: 2, curve: line}; fix "
+         "{points and/or curves}. Dimensions (value: number or expression): distance {points: 2} or {point, "
+         "curve: line}; horizontal_distance / vertical_distance {points: 2}; length {curve: line}; radius / "
+         "diameter {curve}; angle {curves: 2 lines} (degrees)."},
+        {"properties",
+         {{"type",
+           {{"type", "string"},
+            {"enum", {"coincident", "point_on_curve", "midpoint", "horizontal", "vertical", "parallel",
+                      "perpendicular", "collinear", "tangent", "equal", "concentric", "symmetric", "fix",
+                      "distance", "horizontal_distance", "vertical_distance", "length", "radius", "diameter",
+                      "angle"}}}},
+          {"curve", {{"type", "integer"}, {"minimum", 0}}},
+          {"curves", {{"type", "array"}, {"items", {{"type", "integer"}, {"minimum", 0}}}}},
+          {"point", constraintPointSchema()},
+          {"points", {{"type", "array"}, {"items", constraintPointSchema()}}},
+          {"value", numberOrExpr("Dimension value (mm, or degrees for angle).")}}},
+        {"required", {"type"}},
+        {"additionalProperties", false}};
+}
+
+Json constraintsSchema()
+{
+    return Json{{"type", "array"}, {"items", constraintSchema()},
+                {"description", "Sketch constraints and dimensions (solved after the curves)."}};
+}
+
 Json curvesSchema()
 {
     return Json{{"type", "array"}, {"items", curveSchema()}, {"description", "Sketch curves."}};
@@ -276,8 +319,10 @@ Json addedFeature(cad::Design& d, const model::Document& doc, cad::FeatureId id)
             break;
     Json j = featureToJson(d, *f, index);
     j["bodies"] = bodiesToJson(d, doc);
-    if (auto it = d.sketches().find(id); it != d.sketches().end())
+    if (auto it = d.sketches().find(id); it != d.sketches().end()) {
         j["profiles"] = it->second.geometry.profiles.size();
+        j["degreesOfFreedom"] = it->second.degreesOfFreedom;
+    }
     return j;
 }
 
@@ -318,6 +363,14 @@ const cad::Body& requireBody(const cad::Design& d, const Json& ref)
     throw CommandError("No body " + ref.dump());
 }
 
+const cad::Feature& sketchFeature(const cad::Design& d, cad::FeatureId id)
+{
+    const cad::Feature* f = d.feature(id);
+    if (f == nullptr || f->type != "sketch")
+        throw cad::DesignError("No sketch with id " + std::to_string(id));
+    return *f;
+}
+
 // --- Registration -----------------------------------------------------------------------
 
 void registerSketchCommands(CommandRegistry& r)
@@ -331,6 +384,7 @@ void registerSketchCommands(CommandRegistry& r)
                          {"face", faceRefSchema()},
                          {"offset", numberOrExpr("Offset of the plane along its normal (mm).")},
                          {"curves", curvesSchema()},
+                         {"constraints", constraintsSchema()},
                          {"name", {{"type", "string"}, {"description", "Optional name, default SketchN."}}}}),
            true},
           [](CommandContext& ctx, const Json& params) {
@@ -390,6 +444,99 @@ void registerSketchCommands(CommandRegistry& r)
                                      {"yDir", vec(sk.plane.yDir())}}},
                           {"curves", sk.curves.size()},
                           {"profiles", out}};
+          });
+
+    r.add({"sketch.add_constraints", "Add Sketch Constraints",
+           "Adds geometric constraints and dimensions to a sketch (Fusion: Sketch > Constraints, Sketch "
+           "Dimension, shortcut D). The curves move as little as possible to satisfy them; constraints that "
+           "conflict are rejected. Dimension values can be expressions using user parameters.",
+           objectSchema({{"sketch", featureIdSchema("Sketch feature id.")}, {"constraints", constraintsSchema()}},
+                        {"sketch", "constraints"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              const auto id = params.at("sketch").get<cad::FeatureId>();
+              designChange(ctx, "Add Constraint", [&](cad::Design& d) {
+                  Json list = sketchFeature(d, id).params.value("constraints", Json::array());
+                  for (const auto& c : params.at("constraints"))
+                      list.push_back(c);
+                  d.editFeature(id, {{"constraints", list}});
+                  return Json{};
+              });
+              return addedFeature(design(ctx), ctx.document, id);
+          });
+
+    r.add({"sketch.edit_constraint", "Edit Sketch Constraint",
+           "Changes the value of a sketch dimension, or removes a constraint (remove: true). index is the "
+           "position in sketch.curves' constraints list.",
+           objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
+                         {"index", {{"type", "integer"}, {"minimum", 0}}},
+                         {"value", numberOrExpr("New dimension value.")},
+                         {"remove", {{"type", "boolean"}}}},
+                        {"sketch", "index"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              const auto id = params.at("sketch").get<cad::FeatureId>();
+              const auto index = params.at("index").get<std::size_t>();
+              const bool remove = params.value("remove", false);
+              designChange(ctx, remove ? "Delete Constraint" : "Edit Dimension", [&](cad::Design& d) {
+                  Json list = sketchFeature(d, id).params.value("constraints", Json::array());
+                  if (index >= list.size())
+                      throw cad::DesignError("Sketch has no constraint " + std::to_string(index));
+                  if (remove) {
+                      list.erase(list.begin() + static_cast<std::ptrdiff_t>(index));
+                  } else {
+                      if (!params.contains("value"))
+                          throw cad::DesignError("Give value or remove");
+                      list[index]["value"] = params.at("value");
+                  }
+                  d.editFeature(id, {{"constraints", list}});
+                  return Json{};
+              });
+              return addedFeature(design(ctx), ctx.document, id);
+          });
+
+    r.add({"sketch.curves", "Sketch curves",
+           "Lists the solved curves of a sketch (index, kind, points in sketch coordinates) and its constraints, "
+           "with the remaining degrees of freedom. Use the indices in sketch.add_constraints.",
+           objectSchema({{"sketch", featureIdSchema("Sketch feature id.")}}, {"sketch"})},
+          [](CommandContext& ctx, const Json& params) {
+              const auto id = params.at("sketch").get<cad::FeatureId>();
+              const cad::Design& d = design(ctx);
+              const cad::Feature& f = sketchFeature(d, id);
+              auto it = d.sketches().find(id);
+              if (it == d.sketches().end())
+                  throw CommandError("No evaluated sketch with id " + std::to_string(id));
+              const auto& sk = it->second;
+              Json curves = Json::array();
+              for (std::size_t i = 0; i < sk.curves.size(); ++i) {
+                  const auto& c = sk.curves[i];
+                  static const char* kinds[] = {"line", "arc", "circle", "spline"};
+                  Json pts = Json::array();
+                  for (const auto& p : c.points)
+                      pts.push_back(Json::array({p.x, p.y}));
+                  Json cj{{"index", i}, {"kind", kinds[static_cast<int>(c.kind)]}, {"points", pts},
+                          {"construction", c.construction}};
+                  if (c.kind == geometry::SketchCurve::Kind::Circle)
+                      cj["radius"] = c.radius;
+                  curves.push_back(cj);
+              }
+              Json constraints = Json::array();
+              const Json list = f.params.value("constraints", Json::array());
+              for (std::size_t i = 0; i < list.size(); ++i) {
+                  Json cj = list[i];
+                  cj["index"] = i;
+                  if (cj.contains("value")) {
+                      try {
+                          cj["resolved"] = d.evaluate(cj.at("value"));
+                      } catch (const std::exception&) {
+                      }
+                  }
+                  constraints.push_back(cj);
+              }
+              return Json{{"sketch", id},
+                          {"curves", curves},
+                          {"constraints", constraints},
+                          {"degreesOfFreedom", sk.degreesOfFreedom}};
           });
 }
 

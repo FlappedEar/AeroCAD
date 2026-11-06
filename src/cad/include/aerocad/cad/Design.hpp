@@ -70,6 +70,10 @@ struct SketchResult {
     geometry::SketchGeometry geometry;
     /// True when a later active feature uses its profiles (Fusion then hides it).
     bool consumed = false;
+    /// Degrees of freedom left by the constraints (0 = fully constrained).
+    int degreesOfFreedom = 0;
+    /// Number of user constraints and dimensions (params "constraints").
+    std::size_t constraintCount = 0;
 };
 
 class Design {
