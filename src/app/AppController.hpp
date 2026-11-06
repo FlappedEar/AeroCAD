@@ -49,6 +49,8 @@ public:
 
     /// Runs a command. Returns {ok: bool, result: object} or {ok: false, error: string}.
     Q_INVOKABLE QVariantMap execute(const QString& name, const QVariantMap& params = {});
+    /// Like execute(), but a failure is not shown in the status bar (live previews).
+    Q_INVOKABLE QVariantMap executeQuiet(const QString& name, const QVariantMap& params = {});
     /// Convenience wrapper around document.import for file dialogs and drag & drop.
     Q_INVOKABLE bool importFile(const QUrl& url);
     /// Runs a JSON command script: an array of {"name": ..., "params": {...}} objects (the

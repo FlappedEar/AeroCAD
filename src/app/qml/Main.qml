@@ -73,30 +73,27 @@ ApplicationWindow {
             enterSketch(r.result.id)
     }
 
-    /// Snap points of a sketch: ends of lines, rectangle corners, centres.
-    function sketchSnapPoints(feature) {
-        const out = []
-        const num = v => typeof v === "number"
-        const pt = p => p && num(p[0]) && num(p[1])
-        for (const c of (feature && feature.params.curves) || []) {
-            for (const k of ["start", "end", "through", "center", "corner", "opposite"]) {
-                if (pt(c[k]))
-                    out.push(c[k])
-            }
-            if (c.type === "rectangle" && pt(c.corner) && num(c.width) && num(c.height)) {
-                const [x, y] = c.corner
-                out.push([x + c.width, y], [x + c.width, y + c.height], [x, y + c.height])
-            }
-        }
-        return out
-    }
-
+    /// Reloads the solved curves and constraints of the active sketch; snap points are
+    /// the curve ends and centres.
     function refreshSketchSnaps() {
         if (!activeSketch)
             return
-        const r = controller.execute("timeline.list")
-        if (r.ok)
-            viewport.sketchSnapPoints = sketchSnapPoints(r.result.features.find(f => f.id === activeSketch.id))
+        const r = controller.execute("sketch.curves", { sketch: activeSketch.id })
+        if (!r.ok)
+            return
+        const snaps = []
+        for (const c of r.result.curves) {
+            if (c.kind === "circle")
+                snaps.push(c.points[0])
+            else
+                snaps.push(c.points[0], c.points[c.points.length - 1])
+            if (c.center)
+                snaps.push(c.center)
+        }
+        viewport.sketchSnapPoints = snaps
+        viewport.sketchCurves = r.result.curves
+        viewport.sketchConstraints = r.result.constraints
+        viewport.sketchDegreesOfFreedom = r.result.degreesOfFreedom
     }
 
     function enterSketch(id) {
@@ -124,6 +121,9 @@ ApplicationWindow {
     function finishSketch() {
         activeSketch = null
         sketchTool = ""
+        viewport.sketchCurves = []
+        viewport.sketchConstraints = []
+        viewport.sketchDegreesOfFreedom = -1
     }
 
     function sketchTool_(tool) {
@@ -263,6 +263,18 @@ ApplicationWindow {
     Action { id: circleAction; text: qsTr("&Circle"); shortcut: "C"; enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "circle"; onTriggered: window.sketchTool_("circle") }
     Action { id: arcAction; text: qsTr("&Arc"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "arc"; onTriggered: window.sketchTool_("arc") }
     Action { id: polygonAction; text: qsTr("&Polygon"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "polygon"; onTriggered: window.sketchTool_("polygon") }
+    Action { id: dimensionAction; text: qsTr("Sketch &Dimension"); shortcut: "D"; enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "dimension"; onTriggered: window.sketchTool_("dimension") }
+    Action { id: horizontalAction; text: qsTr("Horizontal"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "horizontal"; onTriggered: window.sketchTool_("horizontal") }
+    Action { id: verticalAction; text: qsTr("Vertical"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "vertical"; onTriggered: window.sketchTool_("vertical") }
+    Action { id: coincidentAction; text: qsTr("Coincident"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "coincident"; onTriggered: window.sketchTool_("coincident") }
+    Action { id: tangentAction; text: qsTr("Tangent"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "tangent"; onTriggered: window.sketchTool_("tangent") }
+    Action { id: equalAction; text: qsTr("Equal"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "equal"; onTriggered: window.sketchTool_("equal") }
+    Action { id: parallelAction; text: qsTr("Parallel"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "parallel"; onTriggered: window.sketchTool_("parallel") }
+    Action { id: perpendicularAction; text: qsTr("Perpendicular"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "perpendicular"; onTriggered: window.sketchTool_("perpendicular") }
+    Action { id: concentricAction; text: qsTr("Concentric"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "concentric"; onTriggered: window.sketchTool_("concentric") }
+    Action { id: midpointAction; text: qsTr("Midpoint"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "midpoint"; onTriggered: window.sketchTool_("midpoint") }
+    Action { id: collinearAction; text: qsTr("Collinear"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "collinear"; onTriggered: window.sketchTool_("collinear") }
+    Action { id: fixAction; text: qsTr("Fix/Unfix"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "fix"; onTriggered: window.sketchTool_("fix") }
     Action { id: slotAction; text: qsTr("Sl&ot"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "slot"; onTriggered: window.sketchTool_("slot") }
 
     Shortcut {
@@ -334,6 +346,22 @@ ApplicationWindow {
             MenuItem { action: arcAction }
             MenuItem { action: polygonAction }
             MenuItem { action: slotAction }
+            MenuSeparator {}
+            MenuItem { action: dimensionAction }
+            Menu {
+                title: qsTr("&Constraints")
+                MenuItem { action: horizontalAction }
+                MenuItem { action: verticalAction }
+                MenuItem { action: coincidentAction }
+                MenuItem { action: tangentAction }
+                MenuItem { action: equalAction }
+                MenuItem { action: parallelAction }
+                MenuItem { action: perpendicularAction }
+                MenuItem { action: concentricAction }
+                MenuItem { action: midpointAction }
+                MenuItem { action: collinearAction }
+                MenuItem { action: fixAction }
+            }
             MenuSeparator {}
             MenuItem { action: finishSketchAction }
         }
@@ -458,6 +486,7 @@ ApplicationWindow {
                 ToolCommand { action: arcAction; text: qsTr("Arc") }
                 ToolCommand { action: polygonAction; text: qsTr("Polygon") }
                 ToolCommand { action: slotAction; text: qsTr("Slot") }
+                ToolCommand { action: dimensionAction; text: qsTr("Dimension") }
                 ToolCommand { action: extrudeAction; text: qsTr("Extrude") }
                 ToolCommand { action: finishSketchAction; text: qsTr("Finish Sketch") }
             }
@@ -506,6 +535,8 @@ ApplicationWindow {
             sketch: window.activeSketch
             sketchTool: window.sketchTool
             markers: featureDialog.visible ? featureDialog.pickedPoints : []
+            pickKind: featureDialog.visible ? featureDialog.pickKind : ""
+            shownSketch: featureDialog.shownSketch
             onPartPicked: id => window.selectPart(id)
             onPointPicked: (id, point) => {
                 const info = window.controller.partInfo(id)
@@ -520,6 +551,24 @@ ApplicationWindow {
                 if (!window.activeSketch)
                     return
                 window.controller.execute("sketch.add_curves", { sketch: window.activeSketch.id, curves: [curve] })
+                window.refreshSketchSnaps()
+            }
+            onConstraintAdded: c => {
+                if (!window.activeSketch)
+                    return
+                // A conflicting constraint is rejected; the error shows in the status bar.
+                window.controller.execute("sketch.add_constraints", { sketch: window.activeSketch.id, constraints: [c] })
+                window.refreshSketchSnaps()
+            }
+            onConstraintEdited: (index, value) => {
+                if (window.activeSketch)
+                    window.controller.execute("sketch.edit_constraint", { sketch: window.activeSketch.id, index: index, value: value })
+                window.refreshSketchSnaps()
+            }
+            onSketchToolRequested: tool => window.sketchTool_(tool)
+            onConstraintRemoved: index => {
+                if (window.activeSketch)
+                    window.controller.execute("sketch.edit_constraint", { sketch: window.activeSketch.id, index: index, remove: true })
                 window.refreshSketchSnaps()
             }
 
@@ -606,6 +655,8 @@ ApplicationWindow {
     Connections {
         target: window.controller
         function onScriptFinished() { viewport.fitAll() }
+        // Undo/redo and edits elsewhere (timeline, parameters) change the sketch too.
+        function onHistoryChanged() { window.refreshSketchSnaps() }
         function onPartImported(id) {
             window.selectPart(id)
             viewport.fitAll()

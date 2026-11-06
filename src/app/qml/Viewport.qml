@@ -17,7 +17,18 @@ Item {
     property var sketch: null
     property string sketchTool: ""
     property var sketchSnapPoints: []
+    /// Only parts of this kind ("body", "sketch") can be clicked; "" = all.
+    property string pickKind: ""
+    /// Sketch feature shown even when hidden (the sketch a feature dialog works on).
+    property var shownSketch: -1
+    property var sketchCurves: []
+    property var sketchConstraints: []
+    property int sketchDegreesOfFreedom: -1
     signal curveDrawn(var curve)
+    signal constraintAdded(var constraint)
+    signal constraintEdited(int index, var value)
+    signal constraintRemoved(int index)
+    signal sketchToolRequested(string tool)
     /// Model-space points to mark (selections of the open feature dialog).
     property var markers: []
     readonly property alias sketchOverlay: sketchOverlay
@@ -159,11 +170,12 @@ Item {
                     required property var partId
                     required property bool partVisible
                     required property string kind
+                    required property var featureId
                     property var pickPartId: partId
                     readonly property bool selected: partId === root.selectedPartId
 
-                    visible: partVisible
-                    pickable: true
+                    visible: partVisible || (kind === "sketch" && featureId == root.shownSketch)
+                    pickable: root.pickKind === "" || kind === root.pickKind
                     geometry: MeshGeometry {
                         controller: root.controller
                         partId: partModel.partId
@@ -291,7 +303,14 @@ Item {
         sketch: root.sketch
         tool: root.sketchTool
         snapPoints: root.sketchSnapPoints
+        sketchCurves: root.sketchCurves
+        sketchConstraints: root.sketchConstraints
+        degreesOfFreedom: root.sketchDegreesOfFreedom
         onCurveDrawn: curve => root.curveDrawn(curve)
+        onConstraintAdded: c => root.constraintAdded(c)
+        onConstraintEdited: (i, v) => root.constraintEdited(i, v)
+        onConstraintRemoved: i => root.constraintRemoved(i)
+        onToolRequested: t => root.sketchToolRequested(t)
     }
 
     Connections {

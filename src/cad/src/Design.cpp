@@ -946,6 +946,8 @@ void Design::syncDocument(model::Document& document)
                 part.edgeSegments = w.segments;
                 if (w.kind == model::PartKind::Sketch && w.consumed && !wasConsumed)
                     part.visible = false; // Fusion hides a sketch once a feature uses it
+                else if (w.kind == model::PartKind::Sketch && !w.consumed && wasConsumed)
+                    part.visible = true; // ... and shows it again when that feature goes away
             });
         } else {
             model::Part part;
