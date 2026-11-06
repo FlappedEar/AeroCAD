@@ -338,7 +338,7 @@ QtObject {
                                { title: qsTr("Thicken"), done: false,
                                  text: qsTr("Turns the piece into a solid with the thickness you type."),
                                  actions: [a("thicken")] }] },
-                         { title: qsTr("More"), steps: [], actions: [a("offset"), a("export"), a("hide"), a("delete")] }] }
+                         { title: qsTr("More"), steps: [], actions: [a("offset"), a("scale"), a("export"), a("hide"), a("delete")] }] }
         }
         if (r === "sketch") {
             const onSurface = sketchSurface(info.featureId) > 0
@@ -371,7 +371,7 @@ QtObject {
                               { title: qsTr("Or keep designing"), done: false,
                                 text: qsTr("Make it editable to add fillets, holes and cuts; the changes appear in the timeline."),
                                 actions: [a("solidToBody")] }] },
-                        { title: qsTr("More"), steps: [], actions: [a("hide"), a("delete")] }] }
+                        { title: qsTr("More"), steps: [], actions: [a("scale"), a("hide"), a("delete")] }] }
     }
 
     /// Every action for the selection, flat (context bar and right-click menu).
@@ -447,8 +447,13 @@ QtObject {
                                                                    useSelection: (info.selectedTriangles ?? 0) > 0 })
             if (r.ok) {
                 const f = r.result.fit
-                controller.showStatus(qsTr("\"%1\": %2 patches, %3.").arg(r.result.name).arg(f.faces)
-                    .arg(f.solid ? qsTr("closed solid") : qsTr("open shell with %1 free edges").arg(f.freeEdges)))
+                let msg = qsTr("\"%1\": %2 patches, %3, max deviation %4 mm (%5).").arg(r.result.name).arg(f.faces)
+                    .arg(f.solid ? qsTr("closed solid") : qsTr("open shell with %1 free edges").arg(f.freeEdges))
+                    .arg(Number(f.meshToSurfaceMax).toFixed(2))
+                    .arg(f.withinTolerance ? qsTr("within tolerance") : qsTr("MORE THAN THE TOLERANCE"))
+                if ((r.result.warnings ?? []).length > 0)
+                    msg += " " + r.result.warnings.join(" ")
+                controller.showStatus(msg)
             }
             return _selectResult(r)
         }

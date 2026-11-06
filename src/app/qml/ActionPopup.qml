@@ -23,6 +23,9 @@ Popup {
             registry.run(act.id, partInfo, {})
             return
         }
+        // Rebuild the form even for the same action object, so the fields show the
+        // defaults that `values` is reset to (not text left from a cancelled edit).
+        action = null
         action = act
         info = partInfo
         const v = {}
