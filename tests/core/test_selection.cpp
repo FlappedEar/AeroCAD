@@ -228,3 +228,44 @@ TEST_CASE("Raycast finds the nearest surface hit", "[core][selection]")
     CHECK_FALSE(raycast(m, {30, 30, 20}, {0, 0, -1}));
     CHECK_FALSE(raycast(m, {3, 3, 20}, {0, 0, 1}));
 }
+
+TEST_CASE("Seed angle limit above 90 degrees", "[core][selection]")
+{
+    // Consistently wound cylinder side, 36 segments (72 triangles), radius 10, height 10.
+    MeshBuilder b;
+    const int n = 36;
+    for (int i = 0; i < n; ++i) {
+        const double a0 = 2 * 3.14159265358979 * i / n, a1 = 2 * 3.14159265358979 * ((i + 1) % n) / n;
+        const Vec3 p0{10 * std::cos(a0), 10 * std::sin(a0), 0}, p1{10 * std::cos(a1), 10 * std::sin(a1), 0};
+        const Vec3 q0{p0.x, p0.y, 10}, q1{p1.x, p1.y, 10};
+        b.addTriangle(p0, p1, q1);
+        b.addTriangle(p0, q1, q0);
+    }
+    const TriangleMesh m = b.take();
+    const MeshAdjacency adj(m);
+    SmoothRegionOptions o;
+    o.maxNeighbourAngleDeg = 20;
+    o.maxSeedAngleDeg = 120;
+    const auto seed = nearestTriangle(m, {10, 0.3, 5});
+    REQUIRE(seed);
+    const auto region = selectSmoothRegion(m, adj, *seed, o);
+    // Within 120 degrees either way: about 2 * 120 / 360 of the 72 triangles.
+    CHECK(region.size() < 60);
+    CHECK(region.size() > 40);
+    o.maxSeedAngleDeg = 180;
+    CHECK(selectSmoothRegion(m, adj, *seed, o).size() == 72);
+}
+
+TEST_CASE("Shrink erodes selections at open mesh edges", "[core][selection]")
+{
+    MeshBuilder b;
+    addGrid(b, 3, 3.0, 0.0);
+    const TriangleMesh m = b.take();
+    const MeshAdjacency adj(m);
+    TriangleSet all(18);
+    for (std::uint32_t i = 0; i < 18; ++i)
+        all[i] = i;
+    const auto shrunk = growSelection(adj, all, -1);
+    CHECK(shrunk.size() < all.size());
+    CHECK(growSelection(adj, all, 1) == all);
+}

@@ -242,27 +242,34 @@ TriangleSet selectSmoothRegion(const TriangleMesh& mesh, const MeshAdjacency& ad
         return {};
 
     const double neighbourCos = cosDeg(options.maxNeighbourAngleDeg);
-    const double seedCos = cosDeg(options.maxSeedAngleDeg);
+    // 180 degrees means no limit (cos(pi) would still reject rounding noise at exactly 180).
+    const double seedCos = options.maxSeedAngleDeg >= 180.0 ? -2.0 : cosDeg(options.maxSeedAngleDeg);
     const Vec3 seedNormal = mesh.faceNormal(seed);
 
+    // Normals are oriented consistently with the seed while flooding (a neighbour whose
+    // normal points the other way is flipped), so inconsistent winding in STL files does
+    // not stop the region, and angles to the seed above 90 degrees still mean something.
     std::vector<char> visited(mesh.triangleCount(), 0);
+    std::vector<Vec3> oriented(mesh.triangleCount());
     std::vector<std::uint32_t> stack{seed};
     visited[seed] = 1;
+    oriented[seed] = seedNormal;
     TriangleSet out;
     while (!stack.empty()) {
         const std::uint32_t t = stack.back();
         stack.pop_back();
         out.push_back(t);
-        const Vec3 n = mesh.faceNormal(t);
+        const Vec3 n = oriented[t];
         for (const std::uint32_t nb : adjacency.neighbours(t)) {
             if (nb == MeshAdjacency::none || visited[nb] != 0)
                 continue;
-            const Vec3 nn = mesh.faceNormal(nb);
-            // Accepts flipped neighbours too (inconsistent winding in many STL files).
-            const double c = std::abs(n.dot(nn));
-            if (c < neighbourCos || std::abs(seedNormal.dot(nn)) < seedCos)
+            Vec3 nn = mesh.faceNormal(nb);
+            if (n.dot(nn) < 0.0)
+                nn = nn * -1.0;
+            if (n.dot(nn) < neighbourCos || seedNormal.dot(nn) < seedCos)
                 continue;
             visited[nb] = 1;
+            oriented[nb] = nn;
             stack.push_back(nb);
         }
     }
@@ -470,12 +477,12 @@ TriangleSet growSelection(const MeshAdjacency& adjacency, const TriangleSet& sel
             if (mask[t] == 0)
                 continue;
             for (const std::uint32_t nb : adjacency.neighbours(static_cast<std::uint32_t>(t))) {
-                if (nb == MeshAdjacency::none)
-                    continue;
-                if (grow)
-                    next[nb] = 1;
-                else if (mask[nb] == 0)
-                    next[t] = 0; // on the selection border
+                if (grow) {
+                    if (nb != MeshAdjacency::none)
+                        next[nb] = 1;
+                } else if (nb == MeshAdjacency::none || mask[nb] == 0) {
+                    next[t] = 0; // on the selection border or an open mesh edge
+                }
             }
         }
         mask = std::move(next);
