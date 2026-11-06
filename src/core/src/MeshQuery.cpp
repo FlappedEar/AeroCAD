@@ -252,7 +252,7 @@ std::optional<SurfacePoint> MeshBvh::closestPoint(const Vec3& p, double maxDista
     return result;
 }
 
-std::optional<RayHit> MeshBvh::raycast(const Vec3& origin, const Vec3& direction, double maxT) const
+std::optional<MeshRayHit> MeshBvh::raycast(const Vec3& origin, const Vec3& direction, double maxT) const
 {
     const double len = direction.length();
     if (m_nodes.empty() || len == 0.0)
@@ -263,7 +263,7 @@ std::optional<RayHit> MeshBvh::raycast(const Vec3& origin, const Vec3& direction
     const auto& verts = m_mesh->vertices();
 
     double best = maxT;
-    std::optional<RayHit> result;
+    std::optional<MeshRayHit> result;
     std::vector<std::uint32_t> stack;
     stack.reserve(64);
     stack.push_back(0);
@@ -280,7 +280,7 @@ std::optional<RayHit> MeshBvh::raycast(const Vec3& origin, const Vec3& direction
                 const double hit = rayTriangle(origin, d, verts[t[0]], verts[t[1]], verts[t[2]]);
                 if (hit > 0.0 && hit <= best) {
                     best = hit;
-                    result = RayHit{hit, origin + d * hit, m_order[i]};
+                    result = MeshRayHit{hit, origin + d * hit, m_order[i]};
                 }
             }
             continue;

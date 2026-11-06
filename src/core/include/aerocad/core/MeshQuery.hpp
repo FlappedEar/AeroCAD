@@ -21,7 +21,7 @@ struct SurfacePoint {
     std::size_t triangle = 0;
 };
 
-struct RayHit {
+struct MeshRayHit {
     double t = 0.0; ///< Distance along the (normalized) ray direction (mm).
     Vec3 point;
     std::size_t triangle = 0;
@@ -42,7 +42,7 @@ public:
 
     /// First intersection of the ray origin + t * direction, 0 < t <= maxT, with the
     /// surface (both triangle sides). `direction` need not be normalized; t is in mm.
-    [[nodiscard]] std::optional<RayHit>
+    [[nodiscard]] std::optional<MeshRayHit>
     raycast(const Vec3& origin, const Vec3& direction, double maxT = std::numeric_limits<double>::infinity()) const;
 
 private:
