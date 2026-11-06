@@ -12,6 +12,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <optional>
 #include <stdexcept>
@@ -34,7 +35,7 @@ public:
 /// docs/cad.md); numbers may be given as expressions using user parameters.
 struct Feature {
     FeatureId id = 0;
-    std::string type; ///< sketch, extrude, revolve, fillet, chamfer, shell, combine, box, cylinder
+    std::string type; ///< sketch, extrude, revolve, fillet, chamfer, shell, combine, box, cylinder, base_body
     std::string name; ///< e.g. "Extrude1"
     Json params = Json::object();
     bool suppressed = false;
@@ -128,6 +129,11 @@ public:
     /// names and visibility set by the user are kept.
     void syncDocument(model::Document& document);
 
+    /// Gives the timeline access to document parts (for "base_body" features that turn an
+    /// imported part into a body). Not part of the undoable state.
+    using PartLookup = std::function<const model::Part*(model::PartId)>;
+    void setPartLookup(PartLookup lookup) { m_partLookup = std::move(lookup); }
+
     /// Feature types that the timeline knows.
     [[nodiscard]] static const std::vector<std::string>& featureTypes();
 
@@ -150,6 +156,13 @@ private:
         bool visible = true;
     };
     std::map<FeatureId, PartMeta> m_partMeta;
+    PartLookup m_partLookup;
+    /// Mesh to B-rep conversions are slow: cached per part id and revision.
+    struct ConvertedPart {
+        std::uint64_t revision = 0;
+        geometry::Shape shape;
+    };
+    std::map<model::PartId, ConvertedPart> m_convertedParts;
     int m_bodyCounter = 0;
 };
 

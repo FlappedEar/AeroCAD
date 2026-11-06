@@ -9,6 +9,18 @@ Item {
     required property AppController controller
     property var selectedPartId: 0
     signal partPicked(var id)
+    /// Left click on a part: its id and the hit point in model coordinates (mm, Z up).
+    signal pointPicked(var id, vector3d point)
+
+    /// Active sketch ({id, origin, normal, xDir, yDir} in model space) or null; while set,
+    /// left clicks draw with `sketchTool` instead of selecting.
+    property var sketch: null
+    property string sketchTool: ""
+    property var sketchSnapPoints: []
+    signal curveDrawn(var curve)
+    /// Model-space points to mark (selections of the open feature dialog).
+    property var markers: []
+    readonly property alias sketchOverlay: sketchOverlay
 
     property bool fitPending: false
 
@@ -32,7 +44,8 @@ Item {
             return
         }
         fitPending = false
-        const r = Math.max(controller.sceneRadius, 1)
+        // An empty scene (e.g. a new sketch) gets a 100 mm view.
+        const r = controller.sceneRadius > 1e-6 ? Math.max(controller.sceneRadius, 1) : 50
         cameraInput.pivot.position = controller.sceneCenter
         const halfFov = camera.fieldOfView * Math.PI / 360
         const aspect = Math.max(0.1, width / Math.max(1, height))
@@ -145,7 +158,9 @@ Item {
                     id: partModel
                     required property var partId
                     required property bool partVisible
+                    required property string kind
                     property var pickPartId: partId
+                    readonly property bool selected: partId === root.selectedPartId
 
                     visible: partVisible
                     pickable: true
@@ -153,11 +168,30 @@ Item {
                         controller: root.controller
                         partId: partModel.partId
                     }
+                    // Fusion-like colours: grey bodies, translucent orange sketch profiles.
                     materials: PrincipledMaterial {
-                        baseColor: partModel.partId === root.selectedPartId ? "#7fb2ff" : "#c8ccd2"
+                        baseColor: partModel.selected ? "#7fb2ff"
+                                 : partModel.kind === "sketch" ? Qt.rgba(1.0, 0.78, 0.45, 0.45)
+                                 : partModel.kind === "body" ? "#b8bec6" : "#c8ccd2"
+                        alphaMode: partModel.kind === "sketch" ? PrincipledMaterial.Blend : PrincipledMaterial.Default
                         metalness: 0.0
                         roughness: 0.55
                         cullMode: Material.NoCulling
+                    }
+
+                    // Sketch curves and body edges.
+                    Model {
+                        visible: !lines.empty
+                        pickable: false
+                        geometry: LineGeometry {
+                            id: lines
+                            controller: root.controller
+                            partId: partModel.partId
+                        }
+                        materials: PrincipledMaterial {
+                            lighting: PrincipledMaterial.NoLighting
+                            baseColor: partModel.kind === "sketch" ? "#1f5fbf" : "#262a30"
+                        }
                     }
                 }
             }
@@ -205,9 +239,59 @@ Item {
         acceptedButtons: Qt.LeftButton
         onTapped: eventPoint => {
             const hit = view.pick(eventPoint.position.x, eventPoint.position.y)
-            root.partPicked(hit.objectHit ? hit.objectHit.pickPartId : 0)
+            const id = hit.objectHit ? hit.objectHit.pickPartId : 0
+            root.partPicked(id)
+            if (id)
+                root.pointPicked(id, modelSpace.mapPositionFromScene(hit.scenePosition))
         }
         onDoubleTapped: root.fitAll()
+    }
+
+    /// Model-space point under a view position on the plane (origin, normal), or null.
+    function planePoint(x, y, origin, normal) {
+        const a = modelSpace.mapPositionFromScene(view.mapTo3DScene(Qt.vector3d(x, y, 0)))
+        const b = modelSpace.mapPositionFromScene(view.mapTo3DScene(Qt.vector3d(x, y, 100)))
+        const d = b.minus(a)
+        const denom = d.dotProduct(normal)
+        if (Math.abs(denom) < 1e-12)
+            return null
+        const t = origin.minus(a).dotProduct(normal) / denom
+        return a.plus(d.times(t))
+    }
+
+    /// View position of a model-space point.
+    function viewPoint(p) {
+        return view.mapFrom3DScene(modelSpace.mapPositionToScene(p))
+    }
+
+    // Selection markers, re-projected whenever the camera moves.
+    Repeater {
+        model: {
+            cameraInput.pitch; cameraInput.yaw; cameraInput.distance; pivot.position; root.width; root.height
+            root.orthographic
+            return root.markers.map(p => root.viewPoint(Qt.vector3d(p[0], p[1], p[2])))
+        }
+        delegate: Rectangle {
+            required property var modelData
+            x: modelData.x - width / 2
+            y: modelData.y - height / 2
+            width: 10
+            height: 10
+            radius: 5
+            color: "#ff8a00"
+            border.color: "white"
+            border.width: 1.5
+        }
+    }
+
+    SketchOverlay {
+        id: sketchOverlay
+        anchors.fill: parent
+        viewport: root
+        sketch: root.sketch
+        tool: root.sketchTool
+        snapPoints: root.sketchSnapPoints
+        onCurveDrawn: curve => root.curveDrawn(curve)
     }
 
     Connections {

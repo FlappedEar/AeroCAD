@@ -142,3 +142,25 @@ TEST_CASE("Design commands: timeline marker, suppress, delete, edit", "[commands
         hasExtrude = hasExtrude || c.at("name") == "feature.extrude";
     CHECK(hasExtrude);
 }
+
+TEST_CASE("Design commands: imported mesh becomes a body that can be cut", "[commands][cad]")
+{
+    commands::Session s;
+    const std::string path = std::string(AEROCAD_TEST_DATA_DIR) + "/tetrahedron.stl";
+    const Json imported = run(s, "document.import", {{"path", path}});
+    const auto partId = imported.at("id").get<std::uint64_t>();
+    const Json body = run(s, "feature.base_body", {{"part", partId}});
+    const auto bodyId = body.at("id").get<std::uint64_t>();
+    REQUIRE(s.design().bodies().contains(bodyId));
+    const double tetra = s.design().bodies().at(bodyId).shape.volume();
+    CHECK(tetra > 0);
+    CHECK_FALSE(s.document().part(partId)->visible);
+
+    run(s, "feature.box", {{"corner", {-1, -1, -1}}, {"size", {3, 3, 3}}, {"operation", "cut"}});
+    CHECK(s.design().bodies().at(bodyId).shape.volume() < tetra);
+
+    run(s, "edit.undo");
+    run(s, "edit.undo");
+    CHECK(s.design().bodies().empty());
+    CHECK(s.document().part(partId)->visible);
+}
