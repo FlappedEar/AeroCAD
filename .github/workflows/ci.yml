@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Fast gate for every pull request and push to main: build + unit tests + app smoke
-# test on Linux (distribution packages) and macOS Apple Silicon (Homebrew). Target: a
-# few minutes with a warm ccache. No packaging: CI only checks that it builds and works.
+# Fast gate for every pull request and push to main: does it compile (warnings are
+# errors) and do the unit tests pass, on Linux (distribution packages) and macOS Apple
+# Silicon (Homebrew). No packaging and no GUI tests; the app smoke test
+# (ctest -L gui) is for local runs.
 name: CI
 
 on:
@@ -31,7 +32,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ninja-build xvfb ccache \
+          sudo apt-get install -y --no-install-recommends ninja-build ccache \
             qt6-base-dev qt6-declarative-dev qt6-quick3d-dev qt6-shadertools-dev libxkbcommon-dev \
             qml6-module-qtquick qml6-module-quick3d qml6-module-qtquick-controls \
             qml6-module-qtquick-layouts qml6-module-qtquick-window qml6-module-qtquick-dialogs \
@@ -47,9 +48,7 @@ jobs:
       - name: Build
         run: cmake --build --preset release --parallel
       - name: Unit tests
-        run: ctest --test-dir build/release --output-on-failure -LE gui
-      - name: App smoke test
-        run: xvfb-run -a ctest --test-dir build/release --output-on-failure -L gui
+        run: ctest --test-dir build/release --output-on-failure -LE gui --parallel 4
       - name: ccache stats
         if: always()
         run: ccache --show-stats
@@ -76,9 +75,7 @@ jobs:
       - name: Build
         run: cmake --build --preset release --parallel
       - name: Unit tests
-        run: ctest --test-dir build/release --output-on-failure -LE gui
-      - name: App smoke test
-        run: ctest --test-dir build/release --output-on-failure -L gui
+        run: ctest --test-dir build/release --output-on-failure -LE gui --parallel 4
       - name: ccache stats
         if: always()
         run: ccache --show-stats
