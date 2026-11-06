@@ -177,6 +177,40 @@ ApplicationWindow {
         onAccepted: window.controller.importFile(selectedFile)
     }
 
+    FileDialog {
+        id: exportDialog
+        // Part ids to export; empty = all visible parts.
+        property var partIds: []
+        title: partIds.length ? qsTr("Export selected part") : qsTr("Export visible parts")
+        fileMode: FileDialog.SaveFile
+        nameFilters: window.controller.exportNameFilters
+        defaultSuffix: selectedNameFilter.extensions.length ? selectedNameFilter.extensions[0] : "stl"
+        onAccepted: {
+            const r = window.controller.exportFile(selectedFile, partIds)
+            if (!r.ok) {
+                exportMessage.title = qsTr("Export failed")
+                exportMessage.text = r.error
+                exportMessage.open()
+            } else if (r.warnings.length) {
+                exportMessage.title = qsTr("Exported with warnings")
+                exportMessage.text = qsTr("The file was written, but some meshes are not watertight solids. " +
+                                          "Slicers and CFD meshers may reject or repair them.\n\n") +
+                                     r.warnings.join("\n")
+                exportMessage.open()
+            }
+        }
+    }
+
+    MessageDialog {
+        id: exportMessage
+        buttons: MessageDialog.Ok
+    }
+
+    function openExport(ids) {
+        exportDialog.partIds = ids
+        exportDialog.open()
+    }
+
     // --- Actions (shared by the menu bar and the toolbar) -------------------------------
 
     Action {
@@ -184,6 +218,20 @@ ApplicationWindow {
         text: qsTr("&Import...")
         shortcut: StandardKey.Open // Fusion: Ctrl+O / Cmd+O
         onTriggered: importDialog.open()
+    }
+    Action {
+        id: exportSelectedAction
+        text: qsTr("&Export Selected...")
+        enabled: !!window.selectedPartId
+        shortcut: "Ctrl+E" // Fusion has no default export shortcut
+        onTriggered: window.openExport([window.selectedPartId])
+    }
+    Action {
+        id: exportAllAction
+        text: qsTr("Export &All Visible...")
+        enabled: window.controller.parts.count > 0
+        shortcut: "Ctrl+Shift+E"
+        onTriggered: window.openExport([])
     }
     Action {
         id: undoAction
@@ -268,6 +316,8 @@ ApplicationWindow {
     Shortcut {
         sequence: "Esc"
         onActivated: {
+            if (viewport.leaveSelectionTool())
+                return
             if (featureDialog.visible)
                 featureDialog.close()
             else if (window.pickingSketchPlane)
@@ -290,6 +340,8 @@ ApplicationWindow {
         Menu {
             title: qsTr("&File")
             MenuItem { action: importAction }
+            MenuItem { action: exportSelectedAction }
+            MenuItem { action: exportAllAction }
             MenuItem { action: convertAction }
             MenuSeparator {}
             Action {
@@ -474,6 +526,12 @@ ApplicationWindow {
             }
             ToolSeparator {}
             ToolGroup {
+                caption: qsTr("EXPORT")
+                ToolCommand { action: exportSelectedAction; text: qsTr("Selected") }
+                ToolCommand { action: exportAllAction; text: qsTr("All") }
+            }
+            ToolSeparator {}
+            ToolGroup {
                 caption: qsTr("VIEW")
                 ToolCommand { action: fitAction; text: qsTr("Fit") }
                 ToolCommand { action: homeAction; text: qsTr("Home") }
@@ -505,6 +563,7 @@ ApplicationWindow {
             selectedPartId: window.selectedPartId
             sketch: window.activeSketch
             sketchTool: window.sketchTool
+            selectionToolsEnabled: !featureDialog.visible && !window.pickingSketchPlane
             markers: featureDialog.visible ? featureDialog.pickedPoints : []
             onPartPicked: id => window.selectPart(id)
             onPointPicked: (id, point) => {

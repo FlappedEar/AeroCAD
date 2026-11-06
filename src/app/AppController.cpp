@@ -64,6 +64,11 @@ QStringList AppController::importNameFilters() const
     return {tr("3D files (%1)").arg(patterns.join(QLatin1Char(' '))), tr("All files (*)")};
 }
 
+QStringList AppController::exportNameFilters() const
+{
+    return {tr("STL, binary (*.stl)"), tr("3MF (*.3mf)"), tr("STEP (*.step *.stp)")};
+}
+
 QString AppController::version() const
 {
     return QStringLiteral(AEROCAD_VERSION);
@@ -84,8 +89,8 @@ QVariantMap AppController::execute(const QString& name, const QVariantMap& param
 bool AppController::importFile(const QUrl& url)
 {
     const QString path = url.isLocalFile() ? url.toLocalFile() : url.toString();
-    const QVariantMap r = execute(QStringLiteral("document.import"),
-                                  {{QStringLiteral("path"), QDir::toNativeSeparators(path)}});
+    const QVariantMap r =
+        execute(QStringLiteral("document.import"), {{QStringLiteral("path"), QDir::toNativeSeparators(path)}});
     if (!r.value(QStringLiteral("ok")).toBool())
         return false;
 
@@ -95,6 +100,30 @@ bool AppController::importFile(const QUrl& url)
                               QLocale().toString(data.value(QStringLiteral("triangles")).toLongLong())));
     emit partImported(data.value(QStringLiteral("id")).toULongLong());
     return true;
+}
+
+QVariantMap AppController::exportFile(const QUrl& url, const QVariantList& ids)
+{
+    const QString path = url.isLocalFile() ? url.toLocalFile() : url.toString();
+    QVariantMap params{{QStringLiteral("path"), QDir::toNativeSeparators(path)}};
+    if (!ids.isEmpty())
+        params.insert(QStringLiteral("ids"), ids);
+    const QVariantMap r = execute(QStringLiteral("document.export"), params);
+    if (!r.value(QStringLiteral("ok")).toBool())
+        return {{QStringLiteral("ok"), false}, {QStringLiteral("error"), r.value(QStringLiteral("error"))}};
+
+    const QVariantMap data = r.value(QStringLiteral("result")).toMap();
+    const QVariantList warnings = data.value(QStringLiteral("warnings")).toList();
+    const QString name = QFileInfo(path).fileName();
+    const QString format = data.value(QStringLiteral("format")).toString();
+    const qsizetype count = data.value(QStringLiteral("ids")).toList().size();
+    if (warnings.isEmpty())
+        setStatusMessage(tr("Exported %n part(s) to %1 (%2)", nullptr, static_cast<int>(count)).arg(name, format));
+    else
+        setStatusMessage(tr("Exported %n part(s) to %1 (%2) with %3 mesh warning(s)", nullptr, static_cast<int>(count))
+                             .arg(name, format)
+                             .arg(warnings.size()));
+    return {{QStringLiteral("ok"), true}, {QStringLiteral("warnings"), warnings}};
 }
 
 bool AppController::runScript(const QString& path)
@@ -153,7 +182,112 @@ QVariantMap AppController::partInfo(quint64 id) const
         {QStringLiteral("sizeX"), size.x},
         {QStringLiteral("sizeY"), size.y},
         {QStringLiteral("sizeZ"), size.z},
+        {QStringLiteral("diagonal"), box.diagonal()},
+        {QStringLiteral("selectedTriangles"), QVariant::fromValue<qulonglong>(p->selection ? p->selection->size() : 0)},
+        {QStringLiteral("selectedArea"), p->mesh && p->selection ? core::selectionArea(*p->mesh, *p->selection) : 0.0},
     };
+}
+
+bool AppController::brushBegin(quint64 id, double radius, bool connected, const QString& mode)
+{
+    brushCancel();
+    const model::Part* p = part(id);
+    if (p == nullptr || !p->mesh || p->mesh->isEmpty() || radius <= 0.0)
+        return false;
+    BrushStroke b;
+    b.partId = id;
+    b.radius = radius;
+    b.connected = connected;
+    b.mode = mode == QStringLiteral("subtract") || mode == QStringLiteral("replace") ? mode : QStringLiteral("add");
+    b.mesh = p->mesh;
+    if (connected)
+        b.adjacency = core::adjacencyFor(p->mesh);
+    if (p->selection)
+        b.base = *p->selection;
+    b.preview = b.base;
+    m_brush = std::move(b);
+    return true;
+}
+
+void AppController::brushAdd(const QVector3D& point)
+{
+    if (!m_brush)
+        return;
+    BrushStroke& b = *m_brush;
+    b.points.push_back(point);
+    const core::TriangleSet dab =
+        core::selectBrushDab(*b.mesh, b.adjacency.get(), {point.x(), point.y(), point.z()}, b.radius);
+    b.stroke = core::combineSelection(b.stroke, dab, core::SelectionMode::Add);
+    core::SelectionMode mode = core::SelectionMode::Add;
+    if (b.mode == QStringLiteral("subtract"))
+        mode = core::SelectionMode::Subtract;
+    else if (b.mode == QStringLiteral("replace"))
+        mode = core::SelectionMode::Replace;
+    b.preview = core::combineSelection(b.base, b.stroke, mode);
+    emit selectionPreviewChanged(b.partId);
+}
+
+QVariantMap AppController::brushEnd()
+{
+    if (!m_brush)
+        return {};
+    BrushStroke b = std::move(*m_brush);
+    m_brush.reset();
+    if (b.points.isEmpty()) {
+        emit selectionPreviewChanged(b.partId);
+        return {};
+    }
+    QVariantList points;
+    for (const auto& p : std::as_const(b.points))
+        points.push_back(QVariantList{p.x(), p.y(), p.z()});
+    const QVariantMap r =
+        execute(QStringLiteral("selection.brush"), {{QStringLiteral("id"), QVariant::fromValue<quint64>(b.partId)},
+                                                    {QStringLiteral("points"), points},
+                                                    {QStringLiteral("radius"), b.radius},
+                                                    {QStringLiteral("connected"), b.connected},
+                                                    {QStringLiteral("mode"), b.mode}});
+    emit selectionPreviewChanged(b.partId); // back to the stored selection
+    return r;
+}
+
+void AppController::brushCancel()
+{
+    if (!m_brush)
+        return;
+    const quint64 id = m_brush->partId;
+    m_brush.reset();
+    emit selectionPreviewChanged(id);
+}
+
+QVariantMap AppController::pickSurface(const QVector3D& origin, const QVector3D& direction) const
+{
+    const core::Vec3 o{origin.x(), origin.y(), origin.z()};
+    const core::Vec3 d{direction.x(), direction.y(), direction.z()};
+    std::optional<core::RayHit> best;
+    model::PartId bestPart = 0;
+    for (const auto& p : m_session.document().parts()) {
+        if (!p.visible || !p.mesh)
+            continue;
+        const auto hit = core::raycast(*p.mesh, o, d);
+        if (hit && (!best || hit->distance < best->distance)) {
+            best = hit;
+            bestPart = p.id;
+        }
+    }
+    if (!best)
+        return {};
+    return {{QStringLiteral("partId"), QVariant::fromValue<quint64>(bestPart)},
+            {QStringLiteral("point"), QVector3D(static_cast<float>(best->point.x), static_cast<float>(best->point.y),
+                                                static_cast<float>(best->point.z))},
+            {QStringLiteral("triangle"), QVariant::fromValue<quint32>(best->triangle)}};
+}
+
+const core::TriangleSet* AppController::displayedSelection(quint64 id) const
+{
+    if (m_brush && m_brush->partId == id)
+        return &m_brush->preview;
+    const model::Part* p = part(id);
+    return p != nullptr && p->selection ? p->selection.get() : nullptr;
 }
 
 const model::Part* AppController::part(quint64 id) const

@@ -13,7 +13,7 @@ function(aerocad_add_test name)
 endfunction()
 
 aerocad_add_test(test_core
-    SOURCES core/test_mesh.cpp
+    SOURCES core/test_mesh.cpp core/test_selection.cpp core/test_mesh_check.cpp
     LIBS AeroCAD::core)
 
 aerocad_add_test(test_geometry
@@ -21,19 +21,20 @@ aerocad_add_test(test_geometry
     LIBS AeroCAD::geometry)
 
 aerocad_add_test(test_io
-    SOURCES io/test_import.cpp
-    LIBS AeroCAD::io AeroCAD::geometry_occt)
+    SOURCES io/test_import.cpp io/test_export.cpp
+    LIBS AeroCAD::io AeroCAD::geometry_occt miniz::miniz)
 
 aerocad_add_test(test_model
     SOURCES model/test_document.cpp
     LIBS AeroCAD::model)
 
 aerocad_add_test(test_commands
-    SOURCES commands/test_commands.cpp commands/test_design_commands.cpp commands/test_simulation_commands.cpp
+    SOURCES commands/test_commands.cpp commands/test_export_commands.cpp commands/test_design_commands.cpp
+            commands/test_simulation_commands.cpp
     LIBS AeroCAD::commands)
 
 aerocad_add_test(test_cad
-    SOURCES cad/test_design.cpp
+    SOURCES cad/test_design.cpp cad/test_sketch_solver.cpp
     LIBS AeroCAD::cad)
 
 aerocad_add_test(test_cfd
