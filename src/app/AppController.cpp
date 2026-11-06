@@ -194,6 +194,8 @@ QVariantMap AppController::partInfo(quint64 id) const
                                  : p->kind == model::PartKind::Sketch ? QStringLiteral("sketch")
                                                                       : QStringLiteral("imported")},
         {QStringLiteral("featureId"), QVariant::fromValue<qulonglong>(p->featureId)},
+        {QStringLiteral("faces"), QVariant::fromValue<qulonglong>(p->shape ? p->shape->faceCount() : 0)},
+        {QStringLiteral("solids"), QVariant::fromValue<qulonglong>(p->shape ? p->shape->solidCount() : 0)},
         {QStringLiteral("sizeX"), size.x},
         {QStringLiteral("sizeY"), size.y},
         {QStringLiteral("sizeZ"), size.z},

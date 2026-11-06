@@ -40,6 +40,22 @@ core -------+                 transforms, primitives).
   across their seams; it is computed once per mesh and cached. The brush preview while
   dragging is kept in `AppController`; releasing the button runs one `selection.brush`.
 
+- **Base surface** (`geometry/SurfaceFit`, command `surface.fit_selection`): the "B
+  smoothing" approach of the CAD-66 spike. PCA plane of the selected vertices, height grid
+  by moving least squares (quadratic inside, plane at the border, thin-plate fill outside
+  the data), `GeomAPI_PointsToBSplineSurface` in smoothing mode, trimmed to the outer
+  selection outline (projected to the surface's parameter space). Deviation is checked
+  both ways; mesh to surface uses a local projection seeded from surface samples. Selected
+  vertices that project outside the trimmed face are reported separately (`outsideTrimMax`,
+  outline fidelity: mesh staircase, rounded corners) with a warning above the tolerance.
+  Not yet: holes in the selection, regions that fold over their mean plane, analytic
+  primitives (plane, cylinder) before free-form fitting.
+- **Offset / thicken** (`geometry/Offset`, commands `surface.offset`, `surface.thicken`):
+  `BRepOffset_MakeSimpleOffset`, which offsets each face on its own surface (exact for
+  the single-face base surfaces); with the solid flag it adds side walls and caps. The
+  solid is reversed when it comes out inside out. Offsets larger than the concave radius
+  of curvature fail with an error.
+
 ## Not yet decided / next steps
 
 - Mesh library: **CGAL** (decided after the CAD-66 spike, see Confluence "CAD-66 Spike:
