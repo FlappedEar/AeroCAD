@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: ccache
+description: Restore/save a ccache directory keyed by OS and commit (ccache must be installed).
+inputs:
+  key:
+    description: Cache key prefix, e.g. the platform name.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Configure ccache
+      shell: bash
+      run: |
+        echo "CCACHE_DIR=$RUNNER_TEMP/ccache" >> "$GITHUB_ENV"
+        echo "CCACHE_BASEDIR=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+        echo "CCACHE_COMPRESS=1" >> "$GITHUB_ENV"
+        echo "CCACHE_MAXSIZE=500M" >> "$GITHUB_ENV"
+        echo "CCACHE_SLOPPINESS=pch_defines,time_macros,include_file_mtime,include_file_ctime" >> "$GITHUB_ENV"
+    - name: Restore ccache
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}/ccache
+        # A new entry per commit; restore-keys picks the newest one for this platform.
+        key: ccache-${{ inputs.key }}-${{ github.sha }}
+        restore-keys: ccache-${{ inputs.key }}-

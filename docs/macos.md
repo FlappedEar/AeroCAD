@@ -1,14 +1,15 @@
 # Running AeroCAD on a Mac (Apple Silicon)
 
 There are two ways: download the app that CI builds, or build it yourself.
-Both are checked by CI on every pull request (`macOS Apple Silicon` and
-`macOS Apple Silicon (Homebrew)` jobs).
+Option B is checked on every pull request by the `CI` workflow
+(`macOS Apple Silicon (Homebrew)` job); the download comes from the `Release build`
+workflow, which runs on every push to `main`.
 
 ## Option A: download the CI build (no tools needed)
 
-1. Open the repository's **Actions** tab, pick the latest green **CI** run on `main`
-   (or on a pull request), scroll to **Artifacts** and download
-   **AeroCAD-macOS-ARM64**. You must be signed in to GitHub.
+1. Open the repository's **Actions** tab, select the **Release build** workflow, pick
+   the latest green run, scroll to **Artifacts** and download **AeroCAD-macOS-ARM64**.
+   You must be signed in to GitHub.
 2. Unzip it and open `AeroCAD.dmg`, then drag **AeroCAD** to **Applications**.
 3. The build is not notarized by Apple, so the first start is blocked by Gatekeeper.
    Either right-click AeroCAD in Applications, choose **Open** and confirm, or run once:

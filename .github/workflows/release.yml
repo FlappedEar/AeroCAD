@@ -1,0 +1,111 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Distributable macOS app (.dmg) built with the pinned release toolchain: Qt 6.8 from
+# aqtinstall and Open CASCADE from vcpkg (minimum macOS 13). Runs on main, tags and on
+# demand; never on pull requests, so it cannot block reviewing or merging work.
+# The vcpkg build of Open CASCADE (~25 min) is cached; warm runs take a few minutes.
+name: Release build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths-ignore: ["**.md", "docs/**", "LICENSE", ".clang-format"]
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  QT_VERSION: "6.8.3"
+  # Must match "builtin-baseline" in vcpkg.json.
+  VCPKG_COMMIT: "9eec002df1cd109f8f104cd966a763daf9751489"
+  TRIPLET: arm64-osx-release
+  PRESET: vcpkg-macos
+
+jobs:
+  macos:
+    name: macOS Apple Silicon (.dmg)
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          arch: clang_64
+          modules: qtquick3d qtshadertools
+          cache: true
+
+      - name: Install tools
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+        run: brew install ninja ccache
+
+      - name: Check out vcpkg
+        run: |
+          # Under RUNNER_TEMP: actions/cache rejects paths containing "..".
+          echo "VCPKG_ROOT=$RUNNER_TEMP/vcpkg" >> "$GITHUB_ENV"
+          echo "VCPKG_DEFAULT_BINARY_CACHE=$RUNNER_TEMP/vcpkg-cache" >> "$GITHUB_ENV"
+          git clone --filter=tree:0 https://github.com/microsoft/vcpkg.git "$RUNNER_TEMP/vcpkg"
+          git -C "$RUNNER_TEMP/vcpkg" checkout "$VCPKG_COMMIT"
+          mkdir -p "$RUNNER_TEMP/vcpkg-cache"
+          "$RUNNER_TEMP/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
+
+      # Restore and save are separate so the slow Open CASCADE build is cached as soon
+      # as configure succeeds, even if a later step fails.
+      - name: Restore vcpkg binary cache
+        id: vcpkg-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/vcpkg-cache
+          key: vcpkg-${{ env.TRIPLET }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'cmake/triplets/**') }}
+          restore-keys: vcpkg-${{ env.TRIPLET }}-${{ env.VCPKG_COMMIT }}-
+
+      - uses: ./.github/actions/ccache
+        with:
+          key: macos-release
+
+      - name: Configure (installs vcpkg dependencies)
+        run: >
+          cmake --preset ${{ env.PRESET }} -DAEROCAD_WARNINGS_AS_ERRORS=ON
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache
+
+      - name: Save vcpkg binary cache
+        if: steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/vcpkg-cache
+          key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
+
+      - name: Build
+        run: cmake --build --preset ${{ env.PRESET }} --parallel
+
+      - name: Tests
+        run: ctest --test-dir build/${{ env.PRESET }} --output-on-failure
+
+      - name: Package
+        run: |
+          mkdir -p dist/dmg
+          cp -R build/${{ env.PRESET }}/bin/AeroCAD.app dist/dmg/
+          macdeployqt dist/dmg/AeroCAD.app -qmldir=src/app/qml
+          # macdeployqt rewrites library paths, which invalidates the linker's ad-hoc
+          # signatures; Apple Silicon refuses to run unsigned code, so re-sign ad hoc.
+          codesign --force --deep --sign - dist/dmg/AeroCAD.app
+          codesign --verify --deep --strict dist/dmg/AeroCAD.app
+          ln -s /Applications dist/dmg/Applications
+          hdiutil create -volname AeroCAD -srcfolder dist/dmg -ov -format UDZO dist/AeroCAD.dmg
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: AeroCAD-macOS-ARM64
+          path: dist/AeroCAD.dmg
+          if-no-files-found: error
+          retention-days: 14
