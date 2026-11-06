@@ -41,8 +41,9 @@ jobs:
     env:
       # VCPKG_ROOT is set in the "Check out vcpkg" step: ilammy/msvc-dev-cmd exports
       # VCPKG_ROOT pointing at Visual Studio's bundled vcpkg, which must not be used.
-      AEROCAD_VCPKG_DIR: ${{ github.workspace }}/../vcpkg
-      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/../vcpkg-cache
+      AEROCAD_VCPKG_DIR: ${{ runner.temp }}/vcpkg
+      # actions/cache rejects paths containing "..", so keep these under runner.temp.
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ runner.temp }}/vcpkg-cache
 
     steps:
       - uses: actions/checkout@v4
