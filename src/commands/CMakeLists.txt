@@ -6,6 +6,7 @@ add_library(aerocad_commands STATIC
     src/CommandRegistry.cpp
     src/ParamsValidation.cpp
     src/BuiltinCommands.cpp
+    src/SelectionCommands.cpp
     src/ExportCommands.cpp
     src/DesignCommands.cpp
     src/ProjectCommands.cpp

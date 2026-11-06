@@ -18,8 +18,11 @@ use the same operations, and every change is one undo step.
 - **Operation** (extrude, revolve, box, cylinder): `new_body` (default), `join`, `cut`,
   `intersect`. join/cut/intersect act on `bodies`, or on every body the result touches.
 - **Edges and faces** are referenced by index (`body.edges`, `body.faces`) or, more robustly,
-  by a point: `{"point": [x, y, z]}` picks the nearest edge/face at regeneration time, so
-  references survive dimension changes better. Persistent naming is not implemented yet.
+  by a point: `{"point": [x, y, z]}`. Fillet, chamfer and shell store point references
+  with matching hints: the point relative to the body's bounding box (`relative`), the edge
+  `direction` or face `normal`, and the `kind` (line, circle, plane, ...). Regeneration
+  picks the edge/face that best matches them, so a picked corner edge follows the body
+  when a dimension makes it grow. Full persistent naming is not implemented yet.
 - **Marker**: `timeline.set_marker` rolls the model back; new features are inserted at it.
 - Failing features: a new or edited feature that fails is rejected (nothing changes).
   Features that break because of an earlier change stay in the timeline with
@@ -108,7 +111,7 @@ created with `frame.set` can be used by name. Saving, variants and frames: see
 
 - Constraint inference while drawing (Fusion adds coincident/horizontal/... automatically);
   today the UI adds them explicitly.
-- Persistent topological naming (edge/face references use index or nearest point).
+- Full persistent topological naming (references use index, or a point with matching hints).
 - Extrude "to object" / up to a surface, loft, sweep, thicken, offset surface (CAD-69..71).
 - Dense scans as bodies: `feature.base_body` refuses meshes above 50 000 triangles; those need
   region selection and surface fitting (CAD-67).

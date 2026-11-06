@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "aerocad/commands/Session.hpp"
+#include "aerocad/core/MeshSelection.hpp"
 #include "aerocad/core/Path.hpp"
 
 #include <catch2/catch_approx.hpp>
@@ -178,4 +179,85 @@ TEST_CASE("Listener sees every executed command", "[commands]")
     session.execute("document.parts");
     session.execute("edit.undo");
     CHECK(seen == std::vector<std::string>{"document.parts", "edit.undo"});
+}
+
+namespace {
+
+/// Adds a closed 10 mm cube (each face 2 triangles) as a part and returns its id.
+std::uint64_t addCubePart(commands::Session& session)
+{
+    core::MeshBuilder b;
+    const core::Vec3 p[8] = {{0, 0, 0}, {10, 0, 0}, {10, 10, 0}, {0, 10, 0},
+                             {0, 0, 10}, {10, 0, 10}, {10, 10, 10}, {0, 10, 10}};
+    const int quads[6][4] = {{0, 3, 2, 1}, {4, 5, 6, 7}, {0, 1, 5, 4}, {2, 3, 7, 6}, {1, 2, 6, 5}, {0, 4, 7, 3}};
+    for (const auto& q : quads) {
+        b.addTriangle(p[q[0]], p[q[1]], p[q[2]]);
+        b.addTriangle(p[q[0]], p[q[2]], p[q[3]]);
+    }
+    model::Part part;
+    part.name = "Cube";
+    part.mesh = std::make_shared<const core::TriangleMesh>(b.take());
+    return session.document().addPart(part);
+}
+
+} // namespace
+
+TEST_CASE("Selection commands are undoable", "[commands][selection]")
+{
+    commands::Session session;
+    const auto id = addCubePart(session);
+
+    auto r = session.execute("selection.pick_region", {{"id", id}, {"point", {5, 5, 10}}});
+    REQUIRE(r.ok);
+    CHECK(r.data.at("selectedTriangles") == 2);
+    CHECK(r.data.at("areaMm2").get<double>() == Approx(100.0));
+
+    r = session.execute("selection.pick_region", {{"id", id}, {"point", {5, 5, 0}}, {"mode", "add"}});
+    REQUIRE(r.ok);
+    CHECK(r.data.at("selectedTriangles") == 4);
+
+    r = session.execute("selection.grow", {{"id", id}});
+    REQUIRE(r.ok);
+    CHECK(r.data.at("selectedTriangles") == 12);
+
+    REQUIRE(session.execute("edit.undo").ok);
+    REQUIRE(session.execute("edit.undo").ok);
+    r = session.execute("selection.get", {{"id", id}, {"includeTriangles", true}});
+    REQUIRE(r.ok);
+    CHECK(r.data.at("selectedTriangles") == 2);
+    CHECK(r.data.at("triangles").size() == 2);
+
+    r = session.execute("selection.invert", {{"id", id}});
+    REQUIRE(r.ok);
+    CHECK(r.data.at("selectedTriangles") == 10);
+    REQUIRE(session.execute("selection.clear", {{"id", id}}).ok);
+    CHECK(session.document().part(id)->selection == nullptr);
+    REQUIRE(session.execute("edit.undo").ok);
+    CHECK(session.document().part(id)->selection->size() == 10);
+
+    r = session.execute("document.parts");
+    CHECK(r.data.at("parts")[0].at("selectedTriangles") == 10);
+}
+
+TEST_CASE("Brush, lasso and set selection", "[commands][selection]")
+{
+    commands::Session session;
+    const auto id = addCubePart(session);
+
+    auto r = session.execute("selection.brush", {{"id", id}, {"points", {{5, 5, 10}}}, {"radius", 4.0}});
+    REQUIRE(r.ok);
+    CHECK(r.data.at("selectedTriangles") == 2); // both top triangle centroids within 4 mm
+
+    r = session.execute("selection.lasso",
+                        {{"id", id},
+                         {"polygon", {{0, 0}, {1, 0}, {1, 1}, {0, 1}}},
+                         {"view", {{"eye", {5, 5, 100}}, {"forward", {0, 0, -1}}, {"up", {0, 1, 0}}, {"fov", 40}, {"aspect", 1}}}});
+    REQUIRE(r.ok);
+    CHECK(r.data.at("selectedTriangles") == 2); // only the top face is visible from above
+
+    r = session.execute("selection.set", {{"id", id}, {"triangles", {0, 1, 1, 3}}});
+    REQUIRE(r.ok);
+    CHECK(r.data.at("selectedTriangles") == 3);
+    CHECK_FALSE(session.execute("selection.set", {{"id", id}, {"triangles", {99}}}).ok);
+    CHECK_FALSE(session.execute("selection.brush", {{"id", id}, {"points", {{0, 0, 0}}}, {"radius", 0}}).ok);
 }

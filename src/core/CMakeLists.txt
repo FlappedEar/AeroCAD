@@ -2,6 +2,7 @@
 # aerocad_core: basic math and mesh types. No third-party dependencies.
 add_library(aerocad_core STATIC
     src/Mesh.cpp
+    src/MeshSelection.cpp
     src/MeshCheck.cpp
 )
 add_library(AeroCAD::core ALIAS aerocad_core)

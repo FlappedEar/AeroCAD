@@ -2,6 +2,7 @@
 #pragma once
 
 #include "aerocad/core/Mesh.hpp"
+#include "aerocad/core/MeshSelection.hpp"
 #include "aerocad/geometry/Shape.hpp"
 
 #include <cstdint>
@@ -31,6 +32,9 @@ struct Part {
     std::shared_ptr<const core::TriangleMesh> mesh;
     /// Exact geometry when available (STEP import, CAD operations).
     std::optional<geometry::Shape> shape;
+    /// Selected triangles of `mesh` (region selection for surface fitting); null = none.
+    /// Must be cleared when an operation changes the mesh topology.
+    std::shared_ptr<const core::TriangleSet> selection;
     PartKind kind = PartKind::Imported;
     /// For bodies and sketches: id of the timeline feature that owns this part.
     std::uint64_t featureId = 0;

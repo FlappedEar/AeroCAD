@@ -17,7 +17,18 @@ Item {
     property string tool: ""
     /// Existing points to snap to, [[u, v], ...].
     property var snapPoints: []
+    /// Solved curves, constraints and degrees of freedom of the sketch (sketch.curves).
+    property var sketchCurves: []
+    property var sketchConstraints: []
+    property int degreesOfFreedom: -1
     signal curveDrawn(var curve)
+    signal constraintAdded(var constraint)
+    signal constraintEdited(int index, var value)
+    signal constraintRemoved(int index)
+    /// A palette button asks for another sketch tool.
+    signal toolRequested(string tool)
+
+    readonly property bool constraintTool: constraintLayer.toolNames.indexOf(tool) >= 0
 
     readonly property bool active: sketch !== null && tool !== ""
     /// Clicked points of the curve being drawn, [[u, v], ...].
@@ -35,6 +46,7 @@ Item {
 
     function reset() {
         points = []
+        hover = null
         dimension.text = ""
         canvas.requestPaint()
     }
@@ -220,12 +232,21 @@ Item {
         acceptedButtons: Qt.LeftButton | Qt.RightButton
         cursorShape: root.active ? Qt.CrossCursor : Qt.ArrowCursor
         onPositionChanged: mouse => {
+            if (root.constraintTool) {
+                constraintLayer.hoverAt(mouse.x, mouse.y)
+                return
+            }
             root.hover = root.snap(mouse.x, mouse.y)
             canvas.requestPaint()
         }
         onClicked: mouse => {
             if (mouse.button === Qt.RightButton) {
                 root.reset()
+                constraintLayer.reset()
+                return
+            }
+            if (root.constraintTool) {
+                constraintLayer.click(mouse.x, mouse.y)
                 return
             }
             const p = root.snap(mouse.x, mouse.y)
@@ -241,8 +262,9 @@ Item {
     Keys.onPressed: event => {
         if (event.key === Qt.Key_Escape) {
             reset()
+            constraintLayer.reset()
             event.accepted = true
-        } else if (active && points.length > 0 && /^[0-9.(\-]$/.test(event.text)) {
+        } else if (active && !constraintTool && points.length > 0 && /^[0-9.(\-]$/.test(event.text)) {
             dimension.text = event.text
             dimension.forceActiveFocus()
             event.accepted = true
@@ -343,6 +365,16 @@ Item {
         }
     }
 
+    SketchConstraintLayer {
+        id: constraintLayer
+        anchors.fill: parent
+        overlay: root
+        curves: root.sketchCurves
+        constraints: root.sketchConstraints
+        tool: root.constraintTool ? root.tool : ""
+        onConstraintAdded: c => root.constraintAdded(c)
+    }
+
     // --- Sketch palette -------------------------------------------------------------------
 
     Pane {
@@ -356,7 +388,8 @@ Item {
         ColumnLayout {
             spacing: 4
             Label {
-                text: root.tool === "" ? qsTr("Sketch: pick a tool (L line, R rectangle, C circle)")
+                text: root.constraintTool ? constraintLayer.hint()
+                    : root.tool === "" ? qsTr("Sketch: pick a tool (L line, R rectangle, C circle, D dimension)")
                     : root.tool === "line" ? qsTr("Line: click points; right-click or Esc ends the chain")
                     : root.tool === "rectangle" ? qsTr("Rectangle: click two corners; type width, height")
                     : root.tool === "circle" ? qsTr("Circle: click centre and a point; type the diameter")
@@ -365,8 +398,38 @@ Item {
                     : qsTr("Slot: click both centres, then the width")
                 font.bold: true
             }
+            // Constraint tools, like Fusion's sketch palette.
+            Flow {
+                Layout.preferredWidth: 300
+                spacing: 2
+                Repeater {
+                    model: [
+                        { tool: "horizontal", text: "H", tip: qsTr("Horizontal") },
+                        { tool: "vertical", text: "V", tip: qsTr("Vertical") },
+                        { tool: "coincident", text: "●", tip: qsTr("Coincident / point on curve") },
+                        { tool: "tangent", text: "T", tip: qsTr("Tangent") },
+                        { tool: "equal", text: "=", tip: qsTr("Equal") },
+                        { tool: "parallel", text: "∥", tip: qsTr("Parallel") },
+                        { tool: "perpendicular", text: "⊥", tip: qsTr("Perpendicular") },
+                        { tool: "concentric", text: "◎", tip: qsTr("Concentric") },
+                        { tool: "midpoint", text: "M", tip: qsTr("Midpoint") },
+                        { tool: "collinear", text: "≡", tip: qsTr("Collinear") },
+                        { tool: "fix", text: "⚓", tip: qsTr("Fix") }
+                    ]
+                    delegate: ToolButton {
+                        required property var modelData
+                        text: modelData.text
+                        checkable: true
+                        checked: root.tool === modelData.tool
+                        implicitWidth: 26
+                        ToolTip.visible: hovered
+                        ToolTip.text: modelData.tip
+                        onClicked: root.toolRequested(modelData.tool)
+                    }
+                }
+            }
             RowLayout {
-                visible: root.active
+                visible: root.active && !root.constraintTool
                 Label { text: root.tool === "rectangle" ? qsTr("Width, height") : root.tool === "line" ? qsTr("Length") : qsTr("Size") }
                 TextField {
                     id: dimension
@@ -382,6 +445,50 @@ Item {
                     to: 64
                     value: root.polygonSides
                     onValueModified: root.polygonSides = value
+                }
+            }
+            Label {
+                visible: root.degreesOfFreedom >= 0
+                text: root.degreesOfFreedom === 0 ? qsTr("Fully constrained")
+                    : qsTr("%n degree(s) of freedom", "", root.degreesOfFreedom)
+                color: root.degreesOfFreedom === 0 ? "#2f7d32" : "#555"
+            }
+            Label {
+                visible: root.sketchConstraints.length > 0
+                text: qsTr("Constraints")
+                font.bold: true
+            }
+            ListView {
+                id: constraintList
+                visible: root.sketchConstraints.length > 0
+                Layout.preferredWidth: 300
+                Layout.preferredHeight: Math.min(180, contentHeight)
+                clip: true
+                model: root.sketchConstraints
+                delegate: RowLayout {
+                    required property var modelData
+                    required property int index
+                    width: ListView.view.width
+                    Label {
+                        Layout.fillWidth: true
+                        text: modelData.type.replace(/_/g, " ") + (modelData.curve !== undefined ? " #" + modelData.curve
+                              : modelData.curves !== undefined ? " #" + modelData.curves.join(", #") : "")
+                        elide: Text.ElideRight
+                    }
+                    TextField {
+                        visible: modelData.value !== undefined
+                        Layout.preferredWidth: 90
+                        text: modelData.value !== undefined ? String(modelData.value) : ""
+                        selectByMouse: true
+                        onEditingFinished: {
+                            if (text !== String(modelData.value) && text.trim().length > 0)
+                                root.constraintEdited(index, isNaN(Number(text)) ? text.trim() : Number(text))
+                        }
+                    }
+                    ToolButton {
+                        text: "✕"
+                        onClicked: root.constraintRemoved(index)
+                    }
                 }
             }
         }
