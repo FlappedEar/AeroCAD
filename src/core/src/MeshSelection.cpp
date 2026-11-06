@@ -179,6 +179,43 @@ std::optional<RayHit> raycast(const TriangleMesh& mesh, const Vec3& origin, cons
     return best;
 }
 
+std::vector<Vec3> sliceMesh(const TriangleMesh& mesh, const Vec3& origin, const Vec3& normal, double radius)
+{
+    std::vector<Vec3> out;
+    const double len = normal.length();
+    if (!(len > 0.0))
+        return out;
+    const Vec3 n = normal * (1.0 / len);
+    const auto& v = mesh.vertices();
+    for (const auto& tri : mesh.triangles()) {
+        const Vec3* p[3] = {&v[tri[0]], &v[tri[1]], &v[tri[2]]};
+        double d[3];
+        int above = 0;
+        for (int k = 0; k < 3; ++k) {
+            d[k] = (*p[k] - origin).dot(n);
+            above += d[k] > 0.0 ? 1 : 0;
+        }
+        if (above == 0 || above == 3)
+            continue;
+        if ((*p[0] - origin).length() > radius && (*p[1] - origin).length() > radius &&
+            (*p[2] - origin).length() > radius)
+            continue;
+        // The two edges whose ends lie on opposite sides.
+        int found = 0;
+        for (int k = 0; k < 3 && found < 2; ++k) {
+            const int j = (k + 1) % 3;
+            if ((d[k] > 0.0) != (d[j] > 0.0)) {
+                const double t = d[k] / (d[k] - d[j]);
+                out.push_back(*p[k] + (*p[j] - *p[k]) * t);
+                ++found;
+            }
+        }
+        if (found == 1)
+            out.pop_back();
+    }
+    return out;
+}
+
 std::vector<Vec3> projectOntoMesh(const TriangleMesh& mesh, const std::vector<Vec3>& points, const Vec3& direction,
                                   std::size_t* hits)
 {

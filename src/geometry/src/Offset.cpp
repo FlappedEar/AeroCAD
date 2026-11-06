@@ -5,6 +5,8 @@
 
 #include <BRepAlgoAPI_Common.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
+#include <BRepAlgoAPI_Splitter.hxx>
+#include <GeomAPI_ProjectPointOnSurf.hxx>
 #include <BRepBndLib.hxx>
 #include <BRepBuilderAPI_Sewing.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
@@ -222,6 +224,95 @@ Shape trimSurface(const Shape& surface, const std::vector<Shape>& outlines, cons
         return wrapShape(sewn);
     } catch (const Standard_Failure& e) {
         throw OffsetError(std::string("Trim failed: ") + e.GetMessageString());
+    }
+}
+
+Shape finOnSurface(const Shape& surface, const std::vector<Shape>& outlines, const core::Vec3& normal,
+                   double thickness, const core::Vec3& outward)
+{
+    TopoDS_Shape s = occt(surface);
+    requireSurface(s);
+    s = untrimmed(s);
+    if (outlines.empty())
+        throw OffsetError("No closed outline for the fin");
+    if (!std::isfinite(thickness) || thickness <= 0.0)
+        throw OffsetError("Thickness must be positive");
+    const double len = normal.length();
+    const double outLen = outward.length();
+    if (!(len > 0.0) || !(outLen > 0.0))
+        throw OffsetError("Fin direction is zero");
+    const gp_Vec dir(normal.x / len, normal.y / len, normal.z / len);
+    const gp_Vec out(outward.x / outLen, outward.y / outLen, outward.z / outLen);
+    try {
+        // The fin before the cut: the outlines extruded half the thickness each way.
+        TopTools_ListOfShape blanks;
+        for (const auto& o : outlines) {
+            if (o.isNull())
+                continue;
+            gp_Trsf back;
+            back.SetTranslation(dir * (-0.5 * thickness));
+            const TopoDS_Shape start = BRepBuilderAPI_Transform(o.impl()->shape, back, true).Shape();
+            BRepPrimAPI_MakePrism prism(start, dir * thickness);
+            if (!prism.IsDone())
+                throw OffsetError("Could not extrude the fin outline");
+            blanks.Append(prism.Shape());
+        }
+        if (blanks.IsEmpty())
+            throw OffsetError("No closed outline for the fin");
+
+        TopTools_ListOfShape tools;
+        tools.Append(s);
+        BRepAlgoAPI_Splitter splitter;
+        splitter.SetArguments(blanks);
+        splitter.SetTools(tools);
+        splitter.SetRunParallel(false);
+        splitter.Build();
+        if (!splitter.IsDone() || splitter.HasErrors())
+            throw OffsetError("Cutting the fin root with the surface failed");
+
+        // Sort the pieces by the side of the surface their centre lies on, and keep the
+        // side with more of the fin: the root dipping into the surface is cut off, whichever
+        // way the outline was drawn.
+        Handle(Geom_Surface) surf;
+        for (TopExp_Explorer e(s, TopAbs_FACE); e.More() && surf.IsNull(); e.Next())
+            surf = BRep_Tool::Surface(TopoDS::Face(e.Current()));
+        std::vector<TopoDS_Shape> sides[2];
+        double volume[2] = {0.0, 0.0};
+        for (TopExp_Explorer e(splitter.Shape(), TopAbs_SOLID); e.More(); e.Next()) {
+            GProp_GProps props;
+            BRepGProp::VolumeProperties(e.Current(), props);
+            const gp_Pnt c = props.CentreOfMass();
+            int side = 0;
+            if (!surf.IsNull()) {
+                GeomAPI_ProjectPointOnSurf projector(c, surf);
+                if (projector.NbPoints() > 0)
+                    side = gp_Vec(projector.NearestPoint(), c).Dot(out) > 0.0 ? 0 : 1;
+            }
+            sides[side].push_back(e.Current());
+            volume[side] += std::abs(props.Mass());
+        }
+        if (sides[0].empty() || sides[1].empty())
+            throw OffsetError("The fin outline does not reach through the surface; draw its root a little into the "
+                              "surface (past the surface line in the sketch)");
+        const std::vector<TopoDS_Shape>& kept = volume[0] >= volume[1] ? sides[0] : sides[1];
+        TopoDS_Shape result;
+        if (kept.size() == 1) {
+            result = kept.front();
+        } else {
+            TopoDS_Compound c;
+            BRep_Builder b;
+            b.MakeCompound(c);
+            for (const auto& k : kept)
+                b.Add(c, k);
+            result = c;
+        }
+        GProp_GProps props;
+        BRepGProp::VolumeProperties(result, props);
+        if (props.Mass() < 0.0)
+            result.Reverse();
+        return wrapShape(result);
+    } catch (const Standard_Failure& e) {
+        throw OffsetError(std::string("Fin failed: ") + e.GetMessageString());
     }
 }
 

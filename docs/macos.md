@@ -99,6 +99,12 @@ open build/vcpkg-macos/bin/AeroCAD.app
   surface is fitted under the outline automatically, so no selection or fit is needed,
   and the edges follow the outline exactly. (*Properties > Surface > Trim by sketch*
   gives just the cut-out surface.)
+- **A fin on the surface (canard, dive plane, winglet):** *Sketch*, tick *Fin across the
+  surface* (optionally an angle), then click the scan where the fin stands. The sketch
+  stands across the surface; the orange line is where it cuts the surface. Draw the fin's
+  outline with its root a little past that line, click *Finish Sketch*, set the thickness
+  in *Fin on surface* and click *Create*: the root is cut to the surface, so the fin sits
+  flush on it.
 - **Undo / redo:** Cmd+Z / Cmd+Shift+Z (also for selection changes).
 
 ## Troubleshooting

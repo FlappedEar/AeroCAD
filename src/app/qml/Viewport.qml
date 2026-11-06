@@ -63,6 +63,10 @@ Item {
     property real homeYaw: defaultHomeYaw
     readonly property alias pitch: cameraInput.pitch
     readonly property alias yaw: cameraInput.yaw
+    /// Changes whenever the camera or the view size does: overlays drawn from projected
+    /// points repaint on it.
+    readonly property var viewKey: [cameraInput.pitch, cameraInput.yaw, cameraInput.distance, pivot.position,
+                                    width, height, orthographic]
     property alias leftDragMode: cameraInput.leftDragMode
     // Region selection tools (see SelectionToolbar.qml). Keys: 1 smooth region (click),
     // 2 lasso, 3 brush, Esc navigate; [ and ] change the brush size.

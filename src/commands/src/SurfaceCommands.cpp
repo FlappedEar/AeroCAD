@@ -10,6 +10,7 @@
 #include "aerocad/geometry/Tessellation.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <memory>
@@ -89,52 +90,49 @@ std::vector<geometry::Shape> sketchOutlines(const cad::SketchResult& sk, const J
     return outlines;
 }
 
-/// Triangles of a scan under a sketch outline: connected to the triangle nearest `seed`,
-/// facing the sketch, and inside the outline's rectangle (sketch coordinates) grown by
-/// `margin`. Enough area around the outline for a smooth fit; the outline cuts it later.
-core::TriangleSet meshUnderSketch(const core::TriangleMesh& mesh, const cad::SketchResult& sk,
-                                  const std::vector<geometry::Shape>& outlines, const core::Vec3& seed, double margin)
-{
-    // Bounds of the evaluated outline (arcs bulge past their defining points).
-    double u0 = std::numeric_limits<double>::max(), v0 = u0, u1 = -u0, v1 = -u0;
-    for (const auto& o : outlines) {
-        const auto t = geometry::tessellate(o);
-        for (const auto& p : t.vertices()) {
-            const auto uv = sk.plane.toLocal(p);
-            u0 = std::min(u0, uv.x);
-            u1 = std::max(u1, uv.x);
-            v0 = std::min(v0, uv.y);
-            v1 = std::max(v1, uv.y);
-        }
-    }
-    if (u0 > u1)
-        throw CommandError("The sketch outline is empty");
-    u0 -= margin;
-    v0 -= margin;
-    u1 += margin;
-    v1 += margin;
+/// A box in a local frame: origin plus orthonormal axes, extent [lo, hi] along each.
+struct FrameBox {
+    core::Vec3 origin;
+    core::Vec3 axis[3];
+    double lo[3];
+    double hi[3];
 
+    [[nodiscard]] bool contains(const core::Vec3& p) const
+    {
+        const core::Vec3 d = p - origin;
+        for (int i = 0; i < 3; ++i) {
+            const double x = d.dot(axis[i]);
+            if (x < lo[i] || x > hi[i])
+                return false;
+        }
+        return true;
+    }
+};
+
+/// Triangles of a scan with their centre in `box`, facing `facing` (dot > 0.2) and
+/// connected to the triangle nearest `seed`.
+core::TriangleSet meshInBox(const core::TriangleMesh& mesh, const FrameBox& box, const core::Vec3& facing,
+                            const core::Vec3& seed, const char* missing)
+{
     const auto& v = mesh.vertices();
-    auto inside = [&](std::uint32_t t) {
+    auto centre = [&](std::uint32_t t) {
         const auto& tri = mesh.triangles()[t];
-        const core::Vec3 c = (v[tri[0]] + v[tri[1]] + v[tri[2]]) * (1.0 / 3.0);
-        const auto uv = sk.plane.toLocal(c);
-        return uv.x >= u0 && uv.x <= u1 && uv.y >= v0 && uv.y <= v1 && mesh.faceNormal(t).dot(sk.plane.normal) > 0.2;
+        return (v[tri[0]] + v[tri[1]] + v[tri[2]]) * (1.0 / 3.0);
     };
+    auto inside = [&](std::uint32_t t) { return box.contains(centre(t)) && mesh.faceNormal(t).dot(facing) > 0.2; };
     std::uint32_t start = core::MeshAdjacency::none;
     double best = std::numeric_limits<double>::max();
     for (std::uint32_t t = 0; t < mesh.triangleCount(); ++t) {
         if (!inside(t))
             continue;
-        const auto& tri = mesh.triangles()[t];
-        const double d = ((v[tri[0]] + v[tri[1]] + v[tri[2]]) * (1.0 / 3.0) - seed).length();
+        const double d = (centre(t) - seed).length();
         if (d < best) {
             best = d;
             start = t;
         }
     }
     if (start == core::MeshAdjacency::none)
-        throw CommandError("No part of the mesh faces the sketch under its outline");
+        throw CommandError(missing);
     const core::MeshAdjacency adjacency(mesh);
     std::vector<char> seen(mesh.triangleCount(), 0);
     core::TriangleSet out{start};
@@ -149,6 +147,57 @@ core::TriangleSet meshUnderSketch(const core::TriangleMesh& mesh, const cad::Ske
     }
     std::sort(out.begin(), out.end());
     return out;
+}
+
+/// Bounds of the evaluated outlines in sketch coordinates (arcs bulge past their
+/// defining points): {u0, v0, u1, v1}.
+std::array<double, 4> outlineBounds(const cad::SketchResult& sk, const std::vector<geometry::Shape>& outlines)
+{
+    double u0 = std::numeric_limits<double>::max(), v0 = u0, u1 = -u0, v1 = -u0;
+    for (const auto& o : outlines) {
+        const auto t = geometry::tessellate(o);
+        for (const auto& p : t.vertices()) {
+            const auto uv = sk.plane.toLocal(p);
+            u0 = std::min(u0, uv.x);
+            u1 = std::max(u1, uv.x);
+            v0 = std::min(v0, uv.y);
+            v1 = std::max(v1, uv.y);
+        }
+    }
+    if (u0 > u1)
+        throw CommandError("The sketch outline is empty");
+    return {u0, v0, u1, v1};
+}
+
+/// Triangles of a scan under a sketch outline: inside the outline's rectangle (sketch
+/// coordinates) grown by `margin`, facing the sketch. Enough area around the outline for
+/// a smooth fit; the outline cuts it later.
+core::TriangleSet meshUnderSketch(const core::TriangleMesh& mesh, const cad::SketchResult& sk,
+                                  const std::vector<geometry::Shape>& outlines, const core::Vec3& seed, double margin)
+{
+    const auto [u0, v0, u1, v1] = outlineBounds(sk, outlines);
+    const double far = std::numeric_limits<double>::max();
+    const FrameBox box{sk.plane.origin,
+                       {sk.plane.xDir, sk.plane.yDir(), sk.plane.normal},
+                       {u0 - margin, v0 - margin, -far},
+                       {u1 + margin, v1 + margin, far}};
+    return meshInBox(mesh, box, sk.plane.normal, seed, "No part of the mesh faces the sketch under its outline");
+}
+
+/// Triangles of a scan under the root of a fin drawn across it (sketch X = surface
+/// normal, outward): along the root (sketch Y) and across the fin's thickness, within the
+/// outline's height range, all grown by `margin`, facing outward.
+core::TriangleSet meshUnderFin(const core::TriangleMesh& mesh, const cad::SketchResult& sk,
+                               const std::vector<geometry::Shape>& outlines, double thickness, const core::Vec3& seed,
+                               double margin)
+{
+    const auto [u0, v0, u1, v1] = outlineBounds(sk, outlines);
+    const double half = 0.5 * thickness + margin;
+    const FrameBox box{sk.plane.origin,
+                       {sk.plane.xDir, sk.plane.yDir(), sk.plane.normal},
+                       {u0 - margin, v0 - margin, -half},
+                       {u1 + margin, v1 + margin, half}};
+    return meshInBox(mesh, box, sk.plane.xDir, seed, "No part of the mesh lies under the root of the fin");
 }
 
 } // namespace
@@ -459,6 +508,100 @@ void registerSurfaceCommands(CommandRegistry& r)
               if (!fitReport.is_null())
                   result["fit"] = fitReport;
               result["warnings"] = warnings;
+              return result;
+          });
+    r.add({"surface.fin_from_sketch", "Fin on surface",
+           "One step from a fin outline to a solid fin standing on a curved surface or scan, e.g. a canard (dive "
+           "plane) on a scanned bumper or a winglet: the sketch is made across the surface (sketch.create with "
+           "surface: {part, point, across: true}; sketch X points outward along the surface normal), the outline "
+           "is extruded `thickness` mm symmetrically about the sketch plane, and its root is cut where it passes "
+           "through the surface, so the root follows the surface exactly. Draw the root a little into the "
+           "surface (x < 0). On a scan a smooth surface is first fitted under the root.",
+           objectSchema({{"sketch", {{"type", "integer"}, {"minimum", 1}, {"description", "Sketch feature id."}}},
+                         {"id", idParam()},
+                         {"thickness", {{"type", "number"}, {"exclusiveMinimum", 0}, {"description", "mm."}}},
+                         {"profiles",
+                          {{"type", "array"},
+                           {"items", {{"type", "integer"}, {"minimum", 0}}},
+                           {"description", "Profile indices (sketch.profiles); default all."}}},
+                         {"tolerance",
+                          {{"type", "number"}, {"exclusiveMinimum", 0}, {"description", "Fit tolerance (scan), mm. Default 0.25."}}},
+                         {"name", {{"type", "string"}, {"description", "Name of the new part."}}}},
+                        {"sketch", "thickness"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              const auto& sk = requireSketch(ctx, params.at("sketch"));
+              const auto outlines = sketchOutlines(sk, params);
+              Json on;
+              if (const cad::Feature* f = ctx.design->feature(sk.id); f != nullptr)
+                  on = f->params.value("onSurface", Json::object());
+              model::PartId partId = 0;
+              if (params.contains("id"))
+                  partId = params.at("id").get<model::PartId>();
+              else if (on.contains("part"))
+                  partId = on.at("part").get<model::PartId>();
+              else
+                  throw CommandError("Sketch " + sk.name + " was not made on a surface; give the surface part `id`");
+              const model::Part* source = ctx.document.part(partId);
+              if (source == nullptr)
+                  throw CommandError("No part with id " + std::to_string(partId));
+              if (source->kind == model::PartKind::Sketch)
+                  throw CommandError("Part " + std::to_string(partId) + " is a sketch");
+              const double thickness = params.at("thickness").get<double>();
+              const double tolerance = params.value("tolerance", geometry::SurfaceFitOptions{}.tolerance);
+              // Outward: the sketch X axis for a sketch made across the surface.
+              const core::Vec3 outward = sk.plane.xDir;
+
+              Json fitReport;
+              auto fitUnder = [&](const model::Part& scan) {
+                  const double margin = std::max(5.0, 0.15 * outlinesDiagonal(outlines));
+                  const auto region = meshUnderFin(*scan.mesh, sk, outlines, thickness, sk.plane.origin, margin);
+                  geometry::SurfaceFitOptions options;
+                  options.tolerance = tolerance;
+                  try {
+                      auto fit = geometry::fitSurface(*scan.mesh, region, options);
+                      fitReport = {{"part", scan.id},
+                                   {"triangles", region.size()},
+                                   {"meshToSurfaceMax", fit.report.meshToSurfaceMax},
+                                   {"meshToSurfaceRms", fit.report.meshToSurfaceRms},
+                                   {"withinTolerance", fit.report.withinTolerance},
+                                   {"method", fit.report.method}};
+                      return fit.face;
+                  } catch (const geometry::SurfaceFitError& e) {
+                      throw CommandError(std::string("Could not fit a surface under the fin root: ") + e.what());
+                  }
+              };
+              auto finOn = [&](const geometry::Shape& surface) {
+                  return geometry::finOnSurface(surface, outlines, sk.plane.normal, thickness, outward);
+              };
+
+              geometry::Shape solid;
+              try {
+                  if (source->shape && !source->shape->isNull()) {
+                      try {
+                          solid = finOn(*source->shape);
+                      } catch (const geometry::OffsetError&) {
+                          // The fitted surface may not reach under the whole root: fit again
+                          // on the scan it came from.
+                          const model::Part* scan = ctx.document.part(model::sourcePartId(*source));
+                          if (scan == nullptr || !scan->mesh || scan->shape)
+                              throw;
+                          solid = finOn(fitUnder(*scan));
+                      }
+                  } else {
+                      if (!source->mesh || source->mesh->triangleCount() == 0)
+                          throw CommandError("Part " + std::to_string(partId) + " has no surface");
+                      solid = finOn(fitUnder(*source));
+                  }
+              } catch (const geometry::OffsetError& e) {
+                  throw CommandError(e.what());
+              }
+              Json result = addShapePart(ctx, *source, solid, params.value("name", sk.name + " fin"),
+                                         "surface.fin_from_sketch", "Fin on surface");
+              result["thickness"] = thickness;
+              result["volume"] = solid.volume();
+              if (!fitReport.is_null())
+                  result["fit"] = fitReport;
               return result;
           });
     r.add({"surface.offset", "Offset surface",

@@ -545,6 +545,86 @@ TEST_CASE("Part on surface: one step from an outline over a scan to a solid", "[
         CHECK(profiles.data.at("onSurface").at("across") == true);
     }
 
+    SECTION("A fin drawn across the surface stands on it, its root following the curve")
+    {
+        // Height 0..10 above the surface (x), 16 mm chord (y); the root reaches 2 mm in.
+        const Json fin = Json::array({{{"type", "rectangle"}, {"corner", {-2, -8}}, {"opposite", {10, 8}}}});
+        auto sk = session.execute("sketch.create",
+                                  {{"surface", {{"part", scanId}, {"point", {40, 15, -0.5}}, {"across", true}}},
+                                   {"curves", fin}});
+        INFO(sk.toJson().dump());
+        REQUIRE(sk.ok);
+        // The sketch reports where its plane cuts the scan (sketch coordinates): the line to
+        // draw the root into, at x = 0 where the plane stands on it.
+        auto prof = session.execute("sketch.profiles", {{"sketch", sk.data.at("id")}});
+        REQUIRE(prof.ok);
+        const auto& line = prof.data.at("surfaceLine");
+        CHECK(line.size() > 20);
+        double nearRoot = 1e9;
+        for (const auto& q : line)
+            if (std::abs(q.at(1).get<double>()) < 1.0)
+                nearRoot = std::min(nearRoot, std::abs(q.at(0).get<double>()));
+        CHECK(nearRoot < 0.05);
+
+        auto part = session.execute("surface.fin_from_sketch", {{"sketch", sk.data.at("id")}, {"thickness", 3.0}});
+        INFO(part.toJson().dump());
+        REQUIRE(part.ok);
+        CHECK(part.data.at("fit").at("part") == scanId);
+        CHECK(part.data.at("hasBrep") == true);
+        const auto& box = part.data.at("bounds");
+        // Tip 10 mm above the plane's origin on the surface; the root cut at the surface,
+        // which falls away along X (slope -0.1 at x = 40): no part of the fin under it.
+        CHECK(box.at("max").at(2).get<double>() == Approx(-0.5 + 10.0).margin(0.3));
+        CHECK(box.at("min").at(2).get<double>() > -0.5 - 0.3);
+        CHECK(box.at("min").at(2).get<double>() < -0.5 + 0.1);
+        // A roundish area facing up: the fin stands across world X, 3 mm thick along it.
+        CHECK(box.at("size").at(0).get<double>() == Approx(3.0).margin(1.0));
+        CHECK(box.at("size").at(1).get<double>() == Approx(16.0).margin(0.2));
+        CHECK(part.data.at("volume").get<double>() == Approx(3.0 * 16.0 * 10.0).epsilon(0.03));
+        for (const auto& q : session.document().part(part.data.at("id").get<model::PartId>())->mesh->vertices())
+            CHECK(q.z > -0.005 * (q.x - 30) * (q.x - 30) - 0.05); // nothing below the scan
+
+        // On a fitted surface the fin is cut by it directly.
+        std::vector<std::uint32_t> all(session.document().part(scanId)->mesh->triangleCount());
+        for (std::size_t i = 0; i < all.size(); ++i)
+            all[i] = static_cast<std::uint32_t>(i);
+        REQUIRE(session.execute("selection.set", {{"id", scanId}, {"triangles", all}}).ok);
+        auto fitted = session.execute("surface.fit_selection", {{"id", scanId}, {"tolerance", 0.05}});
+        REQUIRE(fitted.ok);
+        REQUIRE(session.execute("selection.clear", {{"id", scanId}}).ok);
+        auto onFit = session.execute("sketch.create", {{"surface", {{"part", fitted.data.at("id")}, {"point", {20, 15, -0.5}}, {"across", true}}},
+                                                       {"curves", fin}});
+        REQUIRE(onFit.ok);
+        auto finOnFit = session.execute("surface.fin_from_sketch", {{"sketch", onFit.data.at("id")}, {"thickness", 2.0}});
+        INFO(finOnFit.toJson().dump());
+        REQUIRE(finOnFit.ok);
+        CHECK_FALSE(finOnFit.data.contains("fit"));
+        CHECK(finOnFit.data.at("volume").get<double>() > 2.0 * 16.0 * 9.0);
+        // Where it was clicked, not in the middle of the surface.
+        const auto& fb = finOnFit.data.at("bounds");
+        CHECK((fb.at("min").at(0).get<double>() + fb.at("max").at(0).get<double>()) / 2 == Approx(20.0).margin(1.0));
+
+        // Drawn the other way (most of it on the inner side): the bigger side is kept.
+        auto flipped = session.execute(
+            "sketch.create", {{"surface", {{"part", scanId}, {"point", {40, 15, -0.5}}, {"across", true}}},
+                              {"curves", Json::array({{{"type", "rectangle"}, {"corner", {-10, -8}}, {"opposite", {2, 8}}}})}});
+        REQUIRE(flipped.ok);
+        auto inner = session.execute("surface.fin_from_sketch", {{"sketch", flipped.data.at("id")}, {"thickness", 3.0}});
+        INFO(inner.toJson().dump());
+        REQUIRE(inner.ok);
+        CHECK(inner.data.at("volume").get<double>() == Approx(3.0 * 16.0 * 10.0).epsilon(0.03));
+        CHECK(inner.data.at("bounds").at("max").at(2).get<double>() < -0.5 + 0.3);
+
+        // A fin that floats above the surface is refused with a hint.
+        auto floating = session.execute(
+            "sketch.create", {{"surface", {{"part", scanId}, {"point", {40, 15, -0.5}}, {"across", true}}},
+                              {"curves", Json::array({{{"type", "rectangle"}, {"corner", {1, -8}}, {"opposite", {10, 8}}}})}});
+        REQUIRE(floating.ok);
+        auto refused = session.execute("surface.fin_from_sketch", {{"sketch", floating.data.at("id")}, {"thickness", 3.0}});
+        CHECK_FALSE(refused.ok);
+        CHECK(refused.toJson().dump().find("root") != std::string::npos);
+    }
+
     SECTION("An arc that bulges far past its defining points is covered")
     {
         // 270 degree arc of radius 12 around the sketch origin, closed by a line.

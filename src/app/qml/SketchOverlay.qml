@@ -44,6 +44,11 @@ Item {
 
     onToolChanged: reset()
     onSketchChanged: reset()
+    // Previews and the surface line are projected points: redraw them when the view moves.
+    Connections {
+        target: root.viewport
+        function onViewKeyChanged() { canvas.requestPaint() }
+    }
 
     function reset() {
         points = []
@@ -294,6 +299,21 @@ Item {
             ctx.reset()
             if (root.sketch === null)
                 return
+            // Across a surface (a fin): where the sketch plane cuts the surface, drawn on
+            // top because the surface hides it.
+            const line = root.sketch.surfaceLine || []
+            if (line.length >= 2) {
+                ctx.lineWidth = 2
+                ctx.strokeStyle = Theme.warning
+                ctx.beginPath()
+                for (let i = 0; i + 1 < line.length; i += 2) {
+                    const a = root.viewport.viewPoint(root.toWorld(line[i]))
+                    const b = root.viewport.viewPoint(root.toWorld(line[i + 1]))
+                    ctx.moveTo(a.x, a.y)
+                    ctx.lineTo(b.x, b.y)
+                }
+                ctx.stroke()
+            }
             ctx.lineWidth = 1.5
             ctx.strokeStyle = Theme.sketchColor
             ctx.fillStyle = Theme.sketchColor
