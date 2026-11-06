@@ -97,7 +97,13 @@ core -------+                 transforms, primitives).
   the curves and the profile fill finely and moves them onto it along the sketch normal
   (`core::projectOntoMesh`, grid-accelerated), and clicks while sketching ray-cast the
   surface (`AppController::pickPartSurface`, meshes up to 300k triangles). `across: true`
-  sketches stand on the surface instead (X along its normal), for fins.
+  sketches stand on the surface instead (X along its normal, through the clicked point;
+  turned by `angle` about the normal), for fins: `sketch.profiles` reports where the
+  plane cuts the surface (`surfaceLine`, `core::sliceMesh`), which the sketch overlay
+  draws on top. `surface.fin_from_sketch` (`geometry::finOnSurface`) extrudes the
+  outline half the thickness each way, splits it with the surface (fitted under the
+  root on a scan, `BRepAlgoAPI_Splitter`) and keeps the side with more of the fin, so
+  the root lies exactly on the surface.
 
 ## Not yet decided / next steps
 

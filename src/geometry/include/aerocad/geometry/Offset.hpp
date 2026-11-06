@@ -43,6 +43,18 @@ enum class ThickenSide {
 [[nodiscard]] Shape trimSurface(const Shape& surface, const std::vector<Shape>& outlines, const core::Vec3& direction,
                                 bool keepInside = true, bool extend = true);
 
+/// A fin standing on a surface, e.g. a canard on a scanned bumper: the closed outlines
+/// (drawn in a plane across the surface, its root reaching into the surface) are extruded
+/// `thickness` mm symmetrically along `normal` (the outline plane's normal), and the
+/// root is cut off where the solid passes through the surface: of the two sides (told
+/// apart along `outward`, roughly the surface normal), the one with more of the fin is
+/// kept, so it does not matter which way the outline was drawn. The root face lies
+/// exactly on the curved surface. A single-face surface is taken on its whole B-spline
+/// (see trimSurface).
+/// Throws OffsetError when the outline does not reach through the surface.
+[[nodiscard]] Shape finOnSurface(const Shape& surface, const std::vector<Shape>& outlines, const core::Vec3& normal,
+                                 double thickness, const core::Vec3& outward);
+
 /// Area of all faces in mm^2.
 [[nodiscard]] double surfaceArea(const Shape& shape);
 

@@ -7,6 +7,7 @@
 #include "aerocad/core/Align.hpp"
 #include "aerocad/core/MeshSelection.hpp"
 #include "aerocad/geometry/Modeling.hpp"
+#include "aerocad/geometry/Tessellation.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -393,8 +394,9 @@ std::pair<Json, Json> surfaceSketchPlane(const model::Document& doc, const Json&
     if (ref.value("useSelection", hasSelection) && hasSelection) {
         triangles.assign(part->selection->begin(), part->selection->end());
         area = "selection";
-    } else if (ref.contains("point") && !part->shape) {
-        // A scan: only the area around the click. A fitted surface is used whole.
+    } else if (ref.contains("point") && (!part->shape || ref.value("across", false))) {
+        // A scan, or a fin's place: only the area around the click. A fitted surface is
+        // otherwise used whole.
         const auto& pt = ref.at("point");
         const core::Vec3 point{pt.at(0).get<double>(), pt.at(1).get<double>(), pt.at(2).get<double>()};
         const double radius = ref.value("radius", std::max(mesh.bounds().diagonal() * 0.1, 1e-3));
@@ -429,19 +431,31 @@ std::pair<Json, Json> surfaceSketchPlane(const model::Document& doc, const Json&
         // into the tangent plane (the long side when the surface faces up or down); the fin
         // is level, turned by `angle` about the surface normal.
         core::Vec3 up = core::Vec3{0, 0, 1} - normal * normal.z;
-        if (up.length() < 0.3)
-            up = fit->major - normal * fit->major.dot(normal);
+        if (up.length() < 0.3) {
+            // Facing up or down: along the long side of the area, or world X for a
+            // roundish area (no clear long side), else world Y.
+            core::Vec3 along = fit->elongation >= 0.2 ? fit->major : core::Vec3{1, 0, 0};
+            if (std::abs(along.dot(normal)) > 0.9)
+                along = {0, 1, 0};
+            up = along - normal * along.dot(normal);
+        }
         up = up.normalized();
         const double a = ref.value("angle", 0.0) * 3.14159265358979323846 / 180.0;
         const core::Vec3 finNormal = (up * std::cos(a) + normal.cross(up) * std::sin(a)).normalized();
-        // Through the point of the area nearest its centroid, so x = 0 is on the surface.
+        // Through the clicked point (on the surface), else the point of the area nearest
+        // its centroid, so x = 0 is on the surface.
         core::Vec3 on = fit->origin;
-        double best = std::numeric_limits<double>::max();
-        for (const auto& p : points) {
-            const double d = (p - fit->origin).length();
-            if (d < best) {
-                best = d;
-                on = p;
+        if (ref.contains("point")) {
+            const auto& pt = ref.at("point");
+            on = {pt.at(0).get<double>(), pt.at(1).get<double>(), pt.at(2).get<double>()};
+        } else {
+            double best = std::numeric_limits<double>::max();
+            for (const auto& p : points) {
+                const double d = (p - fit->origin).length();
+                if (d < best) {
+                    best = d;
+                    on = p;
+                }
             }
         }
         Json plane{{"origin", Json::array({on.x, on.y, on.z})},
@@ -754,7 +768,46 @@ void registerSketchCommands(CommandRegistry& r)
               Json onSurface;
               if (const cad::Feature* f = design(ctx).feature(id); f != nullptr && f->params.contains("onSurface"))
                   onSurface = f->params.at("onSurface");
+              // Across a surface (a fin): where the sketch plane cuts it, in sketch
+              // coordinates, so the root can be drawn into it. Seen from the sketch normal
+              // the surface itself hides that line.
+              Json surfaceLine = Json::array();
+              if (onSurface.is_object() && onSurface.value("across", false) && onSurface.contains("part")) {
+                  const model::Part* surface = ctx.document.part(onSurface.at("part").get<model::PartId>());
+                  if (surface != nullptr) {
+                      if (const model::Part* scan = ctx.document.part(model::sourcePartId(*surface));
+                          scan != nullptr && scan->mesh && !scan->shape)
+                          surface = scan;
+                  }
+                  if (surface != nullptr && surface->mesh) {
+                      core::BoundingBox box;
+                      for (const auto& p : geometry::edgeSegments(sk.geometry.curves))
+                          box.extend(p);
+                      const double reach = std::max(box.isEmpty() ? 0.0 : 3.0 * box.diagonal(),
+                                                    0.3 * surface->mesh->bounds().diagonal());
+                      auto cut = core::sliceMesh(*surface->mesh, sk.plane.origin, sk.plane.normal, reach);
+                      // Drawn on every repaint: keep the pieces nearest the sketch origin.
+                      constexpr std::size_t maxSegments = 4000;
+                      if (cut.size() / 2 > maxSegments) {
+                          std::vector<std::pair<double, std::size_t>> byDistance;
+                          for (std::size_t i = 0; i + 1 < cut.size(); i += 2)
+                              byDistance.push_back({((cut[i] + cut[i + 1]) * 0.5 - sk.plane.origin).length(), i});
+                          std::nth_element(byDistance.begin(), byDistance.begin() + maxSegments, byDistance.end());
+                          std::vector<core::Vec3> nearest;
+                          for (std::size_t k = 0; k < maxSegments; ++k) {
+                              nearest.push_back(cut[byDistance[k].second]);
+                              nearest.push_back(cut[byDistance[k].second + 1]);
+                          }
+                          cut = std::move(nearest);
+                      }
+                      for (const auto& p : cut) {
+                          const auto uv = sk.plane.toLocal(p);
+                          surfaceLine.push_back(Json::array({uv.x, uv.y}));
+                      }
+                  }
+              }
               return Json{{"sketch", id},
+                          {"surfaceLine", surfaceLine},
                           {"onSurface", onSurface},
                           {"plane", {{"origin", vec(sk.plane.origin)},
                                      {"normal", vec(sk.plane.normal)},

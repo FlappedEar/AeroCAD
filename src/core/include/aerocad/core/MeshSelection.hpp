@@ -69,6 +69,12 @@ struct RayHit {
 [[nodiscard]] std::vector<Vec3> projectOntoMesh(const TriangleMesh& mesh, const std::vector<Vec3>& points,
                                                 const Vec3& direction, std::size_t* hits = nullptr);
 
+/// Where the plane through `origin` with `normal` cuts the mesh, as line segments (pairs
+/// of points), from triangles within `radius` of `origin`. Shows the surface's line in a
+/// sketch drawn across it (a fin's root).
+[[nodiscard]] std::vector<Vec3> sliceMesh(const TriangleMesh& mesh, const Vec3& origin, const Vec3& normal,
+                                          double radius);
+
 /// Distance from a point to a triangle.
 [[nodiscard]] double pointTriangleDistance(const Vec3& p, const Vec3& a, const Vec3& b, const Vec3& c);
 

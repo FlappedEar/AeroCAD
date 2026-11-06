@@ -140,6 +140,13 @@ ApplicationWindow {
         pickingSketchPlane = true
     }
 
+    /// Fin angle from the Create Sketch pane, degrees.
+    function finAngle() {
+        let a = 0
+        try { a = Number.fromLocaleString(Qt.locale(), sketchAngle.text) } catch (e) { a = Number(sketchAngle.text.replace(",", ".")) }
+        return isFinite(a) ? a : 0
+    }
+
     function createSketch(params) {
         pickingSketchPlane = false
         const r = controller.execute("sketch.create", params)
@@ -177,7 +184,8 @@ ApplicationWindow {
         const pl = r.result.plane
         const on = r.result.onSurface
         activeSketch = { id: id, origin: pl.origin, normal: pl.normal, xDir: pl.xDir, yDir: pl.yDir,
-                         surfacePart: on ? on.part : 0, across: !!(on && on.across) }
+                         surfacePart: on ? on.part : 0, across: !!(on && on.across),
+                         surfaceLine: r.result.surfaceLine || [] }
         sketchTool = "line"
         refreshSketchSnaps()
         // Show the sketch while editing it (Fusion hides sketches once they are used).
@@ -202,7 +210,8 @@ ApplicationWindow {
         if (offerPart && activeSketch) {
             const r = controller.execute("sketch.profiles", { sketch: activeSketch.id })
             if (r.ok && r.result.onSurface && r.result.profiles.length > 0)
-                partOnSurfaceSketch = { id: activeSketch.id, part: r.result.onSurface.part }
+                partOnSurfaceSketch = { id: activeSketch.id, part: r.result.onSurface.part,
+                                        across: !!r.result.onSurface.across }
         }
         activeSketch = null
         sketchTool = ""
@@ -1021,7 +1030,9 @@ ApplicationWindow {
                     else if (info.kind === "imported")
                         // A fitted surface or a scan: sketch over its best-fit plane, then
                         // trim the surface with the outline (Properties > Surface).
-                        window.createSketch({ surface: { part: id, point: at } })
+                        window.createSketch({ surface: sketchAcross.checked
+                                                  ? { part: id, point: at, across: true, angle: window.finAngle() }
+                                                  : { part: id, point: at } })
                 } else if (featureDialog.visible) {
                     featureDialog.addPick(info, point)
                 }
@@ -1106,11 +1117,35 @@ ApplicationWindow {
                         Button { text: qsTr("XZ (Front)"); onClicked: window.createSketch({ plane: "XZ" }) }
                         Button { text: qsTr("YZ (Right)"); onClicked: window.createSketch({ plane: "YZ" }) }
                     }
+                    // A fin (canard, winglet) stands across the surface instead of lying on it.
+                    RowLayout {
+                        CheckBox {
+                            id: sketchAcross
+                            objectName: "sketchAcross"
+                            text: qsTr("Fin across the surface")
+                        }
+                        Label { text: qsTr("Angle"); enabled: sketchAcross.checked }
+                        TextField {
+                            id: sketchAngle
+                            enabled: sketchAcross.checked
+                            Layout.preferredWidth: 48
+                            text: "0"
+                            validator: DoubleValidator { bottom: -90; top: 90; decimals: 1; notation: DoubleValidator.StandardNotation }
+                        }
+                        Label { text: qsTr("°"); enabled: sketchAcross.checked }
+                    }
+                    Label {
+                        visible: sketchAcross.checked
+                        text: qsTr("Click where the fin stands. Draw its side view above the surface line,\nwith the root a little below it; the root is cut to the surface.")
+                        color: Theme.textMuted
+                    }
                     Button {
                         readonly property var info: window.pickingSketchPlane ? window.selectedInfo() : ({})
                         visible: (info.selectedTriangles ?? 0) > 0
                         text: qsTr("Over selection on %1").arg(info.name ?? "")
-                        onClicked: window.createSketch({ surface: { part: window.selectedPartId, useSelection: true } })
+                        onClicked: window.createSketch({ surface: sketchAcross.checked
+                            ? { part: window.selectedPartId, useSelection: true, across: true, angle: window.finAngle() }
+                            : { part: window.selectedPartId, useSelection: true } })
                     }
                     Button { text: qsTr("Cancel"); onClicked: window.pickingSketchPlane = false }
                 }
@@ -1132,9 +1167,16 @@ ApplicationWindow {
                     radius: Theme.radius
                 }
                 ColumnLayout {
-                    Label { text: qsTr("Part on surface"); font.weight: Font.DemiBold; font.pixelSize: Theme.fontTitle }
+                    readonly property bool fin: !!window.partOnSurfaceSketch && window.partOnSurfaceSketch.across
                     Label {
-                        text: qsTr("Cuts the outline out of the surface under it and gives it a thickness.\nThe edges follow the outline; the part follows the surface.")
+                        text: parent.fin ? qsTr("Fin on surface") : qsTr("Part on surface")
+                        font.weight: Font.DemiBold
+                        font.pixelSize: Theme.fontTitle
+                    }
+                    Label {
+                        text: parent.fin
+                              ? qsTr("Gives the outline a thickness (half each side of the sketch)\nand cuts its root to the surface, so it sits flush on it.")
+                              : qsTr("Cuts the outline out of the surface under it and gives it a thickness.\nThe edges follow the outline; the part follows the surface.")
                         color: Theme.textMuted
                     }
                     RowLayout {
@@ -1148,6 +1190,7 @@ ApplicationWindow {
                         Label { text: qsTr("mm") }
                         ComboBox {
                             id: partSide
+                            visible: !(window.partOnSurfaceSketch && window.partOnSurfaceSketch.across)
                             Layout.preferredWidth: 120
                             model: [qsTr("Inward"), qsTr("Outward"), qsTr("Both sides")]
                         }
@@ -1161,15 +1204,23 @@ ApplicationWindow {
                                 try { t = Number.fromLocaleString(Qt.locale(), partThickness.text) } catch (e) { t = Number(partThickness.text.replace(",", ".")) }
                                 if (!(t > 0))
                                     return window.controller.showStatus(qsTr("Enter the thickness in mm"))
-                                const r = window.controller.execute("surface.part_from_sketch",
-                                    { sketch: window.partOnSurfaceSketch.id, thickness: t,
-                                      side: ["inside", "outside", "both"][partSide.currentIndex] })
+                                const fin = window.partOnSurfaceSketch.across
+                                const r = fin
+                                    ? window.controller.execute("surface.fin_from_sketch",
+                                        { sketch: window.partOnSurfaceSketch.id, thickness: t })
+                                    : window.controller.execute("surface.part_from_sketch",
+                                        { sketch: window.partOnSurfaceSketch.id, thickness: t,
+                                          side: ["inside", "outside", "both"][partSide.currentIndex] })
                                 if (!r.ok)
                                     return
                                 window.partOnSurfaceSketch = null
                                 window.selectPart(r.result.id)
-                                window.controller.showStatus(qsTr("Part \"%1\": %2 mm thick, %3 cm²")
-                                    .arg(r.result.name).arg(t).arg((r.result.area / 100).toFixed(1)))
+                                if (fin)
+                                    window.controller.showStatus(qsTr("Fin \"%1\": %2 mm thick, %3 cm³")
+                                        .arg(r.result.name).arg(t).arg((r.result.volume / 1000).toFixed(1)))
+                                else
+                                    window.controller.showStatus(qsTr("Part \"%1\": %2 mm thick, %3 cm²")
+                                        .arg(r.result.name).arg(t).arg((r.result.area / 100).toFixed(1)))
                             }
                         }
                         Button { text: qsTr("Not now"); onClicked: window.partOnSurfaceSketch = null }
