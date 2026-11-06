@@ -6,7 +6,6 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <unordered_map>
 #include <vector>
 
 namespace aerocad::core {
@@ -58,21 +57,36 @@ private:
 
 /// Builds an indexed mesh from triangle soup, welding vertices with identical coordinates.
 /// Degenerate triangles (two or more identical corners) are dropped.
+///
+/// Welding uses exact coordinate equality (-0.0 equals 0.0) and a flat open-addressing
+/// hash table, so multi-million triangle scans are welded quickly.
 class MeshBuilder {
 public:
+    /// Optional capacity hint (e.g. the facet count of a binary STL). Avoids rehashing
+    /// and reallocation while building; never required for correctness.
+    void reserve(std::size_t triangles);
+
     void addTriangle(const Vec3& a, const Vec3& b, const Vec3& c);
+    /// Same as calling addTriangle() for each consecutive corner triple of `corners`
+    /// (3 * count entries), but faster for large inputs.
+    void addTriangles(const Vec3* corners, std::size_t count);
     [[nodiscard]] std::size_t triangleCount() const { return m_mesh.triangleCount(); }
     [[nodiscard]] TriangleMesh take();
 
 private:
-    struct VecHash {
-        std::size_t operator()(const Vec3& v) const noexcept;
+    struct Slot {
+        std::uint32_t index = kEmpty; ///< vertex index, kEmpty for a free slot
+        std::uint32_t tag = 0;        ///< low hash bits, filters most key comparisons
     };
+    static constexpr std::uint32_t kEmpty = 0xFFFFFFFFU;
 
-    std::uint32_t vertexIndex(const Vec3& v);
+    std::uint32_t vertexIndex(const Vec3& key, std::uint64_t hash);
+    void rehash(std::size_t capacity);
 
     TriangleMesh m_mesh;
-    std::unordered_map<Vec3, std::uint32_t, VecHash> m_index;
+    std::vector<Slot> m_slots; ///< size is zero or a power of two
+    unsigned m_shift = 64;     ///< 64 - log2(m_slots.size())
+    std::size_t m_used = 0;
 };
 
 } // namespace aerocad::core

@@ -9,7 +9,7 @@ command, available to scripts and to an AI agent over MCP (`commands.list`).
 
 | Command | What it does |
 | --- | --- |
-| `document.import {"path", "units"}` | `units`: `um`, `mm` (default), `cm`, `m`, `in`, `ft`. STL and OBJ carry no unit; the file is scaled to millimetres on import. |
+| `document.import {"path", "units"}` | `units`: `um`, `mm` (default), `cm`, `m`, `in`, `ft`. STL, OBJ and PLY carry no unit; the file is scaled to millimetres on import. |
 | `part.convert_units {"id", "from", "to"}` | Fix a part imported in the wrong unit: `from: "m"` scales by 1000 (about the world origin). `to` defaults to `mm`. |
 | `part.calibrate {"id", "a", "b", "distance", "units"}` | Scale so that the distance between two points (picked on the model) equals a known dimension. Point `a` stays fixed. Returns the applied `factor`. |
 

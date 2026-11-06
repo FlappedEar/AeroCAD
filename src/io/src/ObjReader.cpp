@@ -32,8 +32,9 @@ bool resolveCorner(std::string_view corner, std::size_t vertexCount, std::size_t
 
 } // namespace
 
-ImportResult readObj(const std::filesystem::path& path)
+ImportResult readObj(const std::filesystem::path& path, const ImportOptions& options)
 {
+    detail::ProgressReporter progress(options);
     const std::string data = detail::readFileBytes(path);
     const std::string name = detail::pathToUtf8(path);
 
@@ -50,6 +51,7 @@ ImportResult readObj(const std::filesystem::path& path)
         std::string logical; // accumulates lines joined with a trailing backslash
 
         while (pos < data.size()) {
+            progress.update(pos, data.size());
             std::size_t end = data.find('\n', pos);
             if (end == std::string::npos)
                 end = data.size();
@@ -116,6 +118,7 @@ ImportResult readObj(const std::filesystem::path& path)
     result.mesh = builder.take();
     if (result.mesh.isEmpty())
         throw ImportError("OBJ file contains no faces: " + name);
+    progress.finish();
     return result;
 }
 

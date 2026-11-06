@@ -54,7 +54,8 @@ open build/vcpkg-macos/bin/AeroCAD.app
 ## Using the app
 
 - **Import:** File > Import (Cmd+O), or drag a file onto the 3D view.
-  Formats: STL, OBJ, 3MF, STEP/STP, IGES/IGS, BREP.
+  Formats: STL, OBJ, PLY (ASCII and binary meshes; point clouds are not supported), 3MF,
+  STEP/STP, IGES/IGS, BREP.
 - **Navigation** follows Autodesk Fusion's defaults (see [ui.md](ui.md)):
   **pan** = middle drag or two-finger swipe, **orbit** = Shift + middle drag or
   Shift + two-finger swipe, **zoom** = scroll wheel or pinch. Without a middle button,

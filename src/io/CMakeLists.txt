@@ -4,6 +4,7 @@ add_library(aerocad_io STATIC
     src/Import.cpp
     src/StlReader.cpp
     src/ObjReader.cpp
+    src/PlyReader.cpp
     src/ThreeMfReader.cpp
     src/CadReader.cpp
     src/Export.cpp
