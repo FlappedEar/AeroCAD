@@ -70,6 +70,13 @@ struct SubShapeProperties {
 };
 [[nodiscard]] SubShapeProperties subShapeProperties(const Shape& shape, const SubShape& sub);
 
+/// Triangulation of a face (or of the whole shape); empty for edges and vertices.
+[[nodiscard]] core::TriangleMesh subShapeMesh(const Shape& shape, const SubShape& sub);
+
+/// Points on a sub-shape for approximate distances to meshes: the vertex, points along an
+/// edge at most `maxStep` apart, or the triangulation nodes and boundary points of a face.
+[[nodiscard]] std::vector<core::Vec3> subShapePoints(const Shape& shape, const SubShape& sub, double maxStep);
+
 /// Volume shared by two solids (0 when they do not overlap), mm^3.
 [[nodiscard]] double interferenceVolume(const Shape& a, const Shape& b);
 

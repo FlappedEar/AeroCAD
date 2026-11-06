@@ -115,6 +115,17 @@ TEST_CASE("inspect.clearance between B-rep bodies and meshes", "[commands][inspe
     CHECK(mesh["interference"].is_null());
 
     CHECK_FALSE(s.execute("inspect.clearance", {{"a", a}, {"b", a}}).ok);
+
+    // A selected B-rep face against a mesh body measures from that face, not the whole part:
+    // the x = 0 face of A is 11 mm from a mesh slab starting at x = 11.
+    const auto slab = addMesh(s, "Slab", geometry::translated(geometry::makeBox(2, 10, 10), {11, 0, 0}));
+    const Json face = run(s, "inspect.measure",
+                          {{"a", {{"part", a}, {"pick", "face"}, {"point", {0, 5, 5}}}}, {"b", {{"part", slab}, {"pick", "body"}}}});
+    CHECK(face["distance"].get<double>() == Approx(11));
+    CHECK(face["pointA"][0].get<double>() == Approx(0));
+    const Json edge = run(s, "inspect.measure",
+                          {{"a", {{"part", a}, {"pick", "edge"}, {"point", {0, 0, 5}}}}, {"b", {{"part", slab}, {"pick", "body"}}}});
+    CHECK(edge["distance"].get<double>() == Approx(11));
 }
 
 TEST_CASE("inspect.section compares scan and part sections", "[commands][inspect]")

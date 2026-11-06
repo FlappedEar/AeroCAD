@@ -60,6 +60,7 @@ TEST_CASE("MeshBvh closest point and ray cast", "[core][inspect]")
     CHECK(hit->point.z == Approx(0));
     CHECK_FALSE(bvh.raycast({5, 5, -5}, {0, 0, -1}));
     CHECK_FALSE(bvh.raycast({5, 5, -5}, {0, 0, 1}, 4.0));
+    CHECK_FALSE(bvh.raycast({50, 5, 5}, {1, 0, 0})); // misses every box, infinite limit
 }
 
 TEST_CASE("Mesh distances, deviation and thickness", "[core][inspect]")

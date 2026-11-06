@@ -321,6 +321,40 @@ Separation separation(CommandContext& ctx, const Entity& a, const Entity& b)
         return pointA ? Separation{hit->distance, p.point, hit->point, "mesh"}
                       : Separation{hit->distance, hit->point, p.point, "mesh"};
     }
+    // A selected face / edge / vertex of a B-rep against a mesh body: measure from that
+    // sub-shape only (sampled), not from its whole part.
+    const bool subA = a.exact && a.sub.kind != geometry::SubShape::Kind::Whole;
+    const bool subB = b.exact && b.sub.kind != geometry::SubShape::Kind::Whole;
+    if (subA || subB) {
+        const Entity& sub = subA ? a : b;
+        const Entity& body = subA ? b : a;
+        const auto meshBvh = st.bvh(requireMeshPart(ctx.document, body.part->id).mesh);
+        std::optional<core::SurfaceDistance> best; // pointA on the sub-shape, pointB on the mesh
+        try {
+            const double step = std::max(sub.part->shape->bounds().diagonal() * 0.002, 1e-4);
+            for (const core::Vec3& p : geometry::subShapePoints(*sub.part->shape, sub.sub, step)) {
+                const auto hit = meshBvh->closestPoint(p, best ? best->distance : std::numeric_limits<double>::infinity());
+                if (hit && (!best || hit->distance < best->distance))
+                    best = core::SurfaceDistance{hit->distance, p, hit->point};
+            }
+            // Faces: also project the mesh vertices onto the face.
+            if (sub.sub.kind == geometry::SubShape::Kind::Face) {
+                const core::MeshBvh faceBvh(std::make_shared<const core::TriangleMesh>(
+                    geometry::subShapeMesh(*sub.part->shape, sub.sub)));
+                for (const core::Vec3& v : body.part->mesh->vertices()) {
+                    const auto hit = faceBvh.closestPoint(v, best ? best->distance : std::numeric_limits<double>::infinity());
+                    if (hit && (!best || hit->distance < best->distance))
+                        best = core::SurfaceDistance{hit->distance, hit->point, v};
+                }
+            }
+        } catch (const geometry::ModelingError& err) {
+            throw CommandError(err.what());
+        }
+        if (!best)
+            throw CommandError("Cannot measure between empty selections");
+        return subA ? Separation{best->distance, best->pointA, best->pointB, "mesh"}
+                    : Separation{best->distance, best->pointB, best->pointA, "mesh"};
+    }
     const auto d = core::minimumDistance(*st.bvh(requireMeshPart(ctx.document, a.part->id).mesh),
                                          *st.bvh(requireMeshPart(ctx.document, b.part->id).mesh));
     if (!d)

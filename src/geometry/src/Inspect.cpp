@@ -260,6 +260,40 @@ SubShapeProperties subShapeProperties(const Shape& shape, const SubShape& sub)
     });
 }
 
+core::TriangleMesh subShapeMesh(const Shape& shape, const SubShape& sub)
+{
+    if (sub.kind != SubShape::Kind::Face && sub.kind != SubShape::Kind::Whole)
+        return {};
+    return guarded("Measure", [&] { return tessellate(wrapShape(resolve(shape, sub))); });
+}
+
+std::vector<core::Vec3> subShapePoints(const Shape& shape, const SubShape& sub, double maxStep)
+{
+    return guarded("Measure", [&] {
+        std::vector<core::Vec3> out;
+        const TopoDS_Shape s = resolve(shape, sub);
+        if (sub.kind == SubShape::Kind::Vertex) {
+            out.push_back(toVec(BRep_Tool::Pnt(TopoDS::Vertex(s))));
+            return out;
+        }
+        if (sub.kind != SubShape::Kind::Edge) {
+            const core::TriangleMesh mesh = tessellate(wrapShape(s));
+            out.insert(out.end(), mesh.vertices().begin(), mesh.vertices().end());
+        }
+        // Boundary / edge polylines, subdivided to maxStep.
+        const std::vector<core::Vec3> segs = edgeSegments(wrapShape(s));
+        const double step = std::max(maxStep, 1e-6);
+        for (std::size_t i = 0; i + 1 < segs.size(); i += 2) {
+            const core::Vec3 a = segs[i];
+            const core::Vec3 d = segs[i + 1] - a;
+            const auto n = static_cast<std::size_t>(std::min(1e5, std::ceil(d.length() / step)));
+            for (std::size_t k = 0; k <= std::max<std::size_t>(n, 1); ++k)
+                out.push_back(a + d * (static_cast<double>(k) / static_cast<double>(std::max<std::size_t>(n, 1))));
+        }
+        return out;
+    });
+}
+
 double interferenceVolume(const Shape& a, const Shape& b)
 {
     if (a.isNull() || b.isNull() || a.solidCount() == 0 || b.solidCount() == 0 || !boundsOverlap(a, b))

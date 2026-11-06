@@ -270,7 +270,9 @@ std::optional<RayHit> MeshBvh::raycast(const Vec3& origin, const Vec3& direction
     while (!stack.empty()) {
         const Node& node = m_nodes[stack.back()];
         stack.pop_back();
-        if (rayBox(node.box, origin, inv, best) > best)
+        // rayBox returns +inf on a miss, which `> best` would not reject when best is +inf.
+        const double entry = rayBox(node.box, origin, inv, best);
+        if (!std::isfinite(entry) || entry > best)
             continue;
         if (node.count > 0) {
             for (std::uint32_t i = node.first; i < node.first + node.count; ++i) {
