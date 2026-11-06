@@ -177,6 +177,8 @@ Pane {
                             .arg(Number(f.meshToSurfaceRms).toFixed(3))
                             .arg(Number(f.surfaceToMeshMax).toFixed(3))
                             .arg(f.withinTolerance ? qsTr("within tolerance") : qsTr("OUT OF TOLERANCE"))
+                        if (f.holes > 0)
+                            msg += " · " + qsTr("%1 hole(s) cut out").arg(f.holes)
                         if (r.result.warnings.length > 0)
                             msg += " · " + r.result.warnings.join(" ")
                         root.controller.showStatus(msg)

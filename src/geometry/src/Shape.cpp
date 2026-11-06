@@ -70,7 +70,8 @@ double Shape::volume() const
     double total = 0.0;
     for (TopExp_Explorer ex(m_impl->shape, TopAbs_SOLID); ex.More(); ex.Next()) {
         GProp_GProps props;
-        BRepGProp::VolumeProperties(ex.Current(), props);
+        // Adaptive: the fixed Gauss rule can be off by several % on finely trimmed faces.
+        BRepGProp::VolumeProperties(ex.Current(), props, 1e-6);
         total += props.Mass();
     }
     return total;

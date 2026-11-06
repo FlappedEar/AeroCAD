@@ -11,12 +11,27 @@
 
 namespace aerocad::geometry {
 
+/// How the selected region is parameterized before the B-spline fit.
+enum class SurfaceFitMethod {
+    /// Unfold, or Plane when the region cannot be unfolded (not a simple sheet).
+    Auto,
+    /// Height field over the best-fit plane, moving least squares. Only for regions that
+    /// do not fold over their mean plane.
+    Plane,
+    /// Region flattened by a least squares conformal map; the surface parameters are the
+    /// unfolded coordinates. Any amount of wrap, such as mirror housings or long curved
+    /// strips. The region must be a simple sheet (a disc, holes allowed).
+    Unfold,
+};
+
 struct SurfaceFitOptions {
-    /// Approximation tolerance in mm passed to the B-spline fit. The fit is accepted
-    /// (`withinTolerance`) when both deviation checks stay below it.
+    /// Deviation tolerance in mm. The fit is accepted (`withinTolerance`) when both
+    /// deviation checks stay below it; the plane method also passes it to the fit.
     double tolerance = 0.25;
-    /// Resampling grid nodes along the longer side; 0 picks one from the point count.
+    /// Resampling grid nodes (plane) or control point spans (unfold) along the longer
+    /// side; 0 picks one from the point count and mesh resolution.
     int gridSize = 0;
+    SurfaceFitMethod method = SurfaceFitMethod::Auto;
 };
 
 /// Fit quality, both ways: mesh to surface catches a surface that misses the mesh,
@@ -32,7 +47,9 @@ struct SurfaceFitReport {
     bool withinTolerance = false;
     int uPoles = 0;
     int vPoles = 0;
-    bool trimmed = false; ///< Face trimmed to the selection outline (else the fit rectangle).
+    bool trimmed = false; ///< Face bounded by the selection outline (else the fit rectangle).
+    int holes = 0;        ///< Holes of the selection cut out of the face.
+    std::string method;   ///< "plane" or "unfold".
     double milliseconds = 0.0;
     std::vector<std::string> warnings;
 };
@@ -47,11 +64,12 @@ public:
     using std::runtime_error::runtime_error;
 };
 
-/// Fits one smooth B-spline surface to the selected triangles of a mesh (approach
-/// "B smoothing" of the CAD-66 spike): best-fit plane by PCA, height grid resampled from
-/// the selected vertices, GeomAPI_PointsToBSplineSurface in smoothing mode, trimmed to
-/// the outer outline of the selection. The region must be a height field over its
-/// best-fit plane (no folds, less than about 180 degrees of wrap).
+/// Fits one smooth bicubic B-spline surface to the selected triangles of a mesh, trimmed
+/// to the outer outline of the selection, with its holes cut out. Unfold (default): the
+/// region is flattened by a least squares conformal map and the surface is fit to the
+/// vertices by penalized least squares (thin plate penalty). Plane (approach "B
+/// smoothing" of the CAD-66 spike): height grid over the PCA plane, then
+/// GeomAPI_PointsToBSplineSurface in smoothing mode. See SurfaceFitMethod.
 /// Throws SurfaceFitError when no surface can be built.
 [[nodiscard]] SurfaceFitResult fitSurface(const core::TriangleMesh& mesh, const core::TriangleSet& selection,
                                           const SurfaceFitOptions& options = {});

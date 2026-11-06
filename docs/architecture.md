@@ -45,16 +45,26 @@ core -------+                 transforms, primitives).
   across their seams; it is computed once per mesh and cached. The brush preview while
   dragging is kept in `AppController`; releasing the button runs one `selection.brush`.
 
-- **Base surface** (`geometry/SurfaceFit`, command `surface.fit_selection`): the "B
-  smoothing" approach of the CAD-66 spike. PCA plane of the selected vertices, height grid
-  by moving least squares (quadratic inside, plane at the border, thin-plate fill outside
-  the data), `GeomAPI_PointsToBSplineSurface` in smoothing mode, trimmed to the outer
-  selection outline (projected to the surface's parameter space). Deviation is checked
-  both ways; mesh to surface uses a local projection seeded from surface samples. Selected
-  vertices that project outside the trimmed face are reported separately (`outsideTrimMax`,
-  outline fidelity: mesh staircase, rounded corners) with a warning above the tolerance.
-  Not yet: holes in the selection, regions that fold over their mean plane, analytic
-  primitives (plane, cylinder) before free-form fitting.
+- **Base surface** (`geometry/SurfaceFit`, command `surface.fit_selection`), two methods:
+  - *unfold* (default): the selected patch is welded, checked to be a simple sheet (Euler
+    characteristic against its border loops) and flattened by a least squares conformal
+    map (free border, two pinned vertices, conjugate gradients with an SSOR
+    preconditioner; patches above 12 000 vertices are coarsened by vertex clustering
+    first). A bicubic B-spline with the unfolded (u, v) in mm as its parameters is fit to
+    the vertices by penalized least squares (thin plate penalty on the control net,
+    banded Cholesky), so any amount of wrap works (mirror housings, long curved strips)
+    and outline and holes are trimmed at their known (u, v), without projection.
+  - *plane*: the "B smoothing" approach of the CAD-66 spike. PCA plane of the selected
+    vertices, height grid by moving least squares (quadratic inside, plane at the border,
+    thin-plate fill outside the data), `GeomAPI_PointsToBSplineSurface` in smoothing
+    mode, trimmed to the outline projected to the surface. `auto` uses it when the patch
+    cannot be unfolded (handles, non-manifold edges).
+  Holes of the selection (inner border loops) are cut out of the face. Deviation is
+  checked both ways; mesh to surface uses a local projection seeded from surface samples.
+  Selected vertices that project outside the trimmed face are reported separately
+  (`outsideTrimMax`, outline fidelity: mesh staircase, rounded corners) with a warning
+  above the tolerance. Not yet: analytic primitives (plane, cylinder) before free-form
+  fitting, several patches stitched with G1 continuity.
 - **Offset / thicken** (`geometry/Offset`, commands `surface.offset`, `surface.thicken`):
   `BRepOffset_MakeSimpleOffset`, which offsets each face on its own surface (exact for
   the single-face base surfaces); with the solid flag it adds side walls and caps. The
