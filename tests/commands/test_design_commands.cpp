@@ -410,3 +410,37 @@ TEST_CASE("Design commands: construction planes carry sketches", "[commands][cad
         found = found || p.at("kind") == "plane";
     CHECK(found);
 }
+
+TEST_CASE("Design commands: loft of rings stays hollow", "[commands][cad][pattern]")
+{
+    commands::Session s;
+    auto ring = [&](double z, double inner) {
+        const Json sk = run(s, "sketch.create",
+                            {{"plane", "XY"},
+                             {"offset", z},
+                             {"curves", Json::array({{{"type", "circle"}, {"center", {0, 0}}, {"radius", 10}},
+                                                     {{"type", "circle"}, {"center", {0, 0}}, {"radius", inner}}})}});
+        const auto id = sk.at("id").get<std::uint64_t>();
+        const Json profiles = run(s, "sketch.profiles", {{"sketch", id}});
+        std::size_t best = 0;
+        double area = 0;
+        for (const auto& p : profiles.at("profiles")) {
+            if (p.at("area").get<double>() > area) {
+                area = p.at("area").get<double>();
+                best = p.at("index").get<std::size_t>();
+            }
+        }
+        return Json{{"sketch", id}, {"profile", best}};
+    };
+    const Json a = ring(0, 5);
+    const Json b = ring(10, 5);
+    const Json r = run(s, "feature.loft", {{"sections", Json::array({a, b})}});
+    CHECK(r.at("bodies")[0].at("volume").get<double>() == Approx(3.14159265358979 * (100 - 25) * 10).epsilon(1e-3));
+
+    // A ring and a disk cannot be matched.
+    const Json disk = run(s, "sketch.create",
+                          {{"plane", "XY"},
+                           {"offset", 20},
+                           {"curves", Json::array({{{"type", "circle"}, {"center", {0, 0}}, {"radius", 8}}})}});
+    CHECK_FALSE(s.execute("feature.loft", {{"sections", Json::array({b, disk.at("id")})}}).ok);
+}

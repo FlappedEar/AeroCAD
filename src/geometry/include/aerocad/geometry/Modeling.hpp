@@ -27,8 +27,9 @@ namespace aerocad::geometry {
 [[nodiscard]] Shape rotated(const Shape& shape, const core::Vec3& axisOrigin, const core::Vec3& axisDirection,
                             double angleDegrees);
 
-/// Loft through the outer boundaries of planar profile faces (Fusion: Loft), in order.
-/// `solid` closes the ends; `ruled` uses straight segments between sections.
+/// Loft through planar profile faces (Fusion: Loft), in order. `solid` closes the ends;
+/// `ruled` uses straight segments between sections. Profiles with one hole each (rings) give
+/// a hollow loft; other hole layouts throw ModelingError.
 [[nodiscard]] Shape loft(const std::vector<Shape>& sections, bool solid = true, bool ruled = false);
 
 /// Sweeps profile faces along a path of connected edges (Fusion: Sweep).

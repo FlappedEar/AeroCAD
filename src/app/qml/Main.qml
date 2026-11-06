@@ -47,8 +47,8 @@ ApplicationWindow {
         if (!selectedPartId)
             return
         const info = controller.partInfo(selectedPartId)
-        // Bodies and sketches come from the timeline: delete the feature that made them.
-        if (info.kind === "body" || info.kind === "sketch")
+        // Bodies, sketches and planes come from the timeline: delete the feature that made them.
+        if (info.kind === "body" || info.kind === "sketch" || info.kind === "plane")
             controller.execute("feature.delete", { id: info.featureId })
         else
             controller.execute("part.remove", { id: selectedPartId })

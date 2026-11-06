@@ -248,21 +248,59 @@ Shape loft(const std::vector<Shape>& sections, bool solid, bool ruled)
 {
     if (sections.size() < 2)
         throw ModelingError("Loft needs at least two profiles");
-    return guarded("Loft", [&] {
-        BRepOffsetAPI_ThruSections thru(solid, ruled, 1e-6);
-        for (const auto& sec : sections) {
-            const TopoDS_Shape& s = occ(sec, "Loft");
-            TopExp_Explorer ex(s, TopAbs_FACE);
-            if (!ex.More())
-                throw ModelingError("Loft: every section must be a closed profile");
-            thru.AddWire(BRepTools::OuterWire(TopoDS::Face(ex.Current())));
+    // Outer boundary of every section, plus its holes. Rings (one hole in every section)
+    // are lofted as outer loft minus inner loft; other hole layouts cannot be matched
+    // between sections reliably and are rejected instead of being silently filled.
+    std::vector<TopoDS_Wire> outer;
+    std::vector<std::vector<TopoDS_Wire>> holes;
+    for (const auto& sec : sections) {
+        const TopoDS_Shape& s = occ(sec, "Loft");
+        TopExp_Explorer ex(s, TopAbs_FACE);
+        if (!ex.More())
+            throw ModelingError("Loft: every section must be a closed profile");
+        const TopoDS_Face face = TopoDS::Face(ex.Current());
+        ex.Next();
+        if (ex.More())
+            throw ModelingError("Loft: every section must be a single profile");
+        const TopoDS_Wire out = BRepTools::OuterWire(face);
+        outer.push_back(out);
+        std::vector<TopoDS_Wire> inner;
+        for (TopExp_Explorer w(face, TopAbs_WIRE); w.More(); w.Next()) {
+            if (!w.Current().IsSame(out))
+                inner.push_back(TopoDS::Wire(w.Current()));
         }
-        thru.CheckCompatibility(true);
-        thru.Build();
-        if (!thru.IsDone())
-            throw ModelingError("Loft failed");
-        return wrapShape(thru.Shape());
-    });
+        holes.push_back(std::move(inner));
+    }
+    const std::size_t holeCount = holes.front().size();
+    for (const auto& h : holes) {
+        if (h.size() != holeCount)
+            throw ModelingError("Loft: all profiles must have the same number of holes");
+    }
+    if (holeCount > 1)
+        throw ModelingError("Loft: profiles with more than one hole are not supported yet");
+    if (holeCount == 1 && !solid)
+        throw ModelingError("Loft: profiles with a hole need a solid loft");
+
+    auto thruSections = [&](const std::vector<TopoDS_Wire>& wires) {
+        return guarded("Loft", [&] {
+            BRepOffsetAPI_ThruSections thru(solid, ruled, 1e-6);
+            for (const auto& w : wires)
+                thru.AddWire(w);
+            thru.CheckCompatibility(true);
+            thru.Build();
+            if (!thru.IsDone())
+                throw ModelingError("Loft failed");
+            return wrapShape(thru.Shape());
+        });
+    };
+    Shape result = thruSections(outer);
+    if (holeCount == 1) {
+        std::vector<TopoDS_Wire> inner;
+        for (const auto& h : holes)
+            inner.push_back(h.front());
+        result = boolean(result, thruSections(inner), BooleanOp::Cut);
+    }
+    return result;
 }
 
 Shape sweep(const Shape& profileFaces, const Shape& pathEdges)
