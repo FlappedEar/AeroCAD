@@ -40,6 +40,11 @@ use the same operations, and every change is one undo step.
 | `sketch.curves` | | solved curves, constraints, degrees of freedom |
 | `feature.extrude` | Extrude (E) | `distance`, `extent` one_side / symmetric / two_sides, `flip`, `profiles` or `points` |
 | `feature.revolve` | Revolve | `axis` X / Y / Z, {line: sketch curve index} or {origin, direction}; `angle` |
+| `feature.sweep` | Sweep | profiles of `sketch` moved along `path` {sketch, curves} (default: all curves of the path sketch) |
+| `feature.loft` | Loft | `sections`: sketch ids or {sketch, profile}, in order; `solid`, `ruled` |
+| `feature.mirror` | Mirror | `body`, `plane` XY / XZ / YZ / {origin, normal} / planar face, `offset`; join or new_body |
+| `feature.rectangular_pattern` | Rectangular Pattern | `direction`, `count`, `spacing`, optional `direction2` / `count2` / `spacing2` |
+| `feature.circular_pattern` | Circular Pattern | `axis` X / Y / Z or {origin, direction}, `count`, `angle` (360 = full turn) |
 | `feature.fillet` | Fillet (F) | `edges`, `radius` |
 | `feature.chamfer` | Chamfer | `edges`, `distance` |
 | `feature.shell` | Shell | `faces` to remove, `thickness` |

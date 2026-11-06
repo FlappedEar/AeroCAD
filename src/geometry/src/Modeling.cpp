@@ -26,7 +26,12 @@
 #include <BRepGProp.hxx>
 #include <BRepGProp_Face.hxx>
 #include <BRepLProp_SLProps.hxx>
+#include <BRepBuilderAPI_MakeWire.hxx>
+#include <BRepOffsetAPI_MakePipe.hxx>
 #include <BRepOffsetAPI_MakeThickSolid.hxx>
+#include <BRepOffsetAPI_ThruSections.hxx>
+#include <BRepTools.hxx>
+#include <gp_Ax2.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <BRepPrimAPI_MakeRevol.hxx>
 #include <BRep_Builder.hxx>
@@ -199,6 +204,94 @@ Shape meshToBrep(const core::TriangleMesh& mesh, std::size_t maxTriangles)
             builder.Add(parts, ex.Current());
         TopoDS_Shape result = parts;
         return wrapShape(unify(result));
+    });
+}
+
+namespace {
+
+Shape transformed(const Shape& shape, const gp_Trsf& t, const char* what)
+{
+    const TopoDS_Shape& s = occ(shape, what);
+    return guarded(what, [&] {
+        BRepBuilderAPI_Transform tr(s, t, true);
+        if (!tr.IsDone())
+            throw ModelingError(std::string(what) + " failed");
+        return wrapShape(tr.Shape());
+    });
+}
+
+gp_Dir dirOf(const core::Vec3& v, const char* what)
+{
+    const core::Vec3 n = v.normalized();
+    if (n.length() < 0.5)
+        throw ModelingError(std::string(what) + ": zero direction");
+    return {n.x, n.y, n.z};
+}
+
+} // namespace
+
+Shape mirrored(const Shape& shape, const core::Vec3& planeOrigin, const core::Vec3& planeNormal)
+{
+    gp_Trsf t;
+    t.SetMirror(gp_Ax2(toPnt(planeOrigin), dirOf(planeNormal, "Mirror")));
+    return transformed(shape, t, "Mirror");
+}
+
+Shape rotated(const Shape& shape, const core::Vec3& axisOrigin, const core::Vec3& axisDirection, double angleDegrees)
+{
+    gp_Trsf t;
+    t.SetRotation(gp_Ax1(toPnt(axisOrigin), dirOf(axisDirection, "Rotate")), angleDegrees * std::numbers::pi / 180.0);
+    return transformed(shape, t, "Rotate");
+}
+
+Shape loft(const std::vector<Shape>& sections, bool solid, bool ruled)
+{
+    if (sections.size() < 2)
+        throw ModelingError("Loft needs at least two profiles");
+    return guarded("Loft", [&] {
+        BRepOffsetAPI_ThruSections thru(solid, ruled, 1e-6);
+        for (const auto& sec : sections) {
+            const TopoDS_Shape& s = occ(sec, "Loft");
+            TopExp_Explorer ex(s, TopAbs_FACE);
+            if (!ex.More())
+                throw ModelingError("Loft: every section must be a closed profile");
+            thru.AddWire(BRepTools::OuterWire(TopoDS::Face(ex.Current())));
+        }
+        thru.CheckCompatibility(true);
+        thru.Build();
+        if (!thru.IsDone())
+            throw ModelingError("Loft failed");
+        return wrapShape(thru.Shape());
+    });
+}
+
+Shape sweep(const Shape& profileFaces, const Shape& pathEdges)
+{
+    const TopoDS_Shape& prof = occ(profileFaces, "Sweep");
+    const TopoDS_Shape& path = occ(pathEdges, "Sweep");
+    if (!hasSubShapes(prof, TopAbs_FACE))
+        throw ModelingError("Sweep: no profile faces");
+    return guarded("Sweep", [&] {
+        BRepBuilderAPI_MakeWire wire;
+        TopTools_ListOfShape edgeList;
+        for (TopExp_Explorer ex(path, TopAbs_EDGE); ex.More(); ex.Next())
+            edgeList.Append(ex.Current());
+        if (edgeList.IsEmpty())
+            throw ModelingError("Sweep: the path has no curves");
+        wire.Add(edgeList);
+        if (!wire.IsDone())
+            throw ModelingError("Sweep: the path curves are not connected");
+        BRep_Builder builder;
+        TopoDS_Compound comp;
+        builder.MakeCompound(comp);
+        for (TopExp_Explorer ex(prof, TopAbs_FACE); ex.More(); ex.Next()) {
+            BRepOffsetAPI_MakePipe pipe(wire.Wire(), ex.Current());
+            pipe.Build();
+            if (!pipe.IsDone())
+                throw ModelingError("Sweep failed");
+            builder.Add(comp, pipe.Shape());
+        }
+        return wrapShape(comp);
     });
 }
 

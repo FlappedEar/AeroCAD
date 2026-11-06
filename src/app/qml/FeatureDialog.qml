@@ -51,6 +51,12 @@ Pane {
         { value: "cut", label: qsTr("Cut") }, { value: "intersect", label: qsTr("Intersect") }
     ]
 
+    readonly property var patternOperations: [
+        { value: "join", label: qsTr("Join") }, { value: "new_body", label: qsTr("New Body") }
+    ]
+    readonly property var axes: [ { value: "X", label: "X" }, { value: "Y", label: "Y" }, { value: "Z", label: "Z" } ]
+    readonly property var planes: [ { value: "YZ", label: "YZ" }, { value: "XZ", label: "XZ" }, { value: "XY", label: "XY" } ]
+
     readonly property var specs: ({
         extrude: { title: qsTr("Extrude"), command: "feature.extrude", fields: [
             { key: "sketch", type: "sketch", label: qsTr("Sketch") },
@@ -99,7 +105,36 @@ Pane {
             { key: "center", type: "vec3", label: qsTr("Base centre"), init: [0, 0, 0] },
             { key: "diameter", type: "expr", label: qsTr("Diameter"), init: 20 },
             { key: "height", type: "expr", label: qsTr("Height"), init: 20 },
-            { key: "operation", type: "choice", label: qsTr("Operation"), init: "new_body", options: operations }] }
+            { key: "operation", type: "choice", label: qsTr("Operation"), init: "new_body", options: operations }] },
+        loft: { title: qsTr("Loft"), command: "feature.loft", fields: [
+            { key: "sections", type: "sketchList", label: qsTr("Profiles (in order)") },
+            { key: "ruled", type: "bool", label: qsTr("Straight between profiles") },
+            { key: "operation", type: "choice", label: qsTr("Operation"), init: "new_body", options: operations }] },
+        sweep: { title: qsTr("Sweep"), command: "feature.sweep", fields: [
+            { key: "sketch", type: "sketch", label: qsTr("Profile sketch") },
+            { key: "points", type: "profilePicks", label: qsTr("Profiles"), hint: qsTr("All profiles (click inside profiles to pick)") },
+            { key: "path", type: "pathSketch", label: qsTr("Path sketch") },
+            { key: "operation", type: "choice", label: qsTr("Operation"), init: "new_body", options: operations }] },
+        mirror: { title: qsTr("Mirror"), command: "feature.mirror", fields: [
+            { key: "body", type: "body", label: qsTr("Body") },
+            { key: "plane", type: "choice", label: qsTr("Mirror plane"), init: "YZ", options: planes },
+            { key: "offset", type: "expr", label: qsTr("Plane offset"), init: 0 },
+            { key: "operation", type: "choice", label: qsTr("Operation"), init: "join", options: patternOperations }] },
+        rectangular_pattern: { title: qsTr("Rectangular Pattern"), command: "feature.rectangular_pattern", fields: [
+            { key: "body", type: "body", label: qsTr("Body") },
+            { key: "direction", type: "choice", label: qsTr("Direction"), init: "X", options: axes },
+            { key: "count", type: "expr", label: qsTr("Quantity"), init: 3 },
+            { key: "spacing", type: "expr", label: qsTr("Spacing"), init: 30 },
+            { key: "direction2", type: "choice", label: qsTr("Direction 2"), init: "Y", options: axes },
+            { key: "count2", type: "expr", label: qsTr("Quantity 2"), init: 1 },
+            { key: "spacing2", type: "expr", label: qsTr("Spacing 2"), init: 30, showIf: v => Number(v.count2) !== 1 },
+            { key: "operation", type: "choice", label: qsTr("Operation"), init: "join", options: patternOperations }] },
+        circular_pattern: { title: qsTr("Circular Pattern"), command: "feature.circular_pattern", fields: [
+            { key: "body", type: "body", label: qsTr("Body") },
+            { key: "axis", type: "choice", label: qsTr("Axis"), init: "Z", options: axes },
+            { key: "count", type: "expr", label: qsTr("Quantity"), init: 6 },
+            { key: "angle", type: "expr", label: qsTr("Total angle (deg)"), init: 360 },
+            { key: "operation", type: "choice", label: qsTr("Operation"), init: "join", options: patternOperations }] }
     })
 
     readonly property var spec: specs[type] || null
@@ -142,6 +177,11 @@ Pane {
                 const sk = sketches()
                 if (sk.length > 0)
                     v.sketch = sk[sk.length - 1].id
+            }
+            const bodies = timeline.bodies || []
+            for (const f of s.fields) {
+                if (f.type === "body" && v[f.key] === undefined && bodies.length > 0)
+                    v[f.key] = bodies[bodies.length - 1].id
             }
             const sketch = timeline.features.find(f => f.id === v.sketch)
             if (featureType === "extrude" && sketch && sketch.params.face && !(initial && initial.operation))
@@ -359,6 +399,8 @@ Pane {
                         case "sketch": return sketchEditor
                         case "body": return bodyEditor
                         case "bodyList": return bodyListEditor
+                        case "sketchList": return sketchListEditor
+                        case "pathSketch": return pathSketchEditor
                         case "vec3": return vec3Editor
                         default: return pickEditor
                         }
@@ -435,6 +477,43 @@ Pane {
             valueRole: "id"
             currentIndex: root.timeline.bodies.findIndex(b => b.id === root.values[field.key])
             onActivated: root.setValue(field.key, currentValue)
+        }
+    }
+    Component {
+        id: sketchListEditor
+        // Loft sections: tick sketches in the order the loft should pass through them.
+        ColumnLayout {
+            property var field: parent ? parent.field : ({})
+            spacing: 0
+            Repeater {
+                model: root.sketches()
+                CheckBox {
+                    required property var modelData
+                    readonly property var picked: root.values[field.key] || []
+                    readonly property int order: picked.indexOf(modelData.id)
+                    text: modelData.name + (order >= 0 ? "  (" + (order + 1) + ")" : "")
+                    checked: order >= 0
+                    onToggled: {
+                        const next = picked.filter(id => id !== modelData.id)
+                        if (checked)
+                            next.push(modelData.id)
+                        root.setValue(field.key, next.length > 0 ? next : undefined)
+                    }
+                }
+            }
+        }
+    }
+    Component {
+        id: pathSketchEditor
+        ComboBox {
+            property var field: parent ? parent.field : ({})
+            readonly property var items: root.sketches()
+            readonly property var current: root.values[field.key]
+            model: items
+            textRole: "name"
+            valueRole: "id"
+            currentIndex: current ? items.findIndex(s => s.id === current.sketch) : -1
+            onActivated: root.setValue(field.key, { sketch: currentValue })
         }
     }
     Component {

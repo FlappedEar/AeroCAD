@@ -35,7 +35,8 @@ public:
 /// docs/cad.md); numbers may be given as expressions using user parameters.
 struct Feature {
     FeatureId id = 0;
-    std::string type; ///< sketch, extrude, revolve, fillet, chamfer, shell, combine, box, cylinder, base_body
+    std::string type; ///< sketch, extrude, revolve, fillet, chamfer, shell, combine, box, cylinder,
+                      ///< base_body, mirror, rectangular_pattern, circular_pattern, loft, sweep
     std::string name; ///< e.g. "Extrude1"
     Json params = Json::object();
     bool suppressed = false;

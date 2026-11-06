@@ -299,6 +299,11 @@ ApplicationWindow {
     Action { id: chamferAction; text: qsTr("C&hamfer"); onTriggered: window.openFeature("chamfer") }
     Action { id: shellAction; text: qsTr("S&hell"); onTriggered: window.openFeature("shell") }
     Action { id: combineAction; text: qsTr("Co&mbine"); onTriggered: window.openFeature("combine") }
+    Action { id: loftAction; text: qsTr("&Loft"); enabled: !window.activeSketch; onTriggered: window.openFeature("loft") }
+    Action { id: sweepAction; text: qsTr("S&weep"); enabled: !window.activeSketch; onTriggered: window.openFeature("sweep") }
+    Action { id: mirrorAction; text: qsTr("M&irror"); enabled: !window.activeSketch; onTriggered: window.openFeature("mirror") }
+    Action { id: rectPatternAction; text: qsTr("&Rectangular Pattern"); enabled: !window.activeSketch; onTriggered: window.openFeature("rectangular_pattern") }
+    Action { id: circPatternAction; text: qsTr("C&ircular Pattern"); enabled: !window.activeSketch; onTriggered: window.openFeature("circular_pattern") }
     Action {
         id: convertAction
         text: qsTr("Convert to &Body")
@@ -377,9 +382,18 @@ ApplicationWindow {
             MenuSeparator {}
             MenuItem { action: extrudeAction }
             MenuItem { action: revolveAction }
+            MenuItem { action: sweepAction }
+            MenuItem { action: loftAction }
             MenuItem { action: boxAction }
             MenuItem { action: cylinderAction }
             MenuItem { action: holeAction }
+            MenuSeparator {}
+            MenuItem { action: mirrorAction }
+            Menu {
+                title: qsTr("&Pattern")
+                MenuItem { action: rectPatternAction }
+                MenuItem { action: circPatternAction }
+            }
         }
         Menu {
             title: qsTr("&Modify")
@@ -525,6 +539,10 @@ ApplicationWindow {
                 ToolCommand { action: createSketchAction; text: qsTr("Sketch") }
                 ToolCommand { action: extrudeAction; text: qsTr("Extrude") }
                 ToolCommand { action: revolveAction; text: qsTr("Revolve") }
+                ToolCommand { action: sweepAction; text: qsTr("Sweep") }
+                ToolCommand { action: loftAction; text: qsTr("Loft") }
+                ToolCommand { action: mirrorAction; text: qsTr("Mirror") }
+                ToolCommand { action: rectPatternAction; text: qsTr("Pattern") }
                 ToolCommand { action: boxAction; text: qsTr("Box") }
                 ToolCommand { action: cylinderAction; text: qsTr("Cylinder") }
                 ToolCommand { action: holeAction; text: qsTr("Hole") }

@@ -5,6 +5,7 @@
 #include "aerocad/cad/SketchSolver.hpp"
 #include "aerocad/geometry/Modeling.hpp"
 #include "aerocad/geometry/Tessellation.hpp"
+#include "aerocad/geometry/Transform.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -75,7 +76,8 @@ std::string_view toString(FeatureStatus::State state)
 const std::vector<std::string>& Design::featureTypes()
 {
     static const std::vector<std::string> types{"sketch", "extrude", "revolve", "fillet", "chamfer",
-                                                "shell",  "combine", "box",     "cylinder", "base_body", "hole"};
+                                                "shell",  "combine", "box",     "cylinder", "base_body", "hole",
+                                                "mirror",  "rectangular_pattern", "circular_pattern", "loft", "sweep"};
     return types;
 }
 
@@ -827,6 +829,163 @@ void Design::evaluateFeature(const Feature& f)
             m_bodies.erase(targetId);
         else
             m_bodies.at(targetId).shape = result;
+    } else if (f.type == "mirror" || f.type == "rectangular_pattern" || f.type == "circular_pattern") {
+        // Fusion: Mirror, Rectangular Pattern, Circular Pattern of a body. "join" (default)
+        // merges the copies into the body, "new_body" makes one new body of the copies.
+        Body& src = bodyRef(required(p, "body"));
+        const geometry::Shape original = src.shape;
+        std::vector<geometry::Shape> copies;
+        if (f.type == "mirror") {
+            core::Vec3 origin{};
+            core::Vec3 normal{1, 0, 0};
+            const Json plane = p.value("plane", Json("YZ"));
+            if (plane.is_string()) {
+                const std::string name = lower(plane.get<std::string>());
+                if (name == "xy")
+                    normal = {0, 0, 1};
+                else if (name == "xz")
+                    normal = {0, 1, 0};
+                else if (name == "yz")
+                    normal = {1, 0, 0};
+                else
+                    throw DesignError("Unknown plane '" + plane.get<std::string>() + "' (XY, XZ, YZ)");
+            } else if (has(plane, "body")) {
+                const Body& fb = bodyRef(plane.at("body"));
+                std::size_t idx = 0;
+                if (has(plane, "index")) {
+                    idx = plane.at("index").get<std::size_t>();
+                } else {
+                    const auto found = geometry::nearestFace(fb.shape, ev.vec3(required(plane, "point")));
+                    if (!found)
+                        throw DesignError("No face found on " + fb.name);
+                    idx = *found;
+                }
+                const auto pl = geometry::facePlane(fb.shape, idx);
+                if (!pl)
+                    throw DesignError("Mirror face is not planar");
+                origin = pl->origin;
+                normal = pl->normal;
+            } else {
+                origin = ev.vec3(plane, "origin", {});
+                normal = ev.vec3(plane, "normal", {1, 0, 0});
+            }
+            origin = origin + normal.normalized() * ev.num(p, "offset", 0.0);
+            copies.push_back(geometry::mirrored(original, origin, normal));
+        } else {
+            auto direction = [&](const Json& d, core::Vec3 fallback) -> core::Vec3 {
+                if (d.is_null())
+                    return fallback;
+                if (d.is_string()) {
+                    const std::string a = lower(d.get<std::string>());
+                    if (a == "x")
+                        return {1, 0, 0};
+                    if (a == "y")
+                        return {0, 1, 0};
+                    if (a == "z")
+                        return {0, 0, 1};
+                    throw DesignError("Unknown direction '" + d.get<std::string>() + "' (X, Y, Z or [x, y, z])");
+                }
+                return ev.vec3(d);
+            };
+            auto count = [&](const char* key) {
+                const long n = std::lround(ev.num(p, key, 1.0));
+                if (n < 1 || n > 1000)
+                    throw DesignError(std::string(key) + " must be between 1 and 1000");
+                return static_cast<int>(n);
+            };
+            if (f.type == "rectangular_pattern") {
+                const core::Vec3 d1 = direction(p.value("direction", Json("X")), {1, 0, 0}).normalized();
+                const core::Vec3 d2 = direction(p.value("direction2", Json("Y")), {0, 1, 0}).normalized();
+                const int n1 = count("count");
+                const int n2 = has(p, "count2") ? count("count2") : 1;
+                const double s1 = ev.num(p, "spacing");
+                const double s2 = n2 > 1 ? ev.num(p, "spacing2") : 0.0;
+                for (int i = 0; i < n1; ++i) {
+                    for (int j = 0; j < n2; ++j) {
+                        if (i == 0 && j == 0)
+                            continue;
+                        copies.push_back(geometry::translated(original, d1 * (s1 * i) + d2 * (s2 * j)));
+                    }
+                }
+            } else {
+                core::Vec3 origin{};
+                core::Vec3 dir{0, 0, 1};
+                const Json axis = p.value("axis", Json("Z"));
+                if (axis.is_string()) {
+                    dir = direction(axis, {0, 0, 1});
+                } else {
+                    origin = ev.vec3(axis, "origin", {});
+                    dir = ev.vec3(axis, "direction", {0, 0, 1});
+                }
+                const int n = count("count");
+                const double total = ev.num(p, "angle", 360.0);
+                // A full circle spreads the copies evenly without one on top of the original.
+                const double step = std::abs(std::abs(total) - 360.0) < 1e-9 ? total / n : (n > 1 ? total / (n - 1) : 0.0);
+                for (int i = 1; i < n; ++i)
+                    copies.push_back(geometry::rotated(original, origin, dir, step * i));
+            }
+        }
+        if (copies.empty())
+            throw DesignError("The pattern makes no copies (count 1)");
+        const std::string op = lower(p.value("operation", std::string("join")));
+        if (op == "join") {
+            geometry::Shape result = original;
+            for (const auto& c : copies)
+                result = geometry::boolean(result, c, geometry::BooleanOp::Union);
+            src.shape = result;
+        } else if (op == "new_body") {
+            newBody(unionAll(copies));
+        } else {
+            throw DesignError("Unknown operation '" + op + "' (join, new_body)");
+        }
+    } else if (f.type == "loft") {
+        // Fusion: Loft through profiles of several sketches, in order.
+        std::vector<geometry::Shape> sections;
+        for (const auto& sec : required(p, "sections")) {
+            FeatureId sid = 0;
+            std::size_t profile = 0;
+            if (sec.is_number_integer()) {
+                sid = sec.get<FeatureId>();
+            } else {
+                sid = required(sec, "sketch").get<FeatureId>();
+                profile = sec.value("profile", std::size_t{0});
+            }
+            auto it = m_sketches.find(sid);
+            if (it == m_sketches.end())
+                throw DesignError("No sketch " + std::to_string(sid) + " at this point of the timeline");
+            const auto& profs = it->second.geometry.profiles;
+            if (profile >= profs.size())
+                throw DesignError(it->second.name + " has no profile " + std::to_string(profile));
+            sections.push_back(profs[profile]);
+            it->second.consumed = true;
+        }
+        applyOperation(geometry::loft(sections, p.value("solid", true), p.value("ruled", false)));
+    } else if (f.type == "sweep") {
+        // Fusion: Sweep profiles of `sketch` along curves of another (or the same) sketch.
+        SketchResult* sk = nullptr;
+        const auto faces = profiles(sk);
+        const Json& path = required(p, "path");
+        const FeatureId pid = required(path, "sketch").get<FeatureId>();
+        auto it = m_sketches.find(pid);
+        if (it == m_sketches.end())
+            throw DesignError("No path sketch " + std::to_string(pid) + " at this point of the timeline");
+        std::vector<SketchCurve> curves;
+        if (has(path, "curves")) {
+            for (const auto& i : path.at("curves")) {
+                const auto idx = i.get<std::size_t>();
+                if (idx >= it->second.curves.size())
+                    throw DesignError(it->second.name + " has no curve " + std::to_string(idx));
+                curves.push_back(it->second.curves[idx]);
+            }
+        } else {
+            curves = it->second.curves;
+        }
+        it->second.consumed = true;
+        const geometry::Shape pathEdges = geometry::curveEdges(it->second.plane, curves);
+        std::vector<geometry::Shape> solids;
+        for (const auto& face : faces)
+            solids.push_back(geometry::sweep(face, pathEdges));
+        applyOperation(unionAll(solids));
     } else if (f.type == "box") {
         const core::Vec3 corner = ev.vec3(p, "corner", {});
         const core::Vec3 size = ev.vec3(required(p, "size"));

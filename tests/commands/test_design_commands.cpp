@@ -326,3 +326,47 @@ TEST_CASE("Design commands: previews keep the undo history", "[commands][preview
     run(s, "edit.redo");
     CHECK(s.design().bodies().size() == 2);
 }
+
+TEST_CASE("Design commands: mirror and patterns", "[commands][cad][pattern]")
+{
+    commands::Session s;
+    const Json box = run(s, "feature.box", {{"size", {10, 10, 10}}, {"corner", {5, 0, 0}}});
+    const auto id = box.at("id").get<std::uint64_t>();
+    Json r = run(s, "feature.mirror", {{"body", id}, {"plane", "YZ"}});
+    CHECK(r.at("bodies")[0].at("volume").get<double>() == Approx(2000));
+    CHECK(r.at("bodies")[0].at("bounds").at("min")[0].get<double>() == Approx(-15));
+    run(s, "edit.undo");
+
+    r = run(s, "feature.rectangular_pattern",
+            {{"body", id}, {"count", 3}, {"spacing", 20}, {"count2", 2}, {"spacing2", 15}});
+    CHECK(r.at("bodies")[0].at("volume").get<double>() == Approx(6000));
+    CHECK(r.at("bodies")[0].at("bounds").at("max")[0].get<double>() == Approx(55));
+    run(s, "edit.undo");
+
+    r = run(s, "feature.circular_pattern", {{"body", id}, {"count", 4}, {"operation", "new_body"}});
+    REQUIRE(r.at("bodies").size() == 2);
+    CHECK(r.at("bodies")[1].at("volume").get<double>() == Approx(3000));
+}
+
+TEST_CASE("Design commands: loft and sweep", "[commands][cad][pattern]")
+{
+    commands::Session s;
+    const Json a = run(s, "sketch.create",
+                       {{"plane", "XY"},
+                        {"curves", Json::array({{{"type", "center_rectangle"}, {"center", {0, 0}}, {"width", 20}, {"height", 20}}})}});
+    const Json b = run(s, "sketch.create",
+                       {{"plane", "XY"},
+                        {"offset", 30},
+                        {"curves", Json::array({{{"type", "center_rectangle"}, {"center", {0, 0}}, {"width", 10}, {"height", 10}}})}});
+    const Json loft = run(s, "feature.loft", {{"sections", Json::array({a.at("id"), b.at("id")})}});
+    // Frustum of a square pyramid: h/3 (A1 + A2 + sqrt(A1 A2)).
+    CHECK(loft.at("bodies")[0].at("volume").get<double>() == Approx(30.0 / 3 * (400 + 100 + 200)).epsilon(1e-4));
+
+    commands::Session t;
+    const Json prof = run(t, "sketch.create",
+                          {{"plane", "XY"}, {"curves", Json::array({{{"type", "circle"}, {"center", {0, 0}}, {"radius", 2}}})}});
+    const Json path = run(t, "sketch.create",
+                          {{"plane", "XZ"}, {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {0, 40}}}})}});
+    const Json sw = run(t, "feature.sweep", {{"sketch", prof.at("id")}, {"path", {{"sketch", path.at("id")}}}});
+    CHECK(sw.at("bodies")[0].at("volume").get<double>() == Approx(std::numbers::pi * 4 * 40).epsilon(1e-4));
+}
