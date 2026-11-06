@@ -87,6 +87,10 @@ struct EdgeInfo {
 /// Used to keep references stable when earlier features change the topology.
 [[nodiscard]] std::optional<std::size_t> nearestEdge(const Shape& shape, const core::Vec3& point);
 [[nodiscard]] std::optional<std::size_t> nearestFace(const Shape& shape, const core::Vec3& point);
+/// Distance from a point to every edge / face (same order as edges() / faces();
+/// infinity for degenerate edges).
+[[nodiscard]] std::vector<double> edgeDistances(const Shape& shape, const core::Vec3& point);
+[[nodiscard]] std::vector<double> faceDistances(const Shape& shape, const core::Vec3& point);
 
 /// The plane of a planar face (normal pointing out of the solid), or std::nullopt for
 /// non-planar faces and invalid indices.

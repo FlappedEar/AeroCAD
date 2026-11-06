@@ -74,6 +74,21 @@ QString AppController::version() const
     return QStringLiteral(AEROCAD_VERSION);
 }
 
+QVariantMap AppController::preview(const QString& name, const QVariantMap& params)
+{
+    const commands::CommandResult result = m_session.preview(name.toStdString(), toJson(params));
+    emit historyChanged();
+    return toVariant(result.toJson()).toMap();
+}
+
+bool AppController::cancelPreview()
+{
+    if (!m_session.cancelPreview())
+        return false;
+    emit historyChanged();
+    return true;
+}
+
 QVariantMap AppController::execute(const QString& name, const QVariantMap& params)
 {
     const commands::CommandResult result = m_session.execute(name.toStdString(), toJson(params));

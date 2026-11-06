@@ -19,7 +19,35 @@ Session::~Session() = default;
 
 CommandResult Session::execute(std::string_view name, const Json& params)
 {
+    const auto* info = m_registry.info(name);
+    if (info != nullptr && info->modifiesDocument)
+        cancelPreview();
     return m_registry.execute(m_context, name, params);
+}
+
+CommandResult Session::preview(std::string_view name, const Json& params)
+{
+    cancelPreview();
+    auto base = m_undoStack.snapshot();
+    const std::size_t before = base.index;
+    CommandResult result = m_registry.execute(m_context, name, params);
+    if (result.ok && m_undoStack.position() == before + 1) {
+        m_previewBase = std::move(base);
+    } else if (result.ok) {
+        // The command did not record exactly one step (nothing changed); nothing to undo later.
+        m_undoStack.restore(std::move(base));
+    }
+    return result;
+}
+
+bool Session::cancelPreview()
+{
+    if (!m_previewBase)
+        return false;
+    m_undoStack.undo();
+    m_undoStack.restore(std::move(*m_previewBase));
+    m_previewBase.reset();
+    return true;
 }
 
 } // namespace aerocad::commands

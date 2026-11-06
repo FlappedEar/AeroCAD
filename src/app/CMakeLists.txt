@@ -33,6 +33,7 @@ qt_add_qml_module(aerocad
         qml/ViewCube.qml
         qml/NavigationBar.qml
         qml/SketchOverlay.qml
+        qml/SketchConstraintLayer.qml
         qml/FeatureDialog.qml
         qml/TimelineBar.qml
         qml/ParametersDialog.qml

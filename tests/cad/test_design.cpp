@@ -252,6 +252,7 @@ TEST_CASE("Document sync keeps part ids, names and visibility", "[cad][design]")
     d.removeFeature(ex);
     d.syncDocument(doc);
     CHECK(doc.part(bodyPart) == nullptr);
+    CHECK(doc.part(sketchPart)->visible); // no longer used: shown again
     d.restore(snapshot);
     d.syncDocument(doc);
     REQUIRE(doc.part(bodyPart) != nullptr); // same id after undo

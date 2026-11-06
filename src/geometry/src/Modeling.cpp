@@ -449,6 +449,24 @@ std::vector<EdgeInfo> edges(const Shape& shape)
 
 namespace {
 
+std::vector<double> distancesTo(const Shape& shape, const core::Vec3& point, TopAbs_ShapeEnum type)
+{
+    std::vector<double> out;
+    if (shape.isNull())
+        return out;
+    const auto map = mapOf(shape.impl()->shape, type);
+    const TopoDS_Vertex v = BRepBuilderAPI_MakeVertex(toPnt(point)).Vertex();
+    out.assign(static_cast<std::size_t>(map.Extent()), std::numeric_limits<double>::infinity());
+    for (int i = 1; i <= map.Extent(); ++i) {
+        if (type == TopAbs_EDGE && BRep_Tool::Degenerated(TopoDS::Edge(map(i))))
+            continue;
+        BRepExtrema_DistShapeShape dist(v, map(i));
+        if (dist.IsDone())
+            out[static_cast<std::size_t>(i - 1)] = dist.Value();
+    }
+    return out;
+}
+
 std::optional<std::size_t> nearest(const Shape& shape, const core::Vec3& point, TopAbs_ShapeEnum type)
 {
     if (shape.isNull())
@@ -481,6 +499,16 @@ std::optional<std::size_t> nearestEdge(const Shape& shape, const core::Vec3& poi
 std::optional<std::size_t> nearestFace(const Shape& shape, const core::Vec3& point)
 {
     return guarded("Face lookup", [&] { return nearest(shape, point, TopAbs_FACE); });
+}
+
+std::vector<double> edgeDistances(const Shape& shape, const core::Vec3& point)
+{
+    return guarded("Edge lookup", [&] { return distancesTo(shape, point, TopAbs_EDGE); });
+}
+
+std::vector<double> faceDistances(const Shape& shape, const core::Vec3& point)
+{
+    return guarded("Face lookup", [&] { return distancesTo(shape, point, TopAbs_FACE); });
 }
 
 std::optional<Plane> facePlane(const Shape& shape, std::size_t faceIndex)
