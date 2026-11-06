@@ -2,8 +2,7 @@
 #
 # Fast gate for every pull request and push to main: build + unit tests + app smoke
 # test on Linux (distribution packages) and macOS Apple Silicon (Homebrew). Target: a
-# few minutes with a warm ccache. Release packaging lives in release.yml and never
-# blocks a pull request.
+# few minutes with a warm ccache. No packaging: CI only checks that it builds and works.
 name: CI
 
 on:

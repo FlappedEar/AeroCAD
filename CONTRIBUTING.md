@@ -7,8 +7,7 @@
   (or `#` for CMake/YAML). By contributing you agree to license your work under
   GPL-3.0-or-later.
 - Work happens on branches and lands through pull requests. CI (`CI` workflow: Linux and
-  macOS) must be green before merging. The `Release build` workflow (packaged macOS app)
-  runs on `main` only and does not block pull requests. Reference the Jira issue key (e.g. `CAD-7`) in the
+  macOS) must be green before merging. Reference the Jira issue key (e.g. `CAD-7`) in the
   branch name and PR title.
 
 ## Architecture rules
