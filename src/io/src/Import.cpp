@@ -42,6 +42,22 @@ bool parseDouble(std::string_view text, double& out)
         text.remove_prefix(1);
     if (text.empty())
         return false;
+    {
+        // nan / inf spelled out: from_chars accepts them, the stream fallback (Apple libc++)
+        // does not, so handle them here for identical behaviour on every platform.
+        std::string_view word = text;
+        const bool negative = word.front() == '-';
+        if (negative)
+            word.remove_prefix(1);
+        if (iequals(word, "nan")) {
+            out = std::numeric_limits<double>::quiet_NaN();
+            return true;
+        }
+        if (iequals(word, "inf") || iequals(word, "infinity")) {
+            out = negative ? -std::numeric_limits<double>::infinity() : std::numeric_limits<double>::infinity();
+            return true;
+        }
+    }
 #if defined(__cpp_lib_to_chars) && __cpp_lib_to_chars >= 201611L
     const char* end = text.data() + text.size();
     const auto [ptr, ec] = std::from_chars(text.data(), end, out);
