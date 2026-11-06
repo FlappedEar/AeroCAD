@@ -225,6 +225,18 @@ TEST_CASE("Variants: duplicate as B, change a parameter, toggle A/B, undo", "[co
     CHECK_FALSE(s.execute("variant.toggle").ok);
 }
 
+TEST_CASE("Features created independently in two variants get distinct ids", "[commands][project][variants]")
+{
+    commands::Session s;
+    run(s, "variant.create");
+    const auto inB = run(s, "feature.box", {{"corner", {0, 0, 0}}, {"size", {1, 1, 1}}}).at("id").get<std::uint64_t>();
+    run(s, "variant.toggle");
+    const auto inA = run(s, "feature.box", {{"corner", {5, 0, 0}}, {"size", {1, 1, 1}}}).at("id").get<std::uint64_t>();
+    CHECK(inA != inB);
+    const Json diff = run(s, "variant.compare");
+    CHECK(diff.at("features").size() == 2); // one only in A, one only in B
+}
+
 TEST_CASE("Variants are saved with the project", "[commands][project][variants]")
 {
     TempDir dir;

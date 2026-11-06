@@ -62,9 +62,15 @@ Design::State VariantSet::activate(VariantId id, Design::State current)
     Variant& target = require(id);
     if (id == m_active)
         return current;
+    // Feature ids stay unique across variants: features created independently in two
+    // variants must not share an id (part bookkeeping and variant.compare key on it).
+    FeatureId nextId = current.nextId;
+    for (const auto& v : m_variants)
+        nextId = std::max(nextId, v.state.nextId);
     require(m_active).state = std::move(current);
     m_previous = m_active;
     m_active = id;
+    target.state.nextId = nextId;
     return target.state;
 }
 

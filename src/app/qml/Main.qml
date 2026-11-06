@@ -330,13 +330,13 @@ ApplicationWindow {
     Action {
         id: duplicateVariantAction
         text: qsTr("&Duplicate as New Variant")
-        onTriggered: window.controller.execute("variant.create")
+        onTriggered: { featureDialog.close(); window.controller.execute("variant.create") }
     }
     Action {
         id: toggleVariantAction
         text: qsTr("&Toggle A/B")
         enabled: window.controller.variants.length > 1
-        onTriggered: window.controller.execute("variant.toggle")
+        onTriggered: { featureDialog.close(); window.controller.execute("variant.toggle") }
     }
     Action {
         id: deleteVariantAction
@@ -671,8 +671,10 @@ ApplicationWindow {
                     model: window.controller.variants
                     textRole: "name"
                     currentIndex: window.controller.variants.findIndex(v => v.active)
-                    onActivated: index => window.controller.execute("variant.activate",
-                                                                    { variant: window.controller.variants[index].id })
+                    onActivated: index => {
+                        featureDialog.close()
+                        window.controller.execute("variant.activate", { variant: window.controller.variants[index].id })
+                    }
                     ToolTip.visible: hovered
                     ToolTip.text: qsTr("Active design variant")
                 }
@@ -814,6 +816,8 @@ ApplicationWindow {
         target: window.controller
         function onScriptFinished() { viewport.fitAll() }
         function onProjectOpened(view) {
+            // The dialog may hold a feature id of the previous project.
+            featureDialog.close()
             window.selectPart(0)
             window.finishSketch()
             viewport.restoreCameraState(view)

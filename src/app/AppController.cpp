@@ -240,8 +240,11 @@ bool AppController::openProject(const QString& path, bool recover)
         return false;
     const QVariantMap data = r.value(QStringLiteral("result")).toMap();
     if (recover) {
-        // The recovered copy is re-written under the project's own autosave name.
-        removeAutosave(path);
+        // Re-write the recovered changes under the project's own autosave name first; the
+        // old copy is the only one on disk until then.
+        const QString own = QFileInfo(autosavePath()).absoluteFilePath();
+        if (autosaveNow() && own != QFileInfo(path).absoluteFilePath())
+            removeAutosave(path);
         setStatusMessage(tr("Recovered unsaved changes of %1").arg(projectName()));
     } else {
         removeAutosave(previousAutosave);
@@ -265,6 +268,7 @@ void AppController::newProject()
     removeAutosave(previousAutosave);
     setStatusMessage(tr("New design"));
     emit historyChanged();
+    emit projectOpened({});
 }
 
 bool AppController::saveProject(const QVariantMap& view)
