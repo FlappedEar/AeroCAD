@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "aerocad/commands/Session.hpp"
 #include "aerocad/core/Path.hpp"
+#include "aerocad/core/Measure.hpp"
+#include "aerocad/geometry/Primitives.hpp"
+#include "aerocad/geometry/Tessellation.hpp"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <random>
 #include <string>
 
@@ -235,4 +239,21 @@ TEST_CASE("geometry.measure: distance, part, point and clearance", "[commands][a
     CHECK(r.error.find("point") != std::string::npos);
     r = session.execute("geometry.measure", {{"kind", "volume"}});
     CHECK_FALSE(r.ok);
+}
+
+TEST_CASE("geometry.measure: B-rep parts are closed with exact volume", "[commands][agent]")
+{
+    commands::Session session;
+    model::Part box;
+    box.name = "Box";
+    box.shape = geometry::makeBox(10, 20, 30);
+    box.mesh = std::make_shared<const core::TriangleMesh>(geometry::tessellate(*box.shape));
+    const auto id = session.document().addPart(box);
+
+    const auto r = session.execute("geometry.measure", {{"kind", "part"}, {"id", id}});
+    REQUIRE(r.ok);
+    CHECK(r.data.at("closed") == true);
+    CHECK(r.data.at("openEdges") == 0);
+    CHECK(r.data.at("volume").get<double>() == Approx(6000.0));
+    CHECK(core::openEdgeCount(*box.mesh) == 0); // per-face tessellation vertices are welded
 }

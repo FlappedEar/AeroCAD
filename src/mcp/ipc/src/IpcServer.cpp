@@ -15,8 +15,9 @@ namespace {
 
 constexpr qsizetype kMaxLineBytes = 16 * 1024 * 1024;
 
-/// On Unix the socket lives in a directory only the user can enter; Qt additionally
-/// restricts the socket file itself (UserAccessOption).
+/// On Unix a missing socket directory is created so that only the user can enter it (the
+/// default ~/.aerocad). Existing directories (e.g. an AEROCAD_MCP_SOCKET override) are left
+/// alone; Qt restricts the socket file itself to the user in any case (UserAccessOption).
 bool prepareSocketDirectory(const QString& endpoint, QString& error)
 {
 #if defined(Q_OS_WIN)
@@ -27,6 +28,8 @@ bool prepareSocketDirectory(const QString& endpoint, QString& error)
     if (!endpoint.contains(QLatin1Char('/')))
         return true;
     const QString dir = QFileInfo(endpoint).absolutePath();
+    if (QFileInfo::exists(dir))
+        return true; // never change permissions of a directory we did not create
     if (!QDir().mkpath(dir)) {
         error = QStringLiteral("Cannot create %1").arg(dir);
         return false;

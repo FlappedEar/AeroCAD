@@ -3,9 +3,11 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace aerocad::core {
 
@@ -84,12 +86,32 @@ double enclosedVolume(const TriangleMesh& mesh)
 
 std::size_t openEdgeCount(const TriangleMesh& mesh)
 {
+    // Weld vertices with identical coordinates first: tessellated B-rep shapes have
+    // separate vertices per face, which would otherwise make every face boundary "open".
+    struct VecHash {
+        std::size_t operator()(const Vec3& v) const noexcept
+        {
+            const std::hash<double> h;
+            std::size_t seed = h(v.x);
+            seed ^= h(v.y) + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2);
+            seed ^= h(v.z) + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2);
+            return seed;
+        }
+    };
+    std::unordered_map<Vec3, std::uint32_t, VecHash> canonical;
+    std::vector<std::uint32_t> weld(mesh.vertexCount());
+    canonical.reserve(mesh.vertexCount());
+    for (std::size_t i = 0; i < mesh.vertexCount(); ++i)
+        weld[i] = canonical.try_emplace(mesh.vertices()[i], static_cast<std::uint32_t>(canonical.size())).first->second;
+
     std::unordered_map<std::uint64_t, int> edges;
     edges.reserve(mesh.triangleCount() * 3);
     for (const auto& t : mesh.triangles()) {
-        for (int i = 0; i < 3; ++i) {
-            std::uint32_t a = t[static_cast<std::size_t>(i)];
-            std::uint32_t b = t[static_cast<std::size_t>((i + 1) % 3)];
+        for (std::size_t i = 0; i < 3; ++i) {
+            std::uint32_t a = weld[t[i]];
+            std::uint32_t b = weld[t[(i + 1) % 3]];
+            if (a == b)
+                continue; // degenerate after welding
             if (a > b)
                 std::swap(a, b);
             ++edges[(static_cast<std::uint64_t>(a) << 32) | b];

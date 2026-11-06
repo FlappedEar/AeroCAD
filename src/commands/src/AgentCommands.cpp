@@ -88,9 +88,12 @@ Json measurePart(const model::Document& doc, const Json& params)
     const std::size_t openEdges = core::openEdgeCount(mesh);
     double volume = 0.0;
     std::string volumeMethod;
-    if (p.shape && p.shape->solidCount() > 0) {
+    // Closedness of exact geometry comes from its topology (solids), not from the mesh.
+    const bool hasSolid = p.shape && p.shape->solidCount() > 0;
+    const bool closed = hasSolid || openEdges == 0;
+    if (hasSolid) {
         volume = p.shape->volume();
-        volumeMethod = "Exact volume of the B-rep solid(s).";
+        volumeMethod = "Exact volume of the B-rep solid(s); closedness from the B-rep topology.";
     } else {
         volume = std::abs(core::enclosedVolume(mesh));
         volumeMethod = "Volume enclosed by the triangle mesh (divergence theorem).";
@@ -105,8 +108,8 @@ Json measurePart(const model::Document& doc, const Json& params)
                 {"bounds", bounds(mesh.bounds())},
                 {"surfaceArea", mesh.surfaceArea()},
                 {"volume", volume},
-                {"closed", openEdges == 0},
-                {"openEdges", openEdges},
+                {"closed", closed},
+                {"openEdges", hasSolid ? std::size_t{0} : openEdges},
                 {"triangles", mesh.triangleCount()},
                 {"units", {{"length", "mm"}, {"area", "mm^2"}, {"volume", "mm^3"}}},
                 {"method", "Bounds and surface area from the display mesh. " + volumeMethod},

@@ -26,7 +26,8 @@ struct MeshPoint {
 [[nodiscard]] double enclosedVolume(const TriangleMesh& mesh);
 
 /// Number of edges not shared by exactly two triangles (boundary or non-manifold edges).
-/// 0 means the mesh is closed (watertight).
+/// 0 means the mesh is closed (watertight). Vertices with identical coordinates count as
+/// one, so meshes with per-face vertices (tessellated B-rep) are handled.
 [[nodiscard]] std::size_t openEdgeCount(const TriangleMesh& mesh);
 
 } // namespace aerocad::core

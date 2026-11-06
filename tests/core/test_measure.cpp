@@ -42,3 +42,18 @@ TEST_CASE("Closest point on a mesh, volume and closedness", "[core][measure]")
     CHECK(openEdgeCount(open) == 3);
     CHECK_FALSE(closestPointOnMesh(TriangleMesh{}, {0, 0, 0}).has_value());
 }
+
+TEST_CASE("openEdgeCount welds per-face vertices", "[core][measure]")
+{
+    // The tetrahedron with separate vertices for every face, as B-rep tessellation emits.
+    const TriangleMesh shared = tetrahedron();
+    TriangleMesh split;
+    for (const auto& t : shared.triangles()) {
+        const auto a = split.addVertex(shared.vertices()[t[0]]);
+        const auto b = split.addVertex(shared.vertices()[t[1]]);
+        const auto c = split.addVertex(shared.vertices()[t[2]]);
+        split.addTriangle(a, b, c);
+    }
+    CHECK(split.vertexCount() == 12);
+    CHECK(openEdgeCount(split) == 0);
+}
