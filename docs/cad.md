@@ -1,0 +1,76 @@
+# CAD modelling (timeline, sketches, features)
+
+AeroCAD models like Autodesk Fusion: a **parametric timeline** of features. Each feature
+stores its parameters as JSON; regeneration replays the timeline on Open CASCADE B-rep and
+produces **bodies** and **sketches**, which appear in the document as parts
+(`document.parts` shows `kind` = `body` / `sketch` / `imported` and the owning `featureId`).
+
+Everything is a command (see `commands.list`), so the UI, scripts and an AI agent (MCP)
+use the same operations, and every change is one undo step.
+
+## Concepts
+
+- **Feature id**: returned when a feature is created. A body is identified by the id of the
+  feature that created it (or by its name, e.g. `"Body1"`).
+- **Parameters**: `parameter.set {"name": "w", "expression": "40 mm"}`. Any number in a
+  feature can be an expression: `"w / 2 + 3"`. Units: mm (default), cm, m, in, deg.
+  Functions: sqrt, sin, cos, tan (degrees), abs, min, max; constant pi.
+- **Operation** (extrude, revolve, box, cylinder): `new_body` (default), `join`, `cut`,
+  `intersect`. join/cut/intersect act on `bodies`, or on every body the result touches.
+- **Edges and faces** are referenced by index (`body.edges`, `body.faces`) or, more robustly,
+  by a point: `{"point": [x, y, z]}` picks the nearest edge/face at regeneration time, so
+  references survive dimension changes better. Persistent naming is not implemented yet.
+- **Marker**: `timeline.set_marker` rolls the model back; new features are inserted at it.
+- Failing features: a new or edited feature that fails is rejected (nothing changes).
+  Features that break because of an earlier change stay in the timeline with
+  `status: "error"` and a message, like Fusion's red timeline icons.
+
+## Commands
+
+| Command | Fusion | Notes |
+|---|---|---|
+| `sketch.create` | Create Sketch | `plane` XY / XZ / YZ / {origin, normal, xDir}, or `face` {body, index or point}; `offset`; `curves` |
+| `sketch.add_curves` | (draw in sketch) | appends curves |
+| `sketch.profiles` | | closed regions with area and centroid |
+| `feature.extrude` | Extrude (E) | `distance`, `extent` one_side / symmetric / two_sides, `flip`, `profiles` or `points` |
+| `feature.revolve` | Revolve | `axis` X / Y / Z, {line: sketch curve index} or {origin, direction}; `angle` |
+| `feature.fillet` | Fillet (F) | `edges`, `radius` |
+| `feature.chamfer` | Chamfer | `edges`, `distance` |
+| `feature.shell` | Shell | `faces` to remove, `thickness` |
+| `feature.combine` | Combine | `target`, `tools`, join / cut / intersect, `keepTools` |
+| `feature.box`, `feature.cylinder` | Box, Cylinder | primitives with an operation |
+| `feature.edit` / `rename` / `suppress` / `delete` | timeline context menu | edit = JSON merge patch of params |
+| `timeline.list`, `timeline.set_marker` | timeline | |
+| `parameter.set` / `remove` | Change Parameters | |
+| `body.faces`, `body.edges` | | for picking by index or point |
+
+Sketch curves: `line {start, end}`, `rectangle {corner, width, height | opposite}`,
+`center_rectangle {center, width, height}`, `circle {center, radius | diameter}`,
+`arc {start, through, end}`, `center_arc {center, radius, startAngle, endAngle}`,
+`polygon {center, radius, sides, angle?}`, `slot {start, end, width}`,
+`spline {points, closed?}`; any curve can be `construction: true`. Curves are split at
+intersections, so a circle inside a rectangle gives two profiles (ring and disk).
+
+Sketch planes (Z up): XY is the ground plane (normal +Z), XZ the front plane (normal -Y,
+sketch v = world Z), YZ the right plane (normal +X, sketch v = world Z).
+
+## Example (what an agent would send)
+
+```json
+{"name": "parameter.set", "params": {"name": "w", "expression": "40"}}
+{"name": "sketch.create", "params": {"plane": "XY", "curves": [
+  {"type": "center_rectangle", "center": [0, 0], "width": "w", "height": "w / 2"}]}}
+{"name": "feature.extrude", "params": {"sketch": 1, "distance": 10}}
+{"name": "sketch.create", "params": {"face": {"body": 2, "point": [0, 0, 10]}, "curves": [
+  {"type": "circle", "center": [0, 0], "diameter": 8}]}}
+{"name": "feature.extrude", "params": {"sketch": 3, "distance": 10, "flip": true, "operation": "cut"}}
+{"name": "feature.fillet", "params": {"body": 2, "edges": [{"point": [20, 10, 5]}], "radius": 2}}
+```
+
+## Not yet
+
+- Geometric constraints solver (coincident, tangent, parallel, ...) and driven dimensions in
+  the sketch: today dimensions are the curve parameters, driven by expressions.
+- Persistent topological naming (edge/face references use index or nearest point).
+- Extrude "to object" / up to a surface, loft, sweep, thicken, offset surface (CAD-69..71).
+- Booleans with imported meshes (needs the mesh to B-rep conversion of CAD-67).

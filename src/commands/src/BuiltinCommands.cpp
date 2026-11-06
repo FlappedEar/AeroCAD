@@ -36,6 +36,8 @@ Json partToJson(const model::Part& p)
         {"vertices", p.mesh ? p.mesh->vertexCount() : 0},
         {"triangles", p.mesh ? p.mesh->triangleCount() : 0},
         {"hasBrep", p.shape.has_value()},
+        {"kind", p.kind == model::PartKind::Body ? "body" : p.kind == model::PartKind::Sketch ? "sketch" : "imported"},
+        {"featureId", p.featureId},
         {"bounds", boundsToJson(p.mesh ? p.mesh->bounds() : core::BoundingBox{})},
     };
 }
@@ -47,6 +49,15 @@ const model::Part& requirePart(const model::Document& doc, const Json& params)
     if (p == nullptr)
         throw CommandError("No part with id " + std::to_string(id));
     return *p;
+}
+
+/// Bodies and sketches are produced by the timeline; geometry edits must go through it.
+void requireImported(const model::Part& p, const char* what)
+{
+    if (p.kind != model::PartKind::Imported)
+        throw CommandError(std::string("Cannot ") + what + " '" + p.name +
+                           "': it is produced by the design timeline (feature " + std::to_string(p.featureId) +
+                           "); use feature.delete / feature.edit instead");
 }
 
 Json idParam()
@@ -148,7 +159,9 @@ void registerPartCommands(CommandRegistry& r)
            true},
           [](CommandContext& ctx, const Json& params) {
               model::Document& doc = ctx.document;
-              model::Part removed = *doc.removePart(requirePart(doc, params).id);
+              const model::Part& target = requirePart(doc, params);
+              requireImported(target, "remove");
+              model::Part removed = *doc.removePart(target.id);
               ctx.undoStack.push({"Remove " + removed.name,
                                   [&doc, removed]() { doc.addPart(removed); },
                                   [&doc, id = removed.id]() { doc.removePart(id); }});
@@ -186,6 +199,7 @@ void registerPartCommands(CommandRegistry& r)
            true},
           [](CommandContext& ctx, const Json& params) {
               const model::Part before = requirePart(ctx.document, params);
+              requireImported(before, "scale");
               const double factor = params.at("factor").get<double>();
               core::Vec3 origin = before.mesh ? before.mesh->bounds().center() : core::Vec3{};
               if (params.contains("origin")) {
