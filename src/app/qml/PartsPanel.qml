@@ -49,7 +49,7 @@ Pane {
                 required property bool partVisible
                 required property var triangles
                 required property string kind
-                required property bool hasBrep
+                required property string shapeKind
 
                 readonly property bool selected: row.partId === root.selectedPartId
 
@@ -74,7 +74,7 @@ Pane {
                 contentItem: RowLayout {
                     spacing: Theme.space2
                     AppIcon {
-                        name: row.kind === "imported" && row.hasBrep ? "surface" : Theme.featureIcon(row.kind)
+                        name: row.shapeKind === "surface" ? "surface" : Theme.featureIcon(row.kind)
                         size: Theme.iconSmall
                         color: row.selected ? Theme.accent : Theme.icon
                         opacity: row.partVisible ? 1 : 0.45
@@ -94,7 +94,8 @@ Pane {
                             Layout.fillWidth: true
                             text: row.kind === "body" ? qsTr("Body")
                                 : row.kind === "sketch" ? qsTr("Sketch")
-                                : row.hasBrep ? qsTr("Smooth shape")
+                                : row.shapeKind === "surface" ? qsTr("Surface")
+                                : row.shapeKind === "solid" ? qsTr("Solid")
                                 : qsTr("Mesh · %1 triangles").arg(Number(row.triangles).toLocaleString(Qt.locale(), "f", 0))
                             color: Theme.textFaint
                             font.pixelSize: Theme.fontSmall

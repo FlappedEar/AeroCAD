@@ -175,7 +175,9 @@ ApplicationWindow {
         if (!r.ok)
             return
         const pl = r.result.plane
-        activeSketch = { id: id, origin: pl.origin, normal: pl.normal, xDir: pl.xDir, yDir: pl.yDir }
+        const on = r.result.onSurface
+        activeSketch = { id: id, origin: pl.origin, normal: pl.normal, xDir: pl.xDir, yDir: pl.yDir,
+                         surfacePart: on ? on.part : 0, across: !!(on && on.across) }
         sketchTool = "line"
         refreshSketchSnaps()
         // Show the sketch while editing it (Fusion hides sketches once they are used).

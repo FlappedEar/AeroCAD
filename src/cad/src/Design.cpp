@@ -3,12 +3,14 @@
 
 #include "aerocad/cad/Expression.hpp"
 #include "aerocad/cad/SketchSolver.hpp"
+#include "aerocad/core/MeshSelection.hpp"
 #include "aerocad/geometry/Modeling.hpp"
 #include "aerocad/geometry/Tessellation.hpp"
 
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <map>
 #include <memory>
 #include <numbers>
 #include <set>
@@ -1003,6 +1005,83 @@ void Design::regenerate()
 // ---------------------------------------------------------------------------------------
 // Document mirror
 
+namespace {
+
+/// A sketch drawn over a curved surface (params onSurface) is shown lying on it: its
+/// line segments are split finely and moved along the sketch normal onto the surface
+/// part's mesh. Pieces that miss the surface stay on the sketch plane.
+std::vector<core::Vec3> drapeSegments(const std::vector<core::Vec3>& segments, const core::TriangleMesh& surface,
+                                      const core::Vec3& normal)
+{
+    core::BoundingBox box;
+    for (const auto& p : segments)
+        box.extend(p);
+    const double step = std::max(box.diagonal() / 300.0, 1e-3);
+    std::vector<core::Vec3> fine;
+    for (std::size_t i = 0; i + 1 < segments.size(); i += 2) {
+        const core::Vec3 a = segments[i];
+        const core::Vec3 b = segments[i + 1];
+        const int pieces = std::clamp(static_cast<int>(std::ceil((b - a).length() / step)), 1, 400);
+        for (int k = 0; k < pieces; ++k) {
+            fine.push_back(a + (b - a) * (static_cast<double>(k) / pieces));
+            fine.push_back(a + (b - a) * (static_cast<double>(k + 1) / pieces));
+        }
+    }
+    auto out = core::projectOntoMesh(surface, fine, normal);
+    // A hair above the surface, so the lines are not hidden in it.
+    const core::Vec3 lift = normal.normalized() * std::max(box.diagonal() * 1.5e-3, 1e-3);
+    for (auto& p : out)
+        p = p + lift;
+    return out;
+}
+
+/// The sketch's filled profiles, split into small triangles and laid onto the surface
+/// like the lines (a flat fill would hover above a curved surface).
+core::TriangleMesh drapeFill(const core::TriangleMesh& fill, const core::TriangleMesh& surface, const core::Vec3& normal)
+{
+    if (fill.triangleCount() == 0)
+        return fill;
+    const double step = std::max(fill.bounds().diagonal() / 60.0, 1e-3);
+    std::vector<core::Vec3> v = fill.vertices();
+    std::vector<core::TriangleMesh::Triangle> tris = fill.triangles();
+    // 1-to-4 splits while any edge is long (edge midpoints shared through a map).
+    for (int level = 0; level < 8 && tris.size() < 60000; ++level) {
+        bool longEdge = false;
+        for (const auto& t : tris)
+            for (int k = 0; k < 3 && !longEdge; ++k)
+                longEdge = (v[t[k]] - v[t[(k + 1) % 3]]).length() > step;
+        if (!longEdge)
+            break;
+        std::map<std::pair<std::uint32_t, std::uint32_t>, std::uint32_t> mid;
+        auto midpoint = [&](std::uint32_t a, std::uint32_t b) {
+            const auto key = std::minmax(a, b);
+            auto [it, added] = mid.try_emplace({key.first, key.second}, static_cast<std::uint32_t>(v.size()));
+            if (added)
+                v.push_back((v[a] + v[b]) * 0.5);
+            return it->second;
+        };
+        std::vector<core::TriangleMesh::Triangle> next;
+        next.reserve(tris.size() * 4);
+        for (const auto& t : tris) {
+            const auto ab = midpoint(t[0], t[1]);
+            const auto bc = midpoint(t[1], t[2]);
+            const auto ca = midpoint(t[2], t[0]);
+            next.push_back({t[0], ab, ca});
+            next.push_back({ab, t[1], bc});
+            next.push_back({ca, bc, t[2]});
+            next.push_back({ab, bc, ca});
+        }
+        tris = std::move(next);
+    }
+    auto draped = core::projectOntoMesh(surface, v, normal);
+    const core::Vec3 lift = normal.normalized() * std::max(fill.bounds().diagonal() * 1e-3, 5e-4);
+    for (auto& p : draped)
+        p = p + lift;
+    return core::TriangleMesh(std::move(draped), std::move(tris));
+}
+
+} // namespace
+
 void Design::syncDocument(model::Document& document)
 {
     struct Wanted {
@@ -1026,12 +1105,30 @@ void Design::syncDocument(model::Document& document)
     }
     for (const auto& [id, s] : m_sketches) {
         const geometry::Shape profiles = geometry::makeCompound(s.geometry.profiles);
+        auto segments = geometry::edgeSegments(s.geometry.curves);
+        auto fill = geometry::tessellate(profiles);
+        if (const Feature* f = feature(id); f != nullptr && f->params.contains("onSurface") && !segments.empty()) {
+            const Json& on = f->params.at("onSurface");
+            const model::Part* surface =
+                on.contains("part") ? document.part(on.at("part").get<model::PartId>()) : nullptr;
+            // Lay it on the scan the surface was fitted to when there is one: the outline
+            // may reach past the fitted area, and the scan is what is seen.
+            if (surface != nullptr) {
+                if (const model::Part* scan = document.part(model::sourcePartId(*surface));
+                    scan != nullptr && scan->mesh && !scan->shape)
+                    surface = scan;
+            }
+            if (!on.value("across", false) && surface != nullptr && surface->mesh) {
+                segments = drapeSegments(segments, *surface->mesh, s.plane.normal);
+                fill = drapeFill(fill, *surface->mesh, s.plane.normal);
+            }
+        }
         wanted[id] = {id,
                       model::PartKind::Sketch,
                       s.name,
                       std::nullopt,
-                      std::make_shared<const core::TriangleMesh>(geometry::tessellate(profiles)),
-                      geometry::edgeSegments(s.geometry.curves),
+                      std::make_shared<const core::TriangleMesh>(std::move(fill)),
+                      std::move(segments),
                       s.consumed};
     }
 
