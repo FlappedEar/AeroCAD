@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "aerocad/commands/Session.hpp"
 
+#include "ExportCommands.hpp"
+
 #include "aerocad/core/Path.hpp"
 #include "aerocad/geometry/Transform.hpp"
 #include "aerocad/io/Import.hpp"
@@ -239,6 +241,7 @@ void registerBuiltinCommands(CommandRegistry& registry)
     registerDocumentCommands(registry);
     registerPartCommands(registry);
     registerEditCommands(registry);
+    registerExportCommands(registry);
 }
 
 } // namespace aerocad::commands

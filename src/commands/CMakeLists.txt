@@ -6,6 +6,7 @@ add_library(aerocad_commands STATIC
     src/CommandRegistry.cpp
     src/ParamsValidation.cpp
     src/BuiltinCommands.cpp
+    src/ExportCommands.cpp
     src/Session.cpp
 )
 add_library(AeroCAD::commands ALIAS aerocad_commands)
