@@ -4,6 +4,7 @@
 #pragma once
 
 #include "aerocad/core/Math.hpp"
+#include "aerocad/core/Mesh.hpp"
 #include "aerocad/geometry/Shape.hpp"
 #include "aerocad/geometry/Sketch.hpp"
 
@@ -13,6 +14,12 @@
 #include <vector>
 
 namespace aerocad::geometry {
+
+/// Converts a triangle mesh into a B-rep: one planar face per triangle, sewn together and
+/// made a solid when the mesh is closed; coplanar neighbours are merged into larger
+/// planar faces. Meant for low-poly models (printed parts, CAD exports), not for dense
+/// scans: throws ModelingError above `maxTriangles`.
+[[nodiscard]] Shape meshToBrep(const core::TriangleMesh& mesh, std::size_t maxTriangles = 50000);
 
 /// Combines shapes into one compound (null shapes are skipped).
 [[nodiscard]] Shape makeCompound(const std::vector<Shape>& shapes);

@@ -2,6 +2,7 @@
 #include "aerocad/geometry/Modeling.hpp"
 #include "aerocad/geometry/Primitives.hpp"
 #include "aerocad/geometry/Sketch.hpp"
+#include "aerocad/geometry/Tessellation.hpp"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -213,4 +214,33 @@ TEST_CASE("Face containment for profile picking", "[geometry][sketch]")
     for (const auto& p : g.profiles)
         containing += faceContains(p, {20, 20, 0}) ? 1 : 0;
     CHECK(containing == 1);
+}
+
+TEST_CASE("Mesh to B-rep: a closed mesh becomes a solid with merged planar faces", "[geometry][modeling]")
+{
+    const auto box = makeBox(10, 20, 30);
+    const core::TriangleMesh mesh = tessellate(box);
+    REQUIRE(mesh.triangleCount() >= 12);
+    const auto brep = meshToBrep(mesh);
+    CHECK(brep.solidCount() == 1);
+    CHECK(brep.volume() == Approx(6000).epsilon(1e-6));
+    CHECK(brep.faceCount() == 6); // coplanar triangles merged
+    const auto cut = boolean(brep, makeBox(5, 5, 50), BooleanOp::Cut);
+    CHECK(cut.volume() == Approx(6000 - 750).epsilon(1e-6));
+    CHECK_THROWS_AS(meshToBrep(mesh, 2), ModelingError);
+    CHECK_THROWS_AS(meshToBrep(core::TriangleMesh{}), ModelingError);
+}
+
+TEST_CASE("Mesh to B-rep: standalone faces next to a closed component are kept", "[geometry][modeling]")
+{
+    core::TriangleMesh mesh = tessellate(makeBox(10, 10, 10));
+    const auto a = mesh.addVertex({50, 0, 0});
+    const auto b = mesh.addVertex({60, 0, 0});
+    const auto c = mesh.addVertex({50, 10, 0});
+    mesh.addTriangle(a, b, c);
+    const auto brep = meshToBrep(mesh);
+    CHECK(brep.solidCount() == 1);
+    CHECK(brep.volume() == Approx(1000).epsilon(1e-6));
+    CHECK(brep.faceCount() == 7);
+    CHECK(brep.bounds().max.x == Approx(60.0));
 }

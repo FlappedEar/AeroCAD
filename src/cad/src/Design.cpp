@@ -74,7 +74,7 @@ std::string_view toString(FeatureStatus::State state)
 const std::vector<std::string>& Design::featureTypes()
 {
     static const std::vector<std::string> types{"sketch", "extrude", "revolve", "fillet", "chamfer",
-                                                "shell",  "combine", "box",     "cylinder"};
+                                                "shell",  "combine", "box",     "cylinder", "base_body", "hole"};
     return types;
 }
 
@@ -698,6 +698,58 @@ void Design::evaluateFeature(const Feature& f)
         c.radius = r;
         const auto g = geometry::buildSketch(base, {c});
         applyOperation(geometry::extrude(g.profiles.at(0), {0, 0, 1}, h));
+    } else if (f.type == "hole") {
+        // Simple drilled hole (Fusion: Hole, H): a cylinder cut into the body, normal to
+        // the planar face at `point`.
+        Body& b = bodyRef(required(p, "body"));
+        const core::Vec3 point = ev.vec3(required(p, "point"));
+        const auto faceIdx = geometry::nearestFace(b.shape, point);
+        const auto plane = faceIdx ? geometry::facePlane(b.shape, *faceIdx) : std::nullopt;
+        if (!plane)
+            throw DesignError("Holes need a planar face at the given point");
+        const double r = ev.num(p, "diameter") / 2;
+        if (r <= 0)
+            throw DesignError("Hole diameter must be positive");
+        const bool through = p.value("through", !has(p, "depth"));
+        const double depth = through ? b.shape.bounds().diagonal() * 2 : ev.num(p, "depth");
+        if (depth <= 0)
+            throw DesignError("Hole depth must be positive");
+        geometry::Plane base = *plane;
+        base.origin = point - plane->normal * plane->normal.dot(point - plane->origin); // onto the face
+        SketchCurve c{SketchCurve::Kind::Circle, {{0, 0}}};
+        c.radius = r;
+        const auto g = geometry::buildSketch(base, {c});
+        // Start slightly outside the face so the cut is clean.
+        const geometry::Shape tool = geometry::extrude(g.profiles.at(0), plane->normal * -1.0, depth, 1e-3 * depth + 1e-3);
+        const geometry::Shape result = geometry::boolean(b.shape, tool, geometry::BooleanOp::Cut);
+        if (result.isNull())
+            throw DesignError("The hole removed the whole body");
+        b.shape = result;
+    } else if (f.type == "base_body") {
+        // An imported part as a body: its exact B-rep (STEP, IGES, BREP) or, for meshes,
+        // a faceted B-rep built from the triangles.
+        const auto partId = required(p, "part").get<model::PartId>();
+        const model::Part* part = m_partLookup ? m_partLookup(partId) : nullptr;
+        if (part == nullptr)
+            throw DesignError("No part with id " + std::to_string(partId));
+        if (part->kind != model::PartKind::Imported)
+            throw DesignError("Part '" + part->name + "' is already produced by the timeline");
+        geometry::Shape shape;
+        if (part->shape && !part->shape->isNull()) {
+            shape = *part->shape;
+        } else if (part->mesh) {
+            auto cached = m_convertedParts.find(partId);
+            if (cached != m_convertedParts.end() && cached->second.revision == part->revision) {
+                shape = cached->second.shape;
+            } else {
+                shape = geometry::meshToBrep(*part->mesh);
+                m_convertedParts[partId] = {part->revision, shape};
+            }
+        } else {
+            throw DesignError("Part '" + part->name + "' has no geometry");
+        }
+        newBody(shape);
+        m_bodies[f.id].name = part->name;
     } else {
         throw DesignError("Unknown feature type '" + f.type + "'");
     }

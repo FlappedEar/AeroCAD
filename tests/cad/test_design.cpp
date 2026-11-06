@@ -286,3 +286,17 @@ TEST_CASE("Automatic targets need real contact; duplicate targets are merged", "
     CHECK_FALSE(d.bodies().contains(box));
     CHECK(d.bodies().at(a).shape.volume() > 50 - 1e-6);
 }
+
+TEST_CASE("Hole: through and blind", "[cad][design]")
+{
+    Design d;
+    const auto box = d.addFeature("box", {{"size", {20, 20, 10}}});
+    const double pi = std::numbers::pi;
+    d.addFeature("hole", {{"body", box}, {"point", {5, 5, 10}}, {"diameter", 4}});
+    CHECK(bodyVolume(d, box) == Approx(4000 - pi * 4 * 10).epsilon(1e-6));
+    d.addFeature("hole", {{"body", box}, {"point", {15, 15, 10}}, {"diameter", 4}, {"depth", 3}});
+    CHECK(bodyVolume(d, box) == Approx(4000 - pi * 4 * 13).epsilon(1e-6));
+    // Side face, through.
+    d.addFeature("hole", {{"body", box}, {"point", {0, 10, 5}}, {"diameter", 2}});
+    CHECK(bodyVolume(d, box) < 4000 - pi * 4 * 13);
+}

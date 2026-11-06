@@ -9,7 +9,15 @@
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepBndLib.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepBuilderAPI_MakePolygon.hxx>
+#include <BRepBuilderAPI_MakeSolid.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
+#include <BRepBuilderAPI_Sewing.hxx>
+#include <BRepLib.hxx>
+#include <ShapeFix_Solid.hxx>
+#include <TopoDS_Shell.hxx>
+#include <TopoDS_Solid.hxx>
 #include <BRepExtrema_DistShapeShape.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
 #include <BRepCheck_Analyzer.hxx>
@@ -38,6 +46,7 @@
 #include <gp_Trsf.hxx>
 #include <gp_Vec.hxx>
 
+#include <algorithm>
 #include <cmath>
 #include <numbers>
 
@@ -137,6 +146,61 @@ core::Vec3 faceNormalAt(const TopoDS_Face& f, gp_Pnt& centerOut)
 }
 
 } // namespace
+
+Shape meshToBrep(const core::TriangleMesh& mesh, std::size_t maxTriangles)
+{
+    if (mesh.isEmpty())
+        throw ModelingError("Mesh to B-rep: the mesh is empty");
+    if (mesh.triangleCount() > maxTriangles)
+        throw ModelingError("Mesh to B-rep: " + std::to_string(mesh.triangleCount()) +
+                            " triangles is too many for a faceted body (limit " + std::to_string(maxTriangles) +
+                            "); simplify the mesh or select a region and fit a surface");
+    return guarded("Mesh to B-rep", [&] {
+        const double tol = std::max(mesh.bounds().diagonal() * 1e-6, 1e-6);
+        BRepBuilderAPI_Sewing sewing(tol * 10);
+        const auto& v = mesh.vertices();
+        std::size_t faces = 0;
+        for (std::size_t t = 0; t < mesh.triangleCount(); ++t) {
+            const auto& tri = mesh.triangles()[t];
+            if (mesh.faceNormal(t).length() < 0.5)
+                continue; // degenerate
+            BRepBuilderAPI_MakePolygon poly(toPnt(v[tri[0]]), toPnt(v[tri[1]]), toPnt(v[tri[2]]), true);
+            if (!poly.IsDone())
+                continue;
+            BRepBuilderAPI_MakeFace face(poly.Wire(), true);
+            if (!face.IsDone())
+                continue;
+            sewing.Add(face.Face());
+            ++faces;
+        }
+        if (faces == 0)
+            throw ModelingError("Mesh to B-rep: no valid triangles");
+        sewing.Perform();
+        TopoDS_Shape sewn = sewing.SewedShape();
+        // Closed shells become solids, so booleans and volumes work. Open shells and
+        // standalone faces are kept as they are, so no part of the mesh is dropped.
+        BRep_Builder builder;
+        TopoDS_Compound parts;
+        builder.MakeCompound(parts);
+        for (TopExp_Explorer ex(sewn, TopAbs_SHELL); ex.More(); ex.Next()) {
+            const TopoDS_Shell& shell = TopoDS::Shell(ex.Current());
+            if (BRep_Tool::IsClosed(shell)) {
+                BRepBuilderAPI_MakeSolid mk(shell);
+                if (mk.IsDone()) {
+                    ShapeFix_Solid fix(mk.Solid());
+                    fix.Perform();
+                    builder.Add(parts, fix.Solid());
+                    continue;
+                }
+            }
+            builder.Add(parts, shell);
+        }
+        for (TopExp_Explorer ex(sewn, TopAbs_FACE, TopAbs_SHELL); ex.More(); ex.Next())
+            builder.Add(parts, ex.Current());
+        TopoDS_Shape result = parts;
+        return wrapShape(unify(result));
+    });
+}
 
 Shape makeCompound(const std::vector<Shape>& shapes)
 {

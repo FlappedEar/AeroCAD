@@ -37,8 +37,10 @@ use the same operations, and every change is one undo step.
 | `feature.fillet` | Fillet (F) | `edges`, `radius` |
 | `feature.chamfer` | Chamfer | `edges`, `distance` |
 | `feature.shell` | Shell | `faces` to remove, `thickness` |
+| `feature.hole` | Hole (H) | `point` on a planar face, `diameter`, `depth` or through all |
 | `feature.combine` | Combine | `target`, `tools`, join / cut / intersect, `keepTools` |
 | `feature.box`, `feature.cylinder` | Box, Cylinder | primitives with an operation |
+| `feature.base_body` | Mesh to BRep / base feature | imported part as a body: B-rep as is, meshes as faceted B-rep (coplanar triangles merged, max 50 000 triangles) |
 | `feature.edit` / `rename` / `suppress` / `delete` | timeline context menu | edit = JSON merge patch of params |
 | `timeline.list`, `timeline.set_marker` | timeline | |
 | `parameter.set` / `remove` | Change Parameters | |
@@ -73,4 +75,5 @@ sketch v = world Z), YZ the right plane (normal +X, sketch v = world Z).
   the sketch: today dimensions are the curve parameters, driven by expressions.
 - Persistent topological naming (edge/face references use index or nearest point).
 - Extrude "to object" / up to a surface, loft, sweep, thicken, offset surface (CAD-69..71).
-- Booleans with imported meshes (needs the mesh to B-rep conversion of CAD-67).
+- Dense scans as bodies: `feature.base_body` refuses meshes above 50 000 triangles; those need
+  region selection and surface fitting (CAD-67).

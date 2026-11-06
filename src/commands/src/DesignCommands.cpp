@@ -468,6 +468,58 @@ void registerFeatureCommands(CommandRegistry& r)
                        {"bodies", bodiesSchema()}},
                       {"height"});
 
+    addFeatureCommand(r, "hole", "Hole",
+                      "Drills a round hole into a body, normal to the planar face at `point` (Fusion: Hole, "
+                      "shortcut H). Through all unless `depth` is given.",
+                      {{"body", bodyRefSchema("Body.")},
+                       {"point", point3("Hole centre on a planar face.")},
+                       {"diameter", numberOrExpr("Diameter (mm).")},
+                       {"depth", numberOrExpr("Depth (mm); omit for through all.")},
+                       {"through", {{"type", "boolean"}, {"description", "Through all (default when no depth)."}}}},
+                      {"body", "point", "diameter"});
+
+    r.add({"feature.base_body", "Convert to Body",
+           "Turns an imported part into a timeline body so it can be sketched on, cut, joined, filleted "
+           "(Fusion: base feature / Mesh to BRep). B-rep imports (STEP, IGES, BREP) are used as they are; "
+           "meshes (STL, OBJ, 3MF) become faceted bodies with coplanar triangles merged into planar faces "
+           "(up to 50 000 triangles). The imported part is hidden.",
+           objectSchema({{"part", {{"type", "integer"}, {"minimum", 1}, {"description", "Imported part id (document.parts)."}}},
+                         {"name", {{"type", "string"}, {"description", "Optional feature name."}}}},
+                        {"part"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              const auto partId = params.at("part").get<model::PartId>();
+              model::Document& doc = ctx.document;
+              const model::Part* source = doc.part(partId);
+              if (source == nullptr)
+                  throw CommandError("No part with id " + std::to_string(partId));
+              cad::Design& d = design(ctx);
+              const cad::Design::State before = d.state();
+              cad::FeatureId id = 0;
+              try {
+                  id = d.addFeature("base_body", featureParams(params), params.value("name", std::string()));
+              } catch (const cad::DesignError& e) {
+                  throw CommandError(e.what());
+              }
+              const cad::Design::State after = d.state();
+              const bool wasVisible = source->visible;
+              doc.modifyPart(partId, [](model::Part& p) { p.visible = false; });
+              d.syncDocument(doc);
+              cad::Design* dp = &d;
+              ctx.undoStack.push({"Convert to Body",
+                                  [dp, &doc, before, partId, wasVisible]() {
+                                      dp->restore(before);
+                                      dp->syncDocument(doc);
+                                      doc.modifyPart(partId, [&](model::Part& p) { p.visible = wasVisible; });
+                                  },
+                                  [dp, &doc, after, partId]() {
+                                      doc.modifyPart(partId, [](model::Part& p) { p.visible = false; });
+                                      dp->restore(after);
+                                      dp->syncDocument(doc);
+                                  }});
+              return addedFeature(d, doc, id);
+          });
+
     r.add({"feature.edit", "Edit Feature",
            "Changes parameters of a feature in the timeline (JSON merge patch: given keys replace, null removes) "
            "and regenerates the model. Fails without changes if the feature would fail.",
