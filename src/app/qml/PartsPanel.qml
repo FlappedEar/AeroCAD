@@ -12,6 +12,8 @@ Pane {
     required property AppController controller
     property var selectedPartId: 0
     signal partSelected(var id)
+    /// Right-click on a row: open the part's context menu at x, y in `item`.
+    signal partContextRequested(var id, Item item, real x, real y)
 
     padding: 0
     background: Rectangle { color: Theme.surface }
@@ -56,6 +58,10 @@ Pane {
                 leftPadding: Theme.space3
                 rightPadding: Theme.space1
                 onClicked: root.partSelected(row.partId)
+                TapHandler {
+                    acceptedButtons: Qt.RightButton
+                    onTapped: eventPoint => root.partContextRequested(row.partId, row, eventPoint.position.x, eventPoint.position.y)
+                }
 
                 background: Rectangle {
                     anchors.fill: parent
@@ -68,7 +74,7 @@ Pane {
                 contentItem: RowLayout {
                     spacing: Theme.space2
                     AppIcon {
-                        name: Theme.featureIcon(row.kind)
+                        name: row.shapeKind === "surface" ? "surface" : Theme.featureIcon(row.kind)
                         size: Theme.iconSmall
                         color: row.selected ? Theme.accent : Theme.icon
                         opacity: row.partVisible ? 1 : 0.45

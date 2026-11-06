@@ -10,6 +10,8 @@ Item {
     required property AppController controller
     property var selectedPartId: 0
     signal partPicked(var id)
+    /// Right-click on a part (id 0: on empty space), at x, y in this item.
+    signal partContextRequested(var id, real x, real y)
     /// Left click on a part: its id and the hit point in model coordinates (mm, Z up).
     signal pointPicked(var id, vector3d point)
 
@@ -442,6 +444,20 @@ Item {
         onProjectionRequested: ortho => root.orthographic = ortho
         gridVisible: root.gridVisible
         onGridToggled: shown => root.gridVisible = shown
+    }
+
+    // Right-click: select the part under the cursor and open its context menu.
+    TapHandler {
+        acceptedButtons: Qt.RightButton
+        enabled: !root.sketch
+        gesturePolicy: TapHandler.ReleaseWithinBounds
+        onTapped: eventPoint => {
+            const hit = root.pickPart(eventPoint.position.x, eventPoint.position.y)
+            const id = hit ? hit.partId : 0
+            if (id)
+                root.partPicked(id)
+            root.partContextRequested(id, eventPoint.position.x, eventPoint.position.y)
+        }
     }
 
     TapHandler {

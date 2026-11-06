@@ -43,6 +43,13 @@ qt_add_qml_module(aerocad
         qml/RibbonGroup.qml
         qml/RibbonTab.qml
         qml/PanelHeader.qml
+        qml/ContextActions.qml
+        qml/ActionPopup.qml
+        qml/ActionButton.qml
+        qml/GuidePanel.qml
+        qml/ContextBar.qml
+        qml/PartContextMenu.qml
+        qml/StartCard.qml
         qml/Viewport.qml
         qml/SelectionToolbar.qml
         qml/CameraController.qml
