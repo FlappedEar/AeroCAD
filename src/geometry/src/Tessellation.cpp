@@ -4,7 +4,10 @@
 #include "aerocad/geometry/OcctShape.hpp"
 
 #include <BRepMesh_IncrementalMesh.hxx>
+#include <BRepAdaptor_Curve.hxx>
 #include <BRep_Tool.hxx>
+#include <GCPnts_TangentialDeflection.hxx>
+#include <TopoDS_Edge.hxx>
 #include <Poly_Triangulation.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopLoc_Location.hxx>
@@ -52,6 +55,29 @@ core::TriangleMesh tessellate(const Shape& shape, const TessellationParams& para
         }
     }
     return mesh;
+}
+
+std::vector<core::Vec3> edgeSegments(const Shape& shape, const TessellationParams& params)
+{
+    std::vector<core::Vec3> out;
+    if (shape.isNull())
+        return out;
+    const double diag = shape.bounds().diagonal();
+    const double linear = std::max(diag * params.relativeLinearDeflection, 1e-4);
+    for (TopExp_Explorer ex(shape.impl()->shape, TopAbs_EDGE); ex.More(); ex.Next()) {
+        const TopoDS_Edge& edge = TopoDS::Edge(ex.Current());
+        if (BRep_Tool::Degenerated(edge))
+            continue;
+        const BRepAdaptor_Curve curve(edge);
+        const GCPnts_TangentialDeflection points(curve, params.angularDeflection / 2, linear);
+        for (int i = 2; i <= points.NbPoints(); ++i) {
+            const gp_Pnt a = points.Value(i - 1);
+            const gp_Pnt b = points.Value(i);
+            out.push_back({a.X(), a.Y(), a.Z()});
+            out.push_back({b.X(), b.Y(), b.Z()});
+        }
+    }
+    return out;
 }
 
 } // namespace aerocad::geometry

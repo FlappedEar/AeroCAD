@@ -20,7 +20,7 @@ namespace {
 /// --smoke-test <file>: import the file, wait for frames to be rendered, verify, quit.
 /// Exit code 0 on success. Used by CTest (app_smoke_test) and CI.
 int runSmokeTest(QGuiApplication& app, QQmlApplicationEngine& engine, aerocad::app::AppController& controller,
-                 const QString& file, const QString& screenshotPath)
+                 const QString& file, const QString& screenshotPath, const QString& scriptPath)
 {
     auto* window = engine.rootObjects().isEmpty() ? nullptr : qobject_cast<QQuickWindow*>(engine.rootObjects().first());
     if (window == nullptr) {
@@ -30,6 +30,10 @@ int runSmokeTest(QGuiApplication& app, QQmlApplicationEngine& engine, aerocad::a
     if (!controller.importFile(QUrl::fromLocalFile(file))) {
         std::fprintf(stderr, "smoke test: import failed: %s\n", qPrintable(controller.statusMessage()));
         return 3;
+    }
+    if (!scriptPath.isEmpty() && !controller.runScript(scriptPath)) {
+        std::fprintf(stderr, "smoke test: script failed: %s\n", qPrintable(controller.statusMessage()));
+        return 7;
     }
 
     // Keep requesting frames (nothing animates, so the window would otherwise go idle),
@@ -116,6 +120,10 @@ int main(int argc, char* argv[])
     QCommandLineOption mcp(QStringLiteral("mcp"),
                            QStringLiteral("Allow AI agents (MCP clients such as Claude) to use the project."));
     parser.addOption(mcp);
+    QCommandLineOption script(QStringLiteral("run"),
+                              QStringLiteral("Run a JSON command script (array of {name, params}) after loading files."),
+                              QStringLiteral("script.json"));
+    parser.addOption(script);
     parser.addPositionalArgument(QStringLiteral("files"), QStringLiteral("3D files to open."), QStringLiteral("[files...]"));
     parser.process(app);
 
@@ -131,7 +139,8 @@ int main(int argc, char* argv[])
         return 1;
 
     if (parser.isSet(smokeTest))
-        return runSmokeTest(app, engine, controller, parser.value(smokeTest), parser.value(screenshot));
+        return runSmokeTest(app, engine, controller, parser.value(smokeTest), parser.value(screenshot),
+                            parser.value(script));
 
     if (parser.isSet(mcp))
         controller.mcp()->setEnabled(true);
@@ -140,6 +149,8 @@ int main(int argc, char* argv[])
 
     for (const QString& file : parser.positionalArguments())
         controller.importFile(QUrl::fromLocalFile(file));
+    if (parser.isSet(script))
+        controller.runScript(parser.value(script));
 
     return QGuiApplication::exec();
 }

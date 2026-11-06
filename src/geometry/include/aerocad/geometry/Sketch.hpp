@@ -1,0 +1,96 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#pragma once
+
+#include "aerocad/core/Math.hpp"
+#include "aerocad/geometry/Shape.hpp"
+
+#include <cstddef>
+#include <optional>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+namespace aerocad::geometry {
+
+/// Error raised by modelling operations (invalid input, failed OCCT algorithm).
+class ModelingError : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
+
+struct Vec2 {
+    double x = 0.0;
+    double y = 0.0;
+
+    constexpr Vec2 operator+(const Vec2& o) const { return {x + o.x, y + o.y}; }
+    constexpr Vec2 operator-(const Vec2& o) const { return {x - o.x, y - o.y}; }
+    constexpr Vec2 operator*(double s) const { return {x * s, y * s}; }
+    constexpr bool operator==(const Vec2&) const = default;
+};
+
+/// A sketch plane: origin plus an orthonormal frame. Sketch coordinates (u, v) map to
+/// origin + u * xDir + v * yDir(). The normal is the extrude direction.
+struct Plane {
+    core::Vec3 origin{};
+    core::Vec3 normal{0, 0, 1};
+    core::Vec3 xDir{1, 0, 0};
+
+    [[nodiscard]] core::Vec3 yDir() const { return normal.cross(xDir).normalized(); }
+    [[nodiscard]] core::Vec3 toWorld(const Vec2& p) const { return origin + xDir * p.x + yDir() * p.y; }
+    [[nodiscard]] Vec2 toLocal(const core::Vec3& p) const
+    {
+        const core::Vec3 d = p - origin;
+        return {d.dot(xDir), d.dot(yDir())};
+    }
+
+    /// Returns a valid orthonormal plane (normal normalized, xDir projected into the plane;
+    /// a default xDir is picked when the given one is parallel to the normal).
+    /// Throws ModelingError for a zero normal.
+    [[nodiscard]] Plane normalized() const;
+
+    [[nodiscard]] static Plane xy() { return {{0, 0, 0}, {0, 0, 1}, {1, 0, 0}}; }
+    [[nodiscard]] static Plane xz() { return {{0, 0, 0}, {0, -1, 0}, {1, 0, 0}}; }
+    [[nodiscard]] static Plane yz() { return {{0, 0, 0}, {1, 0, 0}, {0, 1, 0}}; }
+};
+
+/// One sketch curve in plane coordinates.
+struct SketchCurve {
+    enum class Kind {
+        Line,   ///< points = {start, end}
+        Arc,    ///< points = {start, through, end} (three-point arc)
+        Circle, ///< points = {center}, radius
+        Spline, ///< points = interpolated fit points (>= 2), closed flag
+    };
+    Kind kind = Kind::Line;
+    std::vector<Vec2> points;
+    double radius = 0.0;
+    bool closed = false;
+    /// Construction geometry is shown but never forms profiles.
+    bool construction = false;
+};
+
+/// Result of evaluating a sketch.
+struct SketchGeometry {
+    /// All curves as 3D edges (compound), including construction curves.
+    Shape curves;
+    /// Closed regions bounded by the (non-construction) curves, as planar faces. Regions
+    /// are minimal: a circle inside a rectangle gives a ring and a disk. Ordered by
+    /// centroid (x, then y in plane coordinates).
+    std::vector<Shape> profiles;
+};
+
+/// Builds the curves and closed profiles of a sketch. Curves are split at their mutual
+/// intersections; open chains are allowed (they just do not bound a profile).
+/// Throws ModelingError for degenerate curves.
+[[nodiscard]] SketchGeometry buildSketch(const Plane& plane, const std::vector<SketchCurve>& curves);
+
+/// Area of all faces of a shape in mm^2.
+[[nodiscard]] double area(const Shape& shape);
+
+/// Area centroid of all faces of a shape.
+[[nodiscard]] core::Vec3 centroid(const Shape& shape);
+
+/// True when the point (in the face's plane, within tolerance) lies inside the face.
+[[nodiscard]] bool faceContains(const Shape& face, const core::Vec3& point);
+
+} // namespace aerocad::geometry

@@ -17,7 +17,7 @@ aerocad_add_test(test_core
     LIBS AeroCAD::core)
 
 aerocad_add_test(test_geometry
-    SOURCES geometry/test_geometry.cpp
+    SOURCES geometry/test_geometry.cpp geometry/test_modeling.cpp
     LIBS AeroCAD::geometry)
 
 aerocad_add_test(test_io
@@ -29,7 +29,7 @@ aerocad_add_test(test_model
     LIBS AeroCAD::model)
 
 aerocad_add_test(test_commands
-    SOURCES commands/test_commands.cpp
+    SOURCES commands/test_commands.cpp commands/test_design_commands.cpp
     LIBS AeroCAD::commands)
 
 aerocad_add_test(test_mcp
@@ -48,3 +48,7 @@ if(AEROCAD_BUILD_APP)
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/mcp/stdio_smoke_test.cmake)
     set_tests_properties(mcp_stdio_smoke_test PROPERTIES TIMEOUT 60)
 endif()
+
+aerocad_add_test(test_cad
+    SOURCES cad/test_design.cpp
+    LIBS AeroCAD::cad)

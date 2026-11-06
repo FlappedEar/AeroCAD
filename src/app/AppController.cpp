@@ -7,6 +7,7 @@
 #include "aerocad/io/Import.hpp"
 
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QLocale>
 
@@ -101,6 +102,40 @@ bool AppController::importFile(const QUrl& url)
     return true;
 }
 
+bool AppController::runScript(const QString& path)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        setStatusMessage(tr("Cannot open script %1").arg(path));
+        return false;
+    }
+    const commands::Json script = commands::Json::parse(file.readAll().toStdString(), nullptr, false);
+    if (!script.is_array()) {
+        setStatusMessage(tr("Script %1 is not a JSON array of commands").arg(path));
+        return false;
+    }
+    bool ok = true;
+    for (const auto& step : script) {
+        if (!step.is_object() || !step.contains("name") || !step["name"].is_string()) {
+            setStatusMessage(tr("Script step is not an object with a string \"name\": %1")
+                                 .arg(QString::fromStdString(step.dump())));
+            ok = false;
+            break;
+        }
+        const std::string name = step["name"].get<std::string>();
+        const commands::CommandResult r = m_session.execute(name, step.value("params", commands::Json::object()));
+        if (!r.ok) {
+            setStatusMessage(tr("Script step %1 failed: %2")
+                                 .arg(QString::fromStdString(name), QString::fromStdString(r.error)));
+            ok = false;
+            break;
+        }
+    }
+    emit historyChanged();
+    emit scriptFinished();
+    return ok;
+}
+
 QVariantMap AppController::partInfo(quint64 id) const
 {
     const model::Part* p = part(id);
@@ -116,6 +151,10 @@ QVariantMap AppController::partInfo(quint64 id) const
         {QStringLiteral("vertices"), QVariant::fromValue<qulonglong>(p->mesh ? p->mesh->vertexCount() : 0)},
         {QStringLiteral("triangles"), QVariant::fromValue<qulonglong>(p->mesh ? p->mesh->triangleCount() : 0)},
         {QStringLiteral("hasBrep"), p->shape.has_value()},
+        {QStringLiteral("kind"), p->kind == model::PartKind::Body     ? QStringLiteral("body")
+                                 : p->kind == model::PartKind::Sketch ? QStringLiteral("sketch")
+                                                                      : QStringLiteral("imported")},
+        {QStringLiteral("featureId"), QVariant::fromValue<qulonglong>(p->featureId)},
         {QStringLiteral("sizeX"), size.x},
         {QStringLiteral("sizeY"), size.y},
         {QStringLiteral("sizeZ"), size.z},

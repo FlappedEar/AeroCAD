@@ -10,6 +10,8 @@ set(AEROCAD_APP_SOURCES
     PartListModel.hpp
     MeshGeometry.cpp
     MeshGeometry.hpp
+    LineGeometry.cpp
+    LineGeometry.hpp
     JsonBridge.cpp
     JsonBridge.hpp
     McpAccess.cpp
@@ -30,6 +32,10 @@ qt_add_qml_module(aerocad
         qml/ViewCube.qml
         qml/NavigationBar.qml
         qml/McpPanel.qml
+        qml/SketchOverlay.qml
+        qml/FeatureDialog.qml
+        qml/TimelineBar.qml
+        qml/ParametersDialog.qml
 )
 
 set_target_properties(aerocad PROPERTIES

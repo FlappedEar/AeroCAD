@@ -37,6 +37,7 @@ Pane {
                 required property string name
                 required property bool partVisible
                 required property var triangles
+                required property string kind
 
                 width: ListView.view.width
                 highlighted: row.partId === root.selectedPartId
@@ -56,7 +57,9 @@ Pane {
                             elide: Text.ElideRight
                         }
                         Label {
-                            text: qsTr("%1 triangles").arg(Number(row.triangles).toLocaleString(Qt.locale(), "f", 0))
+                            text: row.kind === "body" ? qsTr("Body (timeline)")
+                                : row.kind === "sketch" ? qsTr("Sketch (timeline)")
+                                : qsTr("%1 triangles").arg(Number(row.triangles).toLocaleString(Qt.locale(), "f", 0))
                             opacity: 0.6
                             font.pointSize: 9
                         }
