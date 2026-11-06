@@ -3,6 +3,7 @@
 
 #include "aerocad/model/Part.hpp"
 
+#include <algorithm>
 #include <functional>
 #include <optional>
 #include <vector>
@@ -36,6 +37,10 @@ public:
     /// older snapshot.
     /// Returns false when the id is unknown.
     bool modifyPart(PartId id, const std::function<void(Part&)>& fn);
+
+    /// Makes sure ids up to `id` are never assigned to new parts (ids held elsewhere, e.g.
+    /// parts of suppressed timeline features in a loaded project).
+    void reserveIds(PartId id) { m_nextId = std::max(m_nextId, id + 1); }
 
     /// Bounding box of all visible parts.
     [[nodiscard]] core::BoundingBox bounds() const;

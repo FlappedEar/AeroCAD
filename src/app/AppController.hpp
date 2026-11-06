@@ -96,6 +96,8 @@ public:
     /// Deletes all autosave copies (the user declined recovery) or, with `currentOnly`, the
     /// copy of the open project (clean exit without saving).
     Q_INVOKABLE void discardAutosaves(bool currentOnly = false);
+    /// Deletes one autosave copy (the user declined to recover it).
+    Q_INVOKABLE void discardAutosaveFile(const QString& path) { removeAutosave(path); }
     /// Writes the autosave copy now if there are unsaved changes. Returns true if written.
     Q_INVOKABLE bool autosaveNow();
     Q_INVOKABLE void clearRecentProjects();

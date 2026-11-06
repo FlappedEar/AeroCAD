@@ -273,6 +273,13 @@ TEST_CASE("Names of suppressed bodies survive save and open", "[commands][projec
     REQUIRE(bodyPart(t, bodyFeature) != nullptr);
     CHECK(bodyPart(t, bodyFeature)->name == "Spar");
     CHECK(bodyPart(t, bodyFeature)->id == partId);
+
+    // A body created while the other one is suppressed must not take its retained id.
+    commands::Session u;
+    run(u, "project.open", {{"path", dir.file("s.aerocad")}});
+    const auto box = run(u, "feature.box", {{"corner", {50, 0, 0}}, {"size", {1, 1, 1}}}).at("id").get<std::uint64_t>();
+    REQUIRE(bodyPart(u, box) != nullptr);
+    CHECK(bodyPart(u, box)->id != partId);
 }
 
 TEST_CASE("Imported parts can be duplicated", "[commands][project]")

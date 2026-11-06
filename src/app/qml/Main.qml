@@ -202,6 +202,15 @@ ApplicationWindow {
         }
     }
 
+    /// Variant commands replace the design: leave sketch / feature editing first, their
+    /// cached planes and ids belong to the previous variant.
+    function switchVariant(command, params) {
+        featureDialog.close()
+        finishSketch()
+        pickingSketchPlane = false
+        controller.execute(command, params)
+    }
+
     /// Called by main() once the window is up (not in smoke tests).
     function offerRecovery() {
         const files = controller.autosaveFiles()
@@ -248,10 +257,13 @@ ApplicationWindow {
         informativeText: file
         buttons: MessageDialog.Yes | MessageDialog.No
         onButtonClicked: (button, role) => {
-            if (button === MessageDialog.Yes)
+            if (button === MessageDialog.Yes) {
                 window.controller.recoverAutosave(file)
-            else
-                window.controller.discardAutosaves(false)
+            } else {
+                window.controller.discardAutosaveFile(file)
+                // Other projects may have left copies too: offer them one by one.
+                Qt.callLater(window.offerRecovery)
+            }
         }
     }
 
@@ -330,13 +342,13 @@ ApplicationWindow {
     Action {
         id: duplicateVariantAction
         text: qsTr("&Duplicate as New Variant")
-        onTriggered: { featureDialog.close(); window.controller.execute("variant.create") }
+        onTriggered: window.switchVariant("variant.create", {})
     }
     Action {
         id: toggleVariantAction
         text: qsTr("&Toggle A/B")
         enabled: window.controller.variants.length > 1
-        onTriggered: { featureDialog.close(); window.controller.execute("variant.toggle") }
+        onTriggered: window.switchVariant("variant.toggle", {})
     }
     Action {
         id: deleteVariantAction
@@ -671,10 +683,8 @@ ApplicationWindow {
                     model: window.controller.variants
                     textRole: "name"
                     currentIndex: window.controller.variants.findIndex(v => v.active)
-                    onActivated: index => {
-                        featureDialog.close()
-                        window.controller.execute("variant.activate", { variant: window.controller.variants[index].id })
-                    }
+                    onActivated: index => window.switchVariant("variant.activate",
+                                                                { variant: window.controller.variants[index].id })
                     ToolTip.visible: hovered
                     ToolTip.text: qsTr("Active design variant")
                 }

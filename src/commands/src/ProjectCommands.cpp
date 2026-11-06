@@ -92,8 +92,10 @@ void applyProject(CommandContext& ctx, project::ProjectData data)
     ctx.document.clear();
     for (auto& part : data.parts)
         ctx.document.addPart(std::move(part));
-    for (auto& t : data.timelineParts)
+    for (auto& t : data.timelineParts) {
+        ctx.document.reserveIds(t.id); // also ids of parts that are not regenerated now
         d.setPartInfo(t.feature, t.id, std::move(t.name), t.visible);
+    }
     d.restore(std::move(data.design));
     d.syncDocument(ctx.document);
     ProjectState& p = projectState(ctx);
