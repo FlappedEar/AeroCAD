@@ -696,4 +696,12 @@ TEST_CASE("Part on surface: one step from an outline over a scan to a solid", "[
     }
 
     CHECK_FALSE(session.execute("surface.part_from_sketch", {{"sketch", 99}, {"thickness", 2.0}}).ok);
+
+    // An ordinary sketch has no surface line.
+    auto plain = session.execute("sketch.create", {{"plane", "XY"}});
+    REQUIRE(plain.ok);
+    auto plainProfiles = session.execute("sketch.profiles", {{"sketch", plain.data.at("id")}});
+    INFO(plainProfiles.toJson().dump());
+    REQUIRE(plainProfiles.ok);
+    CHECK(plainProfiles.data.at("surfaceLine").empty());
 }
