@@ -7,17 +7,56 @@
 
 #include "aerocad/geometry/OcctShape.hpp"
 
+#include <BRep_Tool.hxx>
+#include <Geom_SurfaceOfRevolution.hxx>
 #include <IFSelect_ReturnStatus.hxx>
 #include <Interface_Static.hxx>
 #include <STEPControl_StepModelType.hxx>
 #include <STEPControl_Writer.hxx>
+#include <ShapeCustom.hxx>
 #include <Standard_Failure.hxx>
+#include <TopExp_Explorer.hxx>
+#include <TopoDS.hxx>
+#include <TopoDS_Edge.hxx>
+#include <TopoDS_Face.hxx>
 
 #include <mutex>
 #include <string>
 #include <system_error>
 
 namespace aerocad::io {
+
+namespace {
+
+/// True when a face lies on a general surface of revolution and closes at a pole on the
+/// axis (a degenerated edge), e.g. a dome revolved from an arc that ends on the axis.
+bool hasRevolutionPole(const TopoDS_Shape& shape)
+{
+    for (TopExp_Explorer f(shape, TopAbs_FACE); f.More(); f.Next()) {
+        const TopoDS_Face& face = TopoDS::Face(f.Current());
+        if (BRep_Tool::Surface(face).IsNull() ||
+            !BRep_Tool::Surface(face)->IsKind(STANDARD_TYPE(Geom_SurfaceOfRevolution)))
+            continue;
+        for (TopExp_Explorer e(face, TopAbs_EDGE); e.More(); e.Next())
+            if (BRep_Tool::Degenerated(TopoDS::Edge(e.Current())))
+                return true;
+    }
+    return false;
+}
+
+/// Shape as it goes into the STEP file. OCCT (7.6 to at least 7.8) writes a pole of a
+/// surface of revolution without its degenerated edge, and reading such a file back loses
+/// the face (a revolved dome comes back as an open, flat shell). Those shapes get their
+/// surfaces of revolution converted to exact B-spline surfaces first; planes, cylinders
+/// and the other analytic surfaces stay as they are.
+TopoDS_Shape stepShape(const TopoDS_Shape& shape)
+{
+    if (!hasRevolutionPole(shape))
+        return shape;
+    return ShapeCustom::ConvertToBSpline(shape, Standard_False, Standard_True, Standard_False);
+}
+
+} // namespace
 
 void writeStep(const std::filesystem::path& path, const std::vector<ExportItem>& items)
 {
@@ -41,7 +80,7 @@ void writeStep(const std::filesystem::path& path, const std::vector<ExportItem>&
         Interface_Static::SetCVal("write.step.unit", "MM");
         Interface_Static::SetCVal("write.step.schema", "AP214IS");
         for (const auto& item : items) {
-            const IFSelect_ReturnStatus status = writer.Transfer(item.shape->impl()->shape, STEPControl_AsIs);
+            const IFSelect_ReturnStatus status = writer.Transfer(stepShape(item.shape->impl()->shape), STEPControl_AsIs);
             if (status != IFSelect_RetDone)
                 throw ExportError("Cannot convert '" + item.name + "' to STEP");
         }

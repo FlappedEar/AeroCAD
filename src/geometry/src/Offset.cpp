@@ -107,7 +107,8 @@ double surfaceArea(const Shape& shape)
     if (shape.isNull())
         return 0.0;
     GProp_GProps props;
-    BRepGProp::SurfaceProperties(shape.impl()->shape, props);
+    // Adaptive, like Shape::volume(): the default rule is inaccurate on B-spline faces.
+    BRepGProp::SurfaceProperties(shape.impl()->shape, props, 1e-6);
     return props.Mass();
 }
 
