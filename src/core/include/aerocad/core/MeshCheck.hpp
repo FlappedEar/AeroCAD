@@ -24,7 +24,8 @@ struct MeshCheck {
     /// Edges shared by two triangles that traverse it in the same direction,
     /// i.e. neighbouring triangles with opposite winding.
     std::size_t inconsistentEdges = 0;
-    /// Triangles with (near) zero area, or with repeated vertex indices.
+    /// Triangles with (near) zero area. Those collapsed to an edge or a point (two corners
+    /// at the same position) are counted here and otherwise ignored.
     std::size_t degenerateTriangles = 0;
     /// Edge-connected components.
     std::size_t shells = 0;
@@ -37,7 +38,7 @@ struct MeshCheck {
     double signedVolume = 0.0;
 
     /// Every edge is shared by exactly two triangles.
-    [[nodiscard]] bool closed() const { return boundaryEdges == 0 && nonManifoldEdges == 0 && triangles > 0; }
+    [[nodiscard]] bool closed() const { return boundaryEdges == 0 && nonManifoldEdges == 0 && shells > 0; }
     [[nodiscard]] bool manifold() const { return nonManifoldEdges == 0; }
     /// Neighbouring triangles agree on winding, and for closed meshes normals point outwards.
     [[nodiscard]] bool oriented() const { return inconsistentEdges == 0 && invertedShells == 0; }

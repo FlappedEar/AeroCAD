@@ -203,3 +203,23 @@ TEST_CASE("Volume of a tiny body far from the origin keeps its sign", "[core][ch
     CHECK(c.watertight());
     CHECK(c.signedVolume == Approx(0.001 / 6.0).epsilon(1e-6));
 }
+
+TEST_CASE("Triangles collapsed to an edge are ignored by the topology", "[core][check]")
+{
+    // A tessellation artefact: a triangle with two corners at the same position on an
+    // existing edge. It must not turn that edge into a non-manifold one.
+    TriangleMesh m = tetrahedron();
+    const auto dup = m.addVertex({0, 0, 0}); // same position as vertex 0
+    m.addTriangle(0, dup, 1);
+    const MeshCheck c = checkMesh(m);
+    CHECK(c.degenerateTriangles == 1);
+    CHECK(c.nonManifoldEdges == 0);
+    CHECK(c.closed());
+    CHECK(c.oriented());
+    CHECK(c.shells == 1);
+    CHECK_FALSE(c.watertight()); // still reported as degenerate
+
+    const TriangleMesh welded = weldVertices(m);
+    CHECK(welded.triangleCount() == 4);
+    CHECK(checkMesh(welded).watertight());
+}

@@ -4,6 +4,7 @@
 //                      parameters, reference frames, variants, view)
 //   meshes/<id>.amesh  imported meshes, lossless (double precision, see MeshCodec)
 //   shapes/<id>.brep   exact geometry of imported parts (Open CASCADE BREP)
+//   selections/<id>.u32  region selection of a part (triangle indices)
 // Bodies and sketches are not stored: they are regenerated from the timeline on load.
 // Units are millimetres, Z up. See docs/project-format.md.
 #pragma once
@@ -20,6 +21,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <cstdint>
 #include <vector>
 
 namespace aerocad::project {
@@ -95,5 +97,9 @@ void writeFileAtomically(const std::filesystem::path& path, std::string_view dat
 [[nodiscard]] std::string encodeMesh(const core::TriangleMesh& mesh);
 /// Throws ProjectError for malformed data.
 [[nodiscard]] core::TriangleMesh decodeMesh(std::string_view data);
+
+/// Region selections (selections/<id>.u32): triangle indices as little-endian uint32.
+[[nodiscard]] std::string encodeIndices(const std::vector<std::uint32_t>& indices);
+[[nodiscard]] std::vector<std::uint32_t> decodeIndices(std::string_view data);
 
 } // namespace aerocad::project

@@ -8,6 +8,7 @@ A project is one file: a zip container (deflate) with
 |---|---|
 | `manifest.json` | Versioned JSON manifest, always the first entry. |
 | `meshes/<part id>.amesh` | Imported meshes, lossless: magic `AEROMESH`, uint32 version 1, uint64 vertex count, uint64 triangle count, vertices as 3 × float64, triangles as 3 × uint32, little-endian. |
+| `selections/<part id>.u32` | Region selection of a part (CAD-13): triangle indices, little-endian uint32. |
 | `shapes/<part id>.brep` | Exact geometry of imported parts (STEP, IGES, BREP) in the Open CASCADE BREP text format. |
 
 Bodies and sketches are **not** stored: they are regenerated from the timeline when the
@@ -25,7 +26,8 @@ Manifest (version 1):
   "units": "mm",
   "upAxis": "Z",
   "parts": [{"id": 1, "kind": "imported", "name": "scan", "source": "/path/scan.stl",
-             "visible": true, "mesh": "meshes/1.amesh", "brep": "shapes/1.brep"}],
+             "visible": true, "mesh": "meshes/1.amesh", "brep": "shapes/1.brep",
+             "selection": "selections/1.u32"}],
   "timelineParts": [{"feature": 2, "kind": "body", "id": 3, "name": "Wing", "visible": true}],
   "design": {"features": [...], "parameters": [...], "frames": [...], "nextId": 4, "marker": 3},
   "variants": {"active": 1, "previous": 2,

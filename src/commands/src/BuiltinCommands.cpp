@@ -212,6 +212,7 @@ void registerBuiltinCommands(CommandRegistry& registry)
     registerEditCommands(registry);
     registerSelectionCommands(registry);
     registerExportCommands(registry);
+    registerSurfaceCommands(registry);
 }
 
 } // namespace aerocad::commands

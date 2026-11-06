@@ -94,6 +94,7 @@ TEST_CASE("Project data round-trips through the file format", "[project]")
     part.visible = false;
     part.mesh = std::make_shared<const core::TriangleMesh>(tetra());
     part.shape = geometry::makeBox(10, 20, 30);
+    part.selection = std::make_shared<const core::TriangleSet>(core::TriangleSet{1, 3});
     data.parts.push_back(part);
     data.timelineParts.push_back({3, model::PartKind::Body, 9, "Wing", true});
     data.design.features.push_back({3, "box", "Box1", {{"corner", {0, 0, 0}}, {"size", {"w", 1, 1}}}, false});
@@ -116,6 +117,8 @@ TEST_CASE("Project data round-trips through the file format", "[project]")
     CHECK(back.parts[0].source == "/tmp/scan.stl");
     CHECK_FALSE(back.parts[0].visible);
     CHECK(back.parts[0].mesh->vertices() == part.mesh->vertices());
+    REQUIRE(back.parts[0].selection);
+    CHECK(*back.parts[0].selection == core::TriangleSet{1, 3});
     REQUIRE(back.parts[0].shape.has_value());
     CHECK(back.parts[0].shape->volume() == Approx(6000));
     REQUIRE(back.timelineParts.size() == 1);

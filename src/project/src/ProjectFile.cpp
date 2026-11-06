@@ -150,6 +150,11 @@ std::string encodeProject(const ProjectData& data)
             blobs.emplace_back(entry, encodeMesh(*p.mesh));
             j["mesh"] = entry;
         }
+        if (p.selection && !p.selection->empty()) {
+            const std::string entry = "selections/" + std::to_string(p.id) + ".u32";
+            blobs.emplace_back(entry, encodeIndices(*p.selection));
+            j["selection"] = entry;
+        }
         if (p.shape && !p.shape->isNull()) {
             const std::string entry = "shapes/" + std::to_string(p.id) + ".brep";
             blobs.emplace_back(entry, geometry::toBrep(*p.shape));
@@ -255,6 +260,15 @@ ProjectData decodeImpl(std::string_view bytes)
             p.mesh = std::make_shared<const core::TriangleMesh>(geometry::tessellate(*p.shape));
         } else {
             throw ProjectError("Part " + p.name + " has neither a mesh nor a B-rep");
+        }
+        if (j.contains("selection")) {
+            auto selection = std::make_shared<core::TriangleSet>(
+                decodeIndices(zip.read(field<std::string>(j, "selection", "part " + p.name))));
+            for (const auto t : *selection) {
+                if (t >= p.mesh->triangleCount())
+                    throw ProjectError("Part " + p.name + ": selection refers to a missing triangle");
+            }
+            p.selection = std::move(selection);
         }
         data.parts.push_back(std::move(p));
     }

@@ -104,4 +104,25 @@ core::TriangleMesh decodeMesh(std::string_view data)
     return core::TriangleMesh(std::move(vertices), std::move(triangles));
 }
 
+std::string encodeIndices(const std::vector<std::uint32_t>& indices)
+{
+    std::string out;
+    out.reserve(indices.size() * 4);
+    for (const auto i : indices)
+        put(out, i);
+    return out;
+}
+
+std::vector<std::uint32_t> decodeIndices(std::string_view data)
+{
+    if (data.size() % 4 != 0)
+        throw ProjectError("Truncated index data");
+    std::vector<std::uint32_t> out;
+    out.reserve(data.size() / 4);
+    std::size_t pos = 0;
+    while (pos < data.size())
+        out.push_back(get<std::uint32_t>(data, pos));
+    return out;
+}
+
 } // namespace aerocad::project

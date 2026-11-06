@@ -8,6 +8,8 @@ add_library(aerocad_geometry STATIC
     src/Transform.cpp
     src/Sketch.cpp
     src/Modeling.cpp
+    src/SurfaceFit.cpp
+    src/Offset.cpp
 )
 add_library(AeroCAD::geometry ALIAS aerocad_geometry)
 target_include_directories(aerocad_geometry PUBLIC include PRIVATE occt/include)

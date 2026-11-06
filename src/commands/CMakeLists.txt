@@ -10,6 +10,7 @@ add_library(aerocad_commands STATIC
     src/ExportCommands.cpp
     src/DesignCommands.cpp
     src/ProjectCommands.cpp
+    src/SurfaceCommands.cpp
     src/Session.cpp
 )
 add_library(AeroCAD::commands ALIAS aerocad_commands)
