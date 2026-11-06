@@ -9,6 +9,27 @@ Everything goes through the `simulation.*` commands, so the UI, scripts and an A
 (MCP tools `simulation_run`, `simulation_status`, `simulation_compare`, ...) use the same
 code (module `src/cfd`, commands in `src/commands/src/SimulationCommands.cpp`).
 
+## In the app
+
+Toolbar **SIMULATE > CFD** (or menu Simulate > Wind Tunnel) opens the wind tunnel
+panel in place of Properties:
+
+- **Run**: the engine status (green = ready), settings for a new run of the part
+  selected in the browser (speed, flow direction, mesh, moving floor, other visible
+  parts as surroundings, label) and **Run CFD**. Below, all runs with state, progress,
+  Cd and drag; Cancel / delete; click a run to make it **A**, press **B** on another to
+  compare.
+- **Results**: progress while it runs, then drag/lift/side force in N, Cd/Cl/Cs,
+  pressure vs friction drag, the conditions, the quality status and warnings, and charts
+  of the coefficients, forces and residuals per iteration (updated live). **Show in 3D**:
+  pressure on the part (Cp, blue = suction, red = stagnation), horizontal and vertical
+  velocity sections and streamlines (speed), each with its colour legend. The part
+  itself is hidden while its pressure map is shown.
+- **A/B**: verdict, drag/lift/side of A and B with the difference in N and %, differing
+  conditions and notes; *Show B in 3D* shows B's fields on the same colour scales as A.
+
+Runs continue when the panel or the app is closed.
+
 ## Engine: OpenFOAM v2506 in Docker
 
 One OpenFOAM version is supported: **OpenFOAM v2506** (openfoam.com / OpenCFD). Cases

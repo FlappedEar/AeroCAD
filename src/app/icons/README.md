@@ -36,5 +36,5 @@ From [Tabler Icons](https://github.com/tabler/tabler-icons) 3.19.0, MIT licence 
 
 sketch, extrude, revolve, hole, fillet, chamfer, shell, combine, mesh-to-body, mesh, body,
 slot, arc, dimension, sweep, loft, mirror, pattern, circular-pattern, plane, section,
-deviation, thickness, clearance, tool, and the sketch constraints horizontal, vertical,
+deviation, thickness, clearance, tool, wind-tunnel, and the sketch constraints horizontal, vertical,
 coincident, tangent, equal, parallel, perpendicular, concentric, midpoint, collinear, fix.

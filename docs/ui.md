@@ -172,6 +172,11 @@ See [cad.md](cad.md) for the timeline and the commands behind the tools.
 - Command scripts: `AeroCAD --run script.json` runs a JSON array of `{name, params}`
   commands at start-up, the same calls an AI agent makes through MCP.
 
+## Wind tunnel (CFD)
+
+Toolbar group SIMULATE, button **CFD**: opens the wind tunnel panel (no shortcut; Fusion
+has no CFD command to borrow one from). Details in [cfd.md](cfd.md#in-the-app).
+
 ## Guided workflow
 
 The window tells the user what the selected part is and what to do with it next, so

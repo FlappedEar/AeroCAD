@@ -18,6 +18,8 @@ set(AEROCAD_APP_SOURCES
     LineGeometry.hpp
     GridGeometry.cpp
     GridGeometry.hpp
+    FieldGeometry.cpp
+    FieldGeometry.hpp
     JsonBridge.cpp
     JsonBridge.hpp
     Preferences.cpp
@@ -69,6 +71,8 @@ qt_add_qml_module(aerocad
         qml/PreferencesDialog.qml
         qml/ShortcutsDialog.qml
         qml/ScanPanel.qml
+        qml/SimulationPanel.qml
+        qml/LineChart.qml
     RESOURCES
         ${AEROCAD_ICONS}
 )
