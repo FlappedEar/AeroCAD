@@ -1,0 +1,49 @@
+# Working with scans
+
+3D scans arrive as big triangle meshes (often millions of triangles) in an unknown unit
+and an arbitrary orientation, with holes and flipped or duplicated faces. These commands
+make them usable as a reference for modelling. All of them are undoable and, like every
+command, available to scripts and to an AI agent over MCP (`commands.list`).
+
+## Units and scale
+
+| Command | What it does |
+| --- | --- |
+| `document.import {"path", "units"}` | `units`: `um`, `mm` (default), `cm`, `m`, `in`, `ft`. STL and OBJ carry no unit; the file is scaled to millimetres on import. |
+| `part.convert_units {"id", "from", "to"}` | Fix a part imported in the wrong unit: `from: "m"` scales by 1000 (about the world origin). `to` defaults to `mm`. |
+| `part.calibrate {"id", "a", "b", "distance", "units"}` | Scale so that the distance between two points (picked on the model) equals a known dimension. Point `a` stays fixed. Returns the applied `factor`. |
+
+## Orientation
+
+| Command | What it does |
+| --- | --- |
+| `part.align {"id", "points" \| "triangles" \| "normal"+"origin", "target", "origin", "xDirection", "flip", "keepPosition"}` | Fit a plane to 3+ picked points or to a triangle region (e.g. a selection), turn it onto a world plane (`xy` default: normal to +Z; `xz`: +Y; `yz`: +X) and move its origin to the world origin. `xDirection` fixes the in-plane rotation. Returns the 4x4 `transform` and the fit `fitRms`. |
+| `part.transform {"id", "axis", "angle", "center", "translate"}` | Rigid move/rotation (degrees, right-hand rule; rotation first). |
+| `part.place {"id", "onFloor"}` | Centre the bounding box on the origin in X/Y and rest it on Z = 0 (or centre it in Z). |
+
+To put a picked face of a scan on the floor, align with that face's triangles and
+`flip: true`: its outward normal then points down and the object stands on the XY plane.
+
+## Repair
+
+| Command | What it does |
+| --- | --- |
+| `mesh.stats {"id"}` | Triangles, holes (boundary loops), boundary / non-manifold / inconsistent (flipped) edges, duplicate and degenerate triangles, unused vertices, shells, area, bounds. |
+| `mesh.repair {"id", "mergeDistance", "removeDegenerate", "removeDuplicates", "fixOrientation", "maxHoleEdges"}` | Merge (close) vertices, drop degenerate and duplicate triangles, make the winding consistent (closed shells face outwards), fill holes up to `maxHoleEdges` edges, drop unused vertices. Returns the counts and the stats afterwards. |
+| `mesh.flip_normals {"id"}` | Reverse every triangle. |
+| `mesh.decimate {"id", "targetTriangles"}` | Permanently reduce the mesh (vertex clustering). Usually not needed, see below. |
+
+Repair, flip and decimate refuse parts with exact CAD geometry (STEP/IGES/BREP) and
+timeline bodies; they are meant for meshes.
+
+Holes are filled with a fan around the loop centroid, which suits the small, roughly
+planar holes typical of scans. Large holes (scanner shadows) are better closed by
+modelling over them.
+
+## Performance (5.1 M triangles, Release build, one core)
+
+| Operation | Time |
+| --- | --- |
+| `decimateToTarget` to 1 M triangles | 0.7 s |
+| `meshStats` | 1.4 s |
+| `repairMesh` (all steps) | 3.0 s |

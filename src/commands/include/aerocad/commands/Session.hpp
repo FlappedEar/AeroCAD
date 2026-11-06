@@ -3,6 +3,7 @@
 
 #include "aerocad/commands/CommandRegistry.hpp"
 #include "aerocad/commands/Project.hpp"
+#include "aerocad/commands/ImportStage.hpp"
 
 #include <optional>
 
@@ -16,6 +17,8 @@ void registerDesignCommands(CommandRegistry& registry);
 
 /// Registers the project commands (project.* save / open / new, variant.* A/B variants).
 void registerProjectCommands(CommandRegistry& registry);
+/// Registers the scan commands (mesh.*, part.align, part.calibrate, part.transform, ...).
+void registerScanCommands(CommandRegistry& registry);
 
 /// One open project with its command registry: the single entry point used by the UI
 /// and (later) the MCP server.
@@ -47,6 +50,8 @@ public:
     [[nodiscard]] const ProjectState& project() const { return m_project; }
     [[nodiscard]] CommandRegistry& registry() { return m_registry; }
     [[nodiscard]] const CommandRegistry& registry() const { return m_registry; }
+    /// Files parsed ahead of time for document.import (see ImportStage).
+    [[nodiscard]] ImportStage& importStage() { return m_importStage; }
 
 private:
     model::Document m_document;
@@ -54,6 +59,7 @@ private:
     cad::Design m_design;
     ProjectState m_project;
     CommandRegistry m_registry;
+    ImportStage m_importStage;
     CommandContext m_context;
     /// History before the first preview; set while a preview change is applied.
     std::optional<model::UndoStack::Snapshot> m_previewBase;

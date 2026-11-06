@@ -4,6 +4,10 @@ add_library(aerocad_core STATIC
     src/Mesh.cpp
     src/MeshSelection.cpp
     src/MeshCheck.cpp
+    src/Align.cpp
+    src/MeshRepair.cpp
+    src/MeshSimplify.cpp
+    src/Units.cpp
 )
 add_library(AeroCAD::core ALIAS aerocad_core)
 target_include_directories(aerocad_core PUBLIC include)
