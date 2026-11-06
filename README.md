@@ -1,18 +1,23 @@
 # AeroCAD
 
-Natywna aplikacja CAD (Windows 11 x64, macOS Apple Silicon) do projektowania części
-na bazie dowolnego modelu 3D:
+A native CAD application (Windows 11 x64, macOS Apple Silicon) for designing parts on
+top of an arbitrary 3D model:
 
-1. Wczytujesz plik 3D (STL, OBJ, 3MF, STEP, ...).
-2. Oglądasz model: obrót, przesuwanie, przybliżanie.
-3. Zaznaczasz obszar na modelu, a aplikacja tworzy na nim powierzchnię bazową.
-4. Projektujesz na niej narzędziami CAD (szkic, wyciągnięcie, shell, fillet, boolean, ...).
-5. Eksportujesz wynik do STEP, STL lub 3MF.
-6. Osobno uruchamiasz symulację CFD i dostajesz wykresy.
-7. Agent AI (przez MCP) może wykonywać te same operacje co użytkownik.
+1. Load any 3D file (STL, OBJ, 3MF, STEP, IGES, BREP).
+2. Inspect the model: orbit, pan, zoom.
+3. Select a region on the model; the application builds a base surface on it.
+4. Design on that surface with CAD tools (sketch, extrude, shell, fillet, boolean, ...).
+5. Export the result to STEP, STL or 3MF.
+6. Run a CFD simulation separately and get charts.
+7. An AI agent (over MCP) can run the same operations as the user.
 
-Status: wczesny szkielet (etap 0.1, epik CAD-1 „Fundament”).
+Status: early skeleton (milestone 0.1, epic CAD-1 "Foundation").
 
-Stos: C++20, Qt 6 (Qt Quick, Qt Quick 3D), Open CASCADE Technology, CMake.
+## Stack
 
-Licencja: GPL-3.0-or-later (plik [LICENSE](LICENSE)).
+C++20, Qt 6 (Qt Quick, Qt Quick 3D), Open CASCADE Technology, CMake.
+See [docs/architecture.md](docs/architecture.md) and [docs/building.md](docs/building.md).
+
+## License
+
+GPL-3.0-or-later, see [LICENSE](LICENSE).

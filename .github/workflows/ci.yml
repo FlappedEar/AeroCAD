@@ -1,0 +1,145 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  QT_VERSION: "6.8.3"
+  # Must match "builtin-baseline" in vcpkg.json.
+  VCPKG_COMMIT: "9eec002df1cd109f8f104cd966a763daf9751489"
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows 11 x64 (MSVC)
+            os: windows-2025
+            preset: vcpkg-windows
+            triplet: x64-windows-static-md-release
+            qt_arch: win64_msvc2022_64
+          - name: macOS Apple Silicon
+            os: macos-15
+            preset: vcpkg-macos
+            triplet: arm64-osx-release
+            qt_arch: clang_64
+
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}/../vcpkg
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/../vcpkg-cache
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          arch: ${{ matrix.qt_arch }}
+          modules: qtquick3d qtshadertools
+          cache: true
+
+      - name: Set up MSVC environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install Ninja (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      - name: Check out vcpkg
+        shell: bash
+        run: |
+          git clone --filter=tree:0 https://github.com/microsoft/vcpkg.git "$VCPKG_ROOT"
+          git -C "$VCPKG_ROOT" checkout "$VCPKG_COMMIT"
+          mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
+          if [ "$RUNNER_OS" = "Windows" ]; then "$VCPKG_ROOT/bootstrap-vcpkg.bat" -disableMetrics; else "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics; fi
+
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-${{ matrix.triplet }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'cmake/triplets/**') }}
+          restore-keys: vcpkg-${{ matrix.triplet }}-${{ env.VCPKG_COMMIT }}-
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }} -DAEROCAD_WARNINGS_AS_ERRORS=ON
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }} --parallel
+
+      - name: Unit tests
+        run: ctest --test-dir build/${{ matrix.preset }} --output-on-failure -LE gui
+
+      - name: Application smoke test (import + render a frame)
+        run: ctest --test-dir build/${{ matrix.preset }} --output-on-failure -L gui
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          mkdir -p dist/AeroCAD
+          cp build/${{ matrix.preset }}/bin/AeroCAD.exe dist/AeroCAD/
+          windeployqt --release --qmldir src/app/qml --no-translations dist/AeroCAD/AeroCAD.exe
+          cp LICENSE dist/AeroCAD/
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p dist
+          cp -R build/${{ matrix.preset }}/bin/AeroCAD.app dist/
+          macdeployqt dist/AeroCAD.app -qmldir=src/app/qml -dmg
+          ls -la dist
+
+      - name: Upload application
+        uses: actions/upload-artifact@v4
+        with:
+          name: AeroCAD-${{ runner.os }}-${{ runner.arch }}
+          path: |
+            dist/AeroCAD
+            dist/*.dmg
+          if-no-files-found: error
+          retention-days: 14
+
+  linux:
+    # Fast check with distribution packages (Qt 6.4, OCCT 7.6) on every push.
+    # Not a release target; keeps the code portable across Qt/OCCT versions.
+    name: Linux (Ubuntu 24.04, system packages)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build xvfb \
+            qt6-base-dev qt6-declarative-dev qt6-quick3d-dev qt6-shadertools-dev libxkbcommon-dev \
+            qml6-module-qtquick qml6-module-quick3d qml6-module-qtquick-controls \
+            qml6-module-qtquick-layouts qml6-module-qtquick-window qml6-module-qtquick-dialogs \
+            qml6-module-qtquick-templates qml6-module-qtqml-workerscript qml6-module-qtcore \
+            libocct-data-exchange-dev libocct-modeling-algorithms-dev libocct-foundation-dev \
+            libocct-modeling-data-dev libocct-ocaf-dev libtbb-dev \
+            nlohmann-json3-dev libpugixml-dev catch2 libgl1-mesa-dri
+      - name: Configure
+        run: cmake --preset release -DAEROCAD_WARNINGS_AS_ERRORS=ON
+      - name: Build
+        run: cmake --build --preset release --parallel
+      - name: Unit tests
+        run: ctest --test-dir build/release --output-on-failure -LE gui
+      - name: Application smoke test
+        run: xvfb-run -a ctest --test-dir build/release --output-on-failure -L gui

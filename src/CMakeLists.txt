@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+add_subdirectory(core)
+add_subdirectory(geometry)
+add_subdirectory(io)
+add_subdirectory(model)
+add_subdirectory(commands)
+if(AEROCAD_BUILD_APP)
+    add_subdirectory(app)
+endif()
