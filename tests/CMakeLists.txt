@@ -30,8 +30,13 @@ aerocad_add_test(test_model
 
 aerocad_add_test(test_commands
     SOURCES commands/test_commands.cpp commands/test_export_commands.cpp commands/test_design_commands.cpp
+        commands/test_project_commands.cpp
     LIBS AeroCAD::commands)
 
 aerocad_add_test(test_cad
     SOURCES cad/test_design.cpp cad/test_sketch_solver.cpp
     LIBS AeroCAD::cad)
+
+aerocad_add_test(test_project
+    SOURCES project/test_project_file.cpp
+    LIBS AeroCAD::project miniz::miniz)

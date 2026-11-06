@@ -2,6 +2,7 @@
 #pragma once
 
 #include "aerocad/commands/CommandRegistry.hpp"
+#include "aerocad/commands/Project.hpp"
 
 namespace aerocad::commands {
 
@@ -10,6 +11,9 @@ void registerBuiltinCommands(CommandRegistry& registry);
 
 /// Registers the CAD commands (sketch.*, feature.*, timeline.*, parameter.*, body.*).
 void registerDesignCommands(CommandRegistry& registry);
+
+/// Registers the project commands (project.* save / open / new, variant.* A/B variants).
+void registerProjectCommands(CommandRegistry& registry);
 
 /// One open project with its command registry: the single entry point used by the UI
 /// and (later) the MCP server.
@@ -27,6 +31,8 @@ public:
     [[nodiscard]] const model::UndoStack& undoStack() const { return m_undoStack; }
     [[nodiscard]] cad::Design& design() { return m_design; }
     [[nodiscard]] const cad::Design& design() const { return m_design; }
+    [[nodiscard]] ProjectState& project() { return m_project; }
+    [[nodiscard]] const ProjectState& project() const { return m_project; }
     [[nodiscard]] CommandRegistry& registry() { return m_registry; }
     [[nodiscard]] const CommandRegistry& registry() const { return m_registry; }
 
@@ -34,6 +40,7 @@ private:
     model::Document m_document;
     model::UndoStack m_undoStack;
     cad::Design m_design;
+    ProjectState m_project;
     CommandRegistry m_registry;
     CommandContext m_context;
 };

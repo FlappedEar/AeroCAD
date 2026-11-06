@@ -154,7 +154,8 @@ Json planeSchema()
     return Json{{"type", Json::array({"string", "object"})},
                 {"description",
                  "Sketch plane: \"XY\" (top, normal +Z), \"XZ\" (front, normal -Y), \"YZ\" (right, normal +X), "
-                 "or {origin: [x,y,z], normal: [x,y,z], xDir: [x,y,z]}. Z is up."}};
+                 "the name of a reference frame (frame.list), or {origin: [x,y,z], normal: [x,y,z], "
+                 "xDir: [x,y,z]}. Z is up."}};
 }
 
 Json faceRefSchema()
@@ -911,6 +912,85 @@ void registerBodyCommands(CommandRegistry& r)
           });
 }
 
+Json frameToJson(const cad::ReferenceFrame& f)
+{
+    const auto v = [](const core::Vec3& p) { return Json::array({p.x, p.y, p.z}); };
+    return Json{{"name", f.name},
+                {"origin", v(f.origin)},
+                {"normal", v(f.normal)},
+                {"xDir", v(f.xDir)},
+                {"yDir", v(f.normal.cross(f.xDir))},
+                {"comment", f.comment}};
+}
+
+Json framesToJson(const cad::Design& d)
+{
+    Json out = Json::array();
+    for (const auto& f : d.frames())
+        out.push_back(frameToJson(f));
+    return Json{{"frames", out}};
+}
+
+core::Vec3 vecParam(const Json& params, const char* key, core::Vec3 fallback)
+{
+    if (!params.contains(key))
+        return fallback;
+    const Json& a = params.at(key);
+    return {a[0].get<double>(), a[1].get<double>(), a[2].get<double>()};
+}
+
+void registerFrameCommands(CommandRegistry& r)
+{
+    const Json vec3 = {{"type", "array"}, {"items", {{"type", "number"}}}, {"minItems", 3}, {"maxItems", 3}};
+    auto withDescription = [](Json schema, const std::string& text) {
+        schema["description"] = text;
+        return schema;
+    };
+    r.add({"frame.set", "Set Reference Frame",
+           "Creates or replaces a named reference frame (work plane): origin, normal (Z axis) and xDir (X axis, "
+           "made orthogonal to the normal), mm. Use the name as sketch.create plane to sketch on it. Changing a "
+           "frame regenerates the sketches that use it. Frames belong to the design (undoable, per variant).",
+           objectSchema({{"name",
+                          {{"type", "string"}, {"minLength", 1}, {"description", "Frame name (not XY / XZ / YZ)."}}},
+                         {"origin", withDescription(vec3, "[x, y, z] in mm, default [0, 0, 0].")},
+                         {"normal", withDescription(vec3, "Z axis / plane normal, default [0, 0, 1].")},
+                         {"xDir", withDescription(vec3, "X axis, default [1, 0, 0].")},
+                         {"comment", {{"type", "string"}}}},
+                        {"name"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              cad::ReferenceFrame f;
+              f.name = params.at("name").get<std::string>();
+              if (const cad::ReferenceFrame* old = design(ctx).frame(f.name))
+                  f = *old;
+              f.origin = vecParam(params, "origin", f.origin);
+              f.normal = vecParam(params, "normal", f.normal);
+              f.xDir = vecParam(params, "xDir", f.xDir);
+              f.comment = params.value("comment", f.comment);
+              designChange(ctx, "Set Frame " + f.name, [&](cad::Design& d) {
+                  d.setFrame(f);
+                  return Json{};
+              });
+              return frameToJson(*design(ctx).frame(f.name));
+          });
+
+    r.add({"frame.remove", "Remove Reference Frame",
+           "Removes a reference frame. Sketches placed on it then report errors.",
+           objectSchema({{"name", {{"type", "string"}, {"minLength", 1}}}}, {"name"}), true},
+          [](CommandContext& ctx, const Json& params) {
+              const auto name = params.at("name").get<std::string>();
+              designChange(ctx, "Remove Frame " + name, [&](cad::Design& d) {
+                  d.removeFrame(name);
+                  return Json{};
+              });
+              return framesToJson(design(ctx));
+          });
+
+    r.add({"frame.list", "Reference frames", "Lists the reference frames (work planes) of the design.",
+           objectSchema(Json::object())},
+          [](CommandContext& ctx, const Json&) { return framesToJson(design(ctx)); });
+}
+
 } // namespace
 
 void registerDesignCommands(CommandRegistry& registry)
@@ -919,6 +999,7 @@ void registerDesignCommands(CommandRegistry& registry)
     registerFeatureCommands(registry);
     registerTimelineCommands(registry);
     registerBodyCommands(registry);
+    registerFrameCommands(registry);
 }
 
 } // namespace aerocad::commands

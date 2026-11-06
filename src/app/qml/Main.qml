@@ -29,7 +29,15 @@ ApplicationWindow {
     width: 1400
     height: 860
     visible: true
-    title: qsTr("AeroCAD %1").arg(controller.version)
+    title: (controller.projectDirty ? "*" : "") + controller.projectName
+           + (controller.variants.length > 1 ? " [" + controller.activeVariantName + "]" : "")
+           + " — " + qsTr("AeroCAD %1").arg(controller.version)
+
+    /// Set once the user agreed to close (saved or discarded changes).
+    property bool closeConfirmed: false
+    /// Runs after the unsaved-changes question was answered with Save (and saving worked)
+    /// or Discard.
+    property var afterUnsavedCheck: null
 
     function selectPart(id) {
         selectedPartId = id
@@ -170,6 +178,105 @@ ApplicationWindow {
         properties.SplitView.preferredWidth = 280
     }
 
+    // --- Project files ----------------------------------------------------------------------
+
+    /// Runs `fn` now, or after asking to save unsaved changes.
+    function withUnsavedCheck(fn) {
+        if (!controller.projectDirty) {
+            fn()
+            return
+        }
+        afterUnsavedCheck = fn
+        unsavedDialog.open()
+    }
+
+    function saveProject(then) {
+        if (controller.saveProject(viewport.cameraState())) {
+            if (then)
+                then()
+            return
+        }
+        if (!controller.projectPath) {
+            saveAsDialog.then = then || null
+            saveAsDialog.open()
+        }
+    }
+
+    /// Called by main() once the window is up (not in smoke tests).
+    function offerRecovery() {
+        const files = controller.autosaveFiles()
+        if (files.length === 0)
+            return
+        recoveryDialog.file = files[0]
+        recoveryDialog.open()
+    }
+
+    onClosing: close => {
+        if (closeConfirmed || !controller.projectDirty) {
+            controller.discardAutosaves(true)
+            return
+        }
+        close.accepted = false
+        withUnsavedCheck(() => {
+            controller.discardAutosaves(true)
+            closeConfirmed = true
+            window.close()
+        })
+    }
+
+    MessageDialog {
+        id: unsavedDialog
+        title: qsTr("Unsaved changes")
+        text: qsTr("Save changes to %1?").arg(window.controller.projectName)
+        informativeText: qsTr("Your changes will be lost if you don't save them.")
+        buttons: MessageDialog.Save | MessageDialog.Discard | MessageDialog.Cancel
+        onButtonClicked: (button, role) => {
+            const next = window.afterUnsavedCheck
+            window.afterUnsavedCheck = null
+            if (button === MessageDialog.Save)
+                window.saveProject(next)
+            else if (button === MessageDialog.Discard && next)
+                next()
+        }
+    }
+
+    MessageDialog {
+        id: recoveryDialog
+        property string file
+        title: qsTr("Recover unsaved changes")
+        text: qsTr("AeroCAD did not close properly. Recover the unsaved changes?")
+        informativeText: file
+        buttons: MessageDialog.Yes | MessageDialog.No
+        onButtonClicked: (button, role) => {
+            if (button === MessageDialog.Yes)
+                window.controller.recoverAutosave(file)
+            else
+                window.controller.discardAutosaves(false)
+        }
+    }
+
+    FileDialog {
+        id: openDialog
+        title: qsTr("Open")
+        nameFilters: window.controller.openNameFilters
+        onAccepted: window.withUnsavedCheck(() => window.controller.openFile(selectedFile))
+    }
+
+    FileDialog {
+        id: saveAsDialog
+        property var then: null
+        title: qsTr("Save As")
+        fileMode: FileDialog.SaveFile
+        defaultSuffix: "aerocad"
+        nameFilters: [qsTr("AeroCAD projects (*.aerocad)")]
+        onAccepted: {
+            if (window.controller.saveProjectAs(selectedFile, viewport.cameraState()) && then)
+                then()
+            then = null
+        }
+        onRejected: then = null
+    }
+
     FileDialog {
         id: importDialog
         title: qsTr("Import 3D file")
@@ -180,10 +287,66 @@ ApplicationWindow {
     // --- Actions (shared by the menu bar and the toolbar) -------------------------------
 
     Action {
+        id: newAction
+        text: qsTr("&New Design")
+        shortcut: StandardKey.New // Fusion: Ctrl+N / Cmd+N
+        onTriggered: window.withUnsavedCheck(() => window.controller.newProject())
+    }
+    Action {
+        id: openAction
+        text: qsTr("&Open...")
+        // Fusion: Ctrl+O / Cmd+O. Opens projects and, like Fusion's Open, also 3D files.
+        shortcut: StandardKey.Open
+        onTriggered: openDialog.open()
+    }
+    Action {
+        id: saveAction
+        text: qsTr("&Save")
+        shortcut: StandardKey.Save // Fusion: Ctrl+S / Cmd+S
+        onTriggered: window.saveProject()
+    }
+    Action {
+        id: saveAsAction
+        text: qsTr("Save &As...")
+        // No shortcut: Fusion uses Ctrl+Shift+S for Recovery Save.
+        onTriggered: saveAsDialog.open()
+    }
+    Action {
+        id: recoverySaveAction
+        text: qsTr("Recovery Sa&ve")
+        shortcut: "Ctrl+Shift+S" // Fusion: Recovery Save, Ctrl+Shift+S / Cmd+Shift+S
+        onTriggered: {
+            if (!window.controller.autosaveNow())
+                window.controller.setStatus(qsTr("Nothing to recover: no unsaved changes"))
+        }
+    }
+    Action {
         id: importAction
         text: qsTr("&Import...")
-        shortcut: StandardKey.Open // Fusion: Ctrl+O / Cmd+O
         onTriggered: importDialog.open()
+    }
+
+    // Variants (A/B comparison). Fusion has no shortcuts for these.
+    Action {
+        id: duplicateVariantAction
+        text: qsTr("&Duplicate as New Variant")
+        onTriggered: window.controller.execute("variant.create")
+    }
+    Action {
+        id: toggleVariantAction
+        text: qsTr("&Toggle A/B")
+        enabled: window.controller.variants.length > 1
+        onTriggered: window.controller.execute("variant.toggle")
+    }
+    Action {
+        id: deleteVariantAction
+        text: qsTr("Delete &Other Variant...")
+        enabled: window.controller.variants.length > 1
+        onTriggered: {
+            const other = window.controller.variants.find(v => !v.active)
+            if (other)
+                window.controller.execute("variant.delete", { variant: other.id })
+        }
     }
     Action {
         id: undoAction
@@ -289,6 +452,29 @@ ApplicationWindow {
     menuBar: MenuBar {
         Menu {
             title: qsTr("&File")
+            MenuItem { action: newAction }
+            MenuItem { action: openAction }
+            Menu {
+                id: recentMenu
+                title: qsTr("Open &Recent")
+                enabled: window.controller.recentProjects.length > 0
+                Instantiator {
+                    model: window.controller.recentProjects
+                    delegate: MenuItem {
+                        required property string modelData
+                        text: modelData
+                        onTriggered: window.withUnsavedCheck(() => window.controller.openPath(modelData))
+                    }
+                    onObjectAdded: (index, object) => recentMenu.insertItem(index, object)
+                    onObjectRemoved: (index, object) => recentMenu.removeItem(object)
+                }
+                MenuSeparator {}
+                Action { text: qsTr("Clear List"); onTriggered: window.controller.clearRecentProjects() }
+            }
+            MenuItem { action: saveAction }
+            MenuItem { action: saveAsAction }
+            MenuItem { action: recoverySaveAction }
+            MenuSeparator {}
             MenuItem { action: importAction }
             MenuItem { action: convertAction }
             MenuSeparator {}
@@ -325,6 +511,10 @@ ApplicationWindow {
             MenuItem { action: combineAction }
             MenuSeparator {}
             MenuItem { action: parametersAction }
+            MenuSeparator {}
+            MenuItem { action: duplicateVariantAction }
+            MenuItem { action: toggleVariantAction }
+            MenuItem { action: deleteVariantAction }
         }
         Menu {
             title: qsTr("&Sketch")
@@ -474,6 +664,23 @@ ApplicationWindow {
             }
             ToolSeparator {}
             ToolGroup {
+                caption: qsTr("VARIANT")
+                ComboBox {
+                    id: variantBox
+                    implicitWidth: 90
+                    model: window.controller.variants
+                    textRole: "name"
+                    currentIndex: window.controller.variants.findIndex(v => v.active)
+                    onActivated: index => window.controller.execute("variant.activate",
+                                                                    { variant: window.controller.variants[index].id })
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Active design variant")
+                }
+                ToolCommand { action: toggleVariantAction; text: qsTr("A/B") }
+                ToolCommand { action: duplicateVariantAction; text: qsTr("New") }
+            }
+            ToolSeparator {}
+            ToolGroup {
                 caption: qsTr("VIEW")
                 ToolCommand { action: fitAction; text: qsTr("Fit") }
                 ToolCommand { action: homeAction; text: qsTr("Home") }
@@ -606,6 +813,11 @@ ApplicationWindow {
     Connections {
         target: window.controller
         function onScriptFinished() { viewport.fitAll() }
+        function onProjectOpened(view) {
+            window.selectPart(0)
+            window.finishSketch()
+            viewport.restoreCameraState(view)
+        }
         function onPartImported(id) {
             window.selectPart(id)
             viewport.fitAll()

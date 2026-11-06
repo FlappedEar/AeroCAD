@@ -2,12 +2,17 @@
 #include "aerocad/geometry/OcctShape.hpp"
 
 #include <BRepBndLib.hxx>
+#include <BRepTools.hxx>
+#include <BRep_Builder.hxx>
+#include <Standard_Failure.hxx>
 #include <BRepGProp.hxx>
 #include <Bnd_Box.hxx>
 #include <GProp_GProps.hxx>
 #include <TopAbs_ShapeEnum.hxx>
 #include <TopExp_Explorer.hxx>
 
+#include <sstream>
+#include <string>
 #include <utility>
 
 namespace aerocad::geometry {
@@ -69,6 +74,30 @@ double Shape::volume() const
         total += props.Mass();
     }
     return total;
+}
+
+std::string toBrep(const Shape& shape)
+{
+    if (shape.isNull())
+        return {};
+    std::ostringstream out;
+    BRepTools::Write(shape.impl()->shape, out);
+    return out.str();
+}
+
+Shape fromBrep(std::string_view data)
+{
+    if (data.empty())
+        return Shape{};
+    std::istringstream in{std::string(data)};
+    TopoDS_Shape shape;
+    BRep_Builder builder;
+    try {
+        BRepTools::Read(shape, in, builder);
+    } catch (const Standard_Failure&) {
+        return Shape{};
+    }
+    return wrapShape(shape);
 }
 
 } // namespace aerocad::geometry

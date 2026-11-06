@@ -1,0 +1,257 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#include "aerocad/commands/Session.hpp"
+#include "aerocad/core/Path.hpp"
+#include "aerocad/geometry/Primitives.hpp"
+
+#include <catch2/catch_approx.hpp>
+#include <catch2/catch_test_macros.hpp>
+
+#include <filesystem>
+#include <fstream>
+#include <random>
+
+using namespace aerocad;
+using Catch::Approx;
+using commands::Json;
+namespace fs = std::filesystem;
+
+namespace {
+
+Json run(commands::Session& s, const std::string& name, const Json& params = Json::object())
+{
+    const auto r = s.execute(name, params);
+    INFO(name << " " << params.dump() << " -> " << r.error);
+    REQUIRE(r.ok);
+    return r.data;
+}
+
+class TempDir {
+public:
+    TempDir()
+    {
+        std::random_device rd;
+        m_path = fs::temp_directory_path() / ("aerocad_projcmd_" + std::to_string(rd()));
+        fs::create_directories(m_path);
+    }
+    ~TempDir()
+    {
+        std::error_code ec;
+        fs::remove_all(m_path, ec);
+    }
+    TempDir(const TempDir&) = delete;
+    TempDir& operator=(const TempDir&) = delete;
+    [[nodiscard]] std::string file(const std::string& name) const { return core::pathToUtf8(m_path / name); }
+
+private:
+    fs::path m_path;
+};
+
+const model::Part* bodyPart(const commands::Session& s, std::uint64_t featureId)
+{
+    for (const auto& p : s.document().parts())
+        if (p.kind == model::PartKind::Body && p.featureId == featureId)
+            return &p;
+    return nullptr;
+}
+
+/// Width parameter, a sketch and an extrude: a 2w x w x 10 block.
+std::uint64_t buildBlock(commands::Session& s)
+{
+    run(s, "parameter.set", {{"name", "w"}, {"expression", "20 mm"}});
+    const Json sk =
+        run(s, "sketch.create",
+            {{"plane", "XY"},
+             {"curves",
+              Json::array({{{"type", "center_rectangle"}, {"center", {0, 0}}, {"width", "2 * w"}, {"height", "w"}}})}});
+    const Json ex = run(s, "feature.extrude", {{"sketch", sk.at("id")}, {"distance", 10}});
+    return ex.at("id").get<std::uint64_t>();
+}
+
+} // namespace
+
+TEST_CASE("Project save and open restore parts, timeline, parameters and frames", "[commands][project]")
+{
+    TempDir dir;
+    commands::Session s;
+    CHECK_FALSE(run(s, "project.info").at("dirty").get<bool>());
+
+    const std::string stl = std::string(AEROCAD_TEST_DATA_DIR) + "/tetrahedron.stl";
+    const auto meshId = run(s, "document.import", {{"path", stl}, {"name", "Scan"}}).at("id").get<std::uint64_t>();
+    run(s, "part.scale", {{"id", meshId}, {"factor", 2}});
+    const auto bodyFeature = buildBlock(s);
+    const auto bodyPartId = bodyPart(s, bodyFeature)->id;
+    run(s, "part.rename", {{"id", bodyPartId}, {"name", "Wing"}});
+    run(s, "frame.set", {{"name", "Datum"}, {"origin", {0, 0, 10}}});
+    run(s, "sketch.create",
+        {{"plane", "Datum"}, {"curves", Json::array({{{"type", "circle"}, {"center", {0, 0}}, {"radius", 3}}})}});
+    CHECK(run(s, "project.info").at("dirty").get<bool>());
+
+    // No path yet.
+    CHECK_FALSE(s.execute("project.save").ok);
+
+    const std::string file = dir.file("wing"); // extension is appended
+    const Json saved = run(s, "project.save", {{"path", file}, {"view", {{"pitch", -12.5}}}});
+    CHECK(saved.at("savedTo").get<std::string>().ends_with("wing.aerocad"));
+    CHECK_FALSE(saved.at("dirty").get<bool>());
+    CHECK(fs::exists(core::pathFromUtf8(file + ".aerocad")));
+
+    const auto meshBefore = s.document().part(meshId)->mesh->vertices();
+    const double volumeBefore = s.design().bodies().at(bodyFeature).shape.volume();
+
+    commands::Session t;
+    const Json opened = run(t, "project.open", {{"path", file + ".aerocad"}});
+    CHECK_FALSE(opened.at("dirty").get<bool>());
+    CHECK(opened.at("view").at("pitch").get<double>() == Approx(-12.5));
+    CHECK(opened.at("featureErrors").empty());
+    REQUIRE(t.document().part(meshId) != nullptr);
+    CHECK(t.document().part(meshId)->name == "Scan");
+    CHECK(t.document().part(meshId)->mesh->vertices() == meshBefore);
+    REQUIRE(bodyPart(t, bodyFeature) != nullptr);
+    CHECK(bodyPart(t, bodyFeature)->id == bodyPartId);
+    CHECK(bodyPart(t, bodyFeature)->name == "Wing");
+    CHECK(t.design().bodies().at(bodyFeature).shape.volume() == Approx(volumeBefore));
+    CHECK(t.design().frame("Datum") != nullptr);
+    CHECK_FALSE(t.undoStack().canUndo());
+
+    // Reopened projects stay editable: change the parameter, the body follows.
+    run(t, "parameter.set", {{"name", "w"}, {"expression", "10 mm"}});
+    CHECK(t.design().bodies().at(bodyFeature).shape.volume() == Approx(2000));
+    CHECK(run(t, "project.info").at("dirty").get<bool>());
+    run(t, "project.save");
+    CHECK_FALSE(run(t, "project.info").at("dirty").get<bool>());
+
+    commands::Session u;
+    run(u, "project.open", {{"path", file + ".aerocad"}});
+    CHECK(u.design().bodies().at(bodyFeature).shape.volume() == Approx(2000));
+
+    // A failing open leaves the current project untouched.
+    CHECK_FALSE(u.execute("project.open", {{"path", dir.file("missing.aerocad")}}).ok);
+    CHECK(u.design().bodies().at(bodyFeature).shape.volume() == Approx(2000));
+
+    run(u, "project.new");
+    CHECK(u.document().partCount() == 0);
+    CHECK(u.design().features().empty());
+    CHECK(run(u, "project.info").at("path").get<std::string>().empty());
+}
+
+TEST_CASE("Imported B-rep parts keep their exact geometry", "[commands][project]")
+{
+    TempDir dir;
+    const std::string brep = dir.file("box.brep");
+    {
+        std::ofstream out(core::pathFromUtf8(brep), std::ios::binary);
+        out << geometry::toBrep(geometry::makeBox(10, 10, 10));
+    }
+    commands::Session s;
+    const auto id = run(s, "document.import", {{"path", brep}}).at("id").get<std::uint64_t>();
+    run(s, "project.save", {{"path", dir.file("b.aerocad")}});
+    commands::Session t;
+    run(t, "project.open", {{"path", dir.file("b.aerocad")}});
+    REQUIRE(t.document().part(id)->shape.has_value());
+    CHECK(t.document().part(id)->shape->volume() == Approx(1000));
+}
+
+TEST_CASE("Autosave copies keep the path; recovery reopens as unsaved", "[commands][project]")
+{
+    TempDir dir;
+    commands::Session s;
+    buildBlock(s);
+    run(s, "project.save", {{"path", dir.file("main.aerocad")}});
+    run(s, "parameter.set", {{"name", "w"}, {"expression", "30"}});
+    const Json copy = run(s, "project.save", {{"path", dir.file("autosave.aerocad")}, {"copy", true}});
+    CHECK(copy.at("copy").get<bool>());
+    CHECK(copy.at("dirty").get<bool>());
+    CHECK(copy.at("path").get<std::string>().ends_with("main.aerocad"));
+
+    commands::Session t;
+    const Json recovered = run(t, "project.open", {{"path", dir.file("autosave.aerocad")}, {"recover", true}});
+    CHECK(recovered.at("dirty").get<bool>());
+    CHECK(recovered.at("recovered").get<bool>());
+    CHECK(recovered.at("path").get<std::string>().ends_with("main.aerocad"));
+    CHECK(t.design().parameterValue("w").value() == Approx(30));
+    run(t, "project.save"); // writes the original file
+    CHECK_FALSE(run(t, "project.info").at("dirty").get<bool>());
+    commands::Session u;
+    run(u, "project.open", {{"path", dir.file("main.aerocad")}});
+    CHECK(u.design().parameterValue("w").value() == Approx(30));
+}
+
+TEST_CASE("Variants: duplicate as B, change a parameter, toggle A/B, undo", "[commands][project][variants]")
+{
+    commands::Session s;
+    const auto bodyFeature = buildBlock(s);
+    const auto partId = bodyPart(s, bodyFeature)->id;
+    CHECK(s.design().bodies().at(bodyFeature).shape.volume() == Approx(8000));
+
+    const Json created = run(s, "variant.create");
+    CHECK(created.at("variants").size() == 2);
+    CHECK(created.at("variants")[1].at("name") == "B");
+    CHECK(created.at("active") == created.at("created"));
+    run(s, "parameter.set", {{"name", "w"}, {"expression", "10 mm"}});
+    CHECK(s.design().bodies().at(bodyFeature).shape.volume() == Approx(2000));
+
+    const Json diff = run(s, "variant.compare");
+    REQUIRE(diff.at("parameters").size() == 1);
+    CHECK(diff.at("parameters")[0].at("a") == "20 mm");
+    CHECK(diff.at("parameters")[0].at("b") == "10 mm");
+    CHECK(diff.at("features").empty());
+
+    run(s, "variant.toggle"); // back to A
+    CHECK(s.design().bodies().at(bodyFeature).shape.volume() == Approx(8000));
+    CHECK(bodyPart(s, bodyFeature)->id == partId); // same part, updated in place
+    run(s, "variant.toggle");                      // B again
+    CHECK(s.design().bodies().at(bodyFeature).shape.volume() == Approx(2000));
+    run(s, "variant.activate", {{"variant", "A"}});
+    CHECK(s.design().bodies().at(bodyFeature).shape.volume() == Approx(8000));
+
+    // Undo walks back through the switches and the edit in B.
+    run(s, "edit.undo"); // activate A
+    CHECK(s.design().bodies().at(bodyFeature).shape.volume() == Approx(2000));
+    run(s, "edit.undo"); // toggle to B
+    run(s, "edit.undo"); // toggle to A
+    CHECK(s.design().bodies().at(bodyFeature).shape.volume() == Approx(2000));
+    run(s, "edit.undo"); // parameter in B
+    CHECK(s.design().bodies().at(bodyFeature).shape.volume() == Approx(8000));
+    run(s, "edit.undo"); // create B
+    CHECK(run(s, "variant.list").at("variants").size() == 1);
+    run(s, "edit.redo");
+    CHECK(run(s, "variant.list").at("variants").size() == 2);
+
+    CHECK_FALSE(s.execute("variant.delete", {{"variant", "B"}}).ok); // active
+    run(s, "variant.rename", {{"variant", "B"}, {"name", "Thin"}});
+    run(s, "variant.activate", {{"variant", 1}});
+    run(s, "variant.delete", {{"variant", "Thin"}});
+    CHECK(run(s, "variant.list").at("variants").size() == 1);
+    CHECK_FALSE(s.execute("variant.toggle").ok);
+}
+
+TEST_CASE("Variants are saved with the project", "[commands][project][variants]")
+{
+    TempDir dir;
+    commands::Session s;
+    const auto bodyFeature = buildBlock(s);
+    run(s, "variant.create", {{"name", "Long"}});
+    run(s, "parameter.set", {{"name", "w"}, {"expression", "30 mm"}});
+    run(s, "variant.toggle");
+    run(s, "project.save", {{"path", dir.file("v.aerocad")}});
+
+    commands::Session t;
+    const Json opened = run(t, "project.open", {{"path", dir.file("v.aerocad")}});
+    CHECK(opened.at("variants") == 2);
+    CHECK(opened.at("activeVariant").at("name") == "A");
+    CHECK(t.design().bodies().at(bodyFeature).shape.volume() == Approx(8000));
+    run(t, "variant.toggle");
+    CHECK(t.design().bodies().at(bodyFeature).shape.volume() == Approx(18000));
+}
+
+TEST_CASE("Imported parts can be duplicated", "[commands][project]")
+{
+    commands::Session s;
+    const std::string stl = std::string(AEROCAD_TEST_DATA_DIR) + "/tetrahedron.stl";
+    const auto id = run(s, "document.import", {{"path", stl}}).at("id").get<std::uint64_t>();
+    const Json copy = run(s, "part.duplicate", {{"id", id}, {"name", "B"}});
+    CHECK(copy.at("name") == "B");
+    CHECK(s.document().partCount() == 2);
+    run(s, "edit.undo");
+    CHECK(s.document().partCount() == 1);
+}

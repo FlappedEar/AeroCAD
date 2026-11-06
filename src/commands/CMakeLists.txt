@@ -8,11 +8,12 @@ add_library(aerocad_commands STATIC
     src/BuiltinCommands.cpp
     src/ExportCommands.cpp
     src/DesignCommands.cpp
+    src/ProjectCommands.cpp
     src/Session.cpp
 )
 add_library(AeroCAD::commands ALIAS aerocad_commands)
 target_include_directories(aerocad_commands PUBLIC include PRIVATE src)
 target_link_libraries(aerocad_commands
     PUBLIC AeroCAD::model AeroCAD::cad nlohmann_json::nlohmann_json
-    PRIVATE AeroCAD::io)
+    PRIVATE AeroCAD::io AeroCAD::project)
 aerocad_set_warnings(aerocad_commands)
