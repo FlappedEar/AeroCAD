@@ -2,7 +2,9 @@
 
 ```
 app (Qt Quick, QML)          UI: viewport, panels, menus. Calls commands only.
-  |
+  |                           Also hosts the MCP access (local socket, operation log).
+  |      mcp                  aerocad-mcp: MCP server over stdio for AI agents, maps
+  |       |                   commands to tools, forwards calls to the app over IPC.
 commands                      Named commands with JSON Schema parameters and JSON
   |                           results, undo/redo. Shared by the UI and (later) the MCP
   |                           server, so an AI agent can do everything the user can.
@@ -15,6 +17,11 @@ core -------+                 transforms, primitives).
 ```
 
 ## Key decisions
+
+- **AI agent over MCP**, see [mcp.md](mcp.md). The agent is an external MCP client (e.g.
+  Claude); there is no chat in the app. `aerocad-mcp` (stdio) builds its tool list from
+  its own copy of the command registry and forwards calls to the running app over a
+  user-only local socket, where they run on the UI thread like UI actions.
 
 - **One language, C++20.** Open CASCADE is the B-rep kernel; Qt 6 with Qt Quick 3D is the UI.
 - **Command layer first.** Every user-visible operation is a command such as

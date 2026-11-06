@@ -70,14 +70,19 @@ QString AppController::version() const
 
 QVariantMap AppController::execute(const QString& name, const QVariantMap& params)
 {
-    const commands::CommandResult result = m_session.execute(name.toStdString(), toJson(params));
-    const auto* info = m_session.registry().info(name.toStdString());
+    return toVariant(executeCommand(name.toStdString(), toJson(params)).toJson()).toMap();
+}
+
+commands::CommandResult AppController::executeCommand(const std::string& name, const commands::Json& params)
+{
+    const commands::CommandResult result = m_session.execute(name, params);
+    const auto* info = m_session.registry().info(name);
     if (info != nullptr && info->modifiesDocument)
         emit historyChanged();
 
     if (!result.ok)
         setStatusMessage(QString::fromStdString(result.error));
-    return toVariant(result.toJson()).toMap();
+    return result;
 }
 
 bool AppController::importFile(const QUrl& url)

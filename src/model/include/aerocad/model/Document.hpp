@@ -3,6 +3,7 @@
 
 #include "aerocad/model/Part.hpp"
 
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <vector>
@@ -40,6 +41,10 @@ public:
     /// Bounding box of all visible parts.
     [[nodiscard]] core::BoundingBox bounds() const;
 
+    /// Document revision: incremented after every change (add, remove, modify). Lets
+    /// clients such as an AI agent detect that the document changed since they read it.
+    [[nodiscard]] std::uint64_t revision() const { return m_revision; }
+
     ObserverId addObserver(Observer observer);
     void removeObserver(ObserverId id);
 
@@ -53,6 +58,7 @@ private:
     PartId m_nextId = 1;
     std::vector<std::pair<ObserverId, Observer>> m_observers;
     ObserverId m_nextObserverId = 1;
+    std::uint64_t m_revision = 0;
 };
 
 } // namespace aerocad::model

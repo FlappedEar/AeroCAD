@@ -113,6 +113,9 @@ int main(int argc, char* argv[])
                                   QStringLiteral("With --smoke-test: save the rendered window to <png>."),
                                   QStringLiteral("png"));
     parser.addOption(screenshot);
+    QCommandLineOption mcp(QStringLiteral("mcp"),
+                           QStringLiteral("Allow AI agents (MCP clients such as Claude) to use the project."));
+    parser.addOption(mcp);
     parser.addPositionalArgument(QStringLiteral("files"), QStringLiteral("3D files to open."), QStringLiteral("[files...]"));
     parser.process(app);
 
@@ -129,6 +132,11 @@ int main(int argc, char* argv[])
 
     if (parser.isSet(smokeTest))
         return runSmokeTest(app, engine, controller, parser.value(smokeTest), parser.value(screenshot));
+
+    if (parser.isSet(mcp))
+        controller.mcp()->setEnabled(true);
+    else
+        controller.mcp()->restoreFromSettings();
 
     for (const QString& file : parser.positionalArguments())
         controller.importFile(QUrl::fromLocalFile(file));

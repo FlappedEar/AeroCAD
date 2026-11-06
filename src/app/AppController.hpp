@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "McpAccess.hpp"
 #include "PartListModel.hpp"
 
 #include "aerocad/commands/Session.hpp"
@@ -21,6 +22,7 @@ class AppController : public QObject {
     QML_ELEMENT
     QML_UNCREATABLE("Created by main()")
     Q_PROPERTY(aerocad::app::PartListModel* parts READ parts CONSTANT)
+    Q_PROPERTY(aerocad::app::McpAccess* mcp READ mcp CONSTANT)
     Q_PROPERTY(QVector3D sceneCenter READ sceneCenter NOTIFY boundsChanged)
     Q_PROPERTY(double sceneRadius READ sceneRadius NOTIFY boundsChanged)
     Q_PROPERTY(bool canUndo READ canUndo NOTIFY historyChanged)
@@ -35,6 +37,8 @@ public:
     explicit AppController(QObject* parent = nullptr);
 
     [[nodiscard]] PartListModel* parts() { return &m_parts; }
+    /// AI agent (MCP) access to this project.
+    [[nodiscard]] McpAccess* mcp() { return &m_mcp; }
     /// Centre of all visible parts in scene coordinates (Y-up), see Viewport.qml.
     [[nodiscard]] QVector3D sceneCenter() const;
     /// Radius of the bounding sphere of all visible parts (mm); 0 when empty.
@@ -49,6 +53,9 @@ public:
 
     /// Runs a command. Returns {ok: bool, result: object} or {ok: false, error: string}.
     Q_INVOKABLE QVariantMap execute(const QString& name, const QVariantMap& params = {});
+    /// Same as execute() for C++ callers such as the MCP access (AI agent): JSON in and out,
+    /// with the same UI notifications (history, status, framing of imported parts).
+    commands::CommandResult executeCommand(const std::string& name, const commands::Json& params);
     /// Convenience wrapper around document.import for file dialogs and drag & drop.
     Q_INVOKABLE bool importFile(const QUrl& url);
     /// Part details for the properties panel ({} for unknown ids).
@@ -72,6 +79,7 @@ private:
     commands::Session m_session;
     PartListModel m_parts;
     QString m_statusMessage;
+    McpAccess m_mcp{*this};
 };
 
 } // namespace aerocad::app

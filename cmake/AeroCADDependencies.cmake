@@ -89,6 +89,6 @@ endif()
 
 # --- Qt 6 (application only) ---------------------------------------------------
 if(AEROCAD_BUILD_APP)
-    find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Qml Quick Quick3D)
+    find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Network Qml Quick Quick3D)
     message(STATUS "Qt ${Qt6_VERSION}")
 endif()

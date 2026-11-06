@@ -118,6 +118,18 @@ ApplicationWindow {
         }
     }
 
+    Action {
+        id: agentAccessAction
+        text: qsTr("AI &Agent Access...")
+        onTriggered: mcpPanel.open()
+    }
+
+    McpPanel {
+        id: mcpPanel
+        anchors.centerIn: Overlay.overlay
+        access: window.controller.mcp
+    }
+
     // macOS keyboards label Backspace "delete".
     Shortcut {
         enabled: window.isMac && deleteAction.enabled
@@ -143,6 +155,8 @@ ApplicationWindow {
             MenuSeparator {}
             MenuItem { action: visibilityAction }
             MenuItem { action: deleteAction }
+            MenuSeparator {}
+            MenuItem { action: agentAccessAction }
         }
         Menu {
             title: qsTr("&View")
@@ -256,6 +270,15 @@ ApplicationWindow {
                 ToolCommand { action: fitAction; text: qsTr("Fit") }
                 ToolCommand { action: homeAction; text: qsTr("Home") }
                 ToolCommand { action: orthoAction; text: qsTr("Ortho") }
+            }
+            ToolSeparator {}
+            ToolGroup {
+                caption: qsTr("AI")
+                ToolCommand {
+                    action: agentAccessAction
+                    text: window.controller.mcp.clients.length > 0 ? qsTr("Agent \u25CF")
+                          : window.controller.mcp.listening ? qsTr("Agent \u25CB") : qsTr("Agent")
+                }
             }
             Item { Layout.fillWidth: true }
         }

@@ -13,7 +13,7 @@ function(aerocad_add_test name)
 endfunction()
 
 aerocad_add_test(test_core
-    SOURCES core/test_mesh.cpp
+    SOURCES core/test_mesh.cpp core/test_measure.cpp
     LIBS AeroCAD::core)
 
 aerocad_add_test(test_geometry
@@ -31,3 +31,20 @@ aerocad_add_test(test_model
 aerocad_add_test(test_commands
     SOURCES commands/test_commands.cpp
     LIBS AeroCAD::commands)
+
+aerocad_add_test(test_mcp
+    SOURCES mcp/test_mcp_server.cpp
+    LIBS AeroCAD::mcp)
+
+if(AEROCAD_BUILD_APP)
+    aerocad_add_test(test_mcp_ipc
+        SOURCES mcp/test_mcp_ipc.cpp
+        LIBS AeroCAD::mcp_ipc)
+
+    # The real aerocad-mcp executable over stdio, in headless mode (no GUI needed).
+    add_test(NAME mcp_stdio_smoke_test
+        COMMAND ${CMAKE_COMMAND} -DSERVER=$<TARGET_FILE:aerocad_mcp_server>
+                -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/mcp/stdio_session.jsonl
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/mcp/stdio_smoke_test.cmake)
+    set_tests_properties(mcp_stdio_smoke_test PROPERTIES TIMEOUT 60)
+endif()

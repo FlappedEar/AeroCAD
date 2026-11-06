@@ -8,6 +8,10 @@ namespace aerocad::commands {
 /// Registers the built-in commands (document.*, part.*, edit.*, commands.list).
 void registerBuiltinCommands(CommandRegistry& registry);
 
+/// Registers the commands that give an AI agent context (project.get_context,
+/// geometry.measure).
+void registerAgentCommands(CommandRegistry& registry);
+
 /// One open project with its command registry: the single entry point used by the UI
 /// and (later) the MCP server.
 class Session {

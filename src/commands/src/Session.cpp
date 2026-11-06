@@ -6,6 +6,7 @@ namespace aerocad::commands {
 Session::Session() : m_context{m_document, m_undoStack, &m_registry}
 {
     registerBuiltinCommands(m_registry);
+    registerAgentCommands(m_registry);
 }
 
 CommandResult Session::execute(std::string_view name, const Json& params)

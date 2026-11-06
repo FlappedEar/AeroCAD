@@ -12,6 +12,8 @@ set(AEROCAD_APP_SOURCES
     MeshGeometry.hpp
     JsonBridge.cpp
     JsonBridge.hpp
+    McpAccess.cpp
+    McpAccess.hpp
 )
 qt_add_executable(aerocad ${AEROCAD_APP_SOURCES})
 
@@ -27,6 +29,7 @@ qt_add_qml_module(aerocad
         qml/PropertiesPanel.qml
         qml/ViewCube.qml
         qml/NavigationBar.qml
+        qml/McpPanel.qml
 )
 
 set_target_properties(aerocad PROPERTIES
@@ -43,7 +46,17 @@ target_compile_definitions(aerocad PRIVATE AEROCAD_VERSION="${PROJECT_VERSION}")
 target_include_directories(aerocad PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(aerocad PRIVATE
     Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Quick3D
-    AeroCAD::commands AeroCAD::io)
+    AeroCAD::commands AeroCAD::io AeroCAD::mcp_ipc)
+
+# Bundle the MCP server with the application: next to the executable, and inside the
+# macOS app bundle (Contents/MacOS) so the app can show its path to the user.
+add_dependencies(aerocad aerocad_mcp_server)
+if(APPLE)
+    add_custom_command(TARGET aerocad POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:aerocad_mcp_server>
+                $<TARGET_BUNDLE_CONTENT_DIR:aerocad>/MacOS/
+        VERBATIM)
+endif()
 if(MSVC)
     target_compile_options(aerocad PRIVATE /utf-8 /Zc:__cplusplus)
 endif()
