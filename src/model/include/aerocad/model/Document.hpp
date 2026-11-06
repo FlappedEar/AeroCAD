@@ -32,6 +32,8 @@ public:
     [[nodiscard]] std::size_t partCount() const { return m_parts.size(); }
 
     /// Applies a modification to a part, bumps its revision and notifies observers.
+    /// The new revision is always previous + 1, even if `fn` overwrites the part with an
+    /// older snapshot.
     /// Returns false when the id is unknown.
     bool modifyPart(PartId id, const std::function<void(Part&)>& fn);
 

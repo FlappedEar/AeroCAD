@@ -47,9 +47,12 @@ bool Document::modifyPart(PartId id, const std::function<void(Part&)>& fn)
     Part* p = findPart(id);
     if (p == nullptr)
         return false;
+    const std::uint64_t revision = p->revision;
     fn(*p);
     p->id = id; // the id is not modifiable
-    ++p->revision;
+    // Derived from the state before the callback, so restoring an older snapshot
+    // (undo) still yields a new, never seen revision.
+    p->revision = revision + 1;
     notify(Change::Modified, id);
     return true;
 }

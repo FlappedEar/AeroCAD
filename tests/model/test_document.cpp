@@ -83,6 +83,18 @@ TEST_CASE("Document keeps explicit ids when re-adding", "[model]")
     CHECK(doc.addPart(copy) != a);
 }
 
+TEST_CASE("Restoring an older snapshot still bumps the revision", "[model]")
+{
+    Document doc;
+    const auto a = doc.addPart(makePart("a"));
+    const model::Part snapshot = *doc.part(a); // revision 0
+    doc.modifyPart(a, [](model::Part& p) { p.name = "b"; });
+    CHECK(doc.part(a)->revision == 1);
+    doc.modifyPart(a, [&](model::Part& p) { p = snapshot; });
+    CHECK(doc.part(a)->revision == 2);
+    CHECK(doc.part(a)->name == "a");
+}
+
 TEST_CASE("Document bounds skip hidden parts", "[model]")
 {
     Document doc;

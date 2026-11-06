@@ -130,8 +130,10 @@ TEST_CASE("Import, modify, undo and redo through commands", "[commands]")
     CHECK(session.document().part(id)->visible);
     REQUIRE(session.execute("edit.undo").ok);
     CHECK(session.document().part(id)->name != "Fairing");
+    const auto revisionBeforeUndo = session.document().part(id)->revision;
     REQUIRE(session.execute("edit.undo").ok);
     CHECK(session.document().part(id)->mesh->bounds().size().x == Approx(10.0));
+    CHECK(session.document().part(id)->revision > revisionBeforeUndo); // views must refresh
     r = session.execute("edit.undo");
     REQUIRE(r.ok);
     CHECK(r.data.at("undone").get<std::string>().rfind("Import", 0) == 0);
