@@ -66,6 +66,28 @@ Pane {
         }
     }
 
+    // The analysis can change without this panel (recomputed after an edit or undo, cleared
+    // from the menu or by an agent): show the active analysis, not a stale result.
+    Connections {
+        target: root.controller
+        function onInspectChanged() {
+            if (!root.result)
+                return
+            const h = root.controller.inspectInfo().heatMap
+            if (!h.enabled || h.kind !== root.result.kind || h.part !== root.result.part) {
+                root.result = null
+                return
+            }
+            const r = Object.assign({}, root.result)
+            r.stats = { min: h.min, max: h.max, mean: h.mean, rms: h.rms, stddev: h.stddev }
+            if (h.withinTolerance !== undefined)
+                r.withinTolerance = h.withinTolerance
+            else
+                delete r.withinTolerance
+            root.result = r
+        }
+    }
+
     function clear() {
         controller.execute("inspect.clear", { what: "heatmap" })
         result = null

@@ -5,6 +5,8 @@
 #include "JsonBridge.hpp"
 
 #include "aerocad/core/Path.hpp"
+
+#include <cmath>
 #include "aerocad/io/Import.hpp"
 
 #include <QDir>
@@ -87,6 +89,16 @@ QVariantMap AppController::inspectInfo() const
                      {QStringLiteral("mean"), h.stats.mean},
                      {QStringLiteral("rms"), h.stats.rms},
                      {QStringLiteral("stddev"), h.stats.stddev}});
+        if (h.kind == commands::HeatMap::Kind::Deviation && h.params.contains("tolerance") && h.values &&
+            h.stats.count > 0) {
+            const double tol = h.params["tolerance"].get<double>();
+            std::size_t within = 0;
+            for (const double v : *h.values)
+                within += std::isfinite(v) && std::abs(v) <= tol ? 1 : 0;
+            heat.insert(QStringLiteral("tolerance"), tol);
+            heat.insert(QStringLiteral("withinTolerance"),
+                        100.0 * static_cast<double>(within) / static_cast<double>(h.stats.count));
+        }
     }
     return {{QStringLiteral("section"), section}, {QStringLiteral("heatMap"), heat}};
 }
@@ -370,7 +382,29 @@ QVariantMap AppController::pickSurface(const QVector3D& origin, const QVector3D&
     for (const auto& p : m_session.document().parts()) {
         if (!p.visible || !p.mesh)
             continue;
-        const auto hit = core::raycast(*p.mesh, o, d);
+        std::optional<core::RayHit> hit;
+        const commands::SectionAnalysis& section = m_session.inspect().section();
+        if (p.kind != model::PartKind::Sketch && section.cuts(p.id)) {
+            // Section view: only the kept half is drawn, so only it can be picked.
+            const core::Vec3 n = section.plane.normal.normalized();
+            const double s = section.plane.distance(o);
+            const double ds = d.dot(n); // change of the plane distance per unit t
+            if (s > 0.0) {
+                if (ds < 0.0) {
+                    const double t0 = s / -ds; // where the ray enters the kept half
+                    hit = core::raycast(*p.mesh, o + d * t0, d);
+                    if (hit)
+                        hit->distance += t0;
+                }
+            } else {
+                hit = core::raycast(*p.mesh, o, d);
+                if (hit && section.plane.distance(hit->point) > 1e-9) {
+                    hit.reset();
+                }
+            }
+        } else {
+            hit = core::raycast(*p.mesh, o, d);
+        }
         if (hit && (!best || hit->distance < best->distance)) {
             best = hit;
             bestPart = p.id;

@@ -335,7 +335,8 @@ Item {
 
                     // Region selection highlight.
                     Model {
-                        visible: !selectionGeometry.empty
+                        // Hidden in a section view: the highlight is not clipped.
+                        visible: !selectionGeometry.empty && !partModel.sectioned
                         pickable: false
                         geometry: SelectionGeometry {
                             id: selectionGeometry
