@@ -4,7 +4,11 @@ add_library(aerocad_core STATIC
     src/Mesh.cpp
     src/MeshSelection.cpp
     src/MeshCheck.cpp
+    src/MeshQuery.cpp
+    src/MeshSection.cpp
 )
 add_library(AeroCAD::core ALIAS aerocad_core)
 target_include_directories(aerocad_core PUBLIC include)
+find_package(Threads REQUIRED)
+target_link_libraries(aerocad_core PRIVATE Threads::Threads)
 aerocad_set_warnings(aerocad_core)

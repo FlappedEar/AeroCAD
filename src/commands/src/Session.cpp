@@ -3,10 +3,11 @@
 
 namespace aerocad::commands {
 
-Session::Session() : m_context{m_document, m_undoStack, &m_registry, &m_design}
+Session::Session() : m_context{m_document, m_undoStack, &m_registry, &m_design, &m_inspect}
 {
     registerBuiltinCommands(m_registry);
     registerDesignCommands(m_registry);
+    registerInspectCommands(m_registry);
     m_design.setPartLookup([this](model::PartId id) { return m_document.part(id); });
 }
 

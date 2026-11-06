@@ -9,6 +9,7 @@ add_library(aerocad_commands STATIC
     src/SelectionCommands.cpp
     src/ExportCommands.cpp
     src/DesignCommands.cpp
+    src/InspectCommands.cpp
     src/Session.cpp
 )
 add_library(AeroCAD::commands ALIAS aerocad_commands)
