@@ -288,6 +288,63 @@ struct Eval {
     }
 };
 
+/// Finds the edge or face a reference means after earlier features changed the body.
+/// References carry the picked point and, when picked through the UI or commands, the
+/// point relative to the body's bounding box plus the edge direction / face normal and
+/// type. The relative point follows the body when dimensions change (a box grows: the
+/// picked corner edge moves with it); direction and type break ties between neighbours.
+std::optional<std::size_t> matchTopology(const geometry::Shape& shape, const Json& ref, bool edgesWanted,
+                                         const Eval& ev)
+{
+    core::Vec3 point{};
+    const auto box = shape.bounds();
+    const core::Vec3 size = box.size();
+    if (ref.contains("relative")) {
+        const core::Vec3 rel = ev.vec3(ref.at("relative"));
+        point = {box.min.x + rel.x * size.x, box.min.y + rel.y * size.y, box.min.z + rel.z * size.z};
+    } else {
+        point = ev.vec3(ref.at("point"));
+    }
+    const bool hasHints = ref.contains("direction") || ref.contains("normal") || ref.contains("kind");
+    if (!hasHints)
+        return edgesWanted ? geometry::nearestEdge(shape, point) : geometry::nearestFace(shape, point);
+    const double diag = std::max(1e-9, size.length());
+    const std::string kind = ref.value("kind", std::string());
+    std::optional<std::size_t> best;
+    double bestScore = 0.0;
+    auto consider = [&](std::size_t i, double dist, const std::string& type, double alignment) {
+        if (!std::isfinite(dist))
+            return;
+        double score = dist + 0.5 * diag * (1.0 - alignment);
+        if (!kind.empty() && type != kind)
+            score += 0.25 * diag;
+        if (!best || score < bestScore - 1e-9) {
+            best = i;
+            bestScore = score;
+        }
+    };
+    if (edgesWanted) {
+        const auto info = geometry::edges(shape);
+        const auto dist = geometry::edgeDistances(shape, point);
+        const core::Vec3 want = ref.contains("direction") ? ev.vec3(ref.at("direction")).normalized() : core::Vec3{};
+        for (std::size_t i = 0; i < info.size() && i < dist.size(); ++i) {
+            double alignment = 1.0;
+            if (ref.contains("direction") && info[i].type == "line")
+                alignment = std::abs((info[i].end - info[i].start).normalized().dot(want));
+            consider(i, dist[i], info[i].type, alignment);
+        }
+    } else {
+        const auto info = geometry::faces(shape);
+        const auto dist = geometry::faceDistances(shape, point);
+        const core::Vec3 want = ref.contains("normal") ? ev.vec3(ref.at("normal")).normalized() : core::Vec3{};
+        for (std::size_t i = 0; i < info.size() && i < dist.size(); ++i) {
+            const double alignment = ref.contains("normal") ? (info[i].normal.dot(want) + 1.0) / 2.0 : 1.0;
+            consider(i, dist[i], info[i].type, alignment);
+        }
+    }
+    return best;
+}
+
 SketchCurve lineCurve(Vec2 a, Vec2 b, bool construction)
 {
     SketchCurve c{SketchCurve::Kind::Line, {a, b}};
@@ -477,9 +534,8 @@ void Design::evaluateFeature(const Feature& f)
         for (const auto& item : list) {
             if (item.is_number_integer()) {
                 out.push_back(item.get<std::size_t>());
-            } else if (item.is_object() && item.contains("point")) {
-                const auto idx = edgesWanted ? geometry::nearestEdge(shape, ev.vec3(item.at("point")))
-                                             : geometry::nearestFace(shape, ev.vec3(item.at("point")));
+            } else if (item.is_object() && (item.contains("relative") || item.contains("point"))) {
+                const auto idx = matchTopology(shape, item, edgesWanted, ev);
                 if (!idx)
                     throw DesignError("No edge or face near " + item.dump());
                 out.push_back(*idx);
