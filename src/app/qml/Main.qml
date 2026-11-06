@@ -299,6 +299,7 @@ ApplicationWindow {
     Action { id: chamferAction; text: qsTr("C&hamfer"); onTriggered: window.openFeature("chamfer") }
     Action { id: shellAction; text: qsTr("S&hell"); onTriggered: window.openFeature("shell") }
     Action { id: combineAction; text: qsTr("Co&mbine"); onTriggered: window.openFeature("combine") }
+    Action { id: planeAction; text: qsTr("Construction &Plane"); enabled: !window.activeSketch; onTriggered: window.openFeature("plane") }
     Action { id: loftAction; text: qsTr("&Loft"); enabled: !window.activeSketch; onTriggered: window.openFeature("loft") }
     Action { id: sweepAction; text: qsTr("S&weep"); enabled: !window.activeSketch; onTriggered: window.openFeature("sweep") }
     Action { id: mirrorAction; text: qsTr("M&irror"); enabled: !window.activeSketch; onTriggered: window.openFeature("mirror") }
@@ -394,6 +395,10 @@ ApplicationWindow {
                 MenuItem { action: rectPatternAction }
                 MenuItem { action: circPatternAction }
             }
+        }
+        Menu {
+            title: qsTr("C&onstruct")
+            MenuItem { action: planeAction }
         }
         Menu {
             title: qsTr("&Modify")
@@ -543,6 +548,7 @@ ApplicationWindow {
                 ToolCommand { action: loftAction; text: qsTr("Loft") }
                 ToolCommand { action: mirrorAction; text: qsTr("Mirror") }
                 ToolCommand { action: rectPatternAction; text: qsTr("Pattern") }
+                ToolCommand { action: planeAction; text: qsTr("Plane") }
                 ToolCommand { action: boxAction; text: qsTr("Box") }
                 ToolCommand { action: cylinderAction; text: qsTr("Cylinder") }
                 ToolCommand { action: holeAction; text: qsTr("Hole") }
@@ -614,12 +620,15 @@ ApplicationWindow {
             markers: featureDialog.visible ? featureDialog.pickedPoints : []
             pickKind: featureDialog.visible ? featureDialog.pickKind : ""
             shownSketch: featureDialog.shownSketch
+            unpickablePlane: featureDialog.visible ? featureDialog.ownPlane : -1
             onPartPicked: id => window.selectPart(id)
             onPointPicked: (id, point) => {
                 const info = window.controller.partInfo(id)
                 if (window.pickingSketchPlane) {
                     if (info.kind === "body")
                         window.createSketch({ face: { body: info.featureId, point: [point.x, point.y, point.z] } })
+                    else if (info.kind === "plane")
+                        window.createSketch({ plane: { plane: info.featureId } })
                 } else if (featureDialog.visible) {
                     featureDialog.addPick(info, point)
                 }

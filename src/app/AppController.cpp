@@ -192,6 +192,7 @@ QVariantMap AppController::partInfo(quint64 id) const
         {QStringLiteral("hasBrep"), p->shape.has_value()},
         {QStringLiteral("kind"), p->kind == model::PartKind::Body     ? QStringLiteral("body")
                                  : p->kind == model::PartKind::Sketch ? QStringLiteral("sketch")
+                                 : p->kind == model::PartKind::Plane  ? QStringLiteral("plane")
                                                                       : QStringLiteral("imported")},
         {QStringLiteral("featureId"), QVariant::fromValue<qulonglong>(p->featureId)},
         {QStringLiteral("sizeX"), size.x},

@@ -370,3 +370,43 @@ TEST_CASE("Design commands: loft and sweep", "[commands][cad][pattern]")
     const Json sw = run(t, "feature.sweep", {{"sketch", prof.at("id")}, {"path", {{"sketch", path.at("id")}}}});
     CHECK(sw.at("bodies")[0].at("volume").get<double>() == Approx(std::numbers::pi * 4 * 40).epsilon(1e-4));
 }
+
+TEST_CASE("Design commands: construction planes carry sketches", "[commands][cad][plane]")
+{
+    commands::Session s;
+    run(s, "parameter.set", {{"name", "h"}, {"expression", "12"}});
+    const Json pl = run(s, "feature.plane", {{"base", "XY"}, {"offset", "h"}});
+    const auto plId = pl.at("id").get<std::uint64_t>();
+    CHECK(pl.at("plane").at("origin")[2].get<double>() == Approx(12));
+
+    // A sketch on the plane follows it when the parameter changes.
+    const Json sk = run(s, "sketch.create",
+                        {{"plane", {{"plane", plId}}},
+                         {"curves", Json::array({{{"type", "center_rectangle"}, {"center", {0, 0}}, {"width", 10}, {"height", 10}}})}});
+    Json r = run(s, "feature.extrude", {{"sketch", sk.at("id")}, {"distance", 5}});
+    CHECK(r.at("bodies")[0].at("bounds").at("min")[2].get<double>() == Approx(12));
+    run(s, "parameter.set", {{"name", "h"}, {"expression", "20"}});
+    r = run(s, "timeline.list");
+    CHECK(r.at("bodies")[0].at("bounds").at("min")[2].get<double>() == Approx(20));
+
+    // Plane at angle: XY turned 90 degrees about its x axis has a normal along -Y or +Y.
+    r = run(s, "feature.plane", {{"base", "XY"}, {"angle", 90}});
+    CHECK(std::abs(r.at("plane").at("normal")[1].get<double>()) == Approx(1));
+
+    // Midplane between the XY plane and the top face of the body (z = 25).
+    r = run(s, "feature.plane", {{"base", "XY"}, {"base2", {{"body", r.at("bodies")[0].at("id")}, {"point", {0, 0, 25}}}}});
+    CHECK(r.at("plane").at("origin")[2].get<double>() == Approx(12.5));
+
+    // Through three points; collinear points are rejected.
+    r = run(s, "feature.plane", {{"points", Json::array({{0, 0, 0}, {10, 0, 0}, {0, 0, 10}})}});
+    CHECK(std::abs(r.at("plane").at("normal")[1].get<double>()) == Approx(1));
+    const auto bad = s.execute("feature.plane", {{"points", Json::array({{0, 0, 0}, {1, 0, 0}, {2, 0, 0}})}});
+    CHECK_FALSE(bad.ok);
+
+    // The plane is a part of kind "plane" in the document.
+    const Json parts = run(s, "document.parts");
+    bool found = false;
+    for (const auto& p : parts.at("parts"))
+        found = found || p.at("kind") == "plane";
+    CHECK(found);
+}

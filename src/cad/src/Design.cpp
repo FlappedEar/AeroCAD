@@ -8,6 +8,7 @@
 #include "aerocad/geometry/Transform.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <memory>
@@ -77,7 +78,7 @@ const std::vector<std::string>& Design::featureTypes()
 {
     static const std::vector<std::string> types{"sketch", "extrude", "revolve", "fillet", "chamfer",
                                                 "shell",  "combine", "box",     "cylinder", "base_body", "hole",
-                                                "mirror",  "rectangular_pattern", "circular_pattern", "loft", "sweep"};
+                                                "mirror",  "rectangular_pattern", "circular_pattern", "loft", "sweep", "plane"};
     return types;
 }
 
@@ -529,6 +530,62 @@ void Design::evaluateFeature(const Feature& f)
         throw DesignError("No body " + ref.dump() + " at this point of the timeline");
     };
 
+    // A plane given as "XY" / "XZ" / "YZ", {plane: construction plane id or name},
+    // {body, index or point} (a planar face) or {origin, normal, xDir}.
+    auto resolvePlane = [&](const Json& spec) -> Plane {
+        if (spec.is_string()) {
+            const std::string name = lower(spec.get<std::string>());
+            if (name == "xy")
+                return Plane::xy();
+            if (name == "xz")
+                return Plane::xz();
+            if (name == "yz")
+                return Plane::yz();
+            for (const auto& [_, cp] : m_planes) {
+                if (lower(cp.name) == name)
+                    return cp.plane;
+            }
+            throw DesignError("Unknown plane '" + spec.get<std::string>() + "' (XY, XZ, YZ or a construction plane)");
+        }
+        if (!spec.is_object())
+            throw DesignError("Invalid plane " + spec.dump());
+        if (has(spec, "plane")) {
+            const Json& ref = spec.at("plane");
+            if (ref.is_number_integer()) {
+                auto it = m_planes.find(ref.get<FeatureId>());
+                if (it != m_planes.end())
+                    return it->second.plane;
+            } else if (ref.is_string()) {
+                for (const auto& [_, cp] : m_planes) {
+                    if (cp.name == ref.get<std::string>())
+                        return cp.plane;
+                }
+            }
+            throw DesignError("No construction plane " + ref.dump() + " at this point of the timeline");
+        }
+        if (has(spec, "body")) {
+            const Body& fb = bodyRef(spec.at("body"));
+            std::size_t idx = 0;
+            if (has(spec, "index")) {
+                idx = spec.at("index").get<std::size_t>();
+            } else {
+                const auto found = geometry::nearestFace(fb.shape, ev.vec3(required(spec, "point")));
+                if (!found)
+                    throw DesignError("No face found on " + fb.name);
+                idx = *found;
+            }
+            const auto pl = geometry::facePlane(fb.shape, idx);
+            if (!pl)
+                throw DesignError("Face " + std::to_string(idx) + " of " + fb.name + " is not planar");
+            return *pl;
+        }
+        Plane pl;
+        pl.origin = ev.vec3(spec, "origin", {});
+        pl.normal = ev.vec3(spec, "normal", {0, 0, 1});
+        pl.xDir = ev.vec3(spec, "xDir", {1, 0, 0});
+        return pl;
+    };
+
     auto resolveIndices = [&](const geometry::Shape& shape, const Json& list, bool edgesWanted) {
         std::vector<std::size_t> out;
         if (!list.is_array() || list.empty())
@@ -666,40 +723,7 @@ void Design::evaluateFeature(const Feature& f)
         SketchResult sk;
         sk.id = f.id;
         sk.name = f.name;
-        if (has(p, "face")) {
-            const Json& face = p.at("face");
-            const Body& b = bodyRef(required(face, "body"));
-            std::size_t idx = 0;
-            if (has(face, "index")) {
-                idx = face.at("index").get<std::size_t>();
-            } else {
-                const auto found = geometry::nearestFace(b.shape, ev.vec3(required(face, "point")));
-                if (!found)
-                    throw DesignError("No face found on " + b.name);
-                idx = *found;
-            }
-            const auto plane = geometry::facePlane(b.shape, idx);
-            if (!plane)
-                throw DesignError("Face " + std::to_string(idx) + " of " + b.name + " is not planar");
-            sk.plane = *plane;
-        } else {
-            const Json plane = p.value("plane", Json("XY"));
-            if (plane.is_string()) {
-                const std::string name = lower(plane.get<std::string>());
-                if (name == "xy")
-                    sk.plane = Plane::xy();
-                else if (name == "xz")
-                    sk.plane = Plane::xz();
-                else if (name == "yz")
-                    sk.plane = Plane::yz();
-                else
-                    throw DesignError("Unknown plane '" + plane.get<std::string>() + "' (XY, XZ, YZ)");
-            } else {
-                sk.plane.origin = ev.vec3(plane, "origin", {});
-                sk.plane.normal = ev.vec3(plane, "normal", {0, 0, 1});
-                sk.plane.xDir = ev.vec3(plane, "xDir", {1, 0, 0});
-            }
-        }
+        sk.plane = has(p, "face") ? resolvePlane(p.at("face")) : resolvePlane(p.value("plane", Json("XY")));
         sk.plane = sk.plane.normalized();
         sk.plane.origin = sk.plane.origin + sk.plane.normal * ev.num(p, "offset", 0.0);
         std::vector<SketchConstraint> constraints;
@@ -836,39 +860,9 @@ void Design::evaluateFeature(const Feature& f)
         const geometry::Shape original = src.shape;
         std::vector<geometry::Shape> copies;
         if (f.type == "mirror") {
-            core::Vec3 origin{};
-            core::Vec3 normal{1, 0, 0};
-            const Json plane = p.value("plane", Json("YZ"));
-            if (plane.is_string()) {
-                const std::string name = lower(plane.get<std::string>());
-                if (name == "xy")
-                    normal = {0, 0, 1};
-                else if (name == "xz")
-                    normal = {0, 1, 0};
-                else if (name == "yz")
-                    normal = {1, 0, 0};
-                else
-                    throw DesignError("Unknown plane '" + plane.get<std::string>() + "' (XY, XZ, YZ)");
-            } else if (has(plane, "body")) {
-                const Body& fb = bodyRef(plane.at("body"));
-                std::size_t idx = 0;
-                if (has(plane, "index")) {
-                    idx = plane.at("index").get<std::size_t>();
-                } else {
-                    const auto found = geometry::nearestFace(fb.shape, ev.vec3(required(plane, "point")));
-                    if (!found)
-                        throw DesignError("No face found on " + fb.name);
-                    idx = *found;
-                }
-                const auto pl = geometry::facePlane(fb.shape, idx);
-                if (!pl)
-                    throw DesignError("Mirror face is not planar");
-                origin = pl->origin;
-                normal = pl->normal;
-            } else {
-                origin = ev.vec3(plane, "origin", {});
-                normal = ev.vec3(plane, "normal", {1, 0, 0});
-            }
+            const Plane mirrorPlane = resolvePlane(p.value("plane", Json("YZ"))).normalized();
+            core::Vec3 origin = mirrorPlane.origin;
+            const core::Vec3 normal = mirrorPlane.normal;
             origin = origin + normal.normalized() * ev.num(p, "offset", 0.0);
             copies.push_back(geometry::mirrored(original, origin, normal));
         } else {
@@ -1061,6 +1055,62 @@ void Design::evaluateFeature(const Feature& f)
         }
         newBody(shape);
         m_bodies[f.id].name = part->name;
+    } else if (f.type == "plane") {
+        // Fusion: Construct > Offset Plane, Plane at Angle, Midplane, Plane Through Three Points.
+        Plane pl;
+        if (has(p, "points")) {
+            const Json& pts = p.at("points");
+            if (!pts.is_array() || pts.size() != 3)
+                throw DesignError("A plane through points needs exactly 3 points");
+            const core::Vec3 a = ev.vec3(pts[0]);
+            const core::Vec3 b = ev.vec3(pts[1]);
+            const core::Vec3 c = ev.vec3(pts[2]);
+            const core::Vec3 n = (b - a).cross(c - a);
+            if (n.length() < 1e-9 * std::max(1.0, (b - a).length() * (c - a).length()))
+                throw DesignError("The 3 points of the plane lie on one line");
+            pl.origin = a;
+            pl.normal = n;
+            pl.xDir = b - a;
+            pl = pl.normalized();
+        } else {
+            pl = resolvePlane(p.value("base", Json("XY"))).normalized();
+            if (has(p, "base2")) {
+                // Midplane between two parallel planes or faces.
+                const Plane other = resolvePlane(p.at("base2")).normalized();
+                if (std::abs(std::abs(pl.normal.dot(other.normal)) - 1.0) > 1e-6)
+                    throw DesignError("A midplane needs two parallel planes");
+                pl.origin = pl.origin + pl.normal * (pl.normal.dot(other.origin - pl.origin) * 0.5);
+            }
+            const double angle = ev.num(p, "angle", 0.0);
+            if (angle != 0.0) {
+                // Plane at angle: turned about the base plane's x or y axis through its origin.
+                const std::string axis = lower(p.value("axis", std::string("x")));
+                if (axis != "x" && axis != "y")
+                    throw DesignError("Plane axis must be \"x\" or \"y\" (of the base plane)");
+                const core::Vec3 k = axis == "x" ? pl.xDir : pl.yDir();
+                const double t = angle * std::numbers::pi / 180.0;
+                auto rotate = [&](const core::Vec3& v) {
+                    return v * std::cos(t) + k.cross(v) * std::sin(t) + k * (k.dot(v) * (1.0 - std::cos(t)));
+                };
+                pl.normal = rotate(pl.normal);
+                pl.xDir = rotate(pl.xDir);
+                pl = pl.normalized();
+            }
+            pl.origin = pl.origin + pl.normal * ev.num(p, "offset", 0.0);
+        }
+        // Drawn a bit larger than the bodies built so far, like Fusion.
+        core::BoundingBox box;
+        for (const auto& [_, b] : m_bodies) {
+            const core::BoundingBox bb = b.shape.bounds();
+            if (!bb.isEmpty()) {
+                box.extend(bb.min);
+                box.extend(bb.max);
+            }
+        }
+        double size = 25.0;
+        if (!box.isEmpty())
+            size = std::max(size, 0.6 * (box.max - box.min).length());
+        m_planes[f.id] = {f.id, f.name, pl, size};
     } else {
         throw DesignError("Unknown feature type '" + f.type + "'");
     }
@@ -1070,6 +1120,7 @@ void Design::regenerate()
 {
     m_bodies.clear();
     m_sketches.clear();
+    m_planes.clear();
     m_statuses.clear();
     m_bodyCounter = 0;
     for (std::size_t i = 0; i < m_state.features.size(); ++i) {
@@ -1124,6 +1175,24 @@ void Design::syncDocument(model::Document& document)
                       std::make_shared<const core::TriangleMesh>(geometry::tessellate(profiles)),
                       geometry::edgeSegments(s.geometry.curves),
                       s.consumed};
+    }
+    for (const auto& [id, cp] : m_planes) {
+        const geometry::Plane& pl = cp.plane;
+        const double h = cp.size;
+        const core::Vec3 u = pl.xDir * h;
+        const core::Vec3 v = pl.yDir() * h;
+        const std::array<core::Vec3, 4> c{pl.origin - u - v, pl.origin + u - v, pl.origin + u + v, pl.origin - u + v};
+        auto mesh = std::make_shared<core::TriangleMesh>();
+        for (const auto& corner : c)
+            mesh->addVertex(corner);
+        mesh->addTriangle(0, 1, 2);
+        mesh->addTriangle(0, 2, 3);
+        std::vector<core::Vec3> outline;
+        for (std::size_t i = 0; i < 4; ++i) {
+            outline.push_back(c[i]);
+            outline.push_back(c[(i + 1) % 4]);
+        }
+        wanted[id] = {id, model::PartKind::Plane, cp.name, std::nullopt, std::move(mesh), std::move(outline), false};
     }
 
     // Remember user-controlled settings of every timeline part, so a part that disappears

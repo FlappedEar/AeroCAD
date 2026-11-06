@@ -36,7 +36,7 @@ public:
 struct Feature {
     FeatureId id = 0;
     std::string type; ///< sketch, extrude, revolve, fillet, chamfer, shell, combine, box, cylinder,
-                      ///< base_body, mirror, rectangular_pattern, circular_pattern, loft, sweep
+                      ///< base_body, mirror, rectangular_pattern, circular_pattern, loft, sweep, plane
     std::string name; ///< e.g. "Extrude1"
     Json params = Json::object();
     bool suppressed = false;
@@ -75,6 +75,16 @@ struct SketchResult {
     int degreesOfFreedom = 0;
     /// Number of user constraints and dimensions (params "constraints").
     std::size_t constraintCount = 0;
+};
+
+/// Construction plane (Fusion: Construct > Offset Plane, Plane at Angle, Midplane,
+/// Plane Through Three Points). Sketches can be placed on it.
+struct ConstructionPlane {
+    FeatureId id = 0;
+    std::string name;
+    geometry::Plane plane;
+    /// Half the edge length of the square drawn in the view (mm).
+    double size = 25.0;
 };
 
 class Design {
@@ -126,6 +136,7 @@ public:
 
     [[nodiscard]] const std::map<FeatureId, Body>& bodies() const { return m_bodies; }
     [[nodiscard]] const std::map<FeatureId, SketchResult>& sketches() const { return m_sketches; }
+    [[nodiscard]] const std::map<FeatureId, ConstructionPlane>& planes() const { return m_planes; }
     [[nodiscard]] const std::map<FeatureId, FeatureStatus>& statuses() const { return m_statuses; }
     [[nodiscard]] FeatureStatus status(FeatureId id) const;
 
@@ -152,6 +163,7 @@ private:
     State m_state;
     std::map<FeatureId, Body> m_bodies;
     std::map<FeatureId, SketchResult> m_sketches;
+    std::map<FeatureId, ConstructionPlane> m_planes;
     std::map<FeatureId, FeatureStatus> m_statuses;
     /// Body / sketch feature id -> document part id (kept across undo).
     std::map<FeatureId, model::PartId> m_partIds;

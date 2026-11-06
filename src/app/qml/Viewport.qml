@@ -36,6 +36,8 @@ Item {
     property string pickKind: ""
     /// Sketch feature shown even when hidden (the sketch a feature dialog works on).
     property var shownSketch: -1
+    /// Construction plane that clicks pass through (the one a dialog is creating).
+    property var unpickablePlane: -1
     property var sketchCurves: []
     property var sketchConstraints: []
     property int sketchDegreesOfFreedom: -1
@@ -289,17 +291,19 @@ Item {
                     readonly property bool selected: partId === root.selectedPartId
 
                     visible: partVisible || (kind === "sketch" && featureId == root.shownSketch)
-                    pickable: root.pickKind === "" || kind === root.pickKind
+                    pickable: (root.pickKind === "" || kind === root.pickKind)
+                              && !(kind === "plane" && featureId == root.unpickablePlane)
                     geometry: MeshGeometry {
                         controller: root.controller
                         partId: partModel.partId
                     }
-                    // Fusion-like colours: grey bodies, translucent orange sketch profiles.
+                    // Fusion-like colours: grey bodies, translucent orange sketch profiles and planes.
                     materials: PrincipledMaterial {
-                        baseColor: partModel.selected ? "#7fb2ff"
+                        baseColor: partModel.selected ? (partModel.kind === "plane" ? Qt.rgba(0.5, 0.7, 1.0, 0.3) : "#7fb2ff")
                                  : partModel.kind === "sketch" ? Qt.rgba(1.0, 0.78, 0.45, 0.45)
+                                 : partModel.kind === "plane" ? Qt.rgba(0.95, 0.62, 0.25, 0.22)
                                  : partModel.kind === "body" ? "#b8bec6" : "#c8ccd2"
-                        alphaMode: partModel.kind === "sketch" ? PrincipledMaterial.Blend : PrincipledMaterial.Default
+                        alphaMode: partModel.kind === "sketch" || partModel.kind === "plane" ? PrincipledMaterial.Blend : PrincipledMaterial.Default
                         metalness: 0.0
                         roughness: 0.55
                         cullMode: Material.NoCulling
@@ -334,7 +338,8 @@ Item {
                         }
                         materials: PrincipledMaterial {
                             lighting: PrincipledMaterial.NoLighting
-                            baseColor: partModel.kind === "sketch" ? "#1f5fbf" : "#262a30"
+                            baseColor: partModel.kind === "sketch" ? "#1f5fbf"
+                                     : partModel.kind === "plane" ? "#c77a2a" : "#262a30"
                         }
                     }
                 }

@@ -20,6 +20,7 @@ enum class PartKind {
     Imported, ///< Reference model loaded from a file (mesh and/or B-rep).
     Body,     ///< Solid produced by the design timeline (CAD features).
     Sketch,   ///< Sketch of the design timeline (curves and profiles).
+    Plane,    ///< Construction plane of the design timeline (drawn as a square).
 };
 
 /// A body in the project: an imported reference model or (later) a designed part.

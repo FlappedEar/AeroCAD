@@ -110,6 +110,9 @@ See [cad.md](cad.md) for the timeline and the commands behind the tools.
   Pattern) work the same way. Loft takes sketches ticked in the order the shape passes
   through them; Sweep moves the profiles of one sketch along all curves of a path sketch.
   Mirror and patterns copy a body and join the copies to it by default.
+- **Construct > Construction Plane** (toolbar: Plane) makes an offset or angled plane from
+  an origin plane, another construction plane or a clicked planar face. Planes are drawn as
+  translucent orange squares; Create Sketch accepts a click on a plane.
 - **Timeline** (bottom): features in order; double-click to edit (sketches reopen in the
   sketch environment), right-click for Rename, Suppress, Roll Back To Here and Delete; the
   playback buttons move the marker. Failed features are red with the reason in the tooltip.

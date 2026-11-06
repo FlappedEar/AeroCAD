@@ -154,6 +154,7 @@ Json planeSchema()
     return Json{{"type", Json::array({"string", "object"})},
                 {"description",
                  "Sketch plane: \"XY\" (top, normal +Z), \"XZ\" (front, normal -Y), \"YZ\" (right, normal +X), "
+                 "a construction plane {plane: id or name} (feature.plane), "
                  "or {origin: [x,y,z], normal: [x,y,z], xDir: [x,y,z]}. Z is up."}};
 }
 
@@ -330,6 +331,10 @@ Json addedFeature(cad::Design& d, const model::Document& doc, cad::FeatureId id)
     if (auto it = d.sketches().find(id); it != d.sketches().end()) {
         j["profiles"] = it->second.geometry.profiles.size();
         j["degreesOfFreedom"] = it->second.degreesOfFreedom;
+    }
+    if (auto it = d.planes().find(id); it != d.planes().end()) {
+        const auto& pl = it->second.plane;
+        j["plane"] = {{"origin", vec(pl.origin)}, {"normal", vec(pl.normal)}, {"xDir", vec(pl.xDir)}};
     }
     return j;
 }
@@ -794,6 +799,25 @@ void registerFeatureCommands(CommandRegistry& r)
                 {"operation", operationSchema()},
                 {"bodies", bodiesSchema()}}),
         {"sketch", "path"});
+
+    {
+        const Json basePlane{{"type", Json::array({"string", "object"})},
+                             {"description", "\"XY\", \"XZ\", \"YZ\", a construction plane {plane: id or name}, "
+                                             "a planar face {body, point or index}, or {origin, normal, xDir}."}};
+        addFeatureCommand(
+            r, "plane", "Construction Plane",
+            "Creates a construction plane that sketches can be placed on (sketch.create plane {plane: id}). Fusion: "
+            "Construct > Offset Plane (base + offset), Plane at Angle (base + angle about its x or y axis), Midplane "
+            "(base + base2, parallel) and Plane Through Three Points (points).",
+            {{"base", basePlane},
+             {"offset", numberOrExpr("Offset along the plane normal (mm), applied after the angle.")},
+             {"angle", numberOrExpr("Rotation in degrees about the base plane's axis through its origin.")},
+             {"axis", {{"type", "string"}, {"enum", {"x", "y"}}, {"description", "Axis of the base plane for angle (default x)."}}},
+             {"base2", basePlane},
+             {"points", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", point3("Point.")},
+                         {"description", "Three points the plane passes through (instead of base)."}}}},
+            Json::array());
+    }
 
     addFeatureCommand(r, "fillet", "Fillet", "Rounds edges of a body with a constant radius (Fusion: Fillet, shortcut F).",
                       {{"body", bodyRefSchema("Body.")},

@@ -59,6 +59,7 @@ Pane {
                         Label {
                             text: row.kind === "body" ? qsTr("Body (timeline)")
                                 : row.kind === "sketch" ? qsTr("Sketch (timeline)")
+                                : row.kind === "plane" ? qsTr("Construction plane")
                                 : qsTr("%1 triangles").arg(Number(row.triangles).toLocaleString(Qt.locale(), "f", 0))
                             opacity: 0.6
                             font.pointSize: 9

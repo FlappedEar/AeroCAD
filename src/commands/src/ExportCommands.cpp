@@ -66,7 +66,8 @@ io::FileFormat parseFormat(const Json& params, const std::filesystem::path& path
     return detected;
 }
 
-/// Parts to export: the listed ids (in the given order, duplicates ignored) or all visible parts.
+/// Parts to export: the listed ids (in the given order, duplicates ignored) or all visible
+/// bodies and imported parts.
 std::vector<const model::Part*> selectParts(const model::Document& doc, const Json& params)
 {
     std::vector<const model::Part*> parts;
@@ -78,8 +79,9 @@ std::vector<const model::Part*> selectParts(const model::Document& doc, const Js
                 parts.push_back(&findPart(doc, partId));
         }
     } else {
+        // Sketch profiles and construction planes are helpers, not geometry to export.
         for (const auto& p : doc.parts()) {
-            if (p.visible)
+            if (p.visible && p.kind != model::PartKind::Sketch && p.kind != model::PartKind::Plane)
                 parts.push_back(&p);
         }
         if (parts.empty())
@@ -125,7 +127,7 @@ void registerExport(CommandRegistry& r)
                  {{"type", "array"},
                   {"items", {{"type", "integer"}, {"minimum", 1}}},
                   {"minItems", 1},
-                  {"description", "Parts to export; defaults to all visible parts."}}},
+                  {"description", "Parts to export; defaults to all visible bodies and imported parts (not sketches or construction planes)."}}},
                 {"requireValid",
                  {{"type", "boolean"},
                   {"description", "Fail instead of warning when a mesh is not watertight (STL/3MF). Default false."}}}},

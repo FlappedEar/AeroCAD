@@ -115,6 +115,13 @@ Pane {
             { key: "points", type: "profilePicks", label: qsTr("Profiles"), hint: qsTr("All profiles (click inside profiles to pick)") },
             { key: "path", type: "pathSketch", label: qsTr("Path sketch") },
             { key: "operation", type: "choice", label: qsTr("Operation"), init: "new_body", options: operations }] },
+        plane: { title: qsTr("Construction Plane"), command: "feature.plane", fields: [
+            { key: "base", type: "planePick", label: qsTr("Base plane"), init: "XY", hint: qsTr("Origin plane, construction plane, or click a planar face") },
+            { key: "offset", type: "expr", label: qsTr("Offset"), init: 10 },
+            { key: "angle", type: "expr", label: qsTr("Angle (deg)"), init: 0 },
+            { key: "axis", type: "choice", label: qsTr("Rotation axis"), init: "x", options: [
+                { value: "x", label: qsTr("Plane X axis") }, { value: "y", label: qsTr("Plane Y axis") }],
+              showIf: v => Number(v.angle) !== 0 }] },
         mirror: { title: qsTr("Mirror"), command: "feature.mirror", fields: [
             { key: "body", type: "body", label: qsTr("Body") },
             { key: "plane", type: "choice", label: qsTr("Mirror plane"), init: "YZ", options: planes },
@@ -191,7 +198,7 @@ Pane {
         editId = featureId || 0
         error = ""
         type = featureType
-        const firstPick = s.fields.find(f => f.type.endsWith("Picks") || f.type === "pointPick")
+        const firstPick = s.fields.find(f => f.type.endsWith("Picks") || f.type === "pointPick" || f.type === "planePick")
         pickKey = firstPick ? firstPick.key : ""
         previewTimer.restart()
         return true
@@ -211,6 +218,9 @@ Pane {
     // Cancel undoes the preview.
 
     property bool previewApplied: false
+    property var previewFeatureId: -1
+    /// The plane being created or edited must not catch the clicks meant for faces behind it.
+    readonly property var ownPlane: type !== "plane" ? -1 : editId ? editId : previewFeatureId
 
     /// What viewport clicks should hit while the dialog waits for picks: profiles live on
     /// sketches, edges/faces/points on bodies (the preview body would hide the sketch).
@@ -218,6 +228,8 @@ Pane {
         const f = spec && pickKey ? spec.fields.find(x => x.key === pickKey) : null
         if (!f)
             return ""
+        if (f.type === "planePick")
+            return "" // faces of bodies and construction planes
         return f.type === "profilePicks" ? "sketch" : "body"
     }
     /// The sketch the feature uses stays visible while the dialog is open.
@@ -238,6 +250,7 @@ Pane {
         undoPreview()
         const r = submit(true)
         previewApplied = r.ok
+        previewFeatureId = r.ok && r.result ? r.result.id : -1
         // Incomplete input (no edges picked yet, ...) is normal while editing: errors are
         // shown when OK is pressed.
         if (r.ok)
@@ -286,6 +299,13 @@ Pane {
         if (!spec || !pickKey || !part || !part.id)
             return
         const field = spec.fields.find(f => f.key === pickKey)
+        if (field.type === "planePick") {
+            if (part.kind === "plane")
+                setValue(pickKey, { plane: part.featureId })
+            else if (part.kind === "body")
+                setValue(pickKey, { body: part.featureId, point: [point.x, point.y, point.z].map(x => Math.round(x * 1e4) / 1e4) })
+            return
+        }
         if (field.type === "pointPick") {
             if (part.kind !== "body")
                 return
@@ -401,6 +421,7 @@ Pane {
                         case "bodyList": return bodyListEditor
                         case "sketchList": return sketchListEditor
                         case "pathSketch": return pathSketchEditor
+                        case "planePick": return planeEditor
                         case "vec3": return vec3Editor
                         default: return pickEditor
                         }
@@ -501,6 +522,29 @@ Pane {
                     }
                 }
             }
+        }
+    }
+    Component {
+        id: planeEditor
+        // Origin planes and construction planes; a face clicked in the view shows as an extra entry.
+        ComboBox {
+            property var field: parent ? parent.field : ({})
+            readonly property var current: root.values[field.key]
+            readonly property var items: {
+                const out = [{ name: "XY", value: "XY" }, { name: "XZ", value: "XZ" }, { name: "YZ", value: "YZ" }]
+                for (const f of root.timeline.features) {
+                    if (f.type === "plane" && f.status === "ok" && f.id !== root.editId)
+                        out.push({ name: f.name, value: { plane: f.id } })
+                }
+                if (current && typeof current === "object" && current.body !== undefined) {
+                    const b = root.timeline.bodies.find(x => x.id === current.body)
+                    out.push({ name: qsTr("Face of %1").arg(b ? b.name : current.body), value: current })
+                }
+                return out
+            }
+            model: items.map(i => i.name)
+            currentIndex: items.findIndex(i => JSON.stringify(i.value) === JSON.stringify(current))
+            onActivated: index => root.setValue(field.key, items[index].value)
         }
     }
     Component {
