@@ -421,3 +421,37 @@ TEST_CASE("OpenFOAM: box in a wind tunnel", "[.openfoam]")
         uy += v.y;
     CHECK(uy > 0);
 }
+
+TEST_CASE("RunManager: runs from an earlier session", "[cfd]")
+{
+    TempDir tmp;
+    std::string id;
+    {
+        cfd::RunManager runs(tmp.path());
+        cfd::CaseGeometry g;
+        g.part = box({0, 0, 0}, {100, 50, 20});
+        id = runs.prepare(g, cfd::Settings{}, {});
+    }
+    const fs::path dir = tmp.path() / id;
+    // As if a local engine had been started by an earlier session: no status file yet.
+    fs::remove(dir / "aerocad.status");
+    auto runJson = nlohmann::json::parse(slurp(dir / "run.json"));
+    runJson["backend"] = "local";
+    write(dir / "run.json", runJson.dump());
+    write(dir / "aerocad.stage", "solve\n");
+    write(dir / "log.simpleFoam", "Time = 1\n");
+
+    cfd::RunManager runs(tmp.path());
+    // Logs written just now: still running. It cannot be stopped from here, nor deleted.
+    CHECK(runs.status(id)->state == cfd::RunState::Running);
+    CHECK_FALSE(runs.cancel(id));
+    CHECK_FALSE(fs::exists(dir / "aerocad.cancelled"));
+    CHECK_FALSE(runs.remove(id));
+
+    // Logs an hour old: the engine is gone.
+    const auto old = fs::file_time_type::clock::now() - std::chrono::hours(1);
+    for (const char* f : {"aerocad.stage", "log.simpleFoam"})
+        fs::last_write_time(dir / f, old);
+    CHECK(runs.status(id)->state == cfd::RunState::Interrupted);
+    CHECK(runs.remove(id));
+}

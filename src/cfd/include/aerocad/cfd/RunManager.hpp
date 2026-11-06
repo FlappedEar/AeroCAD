@@ -106,7 +106,8 @@ public:
 
     [[nodiscard]] std::vector<RunStatus> list();
     [[nodiscard]] std::optional<RunStatus> status(const std::string& id);
-    /// Stops a running run. Returns false when it is not running.
+    /// Stops a running run. Returns false when it is not running, or when it runs on a
+    /// local engine started by an earlier session (it cannot be identified safely).
     bool cancel(const std::string& id);
     /// Deletes a finished run and its files. Returns false when unknown or still running.
     bool remove(const std::string& id);

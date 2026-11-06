@@ -299,16 +299,25 @@ std::string errorSummary(const fs::path& log)
     return fatal.empty() ? last : fatal;
 }
 
-fs::file_time_type newestLogTime(const fs::path& dir)
+/// Newest write time of the logs, or nullopt when there are none.
+std::optional<fs::file_time_type> newestLogTime(const fs::path& dir)
 {
-    fs::file_time_type newest{};
+    // file_time_type{} is not "long ago": libstdc++'s file clock has a recent epoch, so
+    // current times are negative. Start from min().
+    auto newest = fs::file_time_type::min();
+    bool any = false;
     std::error_code ec;
     for (const auto& e : fs::directory_iterator(dir, ec)) {
         const auto name = e.path().filename().string();
-        if (name.rfind("log.", 0) == 0 || name == "aerocad.stage")
-            newest = std::max(newest, e.last_write_time(ec));
+        if (name.rfind("log.", 0) == 0 || name == "aerocad.stage") {
+            const auto t = e.last_write_time(ec);
+            if (!ec) {
+                newest = std::max(newest, t);
+                any = true;
+            }
+        }
     }
-    return newest;
+    return any ? std::optional(newest) : std::nullopt;
 }
 
 std::optional<double> lastOf(const Table& t, std::string_view column)
@@ -579,8 +588,9 @@ void RunManager::refresh(Run& run)
         s.state = RunState::Finished;
     } else {
         // Started by an earlier session of the app: still running if it wrote recently.
-        const auto age = fs::file_time_type::clock::now() - newestLogTime(run.caseDir);
-        s.state = age < std::chrono::minutes(3) ? RunState::Running : RunState::Interrupted;
+        const auto newest = newestLogTime(run.caseDir);
+        const bool recent = newest && fs::file_time_type::clock::now() - *newest < std::chrono::minutes(3);
+        s.state = recent ? RunState::Running : RunState::Interrupted;
         if (s.state == RunState::Interrupted)
             s.message = "The run stopped without finishing (the app or the engine was closed).";
     }
@@ -622,6 +632,11 @@ bool RunManager::cancel(const std::string& id)
         return false;
     refresh(*run);
     if (run->status.state != RunState::Running)
+        return false;
+    // A local engine started by an earlier session of the app cannot be identified
+    // safely (process ids are reused), so it is not ours to stop. Docker containers are
+    // found by name.
+    if (run->backend == Backend::Local && !run->process)
         return false;
     std::ofstream(run->caseDir / "aerocad.cancelled") << nowIso() << "\n";
     if (run->backend == Backend::Docker) {

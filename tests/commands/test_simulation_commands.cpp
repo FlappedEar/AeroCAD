@@ -106,7 +106,10 @@ TEST_CASE("simulation.propose_run and a prepared run", "[commands][simulation]")
     CHECK(r.data.at("summary").at("cd").is_null());
     CHECK(r.data.at("conditions").at("openfoam") == "v2506");
     CHECK_FALSE(session.execute("simulation.cancel", {{"run", run}}).ok);
-    CHECK_FALSE(session.execute("simulation.field", {{"run", run}, {"kind", "surface"}}).ok);
+    r = session.execute("simulation.field", {{"run", run}, {"kind", "surface"}});
+    REQUIRE(r.ok);
+    CHECK(r.data.at("available") == false);
+    CHECK_FALSE(session.execute("simulation.field", {{"run", run}, {"kind", "bogus"}}).ok);
     CHECK_FALSE(session.execute("simulation.status", {{"run", "nope"}}).ok);
 
     r = session.execute("simulation.compare", {{"a", run}, {"b", run}});

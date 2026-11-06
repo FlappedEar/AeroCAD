@@ -228,7 +228,8 @@ void registerSimulationCommands(CommandRegistry& r)
           [](CommandContext& ctx, const Json& params) {
               const std::string id = requireRun(ctx, params);
               if (!runs(ctx).cancel(id))
-                  throw CommandError("Run '" + id + "' is not running");
+                  throw CommandError("Run '" + id + "' is not running, or it runs on a local OpenFOAM started by "
+                                     "an earlier session of the app (stop its Allrun process manually)");
               return runs(ctx).status(id)->toJson();
           });
 
@@ -264,7 +265,7 @@ void registerSimulationCommands(CommandRegistry& r)
     r.add({"simulation.field", "Simulation field summary",
            "Statistics of a result field in model coordinates (mm): surface (pressure on the part: p, Cp, "
            "pressure in Pa), sectionHorizontal / sectionVertical (velocity sections through the part centre: speed "
-           "in m/s, Cp) or streamlines.",
+           "in m/s, Cp) or streamlines. available = false until the run has written it.",
            objectSchema({{"run", runIdParam()},
                          {"kind",
                           {{"type", "string"},
@@ -275,11 +276,10 @@ void registerSimulationCommands(CommandRegistry& r)
               try {
                   const auto data = runs(ctx).field(id, params.at("kind").get<std::string>());
                   if (data.empty())
-                      throw CommandError("No " + params.at("kind").get<std::string>() + " data for run '" + id +
-                                         "' (yet)");
-                  return polyDataSummary(data);
-              } catch (const CommandError&) {
-                  throw;
+                      return Json{{"available", false}}; // Written at the end of a run.
+                  Json j = polyDataSummary(data);
+                  j["available"] = true;
+                  return j;
               } catch (const std::exception& e) {
                   throw CommandError(e.what());
               }
