@@ -122,3 +122,13 @@ TEST_CASE("Fit reports selected mesh left outside the trimmed face", "[geometry]
         warned = warned || w.find("outside the face") != std::string::npos;
     CHECK(warned == (fit.report.outsideTrimMax > 0.25));
 }
+
+TEST_CASE("Fit rejects a selection of separate patches", "[geometry][fit]")
+{
+    const core::TriangleMesh mesh = noisyField(60, 0.0);
+    core::TriangleSet two = core::selectInSphere(mesh, {25, 25, truth(25, 25)}, 10.0);
+    const core::TriangleSet second = core::selectInSphere(mesh, {75, 75, truth(75, 75)}, 10.0);
+    two.insert(two.end(), second.begin(), second.end());
+    core::normalizeSelection(two);
+    CHECK_THROWS_AS(geometry::fitSurface(mesh, two, {}), geometry::SurfaceFitError);
+}

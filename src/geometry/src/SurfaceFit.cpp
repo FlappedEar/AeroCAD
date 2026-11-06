@@ -303,6 +303,36 @@ std::vector<Vec3> resampleLoop(const std::vector<Vec3>& loop, std::size_t count)
     return out;
 }
 
+/// Number of edge-connected patches in a sorted selection.
+std::size_t selectionComponents(const core::MeshAdjacency& adjacency, const core::TriangleSet& selection)
+{
+    std::unordered_map<std::uint32_t, char> visited;
+    visited.reserve(selection.size());
+    for (const auto t : selection)
+        visited.emplace(t, 0);
+    std::size_t parts = 0;
+    std::vector<std::uint32_t> stack;
+    for (const auto start : selection) {
+        if (visited[start] != 0)
+            continue;
+        ++parts;
+        visited[start] = 1;
+        stack.push_back(start);
+        while (!stack.empty()) {
+            const auto t = stack.back();
+            stack.pop_back();
+            for (const auto nb : adjacency.neighbours(t)) {
+                const auto it = visited.find(nb);
+                if (it != visited.end() && it->second == 0) {
+                    it->second = 1;
+                    stack.push_back(nb);
+                }
+            }
+        }
+    }
+    return parts;
+}
+
 /// Face bounded by `outline` (points near the surface), or a null face on failure.
 TopoDS_Face trimmedFace(const Handle(Geom_BSplineSurface) & surface, const std::vector<Vec3>& outline, double tolerance)
 {
@@ -400,6 +430,14 @@ SurfaceFitResult fitSurface(const core::TriangleMesh& mesh, const core::Triangle
 
     const Frame frame = pcaFrame(pts, normalSum);
     const core::MeshAdjacency adjacency(mesh);
+
+    // One face has one outer outline: separate patches would silently be dropped.
+    {
+        const std::size_t parts = selectionComponents(adjacency, selection);
+        if (parts > 1)
+            throw SurfaceFitError("The selection has " + std::to_string(parts) +
+                                  " separate patches; fit one connected region at a time");
+    }
 
     // A height field over the plane is required: warn when the region folds over.
     std::size_t steep = 0;
