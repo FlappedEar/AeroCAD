@@ -355,3 +355,29 @@ TEST_CASE("Unfold needs an open sheet; auto falls back to the plane", "[geometry
     CHECK(fit.report.method == "plane");
     CHECK_FALSE(fit.report.warnings.empty());
 }
+
+TEST_CASE("Fit on extra data and trim to a subset of it", "[geometry][fit]")
+{
+    const core::TriangleMesh mesh = tube(30.0, 80.0, 180, 60);
+    const auto data = selectWhere(mesh, [](const core::Vec3& c) {
+        return std::abs(std::atan2(c.y, c.x)) < 110.0 * std::numbers::pi / 180.0 && c.z > 10.0 && c.z < 70.0;
+    });
+    const auto trim = selectWhere(mesh, [](const core::Vec3& c) {
+        return std::abs(std::atan2(c.y, c.x)) < 60.0 * std::numbers::pi / 180.0 && c.z > 20.0 && c.z < 60.0;
+    });
+    for (const auto method : {geometry::SurfaceFitMethod::Unfold, geometry::SurfaceFitMethod::Plane}) {
+        geometry::SurfaceFitOptions options;
+        options.method = method;
+        options.trimTo = trim;
+        const auto fit = geometry::fitSurface(mesh, data, options);
+        INFO(fit.report.method);
+        CHECK(fit.report.trimmed);
+        // The face covers the trim subset only, and only its points are measured.
+        CHECK(std::abs(geometry::surfaceArea(fit.face) - core::selectionArea(mesh, trim)) <
+              0.02 * core::selectionArea(mesh, trim));
+        if (method == geometry::SurfaceFitMethod::Unfold) {
+            CHECK(fit.report.withinTolerance);
+            CHECK(fit.report.outsideTrimMax < 0.5); // the smoothed outline vs. the triangle staircase
+        }
+    }
+}

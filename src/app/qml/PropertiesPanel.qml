@@ -215,6 +215,8 @@ Pane {
                                          : qsTr("open shell (%1 free edges)").arg(f.freeEdges))
                             .arg(Number(f.meshToSurfaceMax).toFixed(3))
                             .arg(f.withinTolerance ? qsTr("within tolerance") : qsTr("OUT OF TOLERANCE"))
+                        if (f.smoothSeams > 0)
+                            msg += qsTr(", smooth seams within %1°").arg(Number(f.seamAngleMaxDeg).toFixed(2))
                         if (r.result.warnings.length > 0)
                             msg += " · " + r.result.warnings.join(" ")
                         root.controller.showStatus(msg)
