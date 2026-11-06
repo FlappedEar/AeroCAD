@@ -281,3 +281,36 @@ TEST_CASE("Design commands: a picked fillet edge follows the body when a dimensi
     CHECK(tl.at("features")[2].at("status") == "ok");
     CHECK(tl.at("bodies")[0].at("volume").get<double>() == Approx(80 * 20 * 10 - cornerLoss * 10));
 }
+
+TEST_CASE("Design commands: previews keep the undo history", "[commands][preview]")
+{
+    commands::Session s;
+    run(s, "feature.box", {{"size", {10, 10, 10}}});
+    run(s, "feature.box", {{"corner", {20, 0, 0}}, {"size", {10, 10, 10}}});
+    run(s, "edit.undo"); // the second box can be redone
+    REQUIRE(s.undoStack().canRedo());
+
+    // Previews replace each other and do not drop the redo entry.
+    REQUIRE(s.preview("feature.cylinder", {{"diameter", 5}, {"height", 5}}).ok);
+    REQUIRE(s.preview("feature.cylinder", {{"diameter", 6}, {"height", 5}}).ok);
+    CHECK(s.design().bodies().size() == 2);
+    CHECK(s.cancelPreview());
+    CHECK(s.design().bodies().size() == 1);
+    CHECK(s.undoStack().canRedo());
+    CHECK_FALSE(s.cancelPreview());
+
+    // A failing preview leaves nothing behind.
+    CHECK_FALSE(s.preview("feature.fillet", {{"body", 1}, {"edges", Json::array()}, {"radius", 1}}).ok);
+    CHECK_FALSE(s.previewActive());
+    CHECK(s.undoStack().canRedo());
+
+    // Undo while a preview is shown ends the preview first, then undoes the real step.
+    REQUIRE(s.preview("feature.cylinder", {{"diameter", 5}, {"height", 5}}).ok);
+    run(s, "edit.undo");
+    CHECK_FALSE(s.previewActive());
+    CHECK(s.design().bodies().empty());
+    CHECK_FALSE(s.cancelPreview());
+    run(s, "edit.redo");
+    run(s, "edit.redo");
+    CHECK(s.design().bodies().size() == 2);
+}

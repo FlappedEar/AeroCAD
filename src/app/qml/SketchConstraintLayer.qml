@@ -105,8 +105,22 @@ Item {
     function curveDistance(p, c) {
         if (c.kind === "line")
             return segmentDistance(p, c.points[0], c.points[1])
-        if (c.kind === "circle" || c.kind === "arc")
+        if (c.kind === "circle")
             return Math.abs(dist(p, curveCenter(c)) - curveRadius(c))
+        if (c.kind === "arc") {
+            // Only the drawn sweep counts (start -> through the middle point -> end); outside
+            // it the nearest point of the arc is one of its ends.
+            const ctr = curveCenter(c)
+            const angle = q => Math.atan2(q[1] - ctr[1], q[0] - ctr[0])
+            const a0 = angle(c.points[0])
+            const span = q => { const d = (angle(q) - a0) % (2 * Math.PI); return d < 0 ? d + 2 * Math.PI : d }
+            const sEnd = span(c.points[2])
+            const sP = span(p)
+            const counterClockwise = span(c.points[1]) < sEnd
+            if (counterClockwise ? sP <= sEnd : sP >= sEnd)
+                return Math.abs(dist(p, ctr) - curveRadius(c))
+            return Math.min(dist(p, c.points[0]), dist(p, c.points[2]))
+        }
         let best = Infinity
         for (let i = 0; i + 1 < c.points.length; ++i)
             best = Math.min(best, segmentDistance(p, c.points[i], c.points[i + 1]))

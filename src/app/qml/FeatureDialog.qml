@@ -183,9 +183,11 @@ Pane {
     /// The sketch the feature uses stays visible while the dialog is open.
     readonly property var shownSketch: type !== "" && values.sketch !== undefined ? values.sketch : -1
 
+    // The controller keeps previews out of the undo history (redo entries survive), and
+    // any other document change (Undo, Delete, ...) ends the preview first.
     function undoPreview() {
         if (previewApplied) {
-            controller.execute("edit.undo")
+            controller.cancelPreview()
             previewApplied = false
         }
     }
@@ -208,6 +210,19 @@ Pane {
         id: previewTimer
         interval: 250
         onTriggered: root.runPreview()
+    }
+
+    // Another change (Undo, Delete, a parameter edit) ended the preview: show it again on
+    // top of the new state.
+    Connections {
+        target: root.controller
+        function onHistoryChanged() {
+            if (root.previewApplied && !root.controller.previewActive()) {
+                root.previewApplied = false
+                if (root.type !== "")
+                    previewTimer.restart()
+            }
+        }
     }
 
     function setValue(key, value) {
@@ -271,7 +286,7 @@ Pane {
 
     /// Runs the feature command (create, or edit of `editId`) with the current values.
     function submit(quiet) {
-        const run = (name, args) => quiet ? controller.executeQuiet(name, args) : controller.execute(name, args)
+        const run = (name, args) => quiet ? controller.preview(name, args) : controller.execute(name, args)
         const params = Object.assign({}, values)
         for (const f of spec.fields) {
             if (f.showIf && !f.showIf(values))
