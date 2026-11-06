@@ -2,11 +2,18 @@
 
 AeroCAD's window follows the layout of common CAD applications, Autodesk Fusion in particular:
 
-- **Toolbar** (top): commands grouped with captions (EDIT, INSERT, MODIFY, VIEW).
+- **Toolbar** (top): tabs (SOLID, and SKETCH while a sketch is edited), then command groups
+  with icons and captions (CREATE, MODIFY, INSERT, EXPORT). Undo/redo, the light/dark
+  switch and Preferences sit at the right end of the tab row.
 - **Browser** (left): the parts of the document.
-- **Canvas** (centre): the 3D view, with the **ViewCube** in the top-right corner and the
-  **navigation bar** at the bottom centre.
-- **Properties** (right) and the **status bar** (bottom).
+- **Canvas** (centre): the 3D view with a ground grid, the **ViewCube** in the top-right
+  corner and the **navigation bar** at the bottom centre.
+- **Properties** (right), the **timeline** and the **status bar** (bottom).
+
+The look is defined in one place, see [Design system](#design-system).
+
+![AeroCAD in the light theme](images/ui/after-light.png)
+![AeroCAD in the dark theme, sketch tab](images/ui/sketch-dark.png)
 
 Keyboard shortcuts and mouse navigation use Fusion's defaults so that Fusion users feel at home.
 Sources: [Autodesk Fusion keyboard shortcuts](https://www.autodesk.com/shortcuts/fusion-360),
@@ -49,7 +56,9 @@ apply immediately and are stored per user (QSettings, organisation "FlappedEar")
 
 - **Length unit**: mm, cm, m or in for displayed lengths (properties panel, sketch
   dimensions while drawing). Input fields, files and commands always use millimetres.
-- **Theme**: follow the system, light or dark. The 3D view keeps its own background.
+- **Theme**: follow the system, light or dark. Everything switches together, including
+  the 3D view background, grid, ViewCube and menus. The sun/moon button in the tab row
+  switches between light and dark directly.
 - **Mouse**: navigation scheme, see above.
 - **Autosave**: interval in minutes, or off. Stored as `project/autosaveSeconds`, the key
   the project autosave reads.
@@ -145,3 +154,55 @@ See [cad.md](cad.md) for the timeline and the commands behind the tools.
 - **Parameters**: Modify > Change Parameters, user parameters used in expressions.
 - Command scripts: `AeroCAD --run script.json` runs a JSON array of `{name, params}`
   commands at start-up, the same calls an AI agent makes through MCP.
+
+## Design system
+
+Every colour, size and icon comes from one place, so features added by different people
+look like one application and switch between light and dark together.
+
+- **`src/app/qml/Theme.qml`** (QML singleton `Theme`): design tokens.
+  - `Theme.dark` follows Preferences › Theme (`system` uses `Qt.styleHints.colorScheme`
+    on Qt 6.5+, the platform palette on older Qt).
+  - Colours: `chrome` (toolbar, timeline, status bar), `surface` (panels, palettes),
+    `surfaceRaised` (cards, buttons), `field` (inputs), `border`, `borderStrong`,
+    `separator`, `text`, `textMuted`, `textFaint`, `icon`, `accent` (selection, focus,
+    checked tools), `accentSoft`, `hover`, `pressed`, `danger`, `success`, `warning`,
+    `overlay` (palettes floating over the 3D view) and the 3D colours (`viewportTop`,
+    `viewportBottom`, `gridMinor`, `gridMajor`, `bodyColor`, `meshColor`, `edgeColor`,
+    `selectedColor`, `hoverColor`, `sketchColor`, `sketchProfile`, `regionColor`).
+  - Type scale (pixels, platform UI font): `fontCaption` 10 (upper-case captions),
+    `fontSmall` 11, `fontBody` 13, `fontTitle` 15.
+  - Spacing on a 4 px grid: `space1` 4, `space2` 8, `space3` 12, `space4` 16,
+    `space6` 24; radii `radiusSmall` 4, `radius` 6, `radiusLarge` 10; icon sizes 16/20/24.
+- **`src/app/style/`** (Qt Quick Controls style `AeroCADStyle`, set in `main.cpp`):
+  Button, ToolButton, TextField, ComboBox, SpinBox, CheckBox, RadioButton, Switch,
+  Slider, GroupBox, Menu, MenuItem (shows the action's shortcut), MenuBar, ToolTip, Popup,
+  Dialog, DialogButtonBox, SplitView, ScrollBar, TabBar, ... drawn with the tokens. Plain
+  `import QtQuick.Controls` gets them; other controls fall back to the Basic style with the
+  palette `Main.qml` builds from the tokens. The native macOS/Windows styles are not used,
+  because they mix system colours into our palette (light widgets in a dark window).
+- **Icons**: `src/app/icons/*.svg`, 24×24, 1.6 px round strokes, black on transparent;
+  areas meant to be shaded use `fill-opacity` about 0.2. They are tinted at run time
+  (`AppIcon { name: "extrude"; color: Theme.icon }`, or `icon.source:
+  Theme.iconUrl("extrude")` with `icon.color`). General icons are from
+  [Tabler Icons](https://tabler.io/icons) (MIT, compatible with GPL-3, see
+  `src/app/icons/README.md`); the CAD icons (sketch, extrude, revolve, fillet, chamfer,
+  shell, hole, constraints, ...) are drawn for AeroCAD in the same style.
+- **Building blocks** (`src/app/qml/`): `AppIcon`, `IconButton` (small icon button with
+  tooltip and shortcut), `RibbonTab`, `RibbonGroup` / `RibbonButton` (used in `Main.qml`
+  as `ToolGroup` / `ToolCommand`), `PanelHeader` (BROWSER / PROPERTIES title bars).
+
+Rules for new UI:
+
+- No colour literals in QML: use a `Theme` token (add one if nothing fits, with a light
+  and a dark value). Canvas drawing can use tokens too (`ctx.strokeStyle = Theme.accent`).
+- No text-only toolbar buttons: a new command is
+  `ToolCommand { action: myAction; text: qsTr("Measure"); iconName: "measure" }` in a
+  `ToolGroup { caption: qsTr("INSPECT"); tab: "solid" }`. Without `iconName` the icon is
+  looked up from the label (`Theme.commandIcons`), else a generic glyph is shown. Commands
+  past the group's `maxVisible` are only in the caption's drop-down menu.
+- A new workspace tab: add it to the tab `Repeater` in `Main.qml` and set `tab:` on its
+  groups (and on the `ToolSeparator`s between them).
+- Floating palettes over the 3D view use `Theme.overlay` with a `Theme.border` outline and
+  `Theme.radius`; side panels start with a `PanelHeader`; sections are `GroupBox`es.
+- Secondary text uses `color: Theme.textMuted` / `textFaint`, not `opacity`.

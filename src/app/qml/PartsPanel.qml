@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Browser (Fusion's name for the document tree): the parts of the document with their
+// visibility.
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -12,24 +14,31 @@ Pane {
     signal partSelected(var id)
 
     padding: 0
+    background: Rectangle { color: Theme.surface }
 
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
 
-        Label {
+        PanelHeader {
             Layout.fillWidth: true
-            Layout.margins: 8
-            text: qsTr("Parts")
-            font.bold: true
+            title: qsTr("BROWSER")
+            Text {
+                text: list.count > 0 ? list.count : ""
+                color: Theme.textFaint
+                font.pixelSize: Theme.fontSmall
+                rightPadding: Theme.space2
+            }
         }
 
         ListView {
             id: list
             Layout.fillWidth: true
             Layout.fillHeight: true
+            Layout.topMargin: Theme.space1
             clip: true
             model: root.controller.parts
+            boundsBehavior: Flickable.StopAtBounds
 
             delegate: ItemDelegate {
                 id: row
@@ -39,42 +48,81 @@ Pane {
                 required property var triangles
                 required property string kind
 
+                readonly property bool selected: row.partId === root.selectedPartId
+
                 width: ListView.view.width
-                highlighted: row.partId === root.selectedPartId
+                height: 36
+                leftPadding: Theme.space3
+                rightPadding: Theme.space1
                 onClicked: root.partSelected(row.partId)
 
+                background: Rectangle {
+                    anchors.fill: parent
+                    anchors.leftMargin: Theme.space1
+                    anchors.rightMargin: Theme.space1
+                    radius: Theme.radiusSmall
+                    color: row.selected ? Theme.accentSoft : row.hovered ? Theme.hover : "transparent"
+                }
+
                 contentItem: RowLayout {
-                    CheckBox {
-                        checked: row.partVisible
-                        onToggled: root.controller.execute("part.set_visible", { id: row.partId, visible: checked })
+                    spacing: Theme.space2
+                    AppIcon {
+                        name: Theme.featureIcon(row.kind)
+                        size: Theme.iconSmall
+                        color: row.selected ? Theme.accent : Theme.icon
+                        opacity: row.partVisible ? 1 : 0.45
                     }
                     ColumnLayout {
                         Layout.fillWidth: true
                         spacing: 0
-                        Label {
+                        Text {
                             Layout.fillWidth: true
                             text: row.name
+                            color: row.partVisible ? Theme.text : Theme.textFaint
+                            font.pixelSize: Theme.fontBody
+                            font.weight: row.selected ? Font.DemiBold : Font.Normal
                             elide: Text.ElideRight
                         }
-                        Label {
-                            text: row.kind === "body" ? qsTr("Body (timeline)")
-                                : row.kind === "sketch" ? qsTr("Sketch (timeline)")
-                                : qsTr("%1 triangles").arg(Number(row.triangles).toLocaleString(Qt.locale(), "f", 0))
-                            opacity: 0.6
-                            font.pointSize: 9
+                        Text {
+                            Layout.fillWidth: true
+                            text: row.kind === "body" ? qsTr("Body")
+                                : row.kind === "sketch" ? qsTr("Sketch")
+                                : qsTr("Mesh · %1 triangles").arg(Number(row.triangles).toLocaleString(Qt.locale(), "f", 0))
+                            color: Theme.textFaint
+                            font.pixelSize: Theme.fontSmall
+                            elide: Text.ElideRight
                         }
+                    }
+                    IconButton {
+                        objectName: "visibilityToggle"
+                        iconName: row.partVisible ? "visible" : "hidden"
+                        tip: row.partVisible ? qsTr("Hide") : qsTr("Show")
+                        // Hidden parts keep a visible toggle; visible ones show it on hover.
+                        opacity: !row.partVisible || row.hovered || hovered ? 1 : 0.0
+                        onClicked: root.controller.execute("part.set_visible", { id: row.partId, visible: !row.partVisible })
                     }
                 }
             }
 
-            Label {
+            Column {
                 anchors.centerIn: parent
-                width: parent.width - 32
+                width: parent.width - 2 * Theme.space6
                 visible: list.count === 0
-                wrapMode: Text.WordWrap
-                horizontalAlignment: Text.AlignHCenter
-                opacity: 0.6
-                text: qsTr("No parts yet.\nFile > Import or drop a 3D file onto the view.")
+                spacing: Theme.space2
+                AppIcon {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    name: "import"
+                    size: 32
+                    color: Theme.textFaint
+                }
+                Text {
+                    width: parent.width
+                    wrapMode: Text.WordWrap
+                    horizontalAlignment: Text.AlignHCenter
+                    color: Theme.textMuted
+                    font.pixelSize: Theme.fontSmall
+                    text: qsTr("No parts yet.\nImport a 3D file or drop one onto the view.")
+                }
             }
         }
     }

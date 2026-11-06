@@ -35,27 +35,36 @@ Pane {
         }
     }
 
+    padding: 0
+
+    PanelHeader {
+        id: header
+        width: parent.width
+        title: root.info.id ? qsTr("PROPERTIES · %1").arg(String(root.info.kind ?? "").toUpperCase()) : qsTr("PROPERTIES")
+    }
+
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: 4
-        spacing: 8
-
-        Label {
-            text: qsTr("Properties")
-            font.bold: true
-        }
+        anchors.topMargin: header.height + Theme.space2
+        anchors.leftMargin: Theme.space3
+        anchors.rightMargin: Theme.space3
+        anchors.bottomMargin: Theme.space3
+        spacing: Theme.space2
 
         Label {
             visible: !root.info.id
-            text: qsTr("Select a part.")
-            opacity: 0.6
+            Layout.fillWidth: true
+            text: qsTr("Select a part in the Browser or the view.")
+            color: Theme.textFaint
+            wrapMode: Text.WordWrap
         }
 
         GridLayout {
             visible: !!root.info.id
             columns: 2
             columnSpacing: 12
-            Label { text: qsTr("Name"); opacity: 0.7 }
+            rowSpacing: 6
+            Label { text: qsTr("Name"); color: Theme.textMuted }
             TextField {
                 Layout.fillWidth: true
                 text: root.info.name ?? ""
@@ -64,15 +73,15 @@ Pane {
                         root.controller.execute("part.rename", { id: root.partId, name: text })
                 }
             }
-            Label { text: qsTr("Size X"); opacity: 0.7 }
+            Label { text: qsTr("Size X"); color: Theme.textMuted }
             Label { text: Preferences.formatLength(Number(root.info.sizeX ?? 0), Preferences.lengthUnit) }
-            Label { text: qsTr("Size Y"); opacity: 0.7 }
+            Label { text: qsTr("Size Y"); color: Theme.textMuted }
             Label { text: Preferences.formatLength(Number(root.info.sizeY ?? 0), Preferences.lengthUnit) }
-            Label { text: qsTr("Size Z"); opacity: 0.7 }
+            Label { text: qsTr("Size Z"); color: Theme.textMuted }
             Label { text: Preferences.formatLength(Number(root.info.sizeZ ?? 0), Preferences.lengthUnit) }
-            Label { text: qsTr("Triangles"); opacity: 0.7 }
+            Label { text: qsTr("Triangles"); color: Theme.textMuted }
             Label { text: Number(root.info.triangles ?? 0).toLocaleString(Qt.locale(), "f", 0) }
-            Label { text: qsTr("Exact (B-rep)"); opacity: 0.7 }
+            Label { text: qsTr("Exact (B-rep)"); color: Theme.textMuted }
             Label { text: root.info.hasBrep ? qsTr("yes") : qsTr("no (mesh)") }
         }
 

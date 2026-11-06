@@ -53,6 +53,8 @@ Item {
     /// Camera projection (Fusion ViewCube menu: Orthographic / Perspective).
     property bool orthographic: false
     property bool viewCubeVisible: true
+    /// Ground grid on the XY plane, spaced to suit the scene size (View > Show Grid).
+    property bool gridVisible: true
     property bool navigationBarVisible: true
     /// Home view orientation; "Set current view as Home" changes it, "Reset Home" restores it.
     readonly property real defaultHomePitch: -30
@@ -243,9 +245,9 @@ Item {
     Rectangle {
         anchors.fill: parent
         gradient: Gradient {
-            // Light top-to-bottom gradient, as in Fusion and most CAD applications.
-            GradientStop { position: 0.0; color: "#fbfcfd" }
-            GradientStop { position: 1.0; color: "#c3cbd4" }
+            // Top-to-bottom gradient, as in Fusion and most CAD applications (Theme.qml).
+            GradientStop { position: 0.0; color: Theme.viewportTop }
+            GradientStop { position: 1.0; color: Theme.viewportBottom }
         }
     }
 
@@ -298,6 +300,37 @@ Item {
             id: modelSpace
             eulerRotation.x: -90
 
+            // Ground grid: minor lines every `step`, major lines every 5th.
+            Node {
+                id: grid
+                visible: root.gridVisible
+                // A round step (1, 2 or 5 x 10^n mm), about a fifth of the scene radius.
+                readonly property real step: {
+                    const target = Math.max(root.controller.sceneRadius, 1e-3) / 5
+                    const power = Math.pow(10, Math.floor(Math.log10(target)))
+                    const f = target / power
+                    return (f < 1.5 ? 1 : f < 3.5 ? 2 : f < 7.5 ? 5 : 10) * power
+                }
+                Model {
+                    pickable: false
+                    geometry: GridGeometry { step: grid.step; extent: grid.step * 25; majorEvery: 5; major: false }
+                    materials: PrincipledMaterial {
+                        lighting: PrincipledMaterial.NoLighting
+                        baseColor: Theme.gridMinor
+                        alphaMode: PrincipledMaterial.Blend
+                    }
+                }
+                Model {
+                    pickable: false
+                    geometry: GridGeometry { step: grid.step; extent: grid.step * 25; majorEvery: 5; major: true }
+                    materials: PrincipledMaterial {
+                        lighting: PrincipledMaterial.NoLighting
+                        baseColor: Theme.gridMajor
+                        alphaMode: PrincipledMaterial.Blend
+                    }
+                }
+            }
+
             Repeater3D {
                 model: root.controller.parts
                 delegate: Model {
@@ -317,12 +350,13 @@ Item {
                     }
                     // Fusion-like colours: grey bodies, translucent orange sketch profiles.
                     materials: PrincipledMaterial {
-                        baseColor: partModel.selected ? "#7fb2ff"
-                                 : partModel.kind === "sketch" ? Qt.rgba(1.0, 0.78, 0.45, 0.45)
-                                 : partModel.kind === "body" ? "#b8bec6" : "#c8ccd2"
+                        baseColor: partModel.selected ? Theme.selectedColor
+                                 : partModel.kind === "sketch" ? Theme.sketchProfile
+                                 : partModel.kind === "body" ? Theme.bodyColor : Theme.meshColor
                         alphaMode: partModel.kind === "sketch" ? PrincipledMaterial.Blend : PrincipledMaterial.Default
                         metalness: 0.0
-                        roughness: 0.55
+                        roughness: 0.45
+                        specularAmount: 0.35
                         cullMode: Material.NoCulling
                     }
 
@@ -336,7 +370,7 @@ Item {
                             partId: partModel.partId
                         }
                         materials: PrincipledMaterial {
-                            baseColor: "#ff9a3c"
+                            baseColor: Theme.regionColor
                             emissiveFactor: Qt.vector3d(0.35, 0.16, 0.0)
                             metalness: 0.0
                             roughness: 0.6
@@ -355,7 +389,7 @@ Item {
                         }
                         materials: PrincipledMaterial {
                             lighting: PrincipledMaterial.NoLighting
-                            baseColor: partModel.kind === "sketch" ? "#1f5fbf" : "#262a30"
+                            baseColor: partModel.kind === "sketch" ? Theme.sketchColor : Theme.edgeColor
                         }
                     }
                 }
@@ -398,6 +432,8 @@ Item {
         onFitRequested: root.fitAll()
         onHomeRequested: root.goHome()
         onProjectionRequested: ortho => root.orthographic = ortho
+        gridVisible: root.gridVisible
+        onGridToggled: shown => root.gridVisible = shown
     }
 
     TapHandler {
