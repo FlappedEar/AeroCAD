@@ -4,6 +4,7 @@
 
 #include "aerocad/cad/Design.hpp"
 #include "aerocad/core/MeshSelection.hpp"
+#include "aerocad/geometry/DrapeFit.hpp"
 #include "aerocad/geometry/Offset.hpp"
 #include "aerocad/geometry/RegionFit.hpp"
 #include "aerocad/geometry/SurfaceFit.hpp"
@@ -169,21 +170,6 @@ std::array<double, 4> outlineBounds(const cad::SketchResult& sk, const std::vect
     return {u0, v0, u1, v1};
 }
 
-/// Triangles of a scan under a sketch outline: inside the outline's rectangle (sketch
-/// coordinates) grown by `margin`, facing the sketch. Enough area around the outline for
-/// a smooth fit; the outline cuts it later.
-core::TriangleSet meshUnderSketch(const core::TriangleMesh& mesh, const cad::SketchResult& sk,
-                                  const std::vector<geometry::Shape>& outlines, const core::Vec3& seed, double margin)
-{
-    const auto [u0, v0, u1, v1] = outlineBounds(sk, outlines);
-    const double far = std::numeric_limits<double>::max();
-    const FrameBox box{sk.plane.origin,
-                       {sk.plane.xDir, sk.plane.yDir(), sk.plane.normal},
-                       {u0 - margin, v0 - margin, -far},
-                       {u1 + margin, v1 + margin, far}};
-    return meshInBox(mesh, box, sk.plane.normal, seed, "No part of the mesh faces the sketch under its outline");
-}
-
 /// Triangles of a scan under the root of a fin drawn across it (sketch X = surface
 /// normal, outward): along the root (sketch Y) and across the fin's thickness, within the
 /// outline's height range, all grown by `margin`, facing outward.
@@ -231,6 +217,15 @@ void registerSurfaceCommands(CommandRegistry& r)
               const model::Part& source = requirePart(ctx.document, params);
               if (!source.mesh || !source.selection || source.selection->empty())
                   throw CommandError("Select a region on part " + std::to_string(source.id) + " first");
+              // One smooth surface over a large part of a scan takes minutes and cannot follow
+              // it anyway. A part drawn on the scan needs no selection or fit.
+              constexpr std::size_t maxTriangles = 200000;
+              if (source.selection->size() > maxTriangles)
+                  throw CommandError("The selected area is too large for one smooth surface (" +
+                                     std::to_string(source.selection->size()) + " triangles, at most " +
+                                     std::to_string(maxTriangles) +
+                                     "). Select a smaller area, or use Sketch and click the scan: a part drawn there "
+                                     "follows the scan without a fitted surface");
 
               geometry::SurfaceFitOptions options;
               options.tolerance = params.value("tolerance", options.tolerance);
@@ -442,62 +437,73 @@ void registerSurfaceCommands(CommandRegistry& r)
                   outlineArea += geometry::area(o);
               const double tolerance = params.value("tolerance", geometry::SurfaceFitOptions{}.tolerance);
               Json fitReport;
-              auto fitUnder = [&](const model::Part& scan) {
-                  core::Vec3 seed = sk.plane.origin;
-                  if (on.contains("point") && on.value("part", Json()) == scan.id) {
-                      const auto& p = on.at("point");
-                      seed = {p.at(0).get<double>(), p.at(1).get<double>(), p.at(2).get<double>()};
-                  }
-                  const double margin = std::max(5.0, 0.15 * outlinesDiagonal(outlines));
-                  const auto region = meshUnderSketch(*scan.mesh, sk, outlines, seed, margin);
-                  geometry::SurfaceFitOptions options;
+              Json warnings = Json::array();
+              // A fitted surface remembers the scan it came from: build the part on the scan
+              // itself, whatever area the earlier fit covered.
+              const model::Part* scan = source;
+              if (source->shape && !source->shape->isNull()) {
+                  scan = ctx.document.part(model::sourcePartId(*source));
+                  if (scan != nullptr && (!scan->mesh || scan->shape))
+                      scan = nullptr;
+              } else if (!source->mesh || source->mesh->triangleCount() == 0) {
+                  throw CommandError("Part " + std::to_string(partId) + " has no surface");
+              }
+
+              geometry::Shape solid;
+              double area = 0.0;
+              if (scan != nullptr) {
+                  // The part follows the skin seen along the sketch normal.
+                  const auto [u0, v0, u1, v1] = outlineBounds(sk, outlines);
+                  const double margin = std::max(10.0, 0.05 * std::max(u1 - u0, v1 - v0));
+                  geometry::DrapeArea drape;
+                  drape.origin = sk.plane.origin;
+                  drape.x = sk.plane.xDir;
+                  drape.y = sk.plane.yDir();
+                  drape.normal = sk.plane.normal;
+                  drape.u0 = u0 - margin;
+                  drape.v0 = v0 - margin;
+                  drape.u1 = u1 + margin;
+                  drape.v1 = v1 + margin;
+                  drape.insideU0 = u0;
+                  drape.insideV0 = v0;
+                  drape.insideU1 = u1;
+                  drape.insideV1 = v1;
+                  geometry::DrapeFitOptions options;
                   options.tolerance = tolerance;
                   try {
-                      auto fit = geometry::fitSurface(*scan.mesh, region, options);
-                      fitReport = {{"part", scan.id},
-                                   {"triangles", region.size()},
-                                   {"meshToSurfaceMax", fit.report.meshToSurfaceMax},
-                                   {"meshToSurfaceRms", fit.report.meshToSurfaceRms},
-                                   {"withinTolerance", fit.report.withinTolerance},
-                                   {"method", fit.report.method}};
-                      return fit.face;
+                      const core::MeshProjector projector(*scan->mesh, sk.plane.normal);
+                      auto part = geometry::partOnScan(projector, drape, outlines, thickness, side, options);
+                      solid = part.solid;
+                      area = part.skinArea;
+                      const auto& rep = part.report;
+                      fitReport = {{"part", scan->id},
+                                   {"method", "draped"},
+                                   {"maxDeviation", rep.maxDeviation},
+                                   {"p99Deviation", rep.p99Deviation},
+                                   {"rmsDeviation", rep.rmsDeviation},
+                                   {"bridged", rep.bridgedFraction},
+                                   {"poles", {rep.uPoles, rep.vPoles}},
+                                   {"withinTolerance", rep.p99Deviation <= tolerance},
+                                   {"milliseconds", rep.milliseconds}};
+                      if (rep.bridgedFraction > 0.05)
+                          warnings.push_back("About " + std::to_string(static_cast<int>(rep.bridgedFraction * 100.0)) +
+                                             "% of the outline's area has no skin under it (holes, past the scan's "
+                                             "edge); the part bridges it smoothly");
                   } catch (const geometry::SurfaceFitError& e) {
-                      throw CommandError(std::string("Could not fit a surface under the outline: ") + e.what());
+                      throw CommandError(std::string("Could not make the part on the scan: ") + e.what());
                   }
-              };
-              auto skinOf = [&](const geometry::Shape& surface) {
+              } else {
+                  geometry::Shape skin;
                   try {
-                      return geometry::trimSurface(surface, outlines, sk.plane.normal, true, true);
+                      skin = geometry::trimSurface(*source->shape, outlines, sk.plane.normal, true, true);
+                      area = geometry::surfaceArea(skin);
+                      if (area < 0.995 * outlineArea)
+                          warnings.push_back("The outline reaches past the surface; the part was cut off where the "
+                                             "surface ends");
+                      solid = geometry::thickenSurface(skin, thickness, side);
                   } catch (const geometry::OffsetError& e) {
                       throw CommandError(e.what());
                   }
-              };
-
-              geometry::Shape skin;
-              if (source->shape && !source->shape->isNull()) {
-                  skin = skinOf(*source->shape);
-                  // Outline drawn past the fitted surface: fit again, on the scan it was
-                  // fitted to, under the whole outline.
-                  if (geometry::surfaceArea(skin) < 0.995 * outlineArea) {
-                      const model::Part* scan = ctx.document.part(model::sourcePartId(*source));
-                      if (scan != nullptr && scan->mesh && !scan->shape)
-                          skin = skinOf(fitUnder(*scan));
-                  }
-              } else {
-                  if (!source->mesh || source->mesh->triangleCount() == 0)
-                      throw CommandError("Part " + std::to_string(partId) + " has no surface");
-                  skin = skinOf(fitUnder(*source));
-              }
-              Json warnings = Json::array();
-              const double area = geometry::surfaceArea(skin);
-              if (area < 0.995 * outlineArea)
-                  warnings.push_back("The outline reaches past the surface; the part was cut off where the surface "
-                                     "ends");
-              geometry::Shape solid;
-              try {
-                  solid = geometry::thickenSurface(skin, thickness, side);
-              } catch (const geometry::OffsetError& e) {
-                  throw CommandError(e.what());
               }
               Json result = addShapePart(ctx, *source, solid, params.value("name", sk.name + " part"),
                                          "surface.part_from_sketch", "Part on surface");

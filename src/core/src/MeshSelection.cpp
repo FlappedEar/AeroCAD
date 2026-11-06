@@ -216,17 +216,189 @@ std::vector<Vec3> sliceMesh(const TriangleMesh& mesh, const Vec3& origin, const 
     return out;
 }
 
+MeshProjector::MeshProjector(const TriangleMesh& mesh, const Vec3& outward) : m_mesh(&mesh)
+{
+    const double len = outward.length();
+    m_d = len > 0.0 ? outward * (1.0 / len) : Vec3{0, 0, 1};
+    const Vec3 helper = std::abs(m_d.x) < 0.9 ? Vec3{1, 0, 0} : Vec3{0, 1, 0};
+    m_e1 = m_d.cross(helper).normalized();
+    m_e2 = m_d.cross(m_e1);
+
+    const auto& v = mesh.vertices();
+    double u1 = -std::numeric_limits<double>::max(), v1 = u1;
+    m_u0 = std::numeric_limits<double>::max();
+    m_v0 = m_u0;
+    std::vector<float> us(v.size()), vs(v.size());
+    for (std::size_t i = 0; i < v.size(); ++i) {
+        const double a = v[i].dot(m_e1), b = v[i].dot(m_e2);
+        us[i] = static_cast<float>(a);
+        vs[i] = static_cast<float>(b);
+        m_u0 = std::min(m_u0, a);
+        u1 = std::max(u1, a);
+        m_v0 = std::min(m_v0, b);
+        v1 = std::max(v1, b);
+    }
+    if (v.empty()) {
+        m_start.assign(2, 0);
+        return;
+    }
+    const double pad = 1e-6 + 1e-3 * std::max(u1 - m_u0, v1 - m_v0);
+    m_u0 -= pad;
+    m_v0 -= pad;
+    u1 += pad;
+    v1 += pad;
+    // About two triangles per cell on a scan seen from the front.
+    const double wide = std::max(u1 - m_u0, 1e-9), high = std::max(v1 - m_v0, 1e-9);
+    const double cells = std::clamp(static_cast<double>(mesh.triangleCount()) / 2.0, 1.0, 4.0e6);
+    const double side = std::sqrt(wide * high / cells);
+    m_nu = std::clamp(static_cast<int>(wide / side), 1, 4096);
+    m_nv = std::clamp(static_cast<int>(high / side), 1, 4096);
+    m_su = wide / m_nu;
+    m_sv = high / m_nv;
+
+    // Two passes: count the entries of each cell, then fill them.
+    m_start.assign(static_cast<std::size_t>(m_nu) * m_nv + 1, 0);
+    auto forCells = [&](const TriangleMesh::Triangle& t, auto&& visit) {
+        const float a0 = std::min({us[t[0]], us[t[1]], us[t[2]]}), a1 = std::max({us[t[0]], us[t[1]], us[t[2]]});
+        const float b0 = std::min({vs[t[0]], vs[t[1]], vs[t[2]]}), b1 = std::max({vs[t[0]], vs[t[1]], vs[t[2]]});
+        const int i0 = cellU(a0), i1 = cellU(a1), j0 = cellV(b0), j1 = cellV(b1);
+        for (int j = j0; j <= j1; ++j)
+            for (int i = i0; i <= i1; ++i)
+                visit(static_cast<std::size_t>(j) * m_nu + i);
+    };
+    for (const auto& t : mesh.triangles())
+        forCells(t, [&](std::size_t c) { ++m_start[c + 1]; });
+    for (std::size_t c = 1; c < m_start.size(); ++c)
+        m_start[c] += m_start[c - 1];
+    m_triangles.resize(m_start.back());
+    std::vector<std::uint32_t> fill(m_start.begin(), m_start.end() - 1);
+    const auto& tris = mesh.triangles();
+    for (std::uint32_t t = 0; t < tris.size(); ++t)
+        forCells(tris[t], [&](std::size_t c) { m_triangles[fill[c]++] = t; });
+}
+
+int MeshProjector::cellU(double u) const
+{
+    return std::clamp(static_cast<int>((u - m_u0) / m_su), 0, m_nu - 1);
+}
+
+int MeshProjector::cellV(double v) const
+{
+    return std::clamp(static_cast<int>((v - m_v0) / m_sv), 0, m_nv - 1);
+}
+
+namespace {
+
+/// Moller-Trumbore on the whole line; signed distance along `d`.
+std::optional<double> lineHit(const TriangleMesh& mesh, std::uint32_t t, const Vec3& origin, const Vec3& d)
+{
+    const auto& v = mesh.vertices();
+    const auto& tri = mesh.triangles()[t];
+    const Vec3& a = v[tri[0]];
+    const Vec3 e1 = v[tri[1]] - a;
+    const Vec3 e2 = v[tri[2]] - a;
+    const Vec3 pvec = d.cross(e2);
+    const double det = e1.dot(pvec);
+    if (std::abs(det) < 1e-12)
+        return std::nullopt;
+    const double inv = 1.0 / det;
+    const Vec3 tvec = origin - a;
+    const double u = tvec.dot(pvec) * inv;
+    if (u < 0.0 || u > 1.0)
+        return std::nullopt;
+    const Vec3 qvec = tvec.cross(e1);
+    const double w = d.dot(qvec) * inv;
+    if (w < 0.0 || u + w > 1.0)
+        return std::nullopt;
+    return e2.dot(qvec) * inv;
+}
+
+} // namespace
+
+std::optional<Vec3> MeshProjector::drop(const Vec3& p) const
+{
+    const double a = p.dot(m_e1), b = p.dot(m_e2);
+    if (a < m_u0 || b < m_v0 || a > m_u0 + m_su * m_nu || b > m_v0 + m_sv * m_nv)
+        return std::nullopt;
+    const std::size_t c = static_cast<std::size_t>(cellV(b)) * m_nu + cellU(a);
+    // The farthest crossing along the outward direction is the first one from outside.
+    std::optional<double> best;
+    for (std::uint32_t k = m_start[c]; k < m_start[c + 1]; ++k) {
+        const auto h = lineHit(*m_mesh, m_triangles[k], p, m_d);
+        if (h && (!best || *h > *best))
+            best = h;
+    }
+    if (!best)
+        return std::nullopt;
+    return p + m_d * *best;
+}
+
+std::optional<RayHit> MeshProjector::raycast(const Vec3& origin, const Vec3& direction) const
+{
+    std::optional<RayHit> best;
+    auto visit = [&](int i, int j) {
+        const std::size_t c = static_cast<std::size_t>(j) * m_nu + i;
+        for (std::uint32_t k = m_start[c]; k < m_start[c + 1]; ++k) {
+            const auto h = lineHit(*m_mesh, m_triangles[k], origin, direction);
+            if (h && *h >= 0.0 && (!best || *h < best->distance))
+                best = RayHit{m_triangles[k], *h, origin + direction * *h};
+        }
+    };
+    // Walk the cells under the ray's shadow on the grid, in order along the ray.
+    const double ou = origin.dot(m_e1), ov = origin.dot(m_e2);
+    const double du = direction.dot(m_e1), dv = direction.dot(m_e2);
+    const double u1 = m_u0 + m_su * m_nu, v1 = m_v0 + m_sv * m_nv;
+    double t0 = 0.0, t1 = std::numeric_limits<double>::max();
+    auto clip = [&](double o, double d, double lo, double hi) {
+        if (std::abs(d) < 1e-14)
+            return o >= lo && o <= hi;
+        double a = (lo - o) / d, b = (hi - o) / d;
+        if (a > b)
+            std::swap(a, b);
+        t0 = std::max(t0, a);
+        t1 = std::min(t1, b);
+        return t0 <= t1;
+    };
+    if (!clip(ou, du, m_u0, u1) || !clip(ov, dv, m_v0, v1))
+        return best;
+    int i = cellU(ou + du * t0), j = cellV(ov + dv * t0);
+    const int stepI = du > 0.0 ? 1 : -1, stepJ = dv > 0.0 ? 1 : -1;
+    const double dtI = std::abs(du) < 1e-14 ? std::numeric_limits<double>::max() : m_su / std::abs(du);
+    const double dtJ = std::abs(dv) < 1e-14 ? std::numeric_limits<double>::max() : m_sv / std::abs(dv);
+    double nextI = std::abs(du) < 1e-14 ? std::numeric_limits<double>::max()
+                                        : (m_u0 + (i + (du > 0.0 ? 1 : 0)) * m_su - ou) / du;
+    double nextJ = std::abs(dv) < 1e-14 ? std::numeric_limits<double>::max()
+                                        : (m_v0 + (j + (dv > 0.0 ? 1 : 0)) * m_sv - ov) / dv;
+    while (i >= 0 && j >= 0 && i < m_nu && j < m_nv) {
+        visit(i, j);
+        const double exit = std::min(nextI, nextJ);
+        // Later cells are farther along the ray than a hit inside the ones walked so far.
+        if ((best && best->distance <= exit) || exit > t1)
+            break;
+        if (nextI < nextJ) {
+            nextI += dtI;
+            i += stepI;
+        } else {
+            nextJ += dtJ;
+            j += stepJ;
+        }
+    }
+    return best;
+}
+
 std::vector<Vec3> projectOntoMesh(const TriangleMesh& mesh, const std::vector<Vec3>& points, const Vec3& direction,
-                                  std::size_t* hits)
+                                  std::size_t* hits, std::vector<char>* missed)
 {
     std::vector<Vec3> out = points;
     if (hits != nullptr)
         *hits = 0;
+    if (missed != nullptr)
+        missed->assign(points.size(), 1);
     const double len = direction.length();
     if (points.empty() || mesh.triangleCount() == 0 || !(len > 0.0))
         return out;
     const Vec3 d = direction * (1.0 / len);
-    // Frame across the direction; the grid lives in it.
+    // Frame across the direction; the grid lives in it, over the points' footprint only.
     const Vec3 helper = std::abs(d.x) < 0.9 ? Vec3{1, 0, 0} : Vec3{0, 1, 0};
     const Vec3 e1 = d.cross(helper).normalized();
     const Vec3 e2 = d.cross(e1);
@@ -265,38 +437,21 @@ std::vector<Vec3> projectOntoMesh(const TriangleMesh& mesh, const std::vector<Ve
             for (int i = cell(a0, u0, su); i <= cell(a1, u0, su); ++i)
                 grid[static_cast<std::size_t>(j * n + i)].push_back(t);
     }
-    for (auto& p : out) {
+    for (std::size_t k = 0; k < out.size(); ++k) {
+        Vec3& p = out[k];
         const auto& candidates = grid[static_cast<std::size_t>(cell(p.dot(e2), v0, sv) * n + cell(p.dot(e1), u0, su))];
-        double best = std::numeric_limits<double>::max();
-        bool found = false;
+        std::optional<double> best;
         for (const auto t : candidates) {
-            const auto& tri = mesh.triangles()[t];
-            const Vec3& a = v[tri[0]];
-            const Vec3 ea = v[tri[1]] - a;
-            const Vec3 eb = v[tri[2]] - a;
-            const Vec3 pvec = d.cross(eb);
-            const double det = ea.dot(pvec);
-            if (std::abs(det) < 1e-12)
-                continue;
-            const double inv = 1.0 / det;
-            const Vec3 tvec = p - a;
-            const double u = tvec.dot(pvec) * inv;
-            if (u < 0.0 || u > 1.0)
-                continue;
-            const Vec3 qvec = tvec.cross(ea);
-            const double w = d.dot(qvec) * inv;
-            if (w < 0.0 || u + w > 1.0)
-                continue;
-            const double dist = eb.dot(qvec) * inv;
-            if (std::abs(dist) < std::abs(best)) {
-                best = dist;
-                found = true;
-            }
+            const auto h = lineHit(mesh, t, p, d);
+            if (h && (!best || *h > *best))
+                best = h;
         }
-        if (found) {
-            p = p + d * best;
+        if (best) {
+            p = p + d * *best;
             if (hits != nullptr)
                 ++*hits;
+            if (missed != nullptr)
+                (*missed)[k] = 0;
         }
     }
     return out;

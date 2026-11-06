@@ -1007,9 +1007,14 @@ void Design::regenerate()
 
 namespace {
 
+/// Steepest rise over run a draped line or fill follows; steeper is a hole, a gap or the edge
+/// of the skin, not the surface under the sketch.
+constexpr double maxDrapeSlope = 3.0;
+
 /// A sketch drawn over a curved surface (params onSurface) is shown lying on it: its
 /// line segments are split finely and moved along the sketch normal onto the surface
-/// part's mesh. Pieces that miss the surface stay on the sketch plane.
+/// part's mesh. Where there is no skin to lie on (a hole, past the edge), a line runs
+/// straight between the nearest points that have one.
 std::vector<core::Vec3> drapeSegments(const std::vector<core::Vec3>& segments, const core::TriangleMesh& surface,
                                       const core::Vec3& normal)
 {
@@ -1017,21 +1022,71 @@ std::vector<core::Vec3> drapeSegments(const std::vector<core::Vec3>& segments, c
     for (const auto& p : segments)
         box.extend(p);
     const double step = std::max(box.diagonal() / 300.0, 1e-3);
+    const core::Vec3 n = normal.normalized();
+    // A hair above the surface, so the lines are not hidden in it.
+    const double lift = std::max(box.diagonal() * 1.5e-3, 1e-3);
+
     std::vector<core::Vec3> fine;
+    std::vector<std::size_t> starts; // of each input segment in `fine`
     for (std::size_t i = 0; i + 1 < segments.size(); i += 2) {
         const core::Vec3 a = segments[i];
         const core::Vec3 b = segments[i + 1];
         const int pieces = std::clamp(static_cast<int>(std::ceil((b - a).length() / step)), 1, 400);
-        for (int k = 0; k < pieces; ++k) {
+        starts.push_back(fine.size());
+        for (int k = 0; k <= pieces; ++k)
             fine.push_back(a + (b - a) * (static_cast<double>(k) / pieces));
-            fine.push_back(a + (b - a) * (static_cast<double>(k + 1) / pieces));
+    }
+    starts.push_back(fine.size());
+    std::vector<char> missed;
+    const auto draped = core::projectOntoMesh(surface, fine, n, nullptr, &missed);
+
+    std::vector<double> height(fine.size(), 0.0);
+    for (std::size_t k = 0; k < fine.size(); ++k)
+        height[k] = (draped[k] - fine[k]).dot(n);
+    std::vector<core::Vec3> out;
+    out.reserve(fine.size() * 2);
+    for (std::size_t s = 0; s + 1 < starts.size(); ++s) {
+        const std::size_t begin = starts[s], end = starts[s + 1];
+        // From the start of the segment on, a point counts when it continues the skin.
+        std::size_t anchor = end;
+        for (std::size_t k = begin; k < end; ++k) {
+            if (missed[k] != 0)
+                continue;
+            if (anchor != end) {
+                const double run = (fine[k] - fine[anchor]).length();
+                if (std::abs(height[k] - height[anchor]) > maxDrapeSlope * run + 1e-6) {
+                    missed[k] = 1;
+                    continue;
+                }
+            }
+            anchor = k;
+        }
+        // Straight across the gaps; a segment with no skin at all stays on the plane.
+        std::size_t last = end;
+        for (std::size_t k = begin; k < end; ++k) {
+            if (missed[k] == 0) {
+                if (last != end)
+                    for (std::size_t g = last + 1; g < k; ++g)
+                        height[g] = height[last] +
+                                    (height[k] - height[last]) * static_cast<double>(g - last) / static_cast<double>(k - last);
+                else
+                    for (std::size_t g = begin; g < k; ++g)
+                        height[g] = height[k];
+                last = k;
+            }
+        }
+        if (last != end) {
+            for (std::size_t g = last + 1; g < end; ++g)
+                height[g] = height[last];
+        } else {
+            for (std::size_t g = begin; g < end; ++g)
+                height[g] = 0.0;
+        }
+        for (std::size_t k = begin; k + 1 < end; ++k) {
+            out.push_back(fine[k] + n * (height[k] + lift));
+            out.push_back(fine[k + 1] + n * (height[k + 1] + lift));
         }
     }
-    auto out = core::projectOntoMesh(surface, fine, normal);
-    // A hair above the surface, so the lines are not hidden in it.
-    const core::Vec3 lift = normal.normalized() * std::max(box.diagonal() * 1.5e-3, 1e-3);
-    for (auto& p : out)
-        p = p + lift;
     return out;
 }
 
@@ -1073,11 +1128,27 @@ core::TriangleMesh drapeFill(const core::TriangleMesh& fill, const core::Triangl
         }
         tris = std::move(next);
     }
-    auto draped = core::projectOntoMesh(surface, v, normal);
-    const core::Vec3 lift = normal.normalized() * std::max(fill.bounds().diagonal() * 1e-3, 5e-4);
+    const core::Vec3 n = normal.normalized();
+    std::vector<char> missed;
+    auto draped = core::projectOntoMesh(surface, v, n, nullptr, &missed);
+    // Only what lies on the skin: nothing over holes, past the edge, or down a wall to
+    // whatever is behind the skin.
+    std::vector<core::TriangleMesh::Triangle> kept;
+    kept.reserve(tris.size());
+    for (const auto& t : tris) {
+        bool ok = missed[t[0]] == 0 && missed[t[1]] == 0 && missed[t[2]] == 0;
+        for (int k = 0; k < 3 && ok; ++k) {
+            const auto a = t[k], b = t[(k + 1) % 3];
+            const double rise = std::abs((draped[a] - v[a]).dot(n) - (draped[b] - v[b]).dot(n));
+            ok = rise <= maxDrapeSlope * (v[a] - v[b]).length();
+        }
+        if (ok)
+            kept.push_back(t);
+    }
+    const core::Vec3 lift = n * std::max(fill.bounds().diagonal() * 1e-3, 5e-4);
     for (auto& p : draped)
         p = p + lift;
-    return core::TriangleMesh(std::move(draped), std::move(tris));
+    return core::TriangleMesh(std::move(draped), std::move(kept));
 }
 
 } // namespace

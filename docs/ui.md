@@ -47,7 +47,8 @@ the choice:
 | Blender | Middle drag | Shift + middle drag | Wheel, Ctrl + middle drag |
 
 On macOS, Ctrl here is the Command key (Qt's mapping). "Reverse zoom direction" flips the
-wheel and drag zoom.
+wheel and drag zoom; "Reverse orbit direction" flips orbiting. By default the model follows
+the pointer or the fingers, the same way for the mouse and the touchpad.
 
 Not implemented yet: Fusion's "orbit around point" (Shift + click + middle drag).
 

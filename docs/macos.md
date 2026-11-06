@@ -92,12 +92,12 @@ open build/vcpkg-macos/bin/AeroCAD.app
   *Convert to Body* turns the solid into a timeline body for sketches, fillets, combine.
 - **A part on the curved surface (aileron, flap, a mounting base):** after *Fit surface
   to selection* a sketch on the new surface starts by itself (or: *Sketch*, then click the
-  scan or a fitted surface). What you draw lies on the surface; clicks land on the
-  surface point under the cursor from any view. The sketch lies on the best-fit plane just above that area. Draw the
-  closed outline and click *Finish Sketch*: the *Part on surface* box offers a thickness
-  and a side (inward / outward / both); *Create* makes the solid. On a scan a smooth
-  surface is fitted under the outline automatically, so no selection or fit is needed,
-  and the edges follow the outline exactly. (*Properties > Surface > Trim by sketch*
+  scan or a fitted surface); the view turns to the clicked place. What you draw lies on the
+  surface; clicks land on the surface point under the cursor from any view, on scans of any
+  size. Draw the closed outline and click *Finish Sketch*: the *Part on surface* box offers
+  a thickness and a side (inward / outward / both); *Create* makes the solid. On a scan the
+  part follows the skin you see under the outline, bridging holes, with edges exactly on the
+  outline; no selection or fit is needed. (*Properties > Surface > Trim by sketch*
   gives just the cut-out surface.)
 - **A fin on the surface (canard, dive plane, winglet):** *Sketch*, tick *Fin across the
   surface* (optionally an angle), then click the scan where the fin stands. The sketch

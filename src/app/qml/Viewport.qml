@@ -195,6 +195,15 @@ Item {
         updateClipping()
     }
 
+    /// Frames the area of `radius` (mm) around a model point (a place being worked on).
+    function frameAround(point, radius) {
+        // Model (x, y, z) is (x, z, -y) in the Y-up scene.
+        cameraInput.pivot.position = Qt.vector3d(point[0], point[2], -point[1])
+        const halfFov = camera.fieldOfView * Math.PI / 360
+        cameraInput.distance = Math.max(radius, 1) / Math.sin(halfFov) * 1.1
+        updateClipping()
+    }
+
     /// Camera state stored in project files.
     function cameraState() {
         const p = cameraInput.pivot.position

@@ -11,6 +11,7 @@ add_library(aerocad_geometry STATIC
     src/SurfaceFit.cpp
     src/RegionFit.cpp
     src/Offset.cpp
+    src/DrapeFit.cpp
 )
 add_library(AeroCAD::geometry ALIAS aerocad_geometry)
 target_include_directories(aerocad_geometry PUBLIC include PRIVATE occt/include)

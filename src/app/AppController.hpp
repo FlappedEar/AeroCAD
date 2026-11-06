@@ -174,6 +174,12 @@ signals:
     void projectOpened(const QVariantMap& view);
 
 private:
+    /// Shared fast queries on one mesh (scans of millions of triangles), cached.
+    [[nodiscard]] const core::MeshProjector& projectorFor(const std::shared_ptr<const core::TriangleMesh>& mesh,
+                                                          const core::Vec3& outward) const;
+    mutable std::shared_ptr<const core::TriangleMesh> m_projectorMesh;
+    mutable std::unique_ptr<core::MeshProjector> m_projector;
+
     void setStatusMessage(const QString& message);
     bool openProject(const QString& path, bool recover);
     bool saveTo(const QString& path, const QVariantMap& view);

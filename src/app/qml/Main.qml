@@ -203,7 +203,11 @@ ApplicationWindow {
         for (let row = 0; row < controller.parts.count; ++row) {
             }
         viewport.setViewDirection(Qt.vector3d(pl.normal[0], pl.normal[1], pl.normal[2]))
-        viewport.fitAll()
+        // On a scan, look at the clicked place: the whole model would leave it tiny.
+        if (on && on.point && controller.sceneRadius > 0)
+            viewport.frameAround(on.point, controller.sceneRadius * 0.35)
+        else
+            viewport.fitAll()
     }
 
     /// Ends sketch editing. With `offerPart` (the user finished it), a closed outline drawn
@@ -227,6 +231,24 @@ ApplicationWindow {
     function sketchTool_(tool) {
         if (activeSketch)
             sketchTool = tool
+    }
+
+    /// Hides the sketch and, when the part was made over one, the fitted surface it replaces.
+    function hideUsedForPart(made) {
+        const parts = controller.execute("document.parts")
+        if (!parts.ok)
+            return
+        const sketchPart = parts.result.parts.find(p => p.kind === "sketch" && p.featureId === made.id)
+        if (sketchPart)
+            controller.execute("part.set_visible", { id: sketchPart.id, visible: false })
+        const surface = parts.result.parts.find(p => p.id === made.part)
+        if (surface && surface.hasBrep) {
+            controller.execute("part.set_visible", { id: surface.id, visible: false })
+            // Fitting a surface hid the scan: bring it back to see the part on it.
+            const scan = /of part (\d+)$/.exec(surface.source || "")
+            if (scan)
+                controller.execute("part.set_visible", { id: Number(scan[1]), visible: true })
+        }
     }
 
     /// Opens a feature dialog, pre-filled from the selection (Fusion: select, then press E).
@@ -1217,6 +1239,9 @@ ApplicationWindow {
                                           side: ["inside", "outside", "both"][partSide.currentIndex] })
                                 if (!r.ok)
                                     return
+                                // The part replaces what it was made from on screen (Fusion
+                                // hides a used sketch); both stay in the browser.
+                                window.hideUsedForPart(window.partOnSurfaceSketch)
                                 window.partOnSurfaceSketch = null
                                 window.selectPart(r.result.id)
                                 if (fin)

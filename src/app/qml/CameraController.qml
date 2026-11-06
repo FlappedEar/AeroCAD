@@ -35,6 +35,7 @@ Item {
     /// "fusion", "solidworks" or "blender" (see Preferences).
     property string mouseProfile: Preferences.mouseProfile
     property bool invertZoom: Preferences.invertZoom
+    property bool invertOrbit: Preferences.invertOrbit
     readonly property int panModifiers: mouseProfile === "solidworks" ? Qt.ControlModifier
                                         : mouseProfile === "blender" ? Qt.ShiftModifier : Qt.NoModifier
     readonly property int orbitModifiers: mouseProfile === "fusion" ? Qt.ShiftModifier : Qt.NoModifier
@@ -57,8 +58,10 @@ Item {
 
     function orbit(dx, dy) {
         viewAnimation.stop()
-        yaw -= dx * orbitSpeed
-        pitch = Math.max(-90, Math.min(90, pitch - dy * orbitSpeed))
+        // The model follows the pointer; the preference turns that around.
+        const s = invertOrbit ? -orbitSpeed : orbitSpeed
+        yaw -= dx * s
+        pitch = Math.max(-90, Math.min(90, pitch - dy * s))
     }
 
     function zoomBy(factor) {
@@ -155,7 +158,7 @@ Item {
                 const d = event.pixelDelta.x !== 0 || event.pixelDelta.y !== 0
                     ? event.pixelDelta : Qt.point(event.angleDelta.x / 8, event.angleDelta.y / 8)
                 if (event.modifiers & Qt.ShiftModifier)
-                    root.orbit(-d.x, -d.y)
+                    root.orbit(d.x, d.y) // as with the mouse and two-finger pan: the model follows
                 else
                     root.pan(d.x, d.y)
                 return

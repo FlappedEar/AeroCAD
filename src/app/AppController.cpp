@@ -587,31 +587,32 @@ QVariantMap AppController::pickSurface(const QVector3D& origin, const QVector3D&
             {QStringLiteral("triangle"), QVariant::fromValue<quint32>(best->triangle)}};
 }
 
+const core::MeshProjector& AppController::projectorFor(const std::shared_ptr<const core::TriangleMesh>& mesh,
+                                                       const core::Vec3& outward) const
+{
+    // Built on the first use for a mesh and direction; clicks and hover then cost microseconds.
+    if (!m_projector || m_projectorMesh != mesh || (m_projector->outward() - outward.normalized()).length() > 1e-9) {
+        m_projectorMesh = mesh;
+        m_projector = std::make_unique<core::MeshProjector>(*mesh, outward);
+    }
+    return *m_projector;
+}
+
 QVector3D AppController::dropOntoPart(quint64 id, const QVector3D& point, const QVector3D& normal) const
 {
-    constexpr std::size_t maxTriangles = 100000; // per sketch point drawn, each repaint
     const core::Vec3 p{point.x(), point.y(), point.z()};
     const core::Vec3 n{normal.x(), normal.y(), normal.z()};
     const model::Part* surface = part(id);
-    if (surface == nullptr)
+    if (surface == nullptr || !(n.length() > 0.0))
         return point;
-    std::vector<const core::TriangleMesh*> meshes;
+    std::vector<std::shared_ptr<const core::TriangleMesh>> meshes;
     if (const model::Part* scan = part(model::sourcePartId(*surface)); scan != nullptr && scan->mesh && !scan->shape)
-        meshes.push_back(scan->mesh.get());
+        meshes.push_back(scan->mesh);
     if (surface->mesh)
-        meshes.push_back(surface->mesh.get());
-    for (const auto* mesh : meshes) {
-        if (mesh->triangleCount() > maxTriangles)
-            continue;
-        // Both ways along the normal; the nearer crossing.
-        const auto down = core::raycast(*mesh, p, n * -1.0);
-        const auto up = core::raycast(*mesh, p, n);
-        const core::RayHit* best = down ? &*down : nullptr;
-        if (up && (best == nullptr || up->distance < best->distance))
-            best = &*up;
-        if (best != nullptr)
-            return {static_cast<float>(best->point.x), static_cast<float>(best->point.y),
-                    static_cast<float>(best->point.z)};
+        meshes.push_back(surface->mesh);
+    for (const auto& mesh : meshes) {
+        if (const auto hit = projectorFor(mesh, n).drop(p))
+            return {static_cast<float>(hit->x), static_cast<float>(hit->y), static_cast<float>(hit->z)};
     }
     return point;
 }
@@ -620,17 +621,20 @@ QVariantMap AppController::pickPartSurface(quint64 id, const QVector3D& origin, 
 {
     const core::Vec3 o{origin.x(), origin.y(), origin.z()};
     const core::Vec3 d{direction.x(), direction.y(), direction.z()};
-    constexpr std::size_t maxTriangles = 300000; // brute-force ray cast per pointer move
     const model::Part* p = part(id);
     if (p == nullptr)
         return {};
+    auto cast = [&](const std::shared_ptr<const core::TriangleMesh>& mesh) {
+        // Any direction serves for ray casts; reuse the one dropOntoPart built.
+        return (m_projector && m_projectorMesh == mesh ? *m_projector : projectorFor(mesh, d)).raycast(o, d);
+    };
     std::optional<core::RayHit> hit;
     // A fitted surface covers only the fitted area; the scan it came from goes further.
-    if (const model::Part* scan = part(model::sourcePartId(*p));
-        scan != nullptr && scan->visible && scan->mesh && !scan->shape && scan->mesh->triangleCount() <= maxTriangles)
-        hit = core::raycast(*scan->mesh, o, d);
-    if (!hit && p->mesh && p->mesh->triangleCount() <= maxTriangles)
-        hit = core::raycast(*p->mesh, o, d);
+    // Hidden too: a sketch is laid on it either way (Fit hides it).
+    if (const model::Part* scan = part(model::sourcePartId(*p)); scan != nullptr && scan->mesh && !scan->shape)
+        hit = cast(scan->mesh);
+    if (!hit && p->mesh)
+        hit = cast(p->mesh);
     if (!hit)
         return {};
     return {{QStringLiteral("partId"), QVariant::fromValue<quint64>(id)},

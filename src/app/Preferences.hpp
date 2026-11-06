@@ -24,6 +24,7 @@ class Preferences : public QObject {
     Q_PROPERTY(QString theme READ theme WRITE setTheme NOTIFY themeChanged)
     Q_PROPERTY(QString mouseProfile READ mouseProfile WRITE setMouseProfile NOTIFY mouseProfileChanged)
     Q_PROPERTY(bool invertZoom READ invertZoom WRITE setInvertZoom NOTIFY invertZoomChanged)
+    Q_PROPERTY(bool invertOrbit READ invertOrbit WRITE setInvertOrbit NOTIFY invertOrbitChanged)
     Q_PROPERTY(int autosaveSeconds READ autosaveSeconds WRITE setAutosaveSeconds NOTIFY autosaveSecondsChanged)
     Q_PROPERTY(QVariantList lengthUnits READ lengthUnits CONSTANT)
     Q_PROPERTY(QVariantList themes READ themes CONSTANT)
@@ -45,7 +46,9 @@ public:
     void setMouseProfile(const QString& profile);
 
     [[nodiscard]] bool invertZoom() const { return m_invertZoom; }
+    [[nodiscard]] bool invertOrbit() const { return m_invertOrbit; }
     void setInvertZoom(bool invert);
+    void setInvertOrbit(bool invert);
 
     /// Project autosave interval in seconds, 0 = off. Stored under the key the project
     /// autosave reads ("project/autosaveSeconds").
@@ -81,6 +84,7 @@ signals:
     void themeChanged();
     void mouseProfileChanged();
     void invertZoomChanged();
+    void invertOrbitChanged();
     void autosaveSecondsChanged();
 
 private:
@@ -89,6 +93,7 @@ private:
     QString m_theme;
     QString m_mouseProfile;
     bool m_invertZoom = false;
+    bool m_invertOrbit = false;
     int m_autosaveSeconds = 120;
 };
 

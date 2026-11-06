@@ -669,7 +669,9 @@ TEST_CASE("Part on surface: one step from an outline over a scan to a solid", "[
         auto part = session.execute("surface.part_from_sketch", {{"sketch", sketchId}, {"thickness", 1.5}, {"side", "outside"}});
         INFO(part.toJson().dump());
         REQUIRE(part.ok);
-        CHECK_FALSE(part.data.contains("fit")); // the fitted surface is used as it is
+        // Built on the scan the surface came from, under the outline.
+        CHECK(part.data.at("fit").at("part") == scanId);
+        CHECK(part.data.at("fit").at("method") == "draped");
         CHECK(part.data.at("volume").get<double>() == Approx(1.5 * trimmed.data.at("area").get<double>()).epsilon(0.03));
     }
 

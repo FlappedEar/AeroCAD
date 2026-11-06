@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "AppController.hpp"
+#include "UiScript.hpp"
 
 #include <QCommandLineParser>
 #include <QColor>
@@ -126,6 +127,10 @@ int main(int argc, char* argv[])
                               QStringLiteral("Run a JSON command script (array of {name, params}) after loading files."),
                               QStringLiteral("script.json"));
     parser.addOption(script);
+    QCommandLineOption uiScript(QStringLiteral("ui-script"),
+                                QStringLiteral("Drive the UI from a script after loading files, then exit (UiScript.cpp)."),
+                                QStringLiteral("script.js"));
+    parser.addOption(uiScript);
     parser.addPositionalArgument(QStringLiteral("files"), QStringLiteral("Projects (.aerocad) or 3D files to open."),
                                  QStringLiteral("[files...]"));
     parser.process(app);
@@ -155,6 +160,8 @@ int main(int argc, char* argv[])
         controller.openFile(QUrl::fromLocalFile(file));
     if (parser.isSet(script))
         controller.runScript(parser.value(script));
+    if (parser.isSet(uiScript))
+        aerocad::app::startUiScript(engine, parser.value(uiScript));
 
     return QGuiApplication::exec();
 }
