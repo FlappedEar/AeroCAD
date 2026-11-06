@@ -5,6 +5,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <array>
+#include <cmath>
 #include <memory>
 #include <vector>
 
@@ -187,4 +188,43 @@ TEST_CASE("Lasso with an orthographic view", "[core][selection]")
     const std::vector<std::array<double, 2>> centre{{0.25, 0.25}, {0.75, 0.25}, {0.75, 0.75}, {0.25, 0.75}};
     CHECK(selectInLasso(m, view, centre).size() == 200);
     CHECK(selectInLasso(m, view, centre, {false}).size() == 400);
+}
+
+TEST_CASE("Lasso keeps surfaces seen at a grazing angle", "[core][selection]")
+{
+    // 10 x 10 grid tilted 80 degrees about Y, fully visible from the camera.
+    MeshBuilder b;
+    const double angle = 80.0 * 3.14159265358979 / 180.0;
+    const double c = std::cos(angle), s = std::sin(angle);
+    auto at = [&](double x, double y) { return Vec3{x * c, y, -x * s}; };
+    for (int i = 0; i < 10; ++i) {
+        for (int j = 0; j < 10; ++j) {
+            const double x0 = i - 5.0, x1 = i - 4.0, y0 = j - 5.0, y1 = j - 4.0;
+            b.addTriangle(at(x0, y0), at(x1, y0), at(x1, y1));
+            b.addTriangle(at(x0, y0), at(x1, y1), at(x0, y1));
+        }
+    }
+    const TriangleMesh m = b.take();
+    ViewParams view;
+    view.eye = {0, 0, 50};
+    view.forward = {0, 0, -1};
+    view.up = {0, 1, 0};
+    view.fovYDeg = 40;
+    view.aspect = 1;
+    const std::vector<std::array<double, 2>> all{{0, 0}, {1, 0}, {1, 1}, {0, 1}};
+    CHECK(selectInLasso(m, view, all).size() == 200);
+}
+
+TEST_CASE("Raycast finds the nearest surface hit", "[core][selection]")
+{
+    MeshBuilder b;
+    addGrid(b, 4, 10.0, 0.0);
+    addGrid(b, 4, 10.0, 5.0);
+    const TriangleMesh m = b.take();
+    const auto hit = raycast(m, {3, 3, 20}, {0, 0, -1});
+    REQUIRE(hit);
+    CHECK(hit->point.z == Approx(5.0));
+    CHECK(hit->distance == Approx(15.0));
+    CHECK_FALSE(raycast(m, {30, 30, 20}, {0, 0, -1}));
+    CHECK_FALSE(raycast(m, {3, 3, 20}, {0, 0, 1}));
 }

@@ -86,6 +86,20 @@ Pane {
                 ToolTip.delay: 500
                 ToolTip.text: qsTr("Largest angle between neighbouring triangles inside the region")
             }
+            Label { text: qsTr("Max total") }
+            SpinBox {
+                from: 5
+                to: 180
+                stepSize: 5
+                value: root.viewport.regionSeedAngle
+                editable: true
+                textFromValue: (value, locale) => value >= 180 ? qsTr("off") : value + "°"
+                valueFromText: (text, locale) => text === qsTr("off") ? 180 : parseInt(text)
+                onValueModified: root.viewport.regionSeedAngle = value
+                ToolTip.visible: hovered
+                ToolTip.delay: 500
+                ToolTip.text: qsTr("Largest angle to the clicked spot, to take part of a smooth, rounded surface")
+            }
         }
 
         RowLayout {

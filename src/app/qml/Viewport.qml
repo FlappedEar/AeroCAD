@@ -30,6 +30,7 @@ Item {
     property string tool: "navigate" // navigate | region | lasso | brush
     property string selectMode: "replace" // replace | add | subtract
     property real regionAngle: 20 // degrees between neighbouring triangles
+    property real regionSeedAngle: 180 // degrees from the clicked triangle; 180 = off
     property real brushRadius: 0 // mm; 0 = set from the part size on first use
     property bool brushConnected: true
     property bool lassoThrough: false
@@ -43,15 +44,21 @@ Item {
             ensureBrushRadius(root.selectedPartId)
     }
 
-    /// Hit on a part at viewport position (x, y), or null.
+    /// Surface hit at viewport position (x, y): {partId, point (model mm), distance from the
+    /// camera}, or null. Ray-cast against the mesh triangles in C++: Qt Quick 3D picks
+    /// custom geometry by its bounding volume only.
     function pickPart(x, y) {
-        const hit = view.pick(x, y)
-        return hit.objectHit && hit.objectHit.pickPartId ? hit : null
+        const near = modelSpace.mapPositionFromScene(view.mapTo3DScene(Qt.vector3d(x, y, 0)))
+        const far = modelSpace.mapPositionFromScene(view.mapTo3DScene(Qt.vector3d(x, y, 100)))
+        const hit = controller.pickSurface(near, far.minus(near))
+        if (!hit.partId)
+            return null
+        const eye = modelSpace.mapPositionFromScene(view.camera.scenePosition)
+        return { partId: hit.partId, point: hit.point, distance: hit.point.minus(eye).length() }
     }
 
     function modelPoint(hit) {
-        const p = modelSpace.mapPositionFromScene(hit.scenePosition)
-        return Qt.vector3d(p.x, p.y, p.z)
+        return hit.point
     }
 
     function ensureBrushRadius(id) {
@@ -62,15 +69,16 @@ Item {
     }
 
     function brushStrokeMode() {
-        return selectMode === "subtract" ? "subtract" : "add"
+        return selectMode
     }
 
     function pickRegion(hit) {
         const p = modelPoint(hit)
         controller.execute("selection.pick_region", {
-            id: hit.objectHit.pickPartId,
+            id: hit.partId,
             point: [p.x, p.y, p.z],
             maxAngle: regionAngle,
+            maxSeedAngle: regionSeedAngle,
             mode: selectMode
         })
     }
@@ -315,7 +323,7 @@ Item {
         acceptedButtons: Qt.LeftButton
         onTapped: eventPoint => {
             const hit = root.pickPart(eventPoint.position.x, eventPoint.position.y)
-            const id = hit ? hit.objectHit.pickPartId : 0
+            const id = hit ? hit.partId : 0
             root.partPicked(id)
             if (!hit)
                 return
@@ -346,7 +354,7 @@ Item {
 
         function brushAt(x, y) {
             const hit = root.pickPart(x, y)
-            if (!hit || hit.objectHit.pickPartId !== strokePartId)
+            if (!hit || hit.partId !== strokePartId)
                 return
             const p = root.modelPoint(hit)
             // Dabs closer than a quarter of the radius add nothing visible.
@@ -370,8 +378,9 @@ Item {
             }
             if (active) {
                 hasLastPoint = false
+                lastScreen = centroid.pressPosition
                 const hit = root.pickPart(centroid.pressPosition.x, centroid.pressPosition.y)
-                strokePartId = hit ? hit.objectHit.pickPartId : 0
+                strokePartId = hit ? hit.partId : 0
                 if (!strokePartId)
                     return
                 root.partPicked(strokePartId)
@@ -382,15 +391,23 @@ Item {
                 root.controller.brushEnd()
             }
         }
+        property point lastScreen
+
         onCentroidChanged: {
             if (!active)
                 return
+            const pos = centroid.position
             if (root.tool === "lasso") {
-                lassoCanvas.points.push(centroid.position)
+                lassoCanvas.points.push(pos)
                 lassoCanvas.requestPaint()
             } else if (root.controller.brushActive()) {
-                brushAt(centroid.position.x, centroid.position.y)
+                // Fill the gap between pointer events so fast strokes stay continuous.
+                const dx = pos.x - lastScreen.x, dy = pos.y - lastScreen.y
+                const steps = Math.min(64, Math.max(1, Math.ceil(Math.hypot(dx, dy) / 4)))
+                for (let i = 1; i <= steps; ++i)
+                    brushAt(lastScreen.x + dx * i / steps, lastScreen.y + dy * i / steps)
             }
+            lastScreen = pos
         }
     }
 

@@ -58,12 +58,16 @@ public:
     /// Part details for the properties panel ({} for unknown ids).
     Q_INVOKABLE QVariantMap partInfo(quint64 id) const;
 
+    /// Nearest hit of a ray (model coordinates) with the visible parts' meshes:
+    /// {partId, point (QVector3D), triangle}, or {} when nothing is hit.
+    Q_INVOKABLE QVariantMap pickSurface(const QVector3D& origin, const QVector3D& direction) const;
+
     /// Shows a message in the status bar.
     Q_INVOKABLE void showStatus(const QString& message) { setStatusMessage(message); }
 
     /// Brush stroke with live preview. brushBegin starts a stroke on a part, brushAdd adds
     /// a dab at a point in model coordinates (mm), brushEnd runs selection.brush with all
-    /// points as one undoable command. mode: "add" or "subtract".
+    /// points as one undoable command. mode: "replace", "add" or "subtract".
     Q_INVOKABLE bool brushBegin(quint64 id, double radius, bool connected, const QString& mode);
     Q_INVOKABLE void brushAdd(const QVector3D& point);
     Q_INVOKABLE QVariantMap brushEnd();

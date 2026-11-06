@@ -45,6 +45,16 @@ private:
 /// Brute force; fine for picking (one query per click or brush dab).
 [[nodiscard]] std::optional<std::uint32_t> nearestTriangle(const TriangleMesh& mesh, const Vec3& point);
 
+struct RayHit {
+    std::uint32_t triangle = 0;
+    double distance = 0.0; ///< Along the ray, in units of |direction|.
+    Vec3 point;
+};
+
+/// Nearest intersection of the ray origin + t * direction (t >= 0) with the mesh, both
+/// triangle sides. Brute force (Moller-Trumbore); fine for one query per pointer event.
+[[nodiscard]] std::optional<RayHit> raycast(const TriangleMesh& mesh, const Vec3& origin, const Vec3& direction);
+
 /// Distance from a point to a triangle.
 [[nodiscard]] double pointTriangleDistance(const Vec3& p, const Vec3& a, const Vec3& b, const Vec3& c);
 

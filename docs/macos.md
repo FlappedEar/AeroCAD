@@ -67,7 +67,9 @@ open build/vcpkg-macos/bin/AeroCAD.app
 - **Region selection** (the toolbar at the top left of the 3D view; the selection is
   shown in orange and listed under *Region selection* in the Properties panel):
   - **Region** (key `1`): click the surface to select the smooth area around the point,
-    up to sharp edges. *Max bend* sets how sharp an edge must be to stop it.
+    up to sharp edges. *Max bend* sets how sharp an edge must be to stop it; *Max total*
+    limits how far the region may turn away from the clicked spot (for smooth parts
+    without edges, such as a duct).
   - **Lasso** (key `2`): drag a loop around the area. Only the visible surface is
     selected unless *Select through* is on.
   - **Brush** (key `3`): paint with the left button. `[` and `]` change the radius.

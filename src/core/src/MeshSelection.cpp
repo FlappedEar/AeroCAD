@@ -139,6 +139,37 @@ std::shared_ptr<const MeshAdjacency> adjacencyFor(const std::shared_ptr<const Tr
     return adjacency;
 }
 
+std::optional<RayHit> raycast(const TriangleMesh& mesh, const Vec3& origin, const Vec3& direction)
+{
+    std::optional<RayHit> best;
+    const auto& v = mesh.vertices();
+    const double eps = 1e-12;
+    for (std::size_t t = 0; t < mesh.triangleCount(); ++t) {
+        const auto& tri = mesh.triangles()[t];
+        const Vec3& a = v[tri[0]];
+        const Vec3 e1 = v[tri[1]] - a;
+        const Vec3 e2 = v[tri[2]] - a;
+        const Vec3 pvec = direction.cross(e2);
+        const double det = e1.dot(pvec);
+        if (std::abs(det) < eps)
+            continue;
+        const double inv = 1.0 / det;
+        const Vec3 tvec = origin - a;
+        const double u = tvec.dot(pvec) * inv;
+        if (u < 0.0 || u > 1.0)
+            continue;
+        const Vec3 qvec = tvec.cross(e1);
+        const double w = direction.dot(qvec) * inv;
+        if (w < 0.0 || u + w > 1.0)
+            continue;
+        const double dist = e2.dot(qvec) * inv;
+        if (dist < 0.0 || (best && dist >= best->distance))
+            continue;
+        best = RayHit{static_cast<std::uint32_t>(t), dist, origin + direction * dist};
+    }
+    return best;
+}
+
 double pointTriangleDistance(const Vec3& p, const Vec3& a, const Vec3& b, const Vec3& c)
 {
     // Closest point on triangle (Ericson, Real-Time Collision Detection, 5.1.5).
@@ -329,19 +360,27 @@ TriangleSet selectInLasso(const TriangleMesh& mesh, const ViewParams& view,
         maxY = std::max(maxY, p[1]);
     }
 
-    // Software depth buffer of the whole mesh for the visibility test.
     const int longSide = 1024;
     const int width = aspect >= 1.0 ? longSide : std::max(1, static_cast<int>(longSide * aspect));
     const int height = aspect >= 1.0 ? std::max(1, static_cast<int>(longSide / aspect)) : longSide;
+    // Software depth buffer with the nearest triangle per pixel (like a GPU id buffer):
+    // a triangle is visible when it is the nearest one at one or more pixels. Comparing
+    // only depths would let a surface seen at a grazing angle hide itself.
+    const std::size_t pixelCount = static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
+    constexpr std::uint32_t noTriangle = 0xFFFFFFFFu;
     std::vector<float> depth;
+    std::vector<std::uint32_t> owner;
+    std::vector<char> covered; // triangle covers at least one pixel centre
     const auto& vertices = mesh.vertices();
     if (options.visibleOnly) {
         std::vector<Projected> pv(vertices.size());
         for (std::size_t i = 0; i < vertices.size(); ++i)
             pv[i] = project(vertices[i]);
-        depth.assign(static_cast<std::size_t>(width) * static_cast<std::size_t>(height),
-                     std::numeric_limits<float>::max());
-        for (const auto& tri : mesh.triangles()) {
+        depth.assign(pixelCount, std::numeric_limits<float>::max());
+        owner.assign(pixelCount, noTriangle);
+        covered.assign(mesh.triangleCount(), 0);
+        for (std::size_t t = 0; t < mesh.triangleCount(); ++t) {
+            const auto& tri = mesh.triangles()[t];
             const Projected& a = pv[tri[0]];
             const Projected& b = pv[tri[1]];
             const Projected& c = pv[tri[2]];
@@ -364,15 +403,32 @@ TriangleSet selectInLasso(const TriangleMesh& mesh, const ViewParams& view,
                     const double w0 = ((bx - px) * (cy - py) - (by - py) * (cx - px)) / area;
                     const double w1 = ((cx - px) * (ay - py) - (cy - py) * (ax - px)) / area;
                     const double w2 = 1.0 - w0 - w1;
-                    if (w0 < 0.0 || w1 < 0.0 || w2 < 0.0)
+                    // Small negative slack closes cracks between neighbouring triangles,
+                    // which would otherwise let hidden surfaces show through.
+                    constexpr double slack = -1e-7;
+                    if (w0 < slack || w1 < slack || w2 < slack)
                         continue;
-                    // 1/z is linear in screen space.
-                    const double z = 1.0 / (w0 / a.z + w1 / b.z + w2 / c.z);
-                    float& slot = depth[static_cast<std::size_t>(y) * static_cast<std::size_t>(width) +
-                                        static_cast<std::size_t>(x)];
-                    slot = std::min(slot, static_cast<float>(z));
+                    // Depth is linear in screen space for a parallel projection, 1/z for a
+                    // perspective one.
+                    const double z =
+                        ortho ? w0 * a.z + w1 * b.z + w2 * c.z : 1.0 / (w0 / a.z + w1 / b.z + w2 / c.z);
+                    covered[t] = 1;
+                    const std::size_t i =
+                        static_cast<std::size_t>(y) * static_cast<std::size_t>(width) + static_cast<std::size_t>(x);
+                    if (static_cast<float>(z) < depth[i]) {
+                        depth[i] = static_cast<float>(z);
+                        owner[i] = static_cast<std::uint32_t>(t);
+                    }
                 }
             }
+        }
+    }
+    std::vector<char> ownsPixel;
+    if (options.visibleOnly) {
+        ownsPixel.assign(mesh.triangleCount(), 0);
+        for (const auto o : owner) {
+            if (o != noTriangle)
+                ownsPixel[o] = 1;
         }
     }
 
@@ -385,24 +441,16 @@ TriangleSet selectInLasso(const TriangleMesh& mesh, const ViewParams& view,
             continue;
         if (!insidePolygon(p.x, p.y, polygon))
             continue;
-        if (options.visibleOnly) {
+        if (options.visibleOnly && ownsPixel[t] == 0) {
+            if (covered[t] != 0)
+                continue; // covers pixels, but something nearer is in front at all of them
+            // Smaller than a pixel: compare its depth with the pixel under its centre.
             const int x = static_cast<int>(p.x * width);
             const int y = static_cast<int>(p.y * height);
             if (x >= 0 && x < width && y >= 0 && y < height) {
-                // Nearest depth in the 3x3 neighbourhood: tolerant to the triangle's own
-                // slope inside one pixel.
-                float nearest = std::numeric_limits<float>::max();
-                for (int dy = -1; dy <= 1; ++dy) {
-                    for (int dx = -1; dx <= 1; ++dx) {
-                        const int xx = std::clamp(x + dx, 0, width - 1);
-                        const int yy = std::clamp(y + dy, 0, height - 1);
-                        nearest =
-                            std::min(nearest, depth[static_cast<std::size_t>(yy) * static_cast<std::size_t>(width) +
-                                                    static_cast<std::size_t>(xx)]);
-                    }
-                }
-                const double tolerance =
-                    sizeTolerance + 4.0 * (ortho ? view.height / height : p.z * pixelAngle);
+                const float nearest =
+                    depth[static_cast<std::size_t>(y) * static_cast<std::size_t>(width) + static_cast<std::size_t>(x)];
+                const double tolerance = sizeTolerance + 4.0 * (ortho ? view.height / height : p.z * pixelAngle);
                 if (nearest < std::numeric_limits<float>::max() && p.z > nearest + tolerance)
                     continue;
             }

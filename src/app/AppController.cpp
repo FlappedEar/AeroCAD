@@ -130,7 +130,7 @@ bool AppController::brushBegin(quint64 id, double radius, bool connected, const 
     b.partId = id;
     b.radius = radius;
     b.connected = connected;
-    b.mode = mode == QStringLiteral("subtract") ? mode : QStringLiteral("add");
+    b.mode = mode == QStringLiteral("subtract") || mode == QStringLiteral("replace") ? mode : QStringLiteral("add");
     b.mesh = p->mesh;
     if (connected)
         b.adjacency = core::adjacencyFor(p->mesh);
@@ -150,9 +150,12 @@ void AppController::brushAdd(const QVector3D& point)
     const core::TriangleSet dab =
         core::selectBrushDab(*b.mesh, b.adjacency.get(), {point.x(), point.y(), point.z()}, b.radius);
     b.stroke = core::combineSelection(b.stroke, dab, core::SelectionMode::Add);
-    b.preview = core::combineSelection(b.base, b.stroke,
-                                       b.mode == QStringLiteral("subtract") ? core::SelectionMode::Subtract
-                                                                            : core::SelectionMode::Add);
+    core::SelectionMode mode = core::SelectionMode::Add;
+    if (b.mode == QStringLiteral("subtract"))
+        mode = core::SelectionMode::Subtract;
+    else if (b.mode == QStringLiteral("replace"))
+        mode = core::SelectionMode::Replace;
+    b.preview = core::combineSelection(b.base, b.stroke, mode);
     emit selectionPreviewChanged(b.partId);
 }
 
@@ -186,6 +189,29 @@ void AppController::brushCancel()
     const quint64 id = m_brush->partId;
     m_brush.reset();
     emit selectionPreviewChanged(id);
+}
+
+QVariantMap AppController::pickSurface(const QVector3D& origin, const QVector3D& direction) const
+{
+    const core::Vec3 o{origin.x(), origin.y(), origin.z()};
+    const core::Vec3 d{direction.x(), direction.y(), direction.z()};
+    std::optional<core::RayHit> best;
+    model::PartId bestPart = 0;
+    for (const auto& p : m_session.document().parts()) {
+        if (!p.visible || !p.mesh)
+            continue;
+        const auto hit = core::raycast(*p.mesh, o, d);
+        if (hit && (!best || hit->distance < best->distance)) {
+            best = hit;
+            bestPart = p.id;
+        }
+    }
+    if (!best)
+        return {};
+    return {{QStringLiteral("partId"), QVariant::fromValue<quint64>(bestPart)},
+            {QStringLiteral("point"), QVector3D(static_cast<float>(best->point.x), static_cast<float>(best->point.y),
+                                                static_cast<float>(best->point.z))},
+            {QStringLiteral("triangle"), QVariant::fromValue<quint32>(best->triangle)}};
 }
 
 const core::TriangleSet* AppController::displayedSelection(quint64 id) const
