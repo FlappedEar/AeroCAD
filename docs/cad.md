@@ -32,6 +32,9 @@ use the same operations, and every change is one undo step.
 | `sketch.create` | Create Sketch | `plane` XY / XZ / YZ / {origin, normal, xDir}, or `face` {body, index or point}; `offset`; `curves` |
 | `sketch.add_curves` | (draw in sketch) | appends curves |
 | `sketch.profiles` | | closed regions with area and centroid |
+| `sketch.add_constraints` | Sketch > Constraints, Sketch Dimension (D) | see Constraints below |
+| `sketch.edit_constraint` | double-click a dimension / delete a constraint | `index`, `value` or `remove` |
+| `sketch.curves` | | solved curves, constraints, degrees of freedom |
 | `feature.extrude` | Extrude (E) | `distance`, `extent` one_side / symmetric / two_sides, `flip`, `profiles` or `points` |
 | `feature.revolve` | Revolve | `axis` X / Y / Z, {line: sketch curve index} or {origin, direction}; `angle` |
 | `feature.fillet` | Fillet (F) | `edges`, `radius` |
@@ -53,6 +56,36 @@ Sketch curves: `line {start, end}`, `rectangle {corner, width, height | opposite
 `spline {points, closed?}`; any curve can be `construction: true`. Curves are split at
 intersections, so a circle inside a rectangle gives two profiles (ring and disk).
 
+### Constraints and dimensions
+
+A sketch can carry `constraints` (in `sketch.create` or via `sketch.add_constraints`). They
+refer to curves by index in `sketch.curves` (a rectangle is four lines in order bottom,
+right, top, left; a slot is line, arc, line, arc) and to points as
+`{"curve": i, "point": "start" | "end" | "center"}` or `"origin"`.
+
+- Geometric: `coincident`, `point_on_curve`, `midpoint`, `horizontal`, `vertical`,
+  `parallel`, `perpendicular`, `collinear`, `tangent`, `equal`, `concentric`, `symmetric`, `fix`.
+- Dimensions (`value` is a number or an expression): `distance` (two points, or a point and a
+  line), `horizontal_distance`, `vertical_distance`, `length`, `radius`, `diameter`, `angle`.
+
+The solver (Levenberg-Marquardt, `src/cad/src/SketchSolver.cpp`) starts from the drawn
+curves and moves them as little as possible. Curve ends that touch are merged, so outlines
+stay closed. Shapes keep their implicit constraints: rectangle sides stay horizontal and
+vertical, polygon sides equal, slot ends tangent. Conflicting constraints are rejected with
+the index of the failing constraint. `degreesOfFreedom` (0 = fully constrained) is returned
+by `sketch.create`, `sketch.add_constraints` and `sketch.curves`.
+`fix` holds points where they are when the constraint is added (`sketch.add_constraints`
+stores the solved positions in `at`; a fixed circle also keeps its radius). Lines that must
+turn far (horizontal on a vertical line, perpendicular on parallel lines) are turned in the
+start guess, so they rotate instead of collapsing.
+
+```json
+{"name": "sketch.add_constraints", "params": {"sketch": 1, "constraints": [
+  {"type": "coincident", "points": [{"curve": 0, "point": "start"}, "origin"]},
+  {"type": "length", "curve": 0, "value": "w"},
+  {"type": "length", "curve": 1, "value": 20}]}}
+```
+
 Sketch planes (Z up): XY is the ground plane (normal +Z), XZ the front plane (normal -Y,
 sketch v = world Z), YZ the right plane (normal +X, sketch v = world Z).
 
@@ -71,8 +104,8 @@ sketch v = world Z), YZ the right plane (normal +X, sketch v = world Z).
 
 ## Not yet
 
-- Geometric constraints solver (coincident, tangent, parallel, ...) and driven dimensions in
-  the sketch: today dimensions are the curve parameters, driven by expressions.
+- Constraint inference while drawing (Fusion adds coincident/horizontal/... automatically);
+  today the UI adds them explicitly.
 - Persistent topological naming (edge/face references use index or nearest point).
 - Extrude "to object" / up to a surface, loft, sweep, thicken, offset surface (CAD-69..71).
 - Dense scans as bodies: `feature.base_body` refuses meshes above 50 000 triangles; those need

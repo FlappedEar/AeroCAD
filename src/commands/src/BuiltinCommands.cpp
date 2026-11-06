@@ -2,6 +2,7 @@
 #include "aerocad/commands/Session.hpp"
 
 #include "CommandHelpers.hpp"
+#include "ExportCommands.hpp"
 
 #include "aerocad/core/Path.hpp"
 #include "aerocad/geometry/Transform.hpp"
@@ -188,6 +189,7 @@ void registerBuiltinCommands(CommandRegistry& registry)
     registerPartCommands(registry);
     registerEditCommands(registry);
     registerSelectionCommands(registry);
+    registerExportCommands(registry);
 }
 
 } // namespace aerocad::commands

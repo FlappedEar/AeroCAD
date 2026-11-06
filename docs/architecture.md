@@ -8,7 +8,7 @@ commands                      Named commands with JSON Schema parameters and JSO
   |                           server, so an AI agent can do everything the user can.
 model                         Document (parts), undo stack, change notifications.
   |
-io        geometry            io: import (STL, OBJ, 3MF, STEP, IGES, BREP), later export.
+io        geometry            io: import (STL, OBJ, 3MF, STEP, IGES, BREP), export (STL, 3MF, STEP).
   |         |                 geometry: Open CASCADE wrapper (B-rep shapes, tessellation,
 core -------+                 transforms, primitives).
                               core: math, triangle meshes. No dependencies.

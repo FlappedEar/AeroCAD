@@ -4,6 +4,7 @@
 add_library(aerocad_cad STATIC
     src/Expression.cpp
     src/Design.cpp
+    src/SketchSolver.cpp
 )
 add_library(AeroCAD::cad ALIAS aerocad_cad)
 target_include_directories(aerocad_cad PUBLIC include)

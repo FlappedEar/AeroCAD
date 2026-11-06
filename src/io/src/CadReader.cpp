@@ -22,15 +22,17 @@
 
 namespace aerocad::io {
 
-namespace {
+namespace detail {
 
-// The OCCT data exchange readers share global state (Interface_Static parameters,
-// static controllers), so serialize them.
 std::mutex& occtMutex()
 {
     static std::mutex mutex;
     return mutex;
 }
+
+} // namespace detail
+
+namespace {
 
 const char* statusText(IFSelect_ReturnStatus status)
 {
@@ -68,7 +70,7 @@ ImportResult guarded(FileFormat format, const std::filesystem::path& path, F&& b
 {
     const std::string name = detail::pathToUtf8(path);
     try {
-        const std::lock_guard<std::mutex> lock(occtMutex());
+        const std::lock_guard<std::mutex> lock(detail::occtMutex());
         return body(name);
     } catch (const ImportError&) {
         throw;

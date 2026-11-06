@@ -2,6 +2,7 @@
 #include "aerocad/cad/Design.hpp"
 
 #include "aerocad/cad/Expression.hpp"
+#include "aerocad/cad/SketchSolver.hpp"
 #include "aerocad/geometry/Modeling.hpp"
 #include "aerocad/geometry/Tessellation.hpp"
 
@@ -294,8 +295,65 @@ SketchCurve lineCurve(Vec2 a, Vec2 b, bool construction)
     return c;
 }
 
-void appendCurves(const Eval& ev, const Json& item, std::vector<SketchCurve>& out)
+SketchPointRef parsePointRef(const Json& j)
 {
+    if (j.is_string() && lower(j.get<std::string>()) == "origin")
+        return {SketchPointRef::Kind::Origin, 0};
+    if (!j.is_object())
+        throw DesignError("Constraint point must be \"origin\" or {curve, point}, got " + j.dump());
+    SketchPointRef ref;
+    ref.curve = required(j, "curve").get<std::size_t>();
+    const std::string which = lower(j.value("point", std::string("start")));
+    if (which == "start")
+        ref.kind = SketchPointRef::Kind::Start;
+    else if (which == "end")
+        ref.kind = SketchPointRef::Kind::End;
+    else if (which == "center")
+        ref.kind = SketchPointRef::Kind::Center;
+    else
+        throw DesignError("Unknown constraint point '" + which + "' (start, end, center)");
+    return ref;
+}
+
+SketchConstraint parseConstraint(const Eval& ev, const Json& j)
+{
+    if (!j.is_object())
+        throw DesignError("Sketch constraint must be an object");
+    SketchConstraint c;
+    try {
+        c.type = constraintType(lower(required(j, "type").get<std::string>()));
+    } catch (const geometry::ModelingError& e) {
+        throw DesignError(e.what());
+    }
+    if (has(j, "curve"))
+        c.curves.push_back(j.at("curve").get<std::size_t>());
+    if (has(j, "curves"))
+        for (const auto& i : j.at("curves"))
+            c.curves.push_back(i.get<std::size_t>());
+    if (has(j, "point"))
+        c.points.push_back(parsePointRef(j.at("point")));
+    if (has(j, "points"))
+        for (const auto& p : j.at("points"))
+            c.points.push_back(parsePointRef(p));
+    if (has(j, "at"))
+        for (const auto& p : j.at("at"))
+            c.at.push_back(ev.vec2(p));
+    if (isDimension(c.type)) {
+        c.value = ev.num(j, "value");
+        if (c.type != SketchConstraint::Type::Angle && c.value < 0)
+            throw DesignError("Dimension value must not be negative");
+    }
+    return c;
+}
+
+/// Appends the curves of one sketch item. `implicit` receives the constraints that the
+/// shape implies (a rectangle has horizontal and vertical sides, a slot tangent ends), so
+/// that dimensions added later keep the shape, like Fusion's sketch tools.
+void appendCurves(const Eval& ev, const Json& item, std::vector<SketchCurve>& out,
+                  std::vector<SketchConstraint>& implicit)
+{
+    using CT = SketchConstraint::Type;
+    const std::size_t first = out.size();
     if (!item.is_object())
         throw DesignError("Sketch curve must be an object");
     const std::string type = lower(required(item, "type").get<std::string>());
@@ -326,6 +384,10 @@ void appendCurves(const Eval& ev, const Json& item, std::vector<SketchCurve>& ou
         push(lineCurve({b.x, a.y}, b, construction));
         push(lineCurve(b, {a.x, b.y}, construction));
         push(lineCurve({a.x, b.y}, a, construction));
+        implicit.push_back({CT::Horizontal, {first}, {}});
+        implicit.push_back({CT::Vertical, {first + 1}, {}});
+        implicit.push_back({CT::Horizontal, {first + 2}, {}});
+        implicit.push_back({CT::Vertical, {first + 3}, {}});
     } else if (type == "circle") {
         SketchCurve c{SketchCurve::Kind::Circle, {ev.vec2(item, "center")}};
         c.radius = has(item, "diameter") ? ev.num(item, "diameter") / 2 : ev.num(item, "radius");
@@ -355,6 +417,8 @@ void appendCurves(const Eval& ev, const Json& item, std::vector<SketchCurve>& ou
         };
         for (int i = 0; i < sides; ++i)
             push(lineCurve(at(i), at(i + 1), construction));
+        for (int i = 1; i < sides; ++i)
+            implicit.push_back({CT::Equal, {first, first + static_cast<std::size_t>(i)}, {}});
     } else if (type == "slot") {
         // Center-to-center slot: two parallel lines joined by half circles.
         const Vec2 a = ev.vec2(item, "start");
@@ -369,6 +433,11 @@ void appendCurves(const Eval& ev, const Json& item, std::vector<SketchCurve>& ou
         push({SketchCurve::Kind::Arc, {b + n * r, b + d * r, b - n * r}});
         push(lineCurve(b - n * r, a - n * r, construction));
         push({SketchCurve::Kind::Arc, {a - n * r, a - d * r, a + n * r}});
+        implicit.push_back({CT::Parallel, {first, first + 2}, {}});
+        implicit.push_back({CT::Tangent, {first, first + 1}, {}});
+        implicit.push_back({CT::Tangent, {first + 2, first + 1}, {}});
+        implicit.push_back({CT::Tangent, {first + 2, first + 3}, {}});
+        implicit.push_back({CT::Tangent, {first, first + 3}, {}});
     } else if (type == "spline") {
         SketchCurve c{SketchCurve::Kind::Spline, {}};
         for (const auto& p : required(item, "points"))
@@ -575,10 +644,37 @@ void Design::evaluateFeature(const Feature& f)
         }
         sk.plane = sk.plane.normalized();
         sk.plane.origin = sk.plane.origin + sk.plane.normal * ev.num(p, "offset", 0.0);
+        std::vector<SketchConstraint> constraints;
         if (has(p, "curves")) {
             for (const auto& c : p.at("curves"))
-                appendCurves(ev, c, sk.curves);
+                appendCurves(ev, c, sk.curves, constraints);
         }
+        const std::size_t implicitCount = constraints.size();
+        if (has(p, "constraints")) {
+            for (const auto& c : p.at("constraints"))
+                constraints.push_back(parseConstraint(ev, c));
+        }
+        try {
+            if (constraints.size() > implicitCount) {
+                const auto solved = solveSketch(sk.curves, constraints);
+                if (!solved.solved) {
+                    std::string list;
+                    for (const std::size_t i : solved.unsatisfied) {
+                        if (i >= implicitCount)
+                            list += (list.empty() ? "" : ", ") + std::to_string(i - implicitCount);
+                    }
+                    throw DesignError("Sketch constraints conflict" +
+                                      (list.empty() ? std::string(" with the drawn shapes")
+                                                    : " (constraint " + list + " cannot be satisfied)"));
+                }
+                sk.degreesOfFreedom = solved.degreesOfFreedom;
+            } else {
+                sk.degreesOfFreedom = degreesOfFreedom(sk.curves, constraints);
+            }
+        } catch (const geometry::ModelingError& e) {
+            throw DesignError(e.what());
+        }
+        sk.constraintCount = constraints.size() - implicitCount;
         sk.geometry = geometry::buildSketch(sk.plane, sk.curves);
         m_sketches[f.id] = std::move(sk);
     } else if (f.type == "extrude") {
