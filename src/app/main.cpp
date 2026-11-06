@@ -27,7 +27,7 @@ int runSmokeTest(QGuiApplication& app, QQmlApplicationEngine& engine, aerocad::a
         std::fprintf(stderr, "smoke test: no root window\n");
         return 2;
     }
-    if (!controller.importFile(QUrl::fromLocalFile(file))) {
+    if (!controller.openFile(QUrl::fromLocalFile(file))) {
         std::fprintf(stderr, "smoke test: import failed: %s\n", qPrintable(controller.statusMessage()));
         return 3;
     }
@@ -110,7 +110,7 @@ int main(int argc, char* argv[])
     parser.addHelpOption();
     parser.addVersionOption();
     QCommandLineOption smokeTest(QStringLiteral("smoke-test"),
-                                 QStringLiteral("Import <file>, render a few frames and exit (for CI)."),
+                                 QStringLiteral("Open <file> (project or 3D file), render frames, exit (for CI)."),
                                  QStringLiteral("file"));
     parser.addOption(smokeTest);
     QCommandLineOption screenshot(QStringLiteral("screenshot"),
@@ -121,7 +121,8 @@ int main(int argc, char* argv[])
                               QStringLiteral("Run a JSON command script (array of {name, params}) after loading files."),
                               QStringLiteral("script.json"));
     parser.addOption(script);
-    parser.addPositionalArgument(QStringLiteral("files"), QStringLiteral("3D files to open."), QStringLiteral("[files...]"));
+    parser.addPositionalArgument(QStringLiteral("files"), QStringLiteral("Projects (.aerocad) or 3D files to open."),
+                                 QStringLiteral("[files...]"));
     parser.process(app);
 
     aerocad::app::AppController controller;
@@ -139,8 +140,9 @@ int main(int argc, char* argv[])
         return runSmokeTest(app, engine, controller, parser.value(smokeTest), parser.value(screenshot),
                             parser.value(script));
 
+    QMetaObject::invokeMethod(engine.rootObjects().first(), "offerRecovery");
     for (const QString& file : parser.positionalArguments())
-        controller.importFile(QUrl::fromLocalFile(file));
+        controller.openFile(QUrl::fromLocalFile(file));
     if (parser.isSet(script))
         controller.runScript(parser.value(script));
 

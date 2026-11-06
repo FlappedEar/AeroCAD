@@ -179,6 +179,27 @@ Item {
         updateClipping()
     }
 
+    /// Camera state stored in project files.
+    function cameraState() {
+        const p = cameraInput.pivot.position
+        return { pivot: [p.x, p.y, p.z], pitch: cameraInput.pitch, yaw: cameraInput.yaw,
+                 distance: cameraInput.distance, orthographic: orthographic }
+    }
+
+    /// Restores cameraState() output; frames everything when `state` has no camera.
+    function restoreCameraState(state) {
+        if (!state || typeof state.distance !== "number" || !state.pivot || state.pivot.length !== 3) {
+            fitAll()
+            return
+        }
+        cameraInput.pitch = state.pitch
+        cameraInput.yaw = state.yaw
+        cameraInput.distance = state.distance
+        cameraInput.pivot.position = Qt.vector3d(state.pivot[0], state.pivot[1], state.pivot[2])
+        orthographic = !!state.orthographic
+        updateClipping()
+    }
+
     onWidthChanged: if (fitPending) fitAll()
     onHeightChanged: if (fitPending) fitAll()
 

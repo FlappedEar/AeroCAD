@@ -6,6 +6,10 @@ app (Qt Quick, QML)          UI: viewport, panels, menus. Calls commands only.
 commands                      Named commands with JSON Schema parameters and JSON
   |                           results, undo/redo. Shared by the UI and (later) the MCP
   |                           server, so an AI agent can do everything the user can.
+project                       .aerocad files: versioned manifest, lossless meshes,
+  |                           B-rep, atomic save (docs/project-format.md).
+cad                           Parametric timeline, parameters, frames, variants.
+  |
 model                         Document (parts), undo stack, change notifications.
   |
 io        geometry            io: import (STL, OBJ, 3MF, STEP, IGES, BREP), export (STL, 3MF, STEP).

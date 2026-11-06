@@ -103,6 +103,28 @@ void registerPartCommands(CommandRegistry& r)
               return Json{{"removed", removed.id}};
           });
 
+    r.add({"part.duplicate", "Duplicate part",
+           "Copies an imported part (mesh and exact geometry) as a new part, e.g. to keep the original next to "
+           "a modified copy. Bodies and sketches are duplicated with variant.create instead.",
+           objectSchema({{"id", idParam()}, {"name", {{"type", "string"}, {"minLength", 1}}}}, {"id"}), true},
+          [](CommandContext& ctx, const Json& params) {
+              model::Document& doc = ctx.document;
+              const model::Part& source = requirePart(doc, params);
+              requireImported(source, "duplicate");
+              // `source` dangles once addPart() reallocates the part list.
+              const std::string label = "Duplicate " + source.name;
+              model::Part copy = source;
+              copy.id = 0;
+              copy.revision = 0;
+              copy.name = params.contains("name") ? params["name"].get<std::string>() : source.name + " (copy)";
+              const model::PartId id = doc.addPart(copy);
+              copy.id = id;
+              ctx.undoStack.push({label,
+                                  [&doc, id]() { doc.removePart(id); },
+                                  [&doc, copy]() { doc.addPart(copy); }});
+              return partToJson(*doc.part(id));
+          });
+
     r.add({"part.set_visible", "Show/hide part", "Shows or hides a part in the viewport.",
            objectSchema({{"id", idParam()}, {"visible", {{"type", "boolean"}}}}, {"id", "visible"}), true},
           [](CommandContext& ctx, const Json& params) {

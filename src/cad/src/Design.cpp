@@ -690,8 +690,11 @@ void Design::evaluateFeature(const Feature& f)
                     sk.plane = Plane::xz();
                 else if (name == "yz")
                     sk.plane = Plane::yz();
+                else if (const ReferenceFrame* fr = frame(plane.get<std::string>()))
+                    sk.plane = Plane{fr->origin, fr->normal, fr->xDir};
                 else
-                    throw DesignError("Unknown plane '" + plane.get<std::string>() + "' (XY, XZ, YZ)");
+                    throw DesignError("Unknown plane '" + plane.get<std::string>() +
+                                      "' (XY, XZ, YZ or the name of a reference frame)");
             } else {
                 sk.plane.origin = ev.vec3(plane, "origin", {});
                 sk.plane.normal = ev.vec3(plane, "normal", {0, 0, 1});
@@ -907,6 +910,71 @@ void Design::evaluateFeature(const Feature& f)
     }
 }
 
+void Design::setFrame(ReferenceFrame fr)
+{
+    const std::string key = lower(fr.name);
+    if (fr.name.empty() || key == "xy" || key == "xz" || key == "yz")
+        throw DesignError("Invalid frame name '" + fr.name + "'");
+    const core::Vec3 n = fr.normal.normalized();
+    const core::Vec3 x = (fr.xDir - n * n.dot(fr.xDir)).normalized();
+    if (n.length() < 0.5 || x.length() < 0.5)
+        throw DesignError("Frame '" + fr.name + "': normal and xDir must be non-zero and not parallel");
+    fr.normal = n;
+    fr.xDir = x;
+    auto it = std::find_if(m_state.frames.begin(), m_state.frames.end(),
+                           [&](const ReferenceFrame& f) { return f.name == fr.name; });
+    if (it == m_state.frames.end())
+        m_state.frames.push_back(std::move(fr));
+    else
+        *it = std::move(fr);
+    regenerate();
+}
+
+void Design::removeFrame(const std::string& name)
+{
+    const auto n = std::erase_if(m_state.frames, [&](const ReferenceFrame& f) { return f.name == name; });
+    if (n == 0)
+        throw DesignError("No frame '" + name + "'");
+    regenerate();
+}
+
+const ReferenceFrame* Design::frame(std::string_view name) const
+{
+    auto it = std::find_if(m_state.frames.begin(), m_state.frames.end(),
+                           [&](const ReferenceFrame& f) { return f.name == name; });
+    return it == m_state.frames.end() ? nullptr : &*it;
+}
+
+void Design::clear()
+{
+    m_state = State{};
+    m_partIds.clear();
+    m_sketchConsumed.clear();
+    m_partMeta.clear();
+    m_convertedParts.clear();
+    regenerate();
+}
+
+void Design::setPartInfo(FeatureId feature, model::PartId part, std::string name, bool visible)
+{
+    m_partIds[feature] = part;
+    m_partMeta[feature] = {std::move(name), visible};
+}
+
+std::vector<Design::PartInfo> Design::partInfos() const
+{
+    std::vector<PartInfo> out;
+    for (const auto& [feature, part] : m_partIds) {
+        PartInfo info{feature, part, {}, true};
+        if (auto meta = m_partMeta.find(feature); meta != m_partMeta.end()) {
+            info.name = meta->second.name;
+            info.visible = meta->second.visible;
+        }
+        out.push_back(std::move(info));
+    }
+    return out;
+}
+
 void Design::regenerate()
 {
     m_bodies.clear();
@@ -1028,6 +1096,105 @@ void Design::syncDocument(model::Document& document)
         }
         m_sketchConsumed[fid] = w.consumed;
     }
+}
+
+// ---------------------------------------------------------------------------------------
+// Serialisation
+
+namespace {
+
+Json vec3ToJson(const core::Vec3& v)
+{
+    return Json::array({v.x, v.y, v.z});
+}
+
+core::Vec3 vec3FromJson(const Json& j, const char* what)
+{
+    if (!j.is_array() || j.size() != 3 || !j[0].is_number() || !j[1].is_number() || !j[2].is_number())
+        throw DesignError(std::string("Invalid vector '") + what + "'");
+    return {j[0].get<double>(), j[1].get<double>(), j[2].get<double>()};
+}
+
+template <typename T>
+T field(const Json& j, const char* key, const char* what)
+{
+    auto it = j.find(key);
+    if (it == j.end())
+        throw DesignError(std::string("Missing '") + key + "' in " + what);
+    try {
+        return it->get<T>();
+    } catch (const Json::exception&) {
+        throw DesignError(std::string("Invalid '") + key + "' in " + what);
+    }
+}
+
+} // namespace
+
+Json stateToJson(const Design::State& state)
+{
+    Json features = Json::array();
+    for (const auto& f : state.features) {
+        features.push_back(
+            {{"id", f.id}, {"type", f.type}, {"name", f.name}, {"params", f.params}, {"suppressed", f.suppressed}});
+    }
+    Json parameters = Json::array();
+    for (const auto& p : state.parameters)
+        parameters.push_back({{"name", p.name}, {"expression", p.expression}, {"comment", p.comment}});
+    Json frames = Json::array();
+    for (const auto& f : state.frames) {
+        frames.push_back({{"name", f.name},
+                          {"origin", vec3ToJson(f.origin)},
+                          {"normal", vec3ToJson(f.normal)},
+                          {"xDir", vec3ToJson(f.xDir)},
+                          {"comment", f.comment}});
+    }
+    return Json{{"features", features},
+                {"parameters", parameters},
+                {"frames", frames},
+                {"nextId", state.nextId},
+                {"marker", state.marker}};
+}
+
+Design::State stateFromJson(const Json& json)
+{
+    if (!json.is_object())
+        throw DesignError("Design state must be an object");
+    Design::State state;
+    const auto& types = Design::featureTypes();
+    std::set<FeatureId> ids;
+    FeatureId maxId = 0;
+    for (const auto& j : json.value("features", Json::array())) {
+        Feature f;
+        f.id = field<FeatureId>(j, "id", "feature");
+        f.type = field<std::string>(j, "type", "feature");
+        f.name = field<std::string>(j, "name", "feature");
+        f.params = j.value("params", Json::object());
+        f.suppressed = j.value("suppressed", false);
+        if (f.id == 0 || !ids.insert(f.id).second)
+            throw DesignError("Invalid or duplicate feature id " + std::to_string(f.id));
+        if (std::find(types.begin(), types.end(), f.type) == types.end())
+            throw DesignError("Unknown feature type '" + f.type + "'");
+        if (!f.params.is_object())
+            throw DesignError("Parameters of feature " + f.name + " must be an object");
+        maxId = std::max(maxId, f.id);
+        state.features.push_back(std::move(f));
+    }
+    for (const auto& j : json.value("parameters", Json::array())) {
+        state.parameters.push_back({field<std::string>(j, "name", "parameter"),
+                                    field<std::string>(j, "expression", "parameter"), j.value("comment", "")});
+    }
+    for (const auto& j : json.value("frames", Json::array())) {
+        ReferenceFrame f;
+        f.name = field<std::string>(j, "name", "frame");
+        f.origin = vec3FromJson(j.value("origin", Json::array({0, 0, 0})), "origin");
+        f.normal = vec3FromJson(j.value("normal", Json::array({0, 0, 1})), "normal");
+        f.xDir = vec3FromJson(j.value("xDir", Json::array({1, 0, 0})), "xDir");
+        f.comment = j.value("comment", "");
+        state.frames.push_back(std::move(f));
+    }
+    state.nextId = std::max<FeatureId>(json.value("nextId", FeatureId{1}), maxId + 1);
+    state.marker = std::min<std::size_t>(json.value("marker", state.features.size()), state.features.size());
+    return state;
 }
 
 } // namespace aerocad::cad

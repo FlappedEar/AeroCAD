@@ -74,7 +74,10 @@ Qt maps Ctrl to Command and Alt to Option on macOS, so "Ctrl+Alt+V" is Option+Co
 
 | Command | Windows / Linux | macOS | Fusion default? |
 |---|---|---|---|
-| Import (Open) | Ctrl+O | Cmd+O | yes (Open) |
+| New Design | Ctrl+N | Cmd+N | yes |
+| Open (projects and 3D files) | Ctrl+O | Cmd+O | yes |
+| Save | Ctrl+S | Cmd+S | yes (Save Version) |
+| Recovery Save (write the autosave copy now) | Ctrl+Shift+S | Cmd+Shift+S | yes |
 | Undo | Ctrl+Z | Cmd+Z | yes |
 | Redo | Ctrl+Y | Cmd+Shift+Z | yes |
 | Toggle visibility of the selected part | V | V | yes |
@@ -103,6 +106,9 @@ has focus):
 | Center Diameter Circle (in a sketch) | C | yes |
 | Sketch Dimension (in a sketch) | D | yes |
 | Cancel the current curve / dialog, then leave the sketch | Esc | yes |
+
+Save As, Import and the variant commands (Modify > Duplicate as New Variant, Toggle A/B)
+have no shortcut (Fusion's list has no Save As).
 
 Not mapped yet: Press Pull (Q), Move (M), Trim (T), Offset (O), Project (P),
 Construction (X) and Measure (I). 1/2/3 select the region selection tools on meshes,
