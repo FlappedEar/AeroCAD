@@ -1,25 +1,10 @@
 # Running AeroCAD on a Mac (Apple Silicon)
 
-There are two ways: download the app that CI builds, or build it yourself.
-Both are checked by CI on every pull request (`macOS Apple Silicon` and
-`macOS Apple Silicon (Homebrew)` jobs).
+Build it from source with Homebrew. This exact path is checked on every pull request
+by the `CI` workflow (`macOS Apple Silicon (Homebrew)` job). No prebuilt app is
+published for now.
 
-## Option A: download the CI build (no tools needed)
-
-1. Open the repository's **Actions** tab, pick the latest green **CI** run on `main`
-   (or on a pull request), scroll to **Artifacts** and download
-   **AeroCAD-macOS-ARM64**. You must be signed in to GitHub.
-2. Unzip it and open `AeroCAD.dmg`, then drag **AeroCAD** to **Applications**.
-3. The build is not notarized by Apple, so the first start is blocked by Gatekeeper.
-   Either right-click AeroCAD in Applications, choose **Open** and confirm, or run once:
-
-   ```sh
-   xattr -dr com.apple.quarantine /Applications/AeroCAD.app
-   ```
-
-Artifacts are kept for 14 days.
-
-## Option B: build from source with Homebrew (recommended for development)
+## Build from source with Homebrew
 
 Requirements: macOS 13 or newer on Apple Silicon, Xcode Command Line Tools
 (`xcode-select --install`) and [Homebrew](https://brew.sh).
@@ -48,10 +33,10 @@ To update later: `git pull`, then repeat step 3.
 Use `--preset dev` instead of `--preset release` for a debug build
 (output in `build/dev/`).
 
-## Option C: the exact CI toolchain (vcpkg + Qt 6.8)
+## Alternative: pinned toolchain (vcpkg + Qt 6.8)
 
-Use this only if you need to reproduce the release build. The first configure
-compiles Open CASCADE and takes a while.
+Only needed to test against Qt 6.8 / Open CASCADE 8 or an older macOS deployment
+target. Not run in CI. The first configure compiles Open CASCADE (~25 min).
 
 ```sh
 brew install cmake ninja
@@ -80,9 +65,7 @@ open build/vcpkg-macos/bin/AeroCAD.app
 ## Troubleshooting
 
 - *"Could not find a package configuration file provided by Qt6"*: pass
-  `-DCMAKE_PREFIX_PATH="$(brew --prefix qt)"` (Option B) or set `CMAKE_PREFIX_PATH`
-  to your Qt install (Option C).
-- *"AeroCAD is damaged and can't be opened"* for a downloaded build: remove the
-  quarantine flag with the `xattr` command above.
+  `-DCMAKE_PREFIX_PATH="$(brew --prefix qt)"`, or for the vcpkg setup set
+  `CMAKE_PREFIX_PATH` to your Qt install.
 - To check the renderer without clicking around, run the smoke test:
   `build/release/bin/AeroCAD.app/Contents/MacOS/AeroCAD --smoke-test tests/data/tetrahedron.stl --screenshot /tmp/aerocad.png`

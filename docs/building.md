@@ -9,6 +9,8 @@ vcpkg if present, otherwise CMake downloads them (FetchContent).
 
 ## Windows 11 x64
 
+Not built in CI for now; the code and presets are kept portable.
+
 1. Install Visual Studio 2022 (Desktop development with C++), CMake and Ninja.
 2. Install Qt 6.8 for MSVC 2022 64-bit with the *Qt Quick 3D* and *Qt Shader Tools* modules
    (Qt online installer or `aqt install-qt windows desktop 6.8.3 win64_msvc2022_64 -m qtquick3d qtshadertools`).
