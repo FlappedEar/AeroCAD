@@ -1,11 +1,15 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# aerocad_io: file import (and later export).
+# aerocad_io: file import and export.
 add_library(aerocad_io STATIC
     src/Import.cpp
     src/StlReader.cpp
     src/ObjReader.cpp
     src/ThreeMfReader.cpp
     src/CadReader.cpp
+    src/Export.cpp
+    src/StlWriter.cpp
+    src/ThreeMfWriter.cpp
+    src/CadWriter.cpp
 )
 add_library(AeroCAD::io ALIAS aerocad_io)
 target_include_directories(aerocad_io PUBLIC include PRIVATE src)
