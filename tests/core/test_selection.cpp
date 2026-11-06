@@ -294,3 +294,31 @@ TEST_CASE("Smooth region: winding from edge direction, sharp folds stay bends", 
     CHECK(flatAdj.windingFlipped(0, 0));
     CHECK(selectSmoothRegion(flat, flatAdj, 0, {}).size() == 2);
 }
+
+TEST_CASE("projectOntoMesh drapes points onto a curved sheet", "[core][selection]")
+{
+    std::vector<Vec3> v;
+    std::vector<TriangleMesh::Triangle> t;
+    const int n = 40;
+    for (int j = 0; j <= n; ++j)
+        for (int i = 0; i <= n; ++i)
+            v.push_back({double(i), double(j), 0.01 * (i - 20) * (i - 20)});
+    auto idx = [](int i, int j) { return static_cast<std::uint32_t>(j * (n + 1) + i); };
+    for (int j = 0; j < n; ++j)
+        for (int i = 0; i < n; ++i) {
+            t.push_back({idx(i, j), idx(i + 1, j), idx(i + 1, j + 1)});
+            t.push_back({idx(i, j), idx(i + 1, j + 1), idx(i, j + 1)});
+        }
+    const TriangleMesh mesh(std::move(v), std::move(t));
+    // Points on a plane above, one below, one off the sheet.
+    const std::vector<Vec3> pts{{5, 5, 10}, {20, 20, 10}, {33.5, 12.25, -3}, {60, 60, 10}};
+    std::size_t hits = 0;
+    const auto out = projectOntoMesh(mesh, pts, {0, 0, -1}, &hits);
+    REQUIRE(out.size() == 4);
+    CHECK(hits == 3);
+    CHECK(out[0].z == Approx(0.01 * 15 * 15).margin(0.02));
+    CHECK(out[1].z == Approx(0.0).margin(0.02));
+    CHECK(out[2].z == Approx(0.01 * 13.5 * 13.5).margin(0.02));
+    CHECK(out[2].x == Approx(33.5));
+    CHECK(out[3].z == Approx(10.0)); // missed: stays
+}

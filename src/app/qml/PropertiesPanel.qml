@@ -10,6 +10,10 @@ Pane {
     required property AppController controller
     property var partId: 0
     property var info: ({})
+    /// A surface was fitted to the selection: the window starts a sketch on it.
+    signal surfaceFitted(var id)
+    /// Offset, trim or thicken made a new part: the window selects it.
+    signal partCreated(var id)
 
     /// Number typed in a field: the locale's format (DoubleValidator accepts it), or a
     /// plain "0.25" (default texts, pasted values). NaN when neither parses.
@@ -202,6 +206,7 @@ Pane {
                         if (r.result.warnings.length > 0)
                             msg += " · " + r.result.warnings.join(" ")
                         root.controller.showStatus(msg)
+                        root.surfaceFitted(r.result.id)
                     }
                 }
                 Button {
@@ -262,6 +267,8 @@ Pane {
                             return root.controller.showStatus(qsTr("Enter the offset distance in mm"))
                         const r = root.controller.execute("surface.offset", { id: root.partId, distance: d })
                         if (r.ok)
+                            root.partCreated(r.result.id)
+                        if (r.ok)
                             root.controller.showStatus(qsTr("Offset surface \"%1\" at %2 mm").arg(r.result.name).arg(d))
                     }
                 }
@@ -293,6 +300,8 @@ Pane {
                                                           { id: root.partId, sketch: sk.featureId,
                                                             keep: trimKeep.currentIndex === 1 ? "outside" : "inside" })
                         if (r.ok)
+                            root.partCreated(r.result.id)
+                        if (r.ok)
                             root.controller.showStatus(qsTr("Surface \"%1\": %2 cm² trimmed by %3")
                                                        .arg(r.result.name).arg((r.result.area / 100).toFixed(2))
                                                        .arg(sk.name))
@@ -323,6 +332,8 @@ Pane {
                             return root.controller.showStatus(qsTr("Enter the thickness in mm"))
                         const side = ["outside", "inside", "both"][thickenSide.currentIndex]
                         const r = root.controller.execute("surface.thicken", { id: root.partId, thickness: t, side: side })
+                        if (r.ok)
+                            root.partCreated(r.result.id)
                         if (r.ok)
                             root.controller.showStatus(qsTr("Solid \"%1\": %2 mm thick, volume %3 cm³")
                                                        .arg(r.result.name).arg(t)

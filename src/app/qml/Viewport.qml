@@ -96,6 +96,14 @@ Item {
         return { partId: hit.partId, point: hit.point, distance: hit.point.minus(eye).length() }
     }
 
+    /// Point on part `id` under view position (x, y) (model mm), or null.
+    function pickOnPart(x, y, id) {
+        const near = modelSpace.mapPositionFromScene(view.mapTo3DScene(Qt.vector3d(x, y, 0)))
+        const far = modelSpace.mapPositionFromScene(view.mapTo3DScene(Qt.vector3d(x, y, 100)))
+        const hit = controller.pickPartSurface(id, near, far.minus(near))
+        return hit.partId ? hit.point : null
+    }
+
     function modelPoint(hit) {
         return hit.point
     }

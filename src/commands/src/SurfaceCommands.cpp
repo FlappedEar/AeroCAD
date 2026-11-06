@@ -386,40 +386,66 @@ void registerSurfaceCommands(CommandRegistry& r)
               const geometry::ThickenSide side = sideName == "outside" ? geometry::ThickenSide::Outside
                                                  : sideName == "both"  ? geometry::ThickenSide::Both
                                                                        : geometry::ThickenSide::Inside;
+              // Planar area of the outline: the cut-out skin covers at least that much
+              // (a curved surface over it is larger); less means it ran off the surface.
+              double outlineArea = 0.0;
+              for (const auto& o : outlines)
+                  outlineArea += geometry::area(o);
+              const double tolerance = params.value("tolerance", geometry::SurfaceFitOptions{}.tolerance);
               Json fitReport;
-              geometry::Shape surface;
-              if (source->shape && !source->shape->isNull()) {
-                  surface = *source->shape;
-              } else {
-                  if (!source->mesh || source->mesh->triangleCount() == 0)
-                      throw CommandError("Part " + std::to_string(partId) + " has no surface");
+              auto fitUnder = [&](const model::Part& scan) {
                   core::Vec3 seed = sk.plane.origin;
-                  if (on.contains("point") && on.value("part", Json()) == partId) {
+                  if (on.contains("point") && on.value("part", Json()) == scan.id) {
                       const auto& p = on.at("point");
                       seed = {p.at(0).get<double>(), p.at(1).get<double>(), p.at(2).get<double>()};
                   }
-                  const auto box = outlinesDiagonal(outlines);
-                  const double margin = std::max(5.0, 0.15 * box);
-                  const auto region = meshUnderSketch(*source->mesh, sk, outlines, seed, margin);
+                  const double margin = std::max(5.0, 0.15 * outlinesDiagonal(outlines));
+                  const auto region = meshUnderSketch(*scan.mesh, sk, outlines, seed, margin);
                   geometry::SurfaceFitOptions options;
-                  options.tolerance = params.value("tolerance", options.tolerance);
+                  options.tolerance = tolerance;
                   try {
-                      auto fit = geometry::fitSurface(*source->mesh, region, options);
-                      surface = fit.face;
-                      fitReport = {{"triangles", region.size()},
+                      auto fit = geometry::fitSurface(*scan.mesh, region, options);
+                      fitReport = {{"part", scan.id},
+                                   {"triangles", region.size()},
                                    {"meshToSurfaceMax", fit.report.meshToSurfaceMax},
                                    {"meshToSurfaceRms", fit.report.meshToSurfaceRms},
                                    {"withinTolerance", fit.report.withinTolerance},
                                    {"method", fit.report.method}};
+                      return fit.face;
                   } catch (const geometry::SurfaceFitError& e) {
                       throw CommandError(std::string("Could not fit a surface under the outline: ") + e.what());
                   }
+              };
+              auto skinOf = [&](const geometry::Shape& surface) {
+                  try {
+                      return geometry::trimSurface(surface, outlines, sk.plane.normal, true, true);
+                  } catch (const geometry::OffsetError& e) {
+                      throw CommandError(e.what());
+                  }
+              };
+
+              geometry::Shape skin;
+              if (source->shape && !source->shape->isNull()) {
+                  skin = skinOf(*source->shape);
+                  // Outline drawn past the fitted surface: fit again, on the scan it was
+                  // fitted to, under the whole outline.
+                  if (geometry::surfaceArea(skin) < 0.995 * outlineArea) {
+                      const model::Part* scan = ctx.document.part(model::sourcePartId(*source));
+                      if (scan != nullptr && scan->mesh && !scan->shape)
+                          skin = skinOf(fitUnder(*scan));
+                  }
+              } else {
+                  if (!source->mesh || source->mesh->triangleCount() == 0)
+                      throw CommandError("Part " + std::to_string(partId) + " has no surface");
+                  skin = skinOf(fitUnder(*source));
               }
+              Json warnings = Json::array();
+              const double area = geometry::surfaceArea(skin);
+              if (area < 0.995 * outlineArea)
+                  warnings.push_back("The outline reaches past the surface; the part was cut off where the surface "
+                                     "ends");
               geometry::Shape solid;
-              double area = 0.0;
               try {
-                  const auto skin = geometry::trimSurface(surface, outlines, sk.plane.normal, true, true);
-                  area = geometry::surfaceArea(skin);
                   solid = geometry::thickenSurface(skin, thickness, side);
               } catch (const geometry::OffsetError& e) {
                   throw CommandError(e.what());
@@ -432,6 +458,7 @@ void registerSurfaceCommands(CommandRegistry& r)
               result["volume"] = solid.volume();
               if (!fitReport.is_null())
                   result["fit"] = fitReport;
+              result["warnings"] = warnings;
               return result;
           });
     r.add({"surface.offset", "Offset surface",

@@ -47,6 +47,7 @@ Pane {
                 required property bool partVisible
                 required property var triangles
                 required property string kind
+                required property string shapeKind
 
                 readonly property bool selected: row.partId === root.selectedPartId
 
@@ -87,6 +88,8 @@ Pane {
                             Layout.fillWidth: true
                             text: row.kind === "body" ? qsTr("Body")
                                 : row.kind === "sketch" ? qsTr("Sketch")
+                                : row.shapeKind === "surface" ? qsTr("Surface")
+                                : row.shapeKind === "solid" ? qsTr("Solid")
                                 : qsTr("Mesh · %1 triangles").arg(Number(row.triangles).toLocaleString(Qt.locale(), "f", 0))
                             color: Theme.textFaint
                             font.pixelSize: Theme.fontSmall

@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <optional>
 #include <string>
 #include <utility>
@@ -356,7 +357,18 @@ Json surfaceRefSchema()
            {{"type", "number"},
             {"exclusiveMinimum", 0},
             {"description", "Size of the area around `point` (mm). Default: a tenth of the part's size."}}},
-          {"useSelection", {{"type", "boolean"}, {"description", "Use the region selection (default when set)."}}}}},
+          {"useSelection", {{"type", "boolean"}, {"description", "Use the region selection (default when set)."}}},
+          {"across",
+           {{"type", "boolean"},
+            {"description",
+             "Sketch across the surface instead of over it, for a fin sticking out of it (a canard on a bumper, a "
+             "winglet): the plane stands on the surface, through a point of the area, its X axis along the "
+             "surface normal (outward), so x > 0 is outside. Draw the fin so its root reaches into the surface "
+             "(x < 0); surface.fin_from_sketch cuts the root to the surface."}}},
+          {"angle",
+           {{"type", "number"},
+            {"description", "With across: turns the fin about the surface normal, degrees from level (0: the fin "
+                            "is horizontal where the surface allows)."}}}}},
         {"required", {"part"}},
         {"additionalProperties", false}};
 }
@@ -412,6 +424,33 @@ std::pair<Json, Json> surfaceSketchPlane(const model::Document& doc, const Json&
     core::Vec3 normal = fit->normal;
     if (facing.dot(normal) < 0.0)
         normal = normal * -1.0;
+    if (ref.value("across", false)) {
+        // Fin plane: stands on the surface. "Up along the surface" is world Z projected
+        // into the tangent plane (the long side when the surface faces up or down); the fin
+        // is level, turned by `angle` about the surface normal.
+        core::Vec3 up = core::Vec3{0, 0, 1} - normal * normal.z;
+        if (up.length() < 0.3)
+            up = fit->major - normal * fit->major.dot(normal);
+        up = up.normalized();
+        const double a = ref.value("angle", 0.0) * 3.14159265358979323846 / 180.0;
+        const core::Vec3 finNormal = (up * std::cos(a) + normal.cross(up) * std::sin(a)).normalized();
+        // Through the point of the area nearest its centroid, so x = 0 is on the surface.
+        core::Vec3 on = fit->origin;
+        double best = std::numeric_limits<double>::max();
+        for (const auto& p : points) {
+            const double d = (p - fit->origin).length();
+            if (d < best) {
+                best = d;
+                on = p;
+            }
+        }
+        Json plane{{"origin", Json::array({on.x, on.y, on.z})},
+                   {"normal", Json::array({finNormal.x, finNormal.y, finNormal.z})},
+                   {"xDir", Json::array({normal.x, normal.y, normal.z})}};
+        Json report{{"part", partId}, {"area", area}, {"triangles", triangles.size()}, {"rms", fit->rms},
+                    {"across", true}};
+        return {plane, report};
+    }
     // Lift the plane to the highest point of the area, so no part of the outline hides
     // under the surface.
     double top = 0.0;
@@ -657,6 +696,8 @@ void registerSketchCommands(CommandRegistry& r)
                   Json on{{"part", params.at("surface").at("part")}};
                   if (params.at("surface").contains("point"))
                       on["point"] = params.at("surface").at("point");
+                  if (params.at("surface").value("across", false))
+                      on["across"] = true;
                   feature["onSurface"] = std::move(on);
                   surfaceReport = std::move(report);
               }

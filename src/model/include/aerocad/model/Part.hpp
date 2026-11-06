@@ -46,4 +46,22 @@ struct Part {
     std::uint64_t revision = 0;
 };
 
+/// The part a derived part was made from, read from its `source` ("surface.fit_selection
+/// of part 3" -> 3): e.g. the scan a surface was fitted to. 0 when there is none.
+[[nodiscard]] inline PartId sourcePartId(const Part& part)
+{
+    static const std::string marker = " of part ";
+    const auto at = part.source.rfind(marker);
+    if (at == std::string::npos)
+        return 0;
+    PartId id = 0;
+    for (std::size_t i = at + marker.size(); i < part.source.size(); ++i) {
+        const char c = part.source[i];
+        if (c < '0' || c > '9')
+            return 0;
+        id = id * 10 + static_cast<PartId>(c - '0');
+    }
+    return id;
+}
+
 } // namespace aerocad::model
