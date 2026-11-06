@@ -34,7 +34,10 @@ core -------+                 transforms, primitives).
 
 ## Not yet decided / next steps
 
-- Mesh library (CGAL vs libigl) for mesh repair and region selection: depends on the
-  mesh-to-B-rep spike (CAD-66).
+- Mesh library: **CGAL** (decided after the CAD-66 spike, see Confluence "CAD-66 Spike:
+  Mesh region to B-rep surface"). The recommended pipeline needs CGAL Shape Detection
+  (analytic primitive fit), and CGAL also covers surface parameterization, mesh repair and
+  hole filling. CGAL's GPL packages are compatible with GPL-3.0-or-later. It will be added
+  with the first feature that uses it (region selection / base surface, CAD-67).
 - Large-mesh performance and picking limits (CAD-11).
 - Background jobs (imports currently run on the UI thread).

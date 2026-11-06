@@ -71,15 +71,25 @@ jobs:
           mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
           if [ "$RUNNER_OS" = "Windows" ]; then "$VCPKG_ROOT/bootstrap-vcpkg.bat" -disableMetrics; else "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics; fi
 
+      # Restore and save are separate steps so the (slow) vcpkg build of Open CASCADE is
+      # cached as soon as configure succeeds, even if a later build or test step fails.
       - name: Restore vcpkg binary cache
-        uses: actions/cache@v4
+        id: vcpkg-cache
+        uses: actions/cache/restore@v4
         with:
           path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
           key: vcpkg-${{ matrix.triplet }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'cmake/triplets/**') }}
           restore-keys: vcpkg-${{ matrix.triplet }}-${{ env.VCPKG_COMMIT }}-
 
-      - name: Configure
+      - name: Configure (installs vcpkg dependencies)
         run: cmake --preset ${{ matrix.preset }} -DAEROCAD_WARNINGS_AS_ERRORS=ON
+
+      - name: Save vcpkg binary cache
+        if: steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
 
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }} --parallel
