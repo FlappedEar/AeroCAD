@@ -5,8 +5,12 @@
 //   touchpad / Magic Mouse: two-finger drag = pan, Shift + two-finger drag = orbit, pinch = zoom.
 // The left button is left free for selection; the navigation bar can temporarily map it to
 // orbit, pan or zoom (`leftDragMode`).
+// Preferences > Mouse switches the middle button to other common schemes:
+//   SolidWorks: middle drag = orbit, Ctrl + middle = pan, Shift + middle = zoom;
+//   Blender:    middle drag = orbit, Shift + middle = pan, Ctrl + middle = zoom.
 import QtQuick
 import QtQuick3D
+import AeroCAD
 
 Item {
     id: root
@@ -27,6 +31,14 @@ Item {
 
     /// What a plain left-button drag does: "" (nothing, left is for selection), "orbit", "pan", "zoom".
     property string leftDragMode: ""
+
+    /// "fusion", "solidworks" or "blender" (see Preferences).
+    property string mouseProfile: Preferences.mouseProfile
+    property bool invertZoom: Preferences.invertZoom
+    readonly property int panModifiers: mouseProfile === "solidworks" ? Qt.ControlModifier
+                                        : mouseProfile === "blender" ? Qt.ShiftModifier : Qt.NoModifier
+    readonly property int orbitModifiers: mouseProfile === "fusion" ? Qt.ShiftModifier : Qt.NoModifier
+    readonly property int zoomModifiers: mouseProfile === "solidworks" ? Qt.ShiftModifier : Qt.ControlModifier
 
     function updateTransform() {
         pivot.eulerRotation = Qt.vector3d(pitch, yaw, 0)
@@ -91,18 +103,24 @@ Item {
         }
     }
 
-    // Fusion: middle drag = pan.
     DeltaDragHandler {
         acceptedButtons: Qt.MiddleButton
-        acceptedModifiers: Qt.NoModifier
+        acceptedModifiers: root.panModifiers
         onMoved: (dx, dy) => root.pan(dx, dy)
     }
 
-    // Fusion: Shift + middle drag = orbit.
     DeltaDragHandler {
         acceptedButtons: Qt.MiddleButton
-        acceptedModifiers: Qt.ShiftModifier
+        acceptedModifiers: root.orbitModifiers
         onMoved: (dx, dy) => root.orbit(dx, dy)
+    }
+
+    // Zoom by dragging (not in the Fusion scheme, which zooms with the wheel only).
+    DeltaDragHandler {
+        enabled: root.mouseProfile !== "fusion"
+        acceptedButtons: Qt.MiddleButton
+        acceptedModifiers: root.zoomModifiers
+        onMoved: (dx, dy) => root.zoomBy(Math.pow(root.dragZoomStep, root.invertZoom ? -dy : dy))
     }
 
     // Navigation bar tools (Orbit / Pan / Zoom) map the left button temporarily.
@@ -144,7 +162,7 @@ Item {
             }
             if (event.modifiers & Qt.ShiftModifier)
                 return
-            root.zoomBy(Math.pow(root.zoomStep, -event.angleDelta.y))
+            root.zoomBy(Math.pow(root.zoomStep, root.invertZoom ? event.angleDelta.y : -event.angleDelta.y))
         }
     }
 }

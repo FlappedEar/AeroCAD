@@ -19,8 +19,8 @@ Pane {
 
     padding: 2
     background: Rectangle {
-        color: "#f2f4f6"
-        border.color: "#b8c0c8"
+        color: palette.window
+        border.color: palette.mid
         radius: 4
         opacity: 0.95
     }
