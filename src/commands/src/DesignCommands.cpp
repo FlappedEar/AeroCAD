@@ -781,7 +781,7 @@ void registerSketchCommands(CommandRegistry& r)
                   onSurface.contains("part")) {
                   const model::Part* surface = ctx.document.part(onSurface.at("part").get<model::PartId>());
                   if (surface != nullptr) {
-                      if (const model::Part* scan = ctx.document.part(model::sourcePartId(*surface));
+                      if (const model::Part* scan = ctx.document.part(model::fittedScanId(*surface));
                           scan != nullptr && scan->mesh && !scan->shape)
                           surface = scan;
                   }

@@ -606,7 +606,7 @@ QVector3D AppController::dropOntoPart(quint64 id, const QVector3D& point, const 
     if (surface == nullptr || !(n.length() > 0.0))
         return point;
     std::vector<std::shared_ptr<const core::TriangleMesh>> meshes;
-    if (const model::Part* scan = part(model::sourcePartId(*surface)); scan != nullptr && scan->mesh && !scan->shape)
+    if (const model::Part* scan = part(model::fittedScanId(*surface)); scan != nullptr && scan->mesh && !scan->shape)
         meshes.push_back(scan->mesh);
     if (surface->mesh)
         meshes.push_back(surface->mesh);
@@ -631,7 +631,7 @@ QVariantMap AppController::pickPartSurface(quint64 id, const QVector3D& origin, 
     std::optional<core::RayHit> hit;
     // A fitted surface covers only the fitted area; the scan it came from goes further.
     // Hidden too: a sketch is laid on it either way (Fit hides it).
-    if (const model::Part* scan = part(model::sourcePartId(*p)); scan != nullptr && scan->mesh && !scan->shape)
+    if (const model::Part* scan = part(model::fittedScanId(*p)); scan != nullptr && scan->mesh && !scan->shape)
         hit = cast(scan->mesh);
     if (!hit && p->mesh)
         hit = cast(p->mesh);

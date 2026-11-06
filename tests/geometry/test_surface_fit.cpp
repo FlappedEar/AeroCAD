@@ -491,3 +491,23 @@ TEST_CASE("A part on a scan: outline past the scan's edge, curved outline, no sc
                                          geometry::ThickenSide::Outside),
                     geometry::SurfaceFitError);
 }
+
+TEST_CASE("A part on a scan is as thick as asked on a slope, also when thinner than the sampling", "[geometry][surface]")
+{
+    // A plane at 45 degrees; the 100 mm outline with its margin samples at about 0.83 mm.
+    const core::TriangleMesh slope({{-50, -50, -50}, {200, -50, 200}, {200, 200, 200}, {-50, 200, -50}},
+                                   {{0, 1, 2}, {0, 2, 3}});
+    const core::MeshProjector projector(slope, {0, 0, 1});
+    const geometry::Plane plane{{0, 0, 300}, {0, 0, 1}, {1, 0, 0}};
+    const auto outline = rectangleOutline(plane, 0, 0, 100, 100);
+    geometry::DrapeArea area = areaOver(0, 0, 100, 100, 10);
+    area.origin = plane.origin;
+
+    for (const double thickness : {0.5, 1.0, 2.0, 6.0}) {
+        const auto part = geometry::partOnScan(projector, area, {outline}, thickness, geometry::ThickenSide::Outside);
+        INFO("thickness " << thickness);
+        CHECK(part.solid.volume() == Approx(thickness * part.skinArea).epsilon(0.02));
+    }
+    const auto both = geometry::partOnScan(projector, area, {outline}, 1.0, geometry::ThickenSide::Both);
+    CHECK(both.solid.volume() == Approx(1.0 * both.skinArea).epsilon(0.02));
+}

@@ -442,7 +442,7 @@ void registerSurfaceCommands(CommandRegistry& r)
               // itself, whatever area the earlier fit covered.
               const model::Part* scan = source;
               if (source->shape && !source->shape->isNull()) {
-                  scan = ctx.document.part(model::sourcePartId(*source));
+                  scan = ctx.document.part(model::fittedScanId(*source));
                   if (scan != nullptr && (!scan->mesh || scan->shape))
                       scan = nullptr;
               } else if (!source->mesh || source->mesh->triangleCount() == 0) {
@@ -589,7 +589,7 @@ void registerSurfaceCommands(CommandRegistry& r)
                       } catch (const geometry::OffsetError&) {
                           // The fitted surface may not reach under the whole root: fit again
                           // on the scan it came from.
-                          const model::Part* scan = ctx.document.part(model::sourcePartId(*source));
+                          const model::Part* scan = ctx.document.part(model::fittedScanId(*source));
                           if (scan == nullptr || !scan->mesh || scan->shape)
                               throw;
                           solid = finOn(fitUnder(*scan));

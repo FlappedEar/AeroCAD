@@ -89,7 +89,7 @@ core -------+                 transforms, primitives).
   surface is trimmed on its whole underlying B-spline (`extend`), so the edges are the
   outline's and not the ragged border of the brushed region it was fitted to.
   `surface.part_from_sketch` does it in one step from the sketch (it remembers its part
-  in `onSurface`). On a scan, or a surface fitted to one (`model::sourcePartId`), it uses
+  in `onSurface`). On a scan, or a surface fitted to one (`model::fittedScanId`), it uses
   `geometry::partOnScan`: heights over the sketch plane sampled at the first hit from
   outside (`core::MeshProjector`), so layers behind the skin never count; the largest
   sheet under the outline is kept and holes and steep pits are bridged; two B-spline

@@ -245,7 +245,7 @@ ApplicationWindow {
         if (surface && surface.hasBrep) {
             controller.execute("part.set_visible", { id: surface.id, visible: false })
             // Fitting a surface hid the scan: bring it back to see the part on it.
-            const scan = /of part (\d+)$/.exec(surface.source || "")
+            const scan = /^surface\.fit_selection of part (\d+)$/.exec(surface.source || "")
             if (scan)
                 controller.execute("part.set_visible", { id: Number(scan[1]), visible: true })
         }

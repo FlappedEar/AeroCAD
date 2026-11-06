@@ -1185,7 +1185,7 @@ void Design::syncDocument(model::Document& document)
             // Lay it on the scan the surface was fitted to when there is one: the outline
             // may reach past the fitted area, and the scan is what is seen.
             if (surface != nullptr) {
-                if (const model::Part* scan = document.part(model::sourcePartId(*surface));
+                if (const model::Part* scan = document.part(model::fittedScanId(*surface));
                     scan != nullptr && scan->mesh && !scan->shape)
                     surface = scan;
             }

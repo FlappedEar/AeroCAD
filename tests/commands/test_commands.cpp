@@ -697,6 +697,31 @@ TEST_CASE("Part on surface: one step from an outline over a scan to a solid", "[
         CHECK(part.data.at("bounds").at("size").at(1).get<double>() == Approx(20.0).margin(0.3));
     }
 
+    SECTION("A part already made from the scan does not stand in for the scan")
+    {
+        auto first = session.execute("sketch.create",
+                                     {{"surface", {{"part", scanId}, {"point", {30, 15, 0}}}},
+                                      {"curves", Json::array({{{"type", "center_rectangle"},
+                                                               {"center", {0, 0}},
+                                                               {"width", 20},
+                                                               {"height", 10}}})}});
+        REQUIRE(first.ok);
+        auto part = session.execute("surface.part_from_sketch", {{"sketch", first.data.at("id")}, {"thickness", 1.0}});
+        REQUIRE(part.ok);
+        const auto solidId = part.data.at("id").get<model::PartId>();
+        auto second = session.execute("sketch.create",
+                                      {{"surface", {{"part", solidId}}},
+                                       {"curves", Json::array({{{"type", "center_rectangle"},
+                                                                {"center", {0, 0}},
+                                                                {"width", 8},
+                                                                {"height", 4}}})}});
+        REQUIRE(second.ok);
+        // Not silently built on the scan underneath: a solid is no surface to cut from.
+        auto onSolid = session.execute("surface.part_from_sketch", {{"sketch", second.data.at("id")}, {"thickness", 1.0}});
+        INFO(onSolid.toJson().dump());
+        CHECK_FALSE(onSolid.ok);
+    }
+
     CHECK_FALSE(session.execute("surface.part_from_sketch", {{"sketch", 99}, {"thickness", 2.0}}).ok);
 
     // An ordinary sketch has no surface line.

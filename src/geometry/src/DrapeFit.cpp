@@ -334,23 +334,34 @@ private:
 
 /// Rolling ball over a height field: the true offset of the skin by `distance` (> 0 up,
 /// < 0 down). Unlike moving each point along its normal it cannot fold in sharp concave
-/// details.
+/// details. The ball touches between samples when it is small against their spacing (on a
+/// slope, off to the side), so it is sampled finer than the grid, on the heights interpolated
+/// between samples.
 std::vector<double> rollBall(const std::vector<double>& h, const Raster& r, double distance)
 {
     const double t = std::abs(distance);
     const double sign = distance > 0.0 ? 1.0 : -1.0;
     struct Offset {
-        int di, dj;
+        int di, dj;     ///< Sample cell, relative.
+        double fu, fv;  ///< Position in the cell, 0 to 1.
         double lift;
     };
     std::vector<Offset> disk;
-    const int ri = static_cast<int>(t / r.du), rj = static_cast<int>(t / r.dv);
+    // At least 4 steps per radius, in whole fractions of the sample spacing.
+    const int subU = std::max(1, static_cast<int>(std::ceil(4.0 * r.du / t)));
+    const int subV = std::max(1, static_cast<int>(std::ceil(4.0 * r.dv / t)));
+    const double stepU = r.du / subU, stepV = r.dv / subV;
+    const int ri = static_cast<int>(t / stepU), rj = static_cast<int>(t / stepV);
     for (int j = -rj; j <= rj; ++j)
         for (int i = -ri; i <= ri; ++i) {
-            const double x = i * r.du, y = j * r.dv;
+            const double x = i * stepU, y = j * stepV;
             const double d2 = x * x + y * y;
-            if (d2 <= t * t)
-                disk.push_back({i, j, std::sqrt(t * t - d2)});
+            if (d2 > t * t)
+                continue;
+            const int ci = static_cast<int>(std::floor(static_cast<double>(i) / subU));
+            const int cj = static_cast<int>(std::floor(static_cast<double>(j) / subV));
+            disk.push_back({ci, cj, static_cast<double>(i - ci * subU) / subU,
+                            static_cast<double>(j - cj * subV) / subV, std::sqrt(t * t - d2)});
         }
     std::vector<double> out(h.size());
     for (int j = 0; j < r.nv; ++j)
@@ -358,9 +369,12 @@ std::vector<double> rollBall(const std::vector<double>& h, const Raster& r, doub
             double best = -std::numeric_limits<double>::max();
             for (const auto& o : disk) {
                 const int a = i + o.di, b = j + o.dj;
-                if (a < 0 || b < 0 || a >= r.nu || b >= r.nv)
+                const int a1 = o.fu > 0.0 ? a + 1 : a, b1 = o.fv > 0.0 ? b + 1 : b;
+                if (a < 0 || b < 0 || a1 >= r.nu || b1 >= r.nv)
                     continue;
-                best = std::max(best, sign * h[r.at(a, b)] + o.lift);
+                const double z = (1.0 - o.fv) * ((1.0 - o.fu) * h[r.at(a, b)] + o.fu * h[r.at(a1, b)]) +
+                                 o.fv * ((1.0 - o.fu) * h[r.at(a, b1)] + o.fu * h[r.at(a1, b1)]);
+                best = std::max(best, sign * z + o.lift);
             }
             out[r.at(i, j)] = sign * best;
         }
