@@ -556,7 +556,7 @@ TEST_CASE("Part on surface: one step from an outline over a scan to a solid", "[
         REQUIRE(sk.ok);
         // The sketch reports where its plane cuts the scan (sketch coordinates): the line to
         // draw the root into, at x = 0 where the plane stands on it.
-        auto prof = session.execute("sketch.profiles", {{"sketch", sk.data.at("id")}});
+        auto prof = session.execute("sketch.profiles", {{"sketch", sk.data.at("id")}, {"surfaceLine", true}});
         REQUIRE(prof.ok);
         const auto& line = prof.data.at("surfaceLine");
         CHECK(line.size() > 20);
@@ -700,7 +700,7 @@ TEST_CASE("Part on surface: one step from an outline over a scan to a solid", "[
     // An ordinary sketch has no surface line.
     auto plain = session.execute("sketch.create", {{"plane", "XY"}});
     REQUIRE(plain.ok);
-    auto plainProfiles = session.execute("sketch.profiles", {{"sketch", plain.data.at("id")}});
+    auto plainProfiles = session.execute("sketch.profiles", {{"sketch", plain.data.at("id")}, {"surfaceLine", true}});
     INFO(plainProfiles.toJson().dump());
     REQUIRE(plainProfiles.ok);
     CHECK(plainProfiles.data.at("surfaceLine").empty());

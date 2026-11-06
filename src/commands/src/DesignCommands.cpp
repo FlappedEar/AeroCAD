@@ -748,7 +748,12 @@ void registerSketchCommands(CommandRegistry& r)
     r.add({"sketch.profiles", "Sketch profiles",
            "Lists the closed profiles of a sketch with their area and centroid (sketch and world coordinates), "
            "to pick profiles for extrude/revolve.",
-           objectSchema({{"sketch", featureIdSchema("Sketch feature id.")}}, {"sketch"})},
+           objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
+                         {"surfaceLine",
+                          {{"type", "boolean"},
+                           {"description", "For a sketch across a surface (a fin): also return where the sketch "
+                                           "plane cuts the surface, as segments in sketch coordinates."}}}},
+                        {"sketch"})},
           [](CommandContext& ctx, const Json& params) {
               const auto id = params.at("sketch").get<cad::FeatureId>();
               const auto& sketches = design(ctx).sketches();
@@ -772,7 +777,8 @@ void registerSketchCommands(CommandRegistry& r)
               // coordinates, so the root can be drawn into it. Seen from the sketch normal
               // the surface itself hides that line.
               Json surfaceLine = Json::array();
-              if (onSurface.is_object() && onSurface.value("across", false) && onSurface.contains("part")) {
+              if (params.value("surfaceLine", false) && onSurface.is_object() && onSurface.value("across", false) &&
+                  onSurface.contains("part")) {
                   const model::Part* surface = ctx.document.part(onSurface.at("part").get<model::PartId>());
                   if (surface != nullptr) {
                       if (const model::Part* scan = ctx.document.part(model::sourcePartId(*surface));

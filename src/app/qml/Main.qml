@@ -133,7 +133,11 @@ ApplicationWindow {
 
     // --- Modelling ----------------------------------------------------------------------
 
-    function startCreateSketch() {
+    /// Create Sketch: pick a plane, face or surface. `across` (optional) presets "Fin
+    /// across the surface".
+    function startCreateSketch(across) {
+        if (across !== undefined)
+            sketchAcross.checked = across
         partOnSurfaceSketch = null
         finishSketch()
         featureDialog.close()
@@ -178,7 +182,7 @@ ApplicationWindow {
     }
 
     function enterSketch(id) {
-        const r = controller.execute("sketch.profiles", { sketch: id })
+        const r = controller.execute("sketch.profiles", { sketch: id, surfaceLine: true })
         if (!r.ok)
             return
         const pl = r.result.plane
