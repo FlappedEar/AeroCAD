@@ -153,13 +153,76 @@ Pane {
         type = featureType
         const firstPick = s.fields.find(f => f.type.endsWith("Picks") || f.type === "pointPick")
         pickKey = firstPick ? firstPick.key : ""
+        previewTimer.restart()
         return true
     }
 
     function close() {
+        previewTimer.stop()
+        undoPreview()
         type = ""
         pickKey = ""
         finished()
+    }
+
+    // --- Live preview -------------------------------------------------------------------
+    // Like Fusion, the model shows the result while the dialog is open: every change runs
+    // the command, and the previous preview is undone first. OK keeps one undo step;
+    // Cancel undoes the preview.
+
+    property bool previewApplied: false
+
+    /// What viewport clicks should hit while the dialog waits for picks: profiles live on
+    /// sketches, edges/faces/points on bodies (the preview body would hide the sketch).
+    readonly property string pickKind: {
+        const f = spec && pickKey ? spec.fields.find(x => x.key === pickKey) : null
+        if (!f)
+            return ""
+        return f.type === "profilePicks" ? "sketch" : "body"
+    }
+    /// The sketch the feature uses stays visible while the dialog is open.
+    readonly property var shownSketch: type !== "" && values.sketch !== undefined ? values.sketch : -1
+
+    // The controller keeps previews out of the undo history (redo entries survive), and
+    // any other document change (Undo, Delete, ...) ends the preview first.
+    function undoPreview() {
+        if (previewApplied) {
+            controller.cancelPreview()
+            previewApplied = false
+        }
+    }
+
+    function runPreview() {
+        if (!spec)
+            return
+        undoPreview()
+        const r = submit(true)
+        previewApplied = r.ok
+        // Incomplete input (no edges picked yet, ...) is normal while editing: errors are
+        // shown when OK is pressed.
+        if (r.ok)
+            error = ""
+    }
+
+    onValuesChanged: if (type !== "") previewTimer.restart()
+
+    Timer {
+        id: previewTimer
+        interval: 250
+        onTriggered: root.runPreview()
+    }
+
+    // Another change (Undo, Delete, a parameter edit) ended the preview: show it again on
+    // top of the new state.
+    Connections {
+        target: root.controller
+        function onHistoryChanged() {
+            if (root.previewApplied && !root.controller.previewActive()) {
+                root.previewApplied = false
+                if (root.type !== "")
+                    previewTimer.restart()
+            }
+        }
     }
 
     function setValue(key, value) {
@@ -221,7 +284,9 @@ Pane {
         setValue(pickKey, list)
     }
 
-    function apply() {
+    /// Runs the feature command (create, or edit of `editId`) with the current values.
+    function submit(quiet) {
+        const run = (name, args) => quiet ? controller.preview(name, args) : controller.execute(name, args)
         const params = Object.assign({}, values)
         for (const f of spec.fields) {
             if (f.showIf && !f.showIf(values))
@@ -242,10 +307,17 @@ Pane {
                 if (type === "cylinder" && feature.params.radius !== undefined)
                     patch.radius = null
             }
-            r = controller.execute("feature.edit", { id: editId, params: patch })
+            r = run("feature.edit", { id: editId, params: patch })
         } else {
-            r = controller.execute(spec.command, params)
+            r = run(spec.command, params)
         }
+        return r
+    }
+
+    function apply() {
+        previewTimer.stop()
+        undoPreview()
+        const r = submit()
         if (r.ok)
             close()
         else

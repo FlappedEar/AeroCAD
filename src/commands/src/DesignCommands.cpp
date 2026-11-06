@@ -192,7 +192,9 @@ Json topologyListSchema(const std::string& what)
                 {"items", {{"type", Json::array({"integer", "object"})}}},
                 {"minItems", 1},
                 {"description", what + " to use: indices from body." + what + "s, or {point: [x,y,z]} to take the " +
-                                    what + " nearest to a point (stays valid when earlier features change)."}};
+                                    what + " nearest to a point. Point references are stored with the point relative "
+                                    "to the body's bounding box and the " + what + "'s direction and type, so they "
+                                    "follow the body when earlier dimensions change."}};
 }
 
 Json profileSelection()
@@ -340,6 +342,62 @@ Json featureParams(const Json& params)
     return p;
 }
 
+/// Adds matching hints to {point} edge/face references of fillet, chamfer and shell: the
+/// point relative to the body's bounding box, the edge direction or face normal, and the
+/// edge/face type. Regeneration then finds the same edge after dimensions change (see
+/// matchTopology in Design.cpp). References that already carry hints are left alone.
+Json describeTopologyRefs(const cad::Design& d, const std::string& type, Json params)
+{
+    const bool edgesWanted = type == "fillet" || type == "chamfer";
+    if (!edgesWanted && type != "shell")
+        return params;
+    const char* key = edgesWanted ? "edges" : "faces";
+    if (!params.contains(key) || !params[key].is_array() || !params.contains("body"))
+        return params;
+    const cad::Body* body = nullptr;
+    for (const auto& [bid, b] : d.bodies()) {
+        const Json& ref = params["body"];
+        if ((ref.is_number_integer() && ref.get<cad::FeatureId>() == bid) ||
+            (ref.is_string() && ref.get<std::string>() == b.name))
+            body = &b;
+    }
+    if (body == nullptr)
+        return params;
+    const auto box = body->shape.bounds();
+    const core::Vec3 size = box.size();
+    auto rel = [&](double v, double lo, double extent) { return extent > 1e-9 ? (v - lo) / extent : 0.0; };
+    for (auto& item : params[key]) {
+        if (!item.is_object() || !item.contains("point") || item.contains("relative") || !item["point"].is_array())
+            continue;
+        bool numeric = true;
+        for (const auto& c : item["point"])
+            numeric = numeric && c.is_number();
+        if (!numeric || item["point"].size() != 3)
+            continue;
+        const core::Vec3 p{item["point"][0].get<double>(), item["point"][1].get<double>(),
+                           item["point"][2].get<double>()};
+        item["relative"] = Json::array({rel(p.x, box.min.x, size.x), rel(p.y, box.min.y, size.y),
+                                        rel(p.z, box.min.z, size.z)});
+        if (edgesWanted) {
+            const auto idx = geometry::nearestEdge(body->shape, p);
+            if (!idx)
+                continue;
+            const auto info = geometry::edges(body->shape).at(*idx);
+            item["kind"] = info.type;
+            if (info.type == "line")
+                item["direction"] = vec((info.end - info.start).normalized());
+        } else {
+            const auto idx = geometry::nearestFace(body->shape, p);
+            if (!idx)
+                continue;
+            const auto info = geometry::faces(body->shape).at(*idx);
+            item["kind"] = info.type;
+            item["normal"] = vec(info.normal);
+        }
+    }
+    return params;
+}
+
 void addFeatureCommand(CommandRegistry& r, const std::string& type, const std::string& title,
                        const std::string& description, Json properties, Json required)
 {
@@ -348,7 +406,8 @@ void addFeatureCommand(CommandRegistry& r, const std::string& type, const std::s
           [type, title](CommandContext& ctx, const Json& params) {
               cad::FeatureId id = 0;
               designChange(ctx, title, [&](cad::Design& d) {
-                  id = d.addFeature(type, featureParams(params), params.value("name", std::string()));
+                  id = d.addFeature(type, describeTopologyRefs(d, type, featureParams(params)),
+                                    params.value("name", std::string()));
                   return Json{};
               });
               // The document is synced only after designChange; build the result now.

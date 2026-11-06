@@ -74,11 +74,12 @@ has focus):
 | Line (in a sketch) | L | yes |
 | 2-point Rectangle (in a sketch) | R | yes |
 | Center Diameter Circle (in a sketch) | C | yes |
+| Sketch Dimension (in a sketch) | D | yes |
 | Cancel the current curve / dialog, then leave the sketch | Esc | yes |
 
 Not mapped yet: Press Pull (Q), Move (M), Trim (T), Offset (O), Project (P),
-Sketch Dimension (D), Construction (X) and Measure (I). 1/2/3 select the region
-selection tools on meshes, see "Region selection" in [macos.md](macos.md).
+Construction (X) and Measure (I). 1/2/3 select the region selection tools on meshes,
+see "Region selection" in [macos.md](macos.md).
 
 ## Modelling
 
@@ -90,10 +91,21 @@ See [cad.md](cad.md) for the timeline and the commands behind the tools.
   that follows the zoom. While drawing, type a number (or `width, height` for rectangles)
   and press Enter to set the size; expressions such as `w / 2` keep the sketch parametric.
   **Finish Sketch** or Esc leaves the sketch.
+- **Constraints and dimensions** (in a sketch): **Sketch Dimension (D)**, click a line
+  (length), a circle (diameter), an arc (radius), two points (distance), a point and a line
+  (distance) or two lines (angle), type the value or an expression and press Enter. The
+  constraint buttons in the sketch palette (H, V, coincident, tangent, equal, parallel,
+  perpendicular, concentric, midpoint, collinear, fix) work by clicking the curves or points
+  they need. The palette lists the constraints (edit a dimension value, ✕ deletes) and the
+  degrees of freedom left; "Fully constrained" means nothing can move. Conflicting
+  constraints are refused with a message in the status bar.
 - **Extrude (E)**, Revolve, Box, Cylinder, **Fillet (F)**, Chamfer, Shell, Combine open a
   dialog in the top-left corner. Selections are made in the view while the dialog is open:
   click inside sketch profiles (Extrude/Revolve; default: all profiles), near edges
   (Fillet/Chamfer), on faces (Shell) or at the hole position (Hole). Numbers accept expressions.
+  The model shows a live preview while the dialog is open; OK keeps it as one undo step,
+  Cancel (or Esc) removes it. While picking profiles only sketches react to clicks, while
+  picking edges/faces only bodies.
 - **Timeline** (bottom): features in order; double-click to edit (sketches reopen in the
   sketch environment), right-click for Rename, Suppress, Roll Back To Here and Delete; the
   playback buttons move the marker. Failed features are red with the reason in the tooltip.

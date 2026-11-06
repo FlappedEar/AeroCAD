@@ -3,6 +3,8 @@
 
 #include "aerocad/commands/CommandRegistry.hpp"
 
+#include <optional>
+
 namespace aerocad::commands {
 
 /// Registers the built-in commands (document.*, part.*, edit.*, commands.list).
@@ -19,7 +21,17 @@ public:
     Session(const Session&) = delete;
     Session& operator=(const Session&) = delete;
 
+    /// Runs a command. A document-changing command first ends an active preview.
     CommandResult execute(std::string_view name, const Json& params = Json::object());
+
+    /// Runs a document-changing command as a temporary preview (feature dialogs). The
+    /// previous preview is undone first. The preview never touches the history the user
+    /// sees: ending it undoes the change and restores the undo/redo stack as it was before
+    /// the first preview, redo entries included.
+    CommandResult preview(std::string_view name, const Json& params = Json::object());
+    /// Ends the preview, if any. Returns true if one was active.
+    bool cancelPreview();
+    [[nodiscard]] bool previewActive() const { return m_previewBase.has_value(); }
 
     [[nodiscard]] model::Document& document() { return m_document; }
     [[nodiscard]] const model::Document& document() const { return m_document; }
@@ -36,6 +48,8 @@ private:
     cad::Design m_design;
     CommandRegistry m_registry;
     CommandContext m_context;
+    /// History before the first preview; set while a preview change is applied.
+    std::optional<model::UndoStack::Snapshot> m_previewBase;
 };
 
 } // namespace aerocad::commands

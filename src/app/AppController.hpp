@@ -56,6 +56,13 @@ public:
 
     /// Runs a command. Returns {ok: bool, result: object} or {ok: false, error: string}.
     Q_INVOKABLE QVariantMap execute(const QString& name, const QVariantMap& params = {});
+    /// Runs a command as a live preview (feature dialogs): the previous preview is undone
+    /// first, the undo/redo history is left as it was, and a failure is not shown in the
+    /// status bar. Any other document change ends the preview.
+    Q_INVOKABLE QVariantMap preview(const QString& name, const QVariantMap& params = {});
+    /// Undoes the preview, if any. Returns true if one was active.
+    Q_INVOKABLE bool cancelPreview();
+    Q_INVOKABLE bool previewActive() const { return m_session.previewActive(); }
     /// Convenience wrapper around document.import for file dialogs and drag & drop.
     Q_INVOKABLE bool importFile(const QUrl& url);
     /// Convenience wrapper around document.export for the save dialog. `ids` empty means
