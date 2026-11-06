@@ -143,7 +143,9 @@ ApplicationWindow {
         if (!r.ok)
             return
         const pl = r.result.plane
-        activeSketch = { id: id, origin: pl.origin, normal: pl.normal, xDir: pl.xDir, yDir: pl.yDir }
+        const on = r.result.onSurface
+        activeSketch = { id: id, origin: pl.origin, normal: pl.normal, xDir: pl.xDir, yDir: pl.yDir,
+                         surfacePart: on ? on.part : 0, across: !!(on && on.across) }
         sketchTool = "line"
         refreshSketchSnaps()
         // Show the sketch while editing it (Fusion hides sketches once they are used).
@@ -1126,6 +1128,19 @@ ApplicationWindow {
             SplitView.minimumWidth: 200
             controller: window.controller
             partId: window.selectedPartId
+            onPartCreated: id => window.selectPart(id)
+            // Fit surface -> straight into a sketch over it, to draw the part's outline;
+            // Finish Sketch then offers "Part on surface".
+            onSurfaceFitted: id => {
+                // The orange selection would cover the new surface while drawing on it
+                // (Undo brings it back).
+                if (window.selectedPartId && window.selectedPartId !== id)
+                    window.controller.execute("selection.clear", { id: window.selectedPartId })
+                window.selectPart(id)
+                window.finishSketch()
+                featureDialog.close()
+                window.createSketch({ surface: { part: id } })
+            }
         }
     }
 

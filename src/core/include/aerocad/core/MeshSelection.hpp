@@ -62,6 +62,13 @@ struct RayHit {
 /// triangle sides. Brute force (Moller-Trumbore); fine for one query per pointer event.
 [[nodiscard]] std::optional<RayHit> raycast(const TriangleMesh& mesh, const Vec3& origin, const Vec3& direction);
 
+/// Moves each point along the line through it in `direction` (either way) onto the mesh:
+/// the nearest crossing. Points whose line misses the mesh stay where they are; `hits`
+/// (optional) counts the others. Used to drape a sketch drawn on a plane over a curved
+/// surface. A grid over the points' footprint keeps it fast on large scans.
+[[nodiscard]] std::vector<Vec3> projectOntoMesh(const TriangleMesh& mesh, const std::vector<Vec3>& points,
+                                                const Vec3& direction, std::size_t* hits = nullptr);
+
 /// Distance from a point to a triangle.
 [[nodiscard]] double pointTriangleDistance(const Vec3& p, const Vec3& a, const Vec3& b, const Vec3& c);
 

@@ -179,6 +179,92 @@ std::optional<RayHit> raycast(const TriangleMesh& mesh, const Vec3& origin, cons
     return best;
 }
 
+std::vector<Vec3> projectOntoMesh(const TriangleMesh& mesh, const std::vector<Vec3>& points, const Vec3& direction,
+                                  std::size_t* hits)
+{
+    std::vector<Vec3> out = points;
+    if (hits != nullptr)
+        *hits = 0;
+    const double len = direction.length();
+    if (points.empty() || mesh.triangleCount() == 0 || !(len > 0.0))
+        return out;
+    const Vec3 d = direction * (1.0 / len);
+    // Frame across the direction; the grid lives in it.
+    const Vec3 helper = std::abs(d.x) < 0.9 ? Vec3{1, 0, 0} : Vec3{0, 1, 0};
+    const Vec3 e1 = d.cross(helper).normalized();
+    const Vec3 e2 = d.cross(e1);
+    double u0 = std::numeric_limits<double>::max(), v0 = u0, u1 = -u0, v1 = -u0;
+    for (const auto& p : points) {
+        u0 = std::min(u0, p.dot(e1));
+        u1 = std::max(u1, p.dot(e1));
+        v0 = std::min(v0, p.dot(e2));
+        v1 = std::max(v1, p.dot(e2));
+    }
+    const double pad = 1e-6 + 0.01 * std::max(u1 - u0, v1 - v0);
+    u0 -= pad;
+    v0 -= pad;
+    u1 += pad;
+    v1 += pad;
+    const int n = 64;
+    const double su = (u1 - u0) / n;
+    const double sv = (v1 - v0) / n;
+    auto cell = [&](double x, double lo, double step) {
+        return std::clamp(static_cast<int>((x - lo) / step), 0, n - 1);
+    };
+    std::vector<std::vector<std::uint32_t>> grid(static_cast<std::size_t>(n * n));
+    const auto& v = mesh.vertices();
+    for (std::uint32_t t = 0; t < mesh.triangleCount(); ++t) {
+        const auto& tri = mesh.triangles()[t];
+        double a0 = std::numeric_limits<double>::max(), b0 = a0, a1 = -a0, b1 = -a0;
+        for (const auto i : tri) {
+            a0 = std::min(a0, v[i].dot(e1));
+            a1 = std::max(a1, v[i].dot(e1));
+            b0 = std::min(b0, v[i].dot(e2));
+            b1 = std::max(b1, v[i].dot(e2));
+        }
+        if (a1 < u0 || a0 > u1 || b1 < v0 || b0 > v1)
+            continue;
+        for (int j = cell(b0, v0, sv); j <= cell(b1, v0, sv); ++j)
+            for (int i = cell(a0, u0, su); i <= cell(a1, u0, su); ++i)
+                grid[static_cast<std::size_t>(j * n + i)].push_back(t);
+    }
+    for (auto& p : out) {
+        const auto& candidates = grid[static_cast<std::size_t>(cell(p.dot(e2), v0, sv) * n + cell(p.dot(e1), u0, su))];
+        double best = std::numeric_limits<double>::max();
+        bool found = false;
+        for (const auto t : candidates) {
+            const auto& tri = mesh.triangles()[t];
+            const Vec3& a = v[tri[0]];
+            const Vec3 ea = v[tri[1]] - a;
+            const Vec3 eb = v[tri[2]] - a;
+            const Vec3 pvec = d.cross(eb);
+            const double det = ea.dot(pvec);
+            if (std::abs(det) < 1e-12)
+                continue;
+            const double inv = 1.0 / det;
+            const Vec3 tvec = p - a;
+            const double u = tvec.dot(pvec) * inv;
+            if (u < 0.0 || u > 1.0)
+                continue;
+            const Vec3 qvec = tvec.cross(ea);
+            const double w = d.dot(qvec) * inv;
+            if (w < 0.0 || u + w > 1.0)
+                continue;
+            const double dist = eb.dot(qvec) * inv;
+            if (std::abs(dist) < std::abs(best)) {
+                best = dist;
+                found = true;
+            }
+        }
+        if (found) {
+            p = p + d * best;
+            if (hits != nullptr)
+                ++*hits;
+        }
+    }
+    return out;
+}
+
 double pointTriangleDistance(const Vec3& p, const Vec3& a, const Vec3& b, const Vec3& c)
 {
     // Closest point on triangle (Ericson, Real-Time Collision Detection, 5.1.5).

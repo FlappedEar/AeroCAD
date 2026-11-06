@@ -91,7 +91,13 @@ core -------+                 transforms, primitives).
   `surface.part_from_sketch` does it in one step from the sketch (it remembers its part
   in `onSurface`): on a scan it first fits a surface to the triangles under the outline
   (connected, facing the sketch, inside the outline's rectangle plus a margin), then
-  trims and thickens.
+  trims and thickens. A fitted surface whose cut-out is smaller than the outline (drawn
+  past the fitted area) is fitted again on its scan (`model::sourcePartId`) under the
+  whole outline. Such sketches are shown lying on the scan: `Design::syncDocument` splits
+  the curves and the profile fill finely and moves them onto it along the sketch normal
+  (`core::projectOntoMesh`, grid-accelerated), and clicks while sketching ray-cast the
+  surface (`AppController::pickPartSurface`, meshes up to 300k triangles). `across: true`
+  sketches stand on the surface instead (X along its normal), for fins.
 
 ## Not yet decided / next steps
 

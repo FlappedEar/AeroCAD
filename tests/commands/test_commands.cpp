@@ -498,6 +498,18 @@ TEST_CASE("Part on surface: one step from an outline over a scan to a solid", "[
         REQUIRE(profiles.ok);
         CHECK(profiles.data.at("onSurface").at("part") == scanId);
 
+        // The sketch is shown lying on the scan, not on its plane above it.
+        const model::Part* sketchPart = nullptr;
+        for (const auto& p : session.document().parts())
+            if (p.kind == model::PartKind::Sketch)
+                sketchPart = &p;
+        REQUIRE(sketchPart != nullptr);
+        REQUIRE(sketchPart->edgeSegments.size() > 8); // split finely to follow the curve
+        double worst = 0.0;
+        for (const auto& q : sketchPart->edgeSegments)
+            worst = std::max(worst, std::abs(q.z - (-0.005 * (q.x - 30) * (q.x - 30))));
+        CHECK(worst < 0.05);
+
         auto part = session.execute("surface.part_from_sketch", {{"sketch", sketchId}, {"thickness", 2.0}});
         INFO(part.toJson().dump());
         REQUIRE(part.ok);
@@ -514,6 +526,23 @@ TEST_CASE("Part on surface: one step from an outline over a scan to a solid", "[
 
         REQUIRE(session.execute("edit.undo").ok);
         CHECK(session.document().partCount() == 2); // scan and sketch
+    }
+
+    SECTION("Across the surface: a plane standing on it, for a fin")
+    {
+        auto sk = session.execute("sketch.create",
+                                  {{"surface", {{"part", scanId}, {"point", {30, 15, 0}}, {"across", true}}}});
+        INFO(sk.toJson().dump());
+        REQUIRE(sk.ok);
+        auto profiles = session.execute("sketch.profiles", {{"sketch", sk.data.at("id")}});
+        REQUIRE(profiles.ok);
+        const auto& pl = profiles.data.at("plane");
+        // X along the surface normal (+Z here), the plane standing on the surface; the
+        // surface faces up, so the fin's normal follows the long side (X).
+        CHECK(pl.at("xDir").at(2).get<double>() > 0.99);
+        CHECK(std::abs(pl.at("normal").at(2).get<double>()) < 0.01);
+        CHECK(std::abs(pl.at("origin").at(2).get<double>()) < 0.1); // on the surface
+        CHECK(profiles.data.at("onSurface").at("across") == true);
     }
 
     SECTION("An arc that bulges far past its defining points is covered")
@@ -562,6 +591,28 @@ TEST_CASE("Part on surface: one step from an outline over a scan to a solid", "[
         REQUIRE(part.ok);
         CHECK_FALSE(part.data.contains("fit")); // the fitted surface is used as it is
         CHECK(part.data.at("volume").get<double>() == Approx(1.5 * trimmed.data.at("area").get<double>()).epsilon(0.03));
+    }
+
+    SECTION("An outline drawn past the fitted surface is fitted again on the scan")
+    {
+        REQUIRE(session.execute("selection.brush", {{"id", scanId}, {"points", {{30, 15, 0}}}, {"radius", 6.0}}).ok);
+        auto fit = session.execute("surface.fit_selection", {{"id", scanId}, {"tolerance", 0.05}});
+        REQUIRE(fit.ok);
+        const auto surfaceId = fit.data.at("id").get<model::PartId>();
+        auto sk = session.execute("sketch.create",
+                                  {{"surface", {{"part", surfaceId}}},
+                                   {"curves", Json::array({{{"type", "center_rectangle"},
+                                                            {"center", {0, 0}},
+                                                            {"width", 40},
+                                                            {"height", 20}}})}});
+        REQUIRE(sk.ok);
+        auto part = session.execute("surface.part_from_sketch", {{"sketch", sk.data.at("id")}, {"thickness", 1.0}});
+        INFO(part.toJson().dump());
+        REQUIRE(part.ok);
+        CHECK(part.data.at("fit").at("part") == scanId);
+        CHECK(part.data.at("warnings").empty());
+        CHECK(part.data.at("bounds").at("size").at(0).get<double>() == Approx(40.0).margin(0.3));
+        CHECK(part.data.at("bounds").at("size").at(1).get<double>() == Approx(20.0).margin(0.3));
     }
 
     CHECK_FALSE(session.execute("surface.part_from_sketch", {{"sketch", 99}, {"thickness", 2.0}}).ok);

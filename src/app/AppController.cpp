@@ -587,6 +587,28 @@ QVariantMap AppController::pickSurface(const QVector3D& origin, const QVector3D&
             {QStringLiteral("triangle"), QVariant::fromValue<quint32>(best->triangle)}};
 }
 
+QVariantMap AppController::pickPartSurface(quint64 id, const QVector3D& origin, const QVector3D& direction) const
+{
+    const core::Vec3 o{origin.x(), origin.y(), origin.z()};
+    const core::Vec3 d{direction.x(), direction.y(), direction.z()};
+    constexpr std::size_t maxTriangles = 300000; // brute-force ray cast per pointer move
+    const model::Part* p = part(id);
+    if (p == nullptr)
+        return {};
+    std::optional<core::RayHit> hit;
+    // A fitted surface covers only the fitted area; the scan it came from goes further.
+    if (const model::Part* scan = part(model::sourcePartId(*p));
+        scan != nullptr && scan->visible && scan->mesh && !scan->shape && scan->mesh->triangleCount() <= maxTriangles)
+        hit = core::raycast(*scan->mesh, o, d);
+    if (!hit && p->mesh && p->mesh->triangleCount() <= maxTriangles)
+        hit = core::raycast(*p->mesh, o, d);
+    if (!hit)
+        return {};
+    return {{QStringLiteral("partId"), QVariant::fromValue<quint64>(id)},
+            {QStringLiteral("point"), QVector3D(static_cast<float>(hit->point.x), static_cast<float>(hit->point.y),
+                                                static_cast<float>(hit->point.z))}};
+}
+
 const core::TriangleSet* AppController::displayedSelection(quint64 id) const
 {
     if (m_brush && m_brush->partId == id)

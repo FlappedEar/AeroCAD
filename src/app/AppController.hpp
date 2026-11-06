@@ -127,6 +127,10 @@ public:
     /// Nearest hit of a ray (model coordinates) with the visible parts' meshes:
     /// {partId, point (QVector3D), triangle}, or {} when nothing is hit.
     Q_INVOKABLE QVariantMap pickSurface(const QVector3D& origin, const QVector3D& direction) const;
+    /// Like pickSurface, on one part only (and the scan it was fitted from, which reaches
+    /// further); {} on a miss, or for meshes too large to ray-cast per pointer move
+    /// (sketching then stays on the sketch plane).
+    Q_INVOKABLE QVariantMap pickPartSurface(quint64 id, const QVector3D& origin, const QVector3D& direction) const;
 
     /// Shows a message in the status bar.
     Q_INVOKABLE void showStatus(const QString& message) { setStatusMessage(message); }

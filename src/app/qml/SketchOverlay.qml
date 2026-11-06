@@ -70,6 +70,13 @@ Item {
     }
 
     function screenToLocal(x, y) {
+        // Over a curved surface: the point of the surface under the cursor, seen along the
+        // sketch normal, so drawing lands where the cursor is on the surface from any view.
+        if (sketch.surfacePart && !sketch.across) {
+            const s = viewport.pickOnPart(x, y, sketch.surfacePart)
+            if (s !== null)
+                return toLocal(s)
+        }
         const w = viewport.planePoint(x, y, v3(sketch.origin), v3(sketch.normal))
         return w === null ? null : toLocal(w)
     }
