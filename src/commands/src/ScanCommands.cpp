@@ -224,6 +224,7 @@ void registerMeshCommands(CommandRegistry& r)
                           {"removedUnusedVertices", rep.removedUnusedVertices},
                           {"flippedTriangles", rep.flippedTriangles},
                           {"filledHoles", rep.filledHoles},
+                          {"skippedHoles", rep.skippedHoles},
                           {"addedTriangles", rep.addedTriangles},
                           {"stats", statsToJson(after)}};
           });

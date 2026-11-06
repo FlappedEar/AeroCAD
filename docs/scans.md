@@ -36,8 +36,9 @@ To put a picked face of a scan on the floor, align with that face's triangles an
 Repair, flip and decimate refuse parts with exact CAD geometry (STEP/IGES/BREP) and
 timeline bodies; they are meant for meshes.
 
-Holes are filled with a fan around the loop centroid, which suits the small, roughly
-planar holes typical of scans. Large holes (scanner shadows) are better closed by
+Holes are filled by ear clipping in the hole's best-fit plane (no new vertices), which suits
+the small, roughly planar holes typical of scans; a hole that does not project to a simple
+polygon is left open and reported as `skippedHoles`. Large holes (scanner shadows) are better closed by
 modelling over them.
 
 ## Performance (5.1 M triangles, Release build, one core)

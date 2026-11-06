@@ -52,6 +52,9 @@ struct RepairReport {
     std::size_t removedUnusedVertices = 0;
     std::size_t flippedTriangles = 0;
     std::size_t filledHoles = 0;
+    /// Holes within maxHoleEdges that could not be triangulated (not a simple polygon in
+    /// their best-fit plane) and were left open.
+    std::size_t skippedHoles = 0;
     std::size_t addedTriangles = 0;
 };
 

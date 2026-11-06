@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <deque>
 #include <numeric>
+#include <optional>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -244,39 +245,150 @@ std::size_t orient(const std::vector<Vec3>& vertices, std::vector<Triangle>& tri
     return flipped;
 }
 
-/// Boundary loops in hole-filling order (each loop edge runs opposite to the
-/// triangle edge that borders the hole).
-std::vector<std::vector<std::uint32_t>> boundaryLoops(const std::vector<EdgeUse>& uses, std::size_t triangleCount)
+/// Boundary loops in hole-filling order: each loop runs opposite to the triangle edge
+/// that borders the hole at its first edge. Loops are traced over undirected boundary
+/// edges, so flipped faces along a rim do not break a hole into pieces.
+std::vector<std::vector<std::uint32_t>> boundaryLoops(const std::vector<EdgeUse>& uses)
 {
-    std::unordered_multimap<std::uint32_t, std::uint32_t> next;
+    struct BoundaryEdge {
+        std::uint32_t from;
+        std::uint32_t to;
+        bool used = false;
+    };
+    std::vector<BoundaryEdge> edges;
     forEachEdge(uses, [&](std::size_t b, std::size_t e) {
         if (e - b == 1)
-            next.emplace(uses[b].to, uses[b].from);
+            edges.push_back({uses[b].from, uses[b].to});
     });
+    std::unordered_multimap<std::uint32_t, std::uint32_t> incident; // vertex -> edge index
+    incident.reserve(edges.size() * 2);
+    for (std::uint32_t i = 0; i < edges.size(); ++i) {
+        incident.emplace(edges[i].from, i);
+        incident.emplace(edges[i].to, i);
+    }
+    auto takeEdgeAt = [&](std::uint32_t vertex) -> std::optional<std::uint32_t> {
+        auto [first, last] = incident.equal_range(vertex);
+        for (auto it = first; it != last; ++it) {
+            if (!edges[it->second].used)
+                return it->second;
+        }
+        return std::nullopt;
+    };
+
     std::vector<std::vector<std::uint32_t>> loops;
-    while (!next.empty()) {
-        auto it = next.begin();
-        const std::uint32_t start = it->first;
-        std::vector<std::uint32_t> loop{start};
-        std::uint32_t current = it->second;
-        next.erase(it);
+    for (std::uint32_t start = 0; start < edges.size(); ++start) {
+        if (edges[start].used)
+            continue;
+        edges[start].used = true;
+        // Walk from `to` around the hole back to `from`; the loop then closes with the
+        // triangle's own edge from -> to, so it is reversed below to run against it.
+        const std::uint32_t first = edges[start].to;
+        const std::uint32_t goal = edges[start].from;
+        std::vector<std::uint32_t> loop{first};
+        std::uint32_t current = first;
         bool closed = false;
-        while (loop.size() <= triangleCount * 3) {
-            if (current == start) {
+        while (true) {
+            // Prefer closing the loop as soon as the start edge's other end is reached.
+            if (current == goal) {
                 closed = true;
                 break;
             }
-            loop.push_back(current);
-            auto n = next.find(current);
-            if (n == next.end())
+            const auto e = takeEdgeAt(current);
+            if (!e)
                 break;
-            current = n->second;
-            next.erase(n);
+            edges[*e].used = true;
+            current = edges[*e].from == current ? edges[*e].to : edges[*e].from;
+            if (current != goal)
+                loop.push_back(current);
         }
-        if (closed && loop.size() >= 3)
-            loops.push_back(std::move(loop));
+        if (closed) {
+            loop.push_back(goal);
+            std::reverse(loop.begin(), loop.end());
+            if (loop.size() >= 3)
+                loops.push_back(std::move(loop));
+        }
     }
     return loops;
+}
+
+/// Triangulates a hole loop by ear clipping in the loop's best-fit plane. Triangles
+/// follow the loop order (so they continue the surrounding winding). Returns false when
+/// the loop does not project to a simple polygon (no valid ear found).
+bool triangulateLoop(const std::vector<Vec3>& vertices, const std::vector<std::uint32_t>& loop,
+                     std::vector<Triangle>& out)
+{
+    const std::size_t n = loop.size();
+    if (n == 3) {
+        out.push_back({loop[0], loop[1], loop[2]});
+        return true;
+    }
+    // Newell normal: orientation of the loop as traversed.
+    Vec3 normal;
+    Vec3 centroid;
+    for (std::size_t i = 0; i < n; ++i) {
+        const Vec3& p = vertices[loop[i]];
+        const Vec3& q = vertices[loop[(i + 1) % n]];
+        normal = normal + Vec3{(p.y - q.y) * (p.z + q.z), (p.z - q.z) * (p.x + q.x), (p.x - q.x) * (p.y + q.y)};
+        centroid = centroid + p;
+    }
+    normal = normal.normalized();
+    if (normal == Vec3{})
+        return false;
+    centroid = centroid * (1.0 / static_cast<double>(n));
+    const Vec3 u = (std::abs(normal.x) < 0.9 ? normal.cross(Vec3{1, 0, 0}) : normal.cross(Vec3{0, 1, 0})).normalized();
+    const Vec3 v = normal.cross(u);
+    struct P2 {
+        double x;
+        double y;
+    };
+    std::vector<P2> pts(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        const Vec3 d = vertices[loop[i]] - centroid;
+        pts[i] = {d.dot(u), d.dot(v)};
+    }
+    // With u, v, normal right-handed the loop is counter-clockwise in (u, v).
+    auto cross = [](const P2& a, const P2& b, const P2& c) {
+        return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+    };
+    std::vector<std::size_t> ring(n);
+    std::iota(ring.begin(), ring.end(), std::size_t{0});
+    std::vector<Triangle> result;
+    result.reserve(n - 2);
+    while (ring.size() > 3) {
+        bool clipped = false;
+        const std::size_t m = ring.size();
+        for (std::size_t k = 0; k < m; ++k) {
+            const std::size_t ia = ring[(k + m - 1) % m];
+            const std::size_t ib = ring[k];
+            const std::size_t ic = ring[(k + 1) % m];
+            const P2& a = pts[ia];
+            const P2& b = pts[ib];
+            const P2& c = pts[ic];
+            if (cross(a, b, c) <= 0.0)
+                continue; // reflex or degenerate corner
+            bool inside = false;
+            for (const std::size_t j : ring) {
+                if (j == ia || j == ib || j == ic)
+                    continue;
+                const P2& p = pts[j];
+                if (cross(a, b, p) >= 0.0 && cross(b, c, p) >= 0.0 && cross(c, a, p) >= 0.0) {
+                    inside = true;
+                    break;
+                }
+            }
+            if (inside)
+                continue;
+            result.push_back({loop[ia], loop[ib], loop[ic]});
+            ring.erase(ring.begin() + static_cast<std::ptrdiff_t>(k));
+            clipped = true;
+            break;
+        }
+        if (!clipped)
+            return false;
+    }
+    result.push_back({loop[ring[0]], loop[ring[1]], loop[ring[2]]});
+    out.insert(out.end(), result.begin(), result.end());
+    return true;
 }
 
 } // namespace
@@ -337,7 +449,7 @@ MeshStats meshStats(const TriangleMesh& mesh)
         if (find(t) == t)
             ++s.components;
     }
-    s.holes = boundaryLoops(uses, tris.size()).size();
+    s.holes = boundaryLoops(uses).size();
     return s;
 }
 
@@ -399,28 +511,23 @@ TriangleMesh repairMesh(const TriangleMesh& mesh, const RepairOptions& options, 
     if (options.fixOrientation)
         report.flippedTriangles = orient(vertices, triangles);
 
-    // 5. Hole filling: triangle for 3 edges, otherwise a fan around the loop centroid.
+    // 5. Hole filling: ear clipping in the plane of each hole. Holes that do not project
+    // to a simple polygon are left open (counted in skippedHoles).
     if (options.maxHoleEdges >= 3) {
-        for (const auto& loop : boundaryLoops(edgeUses(triangles), triangles.size())) {
+        for (const auto& loop : boundaryLoops(edgeUses(triangles))) {
             if (loop.size() > options.maxHoleEdges)
                 continue;
-            ++report.filledHoles;
-            if (loop.size() == 3) {
-                triangles.push_back({loop[0], loop[1], loop[2]});
-                ++report.addedTriangles;
-                continue;
-            }
-            Vec3 c;
-            for (const auto i : loop)
-                c = c + vertices[i];
-            c = c * (1.0 / static_cast<double>(loop.size()));
-            const auto ci = static_cast<std::uint32_t>(vertices.size());
-            vertices.push_back(c);
-            for (std::size_t k = 0; k < loop.size(); ++k) {
-                triangles.push_back({loop[k], loop[(k + 1) % loop.size()], ci});
-                ++report.addedTriangles;
+            const std::size_t before = triangles.size();
+            if (triangulateLoop(vertices, loop, triangles)) {
+                ++report.filledHoles;
+                report.addedTriangles += triangles.size() - before;
+            } else {
+                ++report.skippedHoles;
             }
         }
+        // A shell closed by filling must face outwards as well.
+        if (options.fixOrientation && report.filledHoles > 0)
+            report.flippedTriangles += orient(vertices, triangles);
     }
 
     // 6. Unused vertices (always compacted after merging so the index layout is clean).

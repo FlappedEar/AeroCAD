@@ -196,7 +196,7 @@ TEST_CASE("repairMesh welds, dedupes, orients and fills holes", "[core][scan]")
     RepairReport frep;
     const TriangleMesh filled = repairMesh(open, fill, &frep);
     CHECK(frep.filledHoles == 1);
-    CHECK(frep.addedTriangles == 4);
+    CHECK(frep.addedTriangles == 2); // ear clipping: a square needs two triangles
     const MeshStats fs = meshStats(filled);
     CHECK(fs.holes == 0);
     CHECK(fs.inconsistentEdges == 0);
@@ -218,4 +218,75 @@ TEST_CASE("decimateToTarget reduces a dense sphere and keeps its shape", "[core]
         CHECK(p.length() == Approx(50.0).epsilon(0.03));
     // Small meshes are returned unchanged.
     CHECK(decimateToTarget(cube(), 100).triangleCount() == 12);
+}
+
+TEST_CASE("repairMesh closes an inside-out open shell facing outwards", "[core][scan]")
+{
+    const TriangleMesh c = cube();
+    auto tris = c.triangles();
+    tris.erase(tris.begin() + 2, tris.begin() + 4); // open top
+    TriangleMesh open(c.vertices(), tris);
+    flipNormals(open);
+    RepairOptions opt;
+    opt.maxHoleEdges = 8;
+    const TriangleMesh fixed = repairMesh(open, opt);
+    CHECK(meshStats(fixed).boundaryEdges == 0);
+    CHECK(signedVolume(fixed) == Approx(1.0));
+}
+
+TEST_CASE("holes along flipped rim faces are still counted", "[core][scan]")
+{
+    const TriangleMesh c = cube();
+    auto tris = c.triangles();
+    tris.erase(tris.begin() + 2, tris.begin() + 4); // open top
+    std::swap(tris[4][1], tris[4][2]);              // flip a side triangle on the rim
+    const MeshStats s = meshStats(TriangleMesh(c.vertices(), tris));
+    CHECK(s.holes == 1);
+}
+
+TEST_CASE("concave holes are filled by ear clipping without overlap", "[core][scan]")
+{
+    // Flat U-shaped ring (outer U minus nothing): a planar strip whose outline is a concave
+    // octagon. Build a closed U-shaped prism and remove its top cap: the hole is the U.
+    const std::vector<std::array<double, 2>> outline{{0, 0}, {3, 0}, {3, 3}, {2, 3}, {2, 1}, {1, 1}, {1, 3}, {0, 3}};
+    TriangleMesh m;
+    for (const auto& p : outline)
+        m.addVertex({p[0], p[1], 0});
+    for (const auto& p : outline)
+        m.addVertex({p[0], p[1], 1});
+    const auto n = static_cast<std::uint32_t>(outline.size());
+    // Sides (outline is counter-clockwise seen from +Z, so outward normals use this order).
+    for (std::uint32_t i = 0; i < n; ++i) {
+        const std::uint32_t j = (i + 1) % n;
+        m.addTriangle(i, j, j + n);
+        m.addTriangle(i, j + n, i + n);
+    }
+    // Bottom cap (facing -Z) as rectangles of the U.
+    m.addTriangle(0, 5, 4); // fan-free manual triangulation of the bottom U
+    m.addTriangle(0, 4, 1);
+    m.addTriangle(1, 4, 3);
+    m.addTriangle(1, 3, 2);
+    m.addTriangle(0, 7, 6);
+    m.addTriangle(0, 6, 5);
+    REQUIRE(meshStats(m).holes == 1);
+
+    RepairOptions opt;
+    opt.maxHoleEdges = 8;
+    opt.fixOrientation = false;
+    RepairReport rep;
+    const TriangleMesh filled = repairMesh(m, opt, &rep);
+    CHECK(rep.filledHoles == 1);
+    CHECK(rep.addedTriangles == 6);
+    // Area of the new cap equals the U area (7) and every cap triangle faces +Z.
+    double capArea = 0;
+    for (std::size_t t = m.triangleCount(); t < filled.triangleCount(); ++t) {
+        const auto& tri = filled.triangles()[t];
+        const Vec3 nrm = (filled.vertices()[tri[1]] - filled.vertices()[tri[0]])
+                             .cross(filled.vertices()[tri[2]] - filled.vertices()[tri[0]]);
+        CHECK(nrm.z > 0);
+        capArea += 0.5 * nrm.length();
+    }
+    CHECK(capArea == Approx(7.0));
+    CHECK(meshStats(filled).boundaryEdges == 0);
+    CHECK(signedVolume(filled) == Approx(7.0));
 }
