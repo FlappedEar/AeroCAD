@@ -587,6 +587,35 @@ QVariantMap AppController::pickSurface(const QVector3D& origin, const QVector3D&
             {QStringLiteral("triangle"), QVariant::fromValue<quint32>(best->triangle)}};
 }
 
+QVector3D AppController::dropOntoPart(quint64 id, const QVector3D& point, const QVector3D& normal) const
+{
+    constexpr std::size_t maxTriangles = 100000; // per sketch point drawn, each repaint
+    const core::Vec3 p{point.x(), point.y(), point.z()};
+    const core::Vec3 n{normal.x(), normal.y(), normal.z()};
+    const model::Part* surface = part(id);
+    if (surface == nullptr)
+        return point;
+    std::vector<const core::TriangleMesh*> meshes;
+    if (const model::Part* scan = part(model::sourcePartId(*surface)); scan != nullptr && scan->mesh && !scan->shape)
+        meshes.push_back(scan->mesh.get());
+    if (surface->mesh)
+        meshes.push_back(surface->mesh.get());
+    for (const auto* mesh : meshes) {
+        if (mesh->triangleCount() > maxTriangles)
+            continue;
+        // Both ways along the normal; the nearer crossing.
+        const auto down = core::raycast(*mesh, p, n * -1.0);
+        const auto up = core::raycast(*mesh, p, n);
+        const core::RayHit* best = down ? &*down : nullptr;
+        if (up && (best == nullptr || up->distance < best->distance))
+            best = &*up;
+        if (best != nullptr)
+            return {static_cast<float>(best->point.x), static_cast<float>(best->point.y),
+                    static_cast<float>(best->point.z)};
+    }
+    return point;
+}
+
 QVariantMap AppController::pickPartSurface(quint64 id, const QVector3D& origin, const QVector3D& direction) const
 {
     const core::Vec3 o{origin.x(), origin.y(), origin.z()};

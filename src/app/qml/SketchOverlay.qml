@@ -65,8 +65,13 @@ Item {
         return [d.dotProduct(v3(sketch.xDir)), d.dotProduct(v3(sketch.yDir))]
     }
 
+    /// Where a sketch point is drawn: on a sketch over a surface, on the surface (where the
+    /// finished curves are shown), so previews, hover markers and snapping match them.
     function toScreen(p) {
-        return viewport.viewPoint(toWorld(p))
+        const w = toWorld(p)
+        if (sketch.surfacePart && !sketch.across)
+            return viewport.viewPoint(viewport.controller.dropOntoPart(sketch.surfacePart, w, v3(sketch.normal)))
+        return viewport.viewPoint(w)
     }
 
     function screenToLocal(x, y) {
