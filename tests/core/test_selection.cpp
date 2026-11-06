@@ -6,6 +6,7 @@
 
 #include <array>
 #include <cmath>
+#include <numbers>
 #include <memory>
 #include <vector>
 
@@ -268,4 +269,28 @@ TEST_CASE("Shrink erodes selections at open mesh edges", "[core][selection]")
     const auto shrunk = growSelection(adj, all, -1);
     CHECK(shrunk.size() < all.size());
     CHECK(growSelection(adj, all, 1) == all);
+}
+
+TEST_CASE("Smooth region: winding from edge direction, sharp folds stay bends", "[core][selection]")
+{
+    // Two triangles on the shared edge (0,0,0)-(1,0,0).
+    auto pair = [](const Vec3& apex, bool flipSecond) {
+        std::vector<Vec3> v{{0, 0, 0}, {1, 0, 0}, {0.5, 1, 0}, apex};
+        std::vector<TriangleMesh::Triangle> t{{0, 1, 2}};
+        t.push_back(flipSecond ? TriangleMesh::Triangle{0, 1, 3} : TriangleMesh::Triangle{1, 0, 3});
+        return TriangleMesh(std::move(v), std::move(t));
+    };
+
+    // Consistently wound, folded 170 degrees: a crease, not a smooth continuation.
+    const double a = 10.0 * std::numbers::pi / 180.0;
+    const TriangleMesh fold = pair({0.5, std::cos(a), std::sin(a)}, false);
+    const MeshAdjacency foldAdj(fold);
+    CHECK_FALSE(foldAdj.windingFlipped(0, 0));
+    CHECK(selectSmoothRegion(fold, foldAdj, 0, {}).size() == 1);
+
+    // Flat but the second triangle is wound the other way (unwelded STL): still one region.
+    const TriangleMesh flat = pair({0.5, -1, 0}, true);
+    const MeshAdjacency flatAdj(flat);
+    CHECK(flatAdj.windingFlipped(0, 0));
+    CHECK(selectSmoothRegion(flat, flatAdj, 0, {}).size() == 2);
 }

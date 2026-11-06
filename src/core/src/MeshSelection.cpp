@@ -87,7 +87,9 @@ MeshAdjacency::MeshAdjacency(const TriangleMesh& mesh)
     }
 
     m_neighbours.assign(triangles.size(), {none, none, none});
-    // Edge (canonical a < b) -> first triangle * 3 + slot that has it.
+    m_flipped.assign(triangles.size(), 0);
+    // Edge (canonical a < b) -> first triangle * 3 + slot that has it, times 2, plus 1
+    // when that triangle runs along the edge from b to a.
     std::unordered_map<std::uint64_t, std::uint64_t> open;
     open.reserve(triangles.size() * 2);
     for (std::size_t t = 0; t < triangles.size(); ++t) {
@@ -96,19 +98,25 @@ MeshAdjacency::MeshAdjacency(const TriangleMesh& mesh)
             std::uint32_t b = canonical[triangles[t][(slot + 1) % 3]];
             if (a == b)
                 continue;
+            const std::uint64_t reversed = a > b ? 1 : 0;
             if (a > b)
                 std::swap(a, b);
             const std::uint64_t key = (static_cast<std::uint64_t>(a) << 32) | b;
-            const std::uint64_t here = t * 3 + static_cast<std::uint64_t>(slot);
+            const std::uint64_t here = (t * 3 + static_cast<std::uint64_t>(slot)) * 2 + reversed;
             auto [it, inserted] = open.try_emplace(key, here);
             if (inserted)
                 continue;
             const std::uint64_t other = it->second;
-            const auto otherTri = static_cast<std::uint32_t>(other / 3);
-            const auto otherSlot = static_cast<std::size_t>(other % 3);
-            if (m_neighbours[otherTri][otherSlot] == none && otherTri != t) {
-                m_neighbours[otherTri][otherSlot] = static_cast<std::uint32_t>(t);
+            const auto otherTri = static_cast<std::uint32_t>(other / 6);
+            const auto otherSlot = static_cast<int>(other / 2 % 3);
+            if (m_neighbours[otherTri][static_cast<std::size_t>(otherSlot)] == none && otherTri != t) {
+                m_neighbours[otherTri][static_cast<std::size_t>(otherSlot)] = static_cast<std::uint32_t>(t);
                 m_neighbours[t][static_cast<std::size_t>(slot)] = otherTri;
+                // Consistent winding traverses a shared edge in opposite directions.
+                if ((other & 1u) == reversed) {
+                    m_flipped[otherTri] = static_cast<std::uint8_t>(m_flipped[otherTri] | 1u << otherSlot);
+                    m_flipped[t] = static_cast<std::uint8_t>(m_flipped[t] | 1u << slot);
+                }
             }
         }
     }
@@ -246,11 +254,13 @@ TriangleSet selectSmoothRegion(const TriangleMesh& mesh, const MeshAdjacency& ad
     const double seedCos = options.maxSeedAngleDeg >= 180.0 ? -2.0 : cosDeg(options.maxSeedAngleDeg);
     const Vec3 seedNormal = mesh.faceNormal(seed);
 
-    // Normals are oriented consistently with the seed while flooding (a neighbour whose
-    // normal points the other way is flipped), so inconsistent winding in STL files does
-    // not stop the region, and angles to the seed above 90 degrees still mean something.
+    // Normals are oriented consistently with the seed while flooding: a neighbour that runs
+    // along the shared edge in the same direction is wound the other way and its normal is
+    // turned around. So inconsistent winding in STL files does not stop the region, sharp
+    // folds still count as bends, and angles to the seed above 90 degrees mean something.
     std::vector<char> visited(mesh.triangleCount(), 0);
     std::vector<Vec3> oriented(mesh.triangleCount());
+    std::vector<char> flipped(mesh.triangleCount(), 0); // relative to the seed's winding
     std::vector<std::uint32_t> stack{seed};
     visited[seed] = 1;
     oriented[seed] = seedNormal;
@@ -260,16 +270,20 @@ TriangleSet selectSmoothRegion(const TriangleMesh& mesh, const MeshAdjacency& ad
         stack.pop_back();
         out.push_back(t);
         const Vec3 n = oriented[t];
-        for (const std::uint32_t nb : adjacency.neighbours(t)) {
+        const bool tFlipped = flipped[t] != 0;
+        for (int slot = 0; slot < 3; ++slot) {
+            const std::uint32_t nb = adjacency.neighbours(t)[static_cast<std::size_t>(slot)];
             if (nb == MeshAdjacency::none || visited[nb] != 0)
                 continue;
+            const bool nbFlipped = tFlipped != adjacency.windingFlipped(t, slot);
             Vec3 nn = mesh.faceNormal(nb);
-            if (n.dot(nn) < 0.0)
+            if (nbFlipped)
                 nn = nn * -1.0;
             if (n.dot(nn) < neighbourCos || seedNormal.dot(nn) < seedCos)
                 continue;
             visited[nb] = 1;
             oriented[nb] = nn;
+            flipped[nb] = nbFlipped ? 1 : 0;
             stack.push_back(nb);
         }
     }

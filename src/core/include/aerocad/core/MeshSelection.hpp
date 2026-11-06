@@ -30,10 +30,17 @@ public:
     {
         return m_neighbours[triangle];
     }
+    /// True when the neighbour across edge `slot` runs along that edge in the same
+    /// direction as `triangle`, i.e. the two are wound inconsistently (one is flipped).
+    [[nodiscard]] bool windingFlipped(std::uint32_t triangle, int slot) const
+    {
+        return (m_flipped[triangle] >> slot & 1u) != 0;
+    }
     [[nodiscard]] std::size_t triangleCount() const { return m_neighbours.size(); }
 
 private:
     std::vector<std::array<std::uint32_t, 3>> m_neighbours;
+    std::vector<std::uint8_t> m_flipped; ///< Bit per edge slot, see windingFlipped().
 };
 
 /// Adjacency of `mesh`, computed once and cached for the few most recently used meshes.
