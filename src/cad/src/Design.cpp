@@ -941,6 +941,10 @@ void Design::syncDocument(model::Document& document)
         const bool wasConsumed = m_sketchConsumed[fid];
         if (existing != nullptr) {
             document.modifyPart(existing->id, [&](model::Part& part) {
+                // A region selection holds triangle indices: keep it only while the
+                // regenerated tessellation has the same topology.
+                if (part.selection && !(part.mesh && w.mesh && part.mesh->triangles() == w.mesh->triangles()))
+                    part.selection.reset();
                 part.mesh = w.mesh;
                 part.shape = w.shape;
                 part.edgeSegments = w.segments;
