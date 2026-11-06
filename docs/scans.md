@@ -48,3 +48,22 @@ modelling over them.
 | `decimateToTarget` to 1 M triangles | 0.7 s |
 | `meshStats` | 1.4 s |
 | `repairMesh` (all steps) | 3.0 s |
+
+## In the app
+
+- **Import** (toolbar, File > Import, drag & drop) parses files on a worker thread with a
+  progress bar and a Cancel button; the part is then added through `document.import`.
+  The unit for new imports is set in Scan Tools ("New imports in").
+- **Scan Tools** (toolbar INSERT > Scan, Modify > Scan Tools; no shortcut, Fusion has none)
+  acts on the selected imported part: mesh statistics, Repair / Flip Normals, unit
+  conversion, Calibrate (Pick 2 Points, enter the true distance), Orient (Pick Points on a
+  flat area, choose XY / XZ / YZ, Align; Place on Floor, Center). Picked points snap to the
+  nearest vertex of the full-resolution mesh. Esc closes the panel.
+
+## Display level of detail
+
+Meshes above the "Max. triangles drawn" budget (Scan Tools > Display, default 1 M,
+remembered between sessions) are drawn simplified by vertex clustering, computed in the
+background. The document keeps the full mesh, so picking snaps, selection, fitting and
+modelling always use all the scan data. A 5 M-triangle PLY imports and renders in about
+5 s in the cloud CI container with software OpenGL.
