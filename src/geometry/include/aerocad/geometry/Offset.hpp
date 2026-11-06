@@ -36,9 +36,12 @@ enum class ThickenSide {
 /// so the sketch may lie above, below or through the surface). Keeps the part of the
 /// surface inside the outlines (or outside with keepInside = false), still exactly on the
 /// original curved surface, e.g. the skin of an aileron drawn over a scanned wing.
+/// With `extend` (default) a single-face surface is first taken on its whole underlying
+/// B-spline, past its own trim outline and holes, so the edges of the result are the
+/// projected outline and not the (ragged) border of the region it was fitted to.
 /// Throws OffsetError when nothing is left (the outline misses the surface).
 [[nodiscard]] Shape trimSurface(const Shape& surface, const std::vector<Shape>& outlines, const core::Vec3& direction,
-                                bool keepInside = true);
+                                bool keepInside = true, bool extend = true);
 
 /// Area of all faces in mm^2.
 [[nodiscard]] double surfaceArea(const Shape& shape);

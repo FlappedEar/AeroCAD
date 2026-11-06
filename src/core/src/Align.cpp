@@ -144,6 +144,7 @@ std::optional<Plane> planeFromCovariance(double cov[3][3], const Vec3& centroid,
     plane.normal = Vec3{vectors[0][smallest], vectors[1][smallest], vectors[2][smallest]}.normalized();
     plane.rms = std::sqrt(std::max(0.0, values[smallest]) / weight);
     plane.major = Vec3{vectors[0][largest], vectors[1][largest], vectors[2][largest]}.normalized();
+    plane.elongation = 1.0 - std::max(0.0, values[middle]) / values[largest];
     return plane;
 }
 

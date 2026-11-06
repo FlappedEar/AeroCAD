@@ -10,7 +10,11 @@
 #include <BRepBuilderAPI_Transform.hxx>
 #include <BRepCheck_Analyzer.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRep_Builder.hxx>
+#include <BRep_Tool.hxx>
+#include <Geom_Surface.hxx>
+#include <Precision.hxx>
 #include <Bnd_Box.hxx>
 #include <TopTools_ListOfShape.hxx>
 #include <TopoDS_Compound.hxx>
@@ -70,6 +74,29 @@ TopoDS_Shape simpleOffset(const TopoDS_Shape& s, double distance, bool solid)
     return result;
 }
 
+/// A single face on its whole underlying surface (natural bounds), without the trim
+/// outline and holes: a surface fitted to a brushed selection has a ragged outline, but
+/// the B-spline itself covers the selection's bounding rectangle smoothly. Shells of
+/// several faces (sewn patches) are returned as they are.
+TopoDS_Shape untrimmed(const TopoDS_Shape& s)
+{
+    TopExp_Explorer e(s, TopAbs_FACE);
+    const TopoDS_Face face = TopoDS::Face(e.Current());
+    e.Next();
+    if (e.More())
+        return s;
+    const Handle(Geom_Surface) surf = BRep_Tool::Surface(face);
+    if (surf.IsNull())
+        return s;
+    BRepBuilderAPI_MakeFace maker(surf, Precision::Confusion());
+    if (!maker.IsDone())
+        return s;
+    TopoDS_Shape full = maker.Face();
+    // Keep the face's normal (the side the mesh faced).
+    full.Orientation(face.Orientation());
+    return full;
+}
+
 } // namespace
 
 Shape offsetSurface(const Shape& surface, double distance)
@@ -115,10 +142,12 @@ Shape thickenSurface(const Shape& surface, double thickness, ThickenSide side)
 }
 
 Shape trimSurface(const Shape& surface, const std::vector<Shape>& outlines, const core::Vec3& direction,
-                  bool keepInside)
+                  bool keepInside, bool extend)
 {
-    const TopoDS_Shape& s = occt(surface);
+    TopoDS_Shape s = occt(surface);
     requireSurface(s);
+    if (extend)
+        s = untrimmed(s);
     if (outlines.empty())
         throw OffsetError("No closed outline to cut the surface with");
     const double len = direction.length();

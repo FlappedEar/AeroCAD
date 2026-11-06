@@ -90,13 +90,13 @@ open build/vcpkg-macos/bin/AeroCAD.app
   *Thicken to solid* (a closed solid of the given thickness, outside / inside / both
   sides of the surface). The fitted surface's normal points the way the mesh faces.
   *Convert to Body* turns the solid into a timeline body for sketches, fillets, combine.
-- **A part on the curved surface (aileron, flap):** *Sketch*, then click the fitted
-  surface (or a scan, or *Over selection* when the selected part has a region
-  selection). The sketch lies on the best-fit plane just above that area. Draw the
-  closed outline and finish the sketch. Select the fitted surface, pick the sketch in
-  the *Surface* group and click *Trim by sketch*: the outline is projected onto the
-  curved surface and a new surface of exactly that shape is added. *Thicken to solid*
-  turns it into the part, following the curvature of the scan.
+- **A part on the curved surface (aileron, flap):** *Sketch*, then click the scan (or a
+  fitted surface). The sketch lies on the best-fit plane just above that area. Draw the
+  closed outline and click *Finish Sketch*: the *Part on surface* box offers a thickness
+  and a side (inward / outward / both); *Create* makes the solid. On a scan a smooth
+  surface is fitted under the outline automatically, so no selection or fit is needed,
+  and the edges follow the outline exactly. (*Properties > Surface > Trim by sketch*
+  gives just the cut-out surface.)
 - **Undo / redo:** Cmd+Z / Cmd+Shift+Z (also for selection changes).
 
 ## Troubleshooting
