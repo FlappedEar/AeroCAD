@@ -118,9 +118,12 @@ bool AppController::cancelPreview()
 
 QVariantMap AppController::execute(const QString& name, const QVariantMap& params)
 {
+    const bool hadPreview = m_session.previewActive();
     const commands::CommandResult result = m_session.execute(name.toStdString(), toJson(params));
     const auto* info = m_session.registry().info(name.toStdString());
-    if (info != nullptr && info->modifiesDocument)
+    // A command that ended a live preview (e.g. project.save) also changed the document
+    // back; the feature dialog rebuilds its preview on historyChanged.
+    if ((info != nullptr && info->modifiesDocument) || (hadPreview && !m_session.previewActive()))
         emit historyChanged();
     emit projectChanged();
 
