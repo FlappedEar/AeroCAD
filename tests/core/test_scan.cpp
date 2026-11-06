@@ -91,6 +91,43 @@ TEST_CASE("fitPlane finds the plane of noise-free points", "[core][scan]")
     CHECK_FALSE(fitPlane({{0, 0, 0}, {1, 0, 0}}).has_value());
 }
 
+TEST_CASE("fitPlaneToTriangles weights by area, not by vertex count", "[core][scan]")
+{
+    // A 40 x 10 strip on z = 0: the left half finely meshed (many vertices), the right
+    // half two big triangles. Vertex-based fitting would pull the centre to the left.
+    std::vector<Vec3> v;
+    std::vector<TriangleMesh::Triangle> t;
+    const int n = 20;
+    for (int j = 0; j <= n; ++j)
+        for (int i = 0; i <= n; ++i)
+            v.push_back({20.0 * i / n, 10.0 * j / n, 0.0});
+    auto idx = [](int i, int j) { return static_cast<std::uint32_t>(j * (n + 1) + i); };
+    for (int j = 0; j < n; ++j)
+        for (int i = 0; i < n; ++i) {
+            t.push_back({idx(i, j), idx(i + 1, j), idx(i + 1, j + 1)});
+            t.push_back({idx(i, j), idx(i + 1, j + 1), idx(i, j + 1)});
+        }
+    const auto a = static_cast<std::uint32_t>(v.size());
+    v.push_back({20, 0, 0});
+    v.push_back({40, 0, 0});
+    v.push_back({40, 10, 0});
+    v.push_back({20, 10, 0});
+    t.push_back({a, a + 1, a + 2});
+    t.push_back({a, a + 2, a + 3});
+    const TriangleMesh mesh(std::move(v), std::move(t));
+    std::vector<std::size_t> all(mesh.triangleCount());
+    for (std::size_t i = 0; i < all.size(); ++i)
+        all[i] = i;
+    const auto plane = fitPlaneToTriangles(mesh, all);
+    REQUIRE(plane);
+    CHECK(std::abs(plane->normal.z) == Approx(1.0));
+    CHECK(plane->origin.x == Approx(20.0));
+    CHECK(plane->origin.y == Approx(5.0));
+    CHECK(std::abs(plane->major.x) == Approx(1.0));
+    CHECK(plane->rms == Approx(0.0).margin(1e-9));
+    CHECK_FALSE(fitPlaneToTriangles(mesh, {}).has_value());
+}
+
 TEST_CASE("frameToWorld maps a tilted plane onto XY", "[core][scan]")
 {
     const Vec3 origin{10, -4, 7};

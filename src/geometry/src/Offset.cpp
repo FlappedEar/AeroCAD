@@ -3,7 +3,19 @@
 
 #include "aerocad/geometry/OcctShape.hpp"
 
+#include <BRepAlgoAPI_Common.hxx>
+#include <BRepAlgoAPI_Cut.hxx>
+#include <BRepBndLib.hxx>
+#include <BRepBuilderAPI_Sewing.hxx>
+#include <BRepBuilderAPI_Transform.hxx>
 #include <BRepCheck_Analyzer.hxx>
+#include <BRepPrimAPI_MakePrism.hxx>
+#include <BRep_Builder.hxx>
+#include <Bnd_Box.hxx>
+#include <TopTools_ListOfShape.hxx>
+#include <TopoDS_Compound.hxx>
+#include <gp_Trsf.hxx>
+#include <gp_Vec.hxx>
 #include <BRepGProp.hxx>
 #include <BRepOffset_MakeSimpleOffset.hxx>
 #include <GProp_GProps.hxx>
@@ -99,6 +111,88 @@ Shape thickenSurface(const Shape& surface, double thickness, ThickenSide side)
         return wrapShape(solid);
     } catch (const Standard_Failure& e) {
         throw OffsetError(std::string("Thicken failed: ") + e.GetMessageString());
+    }
+}
+
+Shape trimSurface(const Shape& surface, const std::vector<Shape>& outlines, const core::Vec3& direction,
+                  bool keepInside)
+{
+    const TopoDS_Shape& s = occt(surface);
+    requireSurface(s);
+    if (outlines.empty())
+        throw OffsetError("No closed outline to cut the surface with");
+    const double len = direction.length();
+    if (!(len > 0.0))
+        throw OffsetError("Projection direction is zero");
+    const gp_Vec dir(direction.x / len, direction.y / len, direction.z / len);
+    try {
+        // Prisms through the outlines, long enough to pass through the whole surface on
+        // both sides of the outline plane.
+        Bnd_Box box;
+        BRepBndLib::Add(s, box);
+        for (const auto& o : outlines) {
+            if (!o.isNull())
+                BRepBndLib::Add(o.impl()->shape, box);
+        }
+        const double reach = std::sqrt(box.SquareExtent()) + 1.0;
+        TopTools_ListOfShape tools;
+        for (const auto& o : outlines) {
+            if (o.isNull())
+                continue;
+            gp_Trsf back;
+            back.SetTranslation(dir * -reach);
+            const TopoDS_Shape start = BRepBuilderAPI_Transform(o.impl()->shape, back, true).Shape();
+            BRepPrimAPI_MakePrism prism(start, dir * (2.0 * reach));
+            if (!prism.IsDone())
+                throw OffsetError("Could not sweep the outline");
+            tools.Append(prism.Shape());
+        }
+        if (tools.IsEmpty())
+            throw OffsetError("No closed outline to cut the surface with");
+
+        TopTools_ListOfShape args;
+        args.Append(s);
+        TopoDS_Shape result;
+        auto run = [&](auto&& algo) {
+            algo.SetArguments(args);
+            algo.SetTools(tools);
+            algo.SetRunParallel(false);
+            algo.Build();
+            if (!algo.IsDone() || algo.HasErrors())
+                throw OffsetError("Cutting the surface with the outline failed");
+            result = algo.Shape();
+        };
+        if (keepInside)
+            run(BRepAlgoAPI_Common());
+        else
+            run(BRepAlgoAPI_Cut());
+
+        std::vector<TopoDS_Shape> faces;
+        for (TopExp_Explorer e(result, TopAbs_FACE); e.More(); e.Next())
+            faces.push_back(e.Current());
+        if (faces.empty()) {
+            throw OffsetError(keepInside ? "The outline does not overlap the surface (seen along the sketch normal)"
+                                         : "The outline covers the whole surface; nothing is left");
+        }
+        if (faces.size() == 1)
+            return wrapShape(faces.front());
+        // Several pieces of one surface: sew neighbours into shells so they thicken as one.
+        BRepBuilderAPI_Sewing sewing(1e-4);
+        for (const auto& f : faces)
+            sewing.Add(f);
+        sewing.Perform();
+        TopoDS_Shape sewn = sewing.SewedShape();
+        if (sewn.IsNull()) {
+            TopoDS_Compound c;
+            BRep_Builder b;
+            b.MakeCompound(c);
+            for (const auto& f : faces)
+                b.Add(c, f);
+            sewn = c;
+        }
+        return wrapShape(sewn);
+    } catch (const Standard_Failure& e) {
+        throw OffsetError(std::string("Trim failed: ") + e.GetMessageString());
     }
 }
 

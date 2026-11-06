@@ -373,3 +373,94 @@ TEST_CASE("Fit surfaces to a whole mesh gives a solid part", "[commands][fit]")
     REQUIRE(session.execute("edit.undo").ok);
     CHECK(session.document().partCount() == 1);
 }
+
+TEST_CASE("Sketch over a curved surface, trim it with the outline and thicken", "[commands][fit]")
+{
+    commands::Session session;
+    // 60 x 30 mm sheet curved along X (like a wing skin), facing +Z.
+    std::vector<core::Vec3> v;
+    std::vector<core::TriangleMesh::Triangle> t;
+    const int nx = 60;
+    const int ny = 30;
+    for (int j = 0; j <= ny; ++j)
+        for (int i = 0; i <= nx; ++i)
+            v.push_back({double(i), double(j), -0.005 * (i - 30) * (i - 30)});
+    auto idx = [](int i, int j) { return static_cast<std::uint32_t>(j * (nx + 1) + i); };
+    for (int j = 0; j < ny; ++j)
+        for (int i = 0; i < nx; ++i) {
+            t.push_back({idx(i, j), idx(i + 1, j), idx(i + 1, j + 1)});
+            t.push_back({idx(i, j), idx(i + 1, j + 1), idx(i, j + 1)});
+        }
+    model::Part sheet;
+    sheet.name = "Wing";
+    sheet.mesh = std::make_shared<const core::TriangleMesh>(core::TriangleMesh(std::move(v), std::move(t)));
+    const auto scanId = session.document().addPart(sheet);
+
+    // On the scan itself: only the area around the click counts.
+    auto local = session.execute("sketch.create", {{"surface", {{"part", scanId}, {"point", {5, 15, -3.125}}, {"radius", 4.0}}}});
+    INFO(local.toJson().dump());
+    REQUIRE(local.ok);
+    CHECK(local.data.at("surface").at("area") == "area around the point");
+    REQUIRE(session.execute("edit.undo").ok);
+
+    std::vector<std::uint32_t> all(sheet.mesh->triangleCount());
+    for (std::size_t i = 0; i < all.size(); ++i)
+        all[i] = static_cast<std::uint32_t>(i);
+    REQUIRE(session.execute("selection.set", {{"id", scanId}, {"triangles", all}}).ok);
+    auto fit = session.execute("surface.fit_selection", {{"id", scanId}, {"tolerance", 0.05}});
+    REQUIRE(fit.ok);
+    const auto surfaceId = fit.data.at("id").get<model::PartId>();
+
+    // Clicking the fitted surface sketches over its best-fit plane: normal the way the
+    // surface faces (+Z), X along the long side, lifted to the top of the surface.
+    auto sk = session.execute("sketch.create",
+                              {{"surface", {{"part", surfaceId}, {"point", {30, 15, 0}}}},
+                               {"curves", Json::array({{{"type", "center_rectangle"},
+                                                        {"center", {0, 0}},
+                                                        {"width", 40},
+                                                        {"height", 10}}})}});
+    INFO(sk.toJson().dump());
+    REQUIRE(sk.ok);
+    CHECK(sk.data.at("surface").at("area") == "whole part");
+    CHECK(sk.data.at("profiles") == 1);
+    const auto sketchId = sk.data.at("id").get<std::uint64_t>();
+    auto profiles = session.execute("sketch.profiles", {{"sketch", sketchId}});
+    REQUIRE(profiles.ok);
+    const auto& plane = profiles.data.at("plane");
+    CHECK(plane.at("normal").at(2).get<double>() > 0.99);
+    CHECK(std::abs(plane.at("xDir").at(0).get<double>()) > 0.99);
+    CHECK(plane.at("origin").at(2).get<double>() == Approx(0.0).margin(0.1)); // top of the arch
+    CHECK(plane.at("origin").at(1).get<double>() == Approx(15.0).margin(0.1));
+
+    CHECK_FALSE(session.execute("sketch.create", {{"plane", "XY"}, {"surface", {{"part", surfaceId}}}}).ok);
+    CHECK_FALSE(session.execute("surface.trim_by_sketch", {{"id", scanId}, {"sketch", sketchId}}).ok); // mesh only
+
+    // The outline projected onto the arch: 40 x 10 mm seen from above, a bit more along
+    // the curve.
+    auto trimmed = session.execute("surface.trim_by_sketch", {{"id", surfaceId}, {"sketch", sketchId}});
+    INFO(trimmed.toJson().dump());
+    REQUIRE(trimmed.ok);
+    const double area = trimmed.data.at("area").get<double>();
+    CHECK(area > 400.0);
+    CHECK(area < 420.0);
+    CHECK(trimmed.data.at("hasBrep") == true);
+    const auto& box = trimmed.data.at("bounds");
+    CHECK(box.at("max").at(0).get<double>() - box.at("min").at(0).get<double>() == Approx(40.0).margin(0.2));
+    CHECK(box.at("max").at(1).get<double>() - box.at("min").at(1).get<double>() == Approx(10.0).margin(0.2));
+    // The trimmed skin still follows the curve: its ends sit 2 mm lower than the middle.
+    CHECK(box.at("max").at(2).get<double>() - box.at("min").at(2).get<double>() == Approx(2.0).margin(0.1));
+
+    auto outside = session.execute("surface.trim_by_sketch", {{"id", surfaceId}, {"sketch", sketchId}, {"keep", "outside"}});
+    REQUIRE(outside.ok);
+    CHECK(outside.data.at("area").get<double>() > 1800.0 - area - 20.0);
+
+    auto solid = session.execute("surface.thicken", {{"id", trimmed.data.at("id")}, {"thickness", 2.0}, {"side", "inside"}});
+    INFO(solid.toJson().dump());
+    REQUIRE(solid.ok);
+    CHECK(solid.data.at("volume").get<double>() == Approx(2.0 * area).epsilon(0.03));
+
+    REQUIRE(session.execute("edit.undo").ok);
+    REQUIRE(session.execute("edit.undo").ok);
+    REQUIRE(session.execute("edit.undo").ok);
+    CHECK(session.document().partCount() == 3); // scan, surface, sketch
+}
