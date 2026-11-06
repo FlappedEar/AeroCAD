@@ -18,6 +18,18 @@ Status: early skeleton (milestone 0.1, epic CAD-1 "Foundation").
 C++20, Qt 6 (Qt Quick, Qt Quick 3D), Open CASCADE Technology, CMake.
 See [docs/architecture.md](docs/architecture.md) and [docs/building.md](docs/building.md).
 
+## Quick start on a Mac
+
+```sh
+brew install cmake ninja qt opencascade nlohmann-json pugixml catch2
+git clone https://github.com/FlappedEar/AeroCAD.git && cd AeroCAD
+cmake --preset release -DCMAKE_PREFIX_PATH="$(brew --prefix qt)"
+cmake --build --preset release
+open build/release/bin/AeroCAD.app
+```
+
+Details, the prebuilt download and troubleshooting: [docs/macos.md](docs/macos.md).
+
 ## License
 
 GPL-3.0-or-later, see [LICENSE](LICENSE).

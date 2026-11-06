@@ -27,6 +27,8 @@ vcpkg if present, otherwise CMake downloads them (FetchContent).
 
 ## macOS (Apple Silicon)
 
+See [macos.md](macos.md) for the Homebrew setup and the prebuilt download. The vcpkg build:
+
 ```
 brew install cmake ninja
 # Qt 6.8 for macOS with Qt Quick 3D and Qt Shader Tools, e.g. via aqtinstall:

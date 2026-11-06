@@ -112,9 +112,15 @@ jobs:
       - name: Package (macOS)
         if: runner.os == 'macOS'
         run: |
-          mkdir -p dist
-          cp -R build/${{ matrix.preset }}/bin/AeroCAD.app dist/
-          macdeployqt dist/AeroCAD.app -qmldir=src/app/qml -dmg
+          mkdir -p dist/dmg
+          cp -R build/${{ matrix.preset }}/bin/AeroCAD.app dist/dmg/
+          macdeployqt dist/dmg/AeroCAD.app -qmldir=src/app/qml
+          # macdeployqt rewrites library paths, which invalidates the linker's ad-hoc
+          # signatures; Apple Silicon refuses to run unsigned code, so re-sign ad hoc.
+          codesign --force --deep --sign - dist/dmg/AeroCAD.app
+          codesign --verify --deep --strict dist/dmg/AeroCAD.app
+          ln -s /Applications dist/dmg/Applications
+          hdiutil create -volname AeroCAD -srcfolder dist/dmg -ov -format UDZO dist/AeroCAD.dmg
           ls -la dist
 
       - name: Upload application
@@ -126,6 +132,23 @@ jobs:
             dist/*.dmg
           if-no-files-found: error
           retention-days: 14
+
+  macos-homebrew:
+    # Verifies the simplest local setup on a Mac (docs/macos.md): everything from Homebrew.
+    name: macOS Apple Silicon (Homebrew)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: brew install cmake ninja qt opencascade nlohmann-json pugixml catch2
+      - name: Configure
+        run: cmake --preset release -DCMAKE_PREFIX_PATH="$(brew --prefix qt)"
+      - name: Build
+        run: cmake --build --preset release --parallel
+      - name: Unit tests
+        run: ctest --test-dir build/release --output-on-failure -LE gui
+      - name: Application smoke test
+        run: ctest --test-dir build/release --output-on-failure -L gui
 
   linux:
     # Fast check with distribution packages (Qt 6.4, OCCT 7.6) on every push.
