@@ -84,6 +84,36 @@ The app finds `docker` in `PATH` and in the usual install locations
 because apps started from the Finder do not get the shell's `PATH`. `AEROCAD_DOCKER`
 overrides the path.
 
+### Another machine (remote engine)
+
+To keep the computation off this computer, OpenFOAM can run in Docker on another machine
+(Linux or macOS with Docker), reached over SSH. In the CFD panel choose **Run on: Another
+machine (Docker over SSH)**, enter `ssh://user@host` (or `ssh://user@host:port`) and press
+**Connect** (command `simulation.set_engine {remoteHost}`). The connection is tested first
+(`docker -H ssh://user@host info`); the setting is saved only when Docker answers there, in
+`~/.aerocad/cfd/engine.json` (`AEROCAD_ENGINE_HOST` overrides it). Choose *This computer* to
+go back.
+
+Requirements:
+
+- this computer: the `docker` command line tool only (macOS: `brew install docker`; Install
+  for me does it), no engine;
+- SSH login with a key, without a password prompt, and the host key accepted once (run
+  `ssh user@host` in a terminal the first time);
+- on the other machine: Docker running, the user allowed to run `docker` (Linux: in the
+  `docker` group), and `docker` on the PATH of a non-interactive SSH login (macOS: Docker
+  Desktop's or Homebrew's `docker` may be missing from it; check with
+  `ssh user@host docker info`).
+
+How it runs: the case is copied into a new container there (`docker create` + `docker cp`;
+the two machines share no directory), the container runs `./Allrun` with all CPUs of that
+machine (up to 16 processes), and every 10 s the progress files, logs and
+`postProcessing/` are copied back, so the panel shows progress as usual. At the end the
+results are copied back and the container is removed. The mesh and field files stay out of
+the copy, so `case.foam` of a remote run does not open in ParaView. When the app is closed
+the run continues there, and the app follows it again on the next start. Cancel removes
+the container. Install for me downloads the OpenFOAM image on that machine.
+
 ### Linux
 
 Docker Engine works the same way (the container runs as your user id). Alternatively a

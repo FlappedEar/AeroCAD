@@ -30,15 +30,33 @@ struct Environment {
     bool dockerRunning = false;       ///< `docker info` succeeded.
     bool imagePresent = false;        ///< kDockerImage already pulled.
     std::filesystem::path openfoamBashrc; ///< Local OpenFOAM etc/bashrc, empty when not found.
+    std::string remoteHost;           ///< Remote engine (ssh://user@host), empty = this machine.
+    int remoteCpus = 0;               ///< CPUs of the remote Docker host (0 = unknown).
+    std::string remoteError;          ///< Output of the failed `docker info` on the remote engine.
     std::optional<Backend> recommended;
     std::string message;              ///< Human-readable summary / what to install.
 
     [[nodiscard]] Json toJson() const;
 };
 
-/// Probes Docker and a local OpenFOAM. Blocking (runs `docker info`, at most a few
-/// seconds).
+/// Probes Docker and a local OpenFOAM, or the remote engine when one is set (engineHost()).
+/// Blocking (runs `docker info`, at most a few seconds; longer over SSH).
 [[nodiscard]] Environment detectEnvironment();
+/// The same for a given remote engine ("" = this machine), e.g. to test it before saving.
+[[nodiscard]] Environment detectEnvironment(const std::string& remoteHost);
+
+/// Remote engine: Docker on another machine, reached over SSH ("ssh://user@host" or
+/// "ssh://user@host:port"; the docker CLI's -H syntax). Cases are copied into the
+/// container there, results are copied back while it runs, so this machine only waits.
+/// Empty = this machine. $AEROCAD_ENGINE_HOST overrides the saved setting
+/// (<default runs root>/engine.json).
+[[nodiscard]] std::string engineHost();
+/// Saves the remote engine ("" = this machine). Throws std::invalid_argument for a host
+/// that is not ssh://[user@]host[:port].
+void setEngineHost(const std::string& host);
+[[nodiscard]] bool isValidEngineHost(std::string_view host);
+/// The docker command line with -H for a remote engine.
+[[nodiscard]] std::vector<std::string> dockerCommand(const std::filesystem::path& docker, const std::string& host);
 
 /// The next step of "Install for me", from what is there now:
 /// - "pull": Docker runs, the OpenFOAM image is missing: download it (in the background);
@@ -153,7 +171,7 @@ public:
 
     /// Downloads the OpenFOAM image in the background (`docker pull`, log in
     /// <root>/image-pull.log). Returns false when a download is already running.
-    bool startImagePull(const std::filesystem::path& docker);
+    bool startImagePull(const std::filesystem::path& docker, const std::string& host = {});
     /// State of the last download started by this manager: {state: running | finished |
     /// failed, progress 0..1 (layers done / layers), message}; null when none was started.
     [[nodiscard]] Json imagePullStatus();

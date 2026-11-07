@@ -173,6 +173,32 @@ void registerSimulationCommands(CommandRegistry& r)
               return j;
           });
 
+    r.add({"simulation.set_engine", "Set simulation engine",
+           "Chooses where simulations run: on this machine (remoteHost empty) or on another machine with Docker, "
+           "reached over SSH (remoteHost \"ssh://user@host\"; key-based login, the user may run docker there). The "
+           "connection is tested first and the setting is saved only when Docker answers there. Returns the "
+           "environment of the chosen engine.",
+           objectSchema({{"remoteHost",
+                          {{"type", "string"},
+                           {"description", "ssh://user@host or ssh://user@host:port; empty = this machine."}}}},
+                        {"remoteHost"})},
+          [](CommandContext& ctx, const Json& params) {
+              const std::string host = params.at("remoteHost").get<std::string>();
+              if (!cfd::isValidEngineHost(host))
+                  throw CommandError("remoteHost must be ssh://user@host (optionally :port), or empty");
+              const cfd::Environment env = cfd::detectEnvironment(host);
+              if (!host.empty() && !env.dockerRunning)
+                  throw CommandError(env.message + (env.remoteError.empty() ? "" : " (" + env.remoteError + ")"));
+              try {
+                  cfd::setEngineHost(host);
+              } catch (const std::exception& e) {
+                  throw CommandError(e.what());
+              }
+              Json j = env.toJson();
+              j["runsDirectory"] = runs(ctx).root().string();
+              return j;
+          });
+
     r.add({"simulation.install_engine", "Install simulation engine",
            "Does the next step to get a simulation engine (\"Install for me\"): downloads the OpenFOAM image when "
            "Docker runs; on macOS starts Colima, installing the docker command line tool and Colima with Homebrew "
@@ -186,7 +212,7 @@ void registerSimulationCommands(CommandRegistry& r)
               Json j = setupJson(step);
               try {
                   if (step.action == "pull") {
-                      j["started"] = runs(ctx).startImagePull(env.docker);
+                      j["started"] = runs(ctx).startImagePull(env.docker, env.remoteHost);
                   } else if (!step.command.empty()) {
                       const auto out = cfd::runCommand(step.command, std::chrono::seconds(20));
                       if (out.exitCode != 0)

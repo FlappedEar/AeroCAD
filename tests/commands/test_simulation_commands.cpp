@@ -57,7 +57,7 @@ TEST_CASE("simulation.* commands are registered with schemas", "[commands][simul
     for (const char* name : {"simulation.environment", "simulation.propose_run", "simulation.run", "simulation.status",
                              "simulation.list", "simulation.cancel", "simulation.delete", "simulation.results",
                              "simulation.field", "simulation.compare", "simulation.import",
-                             "simulation.install_engine", "simulation.refine"}) {
+                             "simulation.install_engine", "simulation.refine", "simulation.set_engine"}) {
         INFO(name);
         const auto* info = session.registry().info(name);
         REQUIRE(info != nullptr);
@@ -164,4 +164,31 @@ TEST_CASE("simulation.propose_run and a prepared run", "[commands][simulation]")
     CHECK(session.execute("simulation.delete", {{"run", run}}).ok);
     CHECK_FALSE(fs::exists(dir.path() / run));
     CHECK_FALSE(session.execute("simulation.import", {{"path", dir.path().string()}}).ok);
+}
+
+TEST_CASE("simulation.set_engine tests the remote engine before saving it", "[commands][cfd]")
+{
+    RunsDir dir;
+    commands::Session session;
+    CHECK_FALSE(session.execute("simulation.set_engine", {{"remoteHost", "user@host"}}).ok);
+    CHECK_FALSE(session.execute("simulation.set_engine", {{"remoteHost", "ssh://u@h; rm -rf ~"}}).ok);
+    // Nothing answers there: not saved.
+    const auto bad = session.execute("simulation.set_engine", {{"remoteHost", "unix:///nonexistent/aerocad.sock"}});
+    CHECK_FALSE(bad.ok);
+    CHECK(cfd::engineHost().empty());
+    CHECK_FALSE(fs::exists(dir.path() / "engine.json"));
+
+    // A saved remote engine is what the environment reports (and only that engine).
+    cfd::setEngineHost("ssh://arek@build-box");
+    CHECK(cfd::engineHost() == "ssh://arek@build-box");
+    auto r = session.execute("simulation.environment");
+    REQUIRE(r.ok);
+    CHECK(r.data.at("remoteHost") == "ssh://arek@build-box");
+    CHECK(r.data.at("openfoamBashrc") == "");
+
+    // Back to this computer.
+    r = session.execute("simulation.set_engine", {{"remoteHost", ""}});
+    REQUIRE(r.ok);
+    CHECK(cfd::engineHost().empty());
+    CHECK(r.data.at("remoteHost") == "");
 }

@@ -500,6 +500,22 @@ TEST_CASE("Install for me: the next setup step", "[cfd]")
     installed.imagePresent = true;
     CHECK(cfd::planEngineSetup(installed, Platform::MacOS, {}).action == "none");
 
+    // Remote engine: only the docker CLI is needed here, never Colima.
+    cfd::Environment remote;
+    remote.remoteHost = "ssh://arek@build-box";
+    step = cfd::planEngineSetup(remote, Platform::MacOS, brewOnly);
+    CHECK(step.action == "terminal");
+    CHECK(step.command[4].find("brew install docker\"") != std::string::npos);
+    remote.docker = "/opt/homebrew/bin/docker";
+    remote.message = "Cannot reach Docker on ssh://arek@build-box";
+    step = cfd::planEngineSetup(remote, Platform::MacOS, brewOnly);
+    CHECK(step.action == "manual");
+    CHECK(step.message == remote.message);
+    remote.dockerRunning = true;
+    step = cfd::planEngineSetup(remote, Platform::MacOS, brewOnly);
+    CHECK(step.action == "pull");
+    CHECK(step.message.find("on ssh://arek@build-box") != std::string::npos);
+
     cfd::Environment local;
     local.openfoamBashrc = "/usr/lib/openfoam/openfoam2506/etc/bashrc";
     CHECK(cfd::planEngineSetup(local, Platform::Linux, {}).action == "none");
@@ -657,4 +673,21 @@ TEST_CASE("RunManager: runs from an earlier session", "[cfd]")
         fs::last_write_time(dir / f, old);
     CHECK(runs.status(id)->state == cfd::RunState::Interrupted);
     CHECK(runs.remove(id));
+}
+
+TEST_CASE("Remote engine host: validation and docker command line", "[cfd]")
+{
+    CHECK(cfd::isValidEngineHost(""));
+    CHECK(cfd::isValidEngineHost("ssh://arek@192.168.1.20"));
+    CHECK(cfd::isValidEngineHost("ssh://arek@build-box.local:2222"));
+    CHECK(cfd::isValidEngineHost("unix:///var/run/docker.sock"));
+    CHECK_FALSE(cfd::isValidEngineHost("arek@build-box"));
+    CHECK_FALSE(cfd::isValidEngineHost("ssh://"));
+    CHECK_FALSE(cfd::isValidEngineHost("tcp://build-box:2375")); // Unauthenticated: not offered.
+    CHECK_FALSE(cfd::isValidEngineHost("ssh://a@b c"));
+    CHECK_FALSE(cfd::isValidEngineHost("ssh://a@b;reboot"));
+    CHECK_FALSE(cfd::isValidEngineHost("ssh://a@b$(id)"));
+    CHECK(cfd::dockerCommand("/usr/bin/docker", "") == std::vector<std::string>{"/usr/bin/docker"});
+    CHECK(cfd::dockerCommand("/usr/bin/docker", "ssh://a@b") ==
+          std::vector<std::string>{"/usr/bin/docker", "-H", "ssh://a@b"});
 }
