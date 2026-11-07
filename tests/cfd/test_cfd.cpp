@@ -1104,6 +1104,27 @@ TEST_CASE("Setup evidence an older run did not record is unknown, not equal (CAD
     CHECK(noted);
 }
 
+TEST_CASE("A finished run whose recorded domain is missing is compared as unknown, not an error (CAD-84)", "[cfd]")
+{
+    TempDir tmp;
+    cfd::RunManager runs(tmp.path());
+    cfd::CaseGeometry g;
+    g.part = box({0, 0, 0}, {200, 80, 60});
+    cfd::Settings s;
+    s.flowDirection = "+X";
+    const std::string a = runs.prepare(g, s, {});
+    const std::string b = runs.prepare(g, s, {});
+    for (const auto& id : {a, b})
+        fakeFinishedRun(tmp.path() / id, 0.8, 1.0); // with surface field output
+    editCaseJson(tmp.path() / b, [](nlohmann::json& j) { j.erase("domain"); });
+    nlohmann::json cmp;
+    REQUIRE_NOTHROW(cmp = runs.compare(a, b));
+    INFO(cmp.dump());
+    CHECK(contains(cmp.at("unknownConditions"), "domain"));
+    CHECK(cmp.at("sameConditions") == false);
+    CHECK(cmp.at("verdict") == "not comparable");
+}
+
 TEST_CASE("A target-part variant of another size is compared on a different domain (CAD-84)", "[cfd]")
 {
     TempDir tmp;

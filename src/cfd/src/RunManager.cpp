@@ -1503,7 +1503,14 @@ Json RunManager::compare(const std::string& a, const std::string& b)
         double lo = std::numeric_limits<double>::max(), hi = std::numeric_limits<double>::lowest();
         if (finalAvailable) {
             for (const auto& id : {a, b}) {
-                const PolyData d = field(id, kind);
+                // A run whose setup cannot be read has no field view; the comparison above
+                // already says why (unknownConditions), so do not discard it here.
+                PolyData d;
+                try {
+                    d = field(id, kind);
+                } catch (const std::exception&) {
+                    continue;
+                }
                 if (auto it = d.scalars.find(scalar); it != d.scalars.end()) {
                     const auto [l, h] = range(it->second);
                     lo = std::min(lo, l);
