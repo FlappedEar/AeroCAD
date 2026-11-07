@@ -286,10 +286,15 @@ QtObject {
         // Any part
         case "export":
             return { id: id, text: qsTr("Export…"), icon: "export", enabled: info.kind !== "sketch",
-                     // A finished solid (e.g. a thickened surface) is usually exported next.
-                     primary: role(info) === "solid",
+                     // A finished solid is usually exported next, but by Export for printing.
+                     primary: false,
                      reason: qsTr("Sketches are not exported."),
                      tip: qsTr("Saves this part as STL or 3MF (3D printing) or STEP (CAD).") }
+        case "exportForPrint":
+            return { id: id, text: qsTr("Export for printing…"), icon: "export", enabled: role(info) === "solid",
+                     primary: role(info) === "solid",
+                     reason: qsTr("Only solids can be printed."),
+                     tip: qsTr("Writes every visible solid (e.g. all the fins) to a folder you choose, each as its own STL for the printer and STEP for CAD. Hide what you do not want printed.") }
         case "hide":
             return { id: id, text: info.visible ? qsTr("Hide") : qsTr("Show"), icon: info.visible ? "hidden" : "visible",
                      enabled: true, tip: qsTr("Hides or shows the part in the view. Shortcut V.") }
@@ -422,8 +427,8 @@ QtObject {
                         { title: qsTr("More"), steps: [], actions: [a("export"), a("hide"), a("delete")] }]
                      : [{ title: qsTr("Use it"), steps: [
                               { title: qsTr("Export for printing or CAD"), done: false,
-                                text: qsTr("STL or 3MF for a 3D printer, STEP for other CAD programs."),
-                                actions: [a("export")] },
+                                text: qsTr("STL or 3MF for a 3D printer, STEP for other CAD programs. For printing, every visible solid gets its own files."),
+                                actions: [a("exportForPrint"), a("export")] },
                               { title: qsTr("Or keep designing"), done: false,
                                 text: qsTr("Make it editable to add fillets, holes and cuts; the changes appear in the timeline."),
                                 actions: [a("solidToBody")] }] },
@@ -595,6 +600,7 @@ QtObject {
         case "shell": return host.openFeature("shell")
         case "hole": return host.openFeature("hole")
         case "export": return host.openExport([pid])
+        case "exportForPrint": return host.openPrintExport()
         case "hide": return controller.execute("part.set_visible", { id: pid, visible: !info.visible })
         case "delete": return host.deleteSelected()
         }

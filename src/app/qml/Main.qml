@@ -423,6 +423,29 @@ ApplicationWindow {
         buttons: MessageDialog.Ok
     }
 
+    // Export for printing: each visible solid to its own STL and STEP in a folder.
+    FolderDialog {
+        id: printFolderDialog
+        title: qsTr("Folder for the print files")
+        onAccepted: {
+            const url = selectedFolder.toString()
+            const folder = decodeURIComponent(url.replace(/^file:\/\/\/(?=[A-Za-z]:)|^file:\/\/(?=\/)/, ""))
+            const r = window.controller.execute("document.export_for_print", { folder: folder })
+            if (!r.ok) {
+                exportMessage.title = qsTr("Nothing was exported")
+                exportMessage.text = r.error
+                exportMessage.open()
+                return
+            }
+            window.controller.showStatus(qsTr("%1 part(s) written to %2 (STL and STEP each)")
+                                         .arg(r.result.parts).arg(r.result.folder))
+        }
+    }
+
+    function openPrintExport() {
+        printFolderDialog.open()
+    }
+
     function openExport(ids) {
         exportDialog.partIds = ids
         exportDialog.open()
@@ -505,6 +528,12 @@ ApplicationWindow {
         enabled: window.controller.parts.count > 0
         shortcut: "Ctrl+Shift+E"
         onTriggered: window.openExport([])
+    }
+    Action {
+        id: exportPrintAction
+        text: qsTr("Export for &Printing...")
+        enabled: window.controller.parts.count > 0
+        onTriggered: window.openPrintExport()
     }
     Action {
         id: preferencesAction
@@ -782,6 +811,7 @@ ApplicationWindow {
             MenuItem { action: importAction }
             MenuItem { action: exportSelectedAction }
             MenuItem { action: exportAllAction }
+            MenuItem { action: exportPrintAction }
             MenuItem { action: convertAction }
             MenuSeparator {}
             Action {
@@ -1103,6 +1133,7 @@ ApplicationWindow {
                 caption: qsTr("EXPORT")
                 ToolCommand { action: exportSelectedAction; text: qsTr("Selected"); iconName: "export" }
                 ToolCommand { action: exportAllAction; text: qsTr("All Visible"); iconName: "export" }
+                ToolCommand { action: exportPrintAction; text: qsTr("For Printing"); iconName: "export" }
             }
 
             ToolSeparator {}
