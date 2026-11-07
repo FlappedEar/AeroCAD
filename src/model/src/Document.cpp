@@ -14,6 +14,8 @@ PartId Document::addPart(Part part)
     const PartId id = part.id;
     notify(Change::AboutToAdd, id);
     m_parts.push_back(std::move(part));
+    if (m_parts.back().kind == PartKind::Imported)
+        ++m_importedGeometryRevision;
     notify(Change::Added, id);
     return id;
 }
@@ -27,6 +29,8 @@ std::optional<Part> Document::removePart(PartId id)
     it = std::find_if(m_parts.begin(), m_parts.end(), [id](const Part& p) { return p.id == id; });
     Part removed = std::move(*it);
     m_parts.erase(it);
+    if (removed.kind == PartKind::Imported)
+        ++m_importedGeometryRevision;
     notify(Change::Removed, id);
     return removed;
 }
@@ -48,11 +52,18 @@ bool Document::modifyPart(PartId id, const std::function<void(Part&)>& fn)
     if (p == nullptr)
         return false;
     const std::uint64_t revision = p->revision;
+    const PartKind kind = p->kind;
+    const auto mesh = p->mesh;
+    const auto shape = p->shape;
     fn(*p);
     p->id = id; // the id is not modifiable
     // Derived from the state before the callback, so restoring an older snapshot
     // (undo) still yields a new, never seen revision.
     p->revision = revision + 1;
+    if ((kind == PartKind::Imported || p->kind == PartKind::Imported) &&
+        (kind != p->kind || mesh != p->mesh ||
+         (shape ? shape->impl() : nullptr) != (p->shape ? p->shape->impl() : nullptr)))
+        ++m_importedGeometryRevision;
     notify(Change::Modified, id);
     return true;
 }

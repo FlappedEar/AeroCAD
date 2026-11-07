@@ -68,6 +68,10 @@ public:
     [[nodiscard]] ImportStage& importStage() { return m_importStage; }
 
 private:
+    /// Rebuild after source edits, including undo/redo, before consumers see the result.
+    /// This is derived state and must not add a second undo step or dirty the project.
+    [[nodiscard]] std::optional<std::string> synchronizeSources();
+
     model::Document m_document;
     model::UndoStack m_undoStack;
     cad::Design m_design;
@@ -79,6 +83,8 @@ private:
     CommandContext m_context;
     /// History before the first preview; set while a preview change is applied.
     std::optional<model::UndoStack::Snapshot> m_previewBase;
+    std::uint64_t m_sourceRevision = 0;
+    std::size_t m_operationDepth = 0;
 };
 
 } // namespace aerocad::commands

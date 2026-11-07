@@ -155,6 +155,38 @@ TEST_CASE("Document revision increases on every change", "[model]")
     CHECK(doc.revision() == 3);
 }
 
+TEST_CASE("Only imported geometry changes invalidate source dependencies", "[model][source]")
+{
+    Document doc;
+    CHECK(doc.importedGeometryRevision() == 0);
+    const auto source = doc.addPart(makePart("source"));
+    const auto original = *doc.part(source);
+    CHECK(doc.importedGeometryRevision() == 1);
+    doc.modifyPart(source, [](model::Part& p) {
+        p.name = "renamed";
+        p.visible = false;
+        p.selection = std::make_shared<const core::TriangleSet>(core::TriangleSet{0});
+    });
+    CHECK(doc.importedGeometryRevision() == 1);
+    doc.modifyPart(source, [](model::Part& p) { p.mesh = makePart("replacement").mesh; });
+    CHECK(doc.importedGeometryRevision() == 2);
+    doc.modifyPart(source, [&](model::Part& p) { p = original; });
+    CHECK(doc.importedGeometryRevision() == 3);
+
+    auto body = makePart("body");
+    body.kind = model::PartKind::Body;
+    const auto derived = doc.addPart(body);
+    doc.modifyPart(derived, [](model::Part& p) { p.mesh = makePart("derived update").mesh; });
+    doc.removePart(derived);
+    CHECK(doc.importedGeometryRevision() == 3);
+    auto removed = doc.removePart(source);
+    CHECK(doc.importedGeometryRevision() == 4);
+    doc.addPart(*removed);
+    CHECK(doc.importedGeometryRevision() == 5);
+    doc.modifyPart(source, [](model::Part& p) { p.kind = model::PartKind::Body; });
+    CHECK(doc.importedGeometryRevision() == 6);
+}
+
 TEST_CASE("UndoStack joins the last steps into one", "[model]")
 {
     model::UndoStack stack;
