@@ -94,8 +94,10 @@ public:
     }
 
     /// A touchpad scroll (pixel delta, from a touchpad device as macOS reports a trackpad
-    /// or Magic Mouse).
-    Q_INVOKABLE void wheel(qreal x, qreal y, int dx, int dy, const QString& mods = "")
+    /// or Magic Mouse). `phase`: "begin", "update" (default), "end" or "momentum", as a
+    /// real gesture sends them.
+    Q_INVOKABLE void wheel(qreal x, qreal y, int dx, int dy, const QString& mods = "",
+                           const QString& phase = "update")
     {
         static const QPointingDevice touchpad(QStringLiteral("ui-script touchpad"), 0x75500001,
                                               QInputDevice::DeviceType::TouchPad, QPointingDevice::PointerType::Finger,
@@ -103,8 +105,12 @@ public:
                                                   QInputDevice::Capability::PixelScroll,
                                               2, 0);
         const QPointF local(x, y);
+        const Qt::ScrollPhase p = phase == "begin"      ? Qt::ScrollBegin
+                                  : phase == "end"      ? Qt::ScrollEnd
+                                  : phase == "momentum" ? Qt::ScrollMomentum
+                                                        : Qt::ScrollUpdate;
         QWheelEvent event(local, m_window->mapToGlobal(local), QPoint(dx, dy), QPoint(dx * 2, dy * 2), Qt::NoButton,
-                          modifiers(mods), Qt::ScrollUpdate, false, Qt::MouseEventSynthesizedBySystem, &touchpad);
+                          modifiers(mods), p, false, Qt::MouseEventSynthesizedBySystem, &touchpad);
         QCoreApplication::sendEvent(m_window, &event);
     }
 

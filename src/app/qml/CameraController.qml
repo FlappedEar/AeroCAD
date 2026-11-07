@@ -316,45 +316,64 @@ Item {
         }
     }
 
+    /// One wheel or scroll event. `pos` is the pointer in this item's coordinates.
+    function handleWheel(event, pos) {
+        // A device with smooth (pixel) scrolling: touchpad or Magic Mouse. Qt marks those
+        // as TouchPad on macOS; a plain mouse wheel stays Mouse there too, even though
+        // macOS also reports pixel deltas for it, so pixelDelta alone says nothing.
+        const touchpad = !!event.device && event.device.type === PointerDevice.TouchPad
+        // event.x / event.y are not in this item's coordinates in every Qt version;
+        // the handler's point is.
+        const x = pos.x, y = pos.y
+        if (!touchpad) {
+            // Shift + wheel is horizontal scrolling on most systems: ignore it.
+            if (event.modifiers & Qt.ShiftModifier)
+                return
+            const a = event.angleDelta.y !== 0 ? event.angleDelta.y : event.angleDelta.x
+            // `inverted`: macOS "natural scrolling" turned the sign around; zoom follows
+            // the physical wheel direction.
+            root.zoomAt(root.wheelZoomFactor(event.inverted ? -a : a), x, y)
+            return
+        }
+        const d = event.pixelDelta.x !== 0 || event.pixelDelta.y !== 0
+            ? event.pixelDelta : Qt.point(event.angleDelta.x / 8, event.angleDelta.y / 8)
+        const momentum = event.phase === Qt.ScrollMomentum
+        if (event.modifiers & Qt.ShiftModifier) {
+            if (!momentum)
+                root.orbit(d.x, d.y) // as with the mouse and two-finger pan: the model follows
+            return
+        }
+        const pans = root.touchpadScrollPans !== !!(event.modifiers & Qt.ControlModifier)
+        if (pans) {
+            root.pan(d.x, d.y)
+            return
+        }
+        if (momentum)
+            return // a flick would keep zooming after the fingers lift
+        const a = event.angleDelta.y !== 0 ? event.angleDelta.y : event.pixelDelta.y * 2
+        root.zoomAt(root.wheelZoomFactor(event.inverted ? -a : a), x, y)
+    }
+
+    // Two WheelHandlers: an inactive WheelHandler only takes events along its orientation
+    // (default vertical), so a gesture that starts sideways (touchpad pan, Shift + swipe to
+    // orbit) would never arrive. The horizontal one takes only what the vertical one does
+    // not get: purely sideways events while the vertical one is not in a gesture.
     WheelHandler {
         id: wheel
         target: null
         acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+        onWheel: event => root.handleWheel(event, wheel.point.position)
+    }
+
+    WheelHandler {
+        id: sidewaysWheel
+        target: null
+        orientation: Qt.Horizontal
+        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
         onWheel: event => {
-            // A device with smooth (pixel) scrolling: touchpad or Magic Mouse. Qt marks those
-            // as TouchPad on macOS; a plain mouse wheel stays Mouse there too, even though
-            // macOS also reports pixel deltas for it, so pixelDelta alone says nothing.
-            const touchpad = !!event.device && event.device.type === PointerDevice.TouchPad
-            // event.x / event.y are not in this item's coordinates in every Qt version;
-            // the handler's point is.
-            const x = wheel.point.position.x, y = wheel.point.position.y
-            if (!touchpad) {
-                // Shift + wheel is horizontal scrolling on most systems: ignore it.
-                if (event.modifiers & Qt.ShiftModifier)
-                    return
-                const a = event.angleDelta.y !== 0 ? event.angleDelta.y : event.angleDelta.x
-                // `inverted`: macOS "natural scrolling" turned the sign around; zoom follows
-                // the physical wheel direction.
-                root.zoomAt(root.wheelZoomFactor(event.inverted ? -a : a), x, y)
+            if (wheel.active || event.angleDelta.y !== 0 || event.pixelDelta.y !== 0)
                 return
-            }
-            const d = event.pixelDelta.x !== 0 || event.pixelDelta.y !== 0
-                ? event.pixelDelta : Qt.point(event.angleDelta.x / 8, event.angleDelta.y / 8)
-            const momentum = event.phase === Qt.ScrollMomentum
-            if (event.modifiers & Qt.ShiftModifier) {
-                if (!momentum)
-                    root.orbit(d.x, d.y) // as with the mouse and two-finger pan: the model follows
-                return
-            }
-            const pans = root.touchpadScrollPans !== !!(event.modifiers & Qt.ControlModifier)
-            if (pans) {
-                root.pan(d.x, d.y)
-                return
-            }
-            if (momentum)
-                return // a flick would keep zooming after the fingers lift
-            const a = event.angleDelta.y !== 0 ? event.angleDelta.y : event.pixelDelta.y * 2
-            root.zoomAt(root.wheelZoomFactor(event.inverted ? -a : a), x, y)
+            root.handleWheel(event, sidewaysWheel.point.position)
         }
     }
 }
