@@ -66,7 +66,9 @@ Json toolDefinition(const commands::CommandInfo& info)
 
     const commands::CommandEffects& e = info.effects;
     std::string description = info.description;
-    if (info.modifiesDocument && e.undoable)
+    if (info.name == "edit.undo" || info.name == "edit.redo")
+        ; // the history commands themselves: their descriptions say what they do
+    else if (info.modifiesDocument && e.undoable)
         description += " Changes the document (undoable with edit_undo).";
     else if (info.modifiesDocument)
         description += " Replaces the document and clears the undo history: it cannot be undone with edit_undo.";

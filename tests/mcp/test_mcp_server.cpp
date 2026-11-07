@@ -202,3 +202,17 @@ TEST_CASE("Every command with effects outside the document is declared (CAD-81)"
         CHECK((e.readsFiles || e.writesFiles || e.deletesFiles));
     }
 }
+
+TEST_CASE("CAD-81: undo and redo do not describe themselves as undoable with edit_undo", "[mcp]")
+{
+    Fixture f;
+    const Json tools = f.request("tools/list").at("result").at("tools");
+    for (const auto& t : tools) {
+        const std::string name = t.at("name").get<std::string>();
+        if (name == "edit_undo" || name == "edit_redo") {
+            INFO(name);
+            CHECK(t.at("description").get<std::string>().find("undoable with edit_undo") == std::string::npos);
+            CHECK(t.at("annotations").at("destructiveHint") == false);
+        }
+    }
+}
