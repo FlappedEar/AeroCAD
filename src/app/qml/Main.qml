@@ -476,7 +476,7 @@ ApplicationWindow {
     function writePrintFiles(folder) {
         const r = window.controller.execute("document.export_for_print", { folder: folder })
         if (!r.ok) {
-            exportMessage.title = qsTr("Nothing was exported")
+            exportMessage.title = qsTr("Export failed")
             exportMessage.text = r.error
             exportMessage.open()
             return
