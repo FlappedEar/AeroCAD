@@ -8,6 +8,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import AeroCAD
 
 Item {
     id: root
@@ -17,7 +18,18 @@ Item {
     property string tool: ""
     /// Existing points to snap to, [[u, v], ...].
     property var snapPoints: []
+    /// Solved curves, constraints and degrees of freedom of the sketch (sketch.curves).
+    property var sketchCurves: []
+    property var sketchConstraints: []
+    property int degreesOfFreedom: -1
     signal curveDrawn(var curve)
+    signal constraintAdded(var constraint)
+    signal constraintEdited(int index, var value)
+    signal constraintRemoved(int index)
+    /// A palette button asks for another sketch tool.
+    signal toolRequested(string tool)
+
+    readonly property bool constraintTool: constraintLayer.toolNames.indexOf(tool) >= 0
 
     readonly property bool active: sketch !== null && tool !== ""
     /// Clicked points of the curve being drawn, [[u, v], ...].
@@ -32,9 +44,15 @@ Item {
 
     onToolChanged: reset()
     onSketchChanged: reset()
+    // Previews and the surface line are projected points: redraw them when the view moves.
+    Connections {
+        target: root.viewport
+        function onViewKeyChanged() { canvas.requestPaint() }
+    }
 
     function reset() {
         points = []
+        hover = null
         dimension.text = ""
         canvas.requestPaint()
     }
@@ -52,11 +70,23 @@ Item {
         return [d.dotProduct(v3(sketch.xDir)), d.dotProduct(v3(sketch.yDir))]
     }
 
+    /// Where a sketch point is drawn: on a sketch over a surface, on the surface (where the
+    /// finished curves are shown), so previews, hover markers and snapping match them.
     function toScreen(p) {
-        return viewport.viewPoint(toWorld(p))
+        const w = toWorld(p)
+        if (sketch.surfacePart && !sketch.across)
+            return viewport.viewPoint(viewport.controller.dropOntoPart(sketch.surfacePart, w, v3(sketch.normal)))
+        return viewport.viewPoint(w)
     }
 
     function screenToLocal(x, y) {
+        // Over a curved surface: the point of the surface under the cursor, seen along the
+        // sketch normal, so drawing lands where the cursor is on the surface from any view.
+        if (sketch.surfacePart && !sketch.across) {
+            const s = viewport.pickOnPart(x, y, sketch.surfacePart)
+            if (s !== null)
+                return toLocal(s)
+        }
         const w = viewport.planePoint(x, y, v3(sketch.origin), v3(sketch.normal))
         return w === null ? null : toLocal(w)
     }
@@ -220,12 +250,21 @@ Item {
         acceptedButtons: Qt.LeftButton | Qt.RightButton
         cursorShape: root.active ? Qt.CrossCursor : Qt.ArrowCursor
         onPositionChanged: mouse => {
+            if (root.constraintTool) {
+                constraintLayer.hoverAt(mouse.x, mouse.y)
+                return
+            }
             root.hover = root.snap(mouse.x, mouse.y)
             canvas.requestPaint()
         }
         onClicked: mouse => {
             if (mouse.button === Qt.RightButton) {
                 root.reset()
+                constraintLayer.reset()
+                return
+            }
+            if (root.constraintTool) {
+                constraintLayer.click(mouse.x, mouse.y)
                 return
             }
             const p = root.snap(mouse.x, mouse.y)
@@ -241,8 +280,9 @@ Item {
     Keys.onPressed: event => {
         if (event.key === Qt.Key_Escape) {
             reset()
+            constraintLayer.reset()
             event.accepted = true
-        } else if (active && points.length > 0 && /^[0-9.(\-]$/.test(event.text)) {
+        } else if (active && !constraintTool && points.length > 0 && /^[0-9.(\-]$/.test(event.text)) {
             dimension.text = event.text
             dimension.forceActiveFocus()
             event.accepted = true
@@ -259,9 +299,24 @@ Item {
             ctx.reset()
             if (root.sketch === null)
                 return
+            // Across a surface (a fin): where the sketch plane cuts the surface, drawn on
+            // top because the surface hides it.
+            const line = root.sketch.surfaceLine || []
+            if (line.length >= 2) {
+                ctx.lineWidth = 2
+                ctx.strokeStyle = Theme.warning
+                ctx.beginPath()
+                for (let i = 0; i + 1 < line.length; i += 2) {
+                    const a = root.viewport.viewPoint(root.toWorld(line[i]))
+                    const b = root.viewport.viewPoint(root.toWorld(line[i + 1]))
+                    ctx.moveTo(a.x, a.y)
+                    ctx.lineTo(b.x, b.y)
+                }
+                ctx.stroke()
+            }
             ctx.lineWidth = 1.5
-            ctx.strokeStyle = "#1f5fbf"
-            ctx.fillStyle = "#1f5fbf"
+            ctx.strokeStyle = Theme.sketchColor
+            ctx.fillStyle = Theme.sketchColor
             const pts = root.hover ? root.points.concat([root.hover]) : root.points
             const s = pts.map(p => root.toScreen(p))
             if (root.active && pts.length >= 2) {
@@ -328,19 +383,29 @@ Item {
                 const a = pts[0], b = pts[1]
                 let text = ""
                 if (root.tool === "line" || root.tool === "arc" || root.tool === "slot")
-                    text = root.dist(a, b).toFixed(2) + " mm"
+                    text = Preferences.formatLength(root.dist(a, b), Preferences.lengthUnit)
                 else if (root.tool === "rectangle")
-                    text = Math.abs(b[0] - a[0]).toFixed(2) + " × " + Math.abs(b[1] - a[1]).toFixed(2) + " mm"
+                    text = Preferences.formatLength(Math.abs(b[0] - a[0]), Preferences.lengthUnit) + " × " + Preferences.formatLength(Math.abs(b[1] - a[1]), Preferences.lengthUnit)
                 else if (root.tool === "circle")
-                    text = "⌀ " + (2 * root.dist(a, b)).toFixed(2) + " mm"
+                    text = "⌀ " + Preferences.formatLength(2 * root.dist(a, b), Preferences.lengthUnit)
                 else if (root.tool === "polygon")
-                    text = "R " + root.dist(a, b).toFixed(2) + " mm"
+                    text = "R " + Preferences.formatLength(root.dist(a, b), Preferences.lengthUnit)
                 ctx.font = "12px sans-serif"
-                ctx.fillStyle = "#123a75"
+                ctx.fillStyle = Theme.text
                 const last = s[s.length - 1]
                 ctx.fillText(text, last.x + 12, last.y - 10)
             }
         }
+    }
+
+    SketchConstraintLayer {
+        id: constraintLayer
+        anchors.fill: parent
+        overlay: root
+        curves: root.sketchCurves
+        constraints: root.sketchConstraints
+        tool: root.constraintTool ? root.tool : ""
+        onConstraintAdded: c => root.constraintAdded(c)
     }
 
     // --- Sketch palette -------------------------------------------------------------------
@@ -349,24 +414,59 @@ Item {
         anchors.left: parent.left
         anchors.top: parent.top
         anchors.margins: 8
-        padding: 8
-        opacity: 0.95
+        padding: Theme.space3
         visible: root.sketch !== null
+        background: Rectangle {
+            color: Theme.overlay
+            border.color: Theme.border
+            radius: Theme.radius
+        }
 
         ColumnLayout {
             spacing: 4
             Label {
-                text: root.tool === "" ? qsTr("Sketch: pick a tool (L line, R rectangle, C circle)")
+                text: root.constraintTool ? constraintLayer.hint()
+                    : root.tool === "" ? qsTr("Sketch: pick a tool (L line, R rectangle, C circle, D dimension)")
                     : root.tool === "line" ? qsTr("Line: click points; right-click or Esc ends the chain")
                     : root.tool === "rectangle" ? qsTr("Rectangle: click two corners; type width, height")
                     : root.tool === "circle" ? qsTr("Circle: click centre and a point; type the diameter")
                     : root.tool === "arc" ? qsTr("Arc: click start, end, then a point on the arc")
                     : root.tool === "polygon" ? qsTr("Polygon: click centre and a corner; type the radius")
                     : qsTr("Slot: click both centres, then the width")
-                font.bold: true
+                font.weight: Font.DemiBold
+            }
+            // Constraint tools, like Fusion's sketch palette.
+            Flow {
+                Layout.preferredWidth: 300
+                spacing: 2
+                Repeater {
+                    model: [
+                        { tool: "horizontal", text: "H", tip: qsTr("Horizontal") },
+                        { tool: "vertical", text: "V", tip: qsTr("Vertical") },
+                        { tool: "coincident", text: "●", tip: qsTr("Coincident / point on curve") },
+                        { tool: "tangent", text: "T", tip: qsTr("Tangent") },
+                        { tool: "equal", text: "=", tip: qsTr("Equal") },
+                        { tool: "parallel", text: "∥", tip: qsTr("Parallel") },
+                        { tool: "perpendicular", text: "⊥", tip: qsTr("Perpendicular") },
+                        { tool: "concentric", text: "◎", tip: qsTr("Concentric") },
+                        { tool: "midpoint", text: "M", tip: qsTr("Midpoint") },
+                        { tool: "collinear", text: "≡", tip: qsTr("Collinear") },
+                        { tool: "fix", text: "⚓", tip: qsTr("Fix") }
+                    ]
+                    delegate: IconButton {
+                        required property var modelData
+                        iconName: modelData.tool
+                        iconSize: Theme.iconMedium
+                        implicitWidth: 30
+                        implicitHeight: 30
+                        tip: modelData.tip
+                        checked: root.tool === modelData.tool
+                        onClicked: root.toolRequested(modelData.tool)
+                    }
+                }
             }
             RowLayout {
-                visible: root.active
+                visible: root.active && !root.constraintTool
                 Label { text: root.tool === "rectangle" ? qsTr("Width, height") : root.tool === "line" ? qsTr("Length") : qsTr("Size") }
                 TextField {
                     id: dimension
@@ -382,6 +482,50 @@ Item {
                     to: 64
                     value: root.polygonSides
                     onValueModified: root.polygonSides = value
+                }
+            }
+            Label {
+                visible: root.degreesOfFreedom >= 0
+                text: root.degreesOfFreedom === 0 ? qsTr("Fully constrained")
+                    : qsTr("%n degree(s) of freedom", "", root.degreesOfFreedom)
+                color: root.degreesOfFreedom === 0 ? Theme.success : Theme.textMuted
+            }
+            Label {
+                visible: root.sketchConstraints.length > 0
+                text: qsTr("Constraints")
+                font.bold: true
+            }
+            ListView {
+                id: constraintList
+                visible: root.sketchConstraints.length > 0
+                Layout.preferredWidth: 300
+                Layout.preferredHeight: Math.min(180, contentHeight)
+                clip: true
+                model: root.sketchConstraints
+                delegate: RowLayout {
+                    required property var modelData
+                    required property int index
+                    width: ListView.view.width
+                    Label {
+                        Layout.fillWidth: true
+                        text: modelData.type.replace(/_/g, " ") + (modelData.curve !== undefined ? " #" + modelData.curve
+                              : modelData.curves !== undefined ? " #" + modelData.curves.join(", #") : "")
+                        elide: Text.ElideRight
+                    }
+                    TextField {
+                        visible: modelData.value !== undefined
+                        Layout.preferredWidth: 90
+                        text: modelData.value !== undefined ? String(modelData.value) : ""
+                        selectByMouse: true
+                        onEditingFinished: {
+                            if (text !== String(modelData.value) && text.trim().length > 0)
+                                root.constraintEdited(index, isNaN(Number(text)) ? text.trim() : Number(text))
+                        }
+                    }
+                    ToolButton {
+                        text: "✕"
+                        onClicked: root.constraintRemoved(index)
+                    }
                 }
             }
         }

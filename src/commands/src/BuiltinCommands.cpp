@@ -1,86 +1,24 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "aerocad/commands/Session.hpp"
 
+#include "CommandHelpers.hpp"
+#include "ExportCommands.hpp"
+
+#include "aerocad/commands/ImportStage.hpp"
 #include "aerocad/core/Path.hpp"
+#include "aerocad/core/Units.hpp"
 #include "aerocad/geometry/Transform.hpp"
 #include "aerocad/io/Import.hpp"
 
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 
 namespace aerocad::commands {
 
 namespace {
-
-Json vecToJson(const core::Vec3& v)
-{
-    return Json::array({v.x, v.y, v.z});
-}
-
-Json boundsToJson(const core::BoundingBox& box)
-{
-    if (box.isEmpty())
-        return nullptr;
-    return Json{{"min", vecToJson(box.min)}, {"max", vecToJson(box.max)}, {"size", vecToJson(box.size())}};
-}
-
-Json partToJson(const model::Part& p)
-{
-    return Json{
-        {"id", p.id},
-        {"name", p.name},
-        {"source", p.source},
-        {"visible", p.visible},
-        {"vertices", p.mesh ? p.mesh->vertexCount() : 0},
-        {"triangles", p.mesh ? p.mesh->triangleCount() : 0},
-        {"hasBrep", p.shape.has_value()},
-        {"kind", p.kind == model::PartKind::Body ? "body" : p.kind == model::PartKind::Sketch ? "sketch" : "imported"},
-        {"featureId", p.featureId},
-        {"bounds", boundsToJson(p.mesh ? p.mesh->bounds() : core::BoundingBox{})},
-    };
-}
-
-const model::Part& requirePart(const model::Document& doc, const Json& params)
-{
-    const auto id = params.at("id").get<model::PartId>();
-    const model::Part* p = doc.part(id);
-    if (p == nullptr)
-        throw CommandError("No part with id " + std::to_string(id));
-    return *p;
-}
-
-/// Bodies and sketches are produced by the timeline; geometry edits must go through it.
-void requireImported(const model::Part& p, const char* what)
-{
-    if (p.kind != model::PartKind::Imported)
-        throw CommandError(std::string("Cannot ") + what + " '" + p.name +
-                           "': it is produced by the design timeline (feature " + std::to_string(p.featureId) +
-                           "); use feature.delete / feature.edit instead");
-}
-
-Json idParam()
-{
-    return Json{{"type", "integer"}, {"minimum", 1}, {"description", "Part id (see document.parts)."}};
-}
-
-Json objectSchema(Json properties, Json required = Json::array())
-{
-    return Json{{"type", "object"},
-                {"properties", std::move(properties)},
-                {"required", std::move(required)},
-                {"additionalProperties", false}};
-}
-
-/// Records a part-level change in the undo stack: swaps the part state.
-void pushPartStateUndo(CommandContext& ctx, std::string label, model::PartId id, model::Part before, model::Part after)
-{
-    model::Document& doc = ctx.document;
-    ctx.undoStack.push({std::move(label),
-                        [&doc, id, before]() { doc.modifyPart(id, [&](model::Part& p) { p = before; }); },
-                        [&doc, id, after]() { doc.modifyPart(id, [&](model::Part& p) { p = after; }); }});
-}
 
 void registerIntrospection(CommandRegistry& r)
 {
@@ -106,18 +44,39 @@ void registerDocumentCommands(CommandRegistry& r)
 {
 
     r.add({"document.import", "Import 3D file",
-           "Imports a 3D file (STL, OBJ, 3MF, STEP, IGES, BREP) as a new part. Coordinates are in millimetres.",
+           "Imports a 3D file (STL, OBJ, 3MF, STEP, IGES, BREP) as a new part. The document works in "
+           "millimetres; pass `units` when the file was written in another unit (mesh formats such as STL and "
+           "OBJ carry none) and the geometry is scaled to millimetres.",
            objectSchema({{"path", {{"type", "string"}, {"minLength", 1}, {"description", "Absolute path of the file."}}},
-                         {"name", {{"type", "string"}, {"description", "Optional part name; defaults to the file name."}}}},
+                         {"name", {{"type", "string"}, {"description", "Optional part name; defaults to the file name."}}},
+                         {"units", {{"type", "string"},
+                                    {"enum", {"um", "mm", "cm", "m", "in", "ft"}},
+                                    {"description", "Unit the file coordinates are in (default mm)."}}}},
                         {"path"}),
            true},
           [](CommandContext& ctx, const Json& params) {
-              const std::filesystem::path path = core::pathFromUtf8(params.at("path").get<std::string>());
+              const std::string pathText = params.at("path").get<std::string>();
+              const std::filesystem::path path = core::pathFromUtf8(pathText);
               io::ImportResult imported;
-              try {
-                  imported = io::importFile(path);
-              } catch (const io::ImportError& e) {
-                  throw CommandError(e.what());
+              std::optional<io::ImportResult> staged;
+              if (ctx.importStage != nullptr)
+                  staged = ctx.importStage->take(pathText);
+              if (staged) {
+                  imported = std::move(*staged);
+              } else {
+                  try {
+                      imported = io::importFile(path);
+                  } catch (const io::ImportError& e) {
+                      throw CommandError(e.what());
+                  }
+              }
+              const core::LengthUnit unit =
+                  core::parseLengthUnit(params.value("units", std::string("mm"))).value_or(core::LengthUnit::Millimetre);
+              const double unitScale = core::toMillimetres(unit);
+              if (unitScale != 1.0) {
+                  imported.mesh.scale(unitScale, core::Vec3{});
+                  if (imported.shape)
+                      imported.shape = geometry::scaled(*imported.shape, unitScale, core::Vec3{});
               }
 
               model::Part part;
@@ -135,6 +94,7 @@ void registerDocumentCommands(CommandRegistry& r)
 
               Json result = partToJson(*doc.part(id));
               result["format"] = std::string(io::formatName(imported.format));
+              result["units"] = std::string(core::unitSymbol(unit));
               result["warnings"] = imported.warnings;
               return result;
           });
@@ -166,6 +126,28 @@ void registerPartCommands(CommandRegistry& r)
                                   [&doc, removed]() { doc.addPart(removed); },
                                   [&doc, id = removed.id]() { doc.removePart(id); }});
               return Json{{"removed", removed.id}};
+          });
+
+    r.add({"part.duplicate", "Duplicate part",
+           "Copies an imported part (mesh and exact geometry) as a new part, e.g. to keep the original next to "
+           "a modified copy. Bodies and sketches are duplicated with variant.create instead.",
+           objectSchema({{"id", idParam()}, {"name", {{"type", "string"}, {"minLength", 1}}}}, {"id"}), true},
+          [](CommandContext& ctx, const Json& params) {
+              model::Document& doc = ctx.document;
+              const model::Part& source = requirePart(doc, params);
+              requireImported(source, "duplicate");
+              // `source` dangles once addPart() reallocates the part list.
+              const std::string label = "Duplicate " + source.name;
+              model::Part copy = source;
+              copy.id = 0;
+              copy.revision = 0;
+              copy.name = params.contains("name") ? params["name"].get<std::string>() : source.name + " (copy)";
+              const model::PartId id = doc.addPart(copy);
+              copy.id = id;
+              ctx.undoStack.push({label,
+                                  [&doc, id]() { doc.removePart(id); },
+                                  [&doc, copy]() { doc.addPart(copy); }});
+              return partToJson(*doc.part(id));
           });
 
     r.add({"part.set_visible", "Show/hide part", "Shows or hides a part in the viewport.",
@@ -253,6 +235,9 @@ void registerBuiltinCommands(CommandRegistry& registry)
     registerDocumentCommands(registry);
     registerPartCommands(registry);
     registerEditCommands(registry);
+    registerSelectionCommands(registry);
+    registerExportCommands(registry);
+    registerSurfaceCommands(registry);
 }
 
 } // namespace aerocad::commands

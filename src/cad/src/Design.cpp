@@ -2,12 +2,15 @@
 #include "aerocad/cad/Design.hpp"
 
 #include "aerocad/cad/Expression.hpp"
+#include "aerocad/cad/SketchSolver.hpp"
+#include "aerocad/core/MeshSelection.hpp"
 #include "aerocad/geometry/Modeling.hpp"
 #include "aerocad/geometry/Tessellation.hpp"
 
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <map>
 #include <memory>
 #include <numbers>
 #include <set>
@@ -287,6 +290,63 @@ struct Eval {
     }
 };
 
+/// Finds the edge or face a reference means after earlier features changed the body.
+/// References carry the picked point and, when picked through the UI or commands, the
+/// point relative to the body's bounding box plus the edge direction / face normal and
+/// type. The relative point follows the body when dimensions change (a box grows: the
+/// picked corner edge moves with it); direction and type break ties between neighbours.
+std::optional<std::size_t> matchTopology(const geometry::Shape& shape, const Json& ref, bool edgesWanted,
+                                         const Eval& ev)
+{
+    core::Vec3 point{};
+    const auto box = shape.bounds();
+    const core::Vec3 size = box.size();
+    if (ref.contains("relative")) {
+        const core::Vec3 rel = ev.vec3(ref.at("relative"));
+        point = {box.min.x + rel.x * size.x, box.min.y + rel.y * size.y, box.min.z + rel.z * size.z};
+    } else {
+        point = ev.vec3(ref.at("point"));
+    }
+    const bool hasHints = ref.contains("direction") || ref.contains("normal") || ref.contains("kind");
+    if (!hasHints)
+        return edgesWanted ? geometry::nearestEdge(shape, point) : geometry::nearestFace(shape, point);
+    const double diag = std::max(1e-9, size.length());
+    const std::string kind = ref.value("kind", std::string());
+    std::optional<std::size_t> best;
+    double bestScore = 0.0;
+    auto consider = [&](std::size_t i, double dist, const std::string& type, double alignment) {
+        if (!std::isfinite(dist))
+            return;
+        double score = dist + 0.5 * diag * (1.0 - alignment);
+        if (!kind.empty() && type != kind)
+            score += 0.25 * diag;
+        if (!best || score < bestScore - 1e-9) {
+            best = i;
+            bestScore = score;
+        }
+    };
+    if (edgesWanted) {
+        const auto info = geometry::edges(shape);
+        const auto dist = geometry::edgeDistances(shape, point);
+        const core::Vec3 want = ref.contains("direction") ? ev.vec3(ref.at("direction")).normalized() : core::Vec3{};
+        for (std::size_t i = 0; i < info.size() && i < dist.size(); ++i) {
+            double alignment = 1.0;
+            if (ref.contains("direction") && info[i].type == "line")
+                alignment = std::abs((info[i].end - info[i].start).normalized().dot(want));
+            consider(i, dist[i], info[i].type, alignment);
+        }
+    } else {
+        const auto info = geometry::faces(shape);
+        const auto dist = geometry::faceDistances(shape, point);
+        const core::Vec3 want = ref.contains("normal") ? ev.vec3(ref.at("normal")).normalized() : core::Vec3{};
+        for (std::size_t i = 0; i < info.size() && i < dist.size(); ++i) {
+            const double alignment = ref.contains("normal") ? (info[i].normal.dot(want) + 1.0) / 2.0 : 1.0;
+            consider(i, dist[i], info[i].type, alignment);
+        }
+    }
+    return best;
+}
+
 SketchCurve lineCurve(Vec2 a, Vec2 b, bool construction)
 {
     SketchCurve c{SketchCurve::Kind::Line, {a, b}};
@@ -294,8 +354,65 @@ SketchCurve lineCurve(Vec2 a, Vec2 b, bool construction)
     return c;
 }
 
-void appendCurves(const Eval& ev, const Json& item, std::vector<SketchCurve>& out)
+SketchPointRef parsePointRef(const Json& j)
 {
+    if (j.is_string() && lower(j.get<std::string>()) == "origin")
+        return {SketchPointRef::Kind::Origin, 0};
+    if (!j.is_object())
+        throw DesignError("Constraint point must be \"origin\" or {curve, point}, got " + j.dump());
+    SketchPointRef ref;
+    ref.curve = required(j, "curve").get<std::size_t>();
+    const std::string which = lower(j.value("point", std::string("start")));
+    if (which == "start")
+        ref.kind = SketchPointRef::Kind::Start;
+    else if (which == "end")
+        ref.kind = SketchPointRef::Kind::End;
+    else if (which == "center")
+        ref.kind = SketchPointRef::Kind::Center;
+    else
+        throw DesignError("Unknown constraint point '" + which + "' (start, end, center)");
+    return ref;
+}
+
+SketchConstraint parseConstraint(const Eval& ev, const Json& j)
+{
+    if (!j.is_object())
+        throw DesignError("Sketch constraint must be an object");
+    SketchConstraint c;
+    try {
+        c.type = constraintType(lower(required(j, "type").get<std::string>()));
+    } catch (const geometry::ModelingError& e) {
+        throw DesignError(e.what());
+    }
+    if (has(j, "curve"))
+        c.curves.push_back(j.at("curve").get<std::size_t>());
+    if (has(j, "curves"))
+        for (const auto& i : j.at("curves"))
+            c.curves.push_back(i.get<std::size_t>());
+    if (has(j, "point"))
+        c.points.push_back(parsePointRef(j.at("point")));
+    if (has(j, "points"))
+        for (const auto& p : j.at("points"))
+            c.points.push_back(parsePointRef(p));
+    if (has(j, "at"))
+        for (const auto& p : j.at("at"))
+            c.at.push_back(ev.vec2(p));
+    if (isDimension(c.type)) {
+        c.value = ev.num(j, "value");
+        if (c.type != SketchConstraint::Type::Angle && c.value < 0)
+            throw DesignError("Dimension value must not be negative");
+    }
+    return c;
+}
+
+/// Appends the curves of one sketch item. `implicit` receives the constraints that the
+/// shape implies (a rectangle has horizontal and vertical sides, a slot tangent ends), so
+/// that dimensions added later keep the shape, like Fusion's sketch tools.
+void appendCurves(const Eval& ev, const Json& item, std::vector<SketchCurve>& out,
+                  std::vector<SketchConstraint>& implicit)
+{
+    using CT = SketchConstraint::Type;
+    const std::size_t first = out.size();
     if (!item.is_object())
         throw DesignError("Sketch curve must be an object");
     const std::string type = lower(required(item, "type").get<std::string>());
@@ -326,6 +443,10 @@ void appendCurves(const Eval& ev, const Json& item, std::vector<SketchCurve>& ou
         push(lineCurve({b.x, a.y}, b, construction));
         push(lineCurve(b, {a.x, b.y}, construction));
         push(lineCurve({a.x, b.y}, a, construction));
+        implicit.push_back({CT::Horizontal, {first}, {}});
+        implicit.push_back({CT::Vertical, {first + 1}, {}});
+        implicit.push_back({CT::Horizontal, {first + 2}, {}});
+        implicit.push_back({CT::Vertical, {first + 3}, {}});
     } else if (type == "circle") {
         SketchCurve c{SketchCurve::Kind::Circle, {ev.vec2(item, "center")}};
         c.radius = has(item, "diameter") ? ev.num(item, "diameter") / 2 : ev.num(item, "radius");
@@ -355,6 +476,8 @@ void appendCurves(const Eval& ev, const Json& item, std::vector<SketchCurve>& ou
         };
         for (int i = 0; i < sides; ++i)
             push(lineCurve(at(i), at(i + 1), construction));
+        for (int i = 1; i < sides; ++i)
+            implicit.push_back({CT::Equal, {first, first + static_cast<std::size_t>(i)}, {}});
     } else if (type == "slot") {
         // Center-to-center slot: two parallel lines joined by half circles.
         const Vec2 a = ev.vec2(item, "start");
@@ -369,6 +492,11 @@ void appendCurves(const Eval& ev, const Json& item, std::vector<SketchCurve>& ou
         push({SketchCurve::Kind::Arc, {b + n * r, b + d * r, b - n * r}});
         push(lineCurve(b - n * r, a - n * r, construction));
         push({SketchCurve::Kind::Arc, {a - n * r, a - d * r, a + n * r}});
+        implicit.push_back({CT::Parallel, {first, first + 2}, {}});
+        implicit.push_back({CT::Tangent, {first, first + 1}, {}});
+        implicit.push_back({CT::Tangent, {first + 2, first + 1}, {}});
+        implicit.push_back({CT::Tangent, {first + 2, first + 3}, {}});
+        implicit.push_back({CT::Tangent, {first, first + 3}, {}});
     } else if (type == "spline") {
         SketchCurve c{SketchCurve::Kind::Spline, {}};
         for (const auto& p : required(item, "points"))
@@ -408,9 +536,8 @@ void Design::evaluateFeature(const Feature& f)
         for (const auto& item : list) {
             if (item.is_number_integer()) {
                 out.push_back(item.get<std::size_t>());
-            } else if (item.is_object() && item.contains("point")) {
-                const auto idx = edgesWanted ? geometry::nearestEdge(shape, ev.vec3(item.at("point")))
-                                             : geometry::nearestFace(shape, ev.vec3(item.at("point")));
+            } else if (item.is_object() && (item.contains("relative") || item.contains("point"))) {
+                const auto idx = matchTopology(shape, item, edgesWanted, ev);
                 if (!idx)
                     throw DesignError("No edge or face near " + item.dump());
                 out.push_back(*idx);
@@ -565,8 +692,11 @@ void Design::evaluateFeature(const Feature& f)
                     sk.plane = Plane::xz();
                 else if (name == "yz")
                     sk.plane = Plane::yz();
+                else if (const ReferenceFrame* fr = frame(plane.get<std::string>()))
+                    sk.plane = Plane{fr->origin, fr->normal, fr->xDir};
                 else
-                    throw DesignError("Unknown plane '" + plane.get<std::string>() + "' (XY, XZ, YZ)");
+                    throw DesignError("Unknown plane '" + plane.get<std::string>() +
+                                      "' (XY, XZ, YZ or the name of a reference frame)");
             } else {
                 sk.plane.origin = ev.vec3(plane, "origin", {});
                 sk.plane.normal = ev.vec3(plane, "normal", {0, 0, 1});
@@ -575,10 +705,37 @@ void Design::evaluateFeature(const Feature& f)
         }
         sk.plane = sk.plane.normalized();
         sk.plane.origin = sk.plane.origin + sk.plane.normal * ev.num(p, "offset", 0.0);
+        std::vector<SketchConstraint> constraints;
         if (has(p, "curves")) {
             for (const auto& c : p.at("curves"))
-                appendCurves(ev, c, sk.curves);
+                appendCurves(ev, c, sk.curves, constraints);
         }
+        const std::size_t implicitCount = constraints.size();
+        if (has(p, "constraints")) {
+            for (const auto& c : p.at("constraints"))
+                constraints.push_back(parseConstraint(ev, c));
+        }
+        try {
+            if (constraints.size() > implicitCount) {
+                const auto solved = solveSketch(sk.curves, constraints);
+                if (!solved.solved) {
+                    std::string list;
+                    for (const std::size_t i : solved.unsatisfied) {
+                        if (i >= implicitCount)
+                            list += (list.empty() ? "" : ", ") + std::to_string(i - implicitCount);
+                    }
+                    throw DesignError("Sketch constraints conflict" +
+                                      (list.empty() ? std::string(" with the drawn shapes")
+                                                    : " (constraint " + list + " cannot be satisfied)"));
+                }
+                sk.degreesOfFreedom = solved.degreesOfFreedom;
+            } else {
+                sk.degreesOfFreedom = degreesOfFreedom(sk.curves, constraints);
+            }
+        } catch (const geometry::ModelingError& e) {
+            throw DesignError(e.what());
+        }
+        sk.constraintCount = constraints.size() - implicitCount;
         sk.geometry = geometry::buildSketch(sk.plane, sk.curves);
         m_sketches[f.id] = std::move(sk);
     } else if (f.type == "extrude") {
@@ -755,6 +912,71 @@ void Design::evaluateFeature(const Feature& f)
     }
 }
 
+void Design::setFrame(ReferenceFrame fr)
+{
+    const std::string key = lower(fr.name);
+    if (fr.name.empty() || key == "xy" || key == "xz" || key == "yz")
+        throw DesignError("Invalid frame name '" + fr.name + "'");
+    const core::Vec3 n = fr.normal.normalized();
+    const core::Vec3 x = (fr.xDir - n * n.dot(fr.xDir)).normalized();
+    if (n.length() < 0.5 || x.length() < 0.5)
+        throw DesignError("Frame '" + fr.name + "': normal and xDir must be non-zero and not parallel");
+    fr.normal = n;
+    fr.xDir = x;
+    auto it = std::find_if(m_state.frames.begin(), m_state.frames.end(),
+                           [&](const ReferenceFrame& f) { return f.name == fr.name; });
+    if (it == m_state.frames.end())
+        m_state.frames.push_back(std::move(fr));
+    else
+        *it = std::move(fr);
+    regenerate();
+}
+
+void Design::removeFrame(const std::string& name)
+{
+    const auto n = std::erase_if(m_state.frames, [&](const ReferenceFrame& f) { return f.name == name; });
+    if (n == 0)
+        throw DesignError("No frame '" + name + "'");
+    regenerate();
+}
+
+const ReferenceFrame* Design::frame(std::string_view name) const
+{
+    auto it = std::find_if(m_state.frames.begin(), m_state.frames.end(),
+                           [&](const ReferenceFrame& f) { return f.name == name; });
+    return it == m_state.frames.end() ? nullptr : &*it;
+}
+
+void Design::clear()
+{
+    m_state = State{};
+    m_partIds.clear();
+    m_sketchConsumed.clear();
+    m_partMeta.clear();
+    m_convertedParts.clear();
+    regenerate();
+}
+
+void Design::setPartInfo(FeatureId feature, model::PartId part, std::string name, bool visible)
+{
+    m_partIds[feature] = part;
+    m_partMeta[feature] = {std::move(name), visible};
+}
+
+std::vector<Design::PartInfo> Design::partInfos() const
+{
+    std::vector<PartInfo> out;
+    for (const auto& [feature, part] : m_partIds) {
+        PartInfo info{feature, part, {}, true};
+        if (auto meta = m_partMeta.find(feature); meta != m_partMeta.end()) {
+            info.name = meta->second.name;
+            info.visible = meta->second.visible;
+        }
+        out.push_back(std::move(info));
+    }
+    return out;
+}
+
 void Design::regenerate()
 {
     m_bodies.clear();
@@ -783,6 +1005,154 @@ void Design::regenerate()
 // ---------------------------------------------------------------------------------------
 // Document mirror
 
+namespace {
+
+/// Steepest rise over run a draped line or fill follows; steeper is a hole, a gap or the edge
+/// of the skin, not the surface under the sketch.
+constexpr double maxDrapeSlope = 3.0;
+
+/// A sketch drawn over a curved surface (params onSurface) is shown lying on it: its
+/// line segments are split finely and moved along the sketch normal onto the surface
+/// part's mesh. Where there is no skin to lie on (a hole, past the edge), a line runs
+/// straight between the nearest points that have one.
+std::vector<core::Vec3> drapeSegments(const std::vector<core::Vec3>& segments, const core::TriangleMesh& surface,
+                                      const core::Vec3& normal)
+{
+    core::BoundingBox box;
+    for (const auto& p : segments)
+        box.extend(p);
+    const double step = std::max(box.diagonal() / 300.0, 1e-3);
+    const core::Vec3 n = normal.normalized();
+    // A hair above the surface, so the lines are not hidden in it.
+    const double lift = std::max(box.diagonal() * 1.5e-3, 1e-3);
+
+    std::vector<core::Vec3> fine;
+    std::vector<std::size_t> starts; // of each input segment in `fine`
+    for (std::size_t i = 0; i + 1 < segments.size(); i += 2) {
+        const core::Vec3 a = segments[i];
+        const core::Vec3 b = segments[i + 1];
+        const int pieces = std::clamp(static_cast<int>(std::ceil((b - a).length() / step)), 1, 400);
+        starts.push_back(fine.size());
+        for (int k = 0; k <= pieces; ++k)
+            fine.push_back(a + (b - a) * (static_cast<double>(k) / pieces));
+    }
+    starts.push_back(fine.size());
+    std::vector<char> missed;
+    const auto draped = core::projectOntoMesh(surface, fine, n, nullptr, &missed);
+
+    std::vector<double> height(fine.size(), 0.0);
+    for (std::size_t k = 0; k < fine.size(); ++k)
+        height[k] = (draped[k] - fine[k]).dot(n);
+    std::vector<core::Vec3> out;
+    out.reserve(fine.size() * 2);
+    for (std::size_t s = 0; s + 1 < starts.size(); ++s) {
+        const std::size_t begin = starts[s], end = starts[s + 1];
+        // From the start of the segment on, a point counts when it continues the skin.
+        std::size_t anchor = end;
+        for (std::size_t k = begin; k < end; ++k) {
+            if (missed[k] != 0)
+                continue;
+            if (anchor != end) {
+                const double run = (fine[k] - fine[anchor]).length();
+                if (std::abs(height[k] - height[anchor]) > maxDrapeSlope * run + 1e-6) {
+                    missed[k] = 1;
+                    continue;
+                }
+            }
+            anchor = k;
+        }
+        // Straight across the gaps; a segment with no skin at all stays on the plane.
+        std::size_t last = end;
+        for (std::size_t k = begin; k < end; ++k) {
+            if (missed[k] == 0) {
+                if (last != end)
+                    for (std::size_t g = last + 1; g < k; ++g)
+                        height[g] = height[last] +
+                                    (height[k] - height[last]) * static_cast<double>(g - last) / static_cast<double>(k - last);
+                else
+                    for (std::size_t g = begin; g < k; ++g)
+                        height[g] = height[k];
+                last = k;
+            }
+        }
+        if (last != end) {
+            for (std::size_t g = last + 1; g < end; ++g)
+                height[g] = height[last];
+        } else {
+            for (std::size_t g = begin; g < end; ++g)
+                height[g] = 0.0;
+        }
+        for (std::size_t k = begin; k + 1 < end; ++k) {
+            out.push_back(fine[k] + n * (height[k] + lift));
+            out.push_back(fine[k + 1] + n * (height[k + 1] + lift));
+        }
+    }
+    return out;
+}
+
+/// The sketch's filled profiles, split into small triangles and laid onto the surface
+/// like the lines (a flat fill would hover above a curved surface).
+core::TriangleMesh drapeFill(const core::TriangleMesh& fill, const core::TriangleMesh& surface, const core::Vec3& normal)
+{
+    if (fill.triangleCount() == 0)
+        return fill;
+    const double step = std::max(fill.bounds().diagonal() / 60.0, 1e-3);
+    std::vector<core::Vec3> v = fill.vertices();
+    std::vector<core::TriangleMesh::Triangle> tris = fill.triangles();
+    // 1-to-4 splits while any edge is long (edge midpoints shared through a map).
+    for (int level = 0; level < 8 && tris.size() < 60000; ++level) {
+        bool longEdge = false;
+        for (const auto& t : tris)
+            for (int k = 0; k < 3 && !longEdge; ++k)
+                longEdge = (v[t[k]] - v[t[(k + 1) % 3]]).length() > step;
+        if (!longEdge)
+            break;
+        std::map<std::pair<std::uint32_t, std::uint32_t>, std::uint32_t> mid;
+        auto midpoint = [&](std::uint32_t a, std::uint32_t b) {
+            const auto key = std::minmax(a, b);
+            auto [it, added] = mid.try_emplace({key.first, key.second}, static_cast<std::uint32_t>(v.size()));
+            if (added)
+                v.push_back((v[a] + v[b]) * 0.5);
+            return it->second;
+        };
+        std::vector<core::TriangleMesh::Triangle> next;
+        next.reserve(tris.size() * 4);
+        for (const auto& t : tris) {
+            const auto ab = midpoint(t[0], t[1]);
+            const auto bc = midpoint(t[1], t[2]);
+            const auto ca = midpoint(t[2], t[0]);
+            next.push_back({t[0], ab, ca});
+            next.push_back({ab, t[1], bc});
+            next.push_back({ca, bc, t[2]});
+            next.push_back({ab, bc, ca});
+        }
+        tris = std::move(next);
+    }
+    const core::Vec3 n = normal.normalized();
+    std::vector<char> missed;
+    auto draped = core::projectOntoMesh(surface, v, n, nullptr, &missed);
+    // Only what lies on the skin: nothing over holes, past the edge, or down a wall to
+    // whatever is behind the skin.
+    std::vector<core::TriangleMesh::Triangle> kept;
+    kept.reserve(tris.size());
+    for (const auto& t : tris) {
+        bool ok = missed[t[0]] == 0 && missed[t[1]] == 0 && missed[t[2]] == 0;
+        for (int k = 0; k < 3 && ok; ++k) {
+            const auto a = t[k], b = t[(k + 1) % 3];
+            const double rise = std::abs((draped[a] - v[a]).dot(n) - (draped[b] - v[b]).dot(n));
+            ok = rise <= maxDrapeSlope * (v[a] - v[b]).length();
+        }
+        if (ok)
+            kept.push_back(t);
+    }
+    const core::Vec3 lift = n * std::max(fill.bounds().diagonal() * 1e-3, 5e-4);
+    for (auto& p : draped)
+        p = p + lift;
+    return core::TriangleMesh(std::move(draped), std::move(kept));
+}
+
+} // namespace
+
 void Design::syncDocument(model::Document& document)
 {
     struct Wanted {
@@ -806,12 +1176,30 @@ void Design::syncDocument(model::Document& document)
     }
     for (const auto& [id, s] : m_sketches) {
         const geometry::Shape profiles = geometry::makeCompound(s.geometry.profiles);
+        auto segments = geometry::edgeSegments(s.geometry.curves);
+        auto fill = geometry::tessellate(profiles);
+        if (const Feature* f = feature(id); f != nullptr && f->params.contains("onSurface") && !segments.empty()) {
+            const Json& on = f->params.at("onSurface");
+            const model::Part* surface =
+                on.contains("part") ? document.part(on.at("part").get<model::PartId>()) : nullptr;
+            // Lay it on the scan the surface was fitted to when there is one: the outline
+            // may reach past the fitted area, and the scan is what is seen.
+            if (surface != nullptr) {
+                if (const model::Part* scan = document.part(model::fittedScanId(*surface));
+                    scan != nullptr && scan->mesh && !scan->shape)
+                    surface = scan;
+            }
+            if (!on.value("across", false) && surface != nullptr && surface->mesh) {
+                segments = drapeSegments(segments, *surface->mesh, s.plane.normal);
+                fill = drapeFill(fill, *surface->mesh, s.plane.normal);
+            }
+        }
         wanted[id] = {id,
                       model::PartKind::Sketch,
                       s.name,
                       std::nullopt,
-                      std::make_shared<const core::TriangleMesh>(geometry::tessellate(profiles)),
-                      geometry::edgeSegments(s.geometry.curves),
+                      std::make_shared<const core::TriangleMesh>(std::move(fill)),
+                      std::move(segments),
                       s.consumed};
     }
 
@@ -845,11 +1233,17 @@ void Design::syncDocument(model::Document& document)
         const bool wasConsumed = m_sketchConsumed[fid];
         if (existing != nullptr) {
             document.modifyPart(existing->id, [&](model::Part& part) {
+                // A region selection holds triangle indices: keep it only while the
+                // regenerated tessellation has the same topology.
+                if (part.selection && !(part.mesh && w.mesh && part.mesh->triangles() == w.mesh->triangles()))
+                    part.selection.reset();
                 part.mesh = w.mesh;
                 part.shape = w.shape;
                 part.edgeSegments = w.segments;
                 if (w.kind == model::PartKind::Sketch && w.consumed && !wasConsumed)
                     part.visible = false; // Fusion hides a sketch once a feature uses it
+                else if (w.kind == model::PartKind::Sketch && !w.consumed && wasConsumed)
+                    part.visible = true; // ... and shows it again when that feature goes away
             });
         } else {
             model::Part part;
@@ -870,6 +1264,105 @@ void Design::syncDocument(model::Document& document)
         }
         m_sketchConsumed[fid] = w.consumed;
     }
+}
+
+// ---------------------------------------------------------------------------------------
+// Serialisation
+
+namespace {
+
+Json vec3ToJson(const core::Vec3& v)
+{
+    return Json::array({v.x, v.y, v.z});
+}
+
+core::Vec3 vec3FromJson(const Json& j, const char* what)
+{
+    if (!j.is_array() || j.size() != 3 || !j[0].is_number() || !j[1].is_number() || !j[2].is_number())
+        throw DesignError(std::string("Invalid vector '") + what + "'");
+    return {j[0].get<double>(), j[1].get<double>(), j[2].get<double>()};
+}
+
+template <typename T>
+T field(const Json& j, const char* key, const char* what)
+{
+    auto it = j.find(key);
+    if (it == j.end())
+        throw DesignError(std::string("Missing '") + key + "' in " + what);
+    try {
+        return it->get<T>();
+    } catch (const Json::exception&) {
+        throw DesignError(std::string("Invalid '") + key + "' in " + what);
+    }
+}
+
+} // namespace
+
+Json stateToJson(const Design::State& state)
+{
+    Json features = Json::array();
+    for (const auto& f : state.features) {
+        features.push_back(
+            {{"id", f.id}, {"type", f.type}, {"name", f.name}, {"params", f.params}, {"suppressed", f.suppressed}});
+    }
+    Json parameters = Json::array();
+    for (const auto& p : state.parameters)
+        parameters.push_back({{"name", p.name}, {"expression", p.expression}, {"comment", p.comment}});
+    Json frames = Json::array();
+    for (const auto& f : state.frames) {
+        frames.push_back({{"name", f.name},
+                          {"origin", vec3ToJson(f.origin)},
+                          {"normal", vec3ToJson(f.normal)},
+                          {"xDir", vec3ToJson(f.xDir)},
+                          {"comment", f.comment}});
+    }
+    return Json{{"features", features},
+                {"parameters", parameters},
+                {"frames", frames},
+                {"nextId", state.nextId},
+                {"marker", state.marker}};
+}
+
+Design::State stateFromJson(const Json& json)
+{
+    if (!json.is_object())
+        throw DesignError("Design state must be an object");
+    Design::State state;
+    const auto& types = Design::featureTypes();
+    std::set<FeatureId> ids;
+    FeatureId maxId = 0;
+    for (const auto& j : json.value("features", Json::array())) {
+        Feature f;
+        f.id = field<FeatureId>(j, "id", "feature");
+        f.type = field<std::string>(j, "type", "feature");
+        f.name = field<std::string>(j, "name", "feature");
+        f.params = j.value("params", Json::object());
+        f.suppressed = j.value("suppressed", false);
+        if (f.id == 0 || !ids.insert(f.id).second)
+            throw DesignError("Invalid or duplicate feature id " + std::to_string(f.id));
+        if (std::find(types.begin(), types.end(), f.type) == types.end())
+            throw DesignError("Unknown feature type '" + f.type + "'");
+        if (!f.params.is_object())
+            throw DesignError("Parameters of feature " + f.name + " must be an object");
+        maxId = std::max(maxId, f.id);
+        state.features.push_back(std::move(f));
+    }
+    for (const auto& j : json.value("parameters", Json::array())) {
+        state.parameters.push_back({field<std::string>(j, "name", "parameter"),
+                                    field<std::string>(j, "expression", "parameter"), j.value("comment", "")});
+    }
+    for (const auto& j : json.value("frames", Json::array())) {
+        ReferenceFrame f;
+        f.name = field<std::string>(j, "name", "frame");
+        f.origin = vec3FromJson(j.value("origin", Json::array({0, 0, 0})), "origin");
+        f.normal = vec3FromJson(j.value("normal", Json::array({0, 0, 1})), "normal");
+        f.xDir = vec3FromJson(j.value("xDir", Json::array({1, 0, 0})), "xDir");
+        f.comment = j.value("comment", "");
+        state.frames.push_back(std::move(f));
+    }
+    state.nextId = std::max<FeatureId>(json.value("nextId", FeatureId{1}), maxId + 1);
+    state.marker = std::min<std::size_t>(json.value("marker", state.features.size()), state.features.size());
+    return state;
 }
 
 } // namespace aerocad::cad

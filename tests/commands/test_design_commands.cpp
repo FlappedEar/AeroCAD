@@ -4,6 +4,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <cmath>
 #include <numbers>
 
 using namespace aerocad;
@@ -109,6 +110,18 @@ TEST_CASE("Design commands: body parts cannot be scaled or removed directly", "[
     CHECK(parts.at("parts")[0].at("kind") == "body");
 }
 
+TEST_CASE("Design commands: a region selection is dropped when the body's tessellation changes", "[commands][cad]")
+{
+    commands::Session s;
+    run(s, "feature.box", {{"size", {10, 10, 10}}});
+    const auto partId = s.document().parts().at(0).id;
+    run(s, "selection.set", {{"id", partId}, {"triangles", {0, 1}}});
+    CHECK(run(s, "selection.get", {{"id", partId}}).at("selectedTriangles") == 2);
+
+    run(s, "feature.cylinder", {{"center", {5, 5, -1}}, {"radius", 2}, {"height", 12}, {"operation", "cut"}});
+    CHECK(run(s, "selection.get", {{"id", partId}}).at("selectedTriangles") == 0);
+}
+
 TEST_CASE("Design commands: timeline marker, suppress, delete, edit", "[commands][cad]")
 {
     commands::Session s;
@@ -163,4 +176,153 @@ TEST_CASE("Design commands: imported mesh becomes a body that can be cut", "[com
     run(s, "edit.undo");
     CHECK(s.design().bodies().empty());
     CHECK(s.document().part(partId)->visible);
+}
+
+TEST_CASE("Design commands: sketch constraints drive the model through parameters", "[commands][cad][solver]")
+{
+    commands::Session s;
+    run(s, "parameter.set", {{"name", "len"}, {"expression", "50 mm"}});
+    // A free-hand rectangle (as drawn with the mouse), then dimensioned.
+    const Json sk = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "rectangle"}, {"corner", {3, 2}}, {"opposite", {41, 19}}}})}});
+    const auto id = sk.at("id").get<std::uint64_t>();
+    CHECK(sk.at("degreesOfFreedom") == 4); // position + width + height
+    const Json c = run(s, "sketch.add_constraints",
+                       {{"sketch", id},
+                        {"constraints", Json::array({{{"type", "coincident"},
+                                                      {"points", Json::array({{{"curve", 0}, {"point", "start"}},
+                                                                              "origin"})}},
+                                                     {{"type", "length"}, {"curve", 0}, {"value", "len"}},
+                                                     {{"type", "length"}, {"curve", 1}, {"value", 20}}})}});
+    CHECK(c.at("degreesOfFreedom") == 0);
+    const Json ex = run(s, "feature.extrude", {{"sketch", id}, {"distance", 10}});
+    CHECK(ex.at("bodies")[0].at("volume").get<double>() == Approx(50 * 20 * 10));
+
+    // Changing the parameter moves the sketch and the body.
+    run(s, "parameter.set", {{"name", "len"}, {"expression", "80 mm"}});
+    Json tl = run(s, "timeline.list");
+    CHECK(tl.at("bodies")[0].at("volume").get<double>() == Approx(80 * 20 * 10));
+
+    // Curves and constraints are listed with the solved geometry.
+    const Json curves = run(s, "sketch.curves", {{"sketch", id}});
+    REQUIRE(curves.at("curves").size() == 4);
+    CHECK(curves.at("curves")[0].at("points")[1][0].get<double>() == Approx(80));
+    CHECK(curves.at("constraints").size() == 3);
+    CHECK(curves.at("constraints")[1].at("resolved").get<double>() == Approx(80));
+
+    // Editing a dimension, undo and conflicting constraints.
+    run(s, "sketch.edit_constraint", {{"sketch", id}, {"index", 2}, {"value", 30}});
+    tl = run(s, "timeline.list");
+    CHECK(tl.at("bodies")[0].at("volume").get<double>() == Approx(80 * 30 * 10));
+    run(s, "edit.undo");
+    tl = run(s, "timeline.list");
+    CHECK(tl.at("bodies")[0].at("volume").get<double>() == Approx(80 * 20 * 10));
+
+    const auto bad = s.execute("sketch.add_constraints",
+                               {{"sketch", id},
+                                {"constraints", Json::array({{{"type", "length"}, {"curve", 2}, {"value", 10}}})}});
+    CHECK_FALSE(bad.ok);
+    CHECK(bad.error.find("conflict") != std::string::npos);
+    run(s, "sketch.edit_constraint", {{"sketch", id}, {"index", 0}, {"remove", true}});
+    CHECK(run(s, "sketch.curves", {{"sketch", id}}).at("degreesOfFreedom") == 2);
+}
+
+TEST_CASE("Design commands: a slot keeps its shape when dimensioned", "[commands][cad][solver]")
+{
+    commands::Session s;
+    const Json sk = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "slot"}, {"start", {0, 0}}, {"end", {30, 0}}, {"width", 10}}})},
+                         {"constraints", Json::array({{{"type", "radius"}, {"curve", 1}, {"value", 8}}})}});
+    const auto id = sk.at("id").get<std::uint64_t>();
+    const Json ex = run(s, "feature.extrude", {{"sketch", id}, {"distance", 1}});
+    const double pi = std::numbers::pi;
+    // Both ends follow the radius (tangent lines), the length between centres stays free but unchanged.
+    const double v = ex.at("bodies")[0].at("volume").get<double>();
+    CHECK(v == Approx(pi * 64 + 16 * 30).epsilon(1e-3));
+}
+
+TEST_CASE("Design commands: fixing a dimensioned line keeps its solved position", "[commands][cad][solver]")
+{
+    commands::Session s;
+    const Json sk = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {10, 0}}},
+                                                 {{"type", "circle"}, {"center", {30, 0}}, {"radius", 3}}})},
+                         {"constraints", Json::array({{{"type", "length"}, {"curve", 0}, {"value", 20}},
+                                                      {{"type", "radius"}, {"curve", 1}, {"value", 5}}})}});
+    const auto id = sk.at("id").get<std::uint64_t>();
+    run(s, "sketch.add_constraints",
+        {{"sketch", id}, {"constraints", Json::array({{{"type", "fix"}, {"curves", Json::array({0, 1})}}})}});
+    const Json c = run(s, "sketch.curves", {{"sketch", id}});
+    const double len = std::hypot(
+        c.at("curves")[0].at("points")[1][0].get<double>() - c.at("curves")[0].at("points")[0][0].get<double>(),
+        c.at("curves")[0].at("points")[1][1].get<double>() - c.at("curves")[0].at("points")[0][1].get<double>());
+    CHECK(len == Approx(20));
+    CHECK(c.at("curves")[1].at("radius").get<double>() == Approx(5));
+    CHECK(c.at("degreesOfFreedom") == 0);
+}
+
+TEST_CASE("Design commands: a picked fillet edge follows the body when a dimension grows", "[commands][cad]")
+{
+    commands::Session s;
+    run(s, "parameter.set", {{"name", "w"}, {"expression", "30"}});
+    const Json sk = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "rectangle"},
+                                                  {"corner", {0, 0}},
+                                                  {"width", "w"},
+                                                  {"height", 20}}})}});
+    const Json ex = run(s, "feature.extrude", {{"sketch", sk.at("id")}, {"distance", 10}});
+    const auto body = ex.at("id").get<std::uint64_t>();
+    // The vertical edge at the corner (w, 20), picked by a point on it.
+    const Json f = run(s, "feature.fillet",
+                       {{"body", body}, {"edges", Json::array({{{"point", {30, 20, 5}}}})}, {"radius", 3}});
+    const Json& stored = f.at("params").at("edges")[0];
+    CHECK(stored.contains("relative"));
+    CHECK(stored.at("kind") == "line");
+    const double pi = std::numbers::pi;
+    const double cornerLoss = (1 - pi / 4) * 9;
+    CHECK(f.at("bodies")[0].at("volume").get<double>() == Approx(30 * 20 * 10 - cornerLoss * 10));
+
+    // Old point (30, 20, 5) is now nearer to the long top/bottom edges; the stored
+    // reference still finds the vertical corner edge.
+    run(s, "parameter.set", {{"name", "w"}, {"expression", "80"}});
+    const Json tl = run(s, "timeline.list");
+    CHECK(tl.at("features")[2].at("status") == "ok");
+    CHECK(tl.at("bodies")[0].at("volume").get<double>() == Approx(80 * 20 * 10 - cornerLoss * 10));
+}
+
+TEST_CASE("Design commands: previews keep the undo history", "[commands][preview]")
+{
+    commands::Session s;
+    run(s, "feature.box", {{"size", {10, 10, 10}}});
+    run(s, "feature.box", {{"corner", {20, 0, 0}}, {"size", {10, 10, 10}}});
+    run(s, "edit.undo"); // the second box can be redone
+    REQUIRE(s.undoStack().canRedo());
+
+    // Previews replace each other and do not drop the redo entry.
+    REQUIRE(s.preview("feature.cylinder", {{"diameter", 5}, {"height", 5}}).ok);
+    REQUIRE(s.preview("feature.cylinder", {{"diameter", 6}, {"height", 5}}).ok);
+    CHECK(s.design().bodies().size() == 2);
+    CHECK(s.cancelPreview());
+    CHECK(s.design().bodies().size() == 1);
+    CHECK(s.undoStack().canRedo());
+    CHECK_FALSE(s.cancelPreview());
+
+    // A failing preview leaves nothing behind.
+    CHECK_FALSE(s.preview("feature.fillet", {{"body", 1}, {"edges", Json::array()}, {"radius", 1}}).ok);
+    CHECK_FALSE(s.previewActive());
+    CHECK(s.undoStack().canRedo());
+
+    // Undo while a preview is shown ends the preview first, then undoes the real step.
+    REQUIRE(s.preview("feature.cylinder", {{"diameter", 5}, {"height", 5}}).ok);
+    run(s, "edit.undo");
+    CHECK_FALSE(s.previewActive());
+    CHECK(s.design().bodies().empty());
+    CHECK_FALSE(s.cancelPreview());
+    run(s, "edit.redo");
+    run(s, "edit.redo");
+    CHECK(s.design().bodies().size() == 2);
 }

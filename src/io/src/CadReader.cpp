@@ -12,6 +12,9 @@
 #include <IFSelect_ReturnStatus.hxx>
 #include <IGESControl_Reader.hxx>
 #include <Interface_Static.hxx>
+#include <Message.hxx>
+#include <Message_Messenger.hxx>
+#include <Message_PrinterOStream.hxx>
 #include <STEPControl_Reader.hxx>
 #include <Standard_Failure.hxx>
 #include <TopoDS_Shape.hxx>
@@ -22,15 +25,33 @@
 
 namespace aerocad::io {
 
+namespace detail {
+
 namespace {
 
-// The OCCT data exchange readers share global state (Interface_Static parameters,
-// static controllers), so serialize them.
+/// OCCT's default messenger prints to stdout, and the STEP/IGES translators report
+/// transfer statistics there. stdout carries command results (aerocad-cmd) and the MCP
+/// stdio protocol, so send OCCT messages to stderr, warnings and above only.
+void routeOcctMessagesToStderr()
+{
+    const opencascade::handle<Message_Messenger>& messenger = Message::DefaultMessenger();
+    messenger->RemovePrinters(STANDARD_TYPE(Message_PrinterOStream));
+    messenger->AddPrinter(new Message_PrinterOStream("cerr", false, Message_Warning));
+}
+
+} // namespace
+
 std::mutex& occtMutex()
 {
     static std::mutex mutex;
+    static const bool configured = (routeOcctMessagesToStderr(), true);
+    (void)configured;
     return mutex;
 }
+
+} // namespace detail
+
+namespace {
 
 const char* statusText(IFSelect_ReturnStatus status)
 {
@@ -63,12 +84,11 @@ ImportResult finish(const TopoDS_Shape& shape, FileFormat format, const std::str
 }
 
 /// Runs an OCCT reader, converting OCCT exceptions into ImportError.
-template <typename F>
-ImportResult guarded(FileFormat format, const std::filesystem::path& path, F&& body)
+template <typename F> ImportResult guarded(FileFormat format, const std::filesystem::path& path, F&& body)
 {
     const std::string name = detail::pathToUtf8(path);
     try {
-        const std::lock_guard<std::mutex> lock(occtMutex());
+        const std::lock_guard<std::mutex> lock(detail::occtMutex());
         return body(name);
     } catch (const ImportError&) {
         throw;
