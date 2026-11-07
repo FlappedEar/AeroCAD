@@ -166,3 +166,65 @@ TEST_CASE("document.export skips sketches and construction planes", "[commands][
     CHECK(r.data.at("ids").size() == 1);
     CHECK(r.data.at("triangles") == 12);
 }
+
+TEST_CASE("document.export_check explains what blocks or weakens an export", "[commands][export]")
+{
+    commands::Session s;
+    REQUIRE(s.execute("feature.box", {{"size", {20, 10, 4}}}).ok);
+    const auto box = s.document().parts().back().id;
+
+    SECTION("a solid box is ready for every format")
+    {
+        for (const char* format : {"stl", "3mf", "step"}) {
+            const auto r = s.execute("document.export_check", {{"ids", {box}}, {"format", format}});
+            REQUIRE(r.ok);
+            CHECK(r.data.at("passed") == true);
+            CHECK(r.data.at("canExport") == true);
+            const Json& part = r.data.at("parts").at(0);
+            CHECK(part.at("status") == "ok");
+            CHECK(part.at("watertight") == true);
+            CHECK(part.at("validBrep") == true);
+            CHECK(part.at("minWall").at("thinnest").get<double>() == Approx(4.0).margin(0.01));
+            CHECK(part.at("minWall").at("thinAreaPercent").get<double>() == Approx(0.0));
+        }
+    }
+
+    SECTION("walls thinner than the limit are a warning with the place and share")
+    {
+        const auto r = s.execute("document.export_check", {{"ids", {box}}, {"minWall", 5.0}});
+        REQUIRE(r.ok);
+        CHECK(r.data.at("passed") == false);
+        CHECK(r.data.at("canExport") == true);
+        const Json& part = r.data.at("parts").at(0);
+        CHECK(part.at("status") == "warning");
+        REQUIRE(part.at("warnings").size() == 1);
+        CHECK_THAT(part.at("warnings").at(0).get<std::string>(), ContainsSubstring("thinner than 5.00 mm"));
+        // Every face but the two 20 x 10 ones is less than 5 mm through.
+        CHECK(part.at("minWall").at("thinAreaPercent").get<double>() > 50.0);
+
+        const auto off = s.execute("document.export_check", {{"ids", {box}}, {"minWall", 0}});
+        REQUIRE(off.ok);
+        CHECK(off.data.at("passed") == true);
+        CHECK_FALSE(off.data.at("parts").at(0).contains("minWall"));
+    }
+
+    SECTION("an open mesh cannot be printed; a mesh cannot be STEP")
+    {
+        const auto open = addMeshPart(s, "open", false, 50.0);
+        auto r = s.execute("document.export_check", {{"ids", {open}}, {"format", "stl"}});
+        REQUIRE(r.ok);
+        CHECK(r.data.at("canExport") == false);
+        CHECK(r.data.at("errors") == 1);
+        const Json& part = r.data.at("parts").at(0);
+        CHECK(part.at("status") == "error");
+        CHECK_THAT(part.at("errors").at(0).get<std::string>(), ContainsSubstring("3 open edges"));
+        CHECK_FALSE(part.contains("minWall"));
+
+        const auto closed = addMeshPart(s, "closed", true, 80.0);
+        r = s.execute("document.export_check", {{"ids", {closed}}, {"format", "step"}});
+        REQUIRE(r.ok);
+        CHECK(r.data.at("canExport") == false);
+        CHECK_THAT(r.data.at("parts").at(0).at("errors").at(0).get<std::string>(),
+                   ContainsSubstring("STEP needs exact geometry"));
+    }
+}

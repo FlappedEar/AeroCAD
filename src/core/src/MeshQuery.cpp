@@ -345,11 +345,10 @@ std::vector<double> signedVertexDistances(const TriangleMesh& measured, const Me
     return out;
 }
 
-std::vector<double> vertexThickness(const MeshBvh& bvh, double maxThickness)
+std::vector<double> triangleThickness(const MeshBvh& bvh, double maxThickness)
 {
     // Rays start at triangle centres along the inward face normal (vertex normals are
-    // skewed at sharp edges); a vertex takes the thinnest value of its triangles, which is
-    // what a thickness check looks for.
+    // skewed at sharp edges).
     const TriangleMesh& mesh = bvh.mesh();
     const auto& verts = mesh.vertices();
     const auto& tris = mesh.triangles();
@@ -366,7 +365,17 @@ std::vector<double> vertexThickness(const MeshBvh& bvh, double maxThickness)
         if (hit)
             perTriangle[i] = hit->t + eps;
     });
-    std::vector<double> out(verts.size(), kNaN);
+    return perTriangle;
+}
+
+std::vector<double> vertexThickness(const MeshBvh& bvh, double maxThickness)
+{
+    // A vertex takes the thinnest value of its triangles, which is what a thickness check
+    // looks for.
+    const TriangleMesh& mesh = bvh.mesh();
+    const auto& tris = mesh.triangles();
+    const std::vector<double> perTriangle = triangleThickness(bvh, maxThickness);
+    std::vector<double> out(mesh.vertices().size(), kNaN);
     for (std::size_t i = 0; i < tris.size(); ++i) {
         if (!std::isfinite(perTriangle[i]))
             continue;

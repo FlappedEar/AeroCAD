@@ -3,16 +3,21 @@
 #include "ExportCommands.hpp"
 
 #include "aerocad/core/MeshCheck.hpp"
+#include "aerocad/core/MeshQuery.hpp"
 #include "aerocad/core/Path.hpp"
+#include "aerocad/geometry/Modeling.hpp"
 #include "aerocad/geometry/Tessellation.hpp"
 #include "aerocad/io/Export.hpp"
 #include "aerocad/model/Document.hpp"
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
+#include <cstdio>
 #include <deque>
 #include <filesystem>
 #include <string>
+#include <memory>
 #include <unordered_set>
 #include <vector>
 
@@ -105,6 +110,177 @@ std::vector<const model::Part*> selectParts(const model::Document& doc, const Js
     return parts;
 }
 
+
+/// Parts for print export: the listed ids, or every visible solid with exact geometry
+/// (not scans or surfaces).
+std::vector<const model::Part*> selectPrintParts(const model::Document& doc, const Json& params)
+{
+    if (params.contains("ids"))
+        return selectParts(doc, params);
+    std::vector<const model::Part*> parts;
+    for (const auto& p : doc.parts())
+        if (p.visible && p.shape && !p.shape->isNull() && p.mesh && core::checkMesh(core::weldVertices(*p.mesh)).closed())
+            parts.push_back(&p);
+    if (parts.empty())
+        throw CommandError("No visible solid parts to export");
+    return parts;
+}
+
+/// Default minimum wall thickness for printing (mm): two perimeters of a 0.4 mm FDM nozzle.
+constexpr double kDefaultMinWall = 0.8;
+
+std::string mm(double value)
+{
+    char buffer[32];
+    std::snprintf(buffer, sizeof buffer, "%.2f", value);
+    return buffer;
+}
+
+/// Thin walls of a closed mesh: the thinnest wall, where it is, and the share of the
+/// surface thinner than `limit`.
+struct WallReport {
+    bool measured = false;
+    double thinnest = 0.0;
+    core::Vec3 at;
+    double thinAreaPercent = 0.0;
+};
+
+WallReport measureWalls(const core::TriangleMesh& welded, double limit)
+{
+    WallReport w;
+    auto shared = std::make_shared<const core::TriangleMesh>(welded);
+    const core::MeshBvh bvh(shared);
+    const std::vector<double> t = core::triangleThickness(bvh);
+    const auto& verts = welded.vertices();
+    const auto& tris = welded.triangles();
+    double total = 0.0;
+    double thin = 0.0;
+    for (std::size_t i = 0; i < tris.size(); ++i) {
+        const core::Vec3& a = verts[tris[i][0]];
+        const core::Vec3& b = verts[tris[i][1]];
+        const core::Vec3& c = verts[tris[i][2]];
+        const double area = 0.5 * (b - a).cross(c - a).length();
+        total += area;
+        if (!std::isfinite(t[i]))
+            continue;
+        if (!w.measured || t[i] < w.thinnest) {
+            w.measured = true;
+            w.thinnest = t[i];
+            w.at = (a + b + c) * (1.0 / 3.0);
+        }
+        if (t[i] < limit)
+            thin += area;
+    }
+    if (total > 0.0)
+        w.thinAreaPercent = 100.0 * thin / total;
+    return w;
+}
+
+double round3(double v)
+{
+    return std::round(v * 1000.0) / 1000.0;
+}
+
+/// Checks parts before they are written (see document.export_check). `format` decides what
+/// is an error: STL / 3MF need a watertight mesh, STEP needs exact geometry.
+Json exportCheck(const std::vector<const model::Part*>& parts, io::FileFormat format, double minWall, bool print = false)
+{
+    Json results = Json::array();
+    std::size_t errors = 0;
+    std::size_t warnings = 0;
+    std::deque<core::TriangleMesh> meshes;
+    const bool step = format == io::FileFormat::Step;
+    for (const model::Part* p : parts) {
+        Json errorList = Json::array();
+        Json warningList = Json::array();
+        const bool exact = p->shape && !p->shape->isNull();
+        Json r{{"id", p->id}, {"name", p->name}, {"exact", exact}};
+
+        if (print && !exact)
+            warningList.push_back("Mesh only, so only the STL file is written (no STEP).");
+        if (step && !exact)
+            errorList.push_back("Mesh only, STEP needs exact geometry. Export it as STL or 3MF, "
+                                "or turn it into a body first (Mesh to BRep).");
+        if (exact) {
+            const bool valid = geometry::isValid(*p->shape);
+            r["validBrep"] = valid;
+            if (!valid)
+                warningList.push_back("The exact geometry has defects (B-rep check failed); "
+                                      "other CAD programs may not open it cleanly.");
+        }
+
+        if (const core::TriangleMesh* mesh = fileMesh(*p, meshes); mesh != nullptr) {
+            const core::TriangleMesh welded = core::weldVertices(*mesh);
+            const core::MeshCheck c = core::checkMesh(welded);
+            r["watertight"] = c.watertight();
+            r["closed"] = c.closed();
+            r["manifold"] = c.manifold();
+            r["oriented"] = c.oriented();
+            r["shells"] = c.shells;
+            r["volume"] = c.closed() ? Json(round3(c.signedVolume)) : Json(nullptr);
+            if (!c.closed()) {
+                // An open surface: fine as STEP geometry, but not a printable solid.
+                const std::string msg = c.boundaryEdges > 0
+                                            ? "Not closed: " + std::to_string(c.boundaryEdges) +
+                                                  " open edges, so it is a surface, not a solid. Slicers cannot print it."
+                                            : "Not a solid: " + std::to_string(c.nonManifoldEdges) +
+                                                  " edges are shared by more than two faces.";
+                (step ? warningList : errorList).push_back(msg);
+            } else if (!c.watertight()) {
+                for (const auto& problem : c.problems())
+                    (step ? warningList : errorList).push_back(problem);
+            }
+            if (c.closed() && minWall > 0.0) {
+                const WallReport w = measureWalls(welded, minWall);
+                if (w.measured) {
+                    r["minWall"] = Json{{"thinnest", round3(w.thinnest)},
+                                        {"at", {round3(w.at.x), round3(w.at.y), round3(w.at.z)}},
+                                        {"thinAreaPercent", round3(w.thinAreaPercent)},
+                                        {"limit", minWall}};
+                    if (w.thinnest < minWall) {
+                        char share[32];
+                        std::snprintf(share, sizeof share, "%.1f", std::max(w.thinAreaPercent, 0.1));
+                        warningList.push_back("Walls thinner than " + mm(minWall) + " mm on " + share +
+                                              " % of the surface (thinnest " + mm(w.thinnest) + " mm at " +
+                                              mm(w.at.x) + ", " + mm(w.at.y) + ", " + mm(w.at.z) +
+                                              "). They may not print.");
+                    }
+                }
+            }
+        } else if (!step) {
+            errorList.push_back("Nothing to write: the part has no mesh.");
+        }
+
+        errors += errorList.size();
+        warnings += warningList.size();
+        r["status"] = !errorList.empty() ? "error" : !warningList.empty() ? "warning" : "ok";
+        r["errors"] = std::move(errorList);
+        r["warnings"] = std::move(warningList);
+        results.push_back(std::move(r));
+    }
+    std::string summary;
+    if (errors == 0 && warnings == 0)
+        summary = parts.size() == 1 ? "Ready to export." : "All " + std::to_string(parts.size()) + " parts are ready to export.";
+    else {
+        auto count = [](std::size_t n, const char* one, const char* many) {
+            return std::to_string(n) + " " + (n == 1 ? one : many);
+        };
+        if (errors > 0)
+            summary = count(errors, "problem", "problems");
+        if (warnings > 0)
+            summary += (summary.empty() ? "" : " and ") + count(warnings, "warning", "warnings");
+        summary += " in " + count(parts.size(), "part.", "parts.");
+    }
+    return Json{{"passed", errors == 0 && warnings == 0},
+                {"canExport", errors == 0},
+                {"format", std::string(io::formatName(format))},
+                {"minWall", minWall},
+                {"errors", errors},
+                {"warnings", warnings},
+                {"summary", summary},
+                {"parts", std::move(results)}};
+}
+
 void registerCheck(CommandRegistry& r)
 {
     r.add(
@@ -123,6 +299,39 @@ void registerCheck(CommandRegistry& r)
             out["name"] = p.name;
             return out;
         });
+
+    r.add({"document.export_check", "Check before export",
+           "Checks parts before they are written to STL, 3MF or STEP and explains what is wrong: watertight "
+           "and manifold mesh (STL/3MF need a closed solid), exact geometry present and valid (STEP), and "
+           "walls thinner than minWall for 3D printing (thinnest wall, where, share of the surface). "
+           "status per part: ok, warning (can be exported, but check it) or error (the export would fail or "
+           "the file is not printable). Writes nothing.",
+           objectSchema(
+               {{"format",
+                 {{"type", "string"},
+                  {"enum", {"stl", "3mf", "step"}},
+                  {"description", "Target format. Default stl."}}},
+                {"ids",
+                 {{"type", "array"},
+                  {"items", {{"type", "integer"}, {"minimum", 1}}},
+                  {"minItems", 1},
+                  {"description", "Parts to check; defaults to all visible bodies and imported parts, as document.export."}}},
+                {"minWall",
+                 {{"type", "number"},
+                  {"minimum", 0},
+                  {"description", "Minimum wall thickness for printing, mm. Default 0.8; 0 skips the wall check."}}},
+                {"print",
+                 {{"type", "boolean"},
+                  {"description", "Check for document.export_for_print: the same default parts (visible solids), STL rules."}}}})},
+          [](CommandContext& ctx, const Json& params) {
+              const bool print = params.value("print", false);
+              io::FileFormat format = io::FileFormat::Stl;
+              if (params.contains("format") && !print)
+                  format = parseFormat(params, {});
+              const auto parts = print ? selectPrintParts(ctx.document, params) : selectParts(ctx.document, params);
+              return exportCheck(parts, format, params.value("minWall", kDefaultMinWall), print);
+          });
+
 }
 
 void registerExport(CommandRegistry& r)
@@ -255,17 +464,7 @@ void registerExportForPrint(CommandRegistry& r)
                       step = step || f == "step";
                   }
               }
-              std::vector<const model::Part*> parts;
-              if (params.contains("ids")) {
-                  parts = selectParts(ctx.document, params);
-              } else {
-                  for (const auto& p : ctx.document.parts())
-                      if (p.visible && p.shape && !p.shape->isNull() && p.mesh &&
-                          core::checkMesh(core::weldVertices(*p.mesh)).closed())
-                          parts.push_back(&p);
-                  if (parts.empty())
-                      throw CommandError("No visible solid parts to export");
-              }
+              const std::vector<const model::Part*> parts = selectPrintParts(ctx.document, params);
 
               // Check everything before writing anything.
               struct Planned {
