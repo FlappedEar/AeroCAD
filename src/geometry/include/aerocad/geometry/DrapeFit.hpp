@@ -71,4 +71,10 @@ struct DrapedPart {
                                     const std::vector<Shape>& outlines, double thickness, ThickenSide side,
                                     const DrapeFitOptions& options = {});
 
+/// Just the skin of the scan over the area's rectangle, as one B-spline face (a height field
+/// over the area, the first surface met from outside, holes bridged), e.g. to cut the root of
+/// a fin standing on the scan. Throws SurfaceFitError when the scan is not under the area.
+[[nodiscard]] Shape skinOnScan(const core::MeshProjector& scan, const DrapeArea& area,
+                               DrapeFitReport* report = nullptr, const DrapeFitOptions& options = {});
+
 } // namespace aerocad::geometry
