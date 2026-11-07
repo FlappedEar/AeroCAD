@@ -120,8 +120,8 @@ ApplicationWindow {
         if (!selectedPartId)
             return
         const info = controller.partInfo(selectedPartId)
-        // Bodies and sketches come from the timeline: delete the feature that made them.
-        if (info.kind === "body" || info.kind === "sketch")
+        // Bodies, sketches and planes come from the timeline: delete the feature that made them.
+        if (info.kind === "body" || info.kind === "sketch" || info.kind === "plane")
             controller.execute("feature.delete", { id: info.featureId })
         else
             controller.execute("part.remove", { id: selectedPartId })
@@ -581,6 +581,12 @@ ApplicationWindow {
     Action { id: chamferAction; text: qsTr("C&hamfer"); onTriggered: window.openFeature("chamfer") }
     Action { id: shellAction; text: qsTr("S&hell"); onTriggered: window.openFeature("shell") }
     Action { id: combineAction; text: qsTr("Co&mbine"); onTriggered: window.openFeature("combine") }
+    Action { id: planeAction; text: qsTr("Construction &Plane"); enabled: !window.activeSketch; onTriggered: window.openFeature("plane") }
+    Action { id: loftAction; text: qsTr("&Loft"); enabled: !window.activeSketch; onTriggered: window.openFeature("loft") }
+    Action { id: sweepAction; text: qsTr("S&weep"); enabled: !window.activeSketch; onTriggered: window.openFeature("sweep") }
+    Action { id: mirrorAction; text: qsTr("M&irror"); enabled: !window.activeSketch; onTriggered: window.openFeature("mirror") }
+    Action { id: rectPatternAction; text: qsTr("&Rectangular Pattern"); enabled: !window.activeSketch; onTriggered: window.openFeature("rectangular_pattern") }
+    Action { id: circPatternAction; text: qsTr("C&ircular Pattern"); enabled: !window.activeSketch; onTriggered: window.openFeature("circular_pattern") }
     Action {
         id: convertAction
         text: qsTr("Convert to &Body")
@@ -686,9 +692,22 @@ ApplicationWindow {
             MenuSeparator {}
             MenuItem { action: extrudeAction }
             MenuItem { action: revolveAction }
+            MenuItem { action: sweepAction }
+            MenuItem { action: loftAction }
             MenuItem { action: boxAction }
             MenuItem { action: cylinderAction }
             MenuItem { action: holeAction }
+            MenuSeparator {}
+            MenuItem { action: mirrorAction }
+            Menu {
+                title: qsTr("&Pattern")
+                MenuItem { action: rectPatternAction }
+                MenuItem { action: circPatternAction }
+            }
+        }
+        Menu {
+            title: qsTr("C&onstruct")
+            MenuItem { action: planeAction }
         }
         Menu {
             title: qsTr("&Modify")
@@ -903,6 +922,12 @@ ApplicationWindow {
                 ToolCommand { action: holeAction; text: qsTr("Hole"); iconName: "hole" }
                 ToolCommand { action: boxAction; text: qsTr("Box"); iconName: "box" }
                 ToolCommand { action: cylinderAction; text: qsTr("Cylinder"); iconName: "cylinder" }
+                ToolCommand { action: sweepAction; text: qsTr("Sweep"); iconName: "sweep" }
+                ToolCommand { action: loftAction; text: qsTr("Loft"); iconName: "loft" }
+                ToolCommand { action: mirrorAction; text: qsTr("Mirror"); iconName: "mirror" }
+                ToolCommand { action: rectPatternAction; text: qsTr("Pattern"); iconName: "pattern" }
+                ToolCommand { action: circPatternAction; text: qsTr("Circular Pattern"); iconName: "circular-pattern" }
+                ToolCommand { action: planeAction; text: qsTr("Plane"); iconName: "plane" }
             }
             ToolSeparator {}
             ToolGroup {
@@ -1027,6 +1052,7 @@ ApplicationWindow {
             markers: featureDialog.visible ? featureDialog.pickedPoints : []
             pickKind: featureDialog.visible ? featureDialog.pickKind : ""
             shownSketch: featureDialog.shownSketch
+            unpickablePlane: featureDialog.visible ? featureDialog.ownPlane : -1
             onPartPicked: id => {
                 window.selectPart(id)
                 // A click through a hole of a scan, or next to the model, while choosing where to sketch.
@@ -1045,6 +1071,8 @@ ApplicationWindow {
                     const at = [point.x, point.y, point.z]
                     if (info.kind === "body")
                         window.createSketch({ face: { body: info.featureId, point: at } })
+                    else if (info.kind === "plane")
+                        window.createSketch({ plane: { plane: info.featureId } })
                     else if (info.kind === "imported")
                         // A fitted surface or a scan: sketch over its best-fit plane, then
                         // trim the surface with the outline (Properties > Surface).

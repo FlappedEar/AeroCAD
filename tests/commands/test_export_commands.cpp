@@ -150,3 +150,19 @@ TEST_CASE("document.export parameter errors", "[commands][export]")
     CHECK_FALSE(s.execute("document.export", {{"path", dir.file("x.stl")}, {"ids", Json::array()}}).ok);
     CHECK_FALSE(s.execute("document.export", {{"path", dir.file("x.stl")}, {"ids", {42}}}).ok);
 }
+
+TEST_CASE("document.export skips sketches and construction planes", "[commands][export]")
+{
+    TempDir dir;
+    commands::Session s;
+    REQUIRE(s.execute("feature.box", {{"size", {10, 10, 10}}}).ok);
+    REQUIRE(s.execute("feature.plane", {{"base", "XY"}, {"offset", 20}}).ok);
+    REQUIRE(s.execute("sketch.create",
+                      {{"plane", "XY"},
+                       {"curves", Json::array({{{"type", "circle"}, {"center", {30, 0}}, {"radius", 3}}})}})
+                .ok);
+    const auto r = s.execute("document.export", {{"path", dir.file("bodies.stl")}});
+    REQUIRE(r.ok);
+    CHECK(r.data.at("ids").size() == 1);
+    CHECK(r.data.at("triangles") == 12);
+}

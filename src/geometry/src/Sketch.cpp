@@ -293,6 +293,23 @@ SketchGeometry buildSketch(const Plane& planeIn, const std::vector<SketchCurve>&
     return out;
 }
 
+Shape curveEdges(const Plane& planeIn, const std::vector<SketchCurve>& curves)
+{
+    const Plane plane = planeIn.normalized();
+    BRep_Builder builder;
+    TopoDS_Compound comp;
+    builder.MakeCompound(comp);
+    if (curves.empty())
+        throw ModelingError("No curves given");
+    try {
+        for (const auto& c : curves)
+            builder.Add(comp, makeEdge(plane, c));
+    } catch (const Standard_Failure& e) {
+        throw ModelingError(std::string("Sketch curve: ") + e.GetMessageString());
+    }
+    return wrapShape(comp);
+}
+
 double area(const Shape& shape)
 {
     if (shape.isNull())

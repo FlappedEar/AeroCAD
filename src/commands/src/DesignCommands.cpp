@@ -159,8 +159,8 @@ Json planeSchema()
     return Json{{"type", Json::array({"string", "object"})},
                 {"description",
                  "Sketch plane: \"XY\" (top, normal +Z), \"XZ\" (front, normal -Y), \"YZ\" (right, normal +X), "
-                 "the name of a reference frame (frame.list), or {origin: [x,y,z], normal: [x,y,z], "
-                 "xDir: [x,y,z]}. Z is up."}};
+                 "the name of a reference frame (frame.list), a construction plane {plane: id or name} "
+                 "(feature.plane), or {origin: [x,y,z], normal: [x,y,z], xDir: [x,y,z]}. Z is up."}};
 }
 
 Json faceRefSchema()
@@ -336,6 +336,10 @@ Json addedFeature(cad::Design& d, const model::Document& doc, cad::FeatureId id)
     if (auto it = d.sketches().find(id); it != d.sketches().end()) {
         j["profiles"] = it->second.geometry.profiles.size();
         j["degreesOfFreedom"] = it->second.degreesOfFreedom;
+    }
+    if (auto it = d.planes().find(id); it != d.planes().end()) {
+        const auto& pl = it->second.plane;
+        j["plane"] = {{"origin", vec(pl.origin)}, {"normal", vec(pl.normal)}, {"xDir", vec(pl.xDir)}};
     }
     return j;
 }
@@ -956,6 +960,93 @@ void registerFeatureCommands(CommandRegistry& r)
                 {"operation", operationSchema()},
                 {"bodies", bodiesSchema()}}),
         {"sketch"});
+
+    const Json patternOperation{{"type", "string"},
+                                {"enum", {"join", "new_body"}},
+                                {"description", "join (default): the copies are merged into the body; new_body: the "
+                                                "copies become one new body."}};
+    const Json directionSchema{{"type", Json::array({"string", "array"})},
+                               {"description", "\"X\", \"Y\", \"Z\" or [x, y, z]."}};
+
+    addFeatureCommand(r, "mirror", "Mirror",
+                      "Mirrors a body about a plane (Fusion: Create > Mirror).",
+                      {{"body", bodyRefSchema("Body to mirror.")},
+                       {"plane", {{"type", Json::array({"string", "object"})},
+                                  {"description", "\"XY\", \"XZ\", \"YZ\" (default), {origin, normal}, or a planar "
+                                                  "face {body, index | point}."}}},
+                       {"offset", numberOrExpr("Offset of the mirror plane along its normal (mm).")},
+                       {"operation", patternOperation}},
+                      {"body"});
+
+    addFeatureCommand(r, "rectangular_pattern", "Rectangular Pattern",
+                      "Copies a body in one or two directions (Fusion: Create > Pattern > Rectangular Pattern).",
+                      {{"body", bodyRefSchema("Body to pattern.")},
+                       {"direction", directionSchema},
+                       {"count", numberOrExpr("Number of instances in the first direction, including the body.")},
+                       {"spacing", numberOrExpr("Distance between instances (mm).")},
+                       {"direction2", directionSchema},
+                       {"count2", numberOrExpr("Number of instances in the second direction (default 1).")},
+                       {"spacing2", numberOrExpr("Distance in the second direction (mm).")},
+                       {"operation", patternOperation}},
+                      {"body", "count", "spacing"});
+
+    addFeatureCommand(r, "circular_pattern", "Circular Pattern",
+                      "Copies a body around an axis (Fusion: Create > Pattern > Circular Pattern). A full 360 degree "
+                      "angle spreads the instances evenly.",
+                      {{"body", bodyRefSchema("Body to pattern.")},
+                       {"axis", {{"type", Json::array({"string", "object"})},
+                                 {"description", "\"X\", \"Y\", \"Z\" (default) or {origin, direction}."}}},
+                       {"count", numberOrExpr("Number of instances, including the body.")},
+                       {"angle", numberOrExpr("Total angle in degrees, default 360.")},
+                       {"operation", patternOperation}},
+                      {"body", "count"});
+
+    addFeatureCommand(
+        r, "loft", "Loft",
+        "Lofts through closed profiles of two or more sketches, in order (Fusion: Create > Loft).",
+        {{"sections", {{"type", "array"},
+                       {"minItems", 2},
+                       {"items", {{"type", Json::array({"integer", "object"})}}},
+                       {"description", "Sketch ids, or {sketch, profile} to choose a profile (default 0)."}}},
+         {"solid", {{"type", "boolean"}, {"description", "Closed solid (default) or open surface."}}},
+         {"ruled", {{"type", "boolean"}, {"description", "Straight sections between profiles."}}},
+         {"operation", operationSchema()},
+         {"bodies", bodiesSchema()}},
+        {"sections"});
+
+    addFeatureCommand(
+        r, "sweep", "Sweep",
+        "Sweeps sketch profiles along a path made of sketch curves (Fusion: Create > Sweep). The path is usually "
+        "drawn in a sketch perpendicular to the profile.",
+        merged(profileSelection(),
+               {{"path", {{"type", "object"},
+                          {"description", "{sketch: id, curves: [indices]} (default: all curves of that sketch); "
+                                          "the curves must connect."},
+                          {"properties", {{"sketch", featureIdSchema("Path sketch.")},
+                                          {"curves", {{"type", "array"}, {"items", {{"type", "integer"}}}}}}},
+                          {"required", {"sketch"}}}},
+                {"operation", operationSchema()},
+                {"bodies", bodiesSchema()}}),
+        {"sketch", "path"});
+
+    {
+        const Json basePlane{{"type", Json::array({"string", "object"})},
+                             {"description", "\"XY\", \"XZ\", \"YZ\", a construction plane {plane: id or name}, "
+                                             "a planar face {body, point or index}, or {origin, normal, xDir}."}};
+        addFeatureCommand(
+            r, "plane", "Construction Plane",
+            "Creates a construction plane that sketches can be placed on (sketch.create plane {plane: id}). Fusion: "
+            "Construct > Offset Plane (base + offset), Plane at Angle (base + angle about its x or y axis), Midplane "
+            "(base + base2, parallel) and Plane Through Three Points (points).",
+            {{"base", basePlane},
+             {"offset", numberOrExpr("Offset along the plane normal (mm), applied after the angle.")},
+             {"angle", numberOrExpr("Rotation in degrees about the base plane's axis through its origin.")},
+             {"axis", {{"type", "string"}, {"enum", {"x", "y"}}, {"description", "Axis of the base plane for angle (default x)."}}},
+             {"base2", basePlane},
+             {"points", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", point3("Point.")},
+                         {"description", "Three points the plane passes through (instead of base)."}}}},
+            Json::array());
+    }
 
     addFeatureCommand(r, "fillet", "Fillet", "Rounds edges of a body with a constant radius (Fusion: Fillet, shortcut F).",
                       {{"body", bodyRefSchema("Body.")},
