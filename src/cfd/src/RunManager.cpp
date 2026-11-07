@@ -439,6 +439,7 @@ std::string containerName(const std::string& id) { return "aerocad-cfd-" + id; }
 /// restart, it only follows the container that is already there. Arguments: docker CLI,
 /// host, container name, image; working directory = the local case.
 constexpr const char* kRemoteScript = R"SH(
+set -o pipefail
 DK="$1"; H="$2"; N="$3"; IMG="$4"
 d() { "$DK" -H "$H" "$@"; }
 fetch() {
@@ -451,14 +452,34 @@ if ! d container inspect "$N" >/dev/null 2>&1; then
     d cp . "$N:/case" || { d rm -f "$N" >/dev/null 2>&1; exit 1; }
     d start "$N" >/dev/null || exit 1
 fi
-while [ "$(d container inspect -f '{{.State.Running}}' "$N" 2>/dev/null)" = true ]; do
-    fetch
+lost=0
+while :; do
+    if state=$(d container inspect -f '{{.State.Running}}' "$N" 2>&1); then
+        [ "$state" = true ] || break
+        [ "$lost" = 1 ] && echo "Connection to $H is back"
+        lost=0
+        fetch
+    elif [[ "$state" == *"No such container"* ]]; then
+        echo "The container $N is gone from $H"
+        exit 1
+    else
+        # SSH or Docker did not answer: the run goes on there, keep trying.
+        [ "$lost" = 0 ] && echo "No answer from $H, retrying: $state"
+        lost=1
+    fi
     sleep 10
 done
 code=$(d container inspect -f '{{.State.ExitCode}}' "$N" 2>/dev/null || echo 1)
-d cp "$N:/tmp/aerocad-results.tar" - | tar -xOf - | tar -xf - || fetch
-d rm "$N" >/dev/null 2>&1
-exit "$code"
+for _ in 1 2 3; do
+    if d cp "$N:/tmp/aerocad-results.tar" - | tar -xOf - | tar -xf -; then
+        d rm "$N" >/dev/null 2>&1
+        exit "$code"
+    fi
+    sleep 10
+done
+# Keep the only complete copy of the results; the next start of the app tries again.
+echo "Could not copy the results from $H: the container $N is kept there; restart the app to try again"
+exit 75
 )SH";
 
 std::vector<std::string> remoteArgv(const fs::path& docker, const std::string& host, const std::string& name)
