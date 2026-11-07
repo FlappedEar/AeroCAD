@@ -84,6 +84,13 @@ Dialog {
             onToggled: Preferences.invertOrbit = checked
         }
 
+        Item { width: 1; height: 1 }
+        CheckBox {
+            text: qsTr("Two-finger scroll on a touchpad pans (pinch zooms)")
+            checked: Preferences.touchpadScrollPans
+            onToggled: Preferences.touchpadScrollPans = checked
+        }
+
         Label { text: qsTr("Project"); font.bold: true; Layout.columnSpan: 2; Layout.topMargin: 6 }
 
         Label { text: qsTr("Autosave") }

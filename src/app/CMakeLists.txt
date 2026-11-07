@@ -132,4 +132,9 @@ if(AEROCAD_BUILD_TESTS)
     add_test(NAME app_combobox_popup_test
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/combobox_popup.ui)
     set_tests_properties(app_combobox_popup_test PROPERTIES LABELS gui TIMEOUT 60)
+    # Wheel zoom towards the pointer, right-drag orbit, right-click menus, touchpad, Move/Rotate.
+    add_test(NAME app_navigation_test
+        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl
+                --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/navigation.ui)
+    set_tests_properties(app_navigation_test PROPERTIES LABELS gui TIMEOUT 60)
 endif()

@@ -19,6 +19,7 @@
 #include <QJSValue>
 #include <QMouseEvent>
 #include <QPointer>
+#include <QPointingDevice>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQmlExpression>
@@ -92,15 +93,29 @@ public:
         release(x1, y1, button, mods);
     }
 
-    /// A touchpad scroll (pixel delta).
+    /// A touchpad scroll (pixel delta, from a touchpad device as macOS reports a trackpad
+    /// or Magic Mouse).
     Q_INVOKABLE void wheel(qreal x, qreal y, int dx, int dy, const QString& mods = "")
     {
-        Qt::KeyboardModifiers m;
-        if (mods.contains("shift"))
-            m |= Qt::ShiftModifier;
+        static const QPointingDevice touchpad(QStringLiteral("ui-script touchpad"), 0x75500001,
+                                              QInputDevice::DeviceType::TouchPad, QPointingDevice::PointerType::Finger,
+                                              QInputDevice::Capability::Position | QInputDevice::Capability::Scroll |
+                                                  QInputDevice::Capability::PixelScroll,
+                                              2, 0);
         const QPointF local(x, y);
-        QWheelEvent event(local, m_window->mapToGlobal(local), QPoint(dx, dy), QPoint(dx, dy), Qt::NoButton, m,
-                          Qt::ScrollUpdate, false);
+        QWheelEvent event(local, m_window->mapToGlobal(local), QPoint(dx, dy), QPoint(dx * 2, dy * 2), Qt::NoButton,
+                          modifiers(mods), Qt::ScrollUpdate, false, Qt::MouseEventSynthesizedBySystem, &touchpad);
+        QCoreApplication::sendEvent(m_window, &event);
+    }
+
+    /// A mouse wheel turned by `notches` (positive = away from the user). `pixels` > 0 adds
+    /// the pixel delta macOS reports for every mouse wheel, so scripts can check that it
+    /// still zooms there.
+    Q_INVOKABLE void mouseWheel(qreal x, qreal y, int notches, int pixels = 0, const QString& mods = "")
+    {
+        const QPointF local(x, y);
+        QWheelEvent event(local, m_window->mapToGlobal(local), QPoint(0, notches * pixels), QPoint(0, notches * 120),
+                          Qt::NoButton, modifiers(mods), Qt::NoScrollPhase, false);
         QCoreApplication::sendEvent(m_window, &event);
     }
 
@@ -135,15 +150,20 @@ private:
         return b == "middle" ? Qt::MiddleButton : b == "right" ? Qt::RightButton : Qt::LeftButton;
     }
 
-    void send(QEvent::Type type, qreal x, qreal y, Qt::MouseButton button, const QString& mods)
+    static Qt::KeyboardModifiers modifiers(const QString& mods)
     {
         Qt::KeyboardModifiers m;
         if (mods.contains("shift"))
             m |= Qt::ShiftModifier;
         if (mods.contains("ctrl"))
             m |= Qt::ControlModifier;
+        return m;
+    }
+
+    void send(QEvent::Type type, qreal x, qreal y, Qt::MouseButton button, const QString& mods)
+    {
         const QPointF local(x, y);
-        QMouseEvent event(type, local, local, m_window->mapToGlobal(local), button, m_buttons, m);
+        QMouseEvent event(type, local, local, m_window->mapToGlobal(local), button, m_buttons, modifiers(mods));
         QCoreApplication::sendEvent(m_window, &event);
     }
 

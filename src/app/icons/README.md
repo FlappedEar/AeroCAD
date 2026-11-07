@@ -17,6 +17,7 @@ From [Tabler Icons](https://github.com/tabler/tabler-icons) 3.19.0, MIT licence 
 | delete | trash |
 | home | home |
 | fit | zoom-scan |
+| move | arrows-move |
 | orbit, pan, zoom | rotate-360, hand-stop, zoom-in |
 | parameters | variable |
 | line, circle, polygon, rectangle, point | line, circle, hexagon, rectangle, point |

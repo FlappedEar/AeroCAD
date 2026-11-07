@@ -169,6 +169,7 @@ QtObject {
         "fillet": qsTr("Round the selected edges of a body."),
         "chamfer": qsTr("Bevel (cut off at an angle) the selected edges of a body."),
         "shell": qsTr("Hollow out a body, leaving walls of the thickness you type."),
+        "move/rotate": qsTr("Turn the selected part about an axis and move it by a distance (Fusion: Move/Copy, M)."),
         "combine": qsTr("Join, cut or intersect two bodies."),
         "parameters": qsTr("Named values (e.g. wall = 2 mm) that dimensions can use; change one to update the design."),
         "delete": qsTr("Delete the selected part. Undo brings it back."),
@@ -205,7 +206,7 @@ QtObject {
             hole: "hole", base_body: "mesh-to-body", sweep: "sweep", loft: "loft", mirror: "mirror",
             pattern: "pattern", rectangular_pattern: "pattern", circular_pattern: "circular-pattern",
             plane: "plane", body: "body", imported: "mesh", mesh: "mesh",
-            part_on_surface: "surface", fin_on_surface: "surface"
+            part_on_surface: "surface", fin_on_surface: "surface", move: "move"
         }
         return map[type] || "tool"
     }
