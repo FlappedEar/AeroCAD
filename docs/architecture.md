@@ -8,8 +8,9 @@ commands                      Named commands with JSON Schema parameters and JSO
   |                           server, so an AI agent can do everything the user can.
 project                       .aerocad files: versioned manifest, lossless meshes,
   |                           B-rep, atomic save (docs/project-format.md).
-cad                           Parametric timeline, parameters, frames, variants.
-  |
+cad     cfd                   cad: parametric timeline, parameters, frames, variants.
+  |                           cfd: wind tunnel (OpenFOAM case generation, background
+  |                           runs, results), see cfd.md.
 model                         Document (parts), undo stack, change notifications.
   |
 io        geometry            io: import (STL, OBJ, PLY, 3MF, STEP, IGES, BREP), export (STL, 3MF, STEP).

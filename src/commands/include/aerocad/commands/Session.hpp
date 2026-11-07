@@ -5,6 +5,7 @@
 #include "aerocad/commands/Project.hpp"
 #include "aerocad/commands/ImportStage.hpp"
 
+#include <memory>
 #include <optional>
 
 namespace aerocad::commands {
@@ -19,12 +20,15 @@ void registerDesignCommands(CommandRegistry& registry);
 void registerProjectCommands(CommandRegistry& registry);
 /// Registers the scan commands (mesh.*, part.align, part.calibrate, part.transform, ...).
 void registerScanCommands(CommandRegistry& registry);
+/// Registers the wind tunnel commands (simulation.*).
+void registerSimulationCommands(CommandRegistry& registry);
 
 /// One open project with its command registry: the single entry point used by the UI
 /// and (later) the MCP server.
 class Session {
 public:
     Session();
+    ~Session();
     Session(const Session&) = delete;
     Session& operator=(const Session&) = delete;
 
@@ -48,6 +52,8 @@ public:
     [[nodiscard]] const cad::Design& design() const { return m_design; }
     [[nodiscard]] ProjectState& project() { return m_project; }
     [[nodiscard]] const ProjectState& project() const { return m_project; }
+    /// Simulation runs; stored in cfd::RunManager::defaultRoot().
+    [[nodiscard]] cfd::RunManager& simulations() { return *m_simulations; }
     [[nodiscard]] CommandRegistry& registry() { return m_registry; }
     [[nodiscard]] const CommandRegistry& registry() const { return m_registry; }
     /// Files parsed ahead of time for document.import (see ImportStage).
@@ -60,6 +66,7 @@ private:
     ProjectState m_project;
     CommandRegistry m_registry;
     ImportStage m_importStage;
+    std::unique_ptr<cfd::RunManager> m_simulations;
     CommandContext m_context;
     /// History before the first preview; set while a preview change is applied.
     std::optional<model::UndoStack::Snapshot> m_previewBase;
