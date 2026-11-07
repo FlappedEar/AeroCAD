@@ -458,8 +458,10 @@ void writeFields(const fs::path& zero, const Settings& s)
                     "    outlet { type inletOutlet; inletValue uniform (0 0 0); value $internalField; }\n"
                     "    farfield { type slip; }\n"
                     "    walls { type noSlip; }\n";
-    if (ground)
+    if (ground && s.groundMoving)
         u += "    ground { type fixedValue; value $internalField; }\n"; // Floor moving with the air.
+    else if (ground)
+        u += "    ground { type noSlip; }\n"; // Fixed tunnel floor.
     field("volVectorField", "U", "[0 1 -1 0 0 0 0]", "uniform $flowVelocity", u);
 
     std::string p = "    inlet { type zeroGradient; }\n"
@@ -558,7 +560,13 @@ CaseInfo planCase(const CaseGeometry& geometry, const Settings& s)
     // cells are cubes; the far bounds are snapped to whole cells.
     const double h = L / meshPlan(s.mesh).cellsPerLength;
     BoundingBox d;
-    d.min = {all.min.x - 3.0 * L, all.min.y - 2.5 * L, s.ground ? all.min.z - 0.02 * L : all.min.z - 2.5 * L};
+    double floor = all.min.z - 0.02 * L;
+    if (s.ground && s.groundHeight) {
+        floor = info.frame.toCase({0.0, 0.0, *s.groundHeight}).z; // Rotation is about Z only.
+        if (floor > info.partBounds.min.z + 1e-9)
+            throw std::runtime_error("groundHeight is above the lowest point of the part");
+    }
+    d.min = {all.min.x - 3.0 * L, all.min.y - 2.5 * L, s.ground ? floor : all.min.z - 2.5 * L};
     d.max = {all.max.x + 8.0 * L, all.max.y + 2.5 * L, all.max.z + 2.5 * L};
     const Vec3 ds = d.size();
     auto cellsAlong = [h](double length) { return std::max(1, static_cast<int>(std::ceil(length / h - 1e-9))); };

@@ -592,7 +592,7 @@ Pane {
                             return ""
                         return qsTr("%1 m/s, flow %2, %3 mesh%4 · Aref %5 cm² · OpenFOAM %6 · mean of the last 20 % of %7 iterations")
                             .arg(c.settings.speed).arg(c.settings.flowDirection).arg(c.settings.mesh)
-                            .arg(c.settings.ground ? qsTr(", moving floor") : "")
+                            .arg(!c.settings.ground ? "" : c.settings.groundMoving === false ? qsTr(", fixed floor") : qsTr(", moving floor"))
                             .arg(root.num(c.referenceArea * 1e4, 1)).arg(c.openfoam)
                             .arg(root.results.summary.iterations)
                     }

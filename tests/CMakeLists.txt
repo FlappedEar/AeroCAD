@@ -68,6 +68,13 @@ aerocad_add_test(test_cfd
 add_test(NAME cfd_openfoam_wind_tunnel COMMAND test_cfd "[openfoam]")
 set_tests_properties(cfd_openfoam_wind_tunnel PROPERTIES LABELS openfoam TIMEOUT 1500 SKIP_RETURN_CODE 4)
 
+aerocad_add_test(test_cfd_validation
+    SOURCES cfd/test_cfd_validation.cpp
+    LIBS AeroCAD::cfd AeroCAD::geometry)
+# Ahmed body against experiments (docs/cfd-validation.md). Hours on a laptop; not in CI.
+add_test(NAME cfd_validation_ahmed COMMAND test_cfd_validation "[validation]")
+set_tests_properties(cfd_validation_ahmed PROPERTIES LABELS "openfoam;validation" TIMEOUT 43200 SKIP_RETURN_CODE 4)
+
 aerocad_add_test(test_e2e
     SOURCES e2e/test_workflow.cpp
     LIBS AeroCAD::commands)
