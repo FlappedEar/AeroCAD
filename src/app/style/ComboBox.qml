@@ -22,14 +22,16 @@ T.ComboBox {
     delegate: T.ItemDelegate {
         id: item
         required property int index
-        required property var modelData
         width: ListView.view.width
         implicitHeight: Theme.controlHeight
         leftPadding: Theme.space2
         rightPadding: Theme.space2
         highlighted: control.highlightedIndex === index
         hoverEnabled: control.hoverEnabled
-        text: control.textRole ? (Array.isArray(control.model) ? modelData[control.textRole] : (model[control.textRole] ?? modelData)) : modelData
+        // textAt() resolves textRole for every model kind (string list, object list,
+        // C++ list of maps, ListModel). The old Array.isArray(control.model) check is
+        // false on newer Qt for a JS object list, which left every row empty.
+        text: control.textAt(index)
         contentItem: Text {
             text: item.text
             font.pixelSize: Theme.fontBody
