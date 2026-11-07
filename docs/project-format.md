@@ -81,6 +81,12 @@ file untouched; a failed save removes the temporary file.
 All modifying commands are undoable, including variant switches (undo walks back through
 switches and the edits made in each variant).
 
+In the desktop app, replacing the project or changing the active variant closes feature
+and sketch editors and clears picks and tool panels tied to the previous context. This
+also applies to commands from MCP, command scripts and Undo/Redo. A failed open keeps the
+current editing context. Opening a project restores its saved camera; variant switches
+keep the current camera.
+
 ## Variants (A/B)
 
 A variant is an alternative version of the design timeline (features, parameters,

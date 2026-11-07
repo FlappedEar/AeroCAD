@@ -275,8 +275,14 @@ Item {
                  distance: cameraInput.distance, orthographic: orthographic }
     }
 
+    /// Old-context sketch/view animations must not keep moving the current camera.
+    function stopCameraAnimation() {
+        cameraInput.stopAnimation()
+    }
+
     /// Restores cameraState() output; frames everything when `state` has no camera.
     function restoreCameraState(state) {
+        stopCameraAnimation()
         if (!state || typeof state.distance !== "number" || !state.pivot || state.pivot.length !== 3) {
             fitAll()
             return

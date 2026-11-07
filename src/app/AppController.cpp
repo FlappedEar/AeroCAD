@@ -255,7 +255,18 @@ QVariantMap AppController::execute(const QString& name, const QVariantMap& param
 commands::CommandResult AppController::executeCommand(const std::string& name, const commands::Json& params)
 {
     const bool hadPreview = m_session.previewActive();
+    const auto generation = m_session.project().generation;
+    const auto activeVariant = m_session.project().variants.active();
     const commands::CommandResult result = m_session.execute(name, params);
+    const bool projectReplaced = m_session.project().generation != generation;
+    if (projectReplaced || m_session.project().variants.active() != activeVariant) {
+        // A command can replace the editing context through MCP, a script, or Undo/Redo,
+        // without using the File/Variant menu wrappers. Close stale editors before the
+        // history notification can schedule their previews against the new context.
+        emit editingContextChanged();
+        if (projectReplaced)
+            emit projectOpened(toVariant(m_session.project().view).toMap());
+    }
     const auto* info = m_session.registry().info(name);
     // A command that ended a live preview (e.g. project.save) also changed the document
     // back; the feature dialog rebuilds its preview on historyChanged.
@@ -321,6 +332,7 @@ bool AppController::runScript(const QString& path)
         return false;
     }
     bool ok = true;
+    bool fitView = false;
     for (const auto& step : script) {
         if (!step.is_object() || !step.contains("name") || !step["name"].is_string()) {
             setStatusMessage(tr("Script step is not an object with a string \"name\": %1")
@@ -329,17 +341,25 @@ bool AppController::runScript(const QString& path)
             break;
         }
         const std::string name = step["name"].get<std::string>();
-        const commands::CommandResult r = m_session.execute(name, step.value("params", commands::Json::object()));
+        const auto generation = m_session.project().generation;
+        const auto activeVariant = m_session.project().variants.active();
+        const commands::CommandResult r = executeCommand(name, step.value("params", commands::Json::object()));
         if (!r.ok) {
             setStatusMessage(tr("Script step %1 failed: %2")
                                  .arg(QString::fromStdString(name), QString::fromStdString(r.error)));
             ok = false;
             break;
         }
+        if (m_session.project().generation != generation || m_session.project().variants.active() != activeVariant) {
+            // Open already restored its camera; variant switches keep the existing one.
+            fitView = false;
+        } else if (const auto* info = m_session.registry().info(name); info != nullptr && info->modifiesDocument) {
+            fitView = true;
+        }
     }
     emit historyChanged();
     emit projectChanged();
-    emit scriptFinished();
+    emit scriptFinished(fitView);
     return ok;
 }
 
@@ -437,8 +457,6 @@ bool AppController::openProject(const QString& path, bool recover)
         setStatusMessage(errors == 0 ? tr("Opened %1").arg(file)
                                      : tr("Opened %1 (%2 features with errors)").arg(file).arg(errors));
     }
-    emit historyChanged();
-    emit projectOpened(data.value(QStringLiteral("view")).toMap());
     return true;
 }
 
@@ -450,8 +468,6 @@ void AppController::newProject()
         return;
     removeAutosave(previousAutosave);
     setStatusMessage(tr("New design"));
-    emit historyChanged();
-    emit projectOpened({});
 }
 
 bool AppController::saveProject(const QVariantMap& view)
