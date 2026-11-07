@@ -153,7 +153,14 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/tetrahedron.stl
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/drop_project_unsaved.ui
         WORKING_DIRECTORY ${_drop})
-    set_tests_properties(app_drop_project_unsaved_test PROPERTIES LABELS gui TIMEOUT 90 FIXTURES_REQUIRED gui_drop
+    set_tests_properties(app_drop_project_unsaved_test PROPERTIES LABELS gui TIMEOUT 90 FIXTURES_REQUIRED gui_drop RESOURCE_LOCK gui_drop_dir
+        ENVIRONMENT "XDG_DATA_HOME=${_drop}/data;XDG_CONFIG_HOME=${_drop}/data")
+    # CAD-80: imports queued before New / Open are discarded and keep their import units.
+    add_test(NAME app_import_after_project_replaced_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/import_after_project_replaced.ui
+        WORKING_DIRECTORY ${_drop})
+    set_tests_properties(app_import_after_project_replaced_test PROPERTIES LABELS gui TIMEOUT 90
+        FIXTURES_REQUIRED gui_drop RESOURCE_LOCK gui_drop_dir
         ENVIRONMENT "XDG_DATA_HOME=${_drop}/data;XDG_CONFIG_HOME=${_drop}/data")
     # Wheel zoom towards the pointer, right-drag orbit, right-click menus, touchpad, Move/Rotate.
     add_test(NAME app_navigation_test
