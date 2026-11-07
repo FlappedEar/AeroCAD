@@ -35,6 +35,12 @@ public:
 
     void clear();
 
+    /// Joins the last `count` applied entries into one step called `label` (a dialog that
+    /// ran a helper command on the way, such as making a solid editable before a fillet).
+    /// Redo entries are dropped. Returns false (and changes nothing) when fewer than `count`
+    /// entries are applied or count < 2.
+    bool mergeLast(std::size_t count, std::string label);
+
     /// The stack's entries and position, without applying anything. Used to make a
     /// temporary change (a dialog preview) and then put the history back exactly as it was,
     /// redo entries included.

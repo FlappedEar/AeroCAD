@@ -239,6 +239,8 @@ ApplicationWindow {
     /// Opens a feature dialog, pre-filled from the selection (Fusion: select, then press E).
     function openFeature(type) {
         closeToolPanels()
+        if (featureDialog.visible)
+            featureDialog.close() // an open dialog is cancelled, as in Fusion
         const initial = {}
         const info = selectedInfo()
         if (activeSketch) {
@@ -248,14 +250,16 @@ ApplicationWindow {
             initial.sketch = info.featureId
         }
         // An exact solid outside the timeline (a fin, a fitted solid, a STEP import) is made
-        // editable first, so its edges can be rounded or bevelled in one step.
-        if (info.kind !== "body" && info.kind !== "sketch" && info.hasBrep && (info.solids ?? 0) > 0
-                && ["fillet", "chamfer", "shell", "hole", "combine"].includes(type)) {
-            const r = controller.execute("feature.base_body", { part: info.id })
-            if (r.ok && r.result.bodies && r.result.bodies.length > 0) {
+        // editable first, so its edges can be rounded or bevelled in one step. The dialog
+        // owns the conversion: Cancel undoes it, OK makes it one undo step with the feature.
+        const convert = info.kind !== "body" && info.kind !== "sketch" && info.hasBrep && (info.solids ?? 0) > 0
+                        && ["fillet", "chamfer", "shell", "hole", "combine"].includes(type)
+        if (convert) {
+            const b = featureDialog.convertToBody(info.id)
+            if (b) {
                 info.kind = "body"
-                info.featureId = r.result.bodies[0].id
-                selectBodyOfFeature(r.result.id)
+                info.featureId = b.featureId
+                selectBodyOfFeature(b.featureId)
             }
         }
         if (info.kind === "body") {

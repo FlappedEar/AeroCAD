@@ -40,7 +40,8 @@ Item {
     }
     property string sketchTool: ""
     property var sketchSnapPoints: []
-    /// Only parts of this kind ("body", "sketch") can be clicked; "" = all.
+    /// Only parts of this kind ("body", "sketch") can be clicked; "" = all. "solid": bodies
+    /// and imported exact geometry (fins, fitted solids, STEP parts).
     property string pickKind: ""
     /// Sketch feature shown even when hidden (the sketch a feature dialog works on).
     property var shownSketch: -1
@@ -394,6 +395,7 @@ Item {
                     required property bool partVisible
                     required property string kind
                     required property var featureId
+                    required property bool hasBrep
                     property var pickPartId: partId
                     readonly property bool selected: partId === root.selectedPartId
                     // Inspect: section view (cut + cap) and heat map replace the plain mesh.
@@ -420,7 +422,8 @@ Item {
 
                     visible: (partVisible || (kind === "sketch" && featureId == root.shownSketch))
                              && root.hiddenPartIds.indexOf(partId) < 0
-                    pickable: (root.pickKind === "" || kind === root.pickKind)
+                    pickable: (root.pickKind === "" || kind === root.pickKind
+                               || (root.pickKind === "solid" && (kind === "body" || (kind === "imported" && hasBrep))))
                               && !(kind === "plane" && featureId == root.unpickablePlane)
                     geometry: sectioned ? clippedGeometry : heatMapped ? heatGeometry : plainGeometry
                     // Fusion-like colours: grey bodies, translucent orange sketch profiles and planes.

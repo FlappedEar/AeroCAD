@@ -5,6 +5,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <memory>
+#include <string>
 #include <vector>
 
 using namespace aerocad;
@@ -152,4 +153,28 @@ TEST_CASE("Document revision increases on every change", "[model]")
     CHECK(doc.revision() == 2);
     doc.removePart(a);
     CHECK(doc.revision() == 3);
+}
+
+TEST_CASE("UndoStack joins the last steps into one", "[model]")
+{
+    model::UndoStack stack;
+    std::vector<int> log;
+    auto step = [&](int n) {
+        stack.push({"step " + std::to_string(n), [&log, n]() { log.push_back(-n); }, [&log, n]() { log.push_back(n); }});
+    };
+    step(1);
+    step(2);
+    step(3);
+    CHECK_FALSE(stack.mergeLast(4, "too many"));
+    CHECK_FALSE(stack.mergeLast(1, "one"));
+    REQUIRE(stack.mergeLast(2, "Fillet"));
+    CHECK(stack.size() == 2);
+    CHECK(stack.undoLabel() == "Fillet");
+    REQUIRE(stack.undo());
+    CHECK(log == std::vector<int>{-3, -2});
+    REQUIRE(stack.redo());
+    CHECK(log == std::vector<int>{-3, -2, 2, 3});
+    REQUIRE(stack.undo());
+    REQUIRE(stack.undo());
+    CHECK(stack.undoLabel().empty());
 }

@@ -98,6 +98,8 @@ public:
     Q_INVOKABLE QVariantMap preview(const QString& name, const QVariantMap& params = {});
     /// Undoes the preview, if any. Returns true if one was active.
     Q_INVOKABLE bool cancelPreview();
+    /// Joins the last `count` undo steps into one called `label` (see UndoStack::mergeLast).
+    Q_INVOKABLE bool mergeHistory(int count, const QString& label);
     Q_INVOKABLE bool previewActive() const { return m_session.previewActive(); }
     /// Convenience wrapper around document.import for file dialogs and drag & drop.
     Q_INVOKABLE bool importFile(const QUrl& url);

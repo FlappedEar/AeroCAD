@@ -219,6 +219,9 @@ Pane {
     function close() {
         previewTimer.stop()
         undoPreview()
+        // Cancel: the solids made editable for this dialog go back to what they were.
+        for (; conversions > 0; --conversions)
+            controller.execute("edit.undo")
         type = ""
         pickKey = ""
         finished()
@@ -242,7 +245,8 @@ Pane {
             return ""
         if (f.type === "planePick")
             return "" // faces of bodies and construction planes
-        return f.type === "profilePicks" ? "sketch" : "body"
+        // "solid": bodies and exact solids outside the timeline, made editable when picked.
+        return f.type === "profilePicks" ? "sketch" : "solid"
     }
     /// The sketch the feature uses stays visible while the dialog is open.
     readonly property var shownSketch: type !== "" && values.sketch !== undefined ? values.sketch : -1
@@ -317,12 +321,27 @@ Pane {
             return part
         if (part.kind === "sketch" || part.kind === "plane" || !part.hasBrep || !((part.solids ?? 0) > 0))
             return null
-        const r = controller.execute("feature.base_body", { part: part.id })
-        if (!r.ok || !r.result.bodies || r.result.bodies.length === 0) {
-            error = r.error || qsTr("Could not make the solid editable")
+        const b = convertToBody(part.id)
+        if (!b)
+            error = qsTr("Could not make the solid editable")
+        return b
+    }
+
+    /// Conversions made for this dialog (feature.base_body runs): Cancel undoes them, OK
+    /// joins them with the feature into one undo step.
+    property int conversions: 0
+
+    /// Makes imported part `partId` a timeline body (feature.base_body) as part of this
+    /// dialog. Returns { id, kind: "body", featureId } of the new body, or null.
+    function convertToBody(partId) {
+        undoPreview()
+        const r = controller.execute("feature.base_body", { part: partId })
+        const body = r.ok && r.result.bodies ? r.result.bodies.find(b => b.id === r.result.id) : null
+        if (!body)
             return null
-        }
-        return { id: r.result.bodies[0].partId, kind: "body", featureId: r.result.bodies[0].id }
+        conversions += 1
+        previewTimer.restart()
+        return { id: body.partId, kind: "body", featureId: body.id }
     }
 
     /// Viewport pick while the dialog is open: `part` is controller.partInfo().
@@ -409,10 +428,14 @@ Pane {
         previewTimer.stop()
         undoPreview()
         const r = submit()
-        if (r.ok)
+        if (r.ok) {
+            if (conversions > 0)
+                controller.mergeHistory(conversions + 1, spec.title)
+            conversions = 0
             close()
-        else
+        } else {
             error = r.error
+        }
     }
 
     Keys.onEscapePressed: close()
