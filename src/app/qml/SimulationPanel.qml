@@ -31,7 +31,9 @@ Pane {
     readonly property var hiddenPartIds: {
         const f = fieldChoices.find(c => c.kind === "surface")
         const run = runs.find(r => r.id === displayedRun)
-        return f && f.on && run && run.source && fieldStats[run.id + "/surface"] ? [run.source.partId] : []
+        // Only when the open document still has that part (ids are per document).
+        return f && f.on && run && run.source && run.sourceInDocument && fieldStats[run.id + "/surface"]
+            ? [run.source.partId] : []
     }
     /// Run whose fields are drawn: B while "Show B in 3D" is on, otherwise A.
     readonly property string displayedRun: showB && compareRun ? compareRun : activeRun

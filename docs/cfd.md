@@ -117,8 +117,11 @@ They are walls in the simulation but not part of the reported forces.
 also when the app is closed (it is picked up again on the next start). Progress is
 estimated from the current step (`aerocad.stage`) and the solver iteration. A run
 records everything needed to repeat it: `case.json` (settings, frame, reference values,
-geometry hash), `run.json` (source part and revision, engine command) and the complete
+geometry hash), `run.json` (source part, its revision and geometry fingerprint, engine command) and the complete
 OpenFOAM case, which can be opened in ParaView through `case.foam`.
+
+Runs are stored per user, not per project. `sourceInDocument` in the status tells whether
+the open document still has the run's part (same id and same geometry).
 
 `simulation.run` with `prepareOnly: true` only writes the case; run `./Allrun` in an
 OpenFOAM v2506 environment elsewhere and register the result with `simulation.import`.

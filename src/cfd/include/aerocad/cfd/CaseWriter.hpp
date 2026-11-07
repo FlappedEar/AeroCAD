@@ -72,4 +72,8 @@ CaseInfo planCase(const CaseGeometry& geometry, const Settings& settings);
 /// `aerocad.status` (`finished` or `failed <step>`).
 CaseInfo writeCase(const std::filesystem::path& directory, const CaseGeometry& geometry, const Settings& settings);
 
+/// Hash of a mesh's vertex positions and triangles (model units). Identifies the geometry
+/// a run was made from, e.g. to tell whether a part in another document is the same one.
+[[nodiscard]] std::uint64_t meshFingerprint(const core::TriangleMesh& mesh);
+
 } // namespace aerocad::cfd

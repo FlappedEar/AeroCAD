@@ -98,6 +98,8 @@ TEST_CASE("simulation.propose_run and a prepared run", "[commands][simulation]")
     r = session.execute("simulation.list");
     REQUIRE(r.ok);
     CHECK(r.data.at("runs").size() == 1);
+    CHECK(r.data.at("runs")[0].at("sourceInDocument") == true);
+    CHECK(r.data.at("runs")[0].at("source").at("partFingerprint").is_string());
     r = session.execute("simulation.status", {{"run", run}});
     REQUIRE(r.ok);
     CHECK(r.data.at("state") == "interrupted");
@@ -116,6 +118,18 @@ TEST_CASE("simulation.propose_run and a prepared run", "[commands][simulation]")
     REQUIRE(r.ok);
     CHECK(r.data.at("sameConditions") == true);
     CHECK(r.data.at("forces").empty()); // No results yet.
+
+    // The part is gone (or another document has a part with the same id): not its source.
+    REQUIRE(session.execute("part.remove", {{"id", id}}).ok);
+    r = session.execute("simulation.status", {{"run", run}});
+    REQUIRE(r.ok);
+    CHECK(r.data.at("sourceInDocument") == false);
+    const auto other = session.execute("document.import", {{"path", AEROCAD_TEST_DATA_DIR "/box_200x80x60.stl"}});
+    REQUIRE(other.ok);
+    if (other.data.at("id").get<std::uint64_t>() == id) {
+        r = session.execute("simulation.status", {{"run", run}});
+        CHECK(r.data.at("sourceInDocument") == true); // Same id and same geometry.
+    }
 
     CHECK(session.execute("simulation.delete", {{"run", run}}).ok);
     CHECK_FALSE(fs::exists(dir.path() / run));

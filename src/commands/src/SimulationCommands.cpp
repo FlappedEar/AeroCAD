@@ -45,6 +45,23 @@ std::string requireRun(CommandContext& ctx, const Json& params, const char* key 
     return id;
 }
 
+/// True when the open document still holds the part a run was made from: same id and the
+/// same geometry. Part ids are per document, so an id alone may name another part.
+bool sourceInDocument(const CommandContext& ctx, const cfd::RunSource& source)
+{
+    if (source.partFingerprint == 0)
+        return false;
+    const model::Part* part = ctx.document.part(source.partId);
+    return part != nullptr && part->mesh && cfd::meshFingerprint(*part->mesh) == source.partFingerprint;
+}
+
+Json statusJson(const CommandContext& ctx, const cfd::RunStatus& status)
+{
+    Json j = status.toJson();
+    j["sourceInDocument"] = sourceInDocument(ctx, status.source);
+    return j;
+}
+
 /// Part and context geometry for a run, plus what it was made from.
 struct RunInput {
     cfd::CaseGeometry geometry;
@@ -67,6 +84,7 @@ RunInput collectInput(CommandContext& ctx, const Json& params)
     in.source.partId = part->id;
     in.source.partName = part->name;
     in.source.partRevision = part->revision;
+    in.source.partFingerprint = cfd::meshFingerprint(*part->mesh);
     for (const auto& c : params.value("context", Json::array())) {
         const auto cid = c.get<model::PartId>();
         if (cid == id)
@@ -202,7 +220,7 @@ void registerSimulationCommands(CommandRegistry& r)
               } catch (const std::exception& e) {
                   throw CommandError(e.what());
               }
-              return runs(ctx).status(id)->toJson();
+              return statusJson(ctx, *runs(ctx).status(id));
           });
 
     r.add({"simulation.status", "Simulation status",
@@ -210,7 +228,7 @@ void registerSimulationCommands(CommandRegistry& r)
            "Cd/Cl and forces in N of a run.",
            objectSchema({{"run", runIdParam()}}, {"run"})},
           [](CommandContext& ctx, const Json& params) {
-              return runs(ctx).status(requireRun(ctx, params))->toJson();
+              return statusJson(ctx, *runs(ctx).status(requireRun(ctx, params)));
           });
 
     r.add({"simulation.list", "List simulations", "Lists all simulation runs, oldest first.",
@@ -219,7 +237,7 @@ void registerSimulationCommands(CommandRegistry& r)
               runs(ctx).rescan();
               Json out = Json::array();
               for (const auto& s : runs(ctx).list())
-                  out.push_back(s.toJson());
+                  out.push_back(statusJson(ctx, s));
               return Json{{"runs", std::move(out)}};
           });
 
@@ -230,7 +248,7 @@ void registerSimulationCommands(CommandRegistry& r)
               if (!runs(ctx).cancel(id))
                   throw CommandError("Run '" + id + "' is not running, or it runs on a local OpenFOAM started by "
                                      "an earlier session of the app (stop its Allrun process manually)");
-              return runs(ctx).status(id)->toJson();
+              return statusJson(ctx, *runs(ctx).status(id));
           });
 
     r.add({"simulation.delete", "Delete simulation", "Deletes a run that is not running, with its files.",
@@ -310,7 +328,7 @@ void registerSimulationCommands(CommandRegistry& r)
               try {
                   const std::string id = runs(ctx).importCase(core::pathFromUtf8(params.at("path").get<std::string>()),
                                                               params.value("label", std::string()));
-                  return runs(ctx).status(id)->toJson();
+                  return statusJson(ctx, *runs(ctx).status(id));
               } catch (const std::exception& e) {
                   throw CommandError(e.what());
               }

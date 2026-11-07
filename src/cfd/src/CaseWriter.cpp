@@ -568,6 +568,22 @@ CaseInfo planCase(const CaseGeometry& geometry, const Settings& s)
     return info;
 }
 
+std::uint64_t meshFingerprint(const TriangleMesh& mesh)
+{
+    std::uint64_t hash = fnv1a({});
+    const auto mix = [&hash](const auto& value) {
+        hash = fnv1a(std::string_view(reinterpret_cast<const char*>(&value), sizeof(value)), hash);
+    };
+    for (const Vec3& v : mesh.vertices()) {
+        mix(v.x);
+        mix(v.y);
+        mix(v.z);
+    }
+    for (const auto& t : mesh.triangles())
+        mix(t);
+    return hash;
+}
+
 CaseInfo writeCase(const fs::path& dir, const CaseGeometry& geometry, const Settings& s)
 {
     CaseInfo info = planCase(geometry, s);
