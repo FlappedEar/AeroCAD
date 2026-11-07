@@ -226,7 +226,14 @@ QtObject {
                      reason: qsTr("The sketch needs a closed outline."),
                      tip: qsTr("Gives the fin outline a thickness (half each side of the sketch) and cuts its root to the surface, so it sits flush on it."),
                      params: [_num("thickness", qsTr("Thickness"), 2, "mm"),
-                              _num("rootFillet", qsTr("Root fillet"), 2, "mm", qsTr("Rounds the joint between the fin and the surface; 0 for a sharp joint."))] }
+                              _num("rootFillet", qsTr("Root fillet"), 2, "mm", qsTr("Rounds the joint between the fin and the surface; 0 for a sharp joint.")),
+                              _num("count", qsTr("Fins"), 1, "", qsTr("More than one: copies stacked across the sketch, each set on the surface where it lands.")),
+                              _num("spacing", qsTr("Spacing"), 40, "mm", qsTr("Distance between the fins; negative puts the copies on the other side.")),
+                              _choice("mirror", qsTr("Sides"), [{ value: "no", label: qsTr("This side only") },
+                                                               { value: "auto", label: qsTr("Both, centre plane of the scan") },
+                                                               { value: "yz", label: qsTr("Both, YZ plane") },
+                                                               { value: "xz", label: qsTr("Both, XZ plane") }],
+                                      qsTr("Also makes the fins on the other side of the car, mirrored and set on the surface there."))] }
         }
         case "editSketch":
             return { id: id, text: qsTr("Edit sketch"), icon: "sketch", enabled: true,
@@ -279,10 +286,15 @@ QtObject {
         // Any part
         case "export":
             return { id: id, text: qsTr("Export…"), icon: "export", enabled: info.kind !== "sketch",
-                     // A finished solid (e.g. a thickened surface) is usually exported next.
-                     primary: role(info) === "solid",
+                     // A finished solid is usually exported next, but by Export for printing.
+                     primary: false,
                      reason: qsTr("Sketches are not exported."),
                      tip: qsTr("Saves this part as STL or 3MF (3D printing) or STEP (CAD).") }
+        case "exportForPrint":
+            return { id: id, text: qsTr("Export for printing…"), icon: "export", enabled: role(info) === "solid",
+                     primary: role(info) === "solid",
+                     reason: qsTr("Only solids can be printed."),
+                     tip: qsTr("Writes every visible solid (e.g. all the fins) to a folder you choose, each as its own STL for the printer and STEP for CAD. Hide what you do not want printed.") }
         case "hide":
             return { id: id, text: info.visible ? qsTr("Hide") : qsTr("Show"), icon: info.visible ? "hidden" : "visible",
                      enabled: true, tip: qsTr("Hides or shows the part in the view. Shortcut V.") }
@@ -415,8 +427,8 @@ QtObject {
                         { title: qsTr("More"), steps: [], actions: [a("export"), a("hide"), a("delete")] }]
                      : [{ title: qsTr("Use it"), steps: [
                               { title: qsTr("Export for printing or CAD"), done: false,
-                                text: qsTr("STL or 3MF for a 3D printer, STEP for other CAD programs."),
-                                actions: [a("export")] },
+                                text: qsTr("STL or 3MF for a 3D printer, STEP for other CAD programs. For printing, every visible solid gets its own files."),
+                                actions: [a("exportForPrint"), a("export")] },
                               { title: qsTr("Or keep designing"), done: false,
                                 text: qsTr("Make it editable to add fillets, holes and cuts; the changes appear in the timeline."),
                                 actions: [a("solidToBody")] }] },
@@ -568,7 +580,9 @@ QtObject {
             return _selectResult(r)
         }
         case "finOnSurface": {
-            const r = controller.execute("surface.fin_from_sketch", { sketch: info.featureId, thickness: v.thickness, rootFillet: v.rootFillet || 0 })
+            const r = controller.execute("surface.fin_from_sketch", { sketch: info.featureId, thickness: v.thickness, rootFillet: v.rootFillet || 0,
+                                                                          count: Math.max(1, Math.round(v.count || 1)), spacing: v.spacing || 40,
+                                                                          mirror: !!v.mirror && v.mirror !== "no", mirrorPlane: v.mirror && v.mirror !== "no" ? v.mirror : "auto" })
             if (r.ok && r.result.warnings.length > 0)
                 controller.showStatus(qsTr("Fin \"%1\": %2").arg(r.result.name).arg(r.result.warnings[0]))
             else if (r.ok)
@@ -586,6 +600,7 @@ QtObject {
         case "shell": return host.openFeature("shell")
         case "hole": return host.openFeature("hole")
         case "export": return host.openExport([pid])
+        case "exportForPrint": return host.openPrintExport()
         case "hide": return controller.execute("part.set_visible", { id: pid, visible: !info.visible })
         case "delete": return host.deleteSelected()
         }

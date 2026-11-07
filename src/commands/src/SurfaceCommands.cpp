@@ -5,11 +5,14 @@
 #include "aerocad/cad/Design.hpp"
 #include "aerocad/core/MeshCheck.hpp"
 #include "aerocad/core/MeshSelection.hpp"
+#include "aerocad/core/Symmetry.hpp"
 #include "aerocad/geometry/DrapeFit.hpp"
+#include "aerocad/geometry/Modeling.hpp"
 #include "aerocad/geometry/Offset.hpp"
 #include "aerocad/geometry/RegionFit.hpp"
 #include "aerocad/geometry/SurfaceFit.hpp"
 #include "aerocad/geometry/Tessellation.hpp"
+#include "aerocad/geometry/Transform.hpp"
 
 #include <algorithm>
 #include <array>
@@ -64,21 +67,28 @@ std::vector<VisibilityChange> replacedByPart(const model::Document& doc, cad::Fe
     return changes;
 }
 
-/// Adds a part built from `shape` and pushes an undo entry that removes it again, so one undo
-/// takes back the part and the `changes` that came with it.
-Json addShapePart(CommandContext& ctx, const model::Part& source, const geometry::Shape& shape,
-                  const std::string& name, const std::string& origin, const std::string& undoTitle,
-                  const std::vector<VisibilityChange>& changes = {})
+/// Adds parts built from `shapes` (with their names) and pushes one undo entry that removes
+/// them again, so one undo takes back the parts and the `changes` that came with them.
+std::vector<Json> addShapeParts(CommandContext& ctx, const model::Part& source,
+                                const std::vector<std::pair<geometry::Shape, std::string>>& shapes,
+                                const std::string& origin, const std::string& undoTitle,
+                                const std::vector<VisibilityChange>& changes = {})
 {
-    model::Part part;
-    part.name = name;
-    part.source = origin + " of part " + std::to_string(source.id);
-    part.mesh = std::make_shared<const core::TriangleMesh>(geometry::tessellate(shape));
-    part.shape = shape;
-
     model::Document& doc = ctx.document;
-    const model::PartId id = doc.addPart(part);
-    part.id = id;
+    // `source` may live in the document, whose parts can move as parts are added.
+    const std::string provenance = origin + " of part " + std::to_string(source.id);
+    std::vector<model::Part> parts;
+    std::vector<model::PartId> ids;
+    for (const auto& [shape, name] : shapes) {
+        model::Part part;
+        part.name = name;
+        part.source = provenance;
+        part.mesh = std::make_shared<const core::TriangleMesh>(geometry::tessellate(shape));
+        part.shape = shape;
+        part.id = doc.addPart(part);
+        ids.push_back(part.id);
+        parts.push_back(part);
+    }
     std::vector<VisibilityChange> before;
     for (const auto& c : changes) {
         if (const model::Part* p = doc.part(c.id); p != nullptr && p->visible != c.visible) {
@@ -86,18 +96,34 @@ Json addShapePart(CommandContext& ctx, const model::Part& source, const geometry
             doc.modifyPart(c.id, [&](model::Part& q) { q.visible = c.visible; });
         }
     }
-    ctx.undoStack.push({undoTitle + " " + part.name,
-                        [&doc, id, before]() {
-                            doc.removePart(id);
+    const std::string title = undoTitle + " " + (parts.size() == 1 ? parts.front().name
+                                                                    : std::to_string(parts.size()) + " parts");
+    ctx.undoStack.push({title,
+                        [&doc, ids, before]() {
+                            for (const auto id : ids)
+                                doc.removePart(id);
                             for (const auto& c : before)
                                 doc.modifyPart(c.id, [&](model::Part& q) { q.visible = c.visible; });
                         },
-                        [&doc, part, before]() {
-                            doc.addPart(part);
+                        [&doc, parts, before]() {
+                            for (const auto& part : parts)
+                                doc.addPart(part);
                             for (const auto& c : before)
                                 doc.modifyPart(c.id, [&](model::Part& q) { q.visible = !c.visible; });
                         }});
-    return partToJson(*doc.part(id));
+    std::vector<Json> results;
+    for (const auto id : ids)
+        results.push_back(partToJson(*doc.part(id)));
+    return results;
+}
+
+/// Adds a part built from `shape` and pushes an undo entry that removes it again, so one undo
+/// takes back the part and the `changes` that came with it.
+Json addShapePart(CommandContext& ctx, const model::Part& source, const geometry::Shape& shape,
+                  const std::string& name, const std::string& origin, const std::string& undoTitle,
+                  const std::vector<VisibilityChange>& changes = {})
+{
+    return addShapeParts(ctx, source, {{shape, name}}, origin, undoTitle, changes).front();
 }
 
 const cad::SketchResult& requireSketch(CommandContext& ctx, const Json& id)
@@ -133,13 +159,13 @@ std::vector<geometry::Shape> sketchOutlines(const cad::SketchResult& sk, const J
 
 /// Bounds of the evaluated outlines in sketch coordinates (arcs bulge past their
 /// defining points): {u0, v0, u1, v1}.
-std::array<double, 4> outlineBounds(const cad::SketchResult& sk, const std::vector<geometry::Shape>& outlines)
+std::array<double, 4> outlineBounds(const geometry::Plane& plane, const std::vector<geometry::Shape>& outlines)
 {
     double u0 = std::numeric_limits<double>::max(), v0 = u0, u1 = -u0, v1 = -u0;
     for (const auto& o : outlines) {
         const auto t = geometry::tessellate(o);
         for (const auto& p : t.vertices()) {
-            const auto uv = sk.plane.toLocal(p);
+            const auto uv = plane.toLocal(p);
             u0 = std::min(u0, uv.x);
             u1 = std::max(u1, uv.x);
             v0 = std::min(v0, uv.y);
@@ -428,7 +454,7 @@ void registerSurfaceCommands(CommandRegistry& r)
               double area = 0.0;
               if (scan != nullptr) {
                   // The part follows the skin seen along the sketch normal.
-                  const auto [u0, v0, u1, v1] = outlineBounds(sk, outlines);
+                  const auto [u0, v0, u1, v1] = outlineBounds(sk.plane, outlines);
                   const double margin = std::max(10.0, 0.05 * std::max(u1 - u0, v1 - v0));
                   geometry::DrapeArea drape;
                   drape.origin = sk.plane.origin;
@@ -514,6 +540,24 @@ void registerSurfaceCommands(CommandRegistry& r)
                           {{"type", "number"},
                            {"minimum", 0},
                            {"description", "Radius of the fillet where the fin meets the surface, mm; 0 (default) for none. At most twice the thickness; when it does not fit, a smaller one is used and a warning says so."}}},
+                         {"count",
+                          {{"type", "integer"},
+                           {"minimum", 1},
+                           {"maximum", 20},
+                           {"description", "Number of fins, e.g. 2 for a stacked pair of canards (default 1). The copies "
+                                           "are spaced along the sketch normal, each with its root set on the surface "
+                                           "where it lands."}}},
+                         {"spacing",
+                          {{"type", "number"},
+                           {"description", "Distance between the fins along the sketch normal, mm (default 40; negative "
+                                           "for the other side)."}}},
+                         {"mirror",
+                          {{"type", "boolean"},
+                           {"description", "Also make the fins on the other side: mirrored in the symmetry plane, each "
+                                           "set on the surface there (default false)."}}},
+                         {"mirrorPlane",
+                          {{"description", "auto (default: the scan's own symmetry plane, e.g. a car's centre plane), "
+                                           "yz / xz / xy (world planes through the origin) or {point, normal}."}}},
                          {"name", {{"type", "string"}, {"description", "Name of the new part."}}}},
                         {"sketch", "thickness"}),
            true},
@@ -538,118 +582,245 @@ void registerSurfaceCommands(CommandRegistry& r)
               const double thickness = params.at("thickness").get<double>();
               const double rootFillet = params.value("rootFillet", 0.0);
               const double tolerance = params.value("tolerance", geometry::SurfaceFitOptions{}.tolerance);
-              // Outward: the sketch X axis for a sketch made across the surface.
-              const core::Vec3 outward = sk.plane.xDir;
+              const int count = params.value("count", 1);
+              const double spacing = params.value("spacing", 40.0);
+              if (count < 1 || count > 20)
+                  throw CommandError("count must be 1 to 20");
 
-              Json fitReport;
-              // On a scan: the skin under the root, seen from outside (the first surface met,
-              // never a layer behind it; holes bridged), as a height field over the fin's
-              // footprint: along its chord (sketch Y) and across its thickness.
-              auto fitUnder = [&](const model::Part& scan, double fillet) {
-                  const auto [u0, v0, u1, v1] = outlineBounds(sk, outlines);
-                  (void)u0;
-                  (void)u1;
-                  // Room around the root for its fillet to land on the surface.
-                  const double flare = fillet > 0.0 ? 2.0 * fillet + 2.0 : 0.0;
-                  const double margin = std::max(5.0, 0.1 * (v1 - v0)) + flare;
-                  const double half = 0.5 * thickness;
-                  const double across = std::max(5.0, 2.0 * thickness) + flare;
-                  geometry::DrapeArea area;
-                  area.origin = sk.plane.origin;
-                  area.x = sk.plane.yDir();
-                  area.y = sk.plane.normal;
-                  area.normal = sk.plane.xDir;
-                  area.u0 = v0 - margin;
-                  area.u1 = v1 + margin;
-                  area.v0 = -half - across;
-                  area.v1 = half + across;
-                  area.insideU0 = v0;
-                  area.insideU1 = v1;
-                  area.insideV0 = -half;
-                  area.insideV1 = half;
-                  geometry::DrapeFitOptions options;
-                  options.tolerance = tolerance;
-                  try {
-                      const core::MeshProjector projector(*scan.mesh, sk.plane.xDir);
-                      geometry::DrapeFitReport rep;
-                      auto face = geometry::skinOnScan(projector, area, &rep, options);
-                      fitReport = {{"part", scan.id},
-                                   {"method", "draped"},
-                                   {"maxDeviation", rep.maxDeviation},
-                                   {"rmsDeviation", rep.rmsDeviation},
-                                   {"bridged", rep.bridgedFraction},
-                                   {"withinTolerance", rep.p99Deviation <= tolerance},
-                                   {"milliseconds", rep.milliseconds}};
-                      return face;
-                  } catch (const geometry::SurfaceFitError& e) {
-                      throw CommandError(std::string("Could not find the scan under the fin root: ") + e.what());
-                  }
+              // The scan the fins stand on (a fitted surface remembers its scan), to set each
+              // fin's root on the skin.
+              const model::Part* scanPart = source;
+              if (source->shape && !source->shape->isNull()) {
+                  const model::Part* scan = ctx.document.part(model::fittedScanId(*source));
+                  scanPart = scan != nullptr && scan->mesh && !scan->shape ? scan : source;
+              }
+
+              // Where each fin goes: the sketch plane and its outlines, moved together.
+              struct Placement {
+                  geometry::Plane plane;
+                  std::vector<geometry::Shape> outlines;
               };
-              auto build = [&](double fillet) {
-                  auto finOn = [&](const geometry::Shape& surface) {
-                      return geometry::finOnSurface(surface, outlines, sk.plane.normal, thickness, outward, fillet);
-                  };
-                  geometry::Shape solid;
-                  try {
-                      if (source->shape && !source->shape->isNull()) {
-                          try {
-                              solid = finOn(*source->shape);
-                          } catch (const geometry::OffsetError&) {
-                              // The fitted surface may not reach under the whole root: fit again
-                              // on the scan it came from.
-                              const model::Part* scan = ctx.document.part(model::fittedScanId(*source));
-                              if (scan == nullptr || !scan->mesh || scan->shape)
-                                  throw;
-                              solid = finOn(fitUnder(*scan, fillet));
-                          }
-                      } else {
-                          if (!source->mesh || source->mesh->triangleCount() == 0)
-                              throw CommandError("Part " + std::to_string(partId) + " has no surface");
-                          solid = finOn(fitUnder(*source, fillet));
-                      }
-                  } catch (const geometry::OffsetError& e) {
-                      throw CommandError(e.what());
-                  }
-                  return solid;
-              };
-              // A fillet that does not fit must not cost the fin: smaller radii are tried (a
-              // rolling ball wider than the fin's ends or the surface's bumps folds over
-              // itself, which shows as a mesh that is not watertight), then none; said so.
               Json warnings = Json::array();
-              double appliedFillet = 0.0;
-              geometry::Shape solid;
-              std::string filletProblem;
-              // Wider than twice the fin's thickness, a fillet is past what a canard needs and
-              // what the fillet algorithm handles in good time.
-              const double largest = std::min(rootFillet, 2.0 * thickness);
-              const double smallest = std::max(0.5, 0.2 * largest);
-              for (double f = largest; f > 0.0 && solid.isNull(); f = f * 0.6 >= smallest ? f * 0.6 : 0.0) {
-                  try {
-                      geometry::Shape candidate = build(f);
-                      if (!core::checkMesh(core::weldVertices(geometry::tessellate(candidate))).watertight()) {
-                          filletProblem = "A root fillet of " + formatMm(f) + " mm folds over itself here";
-                          continue;
-                      }
-                      solid = candidate;
-                      appliedFillet = f;
-                  } catch (const CommandError& e) {
-                      if (filletProblem.empty())
-                          filletProblem = e.what();
+              auto moved = [&](const Placement& p, const core::Vec3& offset) {
+                  Placement q{p.plane, {}};
+                  q.plane.origin = p.plane.origin + offset;
+                  for (const auto& o : p.outlines)
+                      q.outlines.push_back(geometry::translated(o, offset));
+                  return q;
+              };
+              // The plane's origin moved along its X axis (outward) onto the skin under it,
+              // so the root reaches into the surface as drawn.
+              auto onSkin = [&](const Placement& p, const std::string& what) {
+                  if (!scanPart->mesh || scanPart->mesh->triangleCount() == 0)
+                      return p;
+                  const core::MeshProjector projector(*scanPart->mesh, p.plane.xDir);
+                  const auto hit = projector.drop(p.plane.origin);
+                  if (!hit) {
+                      warnings.push_back(what + ": no surface under its root (a hole, or past the scan's edge); "
+                                         "it was left where it was placed");
+                      return p;
+                  }
+                  return moved(p, p.plane.xDir * (*hit - p.plane.origin).dot(p.plane.xDir));
+              };
+              std::vector<Placement> placements{{sk.plane, outlines}};
+              for (int k = 1; k < count; ++k)
+                  placements.push_back(onSkin(moved(placements.front(), sk.plane.normal * (spacing * k)),
+                                              "Fin " + std::to_string(k + 1)));
+
+              // The other side of the car: every fin mirrored in the symmetry plane, then set
+              // on the skin there (a scan is never exactly symmetric).
+              Json mirrorReport;
+              if (params.value("mirror", false)) {
+                  core::Vec3 point, normal;
+                  const Json plane = params.value("mirrorPlane", Json("auto"));
+                  if (plane.is_object()) {
+                      const auto& pt = plane.at("point");
+                      const auto& nm = plane.at("normal");
+                      point = {pt.at(0).get<double>(), pt.at(1).get<double>(), pt.at(2).get<double>()};
+                      normal = {nm.at(0).get<double>(), nm.at(1).get<double>(), nm.at(2).get<double>()};
+                      if (!(normal.length() > 0.0))
+                          throw CommandError("mirrorPlane normal is zero");
+                      normal = normal.normalized();
+                      mirrorReport = {{"source", "given"}};
+                  } else if (plane == "yz" || plane == "xz" || plane == "xy") {
+                      normal = plane == "yz" ? core::Vec3{1, 0, 0} : plane == "xz" ? core::Vec3{0, 1, 0} : core::Vec3{0, 0, 1};
+                      mirrorReport = {{"source", plane}};
+                  } else if (plane == "auto") {
+                      if (!scanPart->mesh)
+                          throw CommandError("No mesh to find the symmetry plane on; give mirrorPlane");
+                      const auto found = core::findSymmetryPlane(*scanPart->mesh);
+                      if (!found)
+                          throw CommandError("The scan is not symmetric enough to find its centre plane (a scan of one "
+                                             "side only?); pick the mirror plane (yz, xz, xy) instead");
+                      point = found->point;
+                      normal = found->normal;
+                      mirrorReport = {{"source", "scan"}, {"match", found->match}, {"distance", found->distance}};
+                  } else {
+                      throw CommandError("mirrorPlane must be auto, yz, xz, xy or {point, normal}");
+                  }
+                  mirrorReport["point"] = {point.x, point.y, point.z};
+                  mirrorReport["normal"] = {normal.x, normal.y, normal.z};
+                  const std::size_t one = placements.size();
+                  for (std::size_t k = 0; k < one; ++k) {
+                      const Placement& p = placements[k];
+                      if (std::abs((p.plane.origin - point).dot(normal)) < 1.0)
+                          throw CommandError("The fin stands on the mirror plane; a mirrored copy would fall on it");
+                      Placement q;
+                      q.plane.origin = core::mirrorPoint(p.plane.origin, point, normal);
+                      q.plane.xDir = core::mirrorDirection(p.plane.xDir, normal);
+                      q.plane.normal = core::mirrorDirection(p.plane.normal, normal);
+                      for (const auto& o : p.outlines)
+                          q.outlines.push_back(geometry::mirrored(o, point, normal));
+                      placements.push_back(onSkin(q, "Mirrored fin " + std::to_string(k + 1)));
                   }
               }
-              if (solid.isNull())
-                  solid = build(0.0);
-              if (rootFillet > 0.0 && appliedFillet == 0.0)
-                  warnings.push_back(filletProblem + "; the fin was made without a root fillet");
-              else if (appliedFillet < rootFillet)
-                  warnings.push_back("A root fillet of " + formatMm(rootFillet) + " mm does not fit this fin; it got " +
-                                     formatMm(appliedFillet) + " mm");
-              Json result = addShapePart(ctx, *source, solid, params.value("name", sk.name + " fin"),
-                                         "surface.fin_from_sketch", "Fin on surface",
-                                         replacedByPart(ctx.document, sk.id, *source));
+
+              Json fitReport;
+              // One fin at a placement, its root fillet as big as fits (up to rootFillet).
+              auto makeFin = [&](const Placement& at, double& appliedFillet) {
+                  const geometry::Plane& plane = at.plane;
+                  // Outward: the sketch X axis for a sketch made across the surface.
+                  const core::Vec3 outward = plane.xDir;
+                  // On a scan: the skin under the root, seen from outside (the first surface
+                  // met, never a layer behind it; holes bridged), as a height field over the
+                  // fin's footprint: along its chord (sketch Y) and across its thickness.
+                  auto fitUnder = [&](const model::Part& scan, double fillet) {
+                      const auto [u0, v0, u1, v1] = outlineBounds(plane, at.outlines);
+                      (void)u0;
+                      (void)u1;
+                      // Room around the root for its fillet to land on the surface.
+                      const double flare = fillet > 0.0 ? 2.0 * fillet + 2.0 : 0.0;
+                      const double margin = std::max(5.0, 0.1 * (v1 - v0)) + flare;
+                      const double half = 0.5 * thickness;
+                      const double across = std::max(5.0, 2.0 * thickness) + flare;
+                      geometry::DrapeArea area;
+                      area.origin = plane.origin;
+                      area.x = plane.yDir();
+                      area.y = plane.normal;
+                      area.normal = plane.xDir;
+                      area.u0 = v0 - margin;
+                      area.u1 = v1 + margin;
+                      area.v0 = -half - across;
+                      area.v1 = half + across;
+                      area.insideU0 = v0;
+                      area.insideU1 = v1;
+                      area.insideV0 = -half;
+                      area.insideV1 = half;
+                      geometry::DrapeFitOptions options;
+                      options.tolerance = tolerance;
+                      try {
+                          const core::MeshProjector projector(*scan.mesh, plane.xDir);
+                          geometry::DrapeFitReport rep;
+                          auto face = geometry::skinOnScan(projector, area, &rep, options);
+                          if (fitReport.is_null())
+                              fitReport = {{"part", scan.id},
+                                           {"method", "draped"},
+                                           {"maxDeviation", rep.maxDeviation},
+                                           {"rmsDeviation", rep.rmsDeviation},
+                                           {"bridged", rep.bridgedFraction},
+                                           {"withinTolerance", rep.p99Deviation <= tolerance},
+                                           {"milliseconds", rep.milliseconds}};
+                          return face;
+                      } catch (const geometry::SurfaceFitError& e) {
+                          throw CommandError(std::string("Could not find the scan under the fin root: ") + e.what());
+                      }
+                  };
+                  auto build = [&](double fillet) {
+                      auto finOn = [&](const geometry::Shape& surface) {
+                          return geometry::finOnSurface(surface, at.outlines, plane.normal, thickness, outward, fillet);
+                      };
+                      geometry::Shape solid;
+                      try {
+                          if (source->shape && !source->shape->isNull()) {
+                              try {
+                                  solid = finOn(*source->shape);
+                              } catch (const geometry::OffsetError&) {
+                                  // The fitted surface may not reach under the whole root: fit
+                                  // again on the scan it came from.
+                                  if (scanPart == source)
+                                      throw;
+                                  solid = finOn(fitUnder(*scanPart, fillet));
+                              }
+                          } else {
+                              if (!source->mesh || source->mesh->triangleCount() == 0)
+                                  throw CommandError("Part " + std::to_string(partId) + " has no surface");
+                              solid = finOn(fitUnder(*source, fillet));
+                          }
+                      } catch (const geometry::OffsetError& e) {
+                          throw CommandError(e.what());
+                      }
+                      return solid;
+                  };
+                  // A fillet that does not fit must not cost the fin: smaller radii are tried
+                  // (a rolling ball wider than the fin's ends or the surface's bumps folds over
+                  // itself, which shows as a mesh that is not watertight), then none.
+                  appliedFillet = 0.0;
+                  geometry::Shape solid;
+                  std::string filletProblem;
+                  // Wider than twice the fin's thickness, a fillet is past what a canard needs
+                  // and what the fillet algorithm handles in good time.
+                  const double largest = std::min(rootFillet, 2.0 * thickness);
+                  const double smallest = std::max(0.5, 0.2 * largest);
+                  for (double f = largest; f > 0.0 && solid.isNull(); f = f * 0.6 >= smallest ? f * 0.6 : 0.0) {
+                      try {
+                          geometry::Shape candidate = build(f);
+                          if (!core::checkMesh(core::weldVertices(geometry::tessellate(candidate))).watertight()) {
+                              filletProblem = "A root fillet of " + formatMm(f) + " mm folds over itself here";
+                              continue;
+                          }
+                          solid = candidate;
+                          appliedFillet = f;
+                      } catch (const CommandError& e) {
+                          if (filletProblem.empty())
+                              filletProblem = e.what();
+                      }
+                  }
+                  if (solid.isNull())
+                      solid = build(0.0);
+                  if (rootFillet > 0.0 && appliedFillet == 0.0)
+                      warnings.push_back(filletProblem + "; the fin was made without a root fillet");
+                  else if (appliedFillet < rootFillet)
+                      warnings.push_back("A root fillet of " + formatMm(rootFillet) + " mm does not fit this fin; it got " +
+                                         formatMm(appliedFillet) + " mm");
+                  return solid;
+              };
+
+              const std::string baseName = params.value("name", sk.name + " fin");
+              std::vector<std::pair<geometry::Shape, std::string>> fins;
+              std::vector<double> fillets;
+              for (std::size_t k = 0; k < placements.size(); ++k) {
+                  double applied = 0.0;
+                  try {
+                      const bool mirroredFin = !mirrorReport.is_null() && k >= placements.size() / 2;
+                      const std::size_t n = mirroredFin ? k - placements.size() / 2 : k;
+                      std::string name = count == 1 ? baseName : baseName + " " + std::to_string(n + 1);
+                      if (!mirrorReport.is_null())
+                          name += mirroredFin ? " (mirror)" : "";
+                      fins.emplace_back(makeFin(placements[k], applied), name);
+                  } catch (const CommandError& e) {
+                      if (k == 0)
+                          throw;
+                      warnings.push_back("Fin " + std::to_string(k + 1) + " was not made: " + e.what());
+                      continue;
+                  }
+                  fillets.push_back(applied);
+              }
+              const auto parts = addShapeParts(ctx, *source, fins, "surface.fin_from_sketch", "Fin on surface",
+                                               replacedByPart(ctx.document, sk.id, *source));
+              Json result = parts.front();
               result["thickness"] = thickness;
-              result["rootFillet"] = appliedFillet;
-              result["volume"] = solid.volume();
+              result["rootFillet"] = fillets.front();
+              result["volume"] = fins.front().first.volume();
+              Json all = Json::array();
+              for (std::size_t k = 0; k < parts.size(); ++k) {
+                  Json p = parts[k];
+                  p["rootFillet"] = fillets[k];
+                  p["volume"] = fins[k].first.volume();
+                  all.push_back(p);
+              }
+              result["fins"] = all;
+              if (!mirrorReport.is_null())
+                  result["mirror"] = mirrorReport;
               if (!fitReport.is_null())
                   result["fit"] = fitReport;
               result["warnings"] = warnings;
