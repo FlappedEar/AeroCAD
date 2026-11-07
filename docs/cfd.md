@@ -32,6 +32,13 @@ panel in place of Properties:
 
 Runs continue when the panel or the app is closed.
 
+If a saved run's `run.json` cannot be read or contains invalid metadata, AeroCAD still
+opens and loads the other runs. The affected run appears as **failed**, with the file's
+path, the error and recovery instructions in the Wind Tunnel panel. Its results are
+unavailable and AeroCAD does not resume its engine. The original metadata and case files
+remain unchanged: restore a valid `run.json` from a backup and restart AeroCAD to load
+that run again. The panel's delete action still removes a run only when explicitly chosen.
+
 ## Engine: OpenFOAM v2506 in Docker
 
 One OpenFOAM version is supported: **OpenFOAM v2506** (openfoam.com / OpenCFD). Cases

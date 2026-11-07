@@ -369,6 +369,7 @@ struct RunManager::Run {
     std::optional<Process> stopper; ///< `docker kill` started by cancel().
     fs::path docker;
     std::string dockerHost; ///< Remote engine the run was started on, empty = this machine.
+    std::string metadataError; ///< Kept visible without trusting or resuming an invalid run.json.
     RunStatus status;
 };
 
@@ -427,18 +428,30 @@ Json sourceJson(const RunSource& s)
 
 RunSource sourceFrom(const Json& j)
 {
+    if (!j.is_object())
+        throw std::runtime_error("source must be a JSON object");
+    const auto unsignedValue = [](const Json& value) {
+        if (!value.is_number_integer() || (!value.is_number_unsigned() && value.get<std::int64_t>() < 0))
+            throw std::runtime_error("source identifiers and revisions must be non-negative integers");
+        return value.get<std::uint64_t>();
+    };
     RunSource s;
-    s.partId = j.value("partId", std::uint64_t{0});
+    s.partId = unsignedValue(j.value("partId", Json(0)));
     s.partName = j.value("partName", std::string());
-    s.partRevision = j.value("partRevision", std::uint64_t{0});
-    if (const auto it = j.find("partFingerprint"); it != j.end() && it->is_string()) {
-        try {
-            s.partFingerprint = std::stoull(it->get<std::string>());
-        } catch (const std::exception&) {
-            s.partFingerprint = 0;
-        }
+    s.partRevision = unsignedValue(j.value("partRevision", Json(0)));
+    if (const auto it = j.find("partFingerprint"); it != j.end()) {
+        const auto fingerprint = it->get<std::string>();
+        if (fingerprint.empty() || !std::all_of(fingerprint.begin(), fingerprint.end(), [](char c) {
+                return c >= '0' && c <= '9';
+            }))
+            throw std::runtime_error("source.partFingerprint must be an unsigned decimal string");
+        s.partFingerprint = std::stoull(fingerprint);
     }
-    s.contextPartIds = j.value("contextPartIds", std::vector<std::uint64_t>{});
+    const auto context = j.value("contextPartIds", Json::array());
+    if (!context.is_array())
+        throw std::runtime_error("source.contextPartIds must be an array of non-negative integers");
+    for (const auto& id : context)
+        s.contextPartIds.push_back(unsignedValue(id));
     s.label = j.value("label", std::string());
     return s;
 }
@@ -649,25 +662,41 @@ void RunManager::rescan()
 
 void RunManager::loadRun(const fs::path& dir)
 {
-    std::ifstream in(dir / "run.json");
-    Json j;
-    try {
-        in >> j;
-    } catch (const std::exception&) {
-        return;
-    }
     auto run = std::make_unique<Run>();
+    try {
+        std::ifstream in(dir / "run.json");
+        Json j;
+        in >> j;
+        if (!j.is_object())
+            throw std::runtime_error("Expected a JSON object");
+        run->caseDir = j.contains("caseDir") ? fs::path(j.at("caseDir").get<std::string>()) : dir;
+        if (run->caseDir.empty())
+            throw std::runtime_error("caseDir must not be empty");
+        run->imported = j.value("imported", false);
+        run->created = j.value("created", std::string());
+        const auto backend = parseBackend(j.value("backend", std::string("docker")));
+        if (!backend)
+            throw std::runtime_error("backend must be 'docker' or 'local'");
+        run->backend = *backend;
+        run->source = sourceFrom(j.value("source", Json::object()));
+        run->docker = j.value("docker", std::string());
+        run->dockerHost = j.value("dockerHost", std::string());
+        if (!isValidEngineHost(run->dockerHost))
+            throw std::runtime_error("dockerHost is not a supported engine address");
+    } catch (const std::exception& e) {
+        // Discard all partially decoded paths and engine settings. Preserve the original
+        // file and expose this record alongside healthy runs instead of aborting startup.
+        run = std::make_unique<Run>();
+        run->caseDir = dir;
+        run->metadataError = "Cannot load simulation metadata '" + (dir / "run.json").string() + "': " + e.what() +
+                             ". The original file is unchanged; restore a valid run.json and restart AeroCAD.";
+    }
     run->id = dir.filename().string();
     run->dir = dir;
-    run->caseDir = j.contains("caseDir") ? fs::path(j.at("caseDir").get<std::string>()) : dir;
-    run->imported = j.value("imported", false);
-    run->created = j.value("created", std::string());
-    run->backend = parseBackend(j.value("backend", std::string("docker"))).value_or(Backend::Docker);
-    run->source = sourceFrom(j.value("source", Json::object()));
-    run->docker = j.value("docker", std::string());
-    run->dockerHost = j.value("dockerHost", std::string());
     Run& r = *run;
     m_runs[r.id] = std::move(run);
+    if (!r.metadataError.empty())
+        return;
     // A remote run continues on its host while the app is closed: follow it again.
     if (!r.dockerHost.empty() && !r.docker.empty()) {
         std::error_code ec;
@@ -819,6 +848,13 @@ void RunManager::refresh(Run& run)
     s.caseDir = run.caseDir;
     s.message.clear();
 
+    if (!run.metadataError.empty()) {
+        s.state = RunState::Failed;
+        s.stage = "metadata";
+        s.message = run.metadataError;
+        return;
+    }
+
     if (run.stopper)
         run.stopper->running();
 
@@ -953,7 +989,7 @@ bool RunManager::remove(const std::string& id)
 std::optional<CaseInfo> RunManager::caseInfo(const std::string& id)
 {
     Run* run = find(id);
-    if (run == nullptr)
+    if (run == nullptr || !run->metadataError.empty())
         return std::nullopt;
     std::ifstream in(run->caseDir / "case.json");
     if (!in)
@@ -1032,6 +1068,8 @@ Json RunManager::results(const std::string& id, int maxPoints)
     if (!st)
         throw std::runtime_error("No simulation run '" + id + "'");
     const Run& run = *find(id);
+    if (!run.metadataError.empty())
+        throw std::runtime_error(run.metadataError);
     const auto info = caseInfo(id);
     const Table coeffs = readTable(run.caseDir / "postProcessing" / "forceCoeffs" / "0" / "coefficient.dat");
     const Table forces = readTable(run.caseDir / "postProcessing" / "forces" / "0" / "force.dat");
@@ -1122,6 +1160,8 @@ PolyData RunManager::field(const std::string& id, std::string_view kind)
     Run* run = find(id);
     if (run == nullptr)
         throw std::runtime_error("No simulation run '" + id + "'");
+    if (!run->metadataError.empty())
+        throw std::runtime_error(run->metadataError);
     const auto info = caseInfo(id);
     if (!info)
         throw std::runtime_error("Run '" + id + "' has no case.json");

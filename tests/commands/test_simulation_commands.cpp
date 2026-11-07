@@ -95,6 +95,27 @@ std::string prepareRun(commands::Session& session, std::uint64_t part)
 
 } // namespace
 
+TEST_CASE("invalid run metadata does not prevent a working command session", "[commands][simulation][run-metadata]")
+{
+    RunsDir dir;
+    writeOutput(dir.path() / "broken" / "run.json", "{\"backend\":42}");
+    commands::Session session;
+    const auto listed = session.execute("simulation.list");
+    REQUIRE(listed.ok);
+    REQUIRE(listed.data.at("runs").size() == 1);
+    const auto& broken = listed.data.at("runs").at(0);
+    CHECK(broken.at("state") == "failed");
+    CHECK(broken.at("message").get<std::string>().find("run.json") != std::string::npos);
+    const auto results = session.execute("simulation.results", {{"run", "broken"}});
+    CHECK_FALSE(results.ok);
+    CHECK(results.error == broken.at("message").get<std::string>());
+    const auto id = prepareRun(session, importBox(session));
+    CHECK(session.execute("simulation.results", {{"run", id}}).ok);
+    const auto status = session.execute("simulation.status", {{"run", "broken"}});
+    REQUIRE(status.ok);
+    CHECK(status.data.at("state") == "failed");
+}
+
 TEST_CASE("simulation.* commands are registered with schemas", "[commands][simulation]")
 {
     RunsDir dir;
