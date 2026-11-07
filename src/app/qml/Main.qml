@@ -796,6 +796,25 @@ ApplicationWindow {
         }
     }
 
+    /// New or opened project: nothing of the previous one stays on screen (tools, picks,
+    /// sections, measurements, heat maps, scan picks, simulation results, dialogs holding
+    /// ids). The command layer clears the document, undo history and analyses itself.
+    function resetWorkspace() {
+        featureDialog.close() // may hold a feature id of the previous project
+        parametersDialog.close()
+        exportCheckDialog.close()
+        viewport.leaveSelectionTool()
+        window.pickingSketchPlane = false
+        window.partOnSurfaceSketch = null
+        window.finishSketch()
+        window.selectPart(0)
+        closeToolPanels()
+        scanPanel.reset()
+        heatMapPanel.result = null
+        sectionPanel.close()
+        simulationPanel.clearSelection()
+    }
+
     // Inspect (Fusion: I = Measure).
     /// Closes the panels that share the top-left corner of the view (Measure, heat maps, Scan Tools).
     function closeToolPanels() {
@@ -1995,10 +2014,7 @@ ApplicationWindow {
         target: window.controller
         function onScriptFinished() { viewport.fitAll() }
         function onProjectOpened(view) {
-            // The dialog may hold a feature id of the previous project.
-            featureDialog.close()
-            window.selectPart(0)
-            window.finishSketch()
+            window.resetWorkspace()
             viewport.restoreCameraState(view)
         }
         // Undo/redo and edits elsewhere (timeline, parameters) change the sketch too.

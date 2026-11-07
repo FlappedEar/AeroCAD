@@ -24,7 +24,9 @@ panel in place of Properties:
   of the coefficients, forces and residuals per iteration (updated live). **Show in 3D**:
   pressure on the part (Cp, blue = suction, red = stagnation), horizontal and vertical
   velocity sections and streamlines (speed), each with its colour legend. The part
-  itself is hidden while its pressure map is shown.
+  itself is hidden while its pressure map is shown. The 3D results are drawn only while
+  the open design holds the run's part unchanged: deleting or changing the part hides
+  them (undo brings them back). File > New and Open start with no run selected.
 - **A/B**: verdict, drag/lift/side of A and B with the difference in N and %, differing
   conditions and notes; *Show B in 3D* shows B's fields on the same colour scales as A.
 

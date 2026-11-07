@@ -67,6 +67,28 @@ Item {
     property var _zoomAnchor: null
     property point _zoomAnchorAt
     property double _zoomAnchorTime: 0
+    // The camera as the last zoomAt left it: any other change (Fit, a view restore, a
+    // standard view) means the cached anchor is no longer under the pointer.
+    property var _zoomAnchorCamera: null
+
+    /// Forgets the cached zoom anchor (call when the projection changes).
+    function invalidateZoomAnchor() {
+        _zoomAnchor = null
+    }
+
+    function _cameraKey() {
+        const p = pivot.position
+        return [p.x, p.y, p.z, distance, pitch, yaw]
+    }
+
+    function _sameCamera(a, b) {
+        if (!a || !b)
+            return false
+        for (let i = 0; i < a.length; ++i)
+            if (Math.abs(a[i] - b[i]) > 1e-9 * Math.max(1, Math.abs(a[i])))
+                return false
+        return true
+    }
 
     function updateTransform() {
         pivot.eulerRotation = Qt.vector3d(pitch, yaw, 0)
@@ -126,7 +148,7 @@ Item {
         if (!(newDistance > 0) || newDistance === oldDistance)
             return
         const now = Date.now()
-        if (!_zoomAnchor || Math.abs(x - _zoomAnchorAt.x) > 2 || Math.abs(y - _zoomAnchorAt.y) > 2
+        if (!_zoomAnchor || !_sameCamera(_zoomAnchorCamera, _cameraKey()) || Math.abs(x - _zoomAnchorAt.x) > 2 || Math.abs(y - _zoomAnchorAt.y) > 2
                 || now - _zoomAnchorTime > 600) {
             _zoomAnchor = pointUnder ? pointUnder(x, y, false) : null
             _zoomAnchorAt = Qt.point(x, y)
@@ -137,6 +159,7 @@ Item {
         if (_zoomAnchor)
             pivot.position = _zoomAnchor.plus(pivot.position.minus(_zoomAnchor).times(f))
         distance = newDistance
+        _zoomAnchorCamera = _cameraKey()
     }
 
     /// Wheel angle (1/8 degree units, positive = away from the user) to a zoom factor.

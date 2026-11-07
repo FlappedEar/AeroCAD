@@ -69,6 +69,7 @@ Item {
 
     /// Camera projection (Fusion ViewCube menu: Orthographic / Perspective).
     property bool orthographic: false
+    onOrthographicChanged: cameraInput.invalidateZoomAnchor()
     property bool viewCubeVisible: true
     /// Ground grid on the XY plane, spaced to suit the scene size (View > Show Grid).
     property bool gridVisible: true
