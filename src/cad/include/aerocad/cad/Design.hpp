@@ -227,6 +227,19 @@ public:
     /// FeatureEvaluator). Not part of the undoable state.
     void setFeatureEvaluator(const std::string& type, FeatureEvaluator evaluator);
 
+    /// A FeatureEvaluator result with the fingerprint of its inputs, as stored in project
+    /// files so that opening a project does not rebuild steps made on a scan.
+    struct StoredResult {
+        FeatureId feature = 0;
+        std::string key;
+        FeatureEvaluator::Output output;
+    };
+    /// The evaluator results the current model uses, one per evaluated feature.
+    [[nodiscard]] std::vector<StoredResult> currentResults() const;
+    /// Makes a stored result available to the next regeneration (after clear(), before
+    /// restore() of a loaded project). Used only if its key still matches the inputs.
+    void seedResult(StoredResult result);
+
     /// Number of times evaluators ran (cache misses), for tests.
     [[nodiscard]] std::size_t evaluatorRuns() const { return m_evaluatorRuns; }
 
@@ -280,6 +293,8 @@ private:
         FeatureEvaluator::Output output;
     };
     std::map<FeatureId, std::vector<EvaluatedFeature>> m_evaluated;
+    /// Key of the result each evaluated feature used in the last regeneration.
+    std::map<FeatureId, std::string> m_usedKeys;
     std::size_t m_evaluatorRuns = 0;
     int m_bodyCounter = 0;
 };

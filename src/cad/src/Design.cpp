@@ -1268,6 +1268,18 @@ void Design::evaluateExternal(const Feature& f, const FeatureEvaluator& ev)
     }
     if (ev.inputs)
         key += "\n" + ev.inputs(f);
+    // Stored in project files: a short digest (FNV-1a, 64 bit, and the length) instead of
+    // the whole description.
+    {
+        std::uint64_t h = 1469598103934665603ull;
+        for (const unsigned char c : key) {
+            h ^= c;
+            h *= 1099511628211ull;
+        }
+        char digest[48];
+        std::snprintf(digest, sizeof digest, "%016llx-%zu", static_cast<unsigned long long>(h), key.size());
+        key = digest;
+    }
 
     auto& cache = m_evaluated[f.id];
     const FeatureEvaluator::Output* out = nullptr;
@@ -1282,7 +1294,7 @@ void Design::evaluateExternal(const Feature& f, const FeatureEvaluator& ev)
         constexpr std::size_t keep = 4;
         if (cache.size() >= keep)
             cache.erase(cache.begin());
-        cache.push_back({std::move(key), std::move(fresh)});
+        cache.push_back({key, std::move(fresh)});
         out = &cache.back().output;
     }
     for (std::size_t k = 0; k < out->bodies.size(); ++k) {
@@ -1293,6 +1305,27 @@ void Design::evaluateExternal(const Feature& f, const FeatureEvaluator& ev)
         m_bodies[id] = Body{id, name, shape};
     }
     m_reports[f.id] = out->report;
+    m_usedKeys[f.id] = key;
+}
+
+std::vector<Design::StoredResult> Design::currentResults() const
+{
+    std::vector<StoredResult> out;
+    for (const auto& [id, key] : m_usedKeys) {
+        auto it = m_evaluated.find(id);
+        if (it == m_evaluated.end())
+            continue;
+        for (const auto& e : it->second)
+            if (e.key == key)
+                out.push_back({id, e.key, e.output});
+    }
+    return out;
+}
+
+void Design::seedResult(StoredResult result)
+{
+    auto& cache = m_evaluated[result.feature];
+    cache.push_back({std::move(result.key), std::move(result.output)});
 }
 
 void Design::setFrame(ReferenceFrame fr)
@@ -1369,6 +1402,7 @@ void Design::regenerate()
     m_planes.clear();
     m_statuses.clear();
     m_reports.clear();
+    m_usedKeys.clear();
     m_bodyCounter = 0;
     for (std::size_t i = 0; i < m_state.features.size(); ++i) {
         const Feature& f = m_state.features[i];

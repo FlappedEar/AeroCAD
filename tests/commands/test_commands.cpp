@@ -1173,7 +1173,7 @@ TEST_CASE("Part on surface is a timeline step: edit, follow the sketch, delete, 
         CHECK(partVolume() == Approx(volume).epsilon(1e-6));
     }
 
-    SECTION("saved in the project and rebuilt on open")
+    SECTION("saved in the project and opened without refitting")
     {
         const auto file = std::filesystem::temp_directory_path() / ("aerocad_timeline_" + std::to_string(std::random_device{}()) + ".aerocad");
         REQUIRE(session.execute("project.save", {{"path", core::pathToUtf8(file)}}).ok);
@@ -1186,6 +1186,8 @@ TEST_CASE("Part on surface is a timeline step: edit, follow the sketch, delete, 
         CHECK(p->kind == model::PartKind::Body);
         REQUIRE(p->shape);
         CHECK(p->shape->volume() == Approx(volume).epsilon(0.01));
+        // Its result was stored with the project: opening does not fit the scan again.
+        CHECK(reopened.design().evaluatorRuns() == 0);
         // And it can still be edited there.
         REQUIRE(reopened.execute("feature.edit", {{"id", featureId}, {"params", {{"thickness", 4.0}}}}).ok);
         CHECK(reopened.document().part(partId)->shape->volume() == Approx(2.0 * volume).epsilon(0.03));

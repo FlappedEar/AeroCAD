@@ -180,6 +180,20 @@ std::string encodeProject(const ProjectData& data)
         timelineParts.push_back(std::move(j));
     }
 
+    Json results = Json::array();
+    for (const auto& r : data.timelineResults) {
+        Json bodies = Json::array();
+        for (std::size_t k = 0; k < r.output.bodies.size(); ++k) {
+            const auto& [shape, name] = r.output.bodies[k];
+            if (shape.isNull())
+                continue;
+            const std::string entry = "results/" + std::to_string(r.feature) + "-" + std::to_string(k) + ".brep";
+            blobs.emplace_back(entry, geometry::toBrep(shape));
+            bodies.push_back({{"name", name}, {"brep", entry}});
+        }
+        results.push_back({{"feature", r.feature}, {"key", r.key}, {"report", r.output.report}, {"bodies", bodies}});
+    }
+
     Json variants = Json::array();
     for (const auto& v : data.variants.variants()) {
         Json j{{"id", v.id}, {"name", v.name}};
@@ -197,6 +211,7 @@ std::string encodeProject(const ProjectData& data)
         {"upAxis", "Z"},
         {"parts", parts},
         {"timelineParts", timelineParts},
+        {"timelineResults", results},
         {"design", cad::stateToJson(data.design)},
         {"variants", {{"active", data.variants.active()}, {"previous", data.variants.previous()}, {"items", variants}}},
         {"view", data.view.is_object() ? data.view : Json::object()},
@@ -299,6 +314,25 @@ ProjectData decodeImpl(std::string_view bytes)
         if (!ids.insert(t.id).second)
             continue; // id taken: the part gets a new id when it is regenerated
         data.timelineParts.push_back(std::move(t));
+    }
+
+    // Cached results are an optimisation: one that cannot be read is rebuilt instead.
+    for (const auto& j : m.value("timelineResults", Json::array())) {
+        try {
+            cad::Design::StoredResult r;
+            r.feature = j.at("feature").get<cad::FeatureId>();
+            r.key = j.at("key").get<std::string>();
+            r.output.report = j.value("report", Json());
+            for (const auto& b : j.at("bodies")) {
+                geometry::Shape shape = geometry::fromBrep(zip.read(b.at("brep").get<std::string>()));
+                if (shape.isNull())
+                    throw ProjectError("invalid B-rep");
+                r.output.bodies.emplace_back(std::move(shape), b.value("name", ""));
+            }
+            if (!r.output.bodies.empty())
+                data.timelineResults.push_back(std::move(r));
+        } catch (const std::exception&) {
+        }
     }
 
     try {

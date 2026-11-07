@@ -48,7 +48,7 @@ use the same operations, and every change is one undo step.
   the scan) and an unrelated change, undo or redo does not refit. One feature can make several
   bodies (a stacked or mirrored set of fins): the first has the feature's id, the others
   `id | k << 40`; any of them stands for the feature in `feature.*` commands. On opening a
-  project these steps are rebuilt from the scan, which takes as long as making them did.
+  project their stored results are used while the scan, sketch and params are unchanged.
 - Failing features: a new or edited feature that fails is rejected (nothing changes).
   Features that break because of an earlier change stay in the timeline with
   `status: "error"` and a message, like Fusion's red timeline icons.
