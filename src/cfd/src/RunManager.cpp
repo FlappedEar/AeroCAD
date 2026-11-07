@@ -211,10 +211,22 @@ Environment detectEnvironment(const std::string& remoteHost)
             return runCommand(argv, timeout);
         };
         const auto info = cmd({"info", "--format", "{{.NCPU}}"});
-        e.dockerRunning = info.exitCode == 0;
+        // Some docker versions exit 0 and print 0 CPUs when the daemon does not answer. Warnings
+        // (stderr is in the output too) are on lines of their own.
+        int cpus = 0;
+        {
+            std::istringstream lines(info.output);
+            for (std::string line; std::getline(lines, line);) {
+                while (!line.empty() && std::isspace(static_cast<unsigned char>(line.back())))
+                    line.pop_back();
+                if (!line.empty() && line.find_first_not_of("0123456789") == std::string::npos)
+                    cpus = std::atoi(line.c_str());
+            }
+        }
+        e.dockerRunning = info.exitCode == 0 && cpus > 0;
         if (e.dockerRunning) {
             if (!e.remoteHost.empty())
-                e.remoteCpus = std::atoi(info.output.c_str());
+                e.remoteCpus = cpus;
             e.imagePresent = cmd({"image", "inspect", std::string(kDockerImage), "--format", "{{.Id}}"}).exitCode == 0;
         } else if (!e.remoteHost.empty()) {
             e.remoteError = info.output;
