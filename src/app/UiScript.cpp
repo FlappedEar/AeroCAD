@@ -36,6 +36,7 @@
 #include <cstdio>
 #include <functional>
 #include <memory>
+#include <type_traits>
 
 namespace aerocad::app {
 
@@ -118,16 +119,10 @@ public:
         for (const QString& path : paths)
             urls << QUrl::fromLocalFile(QFileInfo(path).absoluteFilePath());
         data.setUrls(urls);
-#if QT_VERSION >= QT_VERSION_CHECK(6, 16, 0)
-        const QPointF at(x, y); // the QPoint constructors are deprecated from Qt 6.16
-#else
-        const QPoint at(qRound(x), qRound(y));
-#endif
+        const QPointF at(x, y);
         const Qt::DropActions actions = Qt::CopyAction | Qt::LinkAction;
-        QDragEnterEvent enter(at, actions, &data, Qt::LeftButton, Qt::NoModifier);
-        QCoreApplication::sendEvent(m_window, &enter);
-        QDragMoveEvent move(at, actions, &data, Qt::LeftButton, Qt::NoModifier);
-        QCoreApplication::sendEvent(m_window, &move);
+        sendDrag<QDragEnterEvent>(at, actions, &data);
+        sendDrag<QDragMoveEvent>(at, actions, &data);
         QDropEvent dropEvent(at, actions, &data, Qt::LeftButton, Qt::NoModifier);
         QCoreApplication::sendEvent(m_window, &dropEvent);
     }
@@ -158,6 +153,21 @@ public:
     }
 
 private:
+    /// Newer Qt deprecates the QPoint constructors of the drag events for QPointF ones that
+    /// older Qt (6.4) does not have: use whichever exists.
+    template <typename Event>
+    void sendDrag(const QPointF& at, Qt::DropActions actions, const QMimeData* data)
+    {
+        if constexpr (std::is_constructible_v<Event, QPointF, Qt::DropActions, const QMimeData*, Qt::MouseButtons,
+                                              Qt::KeyboardModifiers>) {
+            Event event(at, actions, data, Qt::LeftButton, Qt::NoModifier);
+            QCoreApplication::sendEvent(m_window, &event);
+        } else {
+            Event event(at.toPoint(), actions, data, Qt::LeftButton, Qt::NoModifier);
+            QCoreApplication::sendEvent(m_window, &event);
+        }
+    }
+
     static Qt::MouseButton toButton(const QString& b)
     {
         return b == "middle" ? Qt::MiddleButton : b == "right" ? Qt::RightButton : Qt::LeftButton;
