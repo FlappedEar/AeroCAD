@@ -10,6 +10,7 @@
 #include "aerocad/geometry/Modeling.hpp"
 #include "aerocad/geometry/Offset.hpp"
 #include "aerocad/geometry/RegionFit.hpp"
+#include "aerocad/geometry/Shape.hpp"
 #include "aerocad/geometry/SurfaceFit.hpp"
 #include "aerocad/geometry/Tessellation.hpp"
 #include "aerocad/geometry/Transform.hpp"
@@ -18,9 +19,12 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <cstdint>
 #include <limits>
+#include <map>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace aerocad::commands {
@@ -177,6 +181,635 @@ std::array<double, 4> outlineBounds(const geometry::Plane& plane, const std::vec
     return {u0, v0, u1, v1};
 }
 
+/// The evaluated sketch a feature is built from (params "sketch").
+const cad::SketchResult& sketchOf(const cad::Design& d, const Json& params)
+{
+    const auto sketchId = params.at("sketch").get<cad::FeatureId>();
+    const auto it = d.sketches().find(sketchId);
+    if (it == d.sketches().end())
+        throw CommandError("No sketch " + std::to_string(sketchId) + " before this step of the timeline");
+    return it->second;
+}
+
+/// A positive length from the params: a number or an expression with user parameters.
+double positive(const cad::Design& d, const Json& params, const char* key)
+{
+    const double v = d.evaluate(params.at(key));
+    if (!(v > 0.0))
+        throw CommandError(std::string(key) + " must be positive");
+    return v;
+}
+
+/// The surface part a sketch-made part stands on: `id`, else the part the sketch was made on.
+model::PartId surfacePartOf(const cad::Design& d, const Json& params)
+{
+    if (params.contains("id"))
+        return params.at("id").get<model::PartId>();
+    const cad::Feature* sketch = d.feature(params.at("sketch").get<cad::FeatureId>());
+    if (sketch != nullptr)
+        if (const Json on = sketch->params.value("onSurface", Json::object()); on.contains("part"))
+            return on.at("part").get<model::PartId>();
+    return 0;
+}
+
+/// Content fingerprint of a timeline body's exact geometry, so a cached result is reused
+/// while the body under it is unchanged. Digest of its B-rep text without triangles and
+/// without the per-shape flag lines (seven 0/1 digits: modified, checked, ...), which change
+/// when the shape is merely tessellated or checked.
+std::string shapeFingerprint(const geometry::Shape& shape)
+{
+    const std::string text = geometry::toBrep(shape, false);
+    std::uint64_t h = 1469598103934665603ull;
+    std::size_t used = 0;
+    std::size_t at = 0;
+    while (at < text.size()) {
+        std::size_t end = text.find('\n', at);
+        if (end == std::string::npos)
+            end = text.size();
+        const std::string_view line(text.data() + at, end - at);
+        const bool flags = line.size() == 7 && line.find_first_not_of("01") == std::string_view::npos;
+        if (!flags) {
+            for (const unsigned char c : line) {
+                h ^= c;
+                h *= 1099511628211ull;
+            }
+            h ^= '\n';
+            h *= 1099511628211ull;
+            used += line.size() + 1;
+        }
+        at = end + 1;
+    }
+    return std::to_string(used) + "/" + std::to_string(h);
+}
+
+/// Content fingerprint of a part's geometry (its mesh, which follows its exact shape), so a
+/// cached timeline result is reused while the scan or surface under it is unchanged.
+std::string meshFingerprint(const core::TriangleMesh& mesh)
+{
+    std::uint64_t h = 1469598103934665603ull;
+    auto mix = [&h](const void* data, std::size_t size) {
+        const auto* bytes = static_cast<const unsigned char*>(data);
+        for (std::size_t i = 0; i < size; ++i) {
+            h ^= bytes[i];
+            h *= 1099511628211ull;
+        }
+    };
+    for (const auto& v : mesh.vertices()) {
+        const double xyz[3] = {v.x, v.y, v.z};
+        mix(xyz, sizeof xyz);
+    }
+    for (const auto& t : mesh.triangles())
+        mix(t.data(), sizeof(std::uint32_t) * 3);
+    return std::to_string(mesh.vertexCount()) + "/" + std::to_string(mesh.triangleCount()) + "/" + std::to_string(h);
+}
+/// The timeline feature (body id) whose document part is `id`, or 0 for an imported part.
+cad::FeatureId timelineBodyOf(const cad::Design& d, model::PartId id)
+{
+    for (const auto& info : d.partInfos())
+        if (info.part == id)
+            return info.feature;
+    return 0;
+}
+
+/// The part a step stands on. A timeline body is taken from the design as evaluated up to
+/// this step, not from the document: while a project opens the document does not hold it
+/// yet, and while an earlier step is edited it still holds the previous geometry.
+const model::Part* standingPart(const model::Document& doc, const cad::Design& d, model::PartId id,
+                                model::Part& scratch)
+{
+    const cad::FeatureId body = timelineBodyOf(d, id);
+    if (body == 0)
+        return doc.part(id);
+    const auto it = d.bodies().find(body);
+    if (it == d.bodies().end())
+        throw CommandError("Part " + std::to_string(id) + " is not built before this step of the timeline");
+    scratch = model::Part{};
+    scratch.id = id;
+    scratch.name = it->second.name;
+    scratch.kind = model::PartKind::Body;
+    scratch.featureId = body;
+    scratch.shape = it->second.shape;
+    scratch.mesh = std::make_shared<const core::TriangleMesh>(geometry::tessellate(it->second.shape));
+    return &scratch;
+}
+
+/// First body slot of mirrored fins (see FeatureEvaluator::Output::bodySlots).
+constexpr std::size_t kMirrorSlot = 1000;
+
+/// part_on_surface: the solid of surface.part_from_sketch (see its description).
+cad::FeatureEvaluator::Output partOnSurface(const model::Document& doc, const cad::Design& d, const Json& params)
+{
+    const auto& sk = sketchOf(d, params);
+    const auto outlines = sketchOutlines(sk, params);
+    Json on;
+    if (const cad::Feature* f = d.feature(sk.id); f != nullptr)
+        on = f->params.value("onSurface", Json::object());
+    model::PartId partId = 0;
+    if (params.contains("id"))
+        partId = params.at("id").get<model::PartId>();
+    else if (on.contains("part"))
+        partId = on.at("part").get<model::PartId>();
+    else
+        throw CommandError("Sketch " + sk.name + " was not made over a surface; give the surface part `id`");
+    model::Part bodyPart;
+    const model::Part* source = standingPart(doc, d, partId, bodyPart);
+    if (source == nullptr)
+        throw CommandError("No part with id " + std::to_string(partId));
+    if (source->kind == model::PartKind::Sketch)
+        throw CommandError("Part " + std::to_string(partId) + " is a sketch");
+
+    const double thickness = positive(d, params, "thickness");
+    const std::string sideName = params.value("side", std::string("inside"));
+    const geometry::ThickenSide side = sideName == "outside" ? geometry::ThickenSide::Outside
+                                       : sideName == "both"  ? geometry::ThickenSide::Both
+                                                             : geometry::ThickenSide::Inside;
+    // Planar area of the outline: the cut-out skin covers at least that much
+    // (a curved surface over it is larger); less means it ran off the surface.
+    double outlineArea = 0.0;
+    for (const auto& o : outlines)
+        outlineArea += geometry::area(o);
+    const double tolerance = params.value("tolerance", geometry::SurfaceFitOptions{}.tolerance);
+    Json fitReport;
+    Json warnings = Json::array();
+    // A fitted surface remembers the scan it came from: build the part on the scan
+    // itself, whatever area the earlier fit covered.
+    const model::Part* scan = source;
+    if (source->shape && !source->shape->isNull()) {
+        scan = doc.part(model::fittedScanId(*source));
+        if (scan != nullptr && (!scan->mesh || scan->shape))
+            scan = nullptr;
+    } else if (!source->mesh || source->mesh->triangleCount() == 0) {
+        throw CommandError("Part " + std::to_string(partId) + " has no surface");
+    }
+
+    geometry::Shape solid;
+    double area = 0.0;
+    if (scan != nullptr) {
+        // The part follows the skin seen along the sketch normal.
+        const auto [u0, v0, u1, v1] = outlineBounds(sk.plane, outlines);
+        const double margin = std::max(10.0, 0.05 * std::max(u1 - u0, v1 - v0));
+        geometry::DrapeArea drape;
+        drape.origin = sk.plane.origin;
+        drape.x = sk.plane.xDir;
+        drape.y = sk.plane.yDir();
+        drape.normal = sk.plane.normal;
+        drape.u0 = u0 - margin;
+        drape.v0 = v0 - margin;
+        drape.u1 = u1 + margin;
+        drape.v1 = v1 + margin;
+        drape.insideU0 = u0;
+        drape.insideV0 = v0;
+        drape.insideU1 = u1;
+        drape.insideV1 = v1;
+        geometry::DrapeFitOptions options;
+        options.tolerance = tolerance;
+        try {
+            const core::MeshProjector projector(*scan->mesh, sk.plane.normal);
+            auto part = geometry::partOnScan(projector, drape, outlines, thickness, side, options);
+            solid = part.solid;
+            area = part.skinArea;
+            const auto& rep = part.report;
+            fitReport = {{"part", scan->id},
+                         {"method", "draped"},
+                         {"maxDeviation", rep.maxDeviation},
+                         {"p99Deviation", rep.p99Deviation},
+                         {"rmsDeviation", rep.rmsDeviation},
+                         {"bridged", rep.bridgedFraction},
+                         {"poles", {rep.uPoles, rep.vPoles}},
+                         {"withinTolerance", rep.p99Deviation <= tolerance},
+                         {"milliseconds", rep.milliseconds}};
+            if (rep.bridgedFraction > 0.05)
+                warnings.push_back("About " + std::to_string(static_cast<int>(rep.bridgedFraction * 100.0)) +
+                                   "% of the outline's area has no skin under it (holes, past the scan's "
+                                   "edge); the part bridges it smoothly");
+        } catch (const geometry::SurfaceFitError& e) {
+            throw CommandError(std::string("Could not make the part on the scan: ") + e.what());
+        }
+    } else {
+        geometry::Shape skin;
+        try {
+            skin = geometry::trimSurface(*source->shape, outlines, sk.plane.normal, true, true);
+            area = geometry::surfaceArea(skin);
+            if (area < 0.995 * outlineArea)
+                warnings.push_back("The outline reaches past the surface; the part was cut off where the "
+                                   "surface ends");
+            solid = geometry::thickenSurface(skin, thickness, side);
+        } catch (const geometry::OffsetError& e) {
+            throw CommandError(e.what());
+        }
+    }
+    cad::FeatureEvaluator::Output out;
+    out.bodies.emplace_back(solid, params.value("name", sk.name + " part"));
+    out.report = {{"thickness", thickness}, {"side", sideName}, {"area", area}, {"volume", solid.volume()},
+                  {"warnings", warnings}};
+    if (!fitReport.is_null())
+        out.report["fit"] = fitReport;
+    return out;
+}
+
+/// fin_on_surface: the fins of surface.fin_from_sketch (see its description).
+cad::FeatureEvaluator::Output finOnSurface(const model::Document& doc, const cad::Design& d, const Json& params)
+{
+    const auto& sk = sketchOf(d, params);
+    const auto outlines = sketchOutlines(sk, params);
+    Json on;
+    if (const cad::Feature* f = d.feature(sk.id); f != nullptr)
+        on = f->params.value("onSurface", Json::object());
+    model::PartId partId = 0;
+    if (params.contains("id"))
+        partId = params.at("id").get<model::PartId>();
+    else if (on.contains("part"))
+        partId = on.at("part").get<model::PartId>();
+    else
+        throw CommandError("Sketch " + sk.name + " was not made on a surface; give the surface part `id`");
+    model::Part bodyPart;
+    const model::Part* source = standingPart(doc, d, partId, bodyPart);
+    if (source == nullptr)
+        throw CommandError("No part with id " + std::to_string(partId));
+    if (source->kind == model::PartKind::Sketch)
+        throw CommandError("Part " + std::to_string(partId) + " is a sketch");
+    const double thickness = positive(d, params, "thickness");
+    const double rootFillet = params.contains("rootFillet") ? d.evaluate(params.at("rootFillet")) : 0.0;
+    if (rootFillet < 0.0)
+        throw CommandError("rootFillet must not be negative");
+    const double tolerance = params.value("tolerance", geometry::SurfaceFitOptions{}.tolerance);
+    const int count = params.contains("count") ? static_cast<int>(std::lround(d.evaluate(params.at("count")))) : 1;
+    const double spacing = params.contains("spacing") ? d.evaluate(params.at("spacing")) : 40.0;
+    if (count < 1 || count > 20)
+        throw CommandError("count must be 1 to 20");
+
+    // The scan the fins stand on (a fitted surface remembers its scan), to set each
+    // fin's root on the skin.
+    const model::Part* scanPart = source;
+    if (source->shape && !source->shape->isNull()) {
+        const model::Part* scan = doc.part(model::fittedScanId(*source));
+        scanPart = scan != nullptr && scan->mesh && !scan->shape ? scan : source;
+    }
+
+    // Where each fin goes: the sketch plane and its outlines, moved together.
+    struct Placement {
+        geometry::Plane plane;
+        std::vector<geometry::Shape> outlines;
+    };
+    Json warnings = Json::array();
+    auto moved = [&](const Placement& p, const core::Vec3& offset) {
+        Placement q{p.plane, {}};
+        q.plane.origin = p.plane.origin + offset;
+        for (const auto& o : p.outlines)
+            q.outlines.push_back(geometry::translated(o, offset));
+        return q;
+    };
+    // The plane's origin moved along its X axis (outward) onto the skin under it,
+    // so the root reaches into the surface as drawn.
+    auto onSkin = [&](const Placement& p, const std::string& what) {
+        if (!scanPart->mesh || scanPart->mesh->triangleCount() == 0)
+            return p;
+        const core::MeshProjector projector(*scanPart->mesh, p.plane.xDir);
+        const auto hit = projector.drop(p.plane.origin);
+        if (!hit) {
+            warnings.push_back(what + ": no surface under its root (a hole, or past the scan's edge); "
+                               "it was left where it was placed");
+            return p;
+        }
+        return moved(p, p.plane.xDir * (*hit - p.plane.origin).dot(p.plane.xDir));
+    };
+    std::vector<Placement> placements{{sk.plane, outlines}};
+    for (int k = 1; k < count; ++k)
+        placements.push_back(onSkin(moved(placements.front(), sk.plane.normal * (spacing * k)),
+                                    "Fin " + std::to_string(k + 1)));
+
+    // The other side of the car: every fin mirrored in the symmetry plane, then set
+    // on the skin there (a scan is never exactly symmetric).
+    Json mirrorReport;
+    if (params.value("mirror", false)) {
+        core::Vec3 point, normal;
+        const Json plane = params.value("mirrorPlane", Json("auto"));
+        if (plane.is_object()) {
+            const auto& pt = plane.at("point");
+            const auto& nm = plane.at("normal");
+            point = {pt.at(0).get<double>(), pt.at(1).get<double>(), pt.at(2).get<double>()};
+            normal = {nm.at(0).get<double>(), nm.at(1).get<double>(), nm.at(2).get<double>()};
+            if (!(normal.length() > 0.0))
+                throw CommandError("mirrorPlane normal is zero");
+            normal = normal.normalized();
+            mirrorReport = {{"source", "given"}};
+        } else if (plane == "yz" || plane == "xz" || plane == "xy") {
+            normal = plane == "yz" ? core::Vec3{1, 0, 0} : plane == "xz" ? core::Vec3{0, 1, 0} : core::Vec3{0, 0, 1};
+            mirrorReport = {{"source", plane}};
+        } else if (plane == "auto") {
+            if (!scanPart->mesh)
+                throw CommandError("No mesh to find the symmetry plane on; give mirrorPlane");
+            const auto found = core::findSymmetryPlane(*scanPart->mesh);
+            if (!found)
+                throw CommandError("The scan is not symmetric enough to find its centre plane (a scan of one "
+                                   "side only?); pick the mirror plane (yz, xz, xy) instead");
+            point = found->point;
+            normal = found->normal;
+            mirrorReport = {{"source", "scan"}, {"match", found->match}, {"distance", found->distance}};
+        } else {
+            throw CommandError("mirrorPlane must be auto, yz, xz, xy or {point, normal}");
+        }
+        mirrorReport["point"] = {point.x, point.y, point.z};
+        mirrorReport["normal"] = {normal.x, normal.y, normal.z};
+        const std::size_t one = placements.size();
+        for (std::size_t k = 0; k < one; ++k) {
+            const Placement& p = placements[k];
+            if (std::abs((p.plane.origin - point).dot(normal)) < 1.0)
+                throw CommandError("The fin stands on the mirror plane; a mirrored copy would fall on it");
+            Placement q;
+            q.plane.origin = core::mirrorPoint(p.plane.origin, point, normal);
+            q.plane.xDir = core::mirrorDirection(p.plane.xDir, normal);
+            q.plane.normal = core::mirrorDirection(p.plane.normal, normal);
+            for (const auto& o : p.outlines)
+                q.outlines.push_back(geometry::mirrored(o, point, normal));
+            placements.push_back(onSkin(q, "Mirrored fin " + std::to_string(k + 1)));
+        }
+    }
+
+    Json fitReport;
+    // One fin at a placement, its root fillet as big as fits (up to rootFillet).
+    auto makeFin = [&](const Placement& at, double& appliedFillet) {
+        const geometry::Plane& plane = at.plane;
+        // Outward: the sketch X axis for a sketch made across the surface.
+        const core::Vec3 outward = plane.xDir;
+        // On a scan: the skin under the root, seen from outside (the first surface
+        // met, never a layer behind it; holes bridged), as a height field over the
+        // fin's footprint: along its chord (sketch Y) and across its thickness.
+        auto fitUnder = [&](const model::Part& scan, double fillet) {
+            const auto [u0, v0, u1, v1] = outlineBounds(plane, at.outlines);
+            (void)u0;
+            (void)u1;
+            // Room around the root for its fillet to land on the surface.
+            const double flare = fillet > 0.0 ? 2.0 * fillet + 2.0 : 0.0;
+            const double margin = std::max(5.0, 0.1 * (v1 - v0)) + flare;
+            const double half = 0.5 * thickness;
+            const double across = std::max(5.0, 2.0 * thickness) + flare;
+            geometry::DrapeArea area;
+            area.origin = plane.origin;
+            area.x = plane.yDir();
+            area.y = plane.normal;
+            area.normal = plane.xDir;
+            area.u0 = v0 - margin;
+            area.u1 = v1 + margin;
+            area.v0 = -half - across;
+            area.v1 = half + across;
+            area.insideU0 = v0;
+            area.insideU1 = v1;
+            area.insideV0 = -half;
+            area.insideV1 = half;
+            geometry::DrapeFitOptions options;
+            options.tolerance = tolerance;
+            try {
+                const core::MeshProjector projector(*scan.mesh, plane.xDir);
+                geometry::DrapeFitReport rep;
+                auto face = geometry::skinOnScan(projector, area, &rep, options);
+                if (fitReport.is_null())
+                    fitReport = {{"part", scan.id},
+                                 {"method", "draped"},
+                                 {"maxDeviation", rep.maxDeviation},
+                                 {"rmsDeviation", rep.rmsDeviation},
+                                 {"bridged", rep.bridgedFraction},
+                                 {"withinTolerance", rep.p99Deviation <= tolerance},
+                                 {"milliseconds", rep.milliseconds}};
+                return face;
+            } catch (const geometry::SurfaceFitError& e) {
+                throw CommandError(std::string("Could not find the scan under the fin root: ") + e.what());
+            }
+        };
+        auto build = [&](double fillet) {
+            auto finOn = [&](const geometry::Shape& surface) {
+                return geometry::finOnSurface(surface, at.outlines, plane.normal, thickness, outward, fillet);
+            };
+            geometry::Shape solid;
+            try {
+                if (source->shape && !source->shape->isNull()) {
+                    try {
+                        solid = finOn(*source->shape);
+                    } catch (const geometry::OffsetError&) {
+                        // The fitted surface may not reach under the whole root: fit
+                        // again on the scan it came from.
+                        if (scanPart == source)
+                            throw;
+                        solid = finOn(fitUnder(*scanPart, fillet));
+                    }
+                } else {
+                    if (!source->mesh || source->mesh->triangleCount() == 0)
+                        throw CommandError("Part " + std::to_string(partId) + " has no surface");
+                    solid = finOn(fitUnder(*source, fillet));
+                }
+            } catch (const geometry::OffsetError& e) {
+                throw CommandError(e.what());
+            }
+            return solid;
+        };
+        // A fillet that does not fit must not cost the fin: smaller radii are tried
+        // (a rolling ball wider than the fin's ends or the surface's bumps folds over
+        // itself, which shows as a mesh that is not watertight), then none.
+        appliedFillet = 0.0;
+        geometry::Shape solid;
+        std::string filletProblem;
+        // Wider than twice the fin's thickness, a fillet is past what a canard needs
+        // and what the fillet algorithm handles in good time.
+        const double largest = std::min(rootFillet, 2.0 * thickness);
+        const double smallest = std::max(0.5, 0.2 * largest);
+        for (double f = largest; f > 0.0 && solid.isNull(); f = f * 0.6 >= smallest ? f * 0.6 : 0.0) {
+            try {
+                geometry::Shape candidate = build(f);
+                if (!core::checkMesh(core::weldVertices(geometry::tessellate(candidate))).watertight()) {
+                    filletProblem = "A root fillet of " + formatMm(f) + " mm folds over itself here";
+                    continue;
+                }
+                solid = candidate;
+                appliedFillet = f;
+            } catch (const CommandError& e) {
+                if (filletProblem.empty())
+                    filletProblem = e.what();
+            }
+        }
+        if (solid.isNull())
+            solid = build(0.0);
+        if (rootFillet > 0.0 && appliedFillet == 0.0)
+            warnings.push_back(filletProblem + "; the fin was made without a root fillet");
+        else if (appliedFillet < rootFillet)
+            warnings.push_back("A root fillet of " + formatMm(rootFillet) + " mm does not fit this fin; it got " +
+                               formatMm(appliedFillet) + " mm");
+        return solid;
+    };
+
+    const std::string baseName = params.value("name", sk.name + " fin");
+    std::vector<std::pair<geometry::Shape, std::string>> fins;
+    std::vector<unsigned> bodySlots;
+    std::vector<double> fillets;
+    for (std::size_t k = 0; k < placements.size(); ++k) {
+        double applied = 0.0;
+        try {
+            const bool mirroredFin = !mirrorReport.is_null() && k >= placements.size() / 2;
+            const std::size_t n = mirroredFin ? k - placements.size() / 2 : k;
+            std::string name = count == 1 ? baseName : baseName + " " + std::to_string(n + 1);
+            if (!mirrorReport.is_null())
+                name += mirroredFin ? " (mirror)" : "";
+            fins.emplace_back(makeFin(placements[k], applied), name);
+            // Each fin keeps its id when the count changes or a fin before it fails:
+            // its place in the stack, mirrored fins from slot 1000.
+            bodySlots.push_back(static_cast<unsigned>(mirroredFin ? kMirrorSlot + n : n));
+        } catch (const CommandError& e) {
+            if (k == 0)
+                throw;
+            warnings.push_back("Fin " + std::to_string(k + 1) + " was not made: " + e.what());
+            continue;
+        }
+        fillets.push_back(applied);
+    }
+    cad::FeatureEvaluator::Output out;
+    out.bodies = std::move(fins);
+    out.bodySlots = std::move(bodySlots);
+    Json perFin = Json::array();
+    for (std::size_t k = 0; k < out.bodies.size(); ++k)
+        perFin.push_back({{"rootFillet", fillets[k]}, {"volume", out.bodies[k].first.volume()}});
+    out.report = {{"thickness", thickness}, {"rootFillet", fillets.front()}, {"volume", out.bodies.front().first.volume()},
+                  {"fins", perFin}, {"warnings", warnings}};
+    if (!mirrorReport.is_null())
+        out.report["mirror"] = mirrorReport;
+    if (!fitReport.is_null())
+        out.report["fit"] = fitReport;
+    return out;
+}
+
+/// Adds a feature built on a surface or scan (part_on_surface, fin_on_surface) to the
+/// timeline as one undo step. Like the timeline's own features it can later be edited,
+/// suppressed or deleted and follows edits of its sketch. The sketch is hidden (Fusion
+/// hides used sketches); a surface fitted just to draw on is hidden and its scan shown.
+Json addSurfaceFeature(CommandContext& ctx, const std::string& type, const Json& params, const std::string& label)
+{
+    if (ctx.design == nullptr)
+        throw CommandError("No design in this session");
+    cad::Design& d = *ctx.design;
+    model::Document& doc = ctx.document;
+    const auto& sk = requireSketch(ctx, params.at("sketch"));
+    const model::PartId partId = surfacePartOf(d, params);
+    if (partId == 0)
+        throw CommandError("Sketch " + sk.name + " was not made " + (type == "fin_on_surface" ? "on" : "over") +
+                           " a surface; give the surface part `id`");
+    const model::Part* source = doc.part(partId);
+    if (source == nullptr)
+        throw CommandError("No part with id " + std::to_string(partId));
+    const std::vector<VisibilityChange> changes = replacedByPart(doc, sk.id, *source);
+
+    const cad::Design::State before = d.state();
+    cad::FeatureId id = 0;
+    try {
+        id = d.addFeature(type, params);
+    } catch (const cad::DesignError& e) {
+        throw CommandError(e.what());
+    }
+    const cad::Design::State after = d.state();
+    d.syncDocument(doc);
+    std::vector<VisibilityChange> was;
+    for (const auto& c : changes) {
+        if (const model::Part* p = doc.part(c.id); p != nullptr && p->visible != c.visible) {
+            was.push_back({c.id, p->visible});
+            doc.modifyPart(c.id, [&](model::Part& q) { q.visible = c.visible; });
+        }
+    }
+    cad::Design* dp = &d;
+    ctx.undoStack.push({label + " " + d.feature(id)->name,
+                        [dp, &doc, before, was]() {
+                            dp->restore(before);
+                            dp->syncDocument(doc);
+                            for (const auto& c : was)
+                                doc.modifyPart(c.id, [&](model::Part& q) { q.visible = c.visible; });
+                        },
+                        [dp, &doc, after, was]() {
+                            dp->restore(after);
+                            dp->syncDocument(doc);
+                            for (const auto& c : was)
+                                doc.modifyPart(c.id, [&](model::Part& q) { q.visible = !c.visible; });
+                        }});
+
+    // The bodies' parts, first one first, with what the feature reports.
+    std::vector<const model::Part*> made;
+    for (const auto& q : doc.parts())
+        if (q.kind == model::PartKind::Body && cad::featureOfBody(q.featureId) == id)
+            made.push_back(&q);
+    std::sort(made.begin(), made.end(), [](const model::Part* a, const model::Part* b) { return a->featureId < b->featureId; });
+    std::vector<Json> parts;
+    for (const model::Part* p : made)
+        parts.push_back(partToJson(*p));
+    if (parts.empty())
+        throw CommandError("The feature made no part");
+    const Json report = d.status(id).report;
+    Json result = parts.front();
+    for (const auto& [key, value] : report.items())
+        if (key != "fins")
+            result[key] = value;
+    result["feature"] = id;
+    result["featureName"] = d.feature(id)->name;
+    if (report.contains("fins")) {
+        Json all = Json::array();
+        for (std::size_t k = 0; k < parts.size(); ++k) {
+            Json p = parts[k];
+            if (k < report.at("fins").size())
+                for (const auto& [key, value] : report.at("fins").at(k).items())
+                    p[key] = value;
+            all.push_back(std::move(p));
+        }
+        result["fins"] = all;
+    }
+    return result;
+}
+
+} // namespace
+
+void registerSurfaceFeatures(cad::Design& design, const model::Document& document)
+{
+    // Fingerprints are cached per part revision: hashing a large scan on every
+    // regeneration would cost more than the cache saves.
+    // The mesh itself is remembered too: an opened project replaces the parts, and its parts
+    // start again at revision 0.
+    struct Seen {
+        std::uint64_t revision;
+        std::weak_ptr<const core::TriangleMesh> mesh;
+        std::string fingerprint;
+    };
+    auto seen = std::make_shared<std::map<model::PartId, Seen>>();
+    const model::Document* doc = &document;
+    auto fingerprint = [seen, doc](model::PartId id) -> std::string {
+        const model::Part* p = doc->part(id);
+        if (p == nullptr)
+            return "missing";
+        auto it = seen->find(id);
+        if (it == seen->end() || it->second.revision != p->revision || it->second.mesh.lock() != p->mesh) {
+            const std::string fp = p->mesh ? meshFingerprint(*p->mesh) : std::string("empty");
+            it = seen->insert_or_assign(id, Seen{p->revision, p->mesh, fp}).first;
+        }
+        return it->second.fingerprint;
+    };
+    const cad::Design* dp = &design;
+    auto inputs = [fingerprint, doc, dp](const cad::Feature& f) {
+        const model::PartId partId = surfacePartOf(*dp, f.params);
+        // A timeline body: its geometry as evaluated before this step (see standingPart).
+        if (const cad::FeatureId body = timelineBodyOf(*dp, partId); body != 0) {
+            const auto it = dp->bodies().find(body);
+            return std::to_string(partId) + ":body:" +
+                   (it == dp->bodies().end() ? std::string("missing") : shapeFingerprint(it->second.shape));
+        }
+        std::string key = std::to_string(partId) + ":" + fingerprint(partId);
+        if (const model::Part* p = doc->part(partId); p != nullptr)
+            if (const model::PartId scan = model::fittedScanId(*p); scan != 0)
+                key += ";" + std::to_string(scan) + ":" + fingerprint(scan);
+        return key;
+    };
+    design.setFeatureEvaluator("part_on_surface",
+                               {inputs, [doc](const cad::Feature& f, const cad::Design& d) {
+                                    return partOnSurface(*doc, d, f.params);
+                                }});
+    design.setFeatureEvaluator("fin_on_surface",
+                               {inputs, [doc](const cad::Feature& f, const cad::Design& d) {
+                                    return finOnSurface(*doc, d, f.params);
+                                }});
+}
+
+namespace {
 } // namespace
 
 void registerSurfaceCommands(CommandRegistry& r)
@@ -408,115 +1041,7 @@ void registerSurfaceCommands(CommandRegistry& r)
                         {"sketch", "thickness"}),
            true},
           [](CommandContext& ctx, const Json& params) {
-              const auto& sk = requireSketch(ctx, params.at("sketch"));
-              const auto outlines = sketchOutlines(sk, params);
-              Json on;
-              if (const cad::Feature* f = ctx.design->feature(sk.id); f != nullptr)
-                  on = f->params.value("onSurface", Json::object());
-              model::PartId partId = 0;
-              if (params.contains("id"))
-                  partId = params.at("id").get<model::PartId>();
-              else if (on.contains("part"))
-                  partId = on.at("part").get<model::PartId>();
-              else
-                  throw CommandError("Sketch " + sk.name + " was not made over a surface; give the surface part `id`");
-              const model::Part* source = ctx.document.part(partId);
-              if (source == nullptr)
-                  throw CommandError("No part with id " + std::to_string(partId));
-              if (source->kind == model::PartKind::Sketch)
-                  throw CommandError("Part " + std::to_string(partId) + " is a sketch");
-
-              const double thickness = params.at("thickness").get<double>();
-              const std::string sideName = params.value("side", std::string("inside"));
-              const geometry::ThickenSide side = sideName == "outside" ? geometry::ThickenSide::Outside
-                                                 : sideName == "both"  ? geometry::ThickenSide::Both
-                                                                       : geometry::ThickenSide::Inside;
-              // Planar area of the outline: the cut-out skin covers at least that much
-              // (a curved surface over it is larger); less means it ran off the surface.
-              double outlineArea = 0.0;
-              for (const auto& o : outlines)
-                  outlineArea += geometry::area(o);
-              const double tolerance = params.value("tolerance", geometry::SurfaceFitOptions{}.tolerance);
-              Json fitReport;
-              Json warnings = Json::array();
-              // A fitted surface remembers the scan it came from: build the part on the scan
-              // itself, whatever area the earlier fit covered.
-              const model::Part* scan = source;
-              if (source->shape && !source->shape->isNull()) {
-                  scan = ctx.document.part(model::fittedScanId(*source));
-                  if (scan != nullptr && (!scan->mesh || scan->shape))
-                      scan = nullptr;
-              } else if (!source->mesh || source->mesh->triangleCount() == 0) {
-                  throw CommandError("Part " + std::to_string(partId) + " has no surface");
-              }
-
-              geometry::Shape solid;
-              double area = 0.0;
-              if (scan != nullptr) {
-                  // The part follows the skin seen along the sketch normal.
-                  const auto [u0, v0, u1, v1] = outlineBounds(sk.plane, outlines);
-                  const double margin = std::max(10.0, 0.05 * std::max(u1 - u0, v1 - v0));
-                  geometry::DrapeArea drape;
-                  drape.origin = sk.plane.origin;
-                  drape.x = sk.plane.xDir;
-                  drape.y = sk.plane.yDir();
-                  drape.normal = sk.plane.normal;
-                  drape.u0 = u0 - margin;
-                  drape.v0 = v0 - margin;
-                  drape.u1 = u1 + margin;
-                  drape.v1 = v1 + margin;
-                  drape.insideU0 = u0;
-                  drape.insideV0 = v0;
-                  drape.insideU1 = u1;
-                  drape.insideV1 = v1;
-                  geometry::DrapeFitOptions options;
-                  options.tolerance = tolerance;
-                  try {
-                      const core::MeshProjector projector(*scan->mesh, sk.plane.normal);
-                      auto part = geometry::partOnScan(projector, drape, outlines, thickness, side, options);
-                      solid = part.solid;
-                      area = part.skinArea;
-                      const auto& rep = part.report;
-                      fitReport = {{"part", scan->id},
-                                   {"method", "draped"},
-                                   {"maxDeviation", rep.maxDeviation},
-                                   {"p99Deviation", rep.p99Deviation},
-                                   {"rmsDeviation", rep.rmsDeviation},
-                                   {"bridged", rep.bridgedFraction},
-                                   {"poles", {rep.uPoles, rep.vPoles}},
-                                   {"withinTolerance", rep.p99Deviation <= tolerance},
-                                   {"milliseconds", rep.milliseconds}};
-                      if (rep.bridgedFraction > 0.05)
-                          warnings.push_back("About " + std::to_string(static_cast<int>(rep.bridgedFraction * 100.0)) +
-                                             "% of the outline's area has no skin under it (holes, past the scan's "
-                                             "edge); the part bridges it smoothly");
-                  } catch (const geometry::SurfaceFitError& e) {
-                      throw CommandError(std::string("Could not make the part on the scan: ") + e.what());
-                  }
-              } else {
-                  geometry::Shape skin;
-                  try {
-                      skin = geometry::trimSurface(*source->shape, outlines, sk.plane.normal, true, true);
-                      area = geometry::surfaceArea(skin);
-                      if (area < 0.995 * outlineArea)
-                          warnings.push_back("The outline reaches past the surface; the part was cut off where the "
-                                             "surface ends");
-                      solid = geometry::thickenSurface(skin, thickness, side);
-                  } catch (const geometry::OffsetError& e) {
-                      throw CommandError(e.what());
-                  }
-              }
-              Json result = addShapePart(ctx, *source, solid, params.value("name", sk.name + " part"),
-                                         "surface.part_from_sketch", "Part on surface",
-                                         replacedByPart(ctx.document, sk.id, *source));
-              result["thickness"] = thickness;
-              result["side"] = sideName;
-              result["area"] = area;
-              result["volume"] = solid.volume();
-              if (!fitReport.is_null())
-                  result["fit"] = fitReport;
-              result["warnings"] = warnings;
-              return result;
+              return addSurfaceFeature(ctx, "part_on_surface", params, "Part on surface");
           });
     r.add({"surface.fin_from_sketch", "Fin on surface",
            "One step from a fin outline to a solid fin standing on a curved surface or scan, e.g. a canard (dive "
@@ -562,269 +1087,7 @@ void registerSurfaceCommands(CommandRegistry& r)
                         {"sketch", "thickness"}),
            true},
           [](CommandContext& ctx, const Json& params) {
-              const auto& sk = requireSketch(ctx, params.at("sketch"));
-              const auto outlines = sketchOutlines(sk, params);
-              Json on;
-              if (const cad::Feature* f = ctx.design->feature(sk.id); f != nullptr)
-                  on = f->params.value("onSurface", Json::object());
-              model::PartId partId = 0;
-              if (params.contains("id"))
-                  partId = params.at("id").get<model::PartId>();
-              else if (on.contains("part"))
-                  partId = on.at("part").get<model::PartId>();
-              else
-                  throw CommandError("Sketch " + sk.name + " was not made on a surface; give the surface part `id`");
-              const model::Part* source = ctx.document.part(partId);
-              if (source == nullptr)
-                  throw CommandError("No part with id " + std::to_string(partId));
-              if (source->kind == model::PartKind::Sketch)
-                  throw CommandError("Part " + std::to_string(partId) + " is a sketch");
-              const double thickness = params.at("thickness").get<double>();
-              const double rootFillet = params.value("rootFillet", 0.0);
-              const double tolerance = params.value("tolerance", geometry::SurfaceFitOptions{}.tolerance);
-              const int count = params.value("count", 1);
-              const double spacing = params.value("spacing", 40.0);
-              if (count < 1 || count > 20)
-                  throw CommandError("count must be 1 to 20");
-
-              // The scan the fins stand on (a fitted surface remembers its scan), to set each
-              // fin's root on the skin.
-              const model::Part* scanPart = source;
-              if (source->shape && !source->shape->isNull()) {
-                  const model::Part* scan = ctx.document.part(model::fittedScanId(*source));
-                  scanPart = scan != nullptr && scan->mesh && !scan->shape ? scan : source;
-              }
-
-              // Where each fin goes: the sketch plane and its outlines, moved together.
-              struct Placement {
-                  geometry::Plane plane;
-                  std::vector<geometry::Shape> outlines;
-              };
-              Json warnings = Json::array();
-              auto moved = [&](const Placement& p, const core::Vec3& offset) {
-                  Placement q{p.plane, {}};
-                  q.plane.origin = p.plane.origin + offset;
-                  for (const auto& o : p.outlines)
-                      q.outlines.push_back(geometry::translated(o, offset));
-                  return q;
-              };
-              // The plane's origin moved along its X axis (outward) onto the skin under it,
-              // so the root reaches into the surface as drawn.
-              auto onSkin = [&](const Placement& p, const std::string& what) {
-                  if (!scanPart->mesh || scanPart->mesh->triangleCount() == 0)
-                      return p;
-                  const core::MeshProjector projector(*scanPart->mesh, p.plane.xDir);
-                  const auto hit = projector.drop(p.plane.origin);
-                  if (!hit) {
-                      warnings.push_back(what + ": no surface under its root (a hole, or past the scan's edge); "
-                                         "it was left where it was placed");
-                      return p;
-                  }
-                  return moved(p, p.plane.xDir * (*hit - p.plane.origin).dot(p.plane.xDir));
-              };
-              std::vector<Placement> placements{{sk.plane, outlines}};
-              for (int k = 1; k < count; ++k)
-                  placements.push_back(onSkin(moved(placements.front(), sk.plane.normal * (spacing * k)),
-                                              "Fin " + std::to_string(k + 1)));
-
-              // The other side of the car: every fin mirrored in the symmetry plane, then set
-              // on the skin there (a scan is never exactly symmetric).
-              Json mirrorReport;
-              if (params.value("mirror", false)) {
-                  core::Vec3 point, normal;
-                  const Json plane = params.value("mirrorPlane", Json("auto"));
-                  if (plane.is_object()) {
-                      const auto& pt = plane.at("point");
-                      const auto& nm = plane.at("normal");
-                      point = {pt.at(0).get<double>(), pt.at(1).get<double>(), pt.at(2).get<double>()};
-                      normal = {nm.at(0).get<double>(), nm.at(1).get<double>(), nm.at(2).get<double>()};
-                      if (!(normal.length() > 0.0))
-                          throw CommandError("mirrorPlane normal is zero");
-                      normal = normal.normalized();
-                      mirrorReport = {{"source", "given"}};
-                  } else if (plane == "yz" || plane == "xz" || plane == "xy") {
-                      normal = plane == "yz" ? core::Vec3{1, 0, 0} : plane == "xz" ? core::Vec3{0, 1, 0} : core::Vec3{0, 0, 1};
-                      mirrorReport = {{"source", plane}};
-                  } else if (plane == "auto") {
-                      if (!scanPart->mesh)
-                          throw CommandError("No mesh to find the symmetry plane on; give mirrorPlane");
-                      const auto found = core::findSymmetryPlane(*scanPart->mesh);
-                      if (!found)
-                          throw CommandError("The scan is not symmetric enough to find its centre plane (a scan of one "
-                                             "side only?); pick the mirror plane (yz, xz, xy) instead");
-                      point = found->point;
-                      normal = found->normal;
-                      mirrorReport = {{"source", "scan"}, {"match", found->match}, {"distance", found->distance}};
-                  } else {
-                      throw CommandError("mirrorPlane must be auto, yz, xz, xy or {point, normal}");
-                  }
-                  mirrorReport["point"] = {point.x, point.y, point.z};
-                  mirrorReport["normal"] = {normal.x, normal.y, normal.z};
-                  const std::size_t one = placements.size();
-                  for (std::size_t k = 0; k < one; ++k) {
-                      const Placement& p = placements[k];
-                      if (std::abs((p.plane.origin - point).dot(normal)) < 1.0)
-                          throw CommandError("The fin stands on the mirror plane; a mirrored copy would fall on it");
-                      Placement q;
-                      q.plane.origin = core::mirrorPoint(p.plane.origin, point, normal);
-                      q.plane.xDir = core::mirrorDirection(p.plane.xDir, normal);
-                      q.plane.normal = core::mirrorDirection(p.plane.normal, normal);
-                      for (const auto& o : p.outlines)
-                          q.outlines.push_back(geometry::mirrored(o, point, normal));
-                      placements.push_back(onSkin(q, "Mirrored fin " + std::to_string(k + 1)));
-                  }
-              }
-
-              Json fitReport;
-              // One fin at a placement, its root fillet as big as fits (up to rootFillet).
-              auto makeFin = [&](const Placement& at, double& appliedFillet) {
-                  const geometry::Plane& plane = at.plane;
-                  // Outward: the sketch X axis for a sketch made across the surface.
-                  const core::Vec3 outward = plane.xDir;
-                  // On a scan: the skin under the root, seen from outside (the first surface
-                  // met, never a layer behind it; holes bridged), as a height field over the
-                  // fin's footprint: along its chord (sketch Y) and across its thickness.
-                  auto fitUnder = [&](const model::Part& scan, double fillet) {
-                      const auto [u0, v0, u1, v1] = outlineBounds(plane, at.outlines);
-                      (void)u0;
-                      (void)u1;
-                      // Room around the root for its fillet to land on the surface.
-                      const double flare = fillet > 0.0 ? 2.0 * fillet + 2.0 : 0.0;
-                      const double margin = std::max(5.0, 0.1 * (v1 - v0)) + flare;
-                      const double half = 0.5 * thickness;
-                      const double across = std::max(5.0, 2.0 * thickness) + flare;
-                      geometry::DrapeArea area;
-                      area.origin = plane.origin;
-                      area.x = plane.yDir();
-                      area.y = plane.normal;
-                      area.normal = plane.xDir;
-                      area.u0 = v0 - margin;
-                      area.u1 = v1 + margin;
-                      area.v0 = -half - across;
-                      area.v1 = half + across;
-                      area.insideU0 = v0;
-                      area.insideU1 = v1;
-                      area.insideV0 = -half;
-                      area.insideV1 = half;
-                      geometry::DrapeFitOptions options;
-                      options.tolerance = tolerance;
-                      try {
-                          const core::MeshProjector projector(*scan.mesh, plane.xDir);
-                          geometry::DrapeFitReport rep;
-                          auto face = geometry::skinOnScan(projector, area, &rep, options);
-                          if (fitReport.is_null())
-                              fitReport = {{"part", scan.id},
-                                           {"method", "draped"},
-                                           {"maxDeviation", rep.maxDeviation},
-                                           {"rmsDeviation", rep.rmsDeviation},
-                                           {"bridged", rep.bridgedFraction},
-                                           {"withinTolerance", rep.p99Deviation <= tolerance},
-                                           {"milliseconds", rep.milliseconds}};
-                          return face;
-                      } catch (const geometry::SurfaceFitError& e) {
-                          throw CommandError(std::string("Could not find the scan under the fin root: ") + e.what());
-                      }
-                  };
-                  auto build = [&](double fillet) {
-                      auto finOn = [&](const geometry::Shape& surface) {
-                          return geometry::finOnSurface(surface, at.outlines, plane.normal, thickness, outward, fillet);
-                      };
-                      geometry::Shape solid;
-                      try {
-                          if (source->shape && !source->shape->isNull()) {
-                              try {
-                                  solid = finOn(*source->shape);
-                              } catch (const geometry::OffsetError&) {
-                                  // The fitted surface may not reach under the whole root: fit
-                                  // again on the scan it came from.
-                                  if (scanPart == source)
-                                      throw;
-                                  solid = finOn(fitUnder(*scanPart, fillet));
-                              }
-                          } else {
-                              if (!source->mesh || source->mesh->triangleCount() == 0)
-                                  throw CommandError("Part " + std::to_string(partId) + " has no surface");
-                              solid = finOn(fitUnder(*source, fillet));
-                          }
-                      } catch (const geometry::OffsetError& e) {
-                          throw CommandError(e.what());
-                      }
-                      return solid;
-                  };
-                  // A fillet that does not fit must not cost the fin: smaller radii are tried
-                  // (a rolling ball wider than the fin's ends or the surface's bumps folds over
-                  // itself, which shows as a mesh that is not watertight), then none.
-                  appliedFillet = 0.0;
-                  geometry::Shape solid;
-                  std::string filletProblem;
-                  // Wider than twice the fin's thickness, a fillet is past what a canard needs
-                  // and what the fillet algorithm handles in good time.
-                  const double largest = std::min(rootFillet, 2.0 * thickness);
-                  const double smallest = std::max(0.5, 0.2 * largest);
-                  for (double f = largest; f > 0.0 && solid.isNull(); f = f * 0.6 >= smallest ? f * 0.6 : 0.0) {
-                      try {
-                          geometry::Shape candidate = build(f);
-                          if (!core::checkMesh(core::weldVertices(geometry::tessellate(candidate))).watertight()) {
-                              filletProblem = "A root fillet of " + formatMm(f) + " mm folds over itself here";
-                              continue;
-                          }
-                          solid = candidate;
-                          appliedFillet = f;
-                      } catch (const CommandError& e) {
-                          if (filletProblem.empty())
-                              filletProblem = e.what();
-                      }
-                  }
-                  if (solid.isNull())
-                      solid = build(0.0);
-                  if (rootFillet > 0.0 && appliedFillet == 0.0)
-                      warnings.push_back(filletProblem + "; the fin was made without a root fillet");
-                  else if (appliedFillet < rootFillet)
-                      warnings.push_back("A root fillet of " + formatMm(rootFillet) + " mm does not fit this fin; it got " +
-                                         formatMm(appliedFillet) + " mm");
-                  return solid;
-              };
-
-              const std::string baseName = params.value("name", sk.name + " fin");
-              std::vector<std::pair<geometry::Shape, std::string>> fins;
-              std::vector<double> fillets;
-              for (std::size_t k = 0; k < placements.size(); ++k) {
-                  double applied = 0.0;
-                  try {
-                      const bool mirroredFin = !mirrorReport.is_null() && k >= placements.size() / 2;
-                      const std::size_t n = mirroredFin ? k - placements.size() / 2 : k;
-                      std::string name = count == 1 ? baseName : baseName + " " + std::to_string(n + 1);
-                      if (!mirrorReport.is_null())
-                          name += mirroredFin ? " (mirror)" : "";
-                      fins.emplace_back(makeFin(placements[k], applied), name);
-                  } catch (const CommandError& e) {
-                      if (k == 0)
-                          throw;
-                      warnings.push_back("Fin " + std::to_string(k + 1) + " was not made: " + e.what());
-                      continue;
-                  }
-                  fillets.push_back(applied);
-              }
-              const auto parts = addShapeParts(ctx, *source, fins, "surface.fin_from_sketch", "Fin on surface",
-                                               replacedByPart(ctx.document, sk.id, *source));
-              Json result = parts.front();
-              result["thickness"] = thickness;
-              result["rootFillet"] = fillets.front();
-              result["volume"] = fins.front().first.volume();
-              Json all = Json::array();
-              for (std::size_t k = 0; k < parts.size(); ++k) {
-                  Json p = parts[k];
-                  p["rootFillet"] = fillets[k];
-                  p["volume"] = fins[k].first.volume();
-                  all.push_back(p);
-              }
-              result["fins"] = all;
-              if (!mirrorReport.is_null())
-                  result["mirror"] = mirrorReport;
-              if (!fitReport.is_null())
-                  result["fit"] = fitReport;
-              result["warnings"] = warnings;
-              return result;
+              return addSurfaceFeature(ctx, "fin_on_surface", params, "Fin on surface");
           });
     r.add({"surface.offset", "Offset surface",
            "Adds a copy of a surface part moved by a distance along its normal (negative: against it), for "

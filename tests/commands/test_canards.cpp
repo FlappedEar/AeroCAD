@@ -153,6 +153,32 @@ TEST_CASE("A stacked pair of canards in one go, each root on the skin, one undo"
     CHECK(scene.session.document().parts().size() == parts - 2);
     REQUIRE(scene.session.execute("edit.redo", Json::object()).ok);
     CHECK(scene.session.document().parts().size() == parts);
+
+    // One step in the timeline: editing it rebuilds both fins, deleting it removes both.
+    const auto feature = pair.data.at("feature").get<cad::FeatureId>();
+    const double before = fins[1].at("volume").get<double>();
+    // Through the second fin's body id, with expressions as the edit dialog sends them.
+    const auto secondFin = fins[1].at("featureId").get<cad::FeatureId>();
+    auto edited = scene.session.execute("feature.edit",
+                                        {{"id", secondFin}, {"params", {{"thickness", "3 * 1.5"}, {"rootFillet", "0"}}}});
+    INFO(edited.toJson().dump());
+    REQUIRE(edited.ok);
+    CHECK(edited.data.at("id").get<cad::FeatureId>() == feature);
+    CHECK(edited.data.at("report").at("thickness").get<double>() == Approx(4.5));
+    for (const auto& f : fins) {
+        const model::Part& fin = scene.part(f);
+        REQUIRE(fin.shape);
+        CHECK(fin.shape->volume() > 1.3 * before);
+    }
+    auto renamed = scene.session.execute("feature.rename", {{"id", secondFin}, {"name", "Canards"}});
+    REQUIRE(renamed.ok);
+    CHECK(renamed.data.at("name") == "Canards");
+    auto suppressed = scene.session.execute("feature.suppress", {{"id", secondFin}, {"suppressed", true}});
+    REQUIRE(suppressed.ok);
+    CHECK(suppressed.data.at("status") == "suppressed");
+    REQUIRE(scene.session.execute("feature.suppress", {{"id", secondFin}, {"suppressed", false}}).ok);
+    REQUIRE(scene.session.execute("feature.delete", {{"id", secondFin}}).ok); // a fin's body id works too
+    CHECK(scene.session.document().parts().size() == parts - 2);
 }
 
 TEST_CASE("The centre plane of a scanned bumper is found, also turned and moved", "[canard][symmetry]")
@@ -210,6 +236,34 @@ TEST_CASE("Canards on both sides: mirrored in the scan's centre plane, each on i
         CHECK(fins[k + 2].at("volume").get<double>() == Approx(fins[k].at("volume").get<double>()).epsilon(0.05));
         CHECK(fins[k + 2].at("name").get<std::string>().find("(mirror)") != std::string::npos);
     }
+
+    // One fin a side instead of two: the first mirrored fin keeps its id and its part.
+    const auto mirrorBody = fins[2].at("featureId").get<cad::FeatureId>();
+    const auto mirrorPart = fins[2].at("id").get<model::PartId>();
+    auto single = scene.session.execute("feature.edit", {{"id", both.data.at("feature")}, {"params", {{"count", 1}}}});
+    INFO(single.toJson().dump());
+    REQUIRE(single.ok);
+    const model::Part* p = scene.session.document().part(mirrorPart);
+    REQUIRE(p != nullptr);
+    CHECK(p->featureId == mirrorBody);
+    REQUIRE(p->mesh);
+    CHECK(p->mesh->bounds().max.x < -300.0);
+    std::size_t bodies = 0;
+    for (const auto& q : scene.session.document().parts())
+        bodies += q.kind == model::PartKind::Body ? 1 : 0;
+    CHECK(bodies == 2);
+
+    // Saved and opened again: the stored fins come back with the same ids, without refitting.
+    const auto file = std::filesystem::temp_directory_path() / ("aerocad_fins_" + std::to_string(std::random_device{}()) + ".aerocad");
+    REQUIRE(scene.session.execute("project.save", {{"path", core::pathToUtf8(file)}}).ok);
+    commands::Session reopened;
+    REQUIRE(reopened.execute("project.open", {{"path", core::pathToUtf8(file)}}).ok);
+    CHECK(reopened.design().evaluatorRuns() == 0);
+    const model::Part* q = reopened.document().part(mirrorPart);
+    REQUIRE(q != nullptr);
+    CHECK(q->featureId == mirrorBody);
+    std::error_code ec;
+    std::filesystem::remove(file, ec);
 }
 
 TEST_CASE("Canards exported for printing: one STL and one STEP per fin", "[commands][fit][canard][export]")

@@ -1090,3 +1090,227 @@ TEST_CASE("Fin on a scan with a layer behind the skin and holes: the root sits o
     CHECK(core::checkMesh(core::weldVertices(
               *session.document().part(huge.data.at("id").get<model::PartId>())->mesh)).watertight());
 }
+
+TEST_CASE("Part on surface is a timeline step: edit, follow the sketch, delete, save and reopen", "[commands][fit][timeline]")
+{
+    commands::Session session;
+    std::vector<core::Vec3> v;
+    std::vector<core::TriangleMesh::Triangle> t;
+    const int nx = 60;
+    const int ny = 30;
+    for (int j = 0; j <= ny; ++j)
+        for (int i = 0; i <= nx; ++i)
+            v.push_back({double(i), double(j), -0.005 * (i - 30) * (i - 30)});
+    auto idx = [](int i, int j) { return static_cast<std::uint32_t>(j * (nx + 1) + i); };
+    for (int j = 0; j < ny; ++j)
+        for (int i = 0; i < nx; ++i) {
+            t.push_back({idx(i, j), idx(i + 1, j), idx(i + 1, j + 1)});
+            t.push_back({idx(i, j), idx(i + 1, j + 1), idx(i, j + 1)});
+        }
+    model::Part sheet;
+    sheet.name = "Wing";
+    sheet.mesh = std::make_shared<const core::TriangleMesh>(core::TriangleMesh(std::move(v), std::move(t)));
+    const auto scanId = session.document().addPart(sheet);
+    auto rect = [](double width) {
+        return Json::array({{{"type", "center_rectangle"}, {"center", {0, 0}}, {"width", width}, {"height", 12}}});
+    };
+    auto sk = session.execute("sketch.create", {{"surface", {{"part", scanId}, {"point", {30, 15, 0}}}}, {"curves", rect(30)}});
+    REQUIRE(sk.ok);
+    const auto sketchId = sk.data.at("id").get<cad::FeatureId>();
+
+    auto made = session.execute("surface.part_from_sketch", {{"sketch", sketchId}, {"thickness", 2.0}});
+    INFO(made.toJson().dump());
+    REQUIRE(made.ok);
+    CHECK(made.data.at("kind") == "body");
+    const auto featureId = made.data.at("feature").get<cad::FeatureId>();
+    const auto partId = made.data.at("id").get<model::PartId>();
+    const double volume = made.data.at("volume").get<double>();
+    CHECK(made.data.at("featureName") == "PartOnSurface1");
+
+    auto timeline = [&] {
+        auto r = session.execute("timeline.list");
+        REQUIRE(r.ok);
+        return r.data;
+    };
+    auto partVolume = [&]() -> double {
+        const model::Part* p = session.document().part(partId);
+        return p != nullptr && p->shape ? p->shape->volume() : 0.0;
+    };
+    {
+        const Json tl = timeline();
+        REQUIRE(tl.at("features").size() == 2);
+        const Json& f = tl.at("features").at(1);
+        CHECK(f.at("type") == "part_on_surface");
+        CHECK(f.at("status") == "ok");
+        CHECK(f.at("report").at("fit").at("withinTolerance") == true);
+    }
+
+    // An unrelated step does not fit the scan again.
+    const std::size_t runs = session.design().evaluatorRuns();
+    REQUIRE(session.execute("feature.box", {{"size", {5, 5, 5}}, {"corner", {100, 0, 0}}}).ok);
+    CHECK(session.design().evaluatorRuns() == runs);
+
+    // Edit the step: twice as thick, the same part.
+    REQUIRE(session.execute("feature.edit", {{"id", featureId}, {"params", {{"thickness", 4.0}}}}).ok);
+    CHECK(partVolume() == Approx(2.0 * volume).epsilon(0.03));
+    // Edit the sketch before it: the part follows the wider outline.
+    REQUIRE(session.execute("feature.edit", {{"id", sketchId}, {"params", {{"curves", rect(40)}}}}).ok);
+    CHECK(partVolume() == Approx(2.0 * volume * 40.0 / 30.0).epsilon(0.04));
+    REQUIRE(session.execute("edit.undo").ok);
+    REQUIRE(session.execute("edit.undo").ok);
+    CHECK(partVolume() == Approx(volume).epsilon(1e-6));
+    CHECK(session.design().evaluatorRuns() == runs + 2); // undo used the cached results
+
+    // A small parameter in an amplified expression: every change of it rebuilds the step.
+    REQUIRE(session.execute("parameter.set", {{"name", "f"}, {"expression", "0.000001"}}).ok);
+    REQUIRE(session.execute("feature.edit", {{"id", featureId}, {"params", {{"thickness", "f * 2000000"}}}}).ok);
+    CHECK(partVolume() == Approx(volume).epsilon(1e-6));
+    REQUIRE(session.execute("parameter.set", {{"name", "f"}, {"expression", "0.0000014"}}).ok);
+    CHECK(partVolume() == Approx(1.4 * volume).epsilon(0.03));
+    REQUIRE(session.execute("edit.undo").ok);
+    REQUIRE(session.execute("edit.undo").ok);
+    REQUIRE(session.execute("edit.undo").ok);
+    CHECK(partVolume() == Approx(volume).epsilon(1e-6));
+
+    // A broken parameter the step does not use leaves it alone.
+    REQUIRE(session.execute("parameter.set", {{"name", "a"}, {"expression", "1"}}).ok);
+    REQUIRE(session.execute("parameter.set", {{"name", "b"}, {"expression", "a * 2"}}).ok);
+    REQUIRE(session.execute("parameter.remove", {{"name", "a"}}).ok);
+    CHECK(timeline().at("features").at(1).at("status") == "ok");
+    CHECK(partVolume() == Approx(volume).epsilon(1e-6));
+    REQUIRE(session.execute("edit.undo").ok);
+    REQUIRE(session.execute("edit.undo").ok);
+    REQUIRE(session.execute("edit.undo").ok);
+
+    // The outline turned into construction geometry: same edges, no profile, so the step
+    // is rebuilt and reports it instead of keeping the old part.
+    {
+        Json construction = rect(30);
+        construction[0]["construction"] = true;
+        REQUIRE(session.execute("feature.edit", {{"id", sketchId}, {"params", {{"curves", construction}}}}).ok);
+        const Json tl = timeline();
+        CHECK(tl.at("features").at(1).at("status") == "error");
+        REQUIRE(session.execute("edit.undo").ok);
+        CHECK(timeline().at("features").at(1).at("status") == "ok");
+    }
+
+    // A thickness that cannot be built is refused and changes nothing.
+    CHECK_FALSE(session.execute("feature.edit", {{"id", featureId}, {"params", {{"thickness", -1.0}}}}).ok);
+    CHECK(partVolume() == Approx(volume).epsilon(1e-6));
+
+    SECTION("delete and undo")
+    {
+        REQUIRE(session.execute("feature.delete", {{"id", featureId}}).ok);
+        CHECK(session.document().part(partId) == nullptr);
+        REQUIRE(session.execute("edit.undo").ok);
+        CHECK(partVolume() == Approx(volume).epsilon(1e-6));
+    }
+
+    SECTION("two projects opened one after the other: the second scan is not taken for the first")
+    {
+        const auto stem = std::filesystem::temp_directory_path() / ("aerocad_two_" + std::to_string(std::random_device{}()));
+        const auto fileA = core::pathToUtf8(stem.string() + "_a.aerocad");
+        const auto fileB = core::pathToUtf8(stem.string() + "_b.aerocad");
+        REQUIRE(session.execute("project.save", {{"path", fileA}}).ok);
+        REQUIRE(session.execute("part.scale", {{"id", scanId}, {"factor", 1.5}}).ok);
+        // Rebuild the step on the scaled scan (changing a part does not replay the timeline).
+        REQUIRE(session.execute("feature.edit", {{"id", featureId}, {"params", {{"thickness", 2.5}}}}).ok);
+        REQUIRE(session.execute("project.save", {{"path", fileB}}).ok);
+        commands::Session other;
+        REQUIRE(other.execute("project.open", {{"path", fileA}}).ok);
+        REQUIRE(other.execute("project.open", {{"path", fileB}}).ok);
+        // Both scans are part 1 at revision 0 once opened; each project's stored result is used.
+        CHECK(other.design().evaluatorRuns() == 0);
+        std::error_code ec;
+        std::filesystem::remove(fileA, ec);
+        std::filesystem::remove(fileB, ec);
+    }
+
+    SECTION("saved in the project and opened without refitting")
+    {
+        const auto file = std::filesystem::temp_directory_path() / ("aerocad_timeline_" + std::to_string(std::random_device{}()) + ".aerocad");
+        REQUIRE(session.execute("project.save", {{"path", core::pathToUtf8(file)}}).ok);
+        commands::Session reopened;
+        auto opened = reopened.execute("project.open", {{"path", core::pathToUtf8(file)}});
+        INFO(opened.toJson().dump());
+        REQUIRE(opened.ok);
+        const model::Part* p = reopened.document().part(partId);
+        REQUIRE(p != nullptr);
+        CHECK(p->kind == model::PartKind::Body);
+        REQUIRE(p->shape);
+        CHECK(p->shape->volume() == Approx(volume).epsilon(0.01));
+        // Its result was stored with the project: opening does not fit the scan again.
+        CHECK(reopened.design().evaluatorRuns() == 0);
+        // And it can still be edited there.
+        REQUIRE(reopened.execute("feature.edit", {{"id", featureId}, {"params", {{"thickness", 4.0}}}}).ok);
+        CHECK(reopened.document().part(partId)->shape->volume() == Approx(2.0 * volume).epsilon(0.03));
+        std::error_code ec;
+        std::filesystem::remove(file, ec);
+    }
+}
+
+TEST_CASE("Part on surface on a timeline body is rebuilt from the body, also when the project opens", "[commands][fit][timeline]")
+{
+    commands::Session session;
+    std::vector<core::Vec3> v;
+    std::vector<core::TriangleMesh::Triangle> t;
+    const int nx = 20;
+    const int ny = 10;
+    for (int j = 0; j <= ny; ++j)
+        for (int i = 0; i <= nx; ++i)
+            v.push_back({2.0 * i, 2.0 * j, -0.01 * (2 * i - 20) * (2 * i - 20)});
+    auto idx = [](int i, int j) { return static_cast<std::uint32_t>(j * (nx + 1) + i); };
+    for (int j = 0; j < ny; ++j)
+        for (int i = 0; i < nx; ++i) {
+            t.push_back({idx(i, j), idx(i + 1, j), idx(i + 1, j + 1)});
+            t.push_back({idx(i, j), idx(i + 1, j + 1), idx(i, j + 1)});
+        }
+    model::Part sheet;
+    sheet.name = "Wing";
+    sheet.mesh = std::make_shared<const core::TriangleMesh>(core::TriangleMesh(std::move(v), std::move(t)));
+    const auto scanId = session.document().addPart(sheet);
+
+    // The wing as a timeline body (INSERT > To Body), then a part sketched on that body.
+    auto base = session.execute("feature.base_body", {{"part", scanId}});
+    INFO(base.toJson().dump());
+    REQUIRE(base.ok);
+    const auto baseFeature = base.data.at("id").get<cad::FeatureId>();
+    model::PartId bodyPart = 0;
+    for (const auto& p : session.document().parts())
+        if (p.kind == model::PartKind::Body && p.featureId == baseFeature)
+            bodyPart = p.id;
+    REQUIRE(bodyPart != 0);
+    auto sk = session.execute("sketch.create",
+                              {{"surface", {{"part", bodyPart}, {"point", {20, 10, 0}}}},
+                               {"curves", Json::array({{{"type", "center_rectangle"}, {"center", {0, 0}}, {"width", 16}, {"height", 8}}})}});
+    INFO(sk.toJson().dump());
+    REQUIRE(sk.ok);
+    auto made = session.execute("surface.part_from_sketch", {{"sketch", sk.data.at("id")}, {"thickness", 1.5}});
+    INFO(made.toJson().dump());
+    REQUIRE(made.ok);
+    const auto partId = made.data.at("id").get<model::PartId>();
+    const double volume = made.data.at("volume").get<double>();
+    CHECK(volume > 0.0);
+
+    const auto file = std::filesystem::temp_directory_path() / ("aerocad_onbody_" + std::to_string(std::random_device{}()) + ".aerocad");
+    REQUIRE(session.execute("project.save", {{"path", core::pathToUtf8(file)}}).ok);
+    commands::Session reopened;
+    auto opened = reopened.execute("project.open", {{"path", core::pathToUtf8(file)}});
+    INFO(opened.toJson().dump());
+    REQUIRE(opened.ok);
+    auto tl = reopened.execute("timeline.list");
+    REQUIRE(tl.ok);
+    for (const auto& f : tl.data.at("features")) {
+        INFO(f.dump());
+        CHECK(f.at("status") == "ok");
+    }
+    // The body was not in the document yet while the timeline was rebuilt; the stored
+    // result still matches, so nothing is refitted.
+    CHECK(reopened.design().evaluatorRuns() == 0);
+    const model::Part* p = reopened.document().part(partId);
+    REQUIRE(p != nullptr);
+    REQUIRE(p->shape);
+    CHECK(p->shape->volume() == Approx(volume).epsilon(0.01));
+    std::error_code ec;
+    std::filesystem::remove(file, ec);
+}

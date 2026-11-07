@@ -10,6 +10,7 @@ A project is one file: a zip container (deflate) with
 | `meshes/<part id>.amesh` | Imported meshes, lossless: magic `AEROMESH`, uint32 version 1, uint64 vertex count, uint64 triangle count, vertices as 3 × float64, triangles as 3 × uint32, little-endian. |
 | `selections/<part id>.u32`, `selections/timeline-<part id>.u32` | Region selection of an imported or a timeline part (CAD-13): triangle indices, little-endian uint32. Selections on bodies are restored only if they still fit the regenerated mesh. |
 | `shapes/<part id>.brep` | Exact geometry of imported parts (STEP, IGES, BREP) in the Open CASCADE BREP text format. |
+| `results/<feature id>-<k>.brep` | Bodies of timeline steps built on a scan (Part on surface, Fin on surface), see `timelineResults`. |
 
 Bodies and sketches are **not** stored: they are regenerated from the timeline when the
 project is opened, so a reopened project stays fully parametric (edit a parameter or a
@@ -40,6 +41,13 @@ Manifest (version 1):
 - `design` is the state of the active variant: features (id, type, name, params,
   suppressed), user parameters (name, expression, comment), reference frames, the next
   feature id and the timeline marker. Inactive variants carry their own `design`.
+- `timelineResults` (optional) stores the bodies of timeline steps built on a scan, with the
+  fingerprint (`key`) of their inputs: params, user parameters, sketch geometry and the scan's
+  content. On open a step whose key still matches uses them instead of fitting the scan again;
+  anything else (no entry, another key, unreadable data) is rebuilt. Only the active variant's
+  results are stored. Each body has `name`, `brep` and, for a step with several bodies,
+  `slot`: its stable place (a fin's place in the stack, mirrored fins from 1000), which gives
+  the body's id.
 - `timelineParts` keeps the part ids, names and visibility of bodies and sketches, so ids
   that scripts or an agent hold stay valid after reopening.
 - `view` is the camera, opaque to the format (written by the UI).

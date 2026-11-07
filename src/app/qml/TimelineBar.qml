@@ -129,6 +129,8 @@ Rectangle {
                 ToolTip.visible: chipMouse.containsMouse
                 ToolTip.delay: 400
                 ToolTip.text: chip.feature.status === "error" ? chip.feature.error
+                            : chip.feature.report && chip.feature.report.warnings && chip.feature.report.warnings.length
+                              ? chip.feature.report.warnings.join("\n")
                             : chip.feature.type + " · " + chip.feature.status
 
                 Menu {

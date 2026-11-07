@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "aerocad/commands/Session.hpp"
 
+#include "CommandHelpers.hpp"
+
 #include "aerocad/cfd/RunManager.hpp"
 
 namespace aerocad::commands {
@@ -18,6 +20,7 @@ Session::Session()
     registerScanCommands(m_registry);
     registerSimulationCommands(m_registry);
     m_design.setPartLookup([this](model::PartId id) { return m_document.part(id); });
+    registerSurfaceFeatures(m_design, m_document);
 }
 
 Session::~Session() = default;

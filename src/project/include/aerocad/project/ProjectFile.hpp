@@ -5,7 +5,9 @@
 //   meshes/<id>.amesh  imported meshes, lossless (double precision, see MeshCodec)
 //   shapes/<id>.brep   exact geometry of imported parts (Open CASCADE BREP)
 //   selections/<id>.u32  region selection of a part (triangle indices)
-// Bodies and sketches are not stored: they are regenerated from the timeline on load.
+//   results/<feature>-<k>.brep  bodies of timeline steps built on a scan (part / fin on
+//                      surface), so opening does not refit them
+// Bodies and sketches are otherwise not stored: they are regenerated from the timeline on load.
 // Units are millimetres, Z up. See docs/project-format.md.
 #pragma once
 
@@ -58,6 +60,9 @@ struct ProjectData {
     /// Imported parts (kind Imported) with mesh and / or exact shape.
     std::vector<model::Part> parts;
     std::vector<TimelinePart> timelineParts;
+    /// Results of timeline steps built on a scan (cad::FeatureEvaluator), reused on load
+    /// while their inputs match.
+    std::vector<cad::Design::StoredResult> timelineResults;
     /// Design state of the active variant.
     cad::Design::State design;
     /// All variants; the stored state of the active one is ignored (`design` is used).

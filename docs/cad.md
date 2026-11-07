@@ -40,6 +40,15 @@ use the same operations, and every change is one undo step.
   In the UI: Combine, click the target, then click the tools (bodies, solids, a surface or
   the scan); with a scan or surface selected, "Cut a part to this shape" presets it as the tool.
 - **Marker**: `timeline.set_marker` rolls the model back; new features are inserted at it.
+- **Steps built on a scan** (Part on surface, Fin on surface) are timeline features too: they
+  read the scan or fitted surface from the document, so editing their thickness, or the sketch
+  before them, rebuilds the part on the same scan; delete, suppress and roll back work as for
+  any feature, and they are saved in the project. Fitting the skin takes seconds, so each
+  result is cached by its inputs (params, user parameters, the sketch geometry, the content of
+  the scan) and an unrelated change, undo or redo does not refit. One feature can make several
+  bodies (a stacked or mirrored set of fins): the first has the feature's id, the others
+  `id | k << 40`; any of them stands for the feature in `feature.*` commands. On opening a
+  project their stored results are used while the scan, sketch and params are unchanged.
 - Failing features: a new or edited feature that fails is rejected (nothing changes).
   Features that break because of an earlier change stay in the timeline with
   `status: "error"` and a message, like Fusion's red timeline icons.
@@ -69,6 +78,8 @@ use the same operations, and every change is one undo step.
 | `feature.combine` | Combine, Split Body | `target`, `tools` (bodies, or imported parts `{part: id}`), join / cut / intersect, `keepTools`, `flip` |
 | `feature.box`, `feature.cylinder` | Box, Cylinder | primitives with an operation |
 | `feature.base_body` | Mesh to BRep / base feature | imported part as a body: B-rep as is, meshes as faceted B-rep (coplanar triangles merged, max 50 000 triangles) |
+| `surface.part_from_sketch` → `part_on_surface` | (AeroCAD) Part on surface | timeline step built on a scan or fitted surface: `sketch`, `thickness`, `side`, `profiles`, `tolerance`, `id` (surface part, default: the one the sketch was drawn on) |
+| `surface.fin_from_sketch` → `fin_on_surface` | (AeroCAD) Fin on surface | timeline step: `sketch` (drawn across the surface), `thickness`, `rootFillet`, `count`, `spacing`, `mirror`, `mirrorPlane`; one body per fin |
 | `feature.edit` / `rename` / `suppress` / `delete` | timeline context menu | edit = JSON merge patch of params |
 | `timeline.list`, `timeline.set_marker` | timeline | |
 | `parameter.set` / `remove` | Change Parameters | |

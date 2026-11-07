@@ -89,6 +89,7 @@ project::ProjectData snapshot(CommandContext& ctx)
     for (auto& [_, t] : timeline)
         data.timelineParts.push_back(std::move(t));
     data.design = ctx.design->state();
+    data.timelineResults = ctx.design->currentResults();
     data.variants = p.variants;
     data.view = p.view;
     storeDimensions(ctx, data.view);
@@ -112,6 +113,8 @@ void applyProject(CommandContext& ctx, project::ProjectData data)
             selections.emplace_back(t.id, t.selection);
         d.setPartInfo(t.feature, t.id, std::move(t.name), t.visible);
     }
+    for (auto& r : data.timelineResults)
+        d.seedResult(std::move(r));
     d.restore(std::move(data.design));
     d.syncDocument(ctx.document);
     // Region selections on regenerated parts: indices are kept only while they fit the

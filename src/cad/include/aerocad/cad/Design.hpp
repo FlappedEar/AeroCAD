@@ -36,7 +36,8 @@ public:
 struct Feature {
     FeatureId id = 0;
     std::string type; ///< sketch, extrude, revolve, fillet, chamfer, shell, combine, box, cylinder,
-                      ///< base_body, mirror, rectangular_pattern, circular_pattern, loft, sweep, plane
+                      ///< base_body, mirror, rectangular_pattern, circular_pattern, loft, sweep, plane,
+                      ///< part_on_surface, fin_on_surface (evaluated by a FeatureEvaluator)
     std::string name; ///< e.g. "Extrude1"
     Json params = Json::object();
     bool suppressed = false;
@@ -65,6 +66,42 @@ struct FeatureStatus {
     enum class State { Ok, Error, Suppressed, RolledBack };
     State state = State::Ok;
     std::string message;
+    /// What an evaluated feature reports besides its bodies (fit deviation, warnings), from
+    /// a FeatureEvaluator; null otherwise.
+    Json report;
+};
+
+/// The id of the k-th body (k >= 1) a feature makes besides its first, whose id is the
+/// feature id (e.g. a stacked, mirrored set of fins from one sketch).
+[[nodiscard]] constexpr FeatureId extraBodyId(FeatureId feature, unsigned k)
+{
+    return feature | (static_cast<FeatureId>(k) << 40);
+}
+/// The feature that made a body (see extraBodyId).
+[[nodiscard]] constexpr FeatureId featureOfBody(FeatureId body)
+{
+    return body & ((static_cast<FeatureId>(1) << 40) - 1);
+}
+
+/// Feature types whose geometry the timeline cannot build on its own: it needs document
+/// parts such as a scanned mesh (part_on_surface, fin_on_surface). The commands layer
+/// supplies them; the timeline stores, orders, regenerates and caches them like any other
+/// feature.
+struct FeatureEvaluator {
+    struct Output {
+        /// Bodies made, first one first; each with its default name.
+        std::vector<std::pair<geometry::Shape, std::string>> bodies;
+        /// Stable slot of each body (its id is extraBodyId(feature, slot), slot 0 the feature
+        /// id), so a body keeps its id when bodies before it come and go. Empty: by position.
+        std::vector<unsigned> bodySlots;
+        Json report;
+    };
+    /// Fingerprint of the document inputs (parts the feature reads, by content); with the
+    /// params, user parameters and the sketch it uses, it decides when a cached result can
+    /// be reused.
+    std::function<std::string(const Feature&)> inputs;
+    /// Builds the bodies; throws on failure (the message is the feature's error).
+    std::function<Output(const Feature&, const class Design&)> evaluate;
 };
 
 /// A solid produced by the timeline. Its id is the id of the feature that created it.
@@ -117,6 +154,9 @@ public:
 
     [[nodiscard]] const std::vector<Feature>& features() const { return m_state.features; }
     [[nodiscard]] const Feature* feature(FeatureId id) const;
+    /// The feature an id stands for: the id itself, or the feature that made the body when it
+    /// is the id of a second or later body (extraBodyId). Unknown ids come back unchanged.
+    [[nodiscard]] FeatureId owningFeature(FeatureId id) const;
     [[nodiscard]] std::size_t marker() const { return m_state.marker; }
 
     /// Inserts a feature at the marker, moves the marker after it and regenerates.
@@ -189,11 +229,32 @@ public:
     using PartLookup = std::function<const model::Part*(model::PartId)>;
     void setPartLookup(PartLookup lookup) { m_partLookup = std::move(lookup); }
 
+    /// Supplies the geometry of a feature type built from document parts (see
+    /// FeatureEvaluator). Not part of the undoable state.
+    void setFeatureEvaluator(const std::string& type, FeatureEvaluator evaluator);
+
+    /// A FeatureEvaluator result with the fingerprint of its inputs, as stored in project
+    /// files so that opening a project does not rebuild steps made on a scan.
+    struct StoredResult {
+        FeatureId feature = 0;
+        std::string key;
+        FeatureEvaluator::Output output;
+    };
+    /// The evaluator results the current model uses, one per evaluated feature.
+    [[nodiscard]] std::vector<StoredResult> currentResults() const;
+    /// Makes a stored result available to the next regeneration (after clear(), before
+    /// restore() of a loaded project). Used only if its key still matches the inputs.
+    void seedResult(StoredResult result);
+
+    /// Number of times evaluators ran (cache misses), for tests.
+    [[nodiscard]] std::size_t evaluatorRuns() const { return m_evaluatorRuns; }
+
     /// Feature types that the timeline knows.
     [[nodiscard]] static const std::vector<std::string>& featureTypes();
 
 private:
     void evaluateFeature(const Feature& f);
+    void evaluateExternal(const Feature& f, const FeatureEvaluator& ev);
     [[nodiscard]] std::string defaultName(const std::string& type) const;
     [[nodiscard]] std::size_t indexOf(FeatureId id) const;
     /// Regenerates and throws if feature `id` failed (used to reject bad edits).
@@ -204,6 +265,7 @@ private:
     std::map<FeatureId, SketchResult> m_sketches;
     std::map<FeatureId, ConstructionPlane> m_planes;
     std::map<FeatureId, FeatureStatus> m_statuses;
+    std::map<FeatureId, Json> m_reports;
     /// Body / sketch feature id -> document part id (kept across undo).
     std::map<FeatureId, model::PartId> m_partIds;
     std::map<FeatureId, bool> m_sketchConsumed;
@@ -229,6 +291,17 @@ private:
     };
     std::vector<ScanSurface> m_scanSurfaces;
     [[nodiscard]] geometry::Shape scanSurfaceUnder(const model::Part& scan, const core::BoundingBox& body);
+    std::map<std::string, FeatureEvaluator> m_evaluators;
+    /// Results of evaluators by feature, keyed by their inputs; the last few are kept so
+    /// undo / redo and roll back do not recompute.
+    struct EvaluatedFeature {
+        std::string key;
+        FeatureEvaluator::Output output;
+    };
+    std::map<FeatureId, std::vector<EvaluatedFeature>> m_evaluated;
+    /// Key of the result each evaluated feature used in the last regeneration.
+    std::map<FeatureId, std::string> m_usedKeys;
+    std::size_t m_evaluatorRuns = 0;
     int m_bodyCounter = 0;
 };
 

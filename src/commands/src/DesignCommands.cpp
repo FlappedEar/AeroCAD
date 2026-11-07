@@ -256,6 +256,8 @@ Json featureToJson(const cad::Design& d, const cad::Feature& f, std::size_t inde
            {"status", std::string(cad::toString(st.state))}};
     if (!st.message.empty())
         j["error"] = st.message;
+    if (!st.report.is_null())
+        j["report"] = st.report;
     return j;
 }
 
@@ -1172,7 +1174,8 @@ void registerFeatureCommands(CommandRegistry& r)
                         {"id", "params"}),
            true},
           [](CommandContext& ctx, const Json& params) {
-              const auto id = params.at("id").get<cad::FeatureId>();
+              // The body id of a second fin stands for the step that made it.
+              const auto id = design(ctx).owningFeature(params.at("id").get<cad::FeatureId>());
               designChange(ctx, "Edit Feature", [&](cad::Design& d) {
                   d.editFeature(id, params.at("params"));
                   return Json{};
@@ -1185,7 +1188,8 @@ void registerFeatureCommands(CommandRegistry& r)
                         {"id", "name"}),
            true},
           [](CommandContext& ctx, const Json& params) {
-              const auto id = params.at("id").get<cad::FeatureId>();
+              // The body id of a second fin stands for the step that made it.
+              const auto id = design(ctx).owningFeature(params.at("id").get<cad::FeatureId>());
               designChange(ctx, "Rename Feature", [&](cad::Design& d) {
                   d.renameFeature(id, params.at("name").get<std::string>());
                   return Json{};
@@ -1199,7 +1203,8 @@ void registerFeatureCommands(CommandRegistry& r)
                         {"id", "suppressed"}),
            true},
           [](CommandContext& ctx, const Json& params) {
-              const auto id = params.at("id").get<cad::FeatureId>();
+              // The body id of a second fin stands for the step that made it.
+              const auto id = design(ctx).owningFeature(params.at("id").get<cad::FeatureId>());
               const bool s = params.at("suppressed").get<bool>();
               designChange(ctx, s ? "Suppress Feature" : "Unsuppress Feature", [&](cad::Design& d) {
                   d.setSuppressed(id, s);
@@ -1212,7 +1217,8 @@ void registerFeatureCommands(CommandRegistry& r)
            "Deletes a feature from the timeline. Features that depended on it report errors (see timeline.list).",
            objectSchema({{"id", featureIdSchema("Feature id.")}}, {"id"}), true},
           [](CommandContext& ctx, const Json& params) {
-              const auto id = params.at("id").get<cad::FeatureId>();
+              // The body id of a second fin stands for the step that made it.
+              const auto id = design(ctx).owningFeature(params.at("id").get<cad::FeatureId>());
               designChange(ctx, "Delete Feature", [&](cad::Design& d) {
                   d.removeFeature(id);
                   return Json{};
