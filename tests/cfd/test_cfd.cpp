@@ -250,6 +250,51 @@ TEST_CASE("writeCase with ground, context and one process", "[cfd]")
     CHECK_THROWS(cfd::writeCase(tmp.path(), cfd::CaseGeometry{}, s));
 }
 
+#ifndef _WIN32
+TEST_CASE("Allrun keeps the engine of reused solver results (CAD-84)", "[cfd]")
+{
+    // OpenFOAM's RunFunctions skips an application whose log exists. A stand-in with the same
+    // rule shows which engine a rerun records.
+    TempDir foam;
+    fs::create_directories(foam.path() / "bin/tools");
+    write(foam.path() / "bin/tools/RunFunctions",
+          "runApplication() { [ -f \"log.$1\" ] && return 0; echo ran > \"log.$1\"; }\n"
+          "runParallel() { runApplication \"$@\"; }\n"
+          "restore0Dir() { :; }\n");
+    for (const int processes : {1, 2}) {
+        TempDir tmp;
+        cfd::CaseGeometry g;
+        g.part = box({0, 0, 0}, {100, 50, 20});
+        cfd::Settings s;
+        s.processes = processes;
+        cfd::writeCase(tmp.path(), g, s);
+        const std::string allrun = "\"" + (tmp.path() / "Allrun").string() + "\"";
+        const auto run = [&](const char* version) {
+            const std::string cmd = "WM_PROJECT_DIR=\"" + foam.path().string() + "\" WM_PROJECT_VERSION=" + version +
+                                    " sh " + allrun + " >/dev/null 2>&1";
+            return std::system(cmd.c_str());
+        };
+        REQUIRE(run("v2406") == 0);
+        CHECK(slurp(tmp.path() / "aerocad.engine") == "v2406\n");
+        CHECK(slurp(tmp.path() / "aerocad.status") == "finished\n");
+
+        // Rerun in another environment: the solver is skipped, so its results keep v2406.
+        REQUIRE(run("v2506") == 0);
+        CHECK(slurp(tmp.path() / "aerocad.engine") == "v2406\n");
+
+        // An older run that recorded no engine stays unknown rather than taking the new one.
+        fs::remove(tmp.path() / "aerocad.engine");
+        REQUIRE(run("v2506") == 0);
+        CHECK_FALSE(fs::exists(tmp.path() / "aerocad.engine"));
+
+        // A clean solve records the engine that ran it.
+        fs::remove(tmp.path() / "log.simpleFoam");
+        REQUIRE(run("v2506") == 0);
+        CHECK(slurp(tmp.path() / "aerocad.engine") == "v2506\n");
+    }
+}
+#endif
+
 TEST_CASE("writeCase with a fixed floor at a given height", "[cfd]")
 {
     TempDir tmp;

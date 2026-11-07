@@ -242,8 +242,9 @@ different domain and mesh sizes, which is reported as a note.
 
 The resolved setup is compared too, not only the requested settings. Each case records a
 fingerprint of its surroundings (context parts in model coordinates, independent of their
-order); `Allrun` records the engine that actually runs the case (`WM_PROJECT_VERSION`, in
-`aerocad.engine`). `results.conditions` carries `domain`, `contextHash`, `engine` (null when
+order); `Allrun` records the engine that actually runs the solver (`WM_PROJECT_VERSION`, in
+`aerocad.engine`). OpenFOAM skips an application whose log already exists, so a rerun that
+reuses `log.simpleFoam` keeps the engine recorded with those results (or none). `results.conditions` carries `domain`, `contextHash`, `engine` (null when
 not recorded) and `engineTarget` (the version the case was written for). Different surroundings (for example the part alone against the same part next to
 the car body) add `context` to `differingConditions`, a different engine adds `engine`;
 either makes the verdict `not comparable`. A flow domain that differs by more than 1 µm adds

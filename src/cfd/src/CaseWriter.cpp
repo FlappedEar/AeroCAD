@@ -511,8 +511,9 @@ std::string allrun(int processes)
          "cd \"${0%/*}\" || exit 1\n"
          ". \"${WM_PROJECT_DIR:?}\"/bin/tools/RunFunctions\n"
          "rm -f aerocad.status\n"
-         "# The engine that actually runs the case, for A/B comparisons.\n"
-         "printf '%s\\n' \"${WM_PROJECT_VERSION:-}\" > aerocad.engine\n"
+         "# The engine that actually runs the solver, for A/B comparisons. RunFunctions skips an\n"
+         "# application whose log exists, so reused results keep the engine that produced them.\n"
+         "engine() { [ -f log.simpleFoam ] || printf '%s\\n' \"${WM_PROJECT_VERSION:-}\" > aerocad.engine; }\n"
          "step() { echo \"$1\" > aerocad.stage; }\n"
          "fail() { echo \"failed $1\" > aerocad.status; exit 1; }\n\n"
          "step features;   runApplication surfaceFeatureExtract || fail features\n"
@@ -523,6 +524,7 @@ std::string allrun(int processes)
              "step check;      runParallel checkMesh -constant\n"
              "restore0Dir -processor\n"
              "step initialise; runParallel potentialFoam -writephi || fail initialise\n"
+             "engine\n"
              "step solve;      runParallel simpleFoam || fail solve\n"
              "step reconstruct\n"
              "runApplication reconstructParMesh -constant || fail reconstruct\n"
@@ -532,6 +534,7 @@ std::string allrun(int processes)
              "step check;      runApplication checkMesh -constant\n"
              "restore0Dir\n"
              "step initialise; runApplication potentialFoam -writephi || fail initialise\n"
+             "engine\n"
              "step solve;      runApplication simpleFoam || fail solve\n";
     }
     t << "step done\necho finished > aerocad.status\n";
