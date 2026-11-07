@@ -94,6 +94,13 @@ machine (Docker over SSH)**, enter `ssh://user@host` (or `ssh://user@host:port`)
 `~/.aerocad/cfd/engine.json` (`AEROCAD_ENGINE_HOST` overrides it). Choose *This computer* to
 go back.
 
+`scripts/setup-remote-engine.sh user@host [port]`, run on this computer, does all of the
+setup below and saves the setting: it creates an SSH key if there is none and copies it to
+the other machine (asks for that machine's password once), checks Docker there (adds
+docker to the SSH PATH on macOS, starts Docker if it is stopped, adds the user to the
+`docker` group on Linux with sudo), downloads the OpenFOAM image there and runs a short
+OpenFOAM check through `docker -H ssh://user@host`. It can be run again.
+
 Requirements:
 
 - this computer: the `docker` command line tool only (macOS: `brew install docker`; Install
