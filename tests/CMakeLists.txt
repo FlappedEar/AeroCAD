@@ -40,3 +40,7 @@ aerocad_add_test(test_cad
 aerocad_add_test(test_project
     SOURCES project/test_project_file.cpp
     LIBS AeroCAD::project miniz::miniz)
+
+aerocad_add_test(test_e2e
+    SOURCES e2e/test_workflow.cpp
+    LIBS AeroCAD::commands)
