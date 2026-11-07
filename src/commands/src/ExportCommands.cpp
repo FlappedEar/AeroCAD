@@ -15,7 +15,9 @@
 #include <cmath>
 #include <cstdio>
 #include <deque>
+#include <exception>
 #include <filesystem>
+#include <random>
 #include <string>
 #include <memory>
 #include <unordered_set>
@@ -430,12 +432,160 @@ std::string fileStem(const std::string& name)
     return stem.empty() ? "part" : stem;
 }
 
+struct PrintFile {
+    std::filesystem::path target;
+    io::ExportItem item;
+    io::FileFormat format;
+};
+
+/// Refuse directories, special files and even dangling links. Following a link here
+/// would make the export's rollback affect a path outside its own output set.
+bool checkPrintDestination(const std::filesystem::path& target)
+{
+    std::error_code ec;
+    const auto status = std::filesystem::symlink_status(target, ec);
+    if (ec == std::errc::no_such_file_or_directory)
+        return false;
+    if (ec)
+        throw CommandError("Cannot inspect export destination " + core::pathToUtf8(target) + ": " + ec.message());
+    if (status.type() == std::filesystem::file_type::not_found)
+        return false;
+    if (!std::filesystem::is_regular_file(status))
+        throw CommandError("Export destination is not a regular file: " + core::pathToUtf8(target));
+    return true;
+}
+
+/// A unique directory on the destination filesystem keeps staged files and originals
+/// out of the way of both other exports and the writers' per-file temporary names.
+struct PrintWorkspace {
+    std::filesystem::path path;
+    bool keep = false;
+
+    explicit PrintWorkspace(const std::filesystem::path& folder)
+    {
+        for (int attempt = 0; attempt < 16; ++attempt) {
+            path = folder / (".aerocad-export-" + std::to_string(std::random_device{}()) + "-" +
+                             std::to_string(std::random_device{}()));
+            std::error_code ec;
+            if (std::filesystem::create_directory(path, ec))
+                return;
+            if (ec && ec != std::errc::file_exists)
+                throw CommandError("Cannot stage print export in " + core::pathToUtf8(folder) + ": " + ec.message());
+        }
+        throw CommandError("Cannot create a unique print-export staging folder in " + core::pathToUtf8(folder));
+    }
+
+    ~PrintWorkspace()
+    {
+        if (!keep) {
+            std::error_code ignored;
+            std::filesystem::remove_all(path, ignored);
+        }
+    }
+};
+
+/// All files are written before any destination changes. Rename originals into the
+/// workspace, then publish; any reported failure rolls the changes back. This is a
+/// command-level transaction, not an atomic directory swap or crash-recovery journal.
+std::string writePrintSet(const std::filesystem::path& folder, const std::vector<PrintFile>& files)
+{
+    for (const auto& file : files)
+        checkPrintDestination(file.target);
+    PrintWorkspace workspace(folder);
+    struct State {
+        std::filesystem::path staged;
+        std::filesystem::path backup;
+        bool backedUp = false;
+        bool installed = false;
+    };
+    std::vector<State> states;
+    states.reserve(files.size());
+    for (std::size_t i = 0; i < files.size(); ++i)
+        states.push_back({workspace.path / ("new-" + std::to_string(i)),
+                          workspace.path / ("previous-" + std::to_string(i))});
+
+    try {
+        for (std::size_t i = 0; i < files.size(); ++i)
+            io::exportFile(states[i].staged, {files[i].item}, files[i].format);
+
+        // Tessellation/writing can take time: recheck every destination before moving
+        // any original, and recheck each again immediately before backing it up.
+        for (const auto& file : files)
+            checkPrintDestination(file.target);
+        for (std::size_t i = 0; i < files.size(); ++i) {
+            if (checkPrintDestination(files[i].target)) {
+                std::filesystem::rename(files[i].target, states[i].backup);
+                states[i].backedUp = true;
+            }
+        }
+        for (std::size_t i = 0; i < files.size(); ++i) {
+            if (checkPrintDestination(files[i].target))
+                throw CommandError("Export destination changed during writing: " + core::pathToUtf8(files[i].target));
+            std::filesystem::rename(states[i].staged, files[i].target);
+            states[i].installed = true;
+        }
+    } catch (...) {
+        // Preserve originals even if constructing a rollback diagnostic itself fails.
+        workspace.keep = true;
+        const std::exception_ptr cause = std::current_exception();
+        std::string incomplete;
+        for (std::size_t n = files.size(); n > 0; --n) {
+            const std::size_t i = n - 1;
+            std::error_code ec;
+            if (states[i].installed) {
+                const auto status = std::filesystem::symlink_status(files[i].target, ec);
+                if (!ec && std::filesystem::is_regular_file(status))
+                    std::filesystem::remove(files[i].target, ec);
+                else if (ec == std::errc::no_such_file_or_directory)
+                    ec.clear();
+                else if (!ec)
+                    ec = std::make_error_code(std::errc::operation_not_permitted);
+            }
+            if (!ec && states[i].backedUp) {
+                const auto status = std::filesystem::symlink_status(files[i].target, ec);
+                if (ec == std::errc::no_such_file_or_directory)
+                    ec.clear();
+                if (!ec && status.type() != std::filesystem::file_type::not_found)
+                    ec = std::make_error_code(std::errc::file_exists);
+                if (!ec)
+                    std::filesystem::rename(states[i].backup, files[i].target, ec);
+            }
+            if (ec)
+                incomplete += "\n- " + core::pathToUtf8(files[i].target) + ": " + ec.message() +
+                              (states[i].backedUp ? " (original: " + core::pathToUtf8(states[i].backup) + ")" : "");
+        }
+        std::string message = "Print export failed";
+        try {
+            std::rethrow_exception(cause);
+        } catch (const std::exception& e) {
+            message += ": " + std::string(e.what());
+        } catch (...) {
+            message += ": unknown writer error";
+        }
+        if (!incomplete.empty()) {
+            // Never delete the only surviving original when restoration itself fails.
+            throw CommandError(message + "\nThe previous output set could not be fully restored:" + incomplete +
+                               "\nRecovery files retained in " + core::pathToUtf8(workspace.path));
+        }
+        workspace.keep = false;
+        throw CommandError(message + "\nThe previous output files were preserved; no new files remain.");
+    }
+
+    std::error_code ec;
+    std::filesystem::remove_all(workspace.path, ec);
+    workspace.keep = true;
+    return ec ? "Files exported, but temporary backups could not be removed from " + core::pathToUtf8(workspace.path) +
+                    ": " + ec.message()
+              : std::string{};
+}
+
 void registerExportForPrint(CommandRegistry& r)
 {
     r.add({"document.export_for_print", "Export for printing",
            "Writes each part to its own files in a folder, ready to print: <name>.stl (binary, mm, finely "
            "tessellated) and <name>.step (exact B-rep, for parts that have it), e.g. a set of canards. Every "
-           "STL must be a watertight solid, or nothing is written. Existing files of the same names are replaced.",
+           "STL must be a watertight solid. All files are staged before existing files are replaced, and failed "
+           "publication restores the previous set. If restoration fails, the error identifies retained recovery files.",
            objectSchema({{"folder", {{"type", "string"}, {"minLength", 1}, {"description", "Absolute path of the folder."}}},
                          {"ids",
                           {{"type", "array"},
@@ -506,27 +656,27 @@ void registerExportForPrint(CommandRegistry& r)
 
               Json files = Json::array();
               Json warnings = Json::array();
-              try {
-                  for (const auto& pl : planned) {
-                      if (stl) {
-                          const auto path = folder / core::pathFromUtf8(pl.stem + ".stl");
-                          io::exportFile(path, {{pl.part->name, pl.mesh, nullptr}}, io::FileFormat::Stl);
-                          files.push_back({{"id", pl.part->id}, {"format", "stl"}, {"path", core::pathToUtf8(path)},
-                                           {"triangles", pl.mesh->triangleCount()}});
-                      }
-                      if (step) {
-                          if (!pl.part->shape || pl.part->shape->isNull()) {
-                              warnings.push_back(pl.part->name + ": no exact geometry, so no STEP file");
-                              continue;
-                          }
-                          const auto path = folder / core::pathFromUtf8(pl.stem + ".step");
-                          io::exportFile(path, {{pl.part->name, nullptr, &*pl.part->shape}}, io::FileFormat::Step);
-                          files.push_back({{"id", pl.part->id}, {"format", "step"}, {"path", core::pathToUtf8(path)}});
-                      }
+              std::vector<PrintFile> outputs;
+              for (const auto& pl : planned) {
+                  if (stl) {
+                      const auto path = folder / core::pathFromUtf8(pl.stem + ".stl");
+                      outputs.push_back({path, {pl.part->name, pl.mesh, nullptr}, io::FileFormat::Stl});
+                      files.push_back({{"id", pl.part->id}, {"format", "stl"}, {"path", core::pathToUtf8(path)},
+                                       {"triangles", pl.mesh->triangleCount()}});
                   }
-              } catch (const io::ExportError& e) {
-                  throw CommandError(e.what());
+                  if (step) {
+                      if (!pl.part->shape || pl.part->shape->isNull()) {
+                          warnings.push_back(pl.part->name + ": no exact geometry, so no STEP file");
+                          continue;
+                      }
+                      const auto path = folder / core::pathFromUtf8(pl.stem + ".step");
+                      outputs.push_back({path, {pl.part->name, nullptr, &*pl.part->shape}, io::FileFormat::Step});
+                      files.push_back({{"id", pl.part->id}, {"format", "step"}, {"path", core::pathToUtf8(path)}});
+                  }
               }
+              const auto cleanupWarning = writePrintSet(folder, outputs);
+              if (!cleanupWarning.empty())
+                  warnings.push_back(cleanupWarning);
               return Json{{"folder", core::pathToUtf8(folder)}, {"files", files}, {"warnings", warnings},
                           {"parts", planned.size()}};
           });

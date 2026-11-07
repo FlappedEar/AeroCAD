@@ -135,6 +135,11 @@ Pane {
             { key: "axis", type: "choice", label: qsTr("Rotation axis"), init: "x", options: [
                 { value: "x", label: qsTr("Plane X axis") }, { value: "y", label: qsTr("Plane Y axis") }],
               showIf: v => Number(v.angle) !== 0 }] },
+        move: { title: qsTr("Move/Rotate"), command: "feature.move", fields: [
+            { key: "body", type: "body", label: qsTr("Body") },
+            { key: "axis", type: "choice", label: qsTr("Rotate about"), init: "Z", options: axes },
+            { key: "angle", type: "expr", label: qsTr("Angle (deg)"), init: 90 },
+            { key: "translate", type: "vec3", label: qsTr("Move by"), init: [0, 0, 0] }] },
         mirror: { title: qsTr("Mirror"), command: "feature.mirror", fields: [
             { key: "body", type: "body", label: qsTr("Body") },
             { key: "plane", type: "choice", label: qsTr("Mirror plane"), init: "YZ", options: planes },

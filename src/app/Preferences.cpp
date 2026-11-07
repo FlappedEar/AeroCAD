@@ -18,6 +18,7 @@ const QString kThemeKey = QStringLiteral("display/theme");
 const QString kMouseKey = QStringLiteral("navigation/mouseProfile");
 const QString kInvertZoomKey = QStringLiteral("navigation/invertZoom");
 const QString kInvertOrbitKey = QStringLiteral("navigation/invertOrbit");
+const QString kTouchpadScrollKey = QStringLiteral("navigation/touchpadScrollPans");
 const QString kAutosaveKey = QStringLiteral("project/autosaveSeconds");
 const QString kMinWallKey = QStringLiteral("export/minWallThickness");
 
@@ -56,6 +57,7 @@ Preferences::Preferences(QObject* parent) : QObject(parent)
         m_mouseProfile = kDefaultMouse;
     m_invertZoom = s.value(kInvertZoomKey, false).toBool();
     m_invertOrbit = s.value(kInvertOrbitKey, false).toBool();
+    m_touchpadScrollPans = s.value(kTouchpadScrollKey, false).toBool();
     m_autosaveSeconds = std::clamp(s.value(kAutosaveKey, kDefaultAutosave).toInt(), 0, kMaxAutosave);
     m_minWallThickness = std::clamp(s.value(kMinWallKey, kDefaultMinWall).toDouble(), 0.0, kMaxMinWall);
 
@@ -100,6 +102,15 @@ void Preferences::setInvertOrbit(bool invert)
     m_invertOrbit = invert;
     QSettings().setValue(kInvertOrbitKey, invert);
     emit invertOrbitChanged();
+}
+
+void Preferences::setTouchpadScrollPans(bool pans)
+{
+    if (pans == m_touchpadScrollPans)
+        return;
+    m_touchpadScrollPans = pans;
+    QSettings().setValue(kTouchpadScrollKey, pans);
+    emit touchpadScrollPansChanged();
 }
 
 void Preferences::setInvertZoom(bool invert)
@@ -203,6 +214,7 @@ void Preferences::resetToDefaults()
     setMouseProfile(kDefaultMouse);
     setInvertZoom(false);
     setInvertOrbit(false);
+    setTouchpadScrollPans(false);
     setAutosaveSeconds(kDefaultAutosave);
     setMinWallThickness(kDefaultMinWall);
 }

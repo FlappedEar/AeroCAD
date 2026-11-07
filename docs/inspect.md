@@ -130,6 +130,26 @@ show up as a small share of thin surface.
 `warnings`, `watertight`, `manifold`, `validBrep`, `volume` and `minWall {thinnest, at,
 thinAreaPercent, limit}`.
 
+### Writing a print-file set
+
+**File > Export for Printing** (`document.export_for_print`) stages every STL/STEP
+before replacing existing files. Destinations that are directories, symbolic links
+(including dangling links) or special files are rejected. Existing outputs are kept
+until all writers finish; a publication failure restores them and removes newly
+published files. Sanitized names and ASCII case collisions get distinct filenames.
+If the filesystem also aliases distinct Unicode names, publication is rejected and
+the previous set is restored rather than silently combining two outputs.
+
+If the filesystem prevents restoration, **Export failed** names the affected paths
+and the hidden `.aerocad-export-*` recovery directory. Keep that directory: it contains
+the surviving original files. A successful response contains only the final paths;
+failure to remove temporary backups is returned as a cleanup warning.
+
+This protects against errors reported during an isolated export command. It is not
+a crash-safe directory transaction; a process/power failure or another program
+modifying the same paths during publication can require recovery from the retained
+backup directory.
+
 ## User interface
 
 - **Measure** (Inspect menu, toolbar, key **I**): a panel like Fusion's. Click a first and a

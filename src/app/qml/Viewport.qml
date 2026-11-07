@@ -69,6 +69,7 @@ Item {
 
     /// Camera projection (Fusion ViewCube menu: Orthographic / Perspective).
     property bool orthographic: false
+    onOrthographicChanged: cameraInput.invalidateZoomAnchor()
     property bool viewCubeVisible: true
     /// Ground grid on the XY plane, spaced to suit the scene size (View > Show Grid).
     property bool gridVisible: true
@@ -115,6 +116,23 @@ Item {
             return null
         const eye = modelSpace.mapPositionFromScene(view.camera.scenePosition)
         return { partId: hit.partId, point: hit.point, distance: hit.point.minus(eye).length() }
+    }
+
+    /// Scene position under view position (x, y) for zooming and orbiting: the model
+    /// surface, else (unless onModelOnly) the point at the camera pivot's depth; or null.
+    function scenePointUnder(x, y, onModelOnly) {
+        const hit = pickPart(x, y)
+        if (hit)
+            return modelSpace.mapPositionToScene(hit.point)
+        if (onModelOnly)
+            return null
+        const near = view.mapTo3DScene(Qt.vector3d(x, y, 0))
+        const dir = view.mapTo3DScene(Qt.vector3d(x, y, 100)).minus(near)
+        const forward = view.camera.forward
+        const along = dir.dotProduct(forward)
+        if (Math.abs(along) < 1e-12)
+            return null
+        return near.plus(dir.times(pivot.position.minus(near).dotProduct(forward) / along))
     }
 
     /// Nearest surface to view position (x, y) for a click that misses, like pickPart, or null.
@@ -574,6 +592,16 @@ Item {
         anchors.fill: parent
         pivot: pivot
         camera: camera
+        pointUnder: (x, y, onModelOnly) => root.scenePointUnder(x, y, onModelOnly)
+        // Right-click: select the part under the cursor and open its context menu.
+        contextMenuEnabled: !root.sketch
+        onContextClicked: (x, y) => {
+            const hit = root.pickPart(x, y)
+            const id = hit ? hit.partId : 0
+            if (id)
+                root.partPicked(id)
+            root.partContextRequested(id, x, y)
+        }
         onDistanceChanged: root.updateClipping()
     }
 
@@ -606,20 +634,6 @@ Item {
         onProjectionRequested: ortho => root.orthographic = ortho
         gridVisible: root.gridVisible
         onGridToggled: shown => root.gridVisible = shown
-    }
-
-    // Right-click: select the part under the cursor and open its context menu.
-    TapHandler {
-        acceptedButtons: Qt.RightButton
-        enabled: !root.sketch
-        gesturePolicy: TapHandler.ReleaseWithinBounds
-        onTapped: eventPoint => {
-            const hit = root.pickPart(eventPoint.position.x, eventPoint.position.y)
-            const id = hit ? hit.partId : 0
-            if (id)
-                root.partPicked(id)
-            root.partContextRequested(id, eventPoint.position.x, eventPoint.position.y)
-        }
     }
 
     TapHandler {

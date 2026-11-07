@@ -130,6 +130,32 @@ ApplicationWindow {
             controller.execute("part.remove", { id: selectedPartId })
     }
 
+    // --- View (right-click menu on empty space) ----------------------------------------
+
+    function fitView() { viewport.fitAll() }
+    function homeView() { viewport.goHome() }
+    function isOrthographic() { return viewport.orthographic }
+    function setOrthographic(ortho) { viewport.orthographic = ortho }
+
+    function hiddenPartCount() {
+        const r = controller.execute("document.parts")
+        return r.ok ? r.result.parts.filter(p => !p.visible).length : 0
+    }
+
+    function showAllParts() {
+        const r = controller.execute("document.parts")
+        for (const p of (r.ok ? r.result.parts : []))
+            if (!p.visible)
+                controller.execute("part.set_visible", { id: p.id, visible: true })
+    }
+
+    /// Fills the view with part `id`.
+    function zoomToPart(id) {
+        const info = controller.partInfo(id)
+        if (info.center && info.center.length === 3)
+            viewport.frameAround(info.center, Math.max((info.diagonal ?? 0) / 2, 1))
+    }
+
     function selectedInfo() {
         return selectedPartId ? controller.partInfo(selectedPartId) : ({})
     }
@@ -270,7 +296,8 @@ ApplicationWindow {
         if (info.kind === "body") {
             if (type === "combine")
                 initial.target = info.featureId
-            else if (type === "fillet" || type === "chamfer" || type === "shell" || type === "hole")
+            else if (["fillet", "chamfer", "shell", "hole", "move", "mirror", "rectangular_pattern",
+                      "circular_pattern"].includes(type))
                 initial.body = info.featureId
         }
         pickingSketchPlane = false
@@ -476,7 +503,7 @@ ApplicationWindow {
     function writePrintFiles(folder) {
         const r = window.controller.execute("document.export_for_print", { folder: folder })
         if (!r.ok) {
-            exportMessage.title = qsTr("Nothing was exported")
+            exportMessage.title = qsTr("Export failed")
             exportMessage.text = r.error
             exportMessage.open()
             return
@@ -619,6 +646,14 @@ ApplicationWindow {
         enabled: !!window.selectedPartId
         shortcut: "V" // Fusion: V
         onTriggered: window.toggleSelectedVisibility()
+    }
+    Action {
+        id: moveAction
+        text: qsTr("&Move/Rotate...")
+        enabled: !!window.selectedPartId && !window.activeSketch
+        shortcut: "M" // Fusion: Move/Copy, M
+        onTriggered: actionPopup.request(contextActions.action("moveRotate", window.selectedInfo()),
+                                         window.selectedInfo(), null)
     }
     Action {
         id: fitAction
@@ -1223,6 +1258,7 @@ ApplicationWindow {
             ToolGroup {
                 caption: qsTr("MODIFY")
                 maxVisible: 6
+                ToolCommand { action: moveAction; text: qsTr("Move/Rotate"); iconName: "move" }
                 ToolCommand { action: filletAction; text: qsTr("Fillet"); iconName: "fillet" }
                 ToolCommand { action: chamferAction; text: qsTr("Chamfer"); iconName: "chamfer" }
                 ToolCommand { action: shellAction; text: qsTr("Shell"); iconName: "shell" }
@@ -1329,6 +1365,7 @@ ApplicationWindow {
                 caption: qsTr("PREPARE")
                 GuidedCommand { actionId: "repair"; text: qsTr("Repair"); needs: qsTr("Select a scan first.") }
                 GuidedCommand { actionId: "simplify"; text: qsTr("Simplify"); needs: qsTr("Select a scan first.") }
+                GuidedCommand { actionId: "moveRotate"; text: qsTr("Move/Rotate"); needs: qsTr("Select a part first.") }
                 GuidedCommand { actionId: "scale"; text: qsTr("Scale"); needs: qsTr("Select a part first.") }
             }
             ToolSeparator { tab: "mesh" }
@@ -1911,10 +1948,10 @@ ApplicationWindow {
                 Text {
                     Layout.maximumWidth: window.width * 0.5
                     text: Preferences.mouseProfile === "solidworks"
-                          ? qsTr("Orbit: middle drag · Pan: Ctrl+middle · Zoom: wheel")
+                          ? qsTr("Orbit: right or middle drag · Pan: Ctrl+middle · Zoom: wheel · Fit: F6")
                           : Preferences.mouseProfile === "blender"
-                            ? qsTr("Orbit: middle drag · Pan: Shift+middle · Zoom: wheel")
-                            : qsTr("Pan: middle drag · Orbit: Shift+middle · Zoom: wheel · Fit: F6")
+                            ? qsTr("Orbit: right or middle drag · Pan: Shift+middle · Zoom: wheel · Fit: F6")
+                            : qsTr("Orbit: right drag or Shift+middle · Pan: middle drag · Zoom: wheel · Fit: F6")
                     color: Theme.textFaint
                     font.pixelSize: Theme.fontSmall
                     elide: Text.ElideLeft

@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Prepare a saved fixture.aerocad with one visible solid named test. Beside it create
+# export/test.stl with known bytes and export/test.step as a directory with a marker.
+# Run: AeroCAD <fixture.aerocad> --ui-script tests/gui/print_export_failure.ui
+# Afterward compare the files with their original bytes; the script checks the real
+# application's export dialog and writes cad-87-export-failure.png beside the project.
+ui.wait(600)
+(() => { if (!controller.projectPath) ui.fail("a saved fixture project is required"); const parts = controller.execute("document.parts").result.parts; if (parts.length !== 1 || parts[0].name !== "test") ui.fail("expected one visible solid named test") })()
+window.ribbonTab = "solid"
+ui.wait(300)
+printFolderDialog.currentFolder = "file://" + controller.projectPath.substring(0, controller.projectPath.lastIndexOf("/")) + "/export"
+ui.clickText("For Printing")
+ui.wait(500)
+(() => { if (!printFolderDialog.visible) ui.fail("Print folder dialog did not open from the toolbar") })()
+# Select the prepared folder, then run the same accepted handler as the folder picker.
+printFolderDialog.selectedFolder = printFolderDialog.currentFolder
+printFolderDialog.accept()
+ui.wait(500)
+(() => { ui.log("export title: " + exportMessage.title); ui.log("export message: " + exportMessage.text); if (!exportMessage.visible || exportMessage.title !== "Export failed") ui.fail("expected visible Export failed dialog"); if (exportMessage.text.indexOf("test.step") < 0 || exportMessage.text.indexOf("not a regular file") < 0) ui.fail("destination failure is not actionable") })()
+# Allow a screen capture to include the platform message dialog, which can be a
+# separate native window; ui.shot itself captures the application's main window.
+ui.wait(1000)
+ui.shot(controller.projectPath.substring(0, controller.projectPath.lastIndexOf("/")) + "/cad-87-export-failure.png")
