@@ -132,4 +132,12 @@ if(AEROCAD_BUILD_TESTS)
     add_test(NAME app_combobox_popup_test
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/combobox_popup.ui)
     set_tests_properties(app_combobox_popup_test PROPERTIES LABELS gui TIMEOUT 60)
+    # Runs a coarse OpenFOAM case, so it needs the engine (label openfoam, not in CI). The
+    # runs directory is in the build tree: under the home directory on macOS, which the
+    # engine's VM can mount.
+    add_test(NAME app_new_project_reset_test
+        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl
+                --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/new_project_reset.ui)
+    set_tests_properties(app_new_project_reset_test PROPERTIES LABELS "gui;openfoam" TIMEOUT 300
+        ENVIRONMENT "AEROCAD_CFD_DIR=${CMAKE_CURRENT_BINARY_DIR}/gui-test-runs")
 endif()

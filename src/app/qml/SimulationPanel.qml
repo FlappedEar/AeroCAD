@@ -17,7 +17,9 @@ Pane {
     readonly property var viewportFields: {
         const out = []
         const run = displayedRun
-        if (!run)
+        // Only while the open document still has the run's part, unchanged: the results are
+        // in model coordinates, so without the part they float in empty space.
+        if (!run || !displayedSourcePresent)
             return out
         for (const f of fieldChoices) {
             if (!f.on || !fieldStats[run + "/" + f.kind])
@@ -37,10 +39,20 @@ Pane {
     }
     /// Run whose fields are drawn: B while "Show B in 3D" is on, otherwise A.
     readonly property string displayedRun: showB && compareRun ? compareRun : activeRun
+    /// The part the displayed run was made from is in the open document, unchanged (runs that
+    /// record no part, e.g. imported from elsewhere, are always drawn).
+    readonly property bool displayedSourcePresent: {
+        const run = runs.find(r => r.id === displayedRun)
+        if (!run)
+            return false
+        return !run.source || run.source.partFingerprint === "0" || run.sourceInDocument
+    }
 
     property var environment: null
     property var runs: []
     property string activeRun: ""
+    /// Selects the newest run on first show; off after a new or opened project.
+    property bool autoSelect: true
     property string compareRun: ""
     property bool showB: false
     property var results: null
@@ -128,7 +140,7 @@ Pane {
         const signature = list => list.map(x => x.id + ":" + x.state).join(",")
         const beforeAll = signature(runs)
         runs = r.result.runs
-        if (!activeRun && runs.length > 0) {
+        if (!activeRun && autoSelect && runs.length > 0) {
             selectRun(runs[runs.length - 1].id)
             return
         }
@@ -141,6 +153,18 @@ Pane {
             loadFieldStats()
         if (changedA || changedB || (compareRun && signature(runs) !== beforeAll))
             loadComparison() // Also when runs on other mesh levels finish (mesh check).
+    }
+
+    /// New or opened project: nothing selected, nothing drawn, until a run is picked.
+    function clearSelection() {
+        autoSelect = false
+        activeRun = ""
+        compareRun = ""
+        showB = false
+        results = null
+        comparison = null
+        fieldStats = ({})
+        error = ""
     }
 
     function selectRun(id) {
@@ -262,6 +286,15 @@ Pane {
 
     onVisibleChanged: if (visible) { if (!environment) checkEnvironment(); refreshRuns() }
     Component.onCompleted: if (visible) { checkEnvironment(); refreshRuns() }
+
+    // A part deleted, changed or brought back by undo: show or hide its results at once.
+    Connections {
+        target: root.controller
+        function onHistoryChanged() {
+            if (root.visible)
+                root.refreshRuns()
+        }
+    }
 
     Timer {
         interval: 4000
@@ -731,6 +764,13 @@ Pane {
 
                 // --- 3D view ----------------------------------------------------------
                 Label { text: qsTr("Show in 3D"); font.bold: true }
+                Label {
+                    Layout.fillWidth: true
+                    visible: !!root.displayedRun && !root.displayedSourcePresent
+                    text: qsTr("Not drawn in 3D: the part of this run was deleted or has changed since the run.")
+                    wrapMode: Text.WordWrap
+                    color: Theme.textMuted
+                }
                 Repeater {
                     model: root.fieldChoices
                     delegate: ColumnLayout {
