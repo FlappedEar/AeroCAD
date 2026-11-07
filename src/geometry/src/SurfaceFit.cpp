@@ -45,6 +45,7 @@
 #include <numbers>
 #include <optional>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace aerocad::geometry {
 
@@ -512,9 +513,10 @@ std::vector<std::vector<std::uint32_t>> sheetLoops(const std::vector<std::array<
 /// Vertex clustering on a cubic grid of `cell` mm: vertices in one cell merge (at their
 /// mean), collapsed and repeated triangles are dropped. Vertices flagged in `keep` are not
 /// merged.
-void clusterVertices(std::vector<Vec3>& pos, std::vector<std::array<std::uint32_t, 3>>& tris, double cell,
-                     const std::vector<char>& keep)
+std::vector<std::int64_t> clusterVertices(std::vector<Vec3>& pos, std::vector<std::array<std::uint32_t, 3>>& tris,
+                                          double cell, const std::vector<char>& keep)
 {
+    const std::size_t original = pos.size();
     std::unordered_map<std::uint64_t, std::uint32_t> clusterOf;
     std::vector<std::uint32_t> remap(pos.size());
     std::vector<Vec3> sum;
@@ -563,11 +565,21 @@ void clusterVertices(std::vector<Vec3>& pos, std::vector<std::array<std::uint32_
         }
     pos = std::move(kept);
     tris = std::move(out);
+    std::vector<std::int64_t> oldToNew(original, -1);
+    for (std::size_t i = 0; i < original; ++i)
+        oldToNew[i] = index[remap[i]];
+    return oldToNew;
 }
 
-Unfolded unfoldPatch(const core::TriangleMesh& mesh, const core::TriangleSet& selection)
+/// `trimTo` (a subset of `selection`, or empty): the outline and holes are taken from
+/// that subset, while the whole selection is unfolded and fit (data beyond the trim, for
+/// smooth joins with neighbouring patches).
+Unfolded unfoldPatch(const core::TriangleMesh& mesh, const core::TriangleSet& selection,
+                     const core::TriangleSet& trimTo = {})
 {
     Unfolded u;
+    std::vector<std::array<std::uint32_t, 3>> trimTriangles;
+    std::vector<char> inTrim;
     std::unordered_map<Vec3, std::uint32_t, PositionHash> ids;
     for (const auto t : selection) {
         std::array<std::uint32_t, 3> local{};
@@ -581,9 +593,20 @@ Unfolded unfoldPatch(const core::TriangleMesh& mesh, const core::TriangleSet& se
         if (local[0] == local[1] || local[1] == local[2] || local[0] == local[2])
             continue; // degenerate
         u.triangles.push_back(local);
+        if (!trimTo.empty())
+            inTrim.push_back(std::binary_search(trimTo.begin(), trimTo.end(), t) ? 1 : 0);
     }
     orientConsistently(u.triangles);
     auto loops = sheetLoops(u.triangles, u.positions);
+    std::vector<std::vector<std::uint32_t>> trimLoops;
+    if (!trimTo.empty()) {
+        for (std::size_t k = 0; k < u.triangles.size(); ++k)
+            if (inTrim[k] != 0)
+                trimTriangles.push_back(u.triangles[k]);
+        trimLoops = borderLoops(trimTriangles, u.positions);
+        if (trimLoops.empty())
+            throw SurfaceFitError("The trimmed part of the selection has no border");
+    }
 
     // Large selections are unfolded on a coarser copy (the fit needs far fewer points
     // than a dense scan has); when coarsening changes the topology, the full mesh is used.
@@ -596,25 +619,35 @@ Unfolded unfoldPatch(const core::TriangleMesh& mesh, const core::TriangleSet& se
         auto tris = u.triangles;
         // The border stays exact: neighbouring patches share it when sewn.
         std::vector<char> border(pos.size(), 0);
-        for (const auto& loop : loops)
-            for (const auto v : loop)
-                border[v] = 1;
-        clusterVertices(pos, tris, std::sqrt(area / static_cast<double>(maxVertices)), border);
+        for (const auto* set : {&loops, &trimLoops})
+            for (const auto& loop : *set)
+                for (const auto v : loop)
+                    border[v] = 1;
+        const auto oldToNew = clusterVertices(pos, tris, std::sqrt(area / static_cast<double>(maxVertices)), border);
         try {
             auto coarseLoops = sheetLoops(tris, pos);
-            if (coarseLoops.size() == loops.size()) {
+            bool kept = coarseLoops.size() == loops.size();
+            auto coarseTrim = trimLoops;
+            for (auto& loop : coarseTrim)
+                for (auto& v : loop) {
+                    kept = kept && oldToNew[v] >= 0;
+                    v = kept ? static_cast<std::uint32_t>(oldToNew[v]) : 0;
+                }
+            if (kept) {
                 u.positions = std::move(pos);
                 u.triangles = std::move(tris);
                 loops = std::move(coarseLoops);
+                trimLoops = std::move(coarseTrim);
             }
         } catch (const SurfaceFitError&) {
             // keep the full mesh
         }
     }
     const std::size_t n = u.positions.size();
-    u.outer = loops.front();
-    const std::vector<std::uint32_t>& outer = u.outer;
-    u.holes.assign(loops.begin() + 1, loops.end());
+    const std::vector<std::uint32_t> outer = loops.front(); // for the pins
+    const auto& trim = trimLoops.empty() ? loops : trimLoops;
+    u.outer = trim.front();
+    u.holes.assign(trim.begin() + 1, trim.end());
 
     // Least squares conformal map (Levy et al. 2002) with a free border: every triangle
     // should map to a similar copy of itself. Two far-apart vertices are pinned.
@@ -1207,7 +1240,7 @@ SurfaceFitResult fitSurface(const core::TriangleMesh& mesh, const core::Triangle
     std::optional<Unfolded> unfolded;
     if (options.method != SurfaceFitMethod::Plane) {
         try {
-            unfolded = unfoldPatch(mesh, selection);
+            unfolded = unfoldPatch(mesh, selection, options.trimTo);
         } catch (const SurfaceFitError& error) {
             if (options.method == SurfaceFitMethod::Unfold)
                 throw;
@@ -1444,7 +1477,7 @@ SurfaceFitResult fitSurface(const core::TriangleMesh& mesh, const core::Triangle
                     for (const auto& hole : unfolded->holes)
                         holeWires.push_back(uvLoopWire(hole, false));
             } else {
-                auto outlines = selectionOutlines(mesh, adjacency, selection);
+                auto outlines = selectionOutlines(mesh, adjacency, options.trimTo.empty() ? selection : options.trimTo);
                 // The outer outline encloses the largest area over the plane (a wiggly
                 // hole can be the longest loop).
                 auto enclosed = [&](const std::vector<Vec3>& loop) {
@@ -1504,7 +1537,18 @@ SurfaceFitResult fitSurface(const core::TriangleMesh& mesh, const core::Triangle
     const Buckets seeds(seedLocal, su0l, su1l + 1e-9, sv0l, sv1l + 1e-9, 32);
     const GeomAdaptor_Surface adaptor(surface);
     Extrema_GenLocateExtPS locate(adaptor);
-    const std::size_t stride = std::max<std::size_t>(1, pts.size() / 20000);
+    // With a trim subset, only its points are measured: the rest is fit data beyond the
+    // face, covered by the neighbouring patch.
+    std::vector<Vec3> trimPts;
+    if (!options.trimTo.empty()) {
+        std::unordered_set<Vec3, PositionHash> seenTrim;
+        for (const auto t : options.trimTo)
+            for (const auto vi : mesh.triangles()[t])
+                if (seenTrim.insert(mesh.vertices()[vi]).second)
+                    trimPts.push_back(mesh.vertices()[vi]);
+    }
+    const std::vector<Vec3>& measured = trimPts.empty() ? pts : trimPts;
+    const std::size_t stride = std::max<std::size_t>(1, measured.size() / 20000);
     double sum = 0.0;
     std::size_t count = 0;
 
@@ -1535,19 +1579,19 @@ SurfaceFitResult fitSurface(const core::TriangleMesh& mesh, const core::Triangle
         }
         return best;
     };
-    for (std::size_t i = 0; i < pts.size(); i += stride) {
-        const auto l = frame.toLocal(pts[i]);
+    for (std::size_t i = 0; i < measured.size(); i += stride) {
+        const auto l = frame.toLocal(measured[i]);
         double d = 0.0;
         const auto k = seeds.nearest(l[0], l[1], l[2], d);
         try {
-            locate.Perform(gp_Pnt(pts[i].x, pts[i].y, pts[i].z), seedParams[k][0], seedParams[k][1]);
+            locate.Perform(gp_Pnt(measured[i].x, measured[i].y, measured[i].z), seedParams[k][0], seedParams[k][1]);
             double pu = seedParams[k][0], pv = seedParams[k][1];
             if (locate.IsDone()) {
                 d = std::min(d, std::sqrt(locate.SquareDistance()));
                 locate.Point().Parameter(pu, pv);
             }
             if (classifier && classifier->Perform(gp_Pnt2d(pu, pv)) == TopAbs_OUT) {
-                report.outsideTrimMax = std::max(report.outsideTrimMax, boundaryDistance(pts[i]));
+                report.outsideTrimMax = std::max(report.outsideTrimMax, boundaryDistance(measured[i]));
                 continue; // not on the created face; reported as outsideTrimMax
             }
         } catch (const Standard_Failure&) {
@@ -1563,7 +1607,8 @@ SurfaceFitResult fitSurface(const core::TriangleMesh& mesh, const core::Triangle
     // Measured against the selection grown by two rings: the smoothed trim outline may
     // pass a fraction of a triangle outside the selected triangles, which is not a
     // deviation from the scanned surface.
-    const core::TriangleSet reference = core::growSelection(adjacency, selection, 2);
+    const core::TriangleSet reference =
+        core::growSelection(adjacency, options.trimTo.empty() ? selection : options.trimTo, 2);
     std::unordered_map<Vec3, std::uint32_t, PositionHash> refIndex;
     std::vector<Vec3> refPts;
     std::vector<std::array<double, 3>> refLocal;

@@ -44,9 +44,9 @@ void registerDocumentCommands(CommandRegistry& r)
 {
 
     r.add({"document.import", "Import 3D file",
-           "Imports a 3D file (STL, OBJ, 3MF, STEP, IGES, BREP) as a new part. The document works in "
+           "Imports a 3D file (STL, OBJ, PLY, 3MF, STEP, IGES, BREP) as a new part. The document works in "
            "millimetres; pass `units` when the file was written in another unit (mesh formats such as STL and "
-           "OBJ carry none) and the geometry is scaled to millimetres.",
+           "PLY carry none) and the geometry is scaled to millimetres.",
            objectSchema({{"path", {{"type", "string"}, {"minLength", 1}, {"description", "Absolute path of the file."}}},
                          {"name", {{"type", "string"}, {"description", "Optional part name; defaults to the file name."}}},
                          {"units", {{"type", "string"},

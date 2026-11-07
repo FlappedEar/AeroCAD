@@ -32,7 +32,7 @@ use the same operations, and every change is one undo step.
 
 | Command | Fusion | Notes |
 |---|---|---|
-| `sketch.create` | Create Sketch | `plane` XY / XZ / YZ / {origin, normal, xDir}, or `face` {body, index or point}, or `surface` {part, point / useSelection} (best-fit plane over a curved surface or scan); `offset`; `curves` |
+| `sketch.create` | Create Sketch | `plane` XY / XZ / YZ / {plane: construction plane id} / {origin, normal, xDir}, or `face` {body, index or point}, or `surface` {part, point / useSelection} (best-fit plane over a curved surface or scan); `offset`; `curves` |
 | `sketch.add_curves` | (draw in sketch) | appends curves |
 | `sketch.profiles` | | closed regions with area and centroid |
 | `sketch.add_constraints` | Sketch > Constraints, Sketch Dimension (D) | see Constraints below |
@@ -40,6 +40,12 @@ use the same operations, and every change is one undo step.
 | `sketch.curves` | | solved curves, constraints, degrees of freedom |
 | `feature.extrude` | Extrude (E) | `distance`, `extent` one_side / symmetric / two_sides, `flip`, `profiles` or `points` |
 | `feature.revolve` | Revolve | `axis` X / Y / Z, {line: sketch curve index} or {origin, direction}; `angle` |
+| `feature.sweep` | Sweep | profiles of `sketch` moved along `path` {sketch, curves} (default: all curves of the path sketch) |
+| `feature.loft` | Loft | `sections`: sketch ids or {sketch, profile}, in order; `solid`, `ruled` |
+| `feature.mirror` | Mirror | `body`, `plane` XY / XZ / YZ / {origin, normal} / planar face, `offset`; join or new_body |
+| `feature.rectangular_pattern` | Rectangular Pattern | `direction`, `count`, `spacing`, optional `direction2` / `count2` / `spacing2` |
+| `feature.circular_pattern` | Circular Pattern | `axis` X / Y / Z or {origin, direction}, `count`, `angle` (360 = full turn) |
+| `feature.plane` | Construct > Offset Plane, Plane at Angle, Midplane, Plane Through Three Points | `base` (XY / XZ / YZ, {plane: id}, planar face {body, point}), `offset`, `angle` + `axis` x / y, `base2` (midplane) or `points` (3 points) |
 | `feature.fillet` | Fillet (F) | `edges`, `radius` |
 | `feature.chamfer` | Chamfer | `edges`, `distance` |
 | `feature.shell` | Shell | `faces` to remove, `thickness` |

@@ -5,7 +5,9 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <cmath>
 #include <stdexcept>
+#include <vector>
 
 using namespace aerocad::core;
 using Catch::Approx;
@@ -80,6 +82,51 @@ TEST_CASE("MeshBuilder welds identical vertices and drops degenerate triangles",
     CHECK(mesh.triangleCount() == 3);
     CHECK(mesh.isValid());
     CHECK(b.triangleCount() == 0);
+}
+
+TEST_CASE("MeshBuilder welds large grids across table growth and batches", "[core]")
+{
+    // An n x n vertex grid, two triangles per cell, added once triangle by triangle and
+    // once in batches (with and without a reserve hint): all must give the same mesh.
+    constexpr int n = 300;
+    std::vector<Vec3> corners;
+    for (int i = 0; i + 1 < n; ++i) {
+        for (int j = 0; j + 1 < n; ++j) {
+            const double x = i * 0.1;
+            const double y = j == 0 ? -0.0 : j * 0.1; // -0.0 must weld with 0.0 from other cells
+            const double x1 = (i + 1) * 0.1;
+            const double y1 = (j + 1) * 0.1;
+            corners.insert(corners.end(), {{x, y, 0}, {x1, y, 0}, {x1, y1, 0}, {x, y, 0}, {x1, y1, 0}, {x, y1, 0}});
+        }
+    }
+    corners.insert(corners.end(), {{0, 0, 0}, {0, 0, 0}, {1, 1, 1}}); // degenerate
+    const std::size_t triangles = corners.size() / 3;
+
+    MeshBuilder single;
+    for (std::size_t t = 0; t < triangles; ++t)
+        single.addTriangle(corners[3 * t], corners[3 * t + 1], corners[3 * t + 2]);
+    const TriangleMesh a = single.take();
+
+    MeshBuilder batched;
+    batched.addTriangles(corners.data(), triangles);
+    const TriangleMesh b = batched.take();
+
+    MeshBuilder reserved;
+    reserved.reserve(triangles);
+    reserved.addTriangles(corners.data(), 7); // uneven batch boundaries
+    reserved.addTriangles(corners.data() + 21, triangles - 7);
+    const TriangleMesh c = reserved.take();
+
+    const std::size_t expectedVertices = static_cast<std::size_t>(n) * n + 1; // + the (1,1,1) corner
+    for (const TriangleMesh* mesh : {&a, &b, &c}) {
+        CHECK(mesh->vertexCount() == expectedVertices);
+        CHECK(mesh->triangleCount() == triangles - 1);
+        CHECK(mesh->isValid());
+        CHECK(mesh->vertices() == a.vertices());
+        CHECK(mesh->triangles() == a.triangles());
+    }
+    for (const Vec3& v : a.vertices())
+        CHECK_FALSE(std::signbit(v.y));
 }
 
 TEST_CASE("UTF-8 path round trip", "[core]")

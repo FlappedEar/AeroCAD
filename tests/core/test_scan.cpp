@@ -327,3 +327,18 @@ TEST_CASE("concave holes are filled by ear clipping without overlap", "[core][sc
     CHECK(meshStats(filled).boundaryEdges == 0);
     CHECK(signedVolume(filled) == Approx(7.0));
 }
+
+TEST_CASE("decimateToTarget never collapses a mesh to nothing", "[core][scan]")
+{
+    // Many tiny separate triangles along a line: clustering merges each one away.
+    TriangleMesh m;
+    for (std::uint32_t i = 0; i < 2000; ++i) {
+        const double x = i * 3.0;
+        const auto a = m.addVertex({x, 0, 0});
+        const auto b = m.addVertex({x + 1, 0, 0});
+        const auto c = m.addVertex({x, 1, 0});
+        m.addTriangle(a, b, c);
+    }
+    const TriangleMesh d = decimateToTarget(m, 1000);
+    CHECK_FALSE(d.isEmpty());
+}

@@ -84,6 +84,9 @@ struct SketchGeometry {
 /// Throws ModelingError for degenerate curves.
 [[nodiscard]] SketchGeometry buildSketch(const Plane& plane, const std::vector<SketchCurve>& curves);
 
+/// The given curves as 3D edges (a compound), unsplit; used as sweep paths.
+[[nodiscard]] Shape curveEdges(const Plane& plane, const std::vector<SketchCurve>& curves);
+
 /// Area of all faces of a shape in mm^2.
 [[nodiscard]] double area(const Shape& shape);
 

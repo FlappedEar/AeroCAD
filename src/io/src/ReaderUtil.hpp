@@ -66,4 +66,32 @@ private:
     std::size_t m_count = 0;
 };
 
+/// Throttled progress reporting for ImportOptions::progress. Reports 0.0 on
+/// construction; update() is cheap enough to call for every element of the input.
+class ProgressReporter {
+public:
+    explicit ProgressReporter(const ImportOptions& options);
+    ProgressReporter(const ProgressReporter&) = delete;
+    ProgressReporter& operator=(const ProgressReporter&) = delete;
+
+    /// `done` of `total` work units completed. Calls the callback when about another
+    /// 1% is done. Throws ImportCancelled when the callback returns false.
+    void update(std::size_t done, std::size_t total)
+    {
+        if (done >= m_next)
+            step(done, total);
+    }
+
+    /// Reports 1.0.
+    void finish();
+
+private:
+    void step(std::size_t done, std::size_t total);
+    void report(double fraction);
+
+    const ImportProgress& m_callback;
+    std::size_t m_next;
+    double m_last = 0.0;
+};
+
 } // namespace aerocad::io::detail

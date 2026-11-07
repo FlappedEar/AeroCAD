@@ -24,6 +24,8 @@ set(AEROCAD_APP_SOURCES
     JsonBridge.hpp
     Preferences.cpp
     Preferences.hpp
+    ScanController.cpp
+    ScanController.hpp
     UiScript.cpp
     UiScript.hpp
 )
@@ -72,6 +74,7 @@ qt_add_qml_module(aerocad
         qml/HeatMapLegend.qml
         qml/PreferencesDialog.qml
         qml/ShortcutsDialog.qml
+        qml/ScanPanel.qml
     RESOURCES
         ${AEROCAD_ICONS}
 )
