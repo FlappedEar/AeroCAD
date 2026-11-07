@@ -130,7 +130,14 @@ core -------+                 transforms, primitives).
   intersection never lands on an outline corner. `rootFillet`: the blank is fused with a
   pad (the surface around the root swept down past it), the edges where the fin walls meet
   the pad top are filleted (`BRepFilletAPI_MakeFillet`), and the pad is cut away again,
-  leaving concave fillets tangent to the surface.
+  leaving concave fillets tangent to the surface. `count`/`spacing` and `mirror` build
+  more placements of the same sketch plane and outlines (moved along the normal, or
+  mirrored), each moved along the outward axis onto the skin (`MeshProjector::drop`) and
+  given its own skin fit, so every root follows the real scan. The mirror plane comes from
+  `core::findSymmetryPlane`: planes through the centroid across the principal and world
+  axes, the offset found by a 1D scan, then ICP-style refinement against the mesh vertices
+  and a golden-section search for the offset; the best-matching plane across the widest
+  extent wins (a car's centre plane).
 
 ## Not yet decided / next steps
 

@@ -29,7 +29,7 @@ struct SyntheticBumper {
     [[nodiscard]] double bulge(double z) const
     {
         const double t = (z - 0.5 * height) / (0.5 * height);
-        return 25.0 * t * t;
+        return 25.0 * t * t + 8.0 * t * t * t; // leans in more towards the top
     }
 
     /// Point and outward plan normal at arc length s along the plan curve (from the left

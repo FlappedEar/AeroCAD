@@ -226,7 +226,14 @@ QtObject {
                      reason: qsTr("The sketch needs a closed outline."),
                      tip: qsTr("Gives the fin outline a thickness (half each side of the sketch) and cuts its root to the surface, so it sits flush on it."),
                      params: [_num("thickness", qsTr("Thickness"), 2, "mm"),
-                              _num("rootFillet", qsTr("Root fillet"), 2, "mm", qsTr("Rounds the joint between the fin and the surface; 0 for a sharp joint."))] }
+                              _num("rootFillet", qsTr("Root fillet"), 2, "mm", qsTr("Rounds the joint between the fin and the surface; 0 for a sharp joint.")),
+                              _num("count", qsTr("Fins"), 1, "", qsTr("More than one: copies stacked across the sketch, each set on the surface where it lands.")),
+                              _num("spacing", qsTr("Spacing"), 40, "mm", qsTr("Distance between the fins; negative puts the copies on the other side.")),
+                              _choice("mirror", qsTr("Sides"), [{ value: "no", label: qsTr("This side only") },
+                                                               { value: "auto", label: qsTr("Both, centre plane of the scan") },
+                                                               { value: "yz", label: qsTr("Both, YZ plane") },
+                                                               { value: "xz", label: qsTr("Both, XZ plane") }],
+                                      qsTr("Also makes the fins on the other side of the car, mirrored and set on the surface there."))] }
         }
         case "editSketch":
             return { id: id, text: qsTr("Edit sketch"), icon: "sketch", enabled: true,
@@ -568,7 +575,9 @@ QtObject {
             return _selectResult(r)
         }
         case "finOnSurface": {
-            const r = controller.execute("surface.fin_from_sketch", { sketch: info.featureId, thickness: v.thickness, rootFillet: v.rootFillet || 0 })
+            const r = controller.execute("surface.fin_from_sketch", { sketch: info.featureId, thickness: v.thickness, rootFillet: v.rootFillet || 0,
+                                                                          count: Math.max(1, Math.round(v.count || 1)), spacing: v.spacing || 40,
+                                                                          mirror: !!v.mirror && v.mirror !== "no", mirrorPlane: v.mirror && v.mirror !== "no" ? v.mirror : "auto" })
             if (r.ok && r.result.warnings.length > 0)
                 controller.showStatus(qsTr("Fin \"%1\": %2").arg(r.result.name).arg(r.result.warnings[0]))
             else if (r.ok)
