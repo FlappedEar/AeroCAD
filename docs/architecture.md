@@ -107,9 +107,11 @@ core -------+                 transforms, primitives).
   turned by `angle` about the normal), for fins: `sketch.profiles` reports where the
   plane cuts the surface (`surfaceLine`, `core::sliceMesh`), which the sketch overlay
   draws on top. `surface.fin_from_sketch` (`geometry::finOnSurface`) extrudes the
-  outline half the thickness each way, splits it with the surface (fitted under the
-  root on a scan, `BRepAlgoAPI_Splitter`) and keeps the side with more of the fin, so
-  the root lies exactly on the surface.
+  outline half the thickness each way, splits it with the surface (`BRepAlgoAPI_Splitter`) and keeps the side with more of
+  the fin, so the root lies exactly on the surface. On a scan the surface under the root
+  is `geometry::skinOnScan`: the same first-skin-from-outside height-field fit as
+  `partOnScan` (`core::MeshProjector` along the surface normal), so an inner layer,
+  holes and flipped triangles do not pull the root into the scan.
 
 ## Not yet decided / next steps
 

@@ -822,3 +822,78 @@ TEST_CASE("Sketch and part next to a grille opening of a noisy bumper scan", "[c
     CHECK(part.data.at("volume").get<double>() > 0.0);
     CHECK(part.data.at("volume").get<double>() == Approx(2.0 * part.data.at("area").get<double>()).epsilon(0.05));
 }
+
+TEST_CASE("Fin on a scan with a layer behind the skin and holes: the root sits on the outer skin", "[commands][fit]")
+{
+    // A curved front facing -Y (like a bumper), 0.5 mm triangles, with a hole under part of
+    // the fin's root and an inner layer 3 mm behind it (the inside of the bumper) that
+    // faces the other way.
+    commands::Session session;
+    std::vector<core::Vec3> v;
+    std::vector<core::TriangleMesh::Triangle> t;
+    auto skinY = [](double x, double z) { return 0.004 * x * x + 0.002 * (z - 40) * (z - 40); };
+    const int nx = 240, nz = 160;
+    const double step = 0.5;
+    auto layer = [&](double behind, bool flip, bool holes) {
+        const auto base = static_cast<std::uint32_t>(v.size());
+        for (int j = 0; j <= nz; ++j)
+            for (int i = 0; i <= nx; ++i) {
+                const double x = -60 + i * step, z = j * step;
+                v.push_back({x, skinY(x, z) + behind, z});
+            }
+        auto idx = [&](int i, int j) { return base + static_cast<std::uint32_t>(j * (nx + 1) + i); };
+        for (int j = 0; j < nz; ++j)
+            for (int i = 0; i < nx; ++i) {
+                const double x = -60 + (i + 0.5) * step, z = (j + 0.5) * step;
+                if (holes && (x - 8) * (x - 8) + (z - 40) * (z - 40) < 9.0)
+                    continue; // a 3 mm hole right under the root
+                if (!flip) {
+                    t.push_back({idx(i, j), idx(i + 1, j), idx(i + 1, j + 1)});
+                    t.push_back({idx(i, j), idx(i + 1, j + 1), idx(i, j + 1)});
+                } else {
+                    t.push_back({idx(i, j), idx(i + 1, j + 1), idx(i + 1, j)});
+                    t.push_back({idx(i, j), idx(i, j + 1), idx(i + 1, j + 1)});
+                }
+            }
+    };
+    layer(0.0, false, true);  // outer skin, facing -Y
+    layer(3.0, true, false);  // inner layer behind it
+    model::Part scan;
+    scan.name = "Bumper";
+    scan.mesh = std::make_shared<const core::TriangleMesh>(core::TriangleMesh(std::move(v), std::move(t)));
+    const auto scanId = session.document().addPart(scan);
+    REQUIRE(scan.mesh->faceNormal(0).y < 0.0);
+
+    // A level canard: its plane stands across the front, X out of the bumper (-Y).
+    auto sk = session.execute(
+        "sketch.create",
+        {{"surface", {{"part", scanId}, {"point", {0, 0, 40}}, {"across", true}}},
+         {"curves", Json::array({{{"type", "rectangle"}, {"corner", {-4, -25}}, {"opposite", {30, 25}}}})}});
+    INFO(sk.toJson().dump());
+    REQUIRE(sk.ok);
+    auto profiles = session.execute("sketch.profiles", {{"sketch", sk.data.at("id")}});
+    REQUIRE(profiles.ok);
+    CHECK(profiles.data.at("plane").at("xDir").at(1).get<double>() < -0.95);              // out of the bumper
+    CHECK(std::abs(profiles.data.at("plane").at("normal").at(2).get<double>()) > 0.95); // level fin
+
+    auto fin = session.execute("surface.fin_from_sketch", {{"sketch", sk.data.at("id")}, {"thickness", 3.0}});
+    INFO(fin.toJson().dump());
+    REQUIRE(fin.ok);
+    CHECK(fin.data.at("fit").at("part") == scanId);
+    CHECK(fin.data.at("fit").at("rmsDeviation").get<double>() < 0.05);
+    // The root lies on the outer skin: nothing of the fin behind it (not cut at the inner
+    // layer, not left hanging into the hole), and it reaches it everywhere.
+    const auto* part = session.document().part(fin.data.at("id").get<model::PartId>());
+    REQUIRE(part != nullptr);
+    double deepest = -1e9;
+    for (const auto& q : part->mesh->vertices()) {
+        CHECK(q.y < skinY(q.x, q.z) + 0.1);
+        deepest = std::max(deepest, q.y - skinY(q.x, q.z));
+    }
+    CHECK(deepest > -0.1);
+    // Chord 50 mm, 30 mm out at its centre, 3 mm thick; the skin curves away towards the
+    // ends of the chord, so the fin is a little longer there.
+    const double volume = fin.data.at("volume").get<double>();
+    CHECK(volume > 3.0 * 50.0 * 30.0);
+    CHECK(volume < 3.0 * 50.0 * 30.0 * 1.15);
+}

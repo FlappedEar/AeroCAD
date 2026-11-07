@@ -91,15 +91,6 @@ Json addShapePart(CommandContext& ctx, const model::Part& source, const geometry
     return partToJson(*doc.part(id));
 }
 
-/// Diagonal of the outlines' bounding box (mm).
-double outlinesDiagonal(const std::vector<geometry::Shape>& outlines)
-{
-    core::BoundingBox box;
-    for (const auto& o : outlines)
-        box.merge(o.bounds());
-    return box.diagonal();
-}
-
 const cad::SketchResult& requireSketch(CommandContext& ctx, const Json& id)
 {
     if (ctx.design == nullptr)
@@ -131,65 +122,6 @@ std::vector<geometry::Shape> sketchOutlines(const cad::SketchResult& sk, const J
     return outlines;
 }
 
-/// A box in a local frame: origin plus orthonormal axes, extent [lo, hi] along each.
-struct FrameBox {
-    core::Vec3 origin;
-    core::Vec3 axis[3];
-    double lo[3];
-    double hi[3];
-
-    [[nodiscard]] bool contains(const core::Vec3& p) const
-    {
-        const core::Vec3 d = p - origin;
-        for (int i = 0; i < 3; ++i) {
-            const double x = d.dot(axis[i]);
-            if (x < lo[i] || x > hi[i])
-                return false;
-        }
-        return true;
-    }
-};
-
-/// Triangles of a scan with their centre in `box`, facing `facing` (dot > 0.2) and
-/// connected to the triangle nearest `seed`.
-core::TriangleSet meshInBox(const core::TriangleMesh& mesh, const FrameBox& box, const core::Vec3& facing,
-                            const core::Vec3& seed, const char* missing)
-{
-    const auto& v = mesh.vertices();
-    auto centre = [&](std::uint32_t t) {
-        const auto& tri = mesh.triangles()[t];
-        return (v[tri[0]] + v[tri[1]] + v[tri[2]]) * (1.0 / 3.0);
-    };
-    auto inside = [&](std::uint32_t t) { return box.contains(centre(t)) && mesh.faceNormal(t).dot(facing) > 0.2; };
-    std::uint32_t start = core::MeshAdjacency::none;
-    double best = std::numeric_limits<double>::max();
-    for (std::uint32_t t = 0; t < mesh.triangleCount(); ++t) {
-        if (!inside(t))
-            continue;
-        const double d = (centre(t) - seed).length();
-        if (d < best) {
-            best = d;
-            start = t;
-        }
-    }
-    if (start == core::MeshAdjacency::none)
-        throw CommandError(missing);
-    const core::MeshAdjacency adjacency(mesh);
-    std::vector<char> seen(mesh.triangleCount(), 0);
-    core::TriangleSet out{start};
-    seen[start] = 1;
-    for (std::size_t i = 0; i < out.size(); ++i) {
-        for (const auto n : adjacency.neighbours(out[i])) {
-            if (n != core::MeshAdjacency::none && !seen[n] && inside(n)) {
-                seen[n] = 1;
-                out.push_back(n);
-            }
-        }
-    }
-    std::sort(out.begin(), out.end());
-    return out;
-}
-
 /// Bounds of the evaluated outlines in sketch coordinates (arcs bulge past their
 /// defining points): {u0, v0, u1, v1}.
 std::array<double, 4> outlineBounds(const cad::SketchResult& sk, const std::vector<geometry::Shape>& outlines)
@@ -208,22 +140,6 @@ std::array<double, 4> outlineBounds(const cad::SketchResult& sk, const std::vect
     if (u0 > u1)
         throw CommandError("The sketch outline is empty");
     return {u0, v0, u1, v1};
-}
-
-/// Triangles of a scan under the root of a fin drawn across it (sketch X = surface
-/// normal, outward): along the root (sketch Y) and across the fin's thickness, within the
-/// outline's height range, all grown by `margin`, facing outward.
-core::TriangleSet meshUnderFin(const core::TriangleMesh& mesh, const cad::SketchResult& sk,
-                               const std::vector<geometry::Shape>& outlines, double thickness, const core::Vec3& seed,
-                               double margin)
-{
-    const auto [u0, v0, u1, v1] = outlineBounds(sk, outlines);
-    const double half = 0.5 * thickness + margin;
-    const FrameBox box{sk.plane.origin,
-                       {sk.plane.xDir, sk.plane.yDir(), sk.plane.normal},
-                       {u0 - margin, v0 - margin, -half},
-                       {u1 + margin, v1 + margin, half}};
-    return meshInBox(mesh, box, sk.plane.xDir, seed, "No part of the mesh lies under the root of the fin");
 }
 
 } // namespace
@@ -600,22 +516,45 @@ void registerSurfaceCommands(CommandRegistry& r)
               const core::Vec3 outward = sk.plane.xDir;
 
               Json fitReport;
+              // On a scan: the skin under the root, seen from outside (the first surface met,
+              // never a layer behind it; holes bridged), as a height field over the fin's
+              // footprint: along its chord (sketch Y) and across its thickness.
               auto fitUnder = [&](const model::Part& scan) {
-                  const double margin = std::max(5.0, 0.15 * outlinesDiagonal(outlines));
-                  const auto region = meshUnderFin(*scan.mesh, sk, outlines, thickness, sk.plane.origin, margin);
-                  geometry::SurfaceFitOptions options;
+                  const auto [u0, v0, u1, v1] = outlineBounds(sk, outlines);
+                  (void)u0;
+                  (void)u1;
+                  const double margin = std::max(5.0, 0.1 * (v1 - v0));
+                  const double half = 0.5 * thickness;
+                  const double across = std::max(5.0, 2.0 * thickness);
+                  geometry::DrapeArea area;
+                  area.origin = sk.plane.origin;
+                  area.x = sk.plane.yDir();
+                  area.y = sk.plane.normal;
+                  area.normal = sk.plane.xDir;
+                  area.u0 = v0 - margin;
+                  area.u1 = v1 + margin;
+                  area.v0 = -half - across;
+                  area.v1 = half + across;
+                  area.insideU0 = v0;
+                  area.insideU1 = v1;
+                  area.insideV0 = -half;
+                  area.insideV1 = half;
+                  geometry::DrapeFitOptions options;
                   options.tolerance = tolerance;
                   try {
-                      auto fit = geometry::fitSurface(*scan.mesh, region, options);
+                      const core::MeshProjector projector(*scan.mesh, sk.plane.xDir);
+                      geometry::DrapeFitReport rep;
+                      auto face = geometry::skinOnScan(projector, area, &rep, options);
                       fitReport = {{"part", scan.id},
-                                   {"triangles", region.size()},
-                                   {"meshToSurfaceMax", fit.report.meshToSurfaceMax},
-                                   {"meshToSurfaceRms", fit.report.meshToSurfaceRms},
-                                   {"withinTolerance", fit.report.withinTolerance},
-                                   {"method", fit.report.method}};
-                      return fit.face;
+                                   {"method", "draped"},
+                                   {"maxDeviation", rep.maxDeviation},
+                                   {"rmsDeviation", rep.rmsDeviation},
+                                   {"bridged", rep.bridgedFraction},
+                                   {"withinTolerance", rep.p99Deviation <= tolerance},
+                                   {"milliseconds", rep.milliseconds}};
+                      return face;
                   } catch (const geometry::SurfaceFitError& e) {
-                      throw CommandError(std::string("Could not fit a surface under the fin root: ") + e.what());
+                      throw CommandError(std::string("Could not find the scan under the fin root: ") + e.what());
                   }
               };
               auto finOn = [&](const geometry::Shape& surface) {

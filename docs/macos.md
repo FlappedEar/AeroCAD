@@ -104,7 +104,7 @@ open build/vcpkg-macos/bin/AeroCAD.app
   stands across the surface; the orange line is where it cuts the surface. Draw the fin's
   outline with its root a little past that line, click *Finish Sketch*, set the thickness
   in *Fin on surface* and click *Create*: the root is cut to the surface, so the fin sits
-  flush on it.
+  flush on its outer skin (holes and a second layer behind it in the scan are ignored).
 - **Undo / redo:** Cmd+Z / Cmd+Shift+Z (also for selection changes).
 
 ## Troubleshooting
