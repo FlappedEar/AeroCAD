@@ -7,6 +7,7 @@
 #include "aerocad/geometry/Primitives.hpp"
 #include "aerocad/geometry/Tessellation.hpp"
 #include "aerocad/geometry/Transform.hpp"
+#include "aerocad/project/ProjectFile.hpp"
 
 #include <Standard_ConstructionError.hxx>
 
@@ -1443,4 +1444,87 @@ TEST_CASE("A part whose fit misses the tolerance is kept as a marked approximati
     for (const auto& f : timeline.data.at("features"))
         if (f.at("id") == loose.data.at("feature"))
             CHECK_FALSE(f.value("approximate", false));
+}
+
+TEST_CASE("CAD-85: stacked fins are an approximation when any fin misses the tolerance", "[commands][surface]")
+{
+    commands::Session session;
+    auto scan = session.execute("document.import",
+                                {{"path", std::string(AEROCAD_TEST_DATA_DIR) + "/models/dome_scan.stl"}});
+    REQUIRE(scan.ok);
+    const Json fin = Json::array({{{"type", "rectangle"}, {"corner", {-2, -8}}, {"opposite", {10, 8}}}});
+    auto sk = session.execute("sketch.create",
+                              {{"surface", {{"part", scan.data.at("id")}, {"point", {40, 0, 45}}, {"across", true}}},
+                               {"curves", fin}});
+    REQUIRE(sk.ok);
+    // The first fin alone fits within 0.04 mm (p99 about 0.026 mm) ...
+    auto one = session.execute("surface.fin_from_sketch",
+                               {{"sketch", sk.data.at("id")}, {"thickness", 3.0}, {"tolerance", 0.04}});
+    INFO(one.toJson().dump());
+    REQUIRE(one.ok);
+    REQUIRE(one.data.at("fit").at("withinTolerance").get<bool>());
+    // ... the second, 40 mm further down the dome, does not (p99 about 0.06 mm).
+    auto two = session.execute("surface.fin_from_sketch", {{"sketch", sk.data.at("id")},
+                                                           {"thickness", 3.0},
+                                                           {"tolerance", 0.04},
+                                                           {"count", 2},
+                                                           {"spacing", -40.0}});
+    INFO(two.toJson().dump());
+    REQUIRE(two.ok);
+    const Json& fit = two.data.at("fit");
+    CHECK_FALSE(fit.at("withinTolerance").get<bool>());
+    CHECK(fit.at("p99Deviation").get<double>() > 0.04);
+    bool warned = false;
+    for (const auto& w : two.data.at("warnings"))
+        warned = warned || w.get<std::string>().find("Approximation") != std::string::npos;
+    CHECK(warned);
+}
+
+TEST_CASE("CAD-85: fit reports saved before the tolerance was recorded are fitted again on open",
+          "[commands][surface]")
+{
+    const auto file = std::filesystem::temp_directory_path() /
+                      ("aerocad_cad85_" + std::to_string(std::random_device{}()) + ".aerocad");
+    {
+        commands::Session session;
+        auto scan = session.execute("document.import",
+                                    {{"path", std::string(AEROCAD_TEST_DATA_DIR) + "/models/dome_scan.stl"}});
+        REQUIRE(scan.ok);
+        const Json square = Json::array({{{"type", "rectangle"}, {"corner", {-15, -15}}, {"opposite", {15, 15}}}});
+        auto sk = session.execute("sketch.create",
+                                  {{"surface", {{"part", scan.data.at("id")}, {"point", {0, 0, 45.7}}}}, {"curves", square}});
+        REQUIRE(sk.ok);
+        REQUIRE(session.execute("surface.part_from_sketch",
+                                {{"sketch", sk.data.at("id")}, {"thickness", 2.0}, {"tolerance", 0.01}})
+                    .ok);
+        REQUIRE(session.execute("project.save", {{"path", core::pathToUtf8(file)}}).ok);
+    }
+    // Make it look like a file from before CAD-85: no tolerance, no approximation warning.
+    project::ProjectData data = project::loadProject(file);
+    bool edited = false;
+    for (auto& r : data.timelineResults) {
+        Json& report = r.output.report;
+        if (report.is_object() && report.contains("fit")) {
+            report["fit"].erase("tolerance");
+            report["fit"].erase("p99Deviation");
+            report["warnings"] = Json::array();
+            edited = true;
+        }
+    }
+    REQUIRE(edited);
+    project::saveProject(file, data);
+
+    commands::Session session;
+    REQUIRE(session.execute("project.open", {{"path", core::pathToUtf8(file)}}).ok);
+    auto timeline = session.execute("timeline.list");
+    Json feature;
+    for (const auto& f : timeline.data.at("features"))
+        if (f.contains("report") && f.at("report").contains("fit"))
+            feature = f;
+    REQUIRE(feature.is_object());
+    INFO(feature.dump());
+    CHECK(feature.value("approximate", false));
+    CHECK(feature.at("report").at("fit").at("tolerance").get<double>() == Approx(0.01));
+    CHECK(feature.at("report").at("warnings")[0].get<std::string>().find("Approximation") != std::string::npos);
+    std::filesystem::remove(file);
 }

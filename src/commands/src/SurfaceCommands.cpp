@@ -541,9 +541,28 @@ cad::FeatureEvaluator::Output finOnSurface(const model::Document& doc, const cad
         }
     }
 
+    // The worst fit of all fins made: one fin out of tolerance marks the feature.
     Json fitReport;
+    auto addFit = [&](const Json& fit) {
+        if (fit.is_null())
+            return;
+        if (fitReport.is_null()) {
+            fitReport = fit;
+            return;
+        }
+        const bool within = fitReport.value("withinTolerance", true) && fit.value("withinTolerance", true);
+        if (fit.value("p99Deviation", 0.0) > fitReport.value("p99Deviation", 0.0)) {
+            const double maxDeviation = std::max(fit.value("maxDeviation", 0.0), fitReport.value("maxDeviation", 0.0));
+            fitReport = fit;
+            fitReport["maxDeviation"] = maxDeviation;
+        } else {
+            fitReport["maxDeviation"] = std::max(fit.value("maxDeviation", 0.0), fitReport.value("maxDeviation", 0.0));
+        }
+        fitReport["withinTolerance"] = within;
+    };
     // One fin at a placement, its root fillet as big as fits (up to rootFillet).
     auto makeFin = [&](const Placement& at, double& appliedFillet) {
+        Json lastFit; // fit under the most recent build attempt of this fin
         const geometry::Plane& plane = at.plane;
         // Outward: the sketch X axis for a sketch made across the surface.
         const core::Vec3 outward = plane.xDir;
@@ -578,22 +597,22 @@ cad::FeatureEvaluator::Output finOnSurface(const model::Document& doc, const cad
                 const core::MeshProjector projector(*scan.mesh, plane.xDir);
                 geometry::DrapeFitReport rep;
                 auto face = geometry::skinOnScan(projector, area, &rep, options);
-                if (fitReport.is_null())
-                    fitReport = {{"part", scan.id},
-                                 {"method", "draped"},
-                                 {"maxDeviation", rep.maxDeviation},
-                                 {"p99Deviation", rep.p99Deviation},
-                                 {"rmsDeviation", rep.rmsDeviation},
-                                 {"bridged", rep.bridgedFraction},
-                                 {"tolerance", tolerance},
-                                 {"withinTolerance", rep.p99Deviation <= tolerance},
-                                 {"milliseconds", rep.milliseconds}};
+                lastFit = {{"part", scan.id},
+                           {"method", "draped"},
+                           {"maxDeviation", rep.maxDeviation},
+                           {"p99Deviation", rep.p99Deviation},
+                           {"rmsDeviation", rep.rmsDeviation},
+                           {"bridged", rep.bridgedFraction},
+                           {"tolerance", tolerance},
+                           {"withinTolerance", rep.p99Deviation <= tolerance},
+                           {"milliseconds", rep.milliseconds}};
                 return face;
             } catch (const geometry::SurfaceFitError& e) {
                 throw CommandError(std::string("Could not find the scan under the fin root: ") + e.what());
             }
         };
         auto build = [&](double fillet) {
+            lastFit = nullptr;
             auto finOn = [&](const geometry::Shape& surface) {
                 return geometry::finOnSurface(surface, at.outlines, plane.normal, thickness, outward, fillet);
             };
@@ -638,13 +657,16 @@ cad::FeatureEvaluator::Output finOnSurface(const model::Document& doc, const cad
                 }
                 solid = candidate;
                 appliedFillet = f;
+                addFit(lastFit);
             } catch (const CommandError& e) {
                 if (filletProblem.empty())
                     filletProblem = e.what();
             }
         }
-        if (solid.isNull())
+        if (solid.isNull()) {
             solid = build(0.0);
+            addFit(lastFit);
+        }
         if (rootFillet > 0.0 && appliedFillet == 0.0)
             warnings.push_back(filletProblem + "; the fin was made without a root fillet");
         else if (appliedFillet < rootFillet)
