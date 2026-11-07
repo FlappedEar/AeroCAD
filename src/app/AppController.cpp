@@ -217,6 +217,14 @@ bool AppController::cancelPreview()
     return true;
 }
 
+bool AppController::mergeHistory(int count, const QString& label)
+{
+    if (count < 2 || !m_session.undoStack().mergeLast(static_cast<std::size_t>(count), label.toStdString()))
+        return false;
+    emit historyChanged();
+    return true;
+}
+
 QVariantMap AppController::execute(const QString& name, const QVariantMap& params)
 {
     return toVariant(executeCommand(name.toStdString(), toJson(params)).toJson()).toMap();

@@ -185,6 +185,21 @@ TEST_CASE("Revolve, shell, chamfer, combine", "[cad][design]")
     CHECK(bodyVolume(d, tube) == Approx(pi * (100 - 49) * 10).epsilon(1e-6));
 }
 
+TEST_CASE("Chamfer types in the timeline", "[cad][design]")
+{
+    Design d;
+    const auto block = d.addFeature("box", {{"size", {10, 10, 10}}});
+    const Json edge = Json::array({{{"point", {5, 0, 10}}}});
+    const auto ch = d.addFeature("chamfer", {{"body", block}, {"edges", edge}, {"type", "two_distances"},
+                                             {"distance", 1}, {"distance2", "1 + 2"}});
+    CHECK(bodyVolume(d, block) == Approx(1000 - 15).epsilon(1e-6));
+    d.editFeature(ch, {{"type", "distance_angle"}, {"distance", 2}, {"angle", 45}, {"distance2", nullptr}});
+    CHECK(bodyVolume(d, block) == Approx(1000 - 20).epsilon(1e-6));
+    CHECK_THROWS_AS(d.addFeature("chamfer", {{"body", block}, {"edges", Json::array({{{"point", {5, 10, 10}}}})},
+                                             {"type", "fancy"}, {"distance", 1}}),
+                    cad::DesignError);
+}
+
 TEST_CASE("Timeline: suppress, marker, remove and restore", "[cad][design]")
 {
     Design d;

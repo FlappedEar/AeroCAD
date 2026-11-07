@@ -1048,16 +1048,25 @@ void registerFeatureCommands(CommandRegistry& r)
             Json::array());
     }
 
-    addFeatureCommand(r, "fillet", "Fillet", "Rounds edges of a body with a constant radius (Fusion: Fillet, shortcut F).",
+    addFeatureCommand(r, "fillet", "Fillet", "Rounds edges of a body with a constant radius (Fusion: Fillet, shortcut F). Tangent chains are "
+                      "rounded with the picked edge; a radius that does not fit is reported with the largest that does.",
                       {{"body", bodyRefSchema("Body.")},
                        {"edges", topologyListSchema("edge")},
                        {"radius", numberOrExpr("Radius (mm).")}},
                       {"body", "edges", "radius"});
 
-    addFeatureCommand(r, "chamfer", "Chamfer", "Bevels edges of a body with an equal distance (Fusion: Chamfer).",
+    addFeatureCommand(r, "chamfer", "Chamfer",
+                      "Bevels edges of a body (Fusion: Chamfer): equal distance (default), two distances, or a "
+                      "distance and an angle. Tangent chains are bevelled with the picked edge.",
                       {{"body", bodyRefSchema("Body.")},
                        {"edges", topologyListSchema("edge")},
-                       {"distance", numberOrExpr("Distance (mm).")}},
+                       {"type", {{"type", "string"},
+                                 {"enum", {"equal_distance", "two_distances", "distance_angle"}},
+                                 {"description", "Chamfer type (default equal_distance)."}}},
+                       {"distance", numberOrExpr("Distance (mm), on the first face for two_distances / distance_angle.")},
+                       {"distance2", numberOrExpr("Distance on the other face (mm), two_distances.")},
+                       {"angle", numberOrExpr("Angle to the first face in degrees, distance_angle (default 45).")},
+                       {"flip", {{"type", "boolean"}, {"description", "Swap which face is the first one."}}}},
                       {"body", "edges", "distance"});
 
     addFeatureCommand(r, "shell", "Shell",

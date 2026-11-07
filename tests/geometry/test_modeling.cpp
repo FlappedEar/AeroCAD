@@ -164,6 +164,77 @@ TEST_CASE("Fillet and chamfer edges of a box", "[geometry][modeling]")
     CHECK_THROWS_AS(fillet(box, {0}, 50.0), ModelingError);
 }
 
+TEST_CASE("A fillet that does not fit names the largest radius that does", "[geometry][modeling]")
+{
+    const auto box = makeBox(10, 10, 4);
+    std::size_t top = 0;
+    for (const auto& e : edges(box))
+        if (e.type == "line" && std::abs(e.start.z - 4) < 1e-9 && std::abs(e.end.z - 4) < 1e-9)
+            top = e.index;
+    try {
+        (void)fillet(box, {top}, 20.0);
+        FAIL("a 20 mm fillet on a 4 mm high box should fail");
+    } catch (const ModelingError& e) {
+        const std::string msg = e.what();
+        CHECK(msg.find("20 mm radius does not fit this edge") != std::string::npos);
+        CHECK(msg.find("the largest that works is about") != std::string::npos);
+    }
+    try {
+        (void)chamfer(box, {top}, 20.0);
+        FAIL("a 20 mm chamfer on a 4 mm high box should fail");
+    } catch (const ModelingError& e) {
+        CHECK(std::string(e.what()).find("the largest that works is about") != std::string::npos);
+    }
+}
+
+TEST_CASE("Fillet follows a tangent chain", "[geometry][modeling]")
+{
+    // Rounded vertical corners make the top outline one tangent chain: picking one top edge
+    // rounds the whole outline, as Fusion's Tangent chain.
+    auto box = makeBox(20, 20, 10);
+    std::vector<std::size_t> vertical;
+    for (const auto& e : edges(box))
+        if (e.type == "line" && std::abs(e.end.z - e.start.z) > 1)
+            vertical.push_back(e.index);
+    REQUIRE(vertical.size() == 4);
+    box = fillet(box, vertical, 3.0);
+    std::vector<std::size_t> top;
+    for (const auto& e : edges(box))
+        if (std::abs(e.start.z - 10) < 1e-6 && std::abs(e.end.z - 10) < 1e-6)
+            top.push_back(e.index);
+    REQUIRE(top.size() == 8);
+    const auto one = fillet(box, {top.front()}, 1.0);
+    const auto all = fillet(box, top, 1.0);
+    CHECK(isValid(one));
+    CHECK(one.volume() == Approx(all.volume()).epsilon(1e-6));
+    CHECK(one.volume() < box.volume() - 1.0);
+}
+
+TEST_CASE("Chamfer types: two distances and distance with angle", "[geometry][modeling]")
+{
+    const auto box = makeBox(10, 10, 10);
+    const std::size_t e0 = edges(box).front().index;
+    ChamferOptions two;
+    two.type = ChamferType::TwoDistances;
+    two.distance = 1.0;
+    two.distance2 = 3.0;
+    const auto c2 = chamfer(box, {e0}, two);
+    CHECK(isValid(c2));
+    CHECK(c2.volume() == Approx(1000 - 0.5 * 1 * 3 * 10).epsilon(1e-6));
+    two.flip = true;
+    CHECK(chamfer(box, {e0}, two).volume() == Approx(1000 - 15).epsilon(1e-6));
+
+    ChamferOptions da;
+    da.type = ChamferType::DistanceAngle;
+    da.distance = 2.0;
+    da.angle = 30.0;
+    const auto ca = chamfer(box, {e0}, da);
+    CHECK(isValid(ca));
+    CHECK(ca.volume() == Approx(1000 - 0.5 * 2 * 2 * std::tan(std::numbers::pi / 6) * 10).epsilon(1e-6));
+    da.angle = 90.0;
+    CHECK_THROWS_AS(chamfer(box, {e0}, da), ModelingError);
+}
+
 TEST_CASE("Shell a box", "[geometry][modeling]")
 {
     const auto box = makeBox(10, 10, 10);

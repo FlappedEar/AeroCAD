@@ -23,6 +23,13 @@ use the same operations, and every change is one undo step.
   `direction` or face `normal`, and the `kind` (line, circle, plane, ...). Regeneration
   picks the edge/face that best matches them, so a picked corner edge follows the body
   when a dimension makes it grow. Full persistent naming is not implemented yet.
+- **Fillet and chamfer** follow tangent chains (Fusion's "Tangent chain"): one picked edge
+  rounds every edge that continues it smoothly. When the radius or distance does not fit,
+  the error names the largest one that does ("a 30 mm radius does not fit these edges; the
+  largest that works is about 9.5 mm"); the dialog shows it while you type.
+- **Exact solids outside the timeline** (fins, fitted solids, STEP imports) can be filleted,
+  chamfered, shelled and drilled directly in the UI: the dialog makes them editable
+  (`feature.base_body`) on the way.
 - **Marker**: `timeline.set_marker` rolls the model back; new features are inserted at it.
 - Failing features: a new or edited feature that fails is rejected (nothing changes).
   Features that break because of an earlier change stay in the timeline with
@@ -46,8 +53,8 @@ use the same operations, and every change is one undo step.
 | `feature.rectangular_pattern` | Rectangular Pattern | `direction`, `count`, `spacing`, optional `direction2` / `count2` / `spacing2` |
 | `feature.circular_pattern` | Circular Pattern | `axis` X / Y / Z or {origin, direction}, `count`, `angle` (360 = full turn) |
 | `feature.plane` | Construct > Offset Plane, Plane at Angle, Midplane, Plane Through Three Points | `base` (XY / XZ / YZ, {plane: id}, planar face {body, point}), `offset`, `angle` + `axis` x / y, `base2` (midplane) or `points` (3 points) |
-| `feature.fillet` | Fillet (F) | `edges`, `radius` |
-| `feature.chamfer` | Chamfer | `edges`, `distance` |
+| `feature.fillet` | Fillet (F) | `edges`, `radius`; tangent chains are rounded with the picked edge |
+| `feature.chamfer` | Chamfer | `edges`, `type` equal_distance (default) / two_distances (`distance`, `distance2`) / distance_angle (`distance`, `angle`), `flip` swaps the first face |
 | `feature.shell` | Shell | `faces` to remove, `thickness` |
 | `feature.hole` | Hole (H) | `point` on a planar face, `diameter`, `depth` or through all |
 | `feature.combine` | Combine | `target`, `tools`, join / cut / intersect, `keepTools` |
