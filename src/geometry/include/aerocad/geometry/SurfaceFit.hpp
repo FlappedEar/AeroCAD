@@ -38,6 +38,10 @@ struct SurfaceFitOptions {
     /// Mesh vertex positions on the outline where the boundary is split into separate
     /// edges (where neighbouring patches meet). Used with outlineSmoothing 0.
     std::vector<core::Vec3> outlineCorners;
+    /// Sorted subset of the selection the face is trimmed to (empty: all of it). The
+    /// rest only adds data, so the surface runs on smoothly past the trim, for joining
+    /// neighbouring patches with matching tangents.
+    core::TriangleSet trimTo;
 };
 
 /// Fit quality, both ways: mesh to surface catches a surface that misses the mesh,

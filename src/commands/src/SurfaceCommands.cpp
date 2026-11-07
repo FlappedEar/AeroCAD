@@ -242,6 +242,13 @@ void registerSurfaceCommands(CommandRegistry& r)
                 {"useSelection",
                  {{"type", "boolean"},
                   {"description", "Only the region selection (default when there is one); false: the whole mesh."}}},
+                {"blendRings",
+                 {{"type", "integer"},
+                  {"minimum", 0},
+                  {"maximum", 50},
+                  {"description", "Where a smooth region is split into several patches, each is fit to this many "
+                                  "rings of triangles past its seam so the patches meet with matching tangents. "
+                                  "0: fit each patch alone. Default 6."}}},
                 {"name", {{"type", "string"}, {"description", "Name of the new part."}}}},
                {"id"}),
            true},
@@ -257,6 +264,7 @@ void registerSurfaceCommands(CommandRegistry& r)
               geometry::RegionFitOptions options;
               options.creaseAngleDeg = params.value("creaseAngle", options.creaseAngleDeg);
               options.fit.tolerance = params.value("tolerance", options.fit.tolerance);
+              options.blendRings = params.value("blendRings", options.blendRings);
               geometry::RegionFitResult fit;
               try {
                   fit = geometry::fitRegions(*source.mesh, useSelection ? *source.selection : core::TriangleSet{},
@@ -294,6 +302,8 @@ void registerSurfaceCommands(CommandRegistry& r)
                                {"withinTolerance", allWithin},
                                {"tolerance", options.fit.tolerance},
                                {"sewTolerance", fit.sewTolerance},
+                               {"smoothSeams", fit.smoothSeams},
+                               {"seamAngleMaxDeg", fit.seamAngleMaxDeg},
                                {"milliseconds", fit.milliseconds}};
               result["warnings"] = fit.warnings;
               return result;

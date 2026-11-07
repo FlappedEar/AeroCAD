@@ -138,6 +138,15 @@ TEST_CASE("A closed can is split at its tube and becomes a solid", "[geometry][f
     // The mesh polygon has 90 sides: its volume is a little below the circle's.
     const double polygonVolume = 0.5 * 90 * 20.0 * 20.0 * std::sin(2.0 * std::numbers::pi / 90) * 50.0;
     CHECK(std::abs(fit.volume - polygonVolume) < 0.005 * polygonVolume);
+
+    // The two tube halves meet smoothly: each is fit on data past the seam.
+    CHECK(fit.smoothSeams == 2);
+    CHECK(fit.seamAngleMaxDeg < 0.3);
+    geometry::RegionFitOptions separate;
+    separate.blendRings = 0;
+    const auto c0 = geometry::fitRegions(mesh, {}, separate);
+    REQUIRE(c0.smoothSeams == 2);
+    CHECK(fit.seamAngleMaxDeg < 0.5 * c0.seamAngleMaxDeg);
 }
 
 TEST_CASE("Part of a mesh gives an open shell", "[geometry][fit]")

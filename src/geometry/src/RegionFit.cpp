@@ -3,6 +3,7 @@
 
 #include "aerocad/geometry/OcctShape.hpp"
 
+#include <BRepAdaptor_Surface.hxx>
 #include <BRepBuilderAPI_MakeSolid.hxx>
 #include <BRepBuilderAPI_Sewing.hxx>
 #include <BRepCheck_Analyzer.hxx>
@@ -11,15 +12,20 @@
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
 #include <GProp_GProps.hxx>
+#include <Geom2d_Curve.hxx>
 #include <ShapeFix_Solid.hxx>
 #include <Standard_Failure.hxx>
+#include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
+#include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
+#include <TopTools_ListOfShape.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Compound.hxx>
 #include <TopoDS_Shell.hxx>
 #include <TopoDS_Solid.hxx>
 #include <TopoDS_Vertex.hxx>
 
+#include <gp_Vec.hxx>
 #include <math_Jacobi.hxx>
 #include <math_Matrix.hxx>
 
@@ -27,6 +33,7 @@
 #include <chrono>
 #include <cmath>
 #include <map>
+#include <numbers>
 #include <optional>
 #include <set>
 #include <unordered_map>
@@ -115,6 +122,40 @@ std::vector<core::TriangleSet> bisect(const core::TriangleMesh& mesh, const core
     return out;
 }
 
+/// Largest angle (degrees) between the normals of two faces sharing `edge`, sampled
+/// along it; -1 when it cannot be evaluated.
+double seamAngle(const TopoDS_Edge& edge, const TopoDS_Face& a, const TopoDS_Face& b)
+{
+    double worst = -1.0;
+    constexpr int samples = 12;
+    for (int i = 1; i < samples; ++i) {
+        gp_Vec normals[2];
+        bool ok = true;
+        const TopoDS_Face* faces[2] = {&a, &b};
+        for (int k = 0; k < 2 && ok; ++k) {
+            double f = 0.0, l = 0.0;
+            const Handle(Geom2d_Curve) pcurve = BRep_Tool::CurveOnSurface(edge, *faces[k], f, l);
+            if (pcurve.IsNull()) {
+                ok = false;
+                break;
+            }
+            const gp_Pnt2d uv = pcurve->Value(f + (l - f) * i / samples);
+            const BRepAdaptor_Surface surface(*faces[k], false);
+            gp_Pnt p;
+            gp_Vec du, dv;
+            surface.D1(uv.X(), uv.Y(), p, du, dv);
+            normals[k] = du.Crossed(dv);
+            ok = normals[k].Magnitude() > 1e-12;
+        }
+        if (!ok)
+            continue;
+        // Orientation-free: a smooth seam has (anti)parallel normals either way.
+        const double c = std::abs(normals[0].Normalized().Dot(normals[1].Normalized()));
+        worst = std::max(worst, std::acos(std::min(1.0, c)) * 180.0 / std::numbers::pi);
+    }
+    return worst;
+}
+
 } // namespace
 
 RegionFitResult fitRegions(const core::TriangleMesh& mesh, const core::TriangleSet& selection,
@@ -161,17 +202,46 @@ RegionFitResult fitRegions(const core::TriangleMesh& mesh, const core::TriangleS
         std::optional<SurfaceFitResult> fit;
         std::string error;
     };
+    // The original smooth region of every triangle (splits stay inside it).
+    const std::vector<std::int64_t> regionOfTriangle = label;
     auto fitWith = [&](Fitted& f) {
         f.fit.reset();
         f.error.clear();
         SurfaceFitOptions o = fitOptions;
         o.outlineCorners = f.corners;
+        // Data across smooth seams: grow into the same region only (never over a crease).
+        core::TriangleSet data = f.triangles;
+        if (options.blendRings > 0) {
+            const auto own = regionOfTriangle[f.triangles.front()];
+            data.clear();
+            for (const auto t : core::growSelection(adjacency, f.triangles, options.blendRings))
+                if (regionOfTriangle[t] == own)
+                    data.push_back(t);
+            if (data.size() > f.triangles.size())
+                o.trimTo = f.triangles;
+            else
+                data = f.triangles;
+        }
         try {
-            f.fit = fitSurface(mesh, f.triangles, o);
+            f.fit = fitSurface(mesh, data, o);
         } catch (const SurfaceFitError& e) {
             f.error = e.what();
         } catch (const Standard_Failure& failure) {
             f.error = failure.GetMessageString() != nullptr ? failure.GetMessageString() : "fit failed";
+        }
+        if (!o.trimTo.empty() && !(f.fit && f.fit->report.withinTolerance)) {
+            // The grown data may not unfold (it can close a tube again): fit on its own.
+            o.trimTo.clear();
+            std::optional<SurfaceFitResult> plain;
+            try {
+                plain = fitSurface(mesh, f.triangles, o);
+            } catch (const SurfaceFitError&) {
+            } catch (const Standard_Failure&) {
+            }
+            if (plain && (!f.fit || plain->report.withinTolerance)) {
+                f.fit = std::move(plain);
+                f.error.clear();
+            }
         }
     };
     std::vector<std::pair<core::TriangleSet, int>> queue;
@@ -224,7 +294,10 @@ RegionFitResult fitRegions(const core::TriangleMesh& mesh, const core::TriangleS
     }
 
     BRepBuilderAPI_Sewing sewing(result.sewTolerance);
+    std::vector<std::pair<TopoDS_Shape, std::int64_t>> faceRegion; // input face, its smooth region
     for (auto& f : fitted) {
+        if (f.fit)
+            faceRegion.emplace_back(f.fit->face.impl()->shape, regionOfTriangle[f.triangles.front()]);
         RegionPatch patch;
         patch.triangles = std::move(f.triangles);
         patch.error = f.error;
@@ -253,6 +326,37 @@ RegionFitResult fitRegions(const core::TriangleMesh& mesh, const core::TriangleS
     }
     if (shape.IsNull())
         throw SurfaceFitError("Sewing the fitted patches failed");
+
+    // Smoothness across seams inside a region (where a region was split).
+    try {
+        std::vector<std::pair<TopoDS_Shape, std::int64_t>> sewnRegion;
+        for (const auto& [input, r] : faceRegion)
+            sewnRegion.emplace_back(sewing.Modified(input), r);
+        auto regionOf = [&](const TopoDS_Shape& face) -> std::int64_t {
+            for (const auto& [sewn, r] : sewnRegion)
+                if (sewn.IsSame(face))
+                    return r;
+            return -1;
+        };
+        TopTools_IndexedDataMapOfShapeListOfShape edgeFaces;
+        TopExp::MapShapesAndAncestors(shape, TopAbs_EDGE, TopAbs_FACE, edgeFaces);
+        for (int i = 1; i <= edgeFaces.Extent(); ++i) {
+            const TopTools_ListOfShape& faces = edgeFaces.FindFromIndex(i);
+            if (faces.Extent() != 2 || faces.First().IsSame(faces.Last()))
+                continue;
+            const auto r = regionOf(faces.First());
+            if (r < 0 || r != regionOf(faces.Last()))
+                continue;
+            const double angle =
+                seamAngle(TopoDS::Edge(edgeFaces.FindKey(i)), TopoDS::Face(faces.First()), TopoDS::Face(faces.Last()));
+            if (angle < 0.0)
+                continue;
+            ++result.smoothSeams;
+            result.seamAngleMaxDeg = std::max(result.seamAngleMaxDeg, angle);
+        }
+    } catch (const Standard_Failure&) {
+        // leave the seam measure out
+    }
 
     // Closed shells become solids: each one outward (positive volume); a shell inside
     // another one is a cavity of it. Separate parts give a compound of solids.
