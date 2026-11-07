@@ -36,6 +36,8 @@
 #include <gp_Trsf.hxx>
 #include <gp_Vec.hxx>
 #include <BRepGProp.hxx>
+#include <TopTools_ListIteratorOfListOfShape.hxx>
+#include <BRepTools.hxx>
 #include <BRepOffset_MakeSimpleOffset.hxx>
 #include <GProp_GProps.hxx>
 #include <ShapeFix_Shape.hxx>
@@ -709,36 +711,78 @@ Shape splitBySurface(const Shape& solid, const Shape& surface, bool keepFront)
         if (!splitter.IsDone() || splitter.HasErrors())
             throw OffsetError("Cutting the body with the surface failed");
 
-        // Each piece by the side of the surface its centre lies on: the nearest point on the
-        // surface and the normal of the face there (as oriented, so the fitted side counts).
+        // The cutting surface's oriented normal at the point nearest to `q`.
+        auto surfaceNormal = [&](const gp_Pnt& q, gp_Pnt& onSurface) -> std::optional<gp_Vec> {
+            double best = std::numeric_limits<double>::max();
+            std::optional<gp_Vec> normal;
+            for (TopExp_Explorer f(s, TopAbs_FACE); f.More(); f.Next()) {
+                const TopoDS_Face face = TopoDS::Face(f.Current());
+                const Handle(Geom_Surface) surf = BRep_Tool::Surface(face);
+                if (surf.IsNull())
+                    continue;
+                GeomAPI_ProjectPointOnSurf projector(q, surf);
+                if (projector.NbPoints() == 0 || projector.LowerDistance() >= best)
+                    continue;
+                best = projector.LowerDistance();
+                double u = 0.0, v = 0.0;
+                projector.LowerDistanceParameters(u, v);
+                gp_Vec du, dv;
+                surf->D1(u, v, onSurface, du, dv);
+                gp_Vec n = du.Crossed(dv);
+                if (face.Orientation() == TopAbs_REVERSED)
+                    n.Reverse();
+                normal = n;
+            }
+            return normal;
+        };
+        // The faces the surface left in the result: a piece touching it shows which side it
+        // is on by its own outward normal there (outward along the surface normal = the
+        // piece is behind the surface). Robust for curved surfaces, where a piece's centre
+        // of mass can lie on the other side.
+        TopTools_MapOfShape cutFaces;
+        for (TopExp_Explorer f(s, TopAbs_FACE); f.More(); f.Next()) {
+            const TopTools_ListOfShape& images = splitter.Modified(f.Current());
+            if (images.IsEmpty())
+                cutFaces.Add(f.Current());
+            for (TopTools_ListIteratorOfListOfShape it(images); it.More(); it.Next())
+                cutFaces.Add(it.Value());
+        }
+        auto sideOf = [&](const TopoDS_Shape& piece) -> int {
+            for (TopExp_Explorer f(piece, TopAbs_FACE); f.More(); f.Next()) {
+                if (!cutFaces.Contains(f.Current()))
+                    continue;
+                const TopoDS_Face face = TopoDS::Face(f.Current());
+                BRepAdaptor_Surface adaptor(face);
+                double u0 = 0.0, u1 = 0.0, v0 = 0.0, v1 = 0.0;
+                BRepTools::UVBounds(face, u0, u1, v0, v1);
+                gp_Pnt p;
+                gp_Vec du, dv;
+                adaptor.D1(0.5 * (u0 + u1), 0.5 * (v0 + v1), p, du, dv);
+                gp_Vec outward = du.Crossed(dv);
+                if (face.Orientation() == TopAbs_REVERSED)
+                    outward.Reverse();
+                gp_Pnt q;
+                const auto n = surfaceNormal(p, q);
+                if (n && outward.Magnitude() > 0.0 && n->Magnitude() > 0.0)
+                    return outward.Dot(*n) > 0.0 ? 1 : 0;
+            }
+            // Not touching the surface: by its centre.
+            GProp_GProps props;
+            BRepGProp::VolumeProperties(piece, props);
+            const gp_Pnt c = props.CentreOfMass();
+            gp_Pnt q;
+            const auto n = surfaceNormal(c, q);
+            if (!n)
+                return -1;
+            return gp_Vec(q, c).Dot(*n) >= 0.0 ? 0 : 1;
+        };
         std::vector<TopoDS_Shape> sides[2];
         for (TopExp_Explorer e(splitter.Shape(), TopAbs_SOLID); e.More(); e.Next()) {
             GProp_GProps props;
             BRepGProp::VolumeProperties(e.Current(), props);
             if (std::abs(props.Mass()) < 1e-9)
                 continue;
-            const gp_Pnt c = props.CentreOfMass();
-            double best = std::numeric_limits<double>::max();
-            int side = -1;
-            for (TopExp_Explorer f(s, TopAbs_FACE); f.More(); f.Next()) {
-                const TopoDS_Face face = TopoDS::Face(f.Current());
-                const Handle(Geom_Surface) surf = BRep_Tool::Surface(face);
-                if (surf.IsNull())
-                    continue;
-                GeomAPI_ProjectPointOnSurf projector(c, surf);
-                if (projector.NbPoints() == 0 || projector.LowerDistance() >= best)
-                    continue;
-                best = projector.LowerDistance();
-                double u = 0.0, v = 0.0;
-                projector.LowerDistanceParameters(u, v);
-                gp_Pnt p;
-                gp_Vec du, dv;
-                surf->D1(u, v, p, du, dv);
-                gp_Vec n = du.Crossed(dv);
-                if (face.Orientation() == TopAbs_REVERSED)
-                    n.Reverse();
-                side = gp_Vec(p, c).Dot(n) >= 0.0 ? 0 : 1;
-            }
+            const int side = sideOf(e.Current());
             if (side >= 0)
                 sides[side].push_back(e.Current());
         }

@@ -1271,6 +1271,7 @@ void Design::clear()
     m_sketchConsumed.clear();
     m_partMeta.clear();
     m_convertedParts.clear();
+    m_scanSurfaces.clear();
     regenerate();
 }
 

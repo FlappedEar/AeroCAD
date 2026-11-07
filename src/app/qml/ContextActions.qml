@@ -560,13 +560,6 @@ QtObject {
         case "sketchFin":
             return host.startCreateSketch(true)
         case "toBody":
-        case "combine":
-            return { id: id, text: qsTr("Combine"), icon: "combine", enabled: editableSolid(info),
-                     reason: qsTr("Only solids can be combined."),
-                     tip: qsTr("Joins this solid with other bodies, cuts them out of it, or keeps only the overlap. A surface or the scan as the tool cuts it to that shape.") }
-        case "cutWithThis":
-            return { id: id, text: qsTr("Cut a part to this shape"), icon: "combine", enabled: true,
-                     tip: qsTr("Combine with this as the tool: click the part, and what is behind this surface (inside the scan) is cut away, so the part sits flush on it.") }
         case "solidToBody": {
             const r = controller.execute("feature.base_body", { part: pid })
             if (r.ok && r.result.bodies && r.result.bodies.length)

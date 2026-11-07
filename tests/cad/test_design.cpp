@@ -397,3 +397,34 @@ TEST_CASE("Combine with a scan, a surface and a solid that are not in the timeli
     CHECK_THROWS_AS(d.addFeature("combine", {{"target", far}, {"tools", Json::array({{{"part", 7}}})}, {"operation", "cut"}}),
                     cad::DesignError);
 }
+
+TEST_CASE("Cut by a curved scan: pieces whose centre lies on the other side", "[cad][design]")
+{
+    // Sheet z = x^2 / 20 facing up: the piece of the box under it is a thin crescent whose
+    // centre of mass (x = 0, z = 1.5) lies above the sheet.
+    model::Part scan;
+    scan.id = 3;
+    scan.name = "bowl";
+    auto mesh = std::make_shared<core::TriangleMesh>();
+    const int n = 60;
+    for (int j = 0; j <= n; ++j)
+        for (int i = 0; i <= n; ++i) {
+            const double x = -15.0 + 0.5 * i;
+            mesh->addVertex({x, -15.0 + 0.5 * j, x * x / 20.0});
+        }
+    auto at = [&](int i, int j) { return static_cast<std::uint32_t>(j * (n + 1) + i); };
+    for (int j = 0; j < n; ++j)
+        for (int i = 0; i < n; ++i) {
+            mesh->addTriangle(at(i, j), at(i + 1, j), at(i + 1, j + 1));
+            mesh->addTriangle(at(i, j), at(i + 1, j + 1), at(i, j + 1));
+        }
+    scan.mesh = mesh;
+    Design d;
+    d.setPartLookup([&](model::PartId id) -> const model::Part* { return id == 3 ? &scan : nullptr; });
+    const auto box = d.addFeature("box", {{"corner", {-10, -5, 0}}, {"size", {20, 10, 10}}});
+    const double under = 10.0 * 2000.0 / 60.0; // y length times the integral of x^2 / 20
+    const auto cut = d.addFeature("combine", {{"target", box}, {"tools", Json::array({{{"part", 3}}})}, {"operation", "cut"}});
+    CHECK(bodyVolume(d, box) == Approx(2000 - under).epsilon(0.01));
+    d.editFeature(cut, {{"operation", "intersect"}});
+    CHECK(bodyVolume(d, box) == Approx(under).epsilon(0.02));
+}
