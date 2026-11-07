@@ -16,11 +16,11 @@ Pane {
     /// Fields to draw in the viewport: [{run, kind, scalar, min, max}].
     readonly property var viewportFields: {
         const out = []
-        const run = showB && compareRun ? compareRun : activeRun
-        if (!run || !results || !results.fields)
+        const run = displayedRun
+        if (!run)
             return out
         for (const f of fieldChoices) {
-            if (!f.on || !results.fields[f.kind])
+            if (!f.on || !fieldStats[run + "/" + f.kind])
                 continue
             const r = scaleFor(f.kind, f.scalar)
             out.push({ run: run, kind: f.kind, scalar: f.scalar, min: r[0], max: r[1] })
@@ -30,10 +30,11 @@ Pane {
     /// Parts hidden while their pressure map is shown (they would overlap).
     readonly property var hiddenPartIds: {
         const f = fieldChoices.find(c => c.kind === "surface")
-        const run = runs.find(r => r.id === (showB && compareRun ? compareRun : activeRun))
-        return f && f.on && run && run.source && results && results.fields && results.fields.surface
-            ? [run.source.partId] : []
+        const run = runs.find(r => r.id === displayedRun)
+        return f && f.on && run && run.source && fieldStats[run.id + "/surface"] ? [run.source.partId] : []
     }
+    /// Run whose fields are drawn: B while "Show B in 3D" is on, otherwise A.
+    readonly property string displayedRun: showB && compareRun ? compareRun : activeRun
 
     property var environment: null
     property var runs: []
@@ -70,13 +71,25 @@ Pane {
         const r = controller.execute("simulation.list")
         if (!r.ok)
             return
-        const before = activeStatus ? activeStatus.state : ""
+        const stateOf = id => {
+            const s = runs.find(x => x.id === id)
+            return s ? s.state : ""
+        }
+        const beforeA = stateOf(activeRun), beforeB = stateOf(compareRun)
         runs = r.result.runs
-        if (!activeRun && runs.length > 0)
+        if (!activeRun && runs.length > 0) {
             selectRun(runs[runs.length - 1].id)
-        const now = activeStatus ? activeStatus.state : ""
-        if (activeStatus && (now === "running" || before !== now))
-            loadResults()
+            return
+        }
+        const nowA = stateOf(activeRun), nowB = stateOf(compareRun)
+        const changedA = nowA === "running" || nowA !== beforeA
+        const changedB = !!compareRun && (nowB === "running" || nowB !== beforeB)
+        if (changedA)
+            loadResults() // Also reloads the field statistics of A and B.
+        else if (changedB)
+            loadFieldStats()
+        if (changedA || changedB)
+            loadComparison()
     }
 
     function selectRun(id) {
@@ -120,7 +133,6 @@ Pane {
         }
         const r = controller.execute("simulation.compare", { a: activeRun, b: compareRun })
         comparison = r.ok ? r.result : null
-        loadFieldStats()
     }
 
     /// Colour scale for a field: shared between A and B in compare mode. Pressure maps are
@@ -354,6 +366,7 @@ Pane {
                                 ToolTip.text: qsTr("Compare with A")
                                 onClicked: {
                                     root.compareRun = checked ? runRow.modelData.id : ""
+                                    root.loadFieldStats()
                                     root.loadComparison()
                                     if (root.comparison)
                                         root.tab = 2
