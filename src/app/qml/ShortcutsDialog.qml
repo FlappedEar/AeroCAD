@@ -49,15 +49,20 @@ Dialog {
     function navigationRows() {
         const p = Preferences.mouseProfile
         const g = qsTr("Mouse (%1)").arg(p === "fusion" ? "Fusion" : p === "solidworks" ? "SolidWorks" : "Blender")
-        const orbit = p === "fusion" ? qsTr("Shift + middle drag") : qsTr("Middle drag")
-        const pan = p === "fusion" ? qsTr("Middle drag") : p === "solidworks" ? qsTr("Ctrl + middle drag")
-                                                                              : qsTr("Shift + middle drag")
+        const orbit = (p === "fusion" ? qsTr("Shift + middle drag") : qsTr("Middle drag")) + qsTr(", or right drag")
+        const pan = (p === "fusion" ? qsTr("Middle drag") : p === "solidworks" ? qsTr("Ctrl + middle drag")
+                                                                               : qsTr("Shift + middle drag"))
+                    + qsTr(", or Shift + right drag")
+        const scrollPans = Preferences.touchpadScrollPans
         const rows = [
-            { group: g, name: qsTr("Orbit"), keys: orbit },
+            { group: g, name: qsTr("Orbit (around the point under the pointer)"), keys: orbit },
             { group: g, name: qsTr("Pan"), keys: pan },
-            { group: g, name: qsTr("Zoom"), keys: qsTr("Wheel") },
+            { group: g, name: qsTr("Zoom (towards the pointer)"), keys: qsTr("Wheel") },
             { group: g, name: qsTr("Select"), keys: qsTr("Left click") },
-            { group: g, name: qsTr("Touchpad pan / orbit / zoom"), keys: qsTr("Two fingers / Shift + two fingers / pinch") }
+            { group: g, name: qsTr("Context menu"), keys: qsTr("Right click") },
+            { group: g, name: qsTr("Touchpad zoom / pan / orbit"),
+              keys: scrollPans ? qsTr("Pinch or Ctrl + two fingers / two fingers / Shift + two fingers")
+                               : qsTr("Two fingers or pinch / Ctrl + two fingers / Shift + two fingers") }
         ]
         if (p !== "fusion")
             rows.splice(3, 0, { group: g, name: qsTr("Zoom (drag)"),

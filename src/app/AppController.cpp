@@ -609,6 +609,8 @@ QVariantMap AppController::partInfo(quint64 id) const
         {QStringLiteral("sizeY"), size.y},
         {QStringLiteral("sizeZ"), size.z},
         {QStringLiteral("diagonal"), box.diagonal()},
+        {QStringLiteral("center"), box.isEmpty() ? QVariantList{} : QVariantList{box.center().x, box.center().y,
+                                                                                    box.center().z}},
         {QStringLiteral("selectedTriangles"), QVariant::fromValue<qulonglong>(p->selection ? p->selection->size() : 0)},
         {QStringLiteral("selectedArea"), p->mesh && p->selection ? core::selectionArea(*p->mesh, *p->selection) : 0.0},
     };

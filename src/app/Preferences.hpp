@@ -25,6 +25,8 @@ class Preferences : public QObject {
     Q_PROPERTY(QString mouseProfile READ mouseProfile WRITE setMouseProfile NOTIFY mouseProfileChanged)
     Q_PROPERTY(bool invertZoom READ invertZoom WRITE setInvertZoom NOTIFY invertZoomChanged)
     Q_PROPERTY(bool invertOrbit READ invertOrbit WRITE setInvertOrbit NOTIFY invertOrbitChanged)
+    Q_PROPERTY(bool touchpadScrollPans READ touchpadScrollPans WRITE setTouchpadScrollPans NOTIFY
+                   touchpadScrollPansChanged)
     Q_PROPERTY(int autosaveSeconds READ autosaveSeconds WRITE setAutosaveSeconds NOTIFY autosaveSecondsChanged)
     Q_PROPERTY(double minWallThickness READ minWallThickness WRITE setMinWallThickness NOTIFY minWallThicknessChanged)
     Q_PROPERTY(QVariantList lengthUnits READ lengthUnits CONSTANT)
@@ -50,6 +52,11 @@ public:
     [[nodiscard]] bool invertOrbit() const { return m_invertOrbit; }
     void setInvertZoom(bool invert);
     void setInvertOrbit(bool invert);
+
+    /// What a two-finger scroll on a touchpad or Magic Mouse does: false = zoom (like a
+    /// mouse wheel, the default), true = pan.
+    [[nodiscard]] bool touchpadScrollPans() const { return m_touchpadScrollPans; }
+    void setTouchpadScrollPans(bool pans);
 
     /// Project autosave interval in seconds, 0 = off. Stored under the key the project
     /// autosave reads ("project/autosaveSeconds").
@@ -90,6 +97,7 @@ signals:
     void mouseProfileChanged();
     void invertZoomChanged();
     void invertOrbitChanged();
+    void touchpadScrollPansChanged();
     void autosaveSecondsChanged();
     void minWallThicknessChanged();
 
@@ -100,6 +108,7 @@ private:
     QString m_mouseProfile;
     bool m_invertZoom = false;
     bool m_invertOrbit = false;
+    bool m_touchpadScrollPans = false;
     int m_autosaveSeconds = 120;
     double m_minWallThickness = 0.8;
 };

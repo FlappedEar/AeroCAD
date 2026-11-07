@@ -18,11 +18,13 @@
 #include <QFileInfo>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QGuiApplication>
 #include <QImage>
 #include <QJSValue>
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPointer>
+#include <QPointingDevice>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQmlExpression>
@@ -37,6 +39,7 @@
 #include <functional>
 #include <memory>
 #include <type_traits>
+#include <vector>
 
 namespace aerocad::app {
 
@@ -98,15 +101,35 @@ public:
         release(x1, y1, button, mods);
     }
 
-    /// A touchpad scroll (pixel delta).
-    Q_INVOKABLE void wheel(qreal x, qreal y, int dx, int dy, const QString& mods = "")
+    /// A touchpad scroll (pixel delta, from a touchpad device as macOS reports a trackpad
+    /// or Magic Mouse). `phase`: "begin", "update" (default), "end" or "momentum", as a
+    /// real gesture sends them.
+    Q_INVOKABLE void wheel(qreal x, qreal y, int dx, int dy, const QString& mods = "",
+                           const QString& phase = "update")
     {
-        Qt::KeyboardModifiers m;
-        if (mods.contains("shift"))
-            m |= Qt::ShiftModifier;
+        static const QPointingDevice touchpad(QStringLiteral("ui-script touchpad"), 0x75500001,
+                                              QInputDevice::DeviceType::TouchPad, QPointingDevice::PointerType::Finger,
+                                              QInputDevice::Capability::Position | QInputDevice::Capability::Scroll |
+                                                  QInputDevice::Capability::PixelScroll,
+                                              2, 0);
         const QPointF local(x, y);
-        QWheelEvent event(local, m_window->mapToGlobal(local), QPoint(dx, dy), QPoint(dx, dy), Qt::NoButton, m,
-                          Qt::ScrollUpdate, false);
+        const Qt::ScrollPhase p = phase == "begin"      ? Qt::ScrollBegin
+                                  : phase == "end"      ? Qt::ScrollEnd
+                                  : phase == "momentum" ? Qt::ScrollMomentum
+                                                        : Qt::ScrollUpdate;
+        QWheelEvent event(local, m_window->mapToGlobal(local), QPoint(dx, dy), QPoint(dx * 2, dy * 2), Qt::NoButton,
+                          modifiers(mods), p, false, Qt::MouseEventSynthesizedBySystem, &touchpad);
+        QCoreApplication::sendEvent(m_window, &event);
+    }
+
+    /// A mouse wheel turned by `notches` (positive = away from the user). `pixels` > 0 adds
+    /// the pixel delta macOS reports for every mouse wheel, so scripts can check that it
+    /// still zooms there.
+    Q_INVOKABLE void mouseWheel(qreal x, qreal y, int notches, int pixels = 0, const QString& mods = "")
+    {
+        const QPointF local(x, y);
+        QWheelEvent event(local, m_window->mapToGlobal(local), QPoint(0, notches * pixels), QPoint(0, notches * 120),
+                          Qt::NoButton, modifiers(mods), Qt::NoScrollPhase, false);
         QCoreApplication::sendEvent(m_window, &event);
     }
 
@@ -127,21 +150,36 @@ public:
         QCoreApplication::sendEvent(m_window, &dropEvent);
     }
 
-    /// Clicks the visible, enabled item showing exactly this text.
+    /// Clicks the visible, enabled item showing exactly this text. Dialogs that Qt shows as
+    /// windows of their own (MessageDialog on newer Qt) are searched first, as they are on
+    /// top, and the click goes to the window that shows the item.
     Q_INVOKABLE bool clickText(const QString& text)
     {
-        // From the top: popups live in an overlay beside the content item.
-        QQuickItem* top = m_window->contentItem();
-        while (top->parentItem() != nullptr)
-            top = top->parentItem();
-        QQuickItem* item = find(top, text);
-        if (item == nullptr) {
-            fail("no visible item with text \"" + text + "\"");
-            return false;
+        std::vector<QQuickWindow*> windows;
+        for (QWindow* w : QGuiApplication::topLevelWindows()) {
+            auto* quick = qobject_cast<QQuickWindow*>(w);
+            if (quick != nullptr && quick != m_window && quick->isVisible())
+                windows.push_back(quick);
         }
-        const QPointF c = item->mapToScene(QPointF(item->width() / 2, item->height() / 2));
-        click(c.x(), c.y());
-        return true;
+        windows.push_back(m_window);
+        for (QQuickWindow* window : windows) {
+            // From the top: popups live in an overlay beside the content item.
+            QQuickItem* top = window->contentItem();
+            while (top->parentItem() != nullptr)
+                top = top->parentItem();
+            if (QQuickItem* item = find(top, text)) {
+                const QPointF c = item->mapToScene(QPointF(item->width() / 2, item->height() / 2));
+                if (window == m_window) {
+                    click(c.x(), c.y());
+                } else {
+                    send(window, QEvent::MouseButtonPress, c.x(), c.y(), Qt::LeftButton, "");
+                    send(window, QEvent::MouseButtonRelease, c.x(), c.y(), Qt::LeftButton, "");
+                }
+                return true;
+            }
+        }
+        fail("no visible item with text \"" + text + "\"");
+        return false;
     }
 
     bool failed = false;
@@ -173,16 +211,31 @@ private:
         return b == "middle" ? Qt::MiddleButton : b == "right" ? Qt::RightButton : Qt::LeftButton;
     }
 
-    void send(QEvent::Type type, qreal x, qreal y, Qt::MouseButton button, const QString& mods)
+    static Qt::KeyboardModifiers modifiers(const QString& mods)
     {
         Qt::KeyboardModifiers m;
         if (mods.contains("shift"))
             m |= Qt::ShiftModifier;
         if (mods.contains("ctrl"))
             m |= Qt::ControlModifier;
+        return m;
+    }
+
+    void send(QEvent::Type type, qreal x, qreal y, Qt::MouseButton button, const QString& mods)
+    {
+        send(m_window, type, x, y, button, mods);
+    }
+
+    /// Mouse event at scene position (x, y) of `window`. Presses and releases from clickText
+    /// on another window do not change m_buttons, which tracks the main window's buttons.
+    void send(QQuickWindow* window, QEvent::Type type, qreal x, qreal y, Qt::MouseButton button, const QString& mods)
+    {
         const QPointF local(x, y);
-        QMouseEvent event(type, local, local, m_window->mapToGlobal(local), button, m_buttons, m);
-        QCoreApplication::sendEvent(m_window, &event);
+        Qt::MouseButtons buttons = m_buttons;
+        if (window != m_window)
+            buttons = type == QEvent::MouseButtonPress ? Qt::MouseButtons(button) : Qt::NoButton;
+        QMouseEvent event(type, local, local, window->mapToGlobal(local), button, buttons, modifiers(mods));
+        QCoreApplication::sendEvent(window, &event);
     }
 
     static QQuickItem* find(QQuickItem* item, const QString& text)

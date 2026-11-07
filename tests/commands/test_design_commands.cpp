@@ -110,6 +110,31 @@ TEST_CASE("Design commands: body parts cannot be scaled or removed directly", "[
     CHECK(parts.at("parts")[0].at("kind") == "body");
 }
 
+TEST_CASE("Design commands: move/rotate a body is a timeline step", "[commands][cad]")
+{
+    commands::Session s;
+    const auto box = run(s, "feature.box", {{"size", {20, 10, 4}}}).at("id").get<std::uint64_t>();
+    // 90 degrees about Z through the box centre (10, 5, 2), then 100 mm along X.
+    const auto move = run(s, "feature.move", {{"body", box}, {"axis", "Z"}, {"angle", 90}, {"translate", {100, 0, 0}}})
+                          .at("id")
+                          .get<std::uint64_t>();
+    auto bounds = [&] { return s.design().bodies().at(box).shape.bounds(); };
+    CHECK(bounds().min.x == Approx(105).margin(1e-6));
+    CHECK(bounds().max.x == Approx(115).margin(1e-6));
+    CHECK(bounds().min.y == Approx(-5).margin(1e-6));
+    CHECK(bounds().max.y == Approx(15).margin(1e-6));
+    CHECK(s.design().bodies().at(box).shape.volume() == Approx(800));
+
+    run(s, "feature.edit", {{"id", move}, {"params", {{"angle", 0}}}});
+    CHECK(bounds().min.x == Approx(100).margin(1e-6));
+    CHECK(bounds().max.y == Approx(10).margin(1e-6));
+    CHECK_FALSE(s.execute("feature.move", {{"body", box}, {"axis", "Q"}, {"angle", 10}}).ok);
+
+    run(s, "edit.undo");
+    run(s, "edit.undo");
+    CHECK(bounds().min.x == Approx(0).margin(1e-6));
+}
+
 TEST_CASE("Design commands: a region selection is dropped when the body's tessellation changes", "[commands][cad]")
 {
     commands::Session s;
