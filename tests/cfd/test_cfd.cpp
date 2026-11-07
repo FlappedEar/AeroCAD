@@ -8,6 +8,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -973,4 +974,105 @@ TEST_CASE("Remote engine host: validation and docker command line", "[cfd]")
     CHECK(cfd::dockerCommand("/usr/bin/docker", "") == std::vector<std::string>{"/usr/bin/docker"});
     CHECK(cfd::dockerCommand("/usr/bin/docker", "ssh://a@b") ==
           std::vector<std::string>{"/usr/bin/docker", "-H", "ssh://a@b"});
+}
+TEST_CASE("Different surroundings or domains are not identical conditions (CAD-84)", "[cfd]")
+{
+    TempDir tmp;
+    cfd::RunManager runs(tmp.path());
+    cfd::Settings s;
+    s.flowDirection = "+X";
+    // The audit's case: the same target part alone and next to a context part.
+    cfd::CaseGeometry alone, withContext, otherContext;
+    alone.part = box({0, 0, 0}, {200, 80, 60});
+    withContext.part = alone.part;
+    withContext.context = box({-120, 20, 0}, {240, 240, 45});
+    otherContext.part = alone.part;
+    otherContext.context = box({-120, 20, 0}, {240, 240, 30});
+    const std::string a = runs.prepare(alone, s, {});
+    const std::string b = runs.prepare(withContext, s, {});
+    const std::string c = runs.prepare(withContext, s, {});
+    const std::string d = runs.prepare(otherContext, s, {});
+    for (const auto& id : {a, b, c, d})
+        fakeFinishedRun(tmp.path() / id, 0.8, 1.0);
+
+    auto cmp = runs.compare(a, b);
+    INFO(cmp.dump());
+    CHECK(cmp.at("sameConditions") == false);
+    const auto diff = cmp.at("differingConditions").get<std::vector<std::string>>();
+    CHECK(std::find(diff.begin(), diff.end(), "context") != diff.end());
+    CHECK(cmp.at("sameDomain") == false);
+    CHECK(cmp.at("verdict") == "not comparable");
+
+    // Same part, same surroundings: comparable.
+    cmp = runs.compare(b, c);
+    CHECK(cmp.at("sameConditions") == true);
+    CHECK(cmp.at("sameDomain") == true);
+    CHECK(cmp.at("verdict") == "comparable");
+
+    // Surroundings of another shape, even within the same domain, are a different case.
+    cmp = runs.compare(b, d);
+    CHECK(cmp.at("sameConditions") == false);
+    const auto diff2 = cmp.at("differingConditions").get<std::vector<std::string>>();
+    CHECK(std::find(diff2.begin(), diff2.end(), "context") != diff2.end());
+
+    // The resolved setup is part of the results.
+    const auto cond = runs.results(b).at("conditions");
+    CHECK(cond.contains("domain"));
+    CHECK_FALSE(cond.at("contextHash").is_null());
+}
+
+TEST_CASE("Runs written before the surroundings were recorded get a note (CAD-84)", "[cfd]")
+{
+    TempDir tmp;
+    cfd::RunManager runs(tmp.path());
+    cfd::CaseGeometry g;
+    g.part = box({0, 0, 0}, {200, 80, 60});
+    cfd::Settings s;
+    s.flowDirection = "+X";
+    const std::string a = runs.prepare(g, s, {});
+    const std::string b = runs.prepare(g, s, {});
+    for (const auto& id : {a, b})
+        fakeFinishedRun(tmp.path() / id, 0.8, 1.0);
+    // An older case.json: no contextHash.
+    const fs::path caseJson = tmp.path() / b / "case.json";
+    nlohmann::json j;
+    {
+        std::ifstream in(caseJson);
+        in >> j;
+    }
+    j.erase("contextHash");
+    std::ofstream(caseJson) << j.dump(2);
+    const auto cmp = runs.compare(a, b);
+    INFO(cmp.dump());
+    CHECK(cmp.at("sameConditions") == true);
+    bool noted = false;
+    for (const auto& n : cmp.at("notes"))
+        noted = noted || n.get<std::string>().find("surroundings") != std::string::npos;
+    CHECK(noted);
+}
+
+TEST_CASE("A target-part variant of another size stays comparable; its domain is reported (CAD-84)", "[cfd]")
+{
+    TempDir tmp;
+    cfd::RunManager runs(tmp.path());
+    cfd::Settings s;
+    s.flowDirection = "+X";
+    cfd::CaseGeometry base, longer;
+    base.part = box({0, 0, 0}, {200, 80, 60});
+    base.context = box({-120, 120, 0}, {240, 240, 45});
+    longer.part = box({0, 0, 0}, {215, 80, 60}); // e.g. the same part with a lip
+    longer.context = base.context;
+    const std::string a = runs.prepare(base, s, {});
+    const std::string b = runs.prepare(longer, s, {});
+    for (const auto& id : {a, b})
+        fakeFinishedRun(tmp.path() / id, 0.8, 1.0);
+    const auto cmp = runs.compare(a, b);
+    INFO(cmp.dump());
+    CHECK(cmp.at("sameConditions") == true);
+    CHECK(cmp.at("sameDomain") == false);
+    CHECK(cmp.at("verdict") == "comparable");
+    bool noted = false;
+    for (const auto& n : cmp.at("notes"))
+        noted = noted || n.get<std::string>().find("flow domains differ") != std::string::npos;
+    CHECK(noted);
 }

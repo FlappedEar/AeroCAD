@@ -94,6 +94,7 @@ Json CaseInfo::toJson() const
         {"domain", boxJson(domain)},
         {"baseCellSize", baseCellSize},
         {"geometryHash", geometryHash},
+        {"contextHash", contextHash ? Json(*contextHash) : Json(nullptr)},
     };
 }
 
@@ -109,6 +110,9 @@ CaseInfo CaseInfo::fromJson(const Json& j)
     c.domain = boxFrom(j.at("domain"));
     c.baseCellSize = j.value("baseCellSize", 0.0);
     c.geometryHash = j.value("geometryHash", std::uint64_t{0});
+    if (auto it = j.find("contextHash"); it != j.end() && it->is_number_unsigned())
+        c.contextHash = it->get<std::uint64_t>();
+    c.openfoam = j.value("openfoam", std::string());
     return c;
 }
 
@@ -628,10 +632,14 @@ CaseInfo writeCase(const fs::path& dir, const CaseGeometry& geometry, const Sett
     const std::string partStl = asciiStl(part, "part");
     writeFile(dir / "constant" / "triSurface" / "part.stl", partStl);
     info.geometryHash = fnv1a(partStl);
+    info.contextHash = 0;
     if (hasContext) {
         const std::string contextStl = asciiStl(context, "context");
         writeFile(dir / "constant" / "triSurface" / "context.stl", contextStl);
         info.geometryHash = fnv1a(contextStl, info.geometryHash);
+        // In model coordinates: the case frame is centred on the target part, so the same
+        // surroundings next to a variant of another size are written at other coordinates.
+        info.contextHash = meshFingerprint(geometry.context);
     }
 
     writeFile(dir / "constant" / "transportProperties",

@@ -240,6 +240,16 @@ colour scale ranges (Cp on the surface, speed in the sections). Verdict:
 `comparable`, `difference inconclusive`, `check quality` or `not comparable`. Variants of very different size get
 different domain and mesh sizes, which is reported as a note.
 
+The resolved setup is compared too, not only the requested settings. Each case records a
+fingerprint of its surroundings (context parts, in model coordinates) and the engine version;
+`results.conditions` carries `domain`, `contextHash` and `engine`. Different surroundings
+(for example the part alone against the same part next to the car body) add `context` to
+the differing conditions, and a different engine adds `engine`; either makes the verdict
+`not comparable`. The target part itself may differ, since that is the A/B. A variant of
+another size gets its own flow domain: `sameDomain` is false and a note gives the largest
+difference, but the verdict is not blocked. Runs written before the surroundings were
+recorded get a note that they could not be compared.
+
 Both runs must have final results. Otherwise the verdict is `not comparable`, force
 and coefficient differences and shared colour scales are empty, and `states` / `reasons`
 explain which run is unfinished or has incomplete output. Partial histories remain in

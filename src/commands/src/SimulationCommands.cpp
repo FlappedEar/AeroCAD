@@ -422,7 +422,9 @@ void registerSimulationCommands(CommandRegistry& r)
 
     r.add({"simulation.compare", "Compare simulations",
            "A/B comparison of two runs: drag/lift/side force differences in N and %, coefficients on a shared "
-           "reference area, whether the conditions (speed, direction, mesh, preset, ...) match, quality of both, "
+           "reference area, whether the conditions match (settings such as speed, direction, mesh and preset, and "
+           "the resolved setup: surroundings/context geometry and engine; sameDomain and a note tell when the flow "
+           "domains differ), quality of both, "
            "and shared colour scale ranges. Both runs need successful completion and complete finite force/coefficient "
            "outputs; otherwise verdict is not comparable, deltas/scales are empty, and states/reasons explain why. "
            "meshSensitivity tells whether the difference holds on another mesh level (A and B run there too, see "
