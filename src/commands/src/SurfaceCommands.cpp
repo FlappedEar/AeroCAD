@@ -38,6 +38,18 @@ std::string formatMm(double value)
     return buffer;
 }
 
+/// The warning for a fit that misses the requested tolerance: the result is kept as an
+/// approximation, and says so in the result, the timeline and the saved feature report.
+std::string toleranceWarning(double p99, double max, double tolerance)
+{
+    char buffer[256];
+    std::snprintf(buffer, sizeof buffer,
+                  "Approximation: the surface is up to %.3g mm from the scan (99%% within %.3g mm), more than "
+                  "the requested tolerance of %.3g mm",
+                  max, p99, tolerance);
+    return buffer;
+}
+
 const model::Part& requireSurfacePart(model::Document& doc, const Json& params)
 {
     const model::Part& source = requirePart(doc, params);
@@ -376,8 +388,11 @@ cad::FeatureEvaluator::Output partOnSurface(const model::Document& doc, const ca
                          {"rmsDeviation", rep.rmsDeviation},
                          {"bridged", rep.bridgedFraction},
                          {"poles", {rep.uPoles, rep.vPoles}},
+                         {"tolerance", tolerance},
                          {"withinTolerance", rep.p99Deviation <= tolerance},
                          {"milliseconds", rep.milliseconds}};
+            if (rep.p99Deviation > tolerance)
+                warnings.push_back(toleranceWarning(rep.p99Deviation, rep.maxDeviation, tolerance));
             if (rep.bridgedFraction > 0.05)
                 warnings.push_back("About " + std::to_string(static_cast<int>(rep.bridgedFraction * 100.0)) +
                                    "% of the outline's area has no skin under it (holes, past the scan's "
@@ -567,8 +582,10 @@ cad::FeatureEvaluator::Output finOnSurface(const model::Document& doc, const cad
                     fitReport = {{"part", scan.id},
                                  {"method", "draped"},
                                  {"maxDeviation", rep.maxDeviation},
+                                 {"p99Deviation", rep.p99Deviation},
                                  {"rmsDeviation", rep.rmsDeviation},
                                  {"bridged", rep.bridgedFraction},
+                                 {"tolerance", tolerance},
                                  {"withinTolerance", rep.p99Deviation <= tolerance},
                                  {"milliseconds", rep.milliseconds}};
                 return face;
@@ -660,6 +677,10 @@ cad::FeatureEvaluator::Output finOnSurface(const model::Document& doc, const cad
         }
         fillets.push_back(applied);
     }
+    if (!fitReport.is_null() && !fitReport.value("withinTolerance", true))
+        warnings.push_back(toleranceWarning(fitReport.at("p99Deviation").get<double>(),
+                                            fitReport.at("maxDeviation").get<double>(),
+                                            fitReport.at("tolerance").get<double>()));
     cad::FeatureEvaluator::Output out;
     out.bodies = std::move(fins);
     out.bodySlots = std::move(bodySlots);
@@ -973,7 +994,12 @@ void registerSurfaceCommands(CommandRegistry& r)
                                {"smoothSeams", fit.smoothSeams},
                                {"seamAngleMaxDeg", fit.seamAngleMaxDeg},
                                {"milliseconds", fit.milliseconds}};
-              result["warnings"] = fit.warnings;
+              Json warnings = fit.warnings;
+              if (!allWithin)
+                  warnings.push_back("Approximation: some patches are more than the requested tolerance of " +
+                                     formatMm(options.fit.tolerance) + " mm from the mesh (worst " +
+                                     formatMm(worst) + " mm); see fit.patches");
+              result["warnings"] = warnings;
               return result;
           });
     r.add({"surface.trim_by_sketch", "Trim surface by sketch",

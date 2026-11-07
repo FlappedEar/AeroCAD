@@ -67,6 +67,8 @@ Rectangle {
                 readonly property var feature: modelData
                 readonly property bool inactive: feature.status === "suppressed" || feature.status === "rolled_back"
                 readonly property bool failed: feature.status === "error"
+                // Kept, but the surface fit missed its tolerance (see the tooltip).
+                readonly property bool approximate: !failed && feature.approximate === true
                 readonly property bool atMarker: chip.index === root.timeline.marker - 1
                 width: chipBody.width + (atMarker ? 10 : 0)
                 height: 32
@@ -90,9 +92,9 @@ Rectangle {
                         spacing: 6
                         AppIcon {
                             anchors.verticalCenter: parent.verticalCenter
-                            name: chip.failed ? "warning" : Theme.featureIcon(chip.feature.type)
+                            name: chip.failed || chip.approximate ? "warning" : Theme.featureIcon(chip.feature.type)
                             size: Theme.iconSmall
-                            color: chip.failed ? Theme.danger : Theme.icon
+                            color: chip.failed ? Theme.danger : chip.approximate ? Theme.warning : Theme.icon
                         }
                         Text {
                             anchors.verticalCenter: parent.verticalCenter

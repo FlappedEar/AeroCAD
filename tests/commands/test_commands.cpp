@@ -1390,3 +1390,57 @@ TEST_CASE("A part edit that throws leaves the part untouched (CAD-88)", "[comman
     CHECK(document.part(id)->revision == revision);
     CHECK(notifications == 0);
 }
+
+TEST_CASE("A part whose fit misses the tolerance is kept as a marked approximation (CAD-85)", "[commands][surface]")
+{
+    commands::Session session;
+    auto scan = session.execute("document.import",
+                                {{"path", std::string(AEROCAD_TEST_DATA_DIR) + "/models/dome_scan.stl"}});
+    REQUIRE(scan.ok);
+    const auto scanId = scan.data.at("id").get<model::PartId>();
+    const Json square = Json::array({{{"type", "line"}, {"start", {-15, -15}}, {"end", {15, -15}}},
+                                     {{"type", "line"}, {"start", {15, -15}}, {"end", {15, 15}}},
+                                     {{"type", "line"}, {"start", {15, 15}}, {"end", {-15, 15}}},
+                                     {{"type", "line"}, {"start", {-15, 15}}, {"end", {-15, -15}}}});
+    auto sk = session.execute("sketch.create",
+                              {{"surface", {{"part", scanId}, {"point", {0, 0, 45.7}}}}, {"curves", square}});
+    REQUIRE(sk.ok);
+
+    // The audit's case: 0.01 mm cannot be met on the noisy scan.
+    auto part = session.execute("surface.part_from_sketch",
+                                {{"sketch", sk.data.at("id")}, {"thickness", 2.0}, {"tolerance", 0.01}});
+    INFO(part.toJson().dump());
+    REQUIRE(part.ok);
+    const auto featureId = part.data.at("feature").get<std::uint64_t>();
+    auto timeline = session.execute("timeline.list");
+    Json feature;
+    for (const auto& f : timeline.data.at("features"))
+        if (f.at("id") == featureId)
+            feature = f;
+    REQUIRE(feature.is_object());
+    const Json& fit = feature.at("report").at("fit");
+    CHECK_FALSE(fit.at("withinTolerance").get<bool>());
+    CHECK(fit.at("tolerance").get<double>() == Approx(0.01));
+    CHECK(fit.at("p99Deviation").get<double>() > 0.01);
+    CHECK(fit.at("maxDeviation").get<double>() >= fit.at("p99Deviation").get<double>());
+    CHECK(feature.value("approximate", false));
+    const auto& warnings = feature.at("report").at("warnings");
+    REQUIRE_FALSE(warnings.empty());
+    CHECK(warnings[0].get<std::string>().find("Approximation") != std::string::npos);
+    CHECK(part.data.at("warnings")[0].get<std::string>().find("Approximation") != std::string::npos);
+
+    // The export check names it too.
+    auto check = session.execute("document.export_check", {{"ids", {part.data.at("id")}}});
+    REQUIRE(check.ok);
+    INFO(check.toJson().dump());
+    CHECK(check.data.at("parts")[0].value("approximate", false));
+
+    // An achievable tolerance: no approximation flag.
+    auto loose = session.execute("surface.part_from_sketch",
+                                 {{"sketch", sk.data.at("id")}, {"thickness", 2.0}, {"tolerance", 0.5}});
+    REQUIRE(loose.ok);
+    timeline = session.execute("timeline.list");
+    for (const auto& f : timeline.data.at("features"))
+        if (f.at("id") == loose.data.at("feature"))
+            CHECK_FALSE(f.value("approximate", false));
+}

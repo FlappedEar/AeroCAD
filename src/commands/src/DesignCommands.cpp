@@ -256,8 +256,13 @@ Json featureToJson(const cad::Design& d, const cad::Feature& f, std::size_t inde
            {"status", std::string(cad::toString(st.state))}};
     if (!st.message.empty())
         j["error"] = st.message;
-    if (!st.report.is_null())
+    if (!st.report.is_null()) {
         j["report"] = st.report;
+        // A fit that missed its tolerance is kept as a marked approximation (CAD-85).
+        if (st.report.contains("fit") && st.report["fit"].is_object() &&
+            !st.report["fit"].value("withinTolerance", true))
+            j["approximate"] = true;
+    }
     return j;
 }
 
@@ -1241,7 +1246,8 @@ void registerTimelineCommands(CommandRegistry& r)
 {
     r.add({"timeline.list", "Timeline",
            "Lists the design timeline: features in order with parameters and status (ok, error, suppressed, "
-           "rolled_back), the marker position, user parameters and the resulting bodies.",
+           "rolled_back), the marker position, user parameters and the resulting bodies. A feature whose surface "
+           "fit missed the requested tolerance has approximate: true and says so in report.warnings.",
            objectSchema(Json::object())},
           [](CommandContext& ctx, const Json&) { return timelineToJson(design(ctx), ctx.document); });
 
