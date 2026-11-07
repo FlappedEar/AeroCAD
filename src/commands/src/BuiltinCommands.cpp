@@ -174,7 +174,10 @@ void registerPartCommands(CommandRegistry& r)
     r.add({"part.scale", "Scale part",
            "Uniformly scales a part (mesh and exact geometry) about a point, by default the centre of its bounding box.",
            objectSchema({{"id", idParam()},
-                         {"factor", {{"type", "number"}, {"exclusiveMinimum", 0}, {"description", "Scale factor, e.g. 2 doubles the size."}}},
+                         {"factor", {{"type", "number"},
+                                     {"minimum", geometry::kMinScaleFactor},
+                                     {"maximum", geometry::kMaxScaleFactor},
+                                     {"description", "Scale factor, e.g. 2 doubles the size."}}},
                          {"origin", {{"type", "array"}, {"items", {{"type", "number"}}}, {"minItems", 3}, {"maxItems", 3},
                                      {"description", "Optional [x, y, z] in mm."}}}},
                         {"id", "factor"}),
@@ -188,14 +191,19 @@ void registerPartCommands(CommandRegistry& r)
                   const auto& o = params["origin"];
                   origin = {o[0].get<double>(), o[1].get<double>(), o[2].get<double>()};
               }
+              // Build the new geometry first: if the kernel rejects it, nothing has changed.
+              std::shared_ptr<const core::TriangleMesh> mesh = before.mesh;
+              if (before.mesh) {
+                  auto scaledMesh = std::make_shared<core::TriangleMesh>(*before.mesh);
+                  scaledMesh->scale(factor, origin);
+                  mesh = std::move(scaledMesh);
+              }
+              std::optional<geometry::Shape> shape = before.shape;
+              if (before.shape)
+                  shape = geometry::scaled(*before.shape, factor, origin);
               ctx.document.modifyPart(before.id, [&](model::Part& p) {
-                  if (p.mesh) {
-                      auto mesh = std::make_shared<core::TriangleMesh>(*p.mesh);
-                      mesh->scale(factor, origin);
-                      p.mesh = std::move(mesh);
-                  }
-                  if (p.shape)
-                      p.shape = geometry::scaled(*p.shape, factor, origin);
+                  p.mesh = mesh;
+                  p.shape = shape;
               });
               pushPartStateUndo(ctx, "Scale " + before.name, before.id, before, *ctx.document.part(before.id));
               return partToJson(*ctx.document.part(before.id));

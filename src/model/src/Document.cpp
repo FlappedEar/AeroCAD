@@ -47,12 +47,16 @@ bool Document::modifyPart(PartId id, const std::function<void(Part&)>& fn)
     Part* p = findPart(id);
     if (p == nullptr)
         return false;
-    const std::uint64_t revision = p->revision;
-    fn(*p);
-    p->id = id; // the id is not modifiable
+    // The callback edits a copy, so a callback that throws (e.g. a modelling-kernel error
+    // half way through) leaves the part exactly as it was. Mesh and shape are shared, so the
+    // copy is cheap.
+    Part updated = *p;
+    fn(updated);
+    updated.id = id; // the id is not modifiable
     // Derived from the state before the callback, so restoring an older snapshot
     // (undo) still yields a new, never seen revision.
-    p->revision = revision + 1;
+    updated.revision = p->revision + 1;
+    *p = std::move(updated);
     notify(Change::Modified, id);
     return true;
 }

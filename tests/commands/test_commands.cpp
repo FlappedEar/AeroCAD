@@ -6,6 +6,9 @@
 #include "aerocad/core/Measure.hpp"
 #include "aerocad/geometry/Primitives.hpp"
 #include "aerocad/geometry/Tessellation.hpp"
+#include "aerocad/geometry/Transform.hpp"
+
+#include <Standard_ConstructionError.hxx>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -1313,4 +1316,77 @@ TEST_CASE("Part on surface on a timeline body is rebuilt from the body, also whe
     CHECK(p->shape->volume() == Approx(volume).epsilon(0.01));
     std::error_code ec;
     std::filesystem::remove(file, ec);
+}
+
+TEST_CASE("A rejected scale leaves the model, history and dirty state unchanged (CAD-88)", "[commands]")
+{
+    commands::Session session;
+    auto r = session.execute("document.import", {{"path", std::string(AEROCAD_TEST_DATA_DIR) + "/models/dome.step"}});
+    REQUIRE(r.ok);
+    const auto id = r.data.at("id").get<std::uint64_t>();
+    const Json boundsBefore = session.execute("document.bounds").data.at("bounds");
+    const model::Part before = *session.document().part(id);
+    const std::size_t historyBefore = session.undoStack().position();
+    const bool dirtyBefore = session.project().dirty();
+
+    // The audit's factor: used to abort the process with an uncaught Standard_ConstructionError.
+    for (double factor : {1e-310, 1e-7, 1e7}) {
+        r = session.execute("part.scale", {{"id", id}, {"factor", factor}});
+        CHECK_FALSE(r.ok);
+    }
+    // Past the schema (as an undo/redo or a future command could): the kernel layer rejects it.
+    CHECK_THROWS_AS(geometry::scaled(*before.shape, 1e-310, {}), std::invalid_argument);
+
+    const model::Part* after = session.document().part(id);
+    REQUIRE(after != nullptr);
+    CHECK(after->revision == before.revision);
+    CHECK(after->mesh == before.mesh);
+    CHECK(session.undoStack().position() == historyBefore);
+    CHECK(session.project().dirty() == dirtyBefore);
+    CHECK(session.execute("document.bounds").data.at("bounds") == boundsBefore);
+
+    // The session still works afterwards.
+    r = session.execute("part.scale", {{"id", id}, {"factor", 2.0}});
+    CHECK(r.ok);
+}
+
+TEST_CASE("No exception escapes a command, whatever its type (CAD-88)", "[commands]")
+{
+    model::Document document;
+    model::UndoStack undo;
+    commands::CommandContext context{document, undo};
+    commands::CommandRegistry registry;
+    registry.add({"test.kernel", "Kernel failure", "Throws an Open CASCADE exception.", Json::object()},
+                 [](commands::CommandContext&, const Json&) -> Json {
+                     throw Standard_ConstructionError("gp_Trsf::SetScale");
+                 });
+    registry.add({"test.other", "Unknown failure", "Throws a non-standard exception.", Json::object()},
+                 [](commands::CommandContext&, const Json&) -> Json { throw 42; });
+
+    auto r = registry.execute(context, "test.kernel", Json::object());
+    CHECK_FALSE(r.ok);
+    CHECK(r.error.find("Standard_ConstructionError") != std::string::npos);
+    CHECK(r.error.find("gp_Trsf::SetScale") != std::string::npos);
+
+    r = registry.execute(context, "test.other", Json::object());
+    CHECK_FALSE(r.ok);
+    CHECK(r.error.find("unknown error") != std::string::npos);
+}
+
+TEST_CASE("A part edit that throws leaves the part untouched (CAD-88)", "[commands]")
+{
+    model::Document document;
+    model::Part part;
+    part.name = "A";
+    const auto id = document.addPart(part);
+    const auto revision = document.part(id)->revision;
+    int notifications = 0;
+    document.addObserver([&](model::Document::Change, model::PartId) { ++notifications; });
+    CHECK_THROWS(document.modifyPart(id, [](model::Part& p) {
+        p.name = "half way";
+        throw std::runtime_error("kernel failed");
+    }));
+    CHECK(document.part(id)->name == "A");
+    CHECK(document.part(id)->revision == revision);
+    CHECK(notifications == 0);
 }

@@ -335,6 +335,31 @@ ApplicationWindow {
         unsavedDialog.open()
     }
 
+    /// Dropped or imported files. A project file replaces the current project, so it goes
+    /// through the unsaved-changes check like File > Open; meshes and CAD files are imported
+    /// into the project that is open afterwards (only if opening succeeded).
+    function openOrImport(urls) {
+        const isProject = url => /\.aerocad$/i.test(url.toString())
+        const projects = []
+        const files = []
+        for (const url of urls)
+            (isProject(url) ? projects : files).push(url)
+        const importFiles = () => {
+            for (const url of files)
+                scan.importFile(url)
+        }
+        if (projects.length === 0) {
+            importFiles()
+            return
+        }
+        if (projects.length > 1)
+            controller.showStatus(qsTr("Opened only the first of %1 dropped projects").arg(projects.length))
+        withUnsavedCheck(() => {
+            if (controller.openFile(projects[0]))
+                importFiles()
+        })
+    }
+
     function saveProject(then) {
         if (controller.saveProject(viewport.cameraState())) {
             if (then)
@@ -385,6 +410,9 @@ ApplicationWindow {
         informativeText: qsTr("Your changes will be lost if you don't save them.")
         buttons: MessageDialog.Save | MessageDialog.Discard | MessageDialog.Cancel
         onButtonClicked: (button, role) => {
+            // Discard has the destructive role, which does not close a non-native dialog
+            // (Linux): close it explicitly, or it stays on screen over the opened project.
+            close()
             const next = window.afterUnsavedCheck
             window.afterUnsavedCheck = null
             if (button === MessageDialog.Save)
@@ -438,7 +466,7 @@ ApplicationWindow {
         id: importDialog
         title: qsTr("Import 3D file")
         nameFilters: window.controller.importNameFilters
-        onAccepted: window.scan.importFile(selectedFile)
+        onAccepted: window.openOrImport([selectedFile])
     }
 
     FileDialog {
@@ -1884,10 +1912,7 @@ ApplicationWindow {
 
             DropArea {
                 anchors.fill: parent
-                onDropped: drop => {
-                    for (const url of drop.urls)
-                        window.scan.importFile(url)
-                }
+                onDropped: drop => window.openOrImport(drop.urls)
             }
         }
 

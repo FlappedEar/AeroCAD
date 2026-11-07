@@ -3,6 +3,8 @@
 
 #include "ParamsValidation.hpp"
 
+#include "aerocad/geometry/KernelError.hpp"
+
 #include <exception>
 #include <utility>
 
@@ -58,12 +60,20 @@ CommandResult CommandRegistry::execute(CommandContext& context, std::string_view
     if (auto err = validateParams(entry.info.params, effective)) {
         result = CommandResult::failure("Invalid parameters for " + entry.info.name + ": " + *err);
     } else {
+        // No exception may leave a command: the UI, scripts and the MCP server all call
+        // through here, and an escaping exception would end the process.
         try {
-            result = CommandResult::success(entry.handler(context, effective));
+            try {
+                result = CommandResult::success(entry.handler(context, effective));
+            } catch (...) {
+                geometry::rethrowAsKernelError(); // Open CASCADE errors are not std::exceptions
+            }
         } catch (const CommandError& e) {
             result = CommandResult::failure(e.what());
         } catch (const std::exception& e) {
             result = CommandResult::failure(entry.info.name + " failed: " + e.what());
+        } catch (...) {
+            result = CommandResult::failure(entry.info.name + " failed: unknown error");
         }
     }
     if (m_listener)
