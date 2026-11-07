@@ -12,7 +12,7 @@ Units are millimetres and degrees, model space is Z-up.
 
 | Command | What it does |
 |---|---|
-| `inspect.measure {a, b?}` | One selection: its properties. Two: minimum distance, closest points, X/Y/Z delta, angle. |
+| `inspect.measure {a, b?}` | One selection: its properties and the wall thickness under it. Two: minimum distance, closest points, X/Y/Z delta, angle. |
 | `inspect.clearance {a, b}` | Minimum clearance between two parts; interference and overlap volume for two B-rep solids. |
 | `inspect.section {...}` | Section view: cuts the parts with a plane, caps the cut and reports section curves and areas per part. |
 | `inspect.deviation {measured, reference, ...}` | Colours `measured` (e.g. a scan) by its signed distance to `reference` (e.g. the CAD body). |
@@ -35,7 +35,19 @@ parts (STL, OBJ, 3MF, scans) have no faces or edges: picks on them are points or
 and distances are to the triangle surface. Mesh-to-mesh distances project every vertex of each
 mesh onto the other surface, so they are exact for vertex-to-face contacts and an upper bound
 for edge-to-edge contacts. The angle is reported for two planar faces (0-180, between the
-normals), two straight edges (0-90) or an edge and a planar face (0-90).
+normals), two straight edges (0-90) or an edge and a planar face (0-90). The axis of a
+cylindrical or conical face and of a circle counts as a straight edge, so a hole can be checked
+against a face (90 = square to it).
+
+Sketches are measured on their curves: lines, arcs and circles are exact edges on the sketch
+plane (a circle reports its radius), so `pick: "auto"` takes a vertex or a curve near the point.
+A sketch laid onto a surface is measured on its drawn lines (one edge per smooth stretch).
+
+With one selection the result also has `thickness` (`value`, `pointA` on the surface, `pointB`
+on the opposite wall) when the selection is a face of a solid (exact: from the point projected
+onto the face, straight in against its normal, to the first other wall) or a point on a closed
+mesh (an STL or 3MF part; along the triangle's inward normal). Open meshes such as scans have
+no thickness.
 
 ### Section analysis
 
@@ -107,7 +119,8 @@ thinAreaPercent, limit}`.
 ## User interface
 
 - **Measure** (Inspect menu, toolbar, key **I**): a panel like Fusion's. Click a first and a
-  second selection; a third click starts over. *Selection filter*: Face / Edge / Vertex (picks
+  second selection; a third click starts over. One face shows its wall thickness under the click,
+  drawn across the wall. Sketch lines and circles can be clicked too (within the pick radius). *Selection filter*: Face / Edge / Vertex (picks
   within ~8 px of a vertex or edge, otherwise the face), Body (clearance between parts, with
   interference for B-rep solids) or Point. The closest points are joined by a dashed line with
   the distance. *Precision* sets the decimals.

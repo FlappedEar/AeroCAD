@@ -43,6 +43,8 @@ Item {
     /// Only parts of this kind ("body", "sketch") can be clicked; "" = all. "solid": bodies
     /// and imported exact geometry (fins, fitted solids, STEP parts).
     property string pickKind: ""
+    /// Clicks also pick sketch lines (Measure).
+    property bool pickSketchLines: false
     /// Sketch feature shown even when hidden (the sketch a feature dialog works on).
     property var shownSketch: -1
     /// Construction plane that clicks pass through (the one a dialog is creating).
@@ -133,6 +135,17 @@ Item {
         if (!hit.partId)
             return null
         return { partId: hit.partId, point: hit.point, distance: hit.point.minus(eye).length(), snapped: true }
+    }
+
+    /// Sketch line within the pick radius of view position (x, y), like pickPart, or null.
+    function pickSketchLine(x, y) {
+        const near = modelSpace.mapPositionFromScene(view.mapTo3DScene(Qt.vector3d(x, y, 0)))
+        const far = modelSpace.mapPositionFromScene(view.mapTo3DScene(Qt.vector3d(x, y, 100)))
+        const hit = controller.pickSketchLine(near, far.minus(near), root.pickTolerance())
+        if (!hit.partId)
+            return null
+        const eye = modelSpace.mapPositionFromScene(view.camera.scenePosition)
+        return { partId: hit.partId, point: hit.point, distance: hit.point.minus(eye).length() }
     }
 
     /// Point on part `id` under view position (x, y) (model mm), or null.
@@ -614,6 +627,13 @@ Item {
         onTapped: eventPoint => {
             // Mesh ray cast: Qt Quick 3D picks custom geometry by its bounding volume only.
             let hit = root.pickPart(eventPoint.position.x, eventPoint.position.y)
+            if (root.pickSketchLines) {
+                // Sketch lines have no surface: take one within the pick radius unless a
+                // surface is clearly in front of it.
+                const line = root.pickSketchLine(eventPoint.position.x, eventPoint.position.y)
+                if (line && (!hit || line.distance <= hit.distance + root.pickTolerance()))
+                    hit = line
+            }
             if (!hit && root.snapToNearestSurface) {
                 hit = root.pickNearPart(eventPoint.position.x, eventPoint.position.y)
                 if (hit)

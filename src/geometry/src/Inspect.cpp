@@ -9,11 +9,22 @@
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepBndLib.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRep_Builder.hxx>
+#include <Geom_BSplineCurve.hxx>
+#include <TColStd_Array1OfInteger.hxx>
+#include <TColStd_Array1OfReal.hxx>
+#include <TColgp_Array1OfPnt.hxx>
+#include <TopoDS_Compound.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepExtrema_DistShapeShape.hxx>
 #include <BRepGProp.hxx>
+#include <BRepLProp_SLProps.hxx>
+#include <GeomAPI_ProjectPointOnSurf.hxx>
+#include <IntCurvesFace_ShapeIntersector.hxx>
+#include <gp_Lin.hxx>
 #include <BRepTopAdaptor_FClass2d.hxx>
 #include <BRep_Tool.hxx>
 #include <Bnd_Box.hxx>
@@ -36,6 +47,7 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <numbers>
 #include <string>
 #include <utility>
 
@@ -187,23 +199,33 @@ ShapeDistance distance(const core::Vec3& point, const Shape& b, const SubShape& 
 std::optional<Direction> subShapeDirection(const Shape& shape, const SubShape& sub)
 {
     return guarded("Measure", [&]() -> std::optional<Direction> {
+        auto axis = [](const gp_Dir& d) { return Direction{{d.X(), d.Y(), d.Z()}, false, true}; };
         if (sub.kind == SubShape::Kind::Face) {
             const TopoDS_Face f = TopoDS::Face(resolve(shape, sub));
             BRepAdaptor_Surface surf(f);
-            if (surf.GetType() != GeomAbs_Plane)
-                return std::nullopt;
-            gp_Dir n = surf.Plane().Axis().Direction();
-            if (f.Orientation() == TopAbs_REVERSED)
-                n.Reverse();
-            return Direction{{n.X(), n.Y(), n.Z()}, true};
+            switch (surf.GetType()) {
+            case GeomAbs_Plane: {
+                gp_Dir n = surf.Plane().Axis().Direction();
+                if (f.Orientation() == TopAbs_REVERSED)
+                    n.Reverse();
+                return Direction{{n.X(), n.Y(), n.Z()}, true};
+            }
+            // Round faces measure by their axis, like Fusion (a hole against a face).
+            case GeomAbs_Cylinder: return axis(surf.Cylinder().Axis().Direction());
+            case GeomAbs_Cone: return axis(surf.Cone().Axis().Direction());
+            default: return std::nullopt;
+            }
         }
         if (sub.kind == SubShape::Kind::Edge) {
             const TopoDS_Edge e = TopoDS::Edge(resolve(shape, sub));
             BRepAdaptor_Curve c(e);
-            if (c.GetType() != GeomAbs_Line)
-                return std::nullopt;
-            const gp_Dir d = c.Line().Direction();
-            return Direction{{d.X(), d.Y(), d.Z()}, false};
+            if (c.GetType() == GeomAbs_Line) {
+                const gp_Dir d = c.Line().Direction();
+                return Direction{{d.X(), d.Y(), d.Z()}, false};
+            }
+            if (c.GetType() == GeomAbs_Circle)
+                return axis(c.Circle().Axis().Direction());
+            return std::nullopt;
         }
         return std::nullopt;
     });
@@ -267,6 +289,50 @@ SubShapeProperties subShapeProperties(const Shape& shape, const SubShape& sub)
     });
 }
 
+std::optional<ShapeDistance> wallThickness(const Shape& shape, const SubShape& face, const core::Vec3& point)
+{
+    if (face.kind != SubShape::Kind::Face || shape.isNull() || shape.solidCount() == 0)
+        return std::nullopt;
+    return guarded("Thickness", [&]() -> std::optional<ShapeDistance> {
+        const TopoDS_Face f = TopoDS::Face(resolve(shape, face));
+        const Handle(Geom_Surface) surface = BRep_Tool::Surface(f);
+        if (surface.IsNull())
+            return std::nullopt;
+        // The click is on the display mesh, a little off the exact face: project it first.
+        GeomAPI_ProjectPointOnSurf proj(toPnt(point), surface);
+        if (proj.NbPoints() < 1)
+            return std::nullopt;
+        double u = 0.0;
+        double v = 0.0;
+        proj.LowerDistanceParameters(u, v);
+        BRepLProp_SLProps props(BRepAdaptor_Surface(f), u, v, 1, 1e-9);
+        if (!props.IsNormalDefined())
+            return std::nullopt;
+        gp_Dir n = props.Normal();
+        if (f.Orientation() == TopAbs_REVERSED)
+            n.Reverse();
+        const gp_Pnt start = props.Value();
+        // Straight inwards (against the outward face normal) to the first other wall.
+        const double size = shape.bounds().diagonal();
+        const double eps = std::max(size * 1e-7, 1e-7);
+        IntCurvesFace_ShapeIntersector hits;
+        hits.Load(shape.impl()->shape, 1e-7);
+        hits.Perform(gp_Lin(start, n.Reversed()), eps, 2.0 * size + 1.0);
+        if (!hits.IsDone() || hits.NbPnt() < 1)
+            return std::nullopt;
+        int nearest = 0;
+        for (int i = 1; i <= hits.NbPnt(); ++i) {
+            if (hits.WParameter(i) <= eps * 10.0)
+                continue; // the start face itself
+            if (nearest == 0 || hits.WParameter(i) < hits.WParameter(nearest))
+                nearest = i;
+        }
+        if (nearest == 0)
+            return std::nullopt;
+        return ShapeDistance{hits.WParameter(nearest), toVec(start), toVec(hits.Pnt(nearest))};
+    });
+}
+
 core::TriangleMesh subShapeMesh(const Shape& shape, const SubShape& sub)
 {
     if (sub.kind != SubShape::Kind::Face && sub.kind != SubShape::Kind::Whole)
@@ -298,6 +364,65 @@ std::vector<core::Vec3> subShapePoints(const Shape& shape, const SubShape& sub, 
                 out.push_back(a + d * (static_cast<double>(k) / static_cast<double>(std::max<std::size_t>(n, 1))));
         }
         return out;
+    });
+}
+
+Shape polylineEdges(const std::vector<core::Vec3>& segments)
+{
+    return guarded("Measure", [&] {
+        std::vector<std::vector<core::Vec3>> chains;
+        double size = 0.0;
+        for (std::size_t i = 0; i + 1 < segments.size(); i += 2)
+            size = std::max(size, (segments[i + 1] - segments[i]).length());
+        const double joinTol = std::max(size * 1e-6, 1e-9);
+        for (std::size_t i = 0; i + 1 < segments.size(); i += 2) {
+            const core::Vec3& a = segments[i];
+            const core::Vec3& b = segments[i + 1];
+            if ((b - a).length() <= joinTol)
+                continue;
+            bool joined = false;
+            if (!chains.empty() && (chains.back().back() - a).length() <= joinTol) {
+                auto& c = chains.back();
+                const core::Vec3 prev = (c.back() - c[c.size() - 2]).normalized();
+                const core::Vec3 next = (b - a).normalized();
+                if (prev.dot(next) >= std::cos(30.0 * std::numbers::pi / 180.0)) {
+                    c.push_back(b);
+                    joined = true;
+                } else {
+                    chains.push_back({a, b}); // a corner: a new edge
+                    joined = true;
+                }
+            }
+            if (!joined)
+                chains.push_back({a, b});
+        }
+        if (chains.empty())
+            throw ModelingError("Measure: no lines");
+        BRep_Builder builder;
+        TopoDS_Compound compound;
+        builder.MakeCompound(compound);
+        for (const auto& c : chains) {
+            if (c.size() == 2) {
+                builder.Add(compound, BRepBuilderAPI_MakeEdge(toPnt(c[0]), toPnt(c[1])).Edge());
+                continue;
+            }
+            // One degree-1 B-spline through the points: the drawn polyline as a single edge.
+            const int n = static_cast<int>(c.size());
+            TColgp_Array1OfPnt poles(1, n);
+            TColStd_Array1OfReal knots(1, n);
+            TColStd_Array1OfInteger mults(1, n);
+            double t = 0.0;
+            for (int k = 1; k <= n; ++k) {
+                poles(k) = toPnt(c[static_cast<std::size_t>(k - 1)]);
+                if (k > 1)
+                    t += (c[static_cast<std::size_t>(k - 1)] - c[static_cast<std::size_t>(k - 2)]).length();
+                knots(k) = t;
+                mults(k) = (k == 1 || k == n) ? 2 : 1;
+            }
+            Handle(Geom_BSplineCurve) curve = new Geom_BSplineCurve(poles, knots, mults, 1);
+            builder.Add(compound, BRepBuilderAPI_MakeEdge(curve).Edge());
+        }
+        return wrapShape(compound);
     });
 }
 
