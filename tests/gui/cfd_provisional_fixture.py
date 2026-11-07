@@ -56,7 +56,8 @@ def main():
     model = Path(__file__).resolve().parents[1] / "data/box_200x80x60.stl"
     commands = [{"name": "document.import", "params": {"path": str(model)}}]
     labels = ["Prepared A (synthetic)", "Prepared B (synthetic)",
-              "Finished, incomplete output (synthetic)", "Finished, complete output (synthetic)"]
+              "Finished, incomplete output (synthetic)", "Finished, complete output (synthetic)",
+              "Finished, early nonfinite force (synthetic)"]
     commands += [{"name": "simulation.run", "params": {"id": 1, "prepareOnly": True, "label": label}}
                  for label in labels]
     result = subprocess.run([str(args.cmd.resolve()), "-"], input=json.dumps(commands), text=True,
@@ -70,6 +71,10 @@ def main():
         fixture(runs / run, complete=index >= 2, pressure=100 if index == 3 else 20)
     with (runs / ids[2] / "postProcessing/forces/0/force.dat").open("a") as force_file:
         force_file.write("21 1.0\n")
+    nonfinite = runs / ids[4] / "postProcessing/forces/0/force.dat"
+    rows = nonfinite.read_text().splitlines(keepends=True)
+    rows[1] = "1 nan 0.01 0.2 0.9 0.1\n"
+    nonfinite.write_text("".join(rows))
 
     lines = ["# Synthetic output presentation; no solver was run.", "ui.wait(500)",
              'ui.clickText("SIMULATE")', "ui.wait(200)", 'ui.clickText("Wind Tunnel")', "ui.wait(400)",
@@ -102,7 +107,16 @@ def main():
              'if (simulationPanel.finalComparisonAvailable || simulationPanel.showB '
              '|| simulationPanel.displayedRun !== simulationPanel.activeRun '
              '|| Math.abs(s[0] + 0.1) > 1e-6 || Math.abs(s[1] - 0.1) > 1e-6) '
-             'ui.fail("blocked comparison still pools colour scales or displays B"); })()']
+             'ui.fail("blocked comparison still pools colour scales or displays B"); })()',
+             f"simulationPanel.selectRun({json.dumps(ids[4])}); simulationPanel.loadComparison()",
+             'ui.clickText("Results")', "ui.wait(300)",
+             '(() => { const r = simulationPanel.results; const c = simulationPanel.comparison; '
+             'ui.log("early nonfinite force: " + JSON.stringify(r.finalResults)); '
+             'if (r.run.state !== "finished" || r.quality.status !== "ok" || r.finalResults.available '
+             '|| r.summary.dragN !== null || r.history.forceIteration.length !== 20 '
+             '|| c.verdict !== "not comparable" || Object.keys(c.forces).length) '
+             'ui.fail("early nonfinite force still gives final results"); })()',
+             f"ui.shot({json.dumps(str(output / 'nonfinite-results.png'))})"]
     (output / "provisional.ui").write_text("\n".join(lines) + "\n")
 
     # An actual child process with synthetic partial files exercises RunManager.cancel

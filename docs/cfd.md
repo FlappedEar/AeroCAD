@@ -201,7 +201,10 @@ covering the same iterations. Otherwise all summary metrics are `null` and
 lifecycle state in `run.state`. Prepared, running, interrupted, cancelled and failed
 runs cannot supply final results. Histories (Cd, Cl, Cs, forces) and residuals remain
 available for monitoring; `provisional` marks data that is not final, also labelled in
-the app's charts. Numerical quality is assessed separately in the quality report:
+the app's charts. Non-finite values anywhere in the required histories and unreplaced
+truncated rows block final results, including before the averaging window. A repeated
+or restarted iteration replaces the earlier data at and after that time; valid sparse
+sampling is supported. Numerical quality is assessed separately in the quality report:
 
 - volume mesh: `checkMesh` verdict and cell count,
 - convergence: the final solver step must report SIMPLE convergence and a completed log,

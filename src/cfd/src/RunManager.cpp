@@ -995,16 +995,15 @@ Json sampled(const std::vector<double>* values, const std::vector<std::size_t>& 
     return out;
 }
 
-/// Mean over the last 20 % of the iterations (at least the last one).
+/// Mean over the last 20 % of the iterations (at least the last one). Every retained
+/// sample must be finite, including those before the averaging window.
 std::optional<double> tailMean(const std::vector<double>* v)
 {
-    if (v == nullptr || v->empty())
+    if (v == nullptr || v->empty() || !std::all_of(v->begin(), v->end(), [](double x) { return std::isfinite(x); }))
         return std::nullopt;
     const std::size_t start = v->size() - std::max<std::size_t>(1, v->size() / 5);
     double sum = 0;
     for (std::size_t i = start; i < v->size(); ++i) {
-        if (!std::isfinite((*v)[i]))
-            return std::nullopt;
         sum += (*v)[i];
         if (!std::isfinite(sum))
             return std::nullopt;
