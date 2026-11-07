@@ -178,6 +178,11 @@ if(AEROCAD_BUILD_TESTS)
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/fit_tolerance_warning.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_fit_tolerance_warning_test PROPERTIES LABELS gui TIMEOUT 120)
+    # CAD-86: Cancel / OK of a modelling dialog touch only the dialog's own undo steps.
+    add_test(NAME app_feature_dialog_owned_history_test
+        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome.step
+                --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/feature_dialog_owned_history.ui)
+    set_tests_properties(app_feature_dialog_owned_history_test PROPERTIES LABELS gui TIMEOUT 90)
     # Runs a coarse OpenFOAM case, so it needs the engine (label openfoam, not in CI). The
     # runs directory is in the build tree: under the home directory on macOS, which the
     # engine's VM can mount.
