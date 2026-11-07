@@ -116,6 +116,7 @@ void fakeFinishedRun(const fs::path& dir, double cd, double dragN, double liftN 
           "p 1 3 float\n200 -100 0\nU 3 3 float\n0 0 0 0 0 0 0 0 0\n");
     write(dir / "aerocad.stage", "done\n");
     write(dir / "aerocad.status", "finished\n");
+    write(dir / "aerocad.engine", "v2506\n");
 }
 
 } // namespace
@@ -214,6 +215,7 @@ TEST_CASE("writeCase writes a complete OpenFOAM case in SI units", "[cfd]")
     CHECK(control.find("magUInf $aerocadUInf") != std::string::npos);
     CHECK(control.find("patches (part)") != std::string::npos);
     CHECK(slurp(tmp.path() / "Allrun").find("runParallel simpleFoam") != std::string::npos);
+    CHECK(slurp(tmp.path() / "Allrun").find("\"${WM_PROJECT_VERSION:-}\" > aerocad.engine") != std::string::npos); // CAD-84
     CHECK(slurp(tmp.path() / "system/blockMeshDict").find("ground") == std::string::npos);
 
     const auto rt = cfd::CaseInfo::fromJson(nlohmann::json::parse(slurp(tmp.path() / "case.json")));
@@ -1077,9 +1079,20 @@ TEST_CASE("Setup evidence an older run did not record is unknown, not equal (CAD
     CHECK(contains(cmp.at("differingConditions"), "domain"));
     CHECK(cmp.at("verdict") == "not comparable");
 
-    // Otherwise matched runs without a recorded engine: unknown, with a note.
+    // The engine that actually ran: different versions are different conditions, even though
+    // both cases were written for the same target version.
+    write(tmp.path() / a / "aerocad.engine", "v2406\n");
+    write(tmp.path() / c / "aerocad.engine", "v2512\n");
+    cmp = runs.compare(a, c);
+    INFO(cmp.dump());
+    CHECK(contains(cmp.at("differingConditions"), "engine"));
+    CHECK(cmp.at("verdict") == "not comparable");
+    CHECK(runs.results(a).at("conditions").at("engine") == "v2406");
+    CHECK(runs.results(a).at("conditions").at("engineTarget") == runs.results(c).at("conditions").at("engineTarget"));
+
+    // Otherwise matched runs that did not record the engine: unknown, with a note.
     for (const auto& id : {a, c})
-        editCaseJson(tmp.path() / id, [](nlohmann::json& j) { j.erase("openfoam"); });
+        fs::remove(tmp.path() / id / "aerocad.engine");
     cmp = runs.compare(a, c);
     INFO(cmp.dump());
     CHECK(cmp.at("sameConditions") == false);

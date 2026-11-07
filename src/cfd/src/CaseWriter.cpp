@@ -511,6 +511,8 @@ std::string allrun(int processes)
          "cd \"${0%/*}\" || exit 1\n"
          ". \"${WM_PROJECT_DIR:?}\"/bin/tools/RunFunctions\n"
          "rm -f aerocad.status\n"
+         "# The engine that actually runs the case, for A/B comparisons.\n"
+         "printf '%s\\n' \"${WM_PROJECT_VERSION:-}\" > aerocad.engine\n"
          "step() { echo \"$1\" > aerocad.stage; }\n"
          "fail() { echo \"failed $1\" > aerocad.status; exit 1; }\n\n"
          "step features;   runApplication surfaceFeatureExtract || fail features\n"

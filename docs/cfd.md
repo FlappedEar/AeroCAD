@@ -242,8 +242,9 @@ different domain and mesh sizes, which is reported as a note.
 
 The resolved setup is compared too, not only the requested settings. Each case records a
 fingerprint of its surroundings (context parts in model coordinates, independent of their
-order) and the engine version; `results.conditions` carries `domain`, `contextHash` and
-`engine`. Different surroundings (for example the part alone against the same part next to
+order); `Allrun` records the engine that actually runs the case (`WM_PROJECT_VERSION`, in
+`aerocad.engine`). `results.conditions` carries `domain`, `contextHash`, `engine` (null when
+not recorded) and `engineTarget` (the version the case was written for). Different surroundings (for example the part alone against the same part next to
 the car body) add `context` to `differingConditions`, a different engine adds `engine`;
 either makes the verdict `not comparable`. A flow domain that differs by more than 1 µm adds
 `domain` and sets `sameDomain` to false. The target part itself may differ, since that is the

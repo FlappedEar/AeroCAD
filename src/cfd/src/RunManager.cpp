@@ -455,7 +455,7 @@ set -o pipefail
 DK="$1"; H="$2"; N="$3"; IMG="$4"
 d() { "$DK" -H "$H" "$@"; }
 fetch() {
-    d exec "$N" bash -c 'cd /case && tar -cf - aerocad.stage aerocad.status log.* postProcessing 2>/dev/null' |
+    d exec "$N" bash -c 'cd /case && tar -cf - aerocad.stage aerocad.status aerocad.engine log.* postProcessing 2>/dev/null' |
         tar -xf - 2>/dev/null
 }
 if ! d container inspect "$N" >/dev/null 2>&1; then
@@ -1050,7 +1050,13 @@ Json RunManager::results(const std::string& id, int maxPoints)
                            {"domain", {{"min", {info->domain.min.x, info->domain.min.y, info->domain.min.z}},
                                        {"max", {info->domain.max.x, info->domain.max.y, info->domain.max.z}}}},
                            {"contextHash", info->contextHash ? Json(std::to_string(*info->contextHash)) : Json(nullptr)},
-                           {"engine", info->openfoam.empty() ? Json(nullptr) : Json(info->openfoam)},
+                           // The engine that actually ran the case (Allrun records WM_PROJECT_VERSION in
+                           // aerocad.engine); null when not recorded. engineTarget: what it was written for.
+                           {"engine", [&] {
+                                const std::string v = readFirstLine(run.caseDir / "aerocad.engine");
+                                return v.empty() ? Json(nullptr) : Json(v);
+                            }()},
+                           {"engineTarget", info->openfoam.empty() ? Json(nullptr) : Json(info->openfoam)},
                            {"axes", "drag = along the flow, lift = +Z (model up), side = 90 degrees left of the flow"}};
     }
     j["summary"] = {{"cd", opt(tailMean(coeffs.column("Cd")))},
