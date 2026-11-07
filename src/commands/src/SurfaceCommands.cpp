@@ -545,12 +545,12 @@ void registerSurfaceCommands(CommandRegistry& r)
               // On a scan: the skin under the root, seen from outside (the first surface met,
               // never a layer behind it; holes bridged), as a height field over the fin's
               // footprint: along its chord (sketch Y) and across its thickness.
-              auto fitUnder = [&](const model::Part& scan) {
+              auto fitUnder = [&](const model::Part& scan, double fillet) {
                   const auto [u0, v0, u1, v1] = outlineBounds(sk, outlines);
                   (void)u0;
                   (void)u1;
                   // Room around the root for its fillet to land on the surface.
-                  const double flare = rootFillet > 0.0 ? 2.0 * rootFillet + 2.0 : 0.0;
+                  const double flare = fillet > 0.0 ? 2.0 * fillet + 2.0 : 0.0;
                   const double margin = std::max(5.0, 0.1 * (v1 - v0)) + flare;
                   const double half = 0.5 * thickness;
                   const double across = std::max(5.0, 2.0 * thickness) + flare;
@@ -600,12 +600,12 @@ void registerSurfaceCommands(CommandRegistry& r)
                               const model::Part* scan = ctx.document.part(model::fittedScanId(*source));
                               if (scan == nullptr || !scan->mesh || scan->shape)
                                   throw;
-                              solid = finOn(fitUnder(*scan));
+                              solid = finOn(fitUnder(*scan, fillet));
                           }
                       } else {
                           if (!source->mesh || source->mesh->triangleCount() == 0)
                               throw CommandError("Part " + std::to_string(partId) + " has no surface");
-                          solid = finOn(fitUnder(*source));
+                          solid = finOn(fitUnder(*source, fillet));
                       }
                   } catch (const geometry::OffsetError& e) {
                       throw CommandError(e.what());

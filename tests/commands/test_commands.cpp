@@ -739,6 +739,19 @@ TEST_CASE("Part on surface: one step from an outline over a scan to a solid", "[
         REQUIRE(lowFin.ok);
         CHECK(lowFin.data.at("volume").get<double>() == Approx(2.0 * 16.0 * 1.5).epsilon(0.2));
         CHECK(lowFin.data.at("bounds").at("max").at(2).get<double>() > -0.5 + 1.2);
+
+        // A triangle whose centroid is outside but most of whose area is inside: the bigger
+        // side is kept, as drawn.
+        auto tri = session.execute(
+            "sketch.create", {{"surface", {{"part", scanId}, {"point", {40, 15, -0.5}}, {"across", true}}},
+                              {"curves", Json::array({{{"type", "line"}, {"start", {-10, -10}}, {"end", {-10, 10}}},
+                                                      {{"type", "line"}, {"start", {-10, 10}}, {"end", {22, 0}}},
+                                                      {{"type", "line"}, {"start", {22, 0}}, {"end", {-10, -10}}}})}});
+        REQUIRE(tri.ok);
+        auto triFin = session.execute("surface.fin_from_sketch", {{"sketch", tri.data.at("id")}, {"thickness", 2.0}});
+        INFO(triFin.toJson().dump());
+        REQUIRE(triFin.ok);
+        CHECK(triFin.data.at("bounds").at("max").at(2).get<double>() < -0.5 + 0.5);
     }
 
     SECTION("An arc that bulges far past its defining points is covered")
@@ -1048,6 +1061,12 @@ TEST_CASE("Fin on a scan with a layer behind the skin and holes: the root sits o
     CHECK(huge.data.at("rootFillet").get<double>() < 40.0);
     REQUIRE(huge.data.at("warnings").size() == 1);
     CHECK(huge.data.at("warnings").at(0).get<std::string>().find("root fillet of 40 mm") != std::string::npos);
+    // Absurdly big: the skin is still fitted for the radius actually tried.
+    auto absurd = session.execute("surface.fin_from_sketch",
+                                  {{"sketch", sk.data.at("id")}, {"thickness", 3.0}, {"rootFillet", 10000.0}});
+    INFO(absurd.toJson().dump());
+    REQUIRE(absurd.ok);
+    CHECK(absurd.data.at("rootFillet").get<double>() <= 6.0);
     CHECK(core::checkMesh(core::weldVertices(
               *session.document().part(huge.data.at("id").get<model::PartId>())->mesh)).watertight());
 }

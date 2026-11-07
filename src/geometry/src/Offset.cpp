@@ -572,21 +572,43 @@ Shape finOnSurface(const Shape& surface, const std::vector<Shape>& outlines, con
         // The fin before the cut: the outlines, their roots carried down past the surface,
         // extruded half the thickness each way.
         TopTools_ListOfShape blanks;
-        // Which side the fin stands on, told by the outlines as drawn (area above the surface
-        // against area under it): the extended root must not change it.
+        // Which side the fin stands on, told by the outlines as drawn (their area above the
+        // surface against the area under it): the extended root must not change it.
         double drawnSide = 0.0;
+        auto splitArea = [&](const TopoDS_Shape& outline) {
+            TopTools_ListOfShape args, cutters;
+            args.Append(outline);
+            cutters.Append(s);
+            BRepAlgoAPI_Splitter split;
+            split.SetArguments(args);
+            split.SetTools(cutters);
+            split.SetRunParallel(false);
+            split.Build();
+            double balance = 0.0;
+            if (!split.IsDone() || split.HasErrors())
+                return balance;
+            for (TopExp_Explorer f(split.Shape(), TopAbs_FACE); f.More(); f.Next()) {
+                GProp_GProps piece;
+                BRepGProp::SurfaceProperties(f.Current(), piece);
+                if (const auto h = heightAbove(surf, piece.CentreOfMass(), out))
+                    balance += (*h >= 0.0 ? 1.0 : -1.0) * piece.Mass();
+            }
+            return balance;
+        };
         for (const auto& o : outlines) {
             if (o.isNull())
                 continue;
             TopoDS_Shape outline = o.impl()->shape;
             if (!surf.IsNull()) {
-                // The fin stands on the side of the surface its outline mostly lies on.
+                // The fin stands on the side of the surface more of its outline lies on.
                 GProp_GProps area;
                 BRepGProp::SurfaceProperties(outline, area);
                 const auto side = heightAbove(surf, area.CentreOfMass(), out);
                 if (side) {
-                    drawnSide += (*side >= 0.0 ? 1.0 : -1.0) * area.Mass();
-                    outline = extendRoot(outline, surf, *side >= 0.0 ? out : -out);
+                    const double balance = splitArea(outline);
+                    drawnSide += balance;
+                    const bool above = balance != 0.0 ? balance > 0.0 : *side >= 0.0;
+                    outline = extendRoot(outline, surf, above ? out : -out);
                 }
             }
             gp_Trsf back;
