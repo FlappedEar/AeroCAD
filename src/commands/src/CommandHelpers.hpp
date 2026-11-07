@@ -31,7 +31,10 @@ inline Json partToJson(const model::Part& p)
         {"vertices", p.mesh ? p.mesh->vertexCount() : 0},
         {"triangles", p.mesh ? p.mesh->triangleCount() : 0},
         {"hasBrep", p.shape.has_value()},
-        {"kind", p.kind == model::PartKind::Body ? "body" : p.kind == model::PartKind::Sketch ? "sketch" : "imported"},
+        {"kind", p.kind == model::PartKind::Body     ? "body"
+                 : p.kind == model::PartKind::Sketch ? "sketch"
+                 : p.kind == model::PartKind::Plane  ? "plane"
+                                                     : "imported"},
         {"featureId", p.featureId},
         {"selectedTriangles", p.selection ? p.selection->size() : 0},
         {"bounds", boundsToJson(p.mesh ? p.mesh->bounds() : core::BoundingBox{})},

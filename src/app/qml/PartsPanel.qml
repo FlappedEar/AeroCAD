@@ -94,6 +94,7 @@ Pane {
                             Layout.fillWidth: true
                             text: row.kind === "body" ? qsTr("Body")
                                 : row.kind === "sketch" ? qsTr("Sketch")
+                                : row.kind === "plane" ? qsTr("Construction plane")
                                 : row.shapeKind === "surface" ? qsTr("Surface")
                                 : row.shapeKind === "solid" ? qsTr("Solid")
                                 : qsTr("Mesh · %1 triangles").arg(Number(row.triangles).toLocaleString(Qt.locale(), "f", 0))

@@ -5,6 +5,7 @@
 #include "aerocad/geometry/Shape.hpp"
 
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -13,7 +14,7 @@
 
 namespace aerocad::io {
 
-enum class FileFormat { Unknown, Stl, Obj, ThreeMf, Step, Iges, Brep };
+enum class FileFormat { Unknown, Stl, Obj, Ply, ThreeMf, Step, Iges, Brep };
 
 [[nodiscard]] std::string_view formatName(FileFormat format);
 
@@ -39,13 +40,31 @@ public:
     using std::runtime_error::runtime_error;
 };
 
+/// Thrown when the progress callback asked to stop the import.
+class ImportCancelled : public ImportError {
+public:
+    ImportCancelled() : ImportError("Import cancelled") {}
+};
+
+/// Progress callback: receives the completed fraction (0.0 .. 1.0, non-decreasing).
+/// It is called with 0.0 at the start, about every 1% of the work and with 1.0 at the
+/// end, on the importing thread. Return false to cancel (the import throws ImportCancelled).
+using ImportProgress = std::function<bool(double fraction)>; // return false to cancel
+
+struct ImportOptions {
+    ImportProgress progress;
+};
+
 /// Imports a 3D file. Mesh coordinates are in millimetres.
 /// Throws ImportError on failure.
 [[nodiscard]] ImportResult importFile(const std::filesystem::path& path);
+[[nodiscard]] ImportResult importFile(const std::filesystem::path& path, const ImportOptions& options);
 
-// Format-specific readers (also used by tests).
-[[nodiscard]] ImportResult readStl(const std::filesystem::path& path);
-[[nodiscard]] ImportResult readObj(const std::filesystem::path& path);
+// Format-specific readers (also used by tests). The mesh readers report progress;
+// the others ignore the options (importFile() reports 0 and 1 for them).
+[[nodiscard]] ImportResult readStl(const std::filesystem::path& path, const ImportOptions& options = {});
+[[nodiscard]] ImportResult readObj(const std::filesystem::path& path, const ImportOptions& options = {});
+[[nodiscard]] ImportResult readPly(const std::filesystem::path& path, const ImportOptions& options = {});
 [[nodiscard]] ImportResult read3mf(const std::filesystem::path& path);
 [[nodiscard]] ImportResult readStep(const std::filesystem::path& path);
 [[nodiscard]] ImportResult readIges(const std::filesystem::path& path);

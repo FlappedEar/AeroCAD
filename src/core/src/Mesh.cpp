@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "aerocad/core/Mesh.hpp"
 
-#include <functional>
+#include <algorithm>
+#include <bit>
+#include <cstring>
 #include <stdexcept>
 #include <utility>
 
@@ -88,38 +90,140 @@ bool TriangleMesh::isValid() const
     return true;
 }
 
-std::size_t MeshBuilder::VecHash::operator()(const Vec3& v) const noexcept
+namespace {
+
+std::uint64_t doubleBits(double d)
 {
-    const std::hash<double> h;
-    std::size_t seed = h(v.x);
-    seed ^= h(v.y) + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2);
-    seed ^= h(v.z) + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2);
-    return seed;
+    std::uint64_t bits = 0;
+    static_assert(sizeof(bits) == sizeof(d));
+    std::memcpy(&bits, &d, sizeof(bits));
+    return bits;
 }
 
-std::uint32_t MeshBuilder::vertexIndex(const Vec3& v)
+/// 64-bit hash of the coordinate bit patterns. Coordinates converted from float (STL)
+/// have many zero low mantissa bits, so every step folds high bits down before multiplying.
+std::uint64_t hashVec(const Vec3& v)
 {
-    // Normalise -0.0 to 0.0 so both hash and compare equal.
-    const Vec3 key{v.x + 0.0, v.y + 0.0, v.z + 0.0};
-    auto [it, inserted] = m_index.try_emplace(key, 0U);
-    if (inserted)
-        it->second = m_mesh.addVertex(key);
-    return it->second;
+    std::uint64_t h = doubleBits(v.x) * 0x9E3779B97F4A7C15ULL;
+    h = ((h ^ (h >> 32U)) + doubleBits(v.y)) * 0xC2B2AE3D27D4EB4FULL;
+    h = ((h ^ (h >> 29U)) + doubleBits(v.z)) * 0x165667B19E3779F9ULL;
+    return h ^ (h >> 32U);
+}
+
+/// Smallest power of two table size keeping the load factor at or below 1/2.
+std::size_t tableSizeFor(std::size_t entries)
+{
+    std::size_t size = 16;
+    while (size / 2 < entries)
+        size *= 2;
+    return size;
+}
+
+void prefetch(const void* address)
+{
+#if defined(__GNUC__) || defined(__clang__)
+    __builtin_prefetch(address);
+#else
+    static_cast<void>(address);
+#endif
+}
+
+} // namespace
+
+void MeshBuilder::reserve(std::size_t triangles)
+{
+    // Closed scan meshes have about half as many vertices as triangles.
+    const std::size_t vertices = triangles / 2 + 16;
+    m_mesh.reserve(vertices, triangles);
+    if (tableSizeFor(vertices) > m_slots.size())
+        rehash(tableSizeFor(vertices));
+}
+
+void MeshBuilder::rehash(std::size_t capacity)
+{
+    m_slots.assign(capacity, Slot{});
+    m_shift = 64U - static_cast<unsigned>(std::countr_zero(capacity));
+    const std::size_t mask = capacity - 1;
+    const auto& vertices = m_mesh.vertices();
+    for (std::size_t i = 0; i < vertices.size(); ++i) {
+        const std::uint64_t h = hashVec(vertices[i]);
+        std::size_t pos = static_cast<std::size_t>(h >> m_shift);
+        while (m_slots[pos].index != kEmpty)
+            pos = (pos + 1) & mask;
+        m_slots[pos] = {static_cast<std::uint32_t>(i), static_cast<std::uint32_t>(h)};
+    }
+}
+
+std::uint32_t MeshBuilder::vertexIndex(const Vec3& key, std::uint64_t hash)
+{
+    const auto tag = static_cast<std::uint32_t>(hash);
+    const std::size_t mask = m_slots.size() - 1;
+    const auto& vertices = m_mesh.vertices();
+    std::size_t pos = static_cast<std::size_t>(hash >> m_shift);
+    while (true) {
+        Slot& slot = m_slots[pos];
+        if (slot.index == kEmpty) {
+            slot = {m_mesh.addVertex(key), tag};
+            ++m_used;
+            return slot.index;
+        }
+        if (slot.tag == tag && vertices[slot.index] == key)
+            return slot.index;
+        pos = (pos + 1) & mask;
+    }
 }
 
 void MeshBuilder::addTriangle(const Vec3& a, const Vec3& b, const Vec3& c)
 {
-    const auto ia = vertexIndex(a);
-    const auto ib = vertexIndex(b);
-    const auto ic = vertexIndex(c);
-    if (ia == ib || ib == ic || ia == ic)
-        return;
-    m_mesh.addTriangle(ia, ib, ic);
+    const Vec3 corners[3] = {a, b, c};
+    addTriangles(corners, 1);
+}
+
+void MeshBuilder::addTriangles(const Vec3* corners, std::size_t count)
+{
+    // Big meshes make the table and the vertex array much larger than the CPU caches, so
+    // a naive lookup waits for two cache misses per corner. Batches are processed in three
+    // passes: hash and prefetch the home slots, prefetch the candidate vertices, then do
+    // the real (sequential, exact) lookups. The first two passes are hints only.
+    constexpr std::size_t kBatch = 32; // triangles
+    std::uint64_t hashes[kBatch * 3];
+    Vec3 keys[kBatch * 3];
+    for (std::size_t first = 0; first < count; first += kBatch) {
+        const std::size_t n = std::min(kBatch, count - first) * 3;
+        const Vec3* in = corners + first * 3;
+
+        // Grow first so that slot positions computed below stay valid for the whole batch.
+        if ((m_used + n) * 2 > m_slots.size())
+            rehash(std::max(tableSizeFor(m_used + n), m_slots.size() * 2));
+
+        for (std::size_t i = 0; i < n; ++i) {
+            // Normalise -0.0 to 0.0 so both hash and compare equal.
+            keys[i] = {in[i].x + 0.0, in[i].y + 0.0, in[i].z + 0.0};
+            hashes[i] = hashVec(keys[i]);
+            prefetch(&m_slots[static_cast<std::size_t>(hashes[i] >> m_shift)]);
+        }
+        const auto& vertices = m_mesh.vertices();
+        for (std::size_t i = 0; i < n; ++i) {
+            const Slot& slot = m_slots[static_cast<std::size_t>(hashes[i] >> m_shift)];
+            if (slot.index != kEmpty && slot.tag == static_cast<std::uint32_t>(hashes[i]))
+                prefetch(&vertices[slot.index]);
+        }
+        for (std::size_t i = 0; i < n; i += 3) {
+            const auto ia = vertexIndex(keys[i], hashes[i]);
+            const auto ib = vertexIndex(keys[i + 1], hashes[i + 1]);
+            const auto ic = vertexIndex(keys[i + 2], hashes[i + 2]);
+            if (ia == ib || ib == ic || ia == ic)
+                continue;
+            m_mesh.addTriangle(ia, ib, ic);
+        }
+    }
 }
 
 TriangleMesh MeshBuilder::take()
 {
-    m_index.clear();
+    m_slots = {};
+    m_shift = 64;
+    m_used = 0;
     return std::exchange(m_mesh, TriangleMesh{});
 }
 

@@ -3,7 +3,8 @@
 A native CAD application (Windows 11 x64, macOS Apple Silicon) for designing parts on
 top of an arbitrary 3D model:
 
-1. Load any 3D file (STL, OBJ, 3MF, STEP, IGES, BREP).
+1. Load any 3D file (STL, OBJ, PLY, 3MF, STEP, IGES, BREP), including multi-million
+   triangle 3D scans.
 2. Inspect the model: orbit, pan, zoom.
 3. Select a region on the model; the application builds a base surface on it.
 4. Design on that surface with CAD tools (sketch, extrude, shell, fillet, boolean, ...).

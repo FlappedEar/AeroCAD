@@ -444,6 +444,7 @@ TEST_CASE("Fit surfaces to a whole mesh gives a solid part", "[commands][fit]")
     CHECK(r.data.at("fit").at("volume").get<double>() == Approx(6000.0).epsilon(0.001));
     CHECK(r.data.at("fit").at("withinTolerance") == true);
     CHECK(r.data.at("hasBrep") == true);
+    CHECK(r.data.at("fit").at("smoothSeams") == 0); // a box has creases only
     CHECK(session.document().partCount() == 2);
     // The solid can become a timeline body.
     CHECK(session.execute("feature.base_body", {{"part", r.data.at("id")}}).ok);

@@ -27,5 +27,8 @@
   and GCC.
 - New behaviour needs unit tests (Catch2, `tests/`). Tests must not depend on files
   outside the repository; generate fixtures in a temporary directory where possible.
+- Workflow changes (import, selection, surfaces, modelling, export, project files) must keep
+  the end-to-end test `tests/e2e/test_workflow.cpp` green; it runs on every file of the
+  test model set in [tests/data/models](tests/data/models/README.md).
 
 See [docs/building.md](docs/building.md) for build instructions.

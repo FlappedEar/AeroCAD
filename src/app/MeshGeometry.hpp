@@ -44,6 +44,7 @@ private:
     std::shared_ptr<const core::TriangleMesh> m_builtMesh;
     bool m_builtWithShape = false;
     QMetaObject::Connection m_connection;
+    QMetaObject::Connection m_lodConnection;
 };
 
 } // namespace aerocad::app

@@ -27,6 +27,8 @@ std::string kindName(model::PartKind kind)
         return "body";
     case model::PartKind::Sketch:
         return "sketch";
+    case model::PartKind::Plane:
+        return "plane";
     }
     return "imported";
 }
@@ -37,6 +39,8 @@ model::PartKind kindFromName(const std::string& name)
         return model::PartKind::Body;
     if (name == "sketch")
         return model::PartKind::Sketch;
+    if (name == "plane")
+        return model::PartKind::Plane;
     if (name == "imported")
         return model::PartKind::Imported;
     throw ProjectError("Unknown part kind '" + name + "'");

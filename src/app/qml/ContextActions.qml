@@ -479,6 +479,8 @@ QtObject {
                     .arg(f.solid ? qsTr("closed solid") : qsTr("open shell with %1 free edges").arg(f.freeEdges))
                     .arg(Number(f.meshToSurfaceMax).toFixed(2))
                     .arg(f.withinTolerance ? qsTr("within tolerance") : qsTr("MORE THAN THE TOLERANCE"))
+                if (f.smoothSeams > 0)
+                    msg += " " + qsTr("Smooth seams within %1°.").arg(Number(f.seamAngleMaxDeg).toFixed(2))
                 if ((r.result.warnings ?? []).length > 0)
                     msg += " " + r.result.warnings.join(" ")
                 controller.showStatus(msg)

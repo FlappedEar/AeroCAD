@@ -10,11 +10,12 @@ commands                      Named commands with JSON Schema parameters and JSO
   |                           server, so an AI agent can do everything the user can.
 project                       .aerocad files: versioned manifest, lossless meshes,
   |                           B-rep, atomic save (docs/project-format.md).
-cad                           Parametric timeline, parameters, frames, variants.
-  |
+cad     cfd                   cad: parametric timeline, parameters, frames, variants.
+  |                           cfd: wind tunnel (OpenFOAM case generation, background
+  |                           runs, results), see cfd.md.
 model                         Document (parts), undo stack, change notifications.
   |
-io        geometry            io: import (STL, OBJ, 3MF, STEP, IGES, BREP), export (STL, 3MF, STEP).
+io        geometry            io: import (STL, OBJ, PLY, 3MF, STEP, IGES, BREP), export (STL, 3MF, STEP).
   |         |                 geometry: Open CASCADE wrapper (B-rep shapes, tessellation,
 core -------+                 transforms, primitives).
                               core: math, triangle meshes, mesh repair / decimation /
@@ -78,8 +79,13 @@ core -------+                 transforms, primitives).
   outline smoothing) split into edges where the neighbour changes, and the faces are sewn
   (`BRepBuilderAPI_Sewing`); a closed shell becomes a solid. Patches that miss the
   tolerance or cannot be unfolded (tubes) are cut in two across the direction their
-  normals turn most and fit again (up to 3 times). Neighbouring patches meet with C0
-  continuity (each fits its own side of the shared border); G1 matching is not done.
+  normals turn most and fit again (up to 3 times). Patches across a crease meet with C0
+  continuity. Where one smooth region was split, each patch is fit to its triangles plus
+  `blendRings` (default 6) rings of its neighbours in the same region and trimmed back
+  to its own triangles (`SurfaceFitOptions::trimTo`): both surfaces fit the same data
+  across the seam, so their tangents match closely (near G1, not exact). The largest
+  normal angle along those seams is reported (`seamAngleMaxDeg`; a 90-sided can drops
+  from 0.87 to 0.11 degrees). Exact G1 (constrained fitting) is not done.
 - **Offset / thicken** (`geometry/Offset`, commands `surface.offset`, `surface.thicken`):
   `BRepOffset_MakeSimpleOffset`, which offsets each face on its own surface (exact for
   the single-face base surfaces); with the solid flag it adds side walls and caps. The

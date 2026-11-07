@@ -22,6 +22,11 @@ struct RegionFitOptions {
     /// Largest gap closed when sewing the patches (mm); 0 picks one from the mesh
     /// resolution and the fit tolerance.
     double sewTolerance = 0.0;
+    /// Where a smooth region had to be split into several patches, each patch is fit to
+    /// its triangles plus this many rings of its neighbours in the same region and then
+    /// trimmed back to its own triangles: neighbouring surfaces fit the same data across
+    /// the seam, so their tangents match (near G1). 0 fits each patch on its own (C0).
+    int blendRings = 6;
 };
 
 /// One smooth patch of the region and its fit.
@@ -40,6 +45,10 @@ struct RegionFitResult {
     bool solid = false;  ///< The shell closed and became a solid.
     double volume = 0.0; ///< mm^3, for a solid.
     double sewTolerance = 0.0;
+    /// Seams between patches of the same smooth region (splits, not creases), and the
+    /// largest angle between the two faces' normals measured along them (degrees).
+    int smoothSeams = 0;
+    double seamAngleMaxDeg = 0.0;
     double milliseconds = 0.0;
     std::vector<std::string> warnings;
 };

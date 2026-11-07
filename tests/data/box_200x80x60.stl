@@ -1,0 +1,86 @@
+solid box
+ facet normal 0 0 0
+  outer loop
+   vertex 0 0 0
+   vertex 0 80 0
+   vertex 200 0 0
+  endloop
+ endfacet
+ facet normal 0 0 0
+  outer loop
+   vertex 200 0 0
+   vertex 0 80 0
+   vertex 200 80 0
+  endloop
+ endfacet
+ facet normal 0 0 0
+  outer loop
+   vertex 0 0 60
+   vertex 200 0 60
+   vertex 0 80 60
+  endloop
+ endfacet
+ facet normal 0 0 0
+  outer loop
+   vertex 200 0 60
+   vertex 200 80 60
+   vertex 0 80 60
+  endloop
+ endfacet
+ facet normal 0 0 0
+  outer loop
+   vertex 0 0 0
+   vertex 200 0 0
+   vertex 0 0 60
+  endloop
+ endfacet
+ facet normal 0 0 0
+  outer loop
+   vertex 200 0 0
+   vertex 200 0 60
+   vertex 0 0 60
+  endloop
+ endfacet
+ facet normal 0 0 0
+  outer loop
+   vertex 0 80 0
+   vertex 0 80 60
+   vertex 200 80 0
+  endloop
+ endfacet
+ facet normal 0 0 0
+  outer loop
+   vertex 200 80 0
+   vertex 0 80 60
+   vertex 200 80 60
+  endloop
+ endfacet
+ facet normal 0 0 0
+  outer loop
+   vertex 0 0 0
+   vertex 0 0 60
+   vertex 0 80 0
+  endloop
+ endfacet
+ facet normal 0 0 0
+  outer loop
+   vertex 0 80 0
+   vertex 0 0 60
+   vertex 0 80 60
+  endloop
+ endfacet
+ facet normal 0 0 0
+  outer loop
+   vertex 200 0 0
+   vertex 200 80 0
+   vertex 200 0 60
+  endloop
+ endfacet
+ facet normal 0 0 0
+  outer loop
+   vertex 200 80 0
+   vertex 200 80 60
+   vertex 200 0 60
+  endloop
+ endfacet
+endsolid box
