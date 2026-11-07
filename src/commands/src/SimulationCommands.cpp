@@ -262,6 +262,50 @@ void registerSimulationCommands(CommandRegistry& r)
               return statusJson(ctx, *runs(ctx).status(id));
           });
 
+    r.add({"simulation.refine", "Run on another mesh",
+           "Starts the same simulation as an earlier run (same part, surroundings and conditions) on another mesh "
+           "level, to check that a result or an A/B difference holds under mesh refinement. The part must still be "
+           "in the open document. Returns the new run.",
+           objectSchema({{"run", runIdParam()},
+                         {"mesh",
+                          {{"type", "string"},
+                           {"enum", {"coarse", "medium", "fine"}},
+                           {"description", "Mesh level (default: the next finer one)."}}},
+                         {"prepareOnly", {{"type", "boolean"}, {"description", "Only write the OpenFOAM case."}}}},
+                        {"run"})},
+          [](CommandContext& ctx, const Json& params) {
+              const std::string id = requireRun(ctx, params);
+              const auto status = runs(ctx).status(id);
+              const auto info = runs(ctx).caseInfo(id);
+              if (!info)
+                  throw CommandError("Run '" + id + "' has no case information");
+              if (!sourceInDocument(ctx, status->source))
+                  throw CommandError("The part of run '" + id + "' is not in the open document (or has changed)");
+              Json settings = cfd::toJson(info->settings);
+              const auto current = static_cast<int>(info->settings.mesh);
+              const std::string mesh = params.contains("mesh")
+                                           ? params.at("mesh").get<std::string>()
+                                           : std::string(cfd::meshLevelName(
+                                                 static_cast<cfd::MeshLevel>(std::min(current + 1, 2))));
+              if (mesh == settings.at("mesh").get<std::string>())
+                  throw CommandError("Run '" + id + "' already uses the " + mesh + " mesh");
+              settings["mesh"] = mesh;
+              settings["iterations"] = 0; // Default for the new level.
+              settings.erase("processes");
+              settings["id"] = status->source.partId;
+              settings["context"] = status->source.contextPartIds;
+              settings["label"] = status->source.label;
+              const RunInput in = collectInput(ctx, settings);
+              std::string newId;
+              try {
+                  newId = params.value("prepareOnly", false) ? runs(ctx).prepare(in.geometry, in.settings, in.source)
+                                                             : runs(ctx).start(in.geometry, in.settings, in.source);
+              } catch (const std::exception& e) {
+                  throw CommandError(e.what());
+              }
+              return statusJson(ctx, *runs(ctx).status(newId));
+          });
+
     r.add({"simulation.status", "Simulation status",
            "State (running, finished, failed, cancelled, interrupted), step, progress 0..1, iteration and the latest "
            "Cd/Cl and forces in N of a run.",
@@ -345,7 +389,10 @@ void registerSimulationCommands(CommandRegistry& r)
     r.add({"simulation.compare", "Compare simulations",
            "A/B comparison of two runs: drag/lift/side force differences in N and %, coefficients on a shared "
            "reference area, whether the conditions (speed, direction, mesh, preset, ...) match, quality of both, "
-           "and shared colour scale ranges. For a variant without a finished run, the values are null.",
+           "and shared colour scale ranges. For a variant without a finished run, the values are null. "
+           "meshSensitivity tells whether the difference holds on another mesh level (A and B run there too, see "
+           "simulation.refine); verdict \"difference inconclusive\" when refinement changes it about as much as its "
+           "size.",
            objectSchema({{"a", runIdParam("Run A (baseline).")}, {"b", runIdParam("Run B (variant).")}}, {"a", "b"})},
           [](CommandContext& ctx, const Json& params) {
               const std::string a = requireRun(ctx, params, "a");

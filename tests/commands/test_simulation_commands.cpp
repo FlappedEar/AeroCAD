@@ -57,7 +57,7 @@ TEST_CASE("simulation.* commands are registered with schemas", "[commands][simul
     for (const char* name : {"simulation.environment", "simulation.propose_run", "simulation.run", "simulation.status",
                              "simulation.list", "simulation.cancel", "simulation.delete", "simulation.results",
                              "simulation.field", "simulation.compare", "simulation.import",
-                             "simulation.install_engine"}) {
+                             "simulation.install_engine", "simulation.refine"}) {
         INFO(name);
         const auto* info = session.registry().info(name);
         REQUIRE(info != nullptr);
@@ -122,11 +122,23 @@ TEST_CASE("simulation.propose_run and a prepared run", "[commands][simulation]")
     CHECK(r.data.at("sameConditions") == true);
     CHECK(r.data.at("forces").empty()); // No results yet.
 
+    // The same run on the medium mesh: same case, so the comparison can check the mesh.
+    r = session.execute("simulation.refine", {{"run", run}, {"prepareOnly", true}});
+    REQUIRE(r.ok);
+    const std::string refined = r.data.at("id");
+    CHECK(session.simulations().caseInfo(refined)->settings.mesh == cfd::MeshLevel::Medium);
+    CHECK(session.simulations().caseInfo(refined)->geometryHash == session.simulations().caseInfo(run)->geometryHash);
+    CHECK(r.data.at("source").at("label") == "A");
+    CHECK(session.simulations().sameCaseOnOtherMeshes(run).empty()); // Prepared, not run: not counted.
+    CHECK_FALSE(session.execute("simulation.refine", {{"run", refined}, {"mesh", "medium"}}).ok);
+    CHECK(session.execute("simulation.delete", {{"run", refined}}).ok);
+
     // The part is gone (or another document has a part with the same id): not its source.
     REQUIRE(session.execute("part.remove", {{"id", id}}).ok);
     r = session.execute("simulation.status", {{"run", run}});
     REQUIRE(r.ok);
     CHECK(r.data.at("sourceInDocument") == false);
+    CHECK_FALSE(session.execute("simulation.refine", {{"run", run}, {"prepareOnly", true}}).ok);
     const auto other = session.execute("document.import", {{"path", AEROCAD_TEST_DATA_DIR "/box_200x80x60.stl"}});
     REQUIRE(other.ok);
     if (other.data.at("id").get<std::uint64_t>() == id) {

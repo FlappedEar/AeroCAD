@@ -109,6 +109,8 @@ Pane {
             return s ? s.state : ""
         }
         const beforeA = stateOf(activeRun), beforeB = stateOf(compareRun)
+        const signature = list => list.map(x => x.id + ":" + x.state).join(",")
+        const beforeAll = signature(runs)
         runs = r.result.runs
         if (!activeRun && runs.length > 0) {
             selectRun(runs[runs.length - 1].id)
@@ -121,8 +123,8 @@ Pane {
             loadResults() // Also reloads the field statistics of A and B.
         else if (changedB)
             loadFieldStats()
-        if (changedA || changedB)
-            loadComparison()
+        if (changedA || changedB || (compareRun && signature(runs) !== beforeAll))
+            loadComparison() // Also when runs on other mesh levels finish (mesh check).
     }
 
     function selectRun(id) {
@@ -215,6 +217,21 @@ Pane {
         refreshRuns()
         selectRun(r.result.id)
         tab = 1
+    }
+
+    /// Runs A and B again on another mesh level, for the mesh check of the comparison.
+    function refineComparison(mesh) {
+        error = ""
+        for (const id of [activeRun, compareRun]) {
+            const r = controller.execute("simulation.refine", { run: id, mesh: mesh })
+            if (!r.ok) {
+                error = r.error
+                controller.setStatus(r.error)
+                return
+            }
+        }
+        refreshRuns()
+        loadComparison()
     }
 
     function setField(index, on) {
@@ -734,6 +751,41 @@ Pane {
                         font.pixelSize: 11
                         color: Theme.warning
                         text: "⚠ " + modelData
+                    }
+                }
+                // Does the difference hold on another mesh? (A and B run there too.)
+                ColumnLayout {
+                    id: meshCheck
+                    readonly property var ms: root.comparison ? root.comparison.meshSensitivity : null
+                    visible: !!ms && ms.status !== undefined && root.comparison.sameConditions
+                    Layout.fillWidth: true
+                    Layout.topMargin: 6
+                    spacing: 2
+                    Label { text: qsTr("Mesh check"); font.bold: true; font.pixelSize: 12 }
+                    Repeater {
+                        model: meshCheck.ms && meshCheck.ms.levels ? meshCheck.ms.levels : []
+                        delegate: Label {
+                            required property var modelData
+                            font.pixelSize: 11
+                            color: Theme.textMuted
+                            text: qsTr("%1 mesh: B − A drag %2 N, lift %3 N").arg(modelData.mesh)
+                                .arg(modelData.dragN ? root.num(modelData.dragN.difference, 3) : "–")
+                                .arg(modelData.liftN ? root.num(modelData.liftN.difference, 3) : "–")
+                        }
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        font.pixelSize: 11
+                        color: !meshCheck.ms ? Theme.textMuted
+                             : meshCheck.ms.status === "holds" ? Theme.success
+                             : meshCheck.ms.status === "inconclusive" ? Theme.warning : Theme.textMuted
+                        text: meshCheck.ms ? meshCheck.ms.message || "" : ""
+                    }
+                    Button {
+                        visible: !!meshCheck.ms && meshCheck.ms.status === "not assessed" && !!meshCheck.ms.suggestedMesh
+                        text: qsTr("Run A and B on the %1 mesh").arg(meshCheck.ms ? meshCheck.ms.suggestedMesh : "")
+                        onClicked: root.refineComparison(meshCheck.ms.suggestedMesh)
                     }
                 }
                 Switch {

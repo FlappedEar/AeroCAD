@@ -165,9 +165,20 @@ speed in m/s and Cp) and `streamlines` (35 lines seeded on a grid upstream).
 of B rescaled to A's reference area, the list of differing conditions (speed, direction,
 mesh, preset, fluid, ground, reference values), the quality of both runs and shared
 colour scale ranges (Cp on the surface, speed in the sections). Verdict:
-`comparable`, `check quality` or `not comparable`. Variants of very different size get
-different domain and mesh sizes, which is reported as a note. Mesh-refinement
-sensitivity of the difference (CAD-54) is not assessed yet.
+`comparable`, `difference inconclusive`, `check quality` or `not comparable`. Variants of very different size get
+different domain and mesh sizes, which is reported as a note.
+
+**Mesh check.** A difference found on one mesh can be an artefact of that mesh.
+`simulation.refine {run, mesh}` runs the same case (same part, surroundings and conditions)
+on another mesh level; run it for A and for B (in the app: *Run A and B on the medium
+mesh* in the A/B tab). `meshSensitivity` in `simulation.compare` then lists the
+difference per mesh level and, for the two finest levels, how much refinement changed
+it. The difference **holds** when it changed by less than half of itself and kept its
+sign; otherwise it is **inconclusive** and the verdict becomes `difference
+inconclusive`. Drag and lift are both checked; the verdict follows the one with the
+larger difference, and the message also names the other force when its difference does
+not hold. Runs count as the same case when the geometry hash and all
+conditions except the mesh level are equal.
 
 ## Tests
 
