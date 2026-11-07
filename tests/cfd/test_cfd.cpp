@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <random>
 #include <sstream>
 #include <thread>
@@ -854,7 +855,8 @@ TEST_CASE("RunManager: mesh sensitivity of an A/B difference", "[cfd]")
     auto cmp = runs.compare(a, b);
     CHECK(cmp.at("meshSensitivity").at("status") == "not assessed");
     CHECK(cmp.at("meshSensitivity").at("suggestedMesh") == "medium");
-    CHECK(cmp.at("verdict") == "comparable");
+    // B is 10 mm taller, so it has its own flow domain (CAD-84): compared, but qualified.
+    CHECK(cmp.at("verdict") == "different domains");
 
     // Same A and B on the medium mesh: difference 0.10 N -> 0.12 N, it holds.
     const std::string am = run(ga, cfd::MeshLevel::Medium, 1.0);
@@ -868,7 +870,7 @@ TEST_CASE("RunManager: mesh sensitivity of an A/B difference", "[cfd]")
     CHECK(ms.at("levels").size() == 2);
     CHECK(ms.at("dragN").at("difference").get<double>() == Approx(0.12).epsilon(0.02));
     CHECK(ms.at("dragN").at("change").get<double>() == Approx(0.02).epsilon(0.1));
-    CHECK(cmp.at("verdict") == "comparable");
+    CHECK(cmp.at("verdict") == "different domains");
     CHECK(runs.compare(am, bm).at("meshSensitivity").at("status") == "holds"); // Same pair, seen from medium.
 
     // On the fine mesh the difference shrinks to 0.03 N: changed by more than half of itself.
@@ -1000,6 +1002,7 @@ TEST_CASE("Different surroundings or domains are not identical conditions (CAD-8
     CHECK(cmp.at("sameConditions") == false);
     const auto diff = cmp.at("differingConditions").get<std::vector<std::string>>();
     CHECK(std::find(diff.begin(), diff.end(), "context") != diff.end());
+    CHECK(std::find(diff.begin(), diff.end(), "domain") != diff.end());
     CHECK(cmp.at("sameDomain") == false);
     CHECK(cmp.at("verdict") == "not comparable");
 
@@ -1021,37 +1024,74 @@ TEST_CASE("Different surroundings or domains are not identical conditions (CAD-8
     CHECK_FALSE(cond.at("contextHash").is_null());
 }
 
-TEST_CASE("Runs written before the surroundings were recorded get a note (CAD-84)", "[cfd]")
+namespace {
+
+void editCaseJson(const fs::path& runDir, const std::function<void(nlohmann::json&)>& edit)
 {
-    TempDir tmp;
-    cfd::RunManager runs(tmp.path());
-    cfd::CaseGeometry g;
-    g.part = box({0, 0, 0}, {200, 80, 60});
-    cfd::Settings s;
-    s.flowDirection = "+X";
-    const std::string a = runs.prepare(g, s, {});
-    const std::string b = runs.prepare(g, s, {});
-    for (const auto& id : {a, b})
-        fakeFinishedRun(tmp.path() / id, 0.8, 1.0);
-    // An older case.json: no contextHash.
-    const fs::path caseJson = tmp.path() / b / "case.json";
+    const fs::path caseJson = runDir / "case.json";
     nlohmann::json j;
     {
         std::ifstream in(caseJson);
         in >> j;
     }
-    j.erase("contextHash");
+    edit(j);
     std::ofstream(caseJson) << j.dump(2);
-    const auto cmp = runs.compare(a, b);
+}
+
+bool contains(const nlohmann::json& list, const std::string& value)
+{
+    return std::find(list.begin(), list.end(), value) != list.end();
+}
+
+} // namespace
+
+TEST_CASE("Setup evidence an older run did not record is unknown, not equal (CAD-84)", "[cfd]")
+{
+    TempDir tmp;
+    cfd::RunManager runs(tmp.path());
+    cfd::Settings s;
+    s.flowDirection = "+X";
+    cfd::CaseGeometry alone, withContext;
+    alone.part = box({0, 0, 0}, {200, 80, 60});
+    withContext.part = alone.part;
+    withContext.context = box({-120, 20, 0}, {240, 240, 45});
+    const std::string a = runs.prepare(alone, s, {});
+    const std::string b = runs.prepare(withContext, s, {});
+    const std::string c = runs.prepare(alone, s, {});
+    for (const auto& id : {a, b, c})
+        fakeFinishedRun(tmp.path() / id, 0.8, 1.0);
+
+    // Matched records: identical conditions.
+    auto cmp = runs.compare(a, c);
     INFO(cmp.dump());
     CHECK(cmp.at("sameConditions") == true);
+    CHECK(cmp.at("unknownConditions").empty());
+    CHECK(cmp.at("verdict") == "comparable");
+
+    // The audit's pair with the surroundings of the context run not recorded.
+    editCaseJson(tmp.path() / b, [](nlohmann::json& j) { j.erase("contextHash"); });
+    cmp = runs.compare(a, b);
+    INFO(cmp.dump());
+    CHECK(cmp.at("sameConditions") == false);
+    CHECK(contains(cmp.at("unknownConditions"), "context"));
+    CHECK(contains(cmp.at("differingConditions"), "domain"));
+    CHECK(cmp.at("verdict") == "not comparable");
+
+    // Otherwise matched runs without a recorded engine: unknown, with a note.
+    for (const auto& id : {a, c})
+        editCaseJson(tmp.path() / id, [](nlohmann::json& j) { j.erase("openfoam"); });
+    cmp = runs.compare(a, c);
+    INFO(cmp.dump());
+    CHECK(cmp.at("sameConditions") == false);
+    CHECK(contains(cmp.at("unknownConditions"), "engine"));
+    CHECK(cmp.at("verdict") == "not comparable");
     bool noted = false;
     for (const auto& n : cmp.at("notes"))
-        noted = noted || n.get<std::string>().find("surroundings") != std::string::npos;
+        noted = noted || n.get<std::string>().find("engine of both runs was not recorded") != std::string::npos;
     CHECK(noted);
 }
 
-TEST_CASE("A target-part variant of another size stays comparable; its domain is reported (CAD-84)", "[cfd]")
+TEST_CASE("A target-part variant of another size is compared on a different domain (CAD-84)", "[cfd]")
 {
     TempDir tmp;
     cfd::RunManager runs(tmp.path());
@@ -1068,9 +1108,11 @@ TEST_CASE("A target-part variant of another size stays comparable; its domain is
         fakeFinishedRun(tmp.path() / id, 0.8, 1.0);
     const auto cmp = runs.compare(a, b);
     INFO(cmp.dump());
-    CHECK(cmp.at("sameConditions") == true);
+    CHECK(cmp.at("sameConditions") == false);
     CHECK(cmp.at("sameDomain") == false);
-    CHECK(cmp.at("verdict") == "comparable");
+    CHECK(cmp.at("differingConditions") == nlohmann::json::array({"domain"}));
+    CHECK(cmp.at("verdict") == "different domains");
+    CHECK_FALSE(cmp.at("forces").empty()); // the variant is still compared
     bool noted = false;
     for (const auto& n : cmp.at("notes"))
         noted = noted || n.get<std::string>().find("flow domains differ") != std::string::npos;

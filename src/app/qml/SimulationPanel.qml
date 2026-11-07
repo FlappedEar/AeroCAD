@@ -881,6 +881,7 @@ Pane {
                 }
                 Repeater {
                     model: root.comparison ? root.comparison.differingConditions.map(c => qsTr("Different condition: %1").arg(c))
+                                             .concat((root.comparison.unknownConditions || []).map(c => qsTr("Unknown condition: %1").arg(c)))
                                              .concat(root.comparison.reasons).concat(root.comparison.notes) : []
                     delegate: Label {
                         required property var modelData
@@ -895,7 +896,9 @@ Pane {
                 ColumnLayout {
                     id: meshCheck
                     readonly property var ms: root.comparison ? root.comparison.meshSensitivity : null
-                    visible: !!ms && ms.status !== undefined && root.comparison.sameConditions && !root.comparison.reasons.length
+                    // Also for a target-part variant whose only difference is its own domain.
+                    visible: !!ms && ms.status !== undefined && !root.comparison.reasons.length
+                             && root.comparison.verdict !== "not comparable"
                     Layout.fillWidth: true
                     Layout.topMargin: 6
                     spacing: 2

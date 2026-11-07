@@ -241,14 +241,16 @@ colour scale ranges (Cp on the surface, speed in the sections). Verdict:
 different domain and mesh sizes, which is reported as a note.
 
 The resolved setup is compared too, not only the requested settings. Each case records a
-fingerprint of its surroundings (context parts, in model coordinates) and the engine version;
-`results.conditions` carries `domain`, `contextHash` and `engine`. Different surroundings
-(for example the part alone against the same part next to the car body) add `context` to
-the differing conditions, and a different engine adds `engine`; either makes the verdict
-`not comparable`. The target part itself may differ, since that is the A/B. A variant of
-another size gets its own flow domain: `sameDomain` is false and a note gives the largest
-difference, but the verdict is not blocked. Runs written before the surroundings were
-recorded get a note that they could not be compared.
+fingerprint of its surroundings (context parts in model coordinates, independent of their
+order) and the engine version; `results.conditions` carries `domain`, `contextHash` and
+`engine`. Different surroundings (for example the part alone against the same part next to
+the car body) add `context` to `differingConditions`, a different engine adds `engine`;
+either makes the verdict `not comparable`. A flow domain that differs by more than 1 µm adds
+`domain` and sets `sameDomain` to false. The target part itself may differ, since that is the
+A/B: when the domain is the only difference, the forces are still compared, a note gives the
+difference in mm and the verdict is `different domains` instead of `comparable`. What an
+older run did not record (surroundings, domain or engine) is listed in `unknownConditions`
+and makes the verdict `not comparable`.
 
 Both runs must have final results. Otherwise the verdict is `not comparable`, force
 and coefficient differences and shared colour scales are empty, and `states` / `reasons`
