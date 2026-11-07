@@ -33,7 +33,16 @@ void registerIntrospection(CommandRegistry& r)
                                      {"title", info.title},
                                      {"description", info.description},
                                      {"params", info.params},
-                                     {"modifiesDocument", info.modifiesDocument}});
+                                     {"modifiesDocument", info.modifiesDocument},
+                                     {"effects",
+                                      {{"readsFiles", info.effects.readsFiles},
+                                       {"writesFiles", info.effects.writesFiles},
+                                       {"deletesFiles", info.effects.deletesFiles},
+                                       {"runsProcesses", info.effects.runsProcesses},
+                                       {"network", info.effects.network},
+                                       {"installsSoftware", info.effects.installsSoftware},
+                                       {"undoable", info.effects.undoable},
+                                       {"destructive", info.effects.destructive}}}});
                   }
               }
               return Json{{"commands", out}};

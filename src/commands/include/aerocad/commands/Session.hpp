@@ -28,6 +28,9 @@ void registerProjectCommands(CommandRegistry& registry);
 void registerScanCommands(CommandRegistry& registry);
 /// Registers the wind tunnel commands (simulation.*).
 void registerSimulationCommands(CommandRegistry& registry);
+/// Declares the effects (files, processes, network, undo) of the registered commands that
+/// do more than read or change the document. Call after registering them.
+void declareCommandEffects(CommandRegistry& registry);
 
 /// One open project with its command registry: the single entry point used by the UI
 /// and (later) the MCP server.

@@ -39,6 +39,26 @@ struct CommandContext {
     cfd::RunManager* simulations = nullptr;    ///< Wind tunnel runs (simulation.*).
 };
 
+/// What a command does besides reading the document, for clients that decide what to allow
+/// (MCP tool annotations, permission prompts). Document changes are `modifiesDocument`;
+/// everything else is listed here (see declareCommandEffects for the table).
+struct CommandEffects {
+    bool readsFiles = false;       ///< Reads files given by the caller (import, open).
+    bool writesFiles = false;      ///< Creates or replaces files (save, export, simulation runs).
+    bool deletesFiles = false;     ///< Removes files (simulation.delete).
+    /// Starts or stops programs that keep running (the OpenFOAM solver, Colima). Short probes
+    /// such as `docker version` do not count.
+    bool runsProcesses = false;
+    bool network = false;          ///< May reach other machines or the internet (remote engine, downloads).
+    bool installsSoftware = false; ///< May download or install software.
+    /// Document changes can be undone with edit.undo. False for project.new / project.open,
+    /// which clear the history.
+    bool undoable = true;
+    /// May lose data: overwritten or deleted files, unsaved work, or (part.remove) user data
+    /// removed from the document.
+    bool destructive = false;
+};
+
 /// Static description of a command. `params` is a JSON Schema (subset, see
 /// ParamsValidation) of the parameter object; it is exported as-is to MCP tool
 /// definitions, so keep descriptions meaningful for an AI agent.
@@ -48,6 +68,7 @@ struct CommandInfo {
     std::string description; ///< What the command does.
     Json params = Json{{"type", "object"}, {"properties", Json::object()}};
     bool modifiesDocument = false;
+    CommandEffects effects{};
 };
 
 /// Error reported by a command handler (invalid parameters, failed operation, ...).
@@ -78,6 +99,9 @@ public:
     void add(CommandInfo info, Handler handler);
 
     [[nodiscard]] bool contains(std::string_view name) const;
+    /// Replaces the effects of a registered command. Throws std::invalid_argument for an
+    /// unknown name.
+    void setEffects(std::string_view name, const CommandEffects& effects);
     [[nodiscard]] const CommandInfo* info(std::string_view name) const;
     [[nodiscard]] std::vector<CommandInfo> list() const;
 
