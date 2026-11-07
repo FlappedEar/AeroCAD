@@ -19,6 +19,7 @@ Session::Session()
     registerProjectCommands(m_registry);
     registerScanCommands(m_registry);
     registerSimulationCommands(m_registry);
+    declareCommandEffects(m_registry);
     m_design.setPartLookup([this](model::PartId id) { return m_document.part(id); });
     registerSurfaceFeatures(m_design, m_document);
 }

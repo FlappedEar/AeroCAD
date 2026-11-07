@@ -6,6 +6,8 @@
 #include "aerocad/geometry/KernelError.hpp"
 
 #include <exception>
+#include <stdexcept>
+#include <string>
 #include <utility>
 
 namespace aerocad::commands {
@@ -30,6 +32,14 @@ void CommandRegistry::add(CommandInfo info, Handler handler)
 bool CommandRegistry::contains(std::string_view name) const
 {
     return m_commands.find(name) != m_commands.end();
+}
+
+void CommandRegistry::setEffects(std::string_view name, const CommandEffects& effects)
+{
+    auto it = m_commands.find(name);
+    if (it == m_commands.end())
+        throw std::invalid_argument("CommandRegistry::setEffects: unknown command " + std::string(name));
+    it->second.info.effects = effects;
 }
 
 const CommandInfo* CommandRegistry::info(std::string_view name) const

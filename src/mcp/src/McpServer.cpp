@@ -2,7 +2,10 @@
 #include "aerocad/mcp/McpServer.hpp"
 
 #include <algorithm>
+#include <cctype>
+#include <string>
 #include <utility>
+#include <vector>
 
 namespace aerocad::mcp {
 
@@ -34,8 +37,10 @@ constexpr const char* kInstructions =
     "Units: millimetres (mm) for lengths, degrees for angles; axes are right-handed with Z up. "
     "Start with project_get_context to learn the part ids, sizes and the document revision, and call it again "
     "after changes. Use geometry_measure to check dimensions and clearances instead of guessing. Every "
-    "modifying tool is recorded in the undo history (edit_undo / edit_redo). File paths are absolute paths on "
-    "the user's computer.";
+    "document change is recorded in the undo history (edit_undo / edit_redo), except project_new and "
+    "project_open, which replace the document and clear it. Files written or deleted and programs started are "
+    "never undone; each tool's description and annotations say what it does outside the document. File paths "
+    "are absolute paths on the user's computer.";
 
 } // namespace
 
@@ -59,9 +64,36 @@ Json toolDefinition(const commands::CommandInfo& info)
     if (auto it = schema.find("required"); it != schema.end() && it->is_array() && it->empty())
         schema.erase(it);
 
+    const commands::CommandEffects& e = info.effects;
     std::string description = info.description;
-    if (info.modifiesDocument)
+    if (info.modifiesDocument && e.undoable)
         description += " Changes the document (undoable with edit_undo).";
+    else if (info.modifiesDocument)
+        description += " Replaces the document and clears the undo history: it cannot be undone with edit_undo.";
+    if (e.writesFiles || e.deletesFiles || e.runsProcesses || e.network || e.installsSoftware) {
+        std::vector<std::string> parts;
+        if (e.writesFiles)
+            parts.emplace_back(e.destructive ? "writes files (replacing existing ones)" : "writes files");
+        if (e.deletesFiles)
+            parts.emplace_back("deletes files");
+        if (e.runsProcesses)
+            parts.emplace_back("starts or stops programs");
+        if (e.installsSoftware)
+            parts.emplace_back("may download and install software");
+        else if (e.network)
+            parts.emplace_back("may connect to other machines");
+        std::string list;
+        for (std::size_t i = 0; i < parts.size(); ++i)
+            list += (i == 0 ? "" : i + 1 == parts.size() ? " and " : ", ") + parts[i];
+        list[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(list[0])));
+        description += " " + list + "; edit_undo does not reverse this.";
+    }
+
+    // readOnlyHint: nothing in the document or on the computer changes. destructiveHint (only
+    // meaningful when not read-only): data may be lost; undoable document edits are not.
+    const bool readOnly =
+        !info.modifiesDocument && !e.writesFiles && !e.deletesFiles && !e.runsProcesses && !e.installsSoftware;
+    const bool destructive = e.destructive || e.deletesFiles || (info.modifiesDocument && !e.undoable);
 
     return Json{{"name", toolNameForCommand(info.name)},
                 {"title", info.title},
@@ -69,10 +101,9 @@ Json toolDefinition(const commands::CommandInfo& info)
                 {"inputSchema", schema},
                 {"annotations",
                  {{"title", info.title},
-                  {"readOnlyHint", !info.modifiesDocument},
-                  // Everything is undoable; only removal deletes user data from the view.
-                  {"destructiveHint", info.name == "part.remove"},
-                  {"openWorldHint", false}}}};
+                  {"readOnlyHint", readOnly},
+                  {"destructiveHint", destructive},
+                  {"openWorldHint", e.network}}}};
 }
 
 const std::vector<std::string>& McpServer::supportedProtocolVersions()

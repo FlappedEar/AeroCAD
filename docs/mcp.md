@@ -84,7 +84,19 @@ replaced by `_` (`document.import` -> `document_import`). New commands (CAD tool
 | `part_scale`, `part_rename`, `part_set_visible`, `part_remove` | Part edits (undoable). |
 | `edit_undo`, `edit_redo`, `edit_history` | Undo history. |
 
-Tool annotations mark read-only tools (`readOnlyHint`) so clients can auto-approve them.
+Tool annotations say what a tool does outside the document, so clients can decide what to
+auto-approve. They come from each command's effects (`src/commands/src/CommandEffects.cpp`):
+
+- `readOnlyHint`: nothing changes, neither the document nor files or programs on the computer
+  (e.g. `project_get_context`, `simulation_results`, `simulation_environment`).
+- `destructiveHint`: data may be lost: files are replaced or deleted (`project_save`,
+  `document_export`, `document_export_for_print`, `simulation_delete`), the document is
+  replaced and the undo history cleared (`project_new`, `project_open`), or `part_remove`.
+- `openWorldHint`: the tool may reach other machines or the internet (simulation tools with a
+  remote engine, `simulation_install_engine` downloads).
+
+Descriptions add the same in words ("Writes files ...; edit_undo does not reverse this"), and
+only undoable document changes promise `edit_undo`.
 
 ## Security
 
