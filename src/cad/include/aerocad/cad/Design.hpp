@@ -219,6 +219,16 @@ private:
         geometry::Shape shape;
     };
     std::map<model::PartId, ConvertedPart> m_convertedParts;
+    /// Surfaces fitted to the part of a scan under a body (Combine with a scan as tool):
+    /// cached per part, revision and region, since previews regenerate often.
+    struct ScanSurface {
+        model::PartId part = 0;
+        std::uint64_t revision = 0;
+        core::BoundingBox region;
+        geometry::Shape face;
+    };
+    std::vector<ScanSurface> m_scanSurfaces;
+    [[nodiscard]] geometry::Shape scanSurfaceUnder(const model::Part& scan, const core::BoundingBox& body);
     int m_bodyCounter = 0;
 };
 

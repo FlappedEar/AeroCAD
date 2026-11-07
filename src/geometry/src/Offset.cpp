@@ -687,6 +687,84 @@ Shape finOnSurface(const Shape& surface, const std::vector<Shape>& outlines, con
     }
 }
 
+Shape splitBySurface(const Shape& solid, const Shape& surface, bool keepFront)
+{
+    if (solid.isNull())
+        throw OffsetError("Nothing to cut");
+    const TopoDS_Shape& body = occt(solid);
+    if (!TopExp_Explorer(body, TopAbs_SOLID).More())
+        throw OffsetError("Only solids can be cut by a surface");
+    TopoDS_Shape s = occt(surface);
+    requireSurface(s);
+    s = untrimmed(s);
+    try {
+        TopTools_ListOfShape args, tools;
+        args.Append(body);
+        tools.Append(s);
+        BRepAlgoAPI_Splitter splitter;
+        splitter.SetArguments(args);
+        splitter.SetTools(tools);
+        splitter.SetRunParallel(false);
+        splitter.Build();
+        if (!splitter.IsDone() || splitter.HasErrors())
+            throw OffsetError("Cutting the body with the surface failed");
+
+        // Each piece by the side of the surface its centre lies on: the nearest point on the
+        // surface and the normal of the face there (as oriented, so the fitted side counts).
+        std::vector<TopoDS_Shape> sides[2];
+        for (TopExp_Explorer e(splitter.Shape(), TopAbs_SOLID); e.More(); e.Next()) {
+            GProp_GProps props;
+            BRepGProp::VolumeProperties(e.Current(), props);
+            if (std::abs(props.Mass()) < 1e-9)
+                continue;
+            const gp_Pnt c = props.CentreOfMass();
+            double best = std::numeric_limits<double>::max();
+            int side = -1;
+            for (TopExp_Explorer f(s, TopAbs_FACE); f.More(); f.Next()) {
+                const TopoDS_Face face = TopoDS::Face(f.Current());
+                const Handle(Geom_Surface) surf = BRep_Tool::Surface(face);
+                if (surf.IsNull())
+                    continue;
+                GeomAPI_ProjectPointOnSurf projector(c, surf);
+                if (projector.NbPoints() == 0 || projector.LowerDistance() >= best)
+                    continue;
+                best = projector.LowerDistance();
+                double u = 0.0, v = 0.0;
+                projector.LowerDistanceParameters(u, v);
+                gp_Pnt p;
+                gp_Vec du, dv;
+                surf->D1(u, v, p, du, dv);
+                gp_Vec n = du.Crossed(dv);
+                if (face.Orientation() == TopAbs_REVERSED)
+                    n.Reverse();
+                side = gp_Vec(p, c).Dot(n) >= 0.0 ? 0 : 1;
+            }
+            if (side >= 0)
+                sides[side].push_back(e.Current());
+        }
+        if (sides[0].empty() || sides[1].empty()) {
+            if (sides[0].empty() && sides[1].empty())
+                throw OffsetError("The surface does not reach the body");
+            // Not cut: the whole body is on one side.
+            const bool onFront = !sides[0].empty();
+            if (onFront == keepFront)
+                return solid;
+            return Shape{};
+        }
+        const std::vector<TopoDS_Shape>& kept = keepFront ? sides[0] : sides[1];
+        if (kept.size() == 1)
+            return wrapShape(kept.front());
+        TopoDS_Compound c;
+        BRep_Builder b;
+        b.MakeCompound(c);
+        for (const auto& k : kept)
+            b.Add(c, k);
+        return wrapShape(c);
+    } catch (const Standard_Failure& e) {
+        throw OffsetError(std::string("Cut by surface failed: ") + e.GetMessageString());
+    }
+}
+
 double surfaceArea(const Shape& shape)
 {
     if (shape.isNull())

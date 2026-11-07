@@ -286,6 +286,13 @@ QtObject {
         case "hole":
             return { id: id, text: qsTr("Hole"), icon: "hole", enabled: editableSolid(info),
                      reason: qsTr("Only solids can be drilled."), tip: qsTr("Drills a hole where you click. Shortcut H.") }
+        case "combine":
+            return { id: id, text: qsTr("Combine"), icon: "combine", enabled: editableSolid(info),
+                     reason: qsTr("Only solids can be combined."),
+                     tip: qsTr("Joins this solid with other bodies, cuts them out of it, or keeps only the overlap. A surface or the scan as the tool cuts it to that shape.") }
+        case "cutWithThis":
+            return { id: id, text: qsTr("Cut a part to this shape"), icon: "combine", enabled: true,
+                     tip: qsTr("Combine with this as the tool: click the part, and what is behind this surface (inside the scan) is cut away, so the part sits flush on it.") }
         case "solidToBody":
             return { id: id, text: qsTr("Make editable"), icon: "mesh-to-body", enabled: true,
                      tip: qsTr("Adds the solid to the timeline as a body, so fillets, holes and cuts work on it.") }
@@ -381,7 +388,7 @@ QtObject {
                                  text: qsTr("Creates a new surface part from the selected area. It is selected for the next steps."),
                                  actions: [a("fitSurface")] }] },
                          { title: qsTr("More"), steps: [],
-                           actions: [a("fitWhole"), a("toBody"), a("repair"), a("simplify"), a("scale"), a("export")] }] }
+                           actions: [a("fitWhole"), a("cutWithThis"), a("toBody"), a("repair"), a("simplify"), a("scale"), a("export")] }] }
         }
         if (r === "surface") {
             const cut = isCutOut(info)
@@ -401,7 +408,7 @@ QtObject {
                                { title: qsTr("Thicken"), done: false,
                                  text: qsTr("Turns the piece into a solid with the thickness you type."),
                                  actions: [a("thicken")] }] },
-                         { title: qsTr("More"), steps: [], actions: [...fitted, a("sketchFin"), a("offset"), a("scale"), a("export"), a("hide"), a("delete")] }] }
+                         { title: qsTr("More"), steps: [], actions: [...fitted, a("sketchFin"), a("offset"), a("cutWithThis"), a("scale"), a("export"), a("hide"), a("delete")] }] }
         }
         if (r === "sketch") {
             const onSurface = sketchSurface(info.featureId) > 0
@@ -430,7 +437,7 @@ QtObject {
                                  : qsTr("An exact solid from a file or a fit. Make it editable to add fillets, holes and cuts, or export it as it is."),
                  sections: editable
                      ? [{ title: qsTr("Change the shape"), steps: [],
-                          actions: [a("sketchOnFace"), a("fillet"), a("chamfer"), a("shell"), a("hole")] },
+                          actions: [a("sketchOnFace"), a("fillet"), a("chamfer"), a("shell"), a("hole"), a("combine")] },
                         { title: qsTr("More"), steps: [], actions: [a("export"), a("hide"), a("delete")] }]
                      : [{ title: qsTr("Use it"), steps: [
                               { title: qsTr("Export for printing or CAD"), done: false,
@@ -438,7 +445,7 @@ QtObject {
                                 actions: [a("exportForPrint"), a("export")] },
                               { title: qsTr("Or keep designing"), done: false,
                                 text: qsTr("Round or bevel its edges right away, or make it editable for holes and cuts; the changes appear in the timeline."),
-                                actions: [a("fillet"), a("chamfer"), a("solidToBody")] }] },
+                                actions: [a("fillet"), a("chamfer"), a("combine"), a("solidToBody")] }] },
                         { title: qsTr("More"), steps: [], actions: [...fitted, a("scale"), a("hide"), a("delete")] }] }
     }
 
@@ -553,6 +560,13 @@ QtObject {
         case "sketchFin":
             return host.startCreateSketch(true)
         case "toBody":
+        case "combine":
+            return { id: id, text: qsTr("Combine"), icon: "combine", enabled: editableSolid(info),
+                     reason: qsTr("Only solids can be combined."),
+                     tip: qsTr("Joins this solid with other bodies, cuts them out of it, or keeps only the overlap. A surface or the scan as the tool cuts it to that shape.") }
+        case "cutWithThis":
+            return { id: id, text: qsTr("Cut a part to this shape"), icon: "combine", enabled: true,
+                     tip: qsTr("Combine with this as the tool: click the part, and what is behind this surface (inside the scan) is cut away, so the part sits flush on it.") }
         case "solidToBody": {
             const r = controller.execute("feature.base_body", { part: pid })
             if (r.ok && r.result.bodies && r.result.bodies.length)
@@ -606,6 +620,8 @@ QtObject {
         case "chamfer": return host.openFeature("chamfer")
         case "shell": return host.openFeature("shell")
         case "hole": return host.openFeature("hole")
+        case "combine": return host.openFeature("combine")
+        case "cutWithThis": return host.openFeature("combine")
         case "export": return host.openExport([pid])
         case "exportForPrint": return host.openPrintExport()
         case "hide": return controller.execute("part.set_visible", { id: pid, visible: !info.visible })

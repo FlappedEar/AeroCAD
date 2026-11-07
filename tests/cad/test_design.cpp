@@ -2,10 +2,15 @@
 #include "aerocad/cad/Design.hpp"
 #include "aerocad/cad/Expression.hpp"
 #include "aerocad/geometry/Modeling.hpp"
+#include "aerocad/geometry/Primitives.hpp"
+#include "aerocad/geometry/SurfaceFit.hpp"
+#include "aerocad/model/Part.hpp"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <cmath>
+#include <memory>
 #include <numbers>
 
 using namespace aerocad;
@@ -315,4 +320,80 @@ TEST_CASE("Hole: through and blind", "[cad][design]")
     // Side face, through.
     d.addFeature("hole", {{"body", box}, {"point", {0, 10, 5}}, {"diameter", 2}});
     CHECK(bodyVolume(d, box) < 4000 - pi * 4 * 13);
+}
+
+namespace {
+
+/// A gently curved sheet z = 5 + 0.5 sin(x / 5), triangles facing +Z (a scan's outside).
+std::shared_ptr<const core::TriangleMesh> wavySheet()
+{
+    auto mesh = std::make_shared<core::TriangleMesh>();
+    const int n = 50;
+    for (int j = 0; j <= n; ++j)
+        for (int i = 0; i <= n; ++i) {
+            const double x = -20.0 + i;
+            const double y = -20.0 + j;
+            mesh->addVertex({x, y, 5.0 + 0.5 * std::sin(x / 5.0)});
+        }
+    auto at = [&](int i, int j) { return static_cast<std::uint32_t>(j * (n + 1) + i); };
+    for (int j = 0; j < n; ++j)
+        for (int i = 0; i < n; ++i) {
+            mesh->addTriangle(at(i, j), at(i + 1, j), at(i + 1, j + 1));
+            mesh->addTriangle(at(i, j), at(i + 1, j + 1), at(i, j + 1));
+        }
+    return mesh;
+}
+
+/// Volume of the 10 mm box [0, 10]^3 above the sheet.
+double boxAboveSheet()
+{
+    // Integral over x in [0, 10] of (10 - 5 - 0.5 sin(x / 5)), times 10 along y.
+    return 10.0 * (50.0 - 0.5 * 5.0 * (1.0 - std::cos(2.0)));
+}
+
+} // namespace
+
+TEST_CASE("Combine with a scan, a surface and a solid that are not in the timeline", "[cad][design]")
+{
+    model::Part scan;
+    scan.id = 7;
+    scan.name = "scan";
+    scan.mesh = wavySheet();
+    model::Part solid;
+    solid.id = 8;
+    solid.name = "block";
+    solid.shape = geometry::makeBox(10, 10, 2); // z 0..2
+    model::Part surface;
+    surface.id = 9;
+    surface.name = "skin";
+    {
+        core::TriangleSet all(scan.mesh->triangleCount());
+        for (std::size_t i = 0; i < all.size(); ++i)
+            all[i] = static_cast<std::uint32_t>(i);
+        surface.shape = geometry::fitSurface(*scan.mesh, all).face;
+    }
+    Design d;
+    d.setPartLookup([&](model::PartId id) -> const model::Part* {
+        return id == 7 ? &scan : id == 8 ? &solid : id == 9 ? &surface : nullptr;
+    });
+
+    const auto box = d.addFeature("box", {{"size", {10, 10, 10}}});
+    const auto cut = d.addFeature("combine", {{"target", box}, {"tools", Json::array({{{"part", 7}}})}, {"operation", "cut"}});
+    CHECK(bodyVolume(d, box) == Approx(boxAboveSheet()).epsilon(0.01));
+    d.editFeature(cut, {{"flip", true}});
+    CHECK(bodyVolume(d, box) == Approx(1000 - boxAboveSheet()).epsilon(0.01));
+    d.editFeature(cut, {{"flip", nullptr}, {"operation", "intersect"}});
+    CHECK(bodyVolume(d, box) == Approx(1000 - boxAboveSheet()).epsilon(0.01));
+    d.editFeature(cut, {{"operation", "cut"}, {"tools", Json::array({{{"part", 9}}})}});
+    CHECK(bodyVolume(d, box) == Approx(boxAboveSheet()).epsilon(0.01));
+    // An exact solid part is a normal boolean tool.
+    d.editFeature(cut, {{"tools", Json::array({{{"part", 8}}})}});
+    CHECK(bodyVolume(d, box) == Approx(800).epsilon(1e-6));
+    // A scan cannot be joined.
+    CHECK_THROWS_AS(d.addFeature("combine", {{"target", box}, {"tools", Json::array({{{"part", 7}}})}, {"operation", "join"}}),
+                    cad::DesignError);
+    // A scan far from the body does not reach it.
+    const auto far = d.addFeature("box", {{"corner", {200, 200, 0}}, {"size", {5, 5, 5}}});
+    CHECK_THROWS_AS(d.addFeature("combine", {{"target", far}, {"tools", Json::array({{{"part", 7}}})}, {"operation", "cut"}}),
+                    cad::DesignError);
 }

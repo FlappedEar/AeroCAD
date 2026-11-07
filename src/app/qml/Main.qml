@@ -262,6 +262,11 @@ ApplicationWindow {
                 selectBodyOfFeature(b.featureId)
             }
         }
+        if (type === "combine" && info.kind === "imported" && !((info.solids ?? 0) > 0)) {
+            // A surface or the scan selected: it is the tool that cuts a body to its shape.
+            initial.tools = [{ part: info.id }]
+            initial.operation = "cut"
+        }
         if (info.kind === "body") {
             if (type === "combine")
                 initial.target = info.featureId

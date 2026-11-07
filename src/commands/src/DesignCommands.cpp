@@ -1076,13 +1076,24 @@ void registerFeatureCommands(CommandRegistry& r)
                        {"thickness", numberOrExpr("Wall thickness (mm).")}},
                       {"body", "thickness"});
 
-    addFeatureCommand(r, "combine", "Combine",
-                      "Boolean between bodies (Fusion: Combine): joins, cuts or intersects the target with the tool "
-                      "bodies.",
-                      {{"target", bodyRefSchema("Target body.")},
-                       {"tools", {{"type", "array"}, {"items", bodyRefSchema("Tool body.")}, {"minItems", 1}}},
-                       {"operation", operationSchema(false)},
-                       {"keepTools", {{"type", "boolean"}, {"description", "Keep the tool bodies (default false)."}}}},
+    addFeatureCommand(
+        r, "combine", "Combine",
+        "Boolean between bodies (Fusion: Combine): joins, cuts or intersects the target with the tool bodies. A tool "
+        "can also be an imported part, {\"part\": id}: an exact solid (a fin, a STEP part) works like a body; a "
+        "surface or a scan cuts the target on one side (Fusion: Split Body). Cut removes what is behind the surface "
+        "(inside the scan, against its triangles' normals), Intersect keeps only that; flip swaps the sides. For a "
+        "scan, a smooth surface is fitted to the scan around the target first, so the cut face is clean.",
+        {{"target", bodyRefSchema("Target body.")},
+         {"tools", {{"type", "array"},
+                    {"items", {{"oneOf", Json::array({bodyRefSchema("Tool body."),
+                                                      {{"type", "object"},
+                                                       {"properties", {{"part", {{"type", "integer"}, {"minimum", 1},
+                                                                                 {"description", "Imported part id (document.parts)."}}}}},
+                                                       {"required", {"part"}}}})}}},
+                    {"minItems", 1}}},
+         {"operation", operationSchema(false)},
+         {"keepTools", {{"type", "boolean"}, {"description", "Keep the tool bodies (default false). Imported parts are always kept."}}},
+         {"flip", {{"type", "boolean"}, {"description", "Surface or scan tools: swap which side is removed."}}}},
                       {"target", "tools"});
 
     addFeatureCommand(r, "box", "Box", "Creates an axis-aligned box (Fusion: Box).",
