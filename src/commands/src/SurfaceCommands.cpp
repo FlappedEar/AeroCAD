@@ -759,8 +759,11 @@ void registerSurfaceFeatures(cad::Design& design, const model::Document& documen
 {
     // Fingerprints are cached per part revision: hashing a large scan on every
     // regeneration would cost more than the cache saves.
+    // The mesh itself is remembered too: an opened project replaces the parts, and its parts
+    // start again at revision 0.
     struct Seen {
         std::uint64_t revision;
+        std::weak_ptr<const core::TriangleMesh> mesh;
         std::string fingerprint;
     };
     auto seen = std::make_shared<std::map<model::PartId, Seen>>();
@@ -770,9 +773,9 @@ void registerSurfaceFeatures(cad::Design& design, const model::Document& documen
         if (p == nullptr)
             return "missing";
         auto it = seen->find(id);
-        if (it == seen->end() || it->second.revision != p->revision) {
+        if (it == seen->end() || it->second.revision != p->revision || it->second.mesh.lock() != p->mesh) {
             const std::string fp = p->mesh ? meshFingerprint(*p->mesh) : std::string("empty");
-            it = seen->insert_or_assign(id, Seen{p->revision, fp}).first;
+            it = seen->insert_or_assign(id, Seen{p->revision, p->mesh, fp}).first;
         }
         return it->second.fingerprint;
     };

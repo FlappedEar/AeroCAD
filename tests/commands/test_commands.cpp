@@ -1196,6 +1196,26 @@ TEST_CASE("Part on surface is a timeline step: edit, follow the sketch, delete, 
         CHECK(partVolume() == Approx(volume).epsilon(1e-6));
     }
 
+    SECTION("two projects opened one after the other: the second scan is not taken for the first")
+    {
+        const auto stem = std::filesystem::temp_directory_path() / ("aerocad_two_" + std::to_string(std::random_device{}()));
+        const auto fileA = core::pathToUtf8(stem.string() + "_a.aerocad");
+        const auto fileB = core::pathToUtf8(stem.string() + "_b.aerocad");
+        REQUIRE(session.execute("project.save", {{"path", fileA}}).ok);
+        REQUIRE(session.execute("part.scale", {{"id", scanId}, {"factor", 1.5}}).ok);
+        // Rebuild the step on the scaled scan (changing a part does not replay the timeline).
+        REQUIRE(session.execute("feature.edit", {{"id", featureId}, {"params", {{"thickness", 2.5}}}}).ok);
+        REQUIRE(session.execute("project.save", {{"path", fileB}}).ok);
+        commands::Session other;
+        REQUIRE(other.execute("project.open", {{"path", fileA}}).ok);
+        REQUIRE(other.execute("project.open", {{"path", fileB}}).ok);
+        // Both scans are part 1 at revision 0 once opened; each project's stored result is used.
+        CHECK(other.design().evaluatorRuns() == 0);
+        std::error_code ec;
+        std::filesystem::remove(fileA, ec);
+        std::filesystem::remove(fileB, ec);
+    }
+
     SECTION("saved in the project and opened without refitting")
     {
         const auto file = std::filesystem::temp_directory_path() / ("aerocad_timeline_" + std::to_string(std::random_device{}()) + ".aerocad");
