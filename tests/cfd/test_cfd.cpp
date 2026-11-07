@@ -422,6 +422,68 @@ TEST_CASE("OpenFOAM: box in a wind tunnel", "[.openfoam]")
     CHECK(uy > 0);
 }
 
+TEST_CASE("Install for me: the next setup step", "[cfd]")
+{
+    using cfd::Platform;
+    cfd::Environment none;
+    auto step = cfd::planEngineSetup(none, Platform::MacOS, "/opt/homebrew/bin/brew");
+    CHECK(step.action == "terminal");
+    REQUIRE(step.command.size() == 5);
+    CHECK(step.command[0] == "osascript");
+    CHECK(step.command[4].find("/opt/homebrew/bin/brew install --cask docker-desktop && open -a Docker") !=
+          std::string::npos);
+    step = cfd::planEngineSetup(none, Platform::MacOS, {});
+    CHECK(step.action == "browser");
+    CHECK(step.command == std::vector<std::string>{"open", "https://docs.docker.com/desktop/setup/install/mac-install/"});
+    CHECK(cfd::planEngineSetup(none, Platform::Linux, {}).command.front() == "xdg-open");
+
+    cfd::Environment installed;
+    installed.docker = "/usr/local/bin/docker";
+    CHECK(cfd::planEngineSetup(installed, Platform::MacOS, {}).command ==
+          std::vector<std::string>{"open", "-a", "Docker"});
+    CHECK(cfd::planEngineSetup(installed, Platform::Linux, {}).action == "manual");
+
+    installed.dockerRunning = true;
+    step = cfd::planEngineSetup(installed, Platform::MacOS, {});
+    CHECK(step.action == "pull");
+    CHECK(step.command.empty());
+    installed.imagePresent = true;
+    CHECK(cfd::planEngineSetup(installed, Platform::MacOS, {}).action == "none");
+
+    cfd::Environment local;
+    local.openfoamBashrc = "/usr/lib/openfoam/openfoam2506/etc/bashrc";
+    CHECK(cfd::planEngineSetup(local, Platform::Linux, {}).action == "none");
+
+    TempDir tmp;
+    cfd::RunManager runs(tmp.path());
+    CHECK(runs.imagePullStatus().is_null());
+#ifndef _WIN32
+    // A stand-in for `docker pull` printing what Docker prints without a terminal.
+    const fs::path fake = tmp.path() / "fake-docker";
+    write(fake, "#!/bin/sh\necho '2506: Pulling from opencfd/openfoam-default'\necho 'aaa: Pulling fs layer'\n"
+                "echo 'bbb: Pulling fs layer'\necho 'aaa: Pull complete'\nsleep 1\necho 'bbb: Pull complete'\n");
+    fs::permissions(fake, fs::perms::owner_all);
+    REQUIRE(runs.startImagePull(fake));
+    CHECK_FALSE(runs.startImagePull(fake)); // Already running.
+    auto pull = runs.imagePullStatus();
+    CHECK(pull.at("state") == "running");
+    for (int i = 0; i < 100 && pull.at("state") == "running"; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        pull = runs.imagePullStatus();
+    }
+    CHECK(pull.at("state") == "finished");
+    CHECK(pull.at("progress") == 1.0);
+
+    write(fake, "#!/bin/sh\necho 'Error response from daemon: no space left'\nexit 1\n");
+    REQUIRE(runs.startImagePull(fake));
+    for (int i = 0; i < 100 && runs.imagePullStatus().at("state") == "running"; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    pull = runs.imagePullStatus();
+    CHECK(pull.at("state") == "failed");
+    CHECK(pull.at("message").get<std::string>().find("no space left") != std::string::npos);
+#endif
+}
+
 TEST_CASE("RunManager: runs from an earlier session", "[cfd]")
 {
     TempDir tmp;

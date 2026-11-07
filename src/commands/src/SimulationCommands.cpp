@@ -8,6 +8,7 @@
 #include "aerocad/cfd/RunManager.hpp"
 #include "aerocad/core/Path.hpp"
 
+#include <chrono>
 #include <cmath>
 #include <limits>
 #include <string>
@@ -60,6 +61,11 @@ Json statusJson(const CommandContext& ctx, const cfd::RunStatus& status)
     Json j = status.toJson();
     j["sourceInDocument"] = sourceInDocument(ctx, status.source);
     return j;
+}
+
+Json setupJson(const cfd::SetupStep& step)
+{
+    return Json{{"action", step.action}, {"message", step.message}};
 }
 
 /// Part and context geometry for a run, plus what it was made from.
@@ -154,13 +160,46 @@ void registerSimulationCommands(CommandRegistry& r)
            "and returns the OpenFOAM version, the preset, the settings schema and where runs are stored.",
            objectSchema(Json::object())},
           [](CommandContext& ctx, const Json&) {
-              Json j = cfd::detectEnvironment().toJson();
+              const cfd::Environment env = cfd::detectEnvironment();
+              Json j = env.toJson();
               j["preset"] = cfd::kExternalFlowPreset;
               j["presetDescription"] =
                   "Steady incompressible external flow (simpleFoam, k-omega SST, snappyHexMesh) around the part in a "
                   "virtual wind tunnel; optional moving floor; forces on the part only.";
               j["defaults"] = cfd::toJson(cfd::Settings{});
               j["runsDirectory"] = runs(ctx).root().string();
+              j["imagePull"] = runs(ctx).imagePullStatus();
+              j["setup"] = setupJson(cfd::planEngineSetup(env, cfd::currentPlatform(), cfd::findBrew()));
+              return j;
+          });
+
+    r.add({"simulation.install_engine", "Install simulation engine",
+           "Does the next step to get a simulation engine (\"Install for me\"): downloads the OpenFOAM image when "
+           "Docker runs, starts Docker Desktop when it is installed (macOS), installs it with Homebrew in a "
+           "Terminal window, or opens the Docker download page. Returns the step taken; call "
+           "simulation.environment to follow the download (imagePull).",
+           objectSchema(Json::object())},
+          [](CommandContext& ctx, const Json&) {
+              const cfd::Environment env = cfd::detectEnvironment();
+              const cfd::SetupStep step = cfd::planEngineSetup(env, cfd::currentPlatform(), cfd::findBrew());
+              Json j = setupJson(step);
+              try {
+                  if (step.action == "pull") {
+                      j["started"] = runs(ctx).startImagePull(env.docker);
+                  } else if (!step.command.empty()) {
+                      const auto out = cfd::runCommand(step.command, std::chrono::seconds(20));
+                      if (out.exitCode != 0)
+                          throw CommandError("Could not " + step.action + ": " + out.output);
+                      j["started"] = true;
+                  } else {
+                      j["started"] = false;
+                  }
+              } catch (const CommandError&) {
+                  throw;
+              } catch (const std::exception& e) {
+                  throw CommandError(e.what());
+              }
+              j["imagePull"] = runs(ctx).imagePullStatus();
               return j;
           });
 

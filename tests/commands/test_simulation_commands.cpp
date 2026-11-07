@@ -56,7 +56,8 @@ TEST_CASE("simulation.* commands are registered with schemas", "[commands][simul
     commands::Session session;
     for (const char* name : {"simulation.environment", "simulation.propose_run", "simulation.run", "simulation.status",
                              "simulation.list", "simulation.cancel", "simulation.delete", "simulation.results",
-                             "simulation.field", "simulation.compare", "simulation.import"}) {
+                             "simulation.field", "simulation.compare", "simulation.import",
+                             "simulation.install_engine"}) {
         INFO(name);
         const auto* info = session.registry().info(name);
         REQUIRE(info != nullptr);
@@ -69,6 +70,8 @@ TEST_CASE("simulation.* commands are registered with schemas", "[commands][simul
     CHECK(env.data.at("openfoamVersion") == "v2506");
     CHECK(env.data.at("image") == "opencfd/openfoam-default:2506");
     CHECK(env.data.at("defaults").at("speed") == 20.0);
+    CHECK(env.data.at("setup").contains("action"));
+    CHECK(env.data.at("imagePull").is_null());
 }
 
 TEST_CASE("simulation.propose_run and a prepared run", "[commands][simulation]")
