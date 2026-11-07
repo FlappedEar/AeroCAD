@@ -14,6 +14,12 @@ Item {
     signal partContextRequested(var id, real x, real y)
     /// Left click on a part: its id and the hit point in model coordinates (mm, Z up).
     signal pointPicked(var id, vector3d point)
+    /// A left click went into a hole (or just past an edge) and was moved to the nearest
+    /// surface; emitted before partPicked / pointPicked for that click.
+    signal snappedToNearestSurface()
+    /// Left clicks that miss the model (a hole in a scan) take the nearest surface instead,
+    /// within a few degrees of the click: for choosing where to sketch.
+    property bool snapToNearestSurface: false
 
     /// Active sketch ({id, origin, normal, xDir, yDir} in model space) or null; while set,
     /// left clicks draw with `sketchTool` instead of selecting.
@@ -100,6 +106,17 @@ Item {
             return null
         const eye = modelSpace.mapPositionFromScene(view.camera.scenePosition)
         return { partId: hit.partId, point: hit.point, distance: hit.point.minus(eye).length() }
+    }
+
+    /// Nearest surface to view position (x, y) for a click that misses, like pickPart, or null.
+    function pickNearPart(x, y) {
+        const near = modelSpace.mapPositionFromScene(view.mapTo3DScene(Qt.vector3d(x, y, 0)))
+        const far = modelSpace.mapPositionFromScene(view.mapTo3DScene(Qt.vector3d(x, y, 100)))
+        const hit = controller.pickNearSurface(near, far.minus(near), 4)
+        if (!hit.partId)
+            return null
+        const eye = modelSpace.mapPositionFromScene(view.camera.scenePosition)
+        return { partId: hit.partId, point: hit.point, distance: hit.point.minus(eye).length(), snapped: true }
     }
 
     /// Point on part `id` under view position (x, y) (model mm), or null.
@@ -477,7 +494,12 @@ Item {
         acceptedButtons: Qt.LeftButton
         onTapped: eventPoint => {
             // Mesh ray cast: Qt Quick 3D picks custom geometry by its bounding volume only.
-            const hit = root.pickPart(eventPoint.position.x, eventPoint.position.y)
+            let hit = root.pickPart(eventPoint.position.x, eventPoint.position.y)
+            if (!hit && root.snapToNearestSurface) {
+                hit = root.pickNearPart(eventPoint.position.x, eventPoint.position.y)
+                if (hit)
+                    root.snappedToNearestSurface()
+            }
             const id = hit ? hit.partId : 0
             root.partPicked(id)
             if (!hit)

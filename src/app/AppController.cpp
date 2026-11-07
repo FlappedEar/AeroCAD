@@ -17,6 +17,7 @@
 #include <QStandardPaths>
 
 #include <algorithm>
+#include <cmath>
 
 namespace aerocad::app {
 
@@ -585,6 +586,41 @@ QVariantMap AppController::pickSurface(const QVector3D& origin, const QVector3D&
             {QStringLiteral("point"), QVector3D(static_cast<float>(best->point.x), static_cast<float>(best->point.y),
                                                 static_cast<float>(best->point.z))},
             {QStringLiteral("triangle"), QVariant::fromValue<quint32>(best->triangle)}};
+}
+
+QVariantMap AppController::pickNearSurface(const QVector3D& origin, const QVector3D& direction,
+                                           double maxAngleDeg) const
+{
+    const core::Vec3 o{origin.x(), origin.y(), origin.z()};
+    const core::Vec3 d{direction.x(), direction.y(), direction.z()};
+    const double len = d.length();
+    if (!(len > 0.0))
+        return {};
+    std::optional<core::RayHit> best;
+    double bestAngle = 0.0;
+    model::PartId bestPart = 0;
+    for (const auto& p : m_session.document().parts()) {
+        if (!p.visible || !p.mesh)
+            continue;
+        const auto hit = core::nearestToRay(*p.mesh, o, d, maxAngleDeg);
+        if (!hit)
+            continue;
+        const core::Vec3 w = hit->point - o;
+        const double along = w.dot(d) / len;
+        const double angle = std::atan2((w - d * (along / len)).length(), along);
+        if (!best || angle < bestAngle) {
+            best = hit;
+            bestAngle = angle;
+            bestPart = p.id;
+        }
+    }
+    if (!best)
+        return {};
+    return {{QStringLiteral("partId"), QVariant::fromValue<quint64>(bestPart)},
+            {QStringLiteral("point"), QVector3D(static_cast<float>(best->point.x), static_cast<float>(best->point.y),
+                                                static_cast<float>(best->point.z))},
+            {QStringLiteral("triangle"), QVariant::fromValue<quint32>(best->triangle)},
+            {QStringLiteral("snapped"), true}};
 }
 
 const core::MeshProjector& AppController::projectorFor(const std::shared_ptr<const core::TriangleMesh>& mesh,

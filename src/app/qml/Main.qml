@@ -1021,6 +1021,9 @@ ApplicationWindow {
             sketch: window.activeSketch
             sketchTool: window.sketchTool
             selectionToolsEnabled: !featureDialog.visible && !window.pickingSketchPlane
+            snapToNearestSurface: window.pickingSketchPlane
+            property bool snappedClick: false
+            onSnappedToNearestSurface: snappedClick = true
             markers: featureDialog.visible ? featureDialog.pickedPoints : []
             pickKind: featureDialog.visible ? featureDialog.pickKind : ""
             shownSketch: featureDialog.shownSketch
@@ -1028,7 +1031,7 @@ ApplicationWindow {
                 window.selectPart(id)
                 // A click through a hole of a scan, or next to the model, while choosing where to sketch.
                 if (!id && window.pickingSketchPlane)
-                    window.controller.showStatus(qsTr("Nothing there to sketch on: click on the surface, not a hole in it"))
+                    window.controller.showStatus(qsTr("Nothing there to sketch on: click on or next to the surface"))
             }
             onPartContextRequested: (id, x, y) => {
                 partMenu.info = id ? window.controller.partInfo(id) : ({})
@@ -1037,6 +1040,8 @@ ApplicationWindow {
             onPointPicked: (id, point) => {
                 const info = window.controller.partInfo(id)
                 if (window.pickingSketchPlane) {
+                    const snapped = viewport.snappedClick
+                    viewport.snappedClick = false
                     const at = [point.x, point.y, point.z]
                     if (info.kind === "body")
                         window.createSketch({ face: { body: info.featureId, point: at } })
@@ -1046,6 +1051,8 @@ ApplicationWindow {
                         window.createSketch({ surface: sketchAcross.checked
                                                   ? { part: id, point: at, across: true, angle: window.finAngle() }
                                                   : { part: id, point: at } })
+                    if (snapped && window.activeSketch)
+                        window.controller.showStatus(qsTr("That was a hole in the surface: sketching on the surface next to it"))
                 } else if (featureDialog.visible) {
                     featureDialog.addPick(info, point)
                 }

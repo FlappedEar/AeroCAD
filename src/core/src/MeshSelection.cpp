@@ -179,6 +179,34 @@ std::optional<RayHit> raycast(const TriangleMesh& mesh, const Vec3& origin, cons
     return best;
 }
 
+std::optional<RayHit> nearestToRay(const TriangleMesh& mesh, const Vec3& origin, const Vec3& direction,
+                                   double maxAngleDeg)
+{
+    const double len = direction.length();
+    if (!(len > 0.0) || !(maxAngleDeg > 0.0) || maxAngleDeg >= 90.0)
+        return std::nullopt;
+    const Vec3 d = direction * (1.0 / len);
+    const double maxRatio = std::tan(maxAngleDeg * 3.14159265358979323846 / 180.0);
+    const auto& v = mesh.vertices();
+    // Smallest ratio of distance off the ray to depth along it (tangent of the angle).
+    double bestRatio = maxRatio;
+    std::optional<RayHit> best;
+    for (std::size_t t = 0; t < mesh.triangleCount(); ++t) {
+        for (const auto i : mesh.triangles()[t]) {
+            const Vec3 w = v[i] - origin;
+            const double depth = w.dot(d);
+            if (!(depth > 0.0))
+                continue;
+            const double off = (w - d * depth).length();
+            if (off > bestRatio * depth)
+                continue;
+            bestRatio = off / depth;
+            best = RayHit{static_cast<std::uint32_t>(t), depth / len, v[i]};
+        }
+    }
+    return best;
+}
+
 std::vector<Vec3> sliceMesh(const TriangleMesh& mesh, const Vec3& origin, const Vec3& normal, double radius)
 {
     std::vector<Vec3> out;
