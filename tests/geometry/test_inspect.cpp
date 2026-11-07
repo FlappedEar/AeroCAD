@@ -52,3 +52,17 @@ TEST_CASE("Pick and measure sub-shapes", "[geometry][inspect]")
     CHECK(d.distance == Approx(10));
     CHECK(geometry::subShapeProperties(box, {}).volume == Approx(1000));
 }
+
+TEST_CASE("Mesh distances are refined on the exact faces up and down", "[geometry][inspect]")
+{
+    const auto box = geometry::makeBox(10, 10, 10);
+    const std::vector<core::Vec3> points{{5, 5, 11}, {5, 5, 12}, {5, 5, 9.5}, {5, 5, 13}};
+    // Under- and overestimated mesh values (an inscribed triangulation can be either);
+    // the last is below the threshold and kept.
+    std::vector<double> values{0.9, 3.0, -0.45, 0.01};
+    CHECK(geometry::refineShapeDistances(box, points, values, 0.05, 100) == 3);
+    CHECK(values[0] == Approx(1.0).margin(1e-6));
+    CHECK(values[1] == Approx(2.0).margin(1e-6));
+    CHECK(values[2] == Approx(-0.5).margin(1e-6));
+    CHECK(values[3] == 0.01);
+}

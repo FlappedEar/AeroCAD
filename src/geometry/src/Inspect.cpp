@@ -422,10 +422,12 @@ std::size_t refineShapeDistances(const Shape& shape, const std::vector<core::Vec
     for (const auto i : order) {
         const gp_Pnt p(points[i].x, points[i].y, points[i].z);
         const double current = std::abs(values[i]);
-        double best = current;
+        // The exact distance replaces the mesh one either way: an inscribed triangulation
+        // can also be closer than the surface (inside a convex reference).
+        double best = std::numeric_limits<double>::infinity();
         for (auto& f : faces) {
             Bnd_Box near = f.box;
-            near.Enlarge(current);
+            near.Enlarge(2.0 * current + 1e-3);
             if (near.IsOut(p))
                 continue;
             try {
@@ -437,7 +439,7 @@ std::size_t refineShapeDistances(const Shape& shape, const std::vector<core::Vec
                 // keep the mesh distance
             }
         }
-        if (best < current) {
+        if (std::isfinite(best)) {
             values[i] = values[i] < 0.0 ? -best : best;
             ++replaced;
         }
