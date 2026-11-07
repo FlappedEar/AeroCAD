@@ -5,6 +5,7 @@
 #include "InspectGeometry.hpp"
 #include "JsonBridge.hpp"
 
+#include "aerocad/BuildInfo.hpp"
 #include "aerocad/core/Path.hpp"
 
 #include <cmath>
@@ -39,7 +40,7 @@ QString toLocalPath(const QUrl& url)
 
 AppController::AppController(QObject* parent) : QObject(parent), m_parts(m_session.document())
 {
-    m_session.project().generator = "AeroCAD " AEROCAD_VERSION;
+    m_session.project().generator = std::string("AeroCAD ") + aerocad::buildStamp();
     QSettings settings;
     m_recent = settings.value(QStringLiteral("project/recent")).toStringList();
     m_autosaveTimer.setInterval(std::max(10, autosaveSeconds()) * 1000);
@@ -199,7 +200,7 @@ QStringList AppController::exportNameFilters() const
 
 QString AppController::version() const
 {
-    return QStringLiteral(AEROCAD_VERSION);
+    return QString::fromUtf8(aerocad::buildStamp());
 }
 
 QVariantMap AppController::preview(const QString& name, const QVariantMap& params)

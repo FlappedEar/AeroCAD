@@ -87,21 +87,22 @@ qt_add_qml_module(aerocad
         ${AEROCAD_ICONS}
 )
 
+string(TIMESTAMP AEROCAD_BUNDLE_VERSION "%Y.%m.%d")
 set_target_properties(aerocad PROPERTIES
     OUTPUT_NAME AeroCAD
     WIN32_EXECUTABLE ON
     MACOSX_BUNDLE ON
     MACOSX_BUNDLE_GUI_IDENTIFIER io.github.flappedear.aerocad
     MACOSX_BUNDLE_BUNDLE_NAME AeroCAD
-    MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
-    MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION}
+    # macOS needs a numeric bundle version: the configure date (the full build stamp is in the app).
+    MACOSX_BUNDLE_BUNDLE_VERSION ${AEROCAD_BUNDLE_VERSION}
+    MACOSX_BUNDLE_SHORT_VERSION_STRING ${AEROCAD_BUNDLE_VERSION}
 )
 
-target_compile_definitions(aerocad PRIVATE AEROCAD_VERSION="${PROJECT_VERSION}")
 target_include_directories(aerocad PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(aerocad PRIVATE
     Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::Quick3D
-    AeroCAD::commands AeroCAD::io AeroCAD::mcp_ipc aerocad_styleplugin)
+    AeroCAD::buildinfo AeroCAD::commands AeroCAD::io AeroCAD::mcp_ipc aerocad_styleplugin)
 
 # Bundle the MCP server with the application: next to the executable, and inside the
 # macOS app bundle (Contents/MacOS) so the app can show its path to the user.
