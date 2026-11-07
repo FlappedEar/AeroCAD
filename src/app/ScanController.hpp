@@ -97,13 +97,23 @@ private:
         int budget = 0;
     };
 
+    /// A queued file with the settings captured when it was queued.
+    struct ImportJob {
+        QString path;
+        QString units;
+        std::uint64_t generation = 0; ///< ProjectState::generation it belongs to
+    };
+
     void startNextImport();
     void finishImport();
+    [[nodiscard]] std::uint64_t projectGeneration() const;
+    /// Cancels the running job and drops queued files that belong to a replaced project.
+    void dropStaleImports();
     void setProgress(double value, const QString& text);
 
     QPointer<AppController> m_app;
-    QStringList m_queue;
-    QString m_currentPath;
+    QList<ImportJob> m_queue;
+    ImportJob m_current;
     QThread* m_job = nullptr;
     std::shared_ptr<std::atomic<double>> m_jobProgress;
     std::shared_ptr<std::atomic<bool>> m_jobCancel;

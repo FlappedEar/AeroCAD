@@ -1,0 +1,33 @@
+# CAD-80: a background import belongs to the project that was open when it was queued and
+# uses the import units chosen then. New / Open discards it; a later unit change does not
+# rescale it. Each step queues the import and replaces the project in the same script line,
+# so the parse is always still pending when the project changes.
+# Run from the gui-drop fixture directory (drop/B.aerocad, drop/tetrahedron.stl, see
+# src/app/CMakeLists.txt):
+#   AeroCAD --ui-script <this file>
+ui.wait(1000)
+(() => { scan.importUnits = "mm" })()
+# 1. Two files queued, then File > New: neither lands in the new project.
+(() => { scan.importFile("drop/tetrahedron.stl"); scan.importFile("drop/tetrahedron.stl"); controller.newProject() })()
+ui.wait(2000)
+(() => { const n = controller.execute("document.parts").result.parts.length; ui.log("after New: " + n + " part(s), busy " + scan.busy + ", status: " + controller.statusMessage); if (n !== 0) ui.fail("an import queued before New was added to the new project"); if (scan.busy) ui.fail("an import is still running") })()
+ui.shot("import_1_discarded_after_new.png")
+# 2. Units changed while the file is parsed: the import keeps the units it was queued with.
+(() => { scan.importFile("drop/tetrahedron.stl"); scan.importUnits = "cm" })()
+ui.wait(2000)
+(() => { const parts = controller.execute("document.parts").result.parts; const b = controller.execute("document.bounds").result.bounds; ui.log("after unit change: " + parts.length + " part(s), bounds " + JSON.stringify(b) + ", status: " + controller.statusMessage); if (parts.length !== 1) ui.fail("the import was not added"); if (Math.abs(b.max[0] - b.min[0] - 10) > 1e-6) ui.fail("the import used the units chosen after it was queued") })()
+(() => { scan.importUnits = "mm" })()
+# 3. A -> B -> A through project.open (as an MCP client would): the import queued in A is
+#    not added to B, nor to A opened again.
+(() => { if (!controller.execute("project.save", {path: "drop/A.aerocad"}).ok) ui.fail("could not save A") })()
+(() => { scan.importFile("drop/tetrahedron.stl"); controller.execute("project.open", {path: "drop/B.aerocad"}); controller.execute("project.open", {path: "drop/A.aerocad"}) })()
+ui.wait(2000)
+(() => { const n = controller.execute("document.parts").result.parts.length; ui.log("after A -> B -> A: " + controller.projectName + ", " + n + " part(s), status: " + controller.statusMessage); if (controller.projectName !== "A" || n !== 1) ui.fail("an import queued in A was added after A was replaced") })()
+(() => { scan.importFile("drop/tetrahedron.stl"); controller.execute("project.open", {path: "drop/B.aerocad"}) })()
+ui.wait(2000)
+(() => { const parts = controller.execute("document.parts").result.parts; ui.log("in B: " + parts.map(p => p.name).join(", ")); if (parts.some(p => p.name.indexOf("tetrahedron") >= 0)) ui.fail("an import queued in A was added to B") })()
+# 4. Imports into the current project still work.
+(() => { scan.importFile("drop/tetrahedron.stl") })()
+ui.wait(2000)
+(() => { const parts = controller.execute("document.parts").result.parts; ui.log("import into B: " + parts.map(p => p.name).join(", ")); if (!parts.some(p => p.name.indexOf("tetrahedron") >= 0)) ui.fail("a normal import did not work") })()
+ui.shot("import_2_normal_import.png")

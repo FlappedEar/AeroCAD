@@ -1528,3 +1528,25 @@ TEST_CASE("CAD-85: fit reports saved before the tolerance was recorded are fitte
     CHECK(feature.at("report").at("warnings")[0].get<std::string>().find("Approximation") != std::string::npos);
     std::filesystem::remove(file);
 }
+
+TEST_CASE("CAD-80: replacing the project starts a new generation and drops staged imports", "[commands]")
+{
+    commands::Session session;
+    const std::uint64_t first = session.project().generation;
+    session.importStage().put("/pending/scan.stl", io::ImportResult{});
+    REQUIRE(session.execute("project.new").ok);
+    const std::uint64_t second = session.project().generation;
+    CHECK(second != first);
+    // A file parsed for the old project is not imported into the new one.
+    CHECK_FALSE(session.importStage().take("/pending/scan.stl").has_value());
+
+    // Ordinary edits and saves keep the generation; opening a project changes it.
+    REQUIRE(session.execute("feature.box", {{"size", {10, 10, 10}}}).ok);
+    const auto file = std::filesystem::temp_directory_path() /
+                      ("aerocad_generation_" + std::to_string(std::random_device{}()) + ".aerocad");
+    REQUIRE(session.execute("project.save", {{"path", core::pathToUtf8(file)}}).ok);
+    CHECK(session.project().generation == second);
+    REQUIRE(session.execute("project.open", {{"path", core::pathToUtf8(file)}}).ok);
+    CHECK(session.project().generation != second);
+    std::filesystem::remove(file);
+}

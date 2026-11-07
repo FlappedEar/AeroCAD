@@ -244,9 +244,21 @@ Pane {
     function close() {
         previewTimer.stop()
         undoPreview()
-        // Cancel: the solids made editable for this dialog go back to what they were.
-        for (; conversions > 0; --conversions)
-            controller.execute("edit.undo")
+        // Cancel: the solids made editable for this dialog go back to what they were, newest
+        // first, as long as each is still the last step. A change made on top of one (by an
+        // MCP client, a script or another command) is never undone for the dialog: those
+        // conversions stay, and the status bar says so.
+        let kept = 0
+        for (let i = ownedSteps.length - 1; i >= 0; --i) {
+            if (!controller.historyApplied(ownedSteps[i]))
+                continue // already undone by the user, or the project was replaced
+            if (kept > 0 || !controller.undoIfTop(ownedSteps[i]))
+                kept += 1
+        }
+        ownedSteps = []
+        if (kept > 0)
+            controller.showStatus(kept === 1 ? qsTr("The solid made editable stays editable: other changes were made after it")
+                                             : qsTr("%1 solids made editable stay editable: other changes were made after them").arg(kept))
         type = ""
         pickKey = ""
         finished()
@@ -354,9 +366,10 @@ Pane {
         return b
     }
 
-    /// Conversions made for this dialog (feature.base_body runs): Cancel undoes them, OK
-    /// joins them with the feature into one undo step.
-    property int conversions: 0
+    /// Undo-step tokens (controller.historyTopId) of the conversions made for this dialog
+    /// (feature.base_body runs): Cancel undoes them, OK joins them with the feature into one
+    /// undo step, in both cases only while no one else's step is in between.
+    property var ownedSteps: []
 
     /// Makes imported part `partId` a timeline body (feature.base_body) as part of this
     /// dialog. Returns { id, kind: "body", featureId } of the new body, or null.
@@ -366,7 +379,7 @@ Pane {
         const body = r.ok && r.result.bodies ? r.result.bodies.find(b => b.id === r.result.id) : null
         if (!body)
             return null
-        conversions += 1
+        ownedSteps = ownedSteps.concat([controller.historyTopId()])
         previewTimer.restart()
         return { id: body.partId, kind: "body", featureId: body.id }
     }
@@ -485,9 +498,10 @@ Pane {
         undoPreview()
         const r = submit()
         if (r.ok) {
-            if (conversions > 0)
-                controller.mergeHistory(conversions + 1, spec.title)
-            conversions = 0
+            const steps = ownedSteps.filter(id => controller.historyApplied(id))
+            if (steps.length > 0)
+                controller.mergeHistoryIds(steps.concat([controller.historyTopId()]), spec.title)
+            ownedSteps = []
             // A kept approximation (fit tolerance missed) or another caveat must not pass silently.
             const res = r.result || {}
             const warnings = res.warnings || (res.report && res.report.warnings) || []
