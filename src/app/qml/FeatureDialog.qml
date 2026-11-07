@@ -87,7 +87,14 @@ Pane {
         chamfer: { title: qsTr("Chamfer"), command: "feature.chamfer", fields: [
             { key: "body", type: "body", label: qsTr("Body") },
             { key: "edges", type: "edgePicks", label: qsTr("Edges"), hint: qsTr("Click near edges of the body") },
-            { key: "distance", type: "expr", label: qsTr("Distance"), init: 1 }] },
+            { key: "type", type: "choice", label: qsTr("Chamfer type"), init: "equal_distance", options: [
+                { value: "equal_distance", label: qsTr("Equal distance") },
+                { value: "two_distances", label: qsTr("Two distances") },
+                { value: "distance_angle", label: qsTr("Distance and angle") }] },
+            { key: "distance", type: "expr", label: qsTr("Distance"), init: 1 },
+            { key: "distance2", type: "expr", label: qsTr("Distance 2"), init: 1, showIf: v => v.type === "two_distances" },
+            { key: "angle", type: "expr", label: qsTr("Angle (deg)"), init: 45, showIf: v => v.type === "distance_angle" },
+            { key: "flip", type: "bool", label: qsTr("Flip"), showIf: v => v.type !== undefined && v.type !== "equal_distance" }] },
         shell: { title: qsTr("Shell"), command: "feature.shell", fields: [
             { key: "body", type: "body", label: qsTr("Body") },
             { key: "faces", type: "facePicks", label: qsTr("Faces to remove"), hint: qsTr("Click faces (none: closed hollow)") },
@@ -256,10 +263,13 @@ Pane {
         const r = submit(true)
         previewApplied = r.ok
         previewFeatureId = r.ok && r.result ? r.result.id : -1
-        // Incomplete input (no edges picked yet, ...) is normal while editing: errors are
-        // shown when OK is pressed.
+        // Incomplete input (no edges picked yet, ...) is normal while editing: those errors
+        // are shown when OK is pressed. A complete feature that fails (a fillet radius that
+        // does not fit) is reported right away, like Fusion's dialog warning.
         if (r.ok)
             error = ""
+        else if (/does not fit|failed/.test(r.error || ""))
+            error = r.error
     }
 
     onValuesChanged: if (type !== "") previewTimer.restart()
@@ -299,6 +309,22 @@ Pane {
         return isNaN(Number(t)) ? t : Number(t)
     }
 
+    /// The timeline body for a picked part: bodies as they are; an exact solid that is not
+    /// in the timeline yet (a fin, a fitted solid, a STEP import) is made editable first,
+    /// so fillets and cuts work on it in one step. null for anything else.
+    function asBody(part) {
+        if (part.kind === "body")
+            return part
+        if (part.kind === "sketch" || part.kind === "plane" || !part.hasBrep || !((part.solids ?? 0) > 0))
+            return null
+        const r = controller.execute("feature.base_body", { part: part.id })
+        if (!r.ok || !r.result.bodies || r.result.bodies.length === 0) {
+            error = r.error || qsTr("Could not make the solid editable")
+            return null
+        }
+        return { id: r.result.bodies[0].partId, kind: "body", featureId: r.result.bodies[0].id }
+    }
+
     /// Viewport pick while the dialog is open: `part` is controller.partInfo().
     function addPick(part, point) {
         if (!spec || !pickKey || !part || !part.id)
@@ -307,12 +333,12 @@ Pane {
         if (field.type === "planePick") {
             if (part.kind === "plane")
                 setValue(pickKey, { plane: part.featureId })
-            else if (part.kind === "body")
+            else if ((part = asBody(part)))
                 setValue(pickKey, { body: part.featureId, point: [point.x, point.y, point.z].map(x => Math.round(x * 1e4) / 1e4) })
             return
         }
         if (field.type === "pointPick") {
-            if (part.kind !== "body")
+            if (!(part = asBody(part)))
                 return
             const bodyField = spec.fields.find(f => f.type === "body")
             if (bodyField)
@@ -337,7 +363,7 @@ Pane {
             }
             list.push(uv.map(x => Math.round(x * 1e4) / 1e4))
         } else {
-            if (part.kind !== "body")
+            if (!(part = asBody(part)))
                 return
             const bodyKey = spec.fields.find(f => f.type === "body").key
             if (values[bodyKey] !== part.featureId) {

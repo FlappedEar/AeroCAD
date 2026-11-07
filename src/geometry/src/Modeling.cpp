@@ -44,6 +44,7 @@
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
+#include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
 #include <TopTools_ListOfShape.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Compound.hxx>
@@ -53,6 +54,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
+#include <iomanip>
+#include <sstream>
 #include <numbers>
 
 namespace aerocad::geometry {
@@ -437,48 +441,153 @@ Shape boolean(const Shape& a, const Shape& b, BooleanOp op)
     });
 }
 
+namespace {
+
+/// A fillet or chamfer result is usable: built, valid and still a solid with volume.
+bool usableBlend(const TopoDS_Shape& result)
+{
+    if (result.IsNull() || !hasSubShapes(result, TopAbs_FACE))
+        return false;
+    BRepCheck_Analyzer check(result);
+    if (!check.IsValid())
+        return false;
+    GProp_GProps props;
+    BRepGProp::VolumeProperties(result, props);
+    return std::abs(props.Mass()) > 1e-9;
+}
+
+/// "2.4 mm" style: two significant digits, rounded down so the size really works.
+std::string sizeText(double mm)
+{
+    const double step = mm >= 10.0 ? 1.0 : mm >= 1.0 ? 0.1 : mm >= 0.1 ? 0.01 : 0.001;
+    const double down = std::floor(mm / step + 1e-9) * step;
+    std::ostringstream os;
+    os << std::setprecision(down >= 10.0 ? 4 : 3) << down << " mm";
+    return os.str();
+}
+
+/// Runs `build(size)` (null shape on failure). When the requested size fails, searches the
+/// largest size that works (bisection, a few tries) and throws a message naming it.
+TopoDS_Shape blendWithHint(const char* what, const char* sizeName, const char* edgesName, double size,
+                           const std::function<TopoDS_Shape(double)>& build)
+{
+    auto attempt = [&](double s) -> TopoDS_Shape {
+        try {
+            TopoDS_Shape r = build(s);
+            return usableBlend(r) ? r : TopoDS_Shape();
+        } catch (const Standard_Failure&) {
+            return {};
+        } catch (const ModelingError&) {
+            return {};
+        }
+    };
+    TopoDS_Shape result = attempt(size);
+    if (!result.IsNull())
+        return result;
+    // Largest working size: 1% of the request first (nothing works at all otherwise), then
+    // bisection. Only on failure, and a handful of builds, so a dialog preview stays live.
+    double lo = size * 0.01;
+    double hi = size;
+    if (attempt(lo).IsNull())
+        throw ModelingError(std::string(what) + " failed on " + edgesName + " (even a very small " + sizeName +
+                            " does not work; try fewer edges or pick them one chain at a time)");
+    for (int i = 0; i < 6; ++i) {
+        const double mid = 0.5 * (lo + hi);
+        if (attempt(mid).IsNull())
+            hi = mid;
+        else
+            lo = mid;
+    }
+    throw ModelingError(std::string(what) + ": a " + sizeText(size) + " " + sizeName + " does not fit " + edgesName +
+                        "; the largest that works is about " + sizeText(lo));
+}
+
+std::vector<TopoDS_Edge> pickedEdges(const TopoDS_Shape& s, const std::vector<std::size_t>& edgeIndices,
+                                     const char* what)
+{
+    const auto map = mapOf(s, TopAbs_EDGE);
+    std::vector<TopoDS_Edge> out;
+    for (const std::size_t i : edgeIndices) {
+        if (i >= static_cast<std::size_t>(map.Extent()))
+            throw ModelingError(std::string(what) + ": no edge " + std::to_string(i));
+        out.push_back(TopoDS::Edge(map(static_cast<int>(i) + 1)));
+    }
+    return out;
+}
+
+} // namespace
+
 Shape fillet(const Shape& shape, const std::vector<std::size_t>& edgeIndices, double radius)
 {
     const TopoDS_Shape& s = occ(shape, "Fillet");
-    if (radius <= 0.0)
+    if (!std::isfinite(radius) || radius <= 0.0)
         throw ModelingError("Fillet: radius must be positive");
     if (edgeIndices.empty())
         throw ModelingError("Fillet: no edges selected");
-    return guarded("Fillet", [&] {
-        const auto map = mapOf(s, TopAbs_EDGE);
+    const auto picked = pickedEdges(s, edgeIndices, "Fillet");
+    const char* edgesName = picked.size() == 1 ? "this edge" : "these edges";
+    return wrapShape(blendWithHint("Fillet", "radius", edgesName, radius, [&](double r) {
         BRepFilletAPI_MakeFillet mk(s);
-        for (const std::size_t i : edgeIndices) {
-            if (i >= static_cast<std::size_t>(map.Extent()))
-                throw ModelingError("Fillet: no edge " + std::to_string(i));
-            mk.Add(radius, TopoDS::Edge(map(static_cast<int>(i) + 1)));
+        for (const auto& e : picked)
+            mk.Add(r, e);
+        mk.Build();
+        return mk.IsDone() ? mk.Shape() : TopoDS_Shape();
+    }));
+}
+
+Shape chamfer(const Shape& shape, const std::vector<std::size_t>& edgeIndices, const ChamferOptions& options)
+{
+    const TopoDS_Shape& s = occ(shape, "Chamfer");
+    auto positive = [](double v) { return std::isfinite(v) && v > 0.0; };
+    if (!positive(options.distance))
+        throw ModelingError("Chamfer: distance must be positive");
+    if (options.type == ChamferType::TwoDistances && !positive(options.distance2))
+        throw ModelingError("Chamfer: the second distance must be positive");
+    if (options.type == ChamferType::DistanceAngle &&
+        !(std::isfinite(options.angle) && options.angle > 0.0 && options.angle < 90.0))
+        throw ModelingError("Chamfer: the angle must be between 0 and 90 degrees");
+    if (edgeIndices.empty())
+        throw ModelingError("Chamfer: no edges selected");
+    const auto picked = pickedEdges(s, edgeIndices, "Chamfer");
+    // The first face of each edge (the one `distance` is measured on): the first face
+    // around it in the body, the other one when flipped.
+    TopTools_IndexedDataMapOfShapeListOfShape edgeFaces;
+    TopExp::MapShapesAndAncestors(s, TopAbs_EDGE, TopAbs_FACE, edgeFaces);
+    std::vector<TopoDS_Face> firstFaces;
+    for (const auto& e : picked) {
+        const int i = edgeFaces.FindIndex(e);
+        if (i == 0 || edgeFaces(i).Extent() < 2)
+            throw ModelingError("Chamfer: the edge is not between two faces");
+        firstFaces.push_back(TopoDS::Face(options.flip ? edgeFaces(i).Last() : edgeFaces(i).First()));
+    }
+    const char* edgesName = picked.size() == 1 ? "this edge" : "these edges";
+    // The distances keep their ratio while the largest working size is searched.
+    const double ratio = options.distance2 / options.distance;
+    return wrapShape(blendWithHint("Chamfer", "distance", edgesName, options.distance, [&](double d) {
+        BRepFilletAPI_MakeChamfer mk(s);
+        for (std::size_t k = 0; k < picked.size(); ++k) {
+            switch (options.type) {
+            case ChamferType::EqualDistance:
+                mk.Add(d, picked[k]);
+                break;
+            case ChamferType::TwoDistances:
+                mk.Add(d, d * ratio, picked[k], firstFaces[k]);
+                break;
+            case ChamferType::DistanceAngle:
+                mk.AddDA(d, options.angle * std::numbers::pi / 180.0, picked[k], firstFaces[k]);
+                break;
+            }
         }
         mk.Build();
-        if (!mk.IsDone())
-            throw ModelingError("Fillet failed (radius too large for the selected edges?)");
-        return wrapShape(mk.Shape());
-    });
+        return mk.IsDone() ? mk.Shape() : TopoDS_Shape();
+    }));
 }
 
 Shape chamfer(const Shape& shape, const std::vector<std::size_t>& edgeIndices, double distance)
 {
-    const TopoDS_Shape& s = occ(shape, "Chamfer");
-    if (distance <= 0.0)
-        throw ModelingError("Chamfer: distance must be positive");
-    if (edgeIndices.empty())
-        throw ModelingError("Chamfer: no edges selected");
-    return guarded("Chamfer", [&] {
-        const auto map = mapOf(s, TopAbs_EDGE);
-        BRepFilletAPI_MakeChamfer mk(s);
-        for (const std::size_t i : edgeIndices) {
-            if (i >= static_cast<std::size_t>(map.Extent()))
-                throw ModelingError("Chamfer: no edge " + std::to_string(i));
-            mk.Add(distance, TopoDS::Edge(map(static_cast<int>(i) + 1)));
-        }
-        mk.Build();
-        if (!mk.IsDone())
-            throw ModelingError("Chamfer failed (distance too large for the selected edges?)");
-        return wrapShape(mk.Shape());
-    });
+    ChamferOptions options;
+    options.distance = distance;
+    return chamfer(shape, edgeIndices, options);
 }
 
 Shape shell(const Shape& shape, const std::vector<std::size_t>& faceIndices, double thickness)

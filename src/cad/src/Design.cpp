@@ -817,8 +817,25 @@ void Design::evaluateFeature(const Feature& f)
     } else if (f.type == "fillet" || f.type == "chamfer") {
         Body& b = bodyRef(required(p, "body"));
         const auto idx = resolveIndices(b.shape, required(p, "edges"), true);
-        b.shape = f.type == "fillet" ? geometry::fillet(b.shape, idx, ev.num(p, "radius"))
-                                     : geometry::chamfer(b.shape, idx, ev.num(p, "distance"));
+        if (f.type == "fillet") {
+            b.shape = geometry::fillet(b.shape, idx, ev.num(p, "radius"));
+        } else {
+            geometry::ChamferOptions o;
+            const std::string type = lower(p.value("type", std::string("equal_distance")));
+            if (type == "equal_distance")
+                o.type = geometry::ChamferType::EqualDistance;
+            else if (type == "two_distances")
+                o.type = geometry::ChamferType::TwoDistances;
+            else if (type == "distance_angle")
+                o.type = geometry::ChamferType::DistanceAngle;
+            else
+                throw DesignError("Unknown chamfer type '" + type + "' (equal_distance, two_distances, distance_angle)");
+            o.distance = ev.num(p, "distance");
+            o.distance2 = o.type == geometry::ChamferType::TwoDistances ? ev.num(p, "distance2") : o.distance;
+            o.angle = ev.num(p, "angle", 45.0);
+            o.flip = p.value("flip", false);
+            b.shape = geometry::chamfer(b.shape, idx, o);
+        }
     } else if (f.type == "shell") {
         Body& b = bodyRef(required(p, "body"));
         const auto idx = has(p, "faces") ? resolveIndices(b.shape, p.at("faces"), false) : std::vector<std::size_t>{};

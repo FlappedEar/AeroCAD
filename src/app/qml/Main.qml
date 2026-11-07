@@ -247,6 +247,17 @@ ApplicationWindow {
         } else if (info.kind === "sketch") {
             initial.sketch = info.featureId
         }
+        // An exact solid outside the timeline (a fin, a fitted solid, a STEP import) is made
+        // editable first, so its edges can be rounded or bevelled in one step.
+        if (info.kind !== "body" && info.kind !== "sketch" && info.hasBrep && (info.solids ?? 0) > 0
+                && ["fillet", "chamfer", "shell", "hole", "combine"].includes(type)) {
+            const r = controller.execute("feature.base_body", { part: info.id })
+            if (r.ok && r.result.bodies && r.result.bodies.length > 0) {
+                info.kind = "body"
+                info.featureId = r.result.bodies[0].id
+                selectBodyOfFeature(r.result.id)
+            }
+        }
         if (info.kind === "body") {
             if (type === "combine")
                 initial.target = info.featureId

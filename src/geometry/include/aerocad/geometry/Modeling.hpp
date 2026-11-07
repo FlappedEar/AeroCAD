@@ -54,10 +54,35 @@ enum class BooleanOp { Union, Cut, Intersect };
 /// empty (null) shape, e.g. when a cut removes everything.
 [[nodiscard]] Shape boolean(const Shape& a, const Shape& b, BooleanOp op);
 
-/// Rounds edges (indices as in edges()) with a constant radius.
+/// Rounds edges (indices as in edges()) with a constant radius. Edges that continue an
+/// edge tangentially (a tangent chain, as Fusion's "Tangent chain") are rounded with it.
+/// When the radius does not fit, the error names the largest radius that does (when one
+/// is found), e.g. "Fillet: a 5 mm radius does not fit these edges; the largest that
+/// works is about 2.4 mm".
 [[nodiscard]] Shape fillet(const Shape& shape, const std::vector<std::size_t>& edgeIndices, double radius);
 
-/// Bevels edges (indices as in edges()) with a constant distance.
+/// Chamfer types, as in Fusion's Chamfer dialog.
+enum class ChamferType {
+    EqualDistance, ///< `distance` on both faces (45 degrees on a right-angled edge).
+    TwoDistances,  ///< `distance` on the first face, `distance2` on the other.
+    DistanceAngle, ///< `distance` on the first face and the bevel at `angle` to it.
+};
+
+struct ChamferOptions {
+    ChamferType type = ChamferType::EqualDistance;
+    double distance = 1.0;  ///< mm.
+    double distance2 = 1.0; ///< mm, TwoDistances only.
+    double angle = 45.0;    ///< Degrees, DistanceAngle only (0 < angle < 90).
+    /// Swaps which face of each edge is the first one (TwoDistances, DistanceAngle).
+    bool flip = false;
+};
+
+/// Bevels edges (indices as in edges()); tangent chains are bevelled with them. When the
+/// distance does not fit, the error names the largest distance that does.
+[[nodiscard]] Shape chamfer(const Shape& shape, const std::vector<std::size_t>& edgeIndices,
+                            const ChamferOptions& options);
+
+/// Equal distance chamfer.
 [[nodiscard]] Shape chamfer(const Shape& shape, const std::vector<std::size_t>& edgeIndices, double distance);
 
 /// Hollows a solid: removes the given faces and keeps walls of `thickness` (inwards).

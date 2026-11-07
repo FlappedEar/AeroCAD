@@ -48,6 +48,12 @@ QtObject {
         return "mesh"
     }
 
+    /// A body, or an exact solid that features make editable on the way (Main.openFeature).
+    function editableSolid(info) {
+        const r = role(info)
+        return r === "body" || r === "solid"
+    }
+
     function roleName(r) {
         return ({ mesh: qsTr("Scan (mesh)"), surface: qsTr("Surface"), solid: qsTr("Solid"),
                   body: qsTr("Body"), sketch: qsTr("Sketch") })[r] || ""
@@ -266,19 +272,20 @@ QtObject {
             return { id: id, text: qsTr("Sketch on a face"), icon: "sketch", enabled: true, primary: info.kind === "body",
                      tip: qsTr("Click a flat face of the body to draw on it, e.g. the outline of a pocket or a boss.") }
         case "fillet":
-            return { id: id, text: qsTr("Round edges"), icon: "fillet", enabled: info.kind === "body",
-                     reason: qsTr("Convert the part to a body first."),
+            return { id: id, text: qsTr("Round edges"), icon: "fillet", enabled: editableSolid(info),
+                     reason: qsTr("Only solids have edges to round."),
                      tip: qsTr("Fillet: rounds the edges you click. Shortcut F.") }
         case "chamfer":
-            return { id: id, text: qsTr("Bevel edges"), icon: "chamfer", enabled: info.kind === "body",
-                     reason: qsTr("Convert the part to a body first."), tip: qsTr("Chamfer: cuts the edges you click at 45°.") }
+            return { id: id, text: qsTr("Bevel edges"), icon: "chamfer", enabled: editableSolid(info),
+                     reason: qsTr("Only solids have edges to bevel."),
+                     tip: qsTr("Chamfer: cuts the edges you click, at 45° or with two distances or an angle.") }
         case "shell":
-            return { id: id, text: qsTr("Hollow out"), icon: "shell", enabled: info.kind === "body",
-                     reason: qsTr("Convert the part to a body first."),
+            return { id: id, text: qsTr("Hollow out"), icon: "shell", enabled: editableSolid(info),
+                     reason: qsTr("Only solids can be hollowed out."),
                      tip: qsTr("Shell: removes the faces you click and leaves walls of the given thickness.") }
         case "hole":
-            return { id: id, text: qsTr("Hole"), icon: "hole", enabled: info.kind === "body",
-                     reason: qsTr("Convert the part to a body first."), tip: qsTr("Drills a hole where you click. Shortcut H.") }
+            return { id: id, text: qsTr("Hole"), icon: "hole", enabled: editableSolid(info),
+                     reason: qsTr("Only solids can be drilled."), tip: qsTr("Drills a hole where you click. Shortcut H.") }
         case "solidToBody":
             return { id: id, text: qsTr("Make editable"), icon: "mesh-to-body", enabled: true,
                      tip: qsTr("Adds the solid to the timeline as a body, so fillets, holes and cuts work on it.") }
@@ -430,8 +437,8 @@ QtObject {
                                 text: qsTr("STL or 3MF for a 3D printer, STEP for other CAD programs. For printing, every visible solid gets its own files."),
                                 actions: [a("exportForPrint"), a("export")] },
                               { title: qsTr("Or keep designing"), done: false,
-                                text: qsTr("Make it editable to add fillets, holes and cuts; the changes appear in the timeline."),
-                                actions: [a("solidToBody")] }] },
+                                text: qsTr("Round or bevel its edges right away, or make it editable for holes and cuts; the changes appear in the timeline."),
+                                actions: [a("fillet"), a("chamfer"), a("solidToBody")] }] },
                         { title: qsTr("More"), steps: [], actions: [...fitted, a("scale"), a("hide"), a("delete")] }] }
     }
 
