@@ -4,9 +4,14 @@
 // restores the previous timeline state.
 #include "aerocad/commands/Session.hpp"
 
+#include "aerocad/core/Align.hpp"
+#include "aerocad/core/MeshSelection.hpp"
 #include "aerocad/geometry/Modeling.hpp"
+#include "aerocad/geometry/Tessellation.hpp"
 
+#include <algorithm>
 #include <cmath>
+#include <limits>
 #include <optional>
 #include <string>
 #include <utility>
@@ -154,7 +159,8 @@ Json planeSchema()
     return Json{{"type", Json::array({"string", "object"})},
                 {"description",
                  "Sketch plane: \"XY\" (top, normal +Z), \"XZ\" (front, normal -Y), \"YZ\" (right, normal +X), "
-                 "or {origin: [x,y,z], normal: [x,y,z], xDir: [x,y,z]}. Z is up."}};
+                 "the name of a reference frame (frame.list), or {origin: [x,y,z], normal: [x,y,z], "
+                 "xDir: [x,y,z]}. Z is up."}};
 }
 
 Json faceRefSchema()
@@ -332,6 +338,158 @@ Json addedFeature(cad::Design& d, const model::Document& doc, cad::FeatureId id)
         j["degreesOfFreedom"] = it->second.degreesOfFreedom;
     }
     return j;
+}
+
+Json surfaceRefSchema()
+{
+    return Json{
+        {"type", "object"},
+        {"description",
+         "Sketch over a curved part (a fitted surface or a scanned mesh): the sketch plane is the best-fit plane "
+         "of {part}'s region selection when it has one, else of the area within `radius` of `point` (a scan), "
+         "else of the whole part (a fitted surface). The plane's normal points the way the surface faces, its "
+         "X axis along the long side of the area, and it sits just above the area so the whole outline is "
+         "visible. Project the outline back onto the curved surface with surface.trim_by_sketch. The resolved "
+         "plane is stored, so the sketch does not move when the part changes."},
+        {"properties",
+         {{"part", {{"type", "integer"}, {"minimum", 1}, {"description", "Part id (document.parts)."}}},
+          {"point", point3("Clicked point on the part.")},
+          {"radius",
+           {{"type", "number"},
+            {"exclusiveMinimum", 0},
+            {"description", "Size of the area around `point` (mm). Default: a tenth of the part's size."}}},
+          {"useSelection", {{"type", "boolean"}, {"description", "Use the region selection (default when set)."}}},
+          {"across",
+           {{"type", "boolean"},
+            {"description",
+             "Sketch across the surface instead of over it, for a fin sticking out of it (a canard on a bumper, a "
+             "winglet): the plane stands on the surface, through a point of the area, its X axis along the "
+             "surface normal (outward), so x > 0 is outside. Draw the fin so its root reaches into the surface "
+             "(x < 0); surface.fin_from_sketch cuts the root to the surface."}}},
+          {"angle",
+           {{"type", "number"},
+            {"description", "With across: turns the fin about the surface normal, degrees from level (0: the fin "
+                            "is horizontal where the surface allows)."}}}}},
+        {"required", {"part"}},
+        {"additionalProperties", false}};
+}
+
+/// The sketch plane over (an area of) a curved part, see surfaceRefSchema. Returns the
+/// plane object for the sketch params plus a short report.
+std::pair<Json, Json> surfaceSketchPlane(const model::Document& doc, const Json& ref)
+{
+    const auto partId = ref.at("part").get<model::PartId>();
+    const model::Part* part = doc.part(partId);
+    if (part == nullptr)
+        throw CommandError("No part with id " + std::to_string(partId));
+    if (part->kind == model::PartKind::Sketch)
+        throw CommandError("Part " + std::to_string(partId) + " is a sketch");
+    if (!part->mesh || part->mesh->triangleCount() == 0)
+        throw CommandError("Part " + std::to_string(partId) + " has no surface");
+    const core::TriangleMesh& mesh = *part->mesh;
+
+    std::vector<std::size_t> triangles;
+    std::string area;
+    const bool hasSelection = part->selection && !part->selection->empty();
+    if (ref.value("useSelection", hasSelection) && hasSelection) {
+        triangles.assign(part->selection->begin(), part->selection->end());
+        area = "selection";
+    } else if (ref.contains("point") && (!part->shape || ref.value("across", false))) {
+        // A scan, or a fin's place: only the area around the click. A fitted surface is
+        // otherwise used whole.
+        const auto& pt = ref.at("point");
+        const core::Vec3 point{pt.at(0).get<double>(), pt.at(1).get<double>(), pt.at(2).get<double>()};
+        const double radius = ref.value("radius", std::max(mesh.bounds().diagonal() * 0.1, 1e-3));
+        const core::MeshAdjacency adjacency(mesh);
+        for (const auto t : core::selectBrushDab(mesh, &adjacency, point, radius))
+            triangles.push_back(t);
+        area = "area around the point";
+    } else {
+        triangles.resize(mesh.triangleCount());
+        for (std::size_t i = 0; i < triangles.size(); ++i)
+            triangles[i] = i;
+        area = "whole part";
+    }
+    const auto points = core::triangleVertices(mesh, triangles);
+    const auto fit = core::fitPlaneToTriangles(mesh, triangles);
+    if (!fit)
+        throw CommandError("The " + area + " of part " + std::to_string(partId) +
+                           " is too small or flat in one direction to fit a sketch plane");
+
+    // Orient the normal the way the triangles face (area-weighted average normal).
+    core::Vec3 facing;
+    for (const std::size_t t : triangles) {
+        const auto& tri = mesh.triangles()[t];
+        const auto& v = mesh.vertices();
+        facing = facing + (v[tri[1]] - v[tri[0]]).cross(v[tri[2]] - v[tri[0]]);
+    }
+    core::Vec3 normal = fit->normal;
+    if (facing.dot(normal) < 0.0)
+        normal = normal * -1.0;
+    if (ref.value("across", false)) {
+        // Fin plane: stands on the surface. "Up along the surface" is world Z projected
+        // into the tangent plane (the long side when the surface faces up or down); the fin
+        // is level, turned by `angle` about the surface normal.
+        core::Vec3 up = core::Vec3{0, 0, 1} - normal * normal.z;
+        if (up.length() < 0.3) {
+            // Facing up or down: along the long side of the area, or world X for a
+            // roundish area (no clear long side), else world Y.
+            core::Vec3 along = fit->elongation >= 0.2 ? fit->major : core::Vec3{1, 0, 0};
+            if (std::abs(along.dot(normal)) > 0.9)
+                along = {0, 1, 0};
+            up = along - normal * along.dot(normal);
+        }
+        up = up.normalized();
+        const double a = ref.value("angle", 0.0) * 3.14159265358979323846 / 180.0;
+        const core::Vec3 finNormal = (up * std::cos(a) + normal.cross(up) * std::sin(a)).normalized();
+        // Through the clicked point (on the surface), else the point of the area nearest
+        // its centroid, so x = 0 is on the surface.
+        core::Vec3 on = fit->origin;
+        if (ref.contains("point")) {
+            const auto& pt = ref.at("point");
+            on = {pt.at(0).get<double>(), pt.at(1).get<double>(), pt.at(2).get<double>()};
+        } else {
+            double best = std::numeric_limits<double>::max();
+            for (const auto& p : points) {
+                const double d = (p - fit->origin).length();
+                if (d < best) {
+                    best = d;
+                    on = p;
+                }
+            }
+        }
+        Json plane{{"origin", Json::array({on.x, on.y, on.z})},
+                   {"normal", Json::array({finNormal.x, finNormal.y, finNormal.z})},
+                   {"xDir", Json::array({normal.x, normal.y, normal.z})}};
+        Json report{{"part", partId}, {"area", area}, {"triangles", triangles.size()}, {"rms", fit->rms},
+                    {"across", true}};
+        return {plane, report};
+    }
+    // Lift the plane to the highest point of the area, so no part of the outline hides
+    // under the surface.
+    double top = 0.0;
+    for (const auto& p : points)
+        top = std::max(top, (p - fit->origin).dot(normal));
+    const core::Vec3 origin = fit->origin + normal * top;
+    // X along the long side; for a roundish area (no clear long side) along world X, or
+    // world Y when X is nearly along the normal.
+    core::Vec3 xHint = fit->major;
+    if (fit->elongation < 0.2)
+        xHint = std::abs(normal.x) < 0.9 ? core::Vec3{1, 0, 0} : core::Vec3{0, 1, 0};
+    core::Vec3 xDir = xHint - normal * xHint.dot(normal);
+    if (xDir.length() < 1e-9)
+        xDir = std::abs(normal.z) < 0.9 ? core::Vec3{0, 0, 1}.cross(normal) : core::Vec3{1, 0, 0};
+    xDir = xDir.normalized();
+
+    Json plane{{"origin", Json::array({origin.x, origin.y, origin.z})},
+               {"normal", Json::array({normal.x, normal.y, normal.z})},
+               {"xDir", Json::array({xDir.x, xDir.y, xDir.z})}};
+    Json report{{"part", partId},
+                {"area", area},
+                {"triangles", triangles.size()},
+                {"rms", fit->rms},
+                {"height", top}};
+    return {plane, report};
 }
 
 /// Copies the command params into feature params, without the command-only keys.
@@ -523,26 +681,49 @@ Json resolveFix(const std::vector<geometry::SketchCurve>& curves, const Json& c)
 void registerSketchCommands(CommandRegistry& r)
 {
     r.add({"sketch.create", "Create Sketch",
-           "Creates a 2D sketch on a standard plane, an arbitrary plane or a planar face of a body, with curves "
+           "Creates a 2D sketch on a standard plane, an arbitrary plane, a planar face of a body or over a curved "
+           "surface or scan (surface: best-fit plane), with curves "
            "(lines, rectangles, circles, arcs, polygons, slots, splines). Closed regions become profiles for "
            "extrude/revolve. Dimensions can be expressions using user parameters (parameter.set), so editing a "
            "parameter updates the model.",
            objectSchema({{"plane", planeSchema()},
                          {"face", faceRefSchema()},
+                         {"surface", surfaceRefSchema()},
                          {"offset", numberOrExpr("Offset of the plane along its normal (mm).")},
                          {"curves", curvesSchema()},
                          {"constraints", constraintsSchema()},
                          {"name", {{"type", "string"}, {"description", "Optional name, default SketchN."}}}}),
            true},
           [](CommandContext& ctx, const Json& params) {
-              if (params.contains("plane") && params.contains("face"))
-                  throw CommandError("Give either plane or face, not both");
+              const int refs = static_cast<int>(params.contains("plane")) + static_cast<int>(params.contains("face")) +
+                               static_cast<int>(params.contains("surface"));
+              if (refs > 1)
+                  throw CommandError("Give one of plane, face or surface");
+              Json feature = featureParams(params);
+              Json surfaceReport;
+              if (params.contains("surface")) {
+                  auto [plane, report] = surfaceSketchPlane(ctx.document, params.at("surface"));
+                  feature.erase("surface");
+                  feature["plane"] = std::move(plane);
+                  // Remembered for "part from sketch" (surface.part_from_sketch), which cuts
+                  // the part out of this surface or scan; sketch evaluation ignores it.
+                  Json on{{"part", params.at("surface").at("part")}};
+                  if (params.at("surface").contains("point"))
+                      on["point"] = params.at("surface").at("point");
+                  if (params.at("surface").value("across", false))
+                      on["across"] = true;
+                  feature["onSurface"] = std::move(on);
+                  surfaceReport = std::move(report);
+              }
               cad::FeatureId id = 0;
               designChange(ctx, "Create Sketch", [&](cad::Design& d) {
-                  id = d.addFeature("sketch", featureParams(params), params.value("name", std::string()));
+                  id = d.addFeature("sketch", feature, params.value("name", std::string()));
                   return Json{};
               });
-              return addedFeature(design(ctx), ctx.document, id);
+              Json result = addedFeature(design(ctx), ctx.document, id);
+              if (!surfaceReport.is_null())
+                  result["surface"] = surfaceReport;
+              return result;
           });
 
     r.add({"sketch.add_curves", "Add Sketch Curves", "Appends curves to an existing sketch.",
@@ -567,7 +748,12 @@ void registerSketchCommands(CommandRegistry& r)
     r.add({"sketch.profiles", "Sketch profiles",
            "Lists the closed profiles of a sketch with their area and centroid (sketch and world coordinates), "
            "to pick profiles for extrude/revolve.",
-           objectSchema({{"sketch", featureIdSchema("Sketch feature id.")}}, {"sketch"})},
+           objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
+                         {"surfaceLine",
+                          {{"type", "boolean"},
+                           {"description", "For a sketch across a surface (a fin): also return where the sketch "
+                                           "plane cuts the surface, as segments in sketch coordinates."}}}},
+                        {"sketch"})},
           [](CommandContext& ctx, const Json& params) {
               const auto id = params.at("sketch").get<cad::FeatureId>();
               const auto& sketches = design(ctx).sketches();
@@ -584,7 +770,51 @@ void registerSketchCommands(CommandRegistry& r)
                                  {"centroid", Json::array({uv.x, uv.y})},
                                  {"centroidWorld", vec(c)}});
               }
+              Json onSurface;
+              if (const cad::Feature* f = design(ctx).feature(id); f != nullptr && f->params.contains("onSurface"))
+                  onSurface = f->params.at("onSurface");
+              // Across a surface (a fin): where the sketch plane cuts it, in sketch
+              // coordinates, so the root can be drawn into it. Seen from the sketch normal
+              // the surface itself hides that line.
+              Json surfaceLine = Json::array();
+              if (params.value("surfaceLine", false) && onSurface.is_object() && onSurface.value("across", false) &&
+                  onSurface.contains("part")) {
+                  const model::Part* surface = ctx.document.part(onSurface.at("part").get<model::PartId>());
+                  if (surface != nullptr) {
+                      if (const model::Part* scan = ctx.document.part(model::fittedScanId(*surface));
+                          scan != nullptr && scan->mesh && !scan->shape)
+                          surface = scan;
+                  }
+                  if (surface != nullptr && surface->mesh) {
+                      core::BoundingBox box;
+                      for (const auto& p : geometry::edgeSegments(sk.geometry.curves))
+                          box.extend(p);
+                      const double reach = std::max(box.isEmpty() ? 0.0 : 3.0 * box.diagonal(),
+                                                    0.3 * surface->mesh->bounds().diagonal());
+                      auto cut = core::sliceMesh(*surface->mesh, sk.plane.origin, sk.plane.normal, reach);
+                      // Drawn on every repaint: keep the pieces nearest the sketch origin.
+                      constexpr std::size_t maxSegments = 4000;
+                      if (cut.size() / 2 > maxSegments) {
+                          std::vector<std::pair<double, std::size_t>> byDistance;
+                          for (std::size_t i = 0; i + 1 < cut.size(); i += 2)
+                              byDistance.push_back({((cut[i] + cut[i + 1]) * 0.5 - sk.plane.origin).length(), i});
+                          std::nth_element(byDistance.begin(), byDistance.begin() + maxSegments, byDistance.end());
+                          std::vector<core::Vec3> nearest;
+                          for (std::size_t k = 0; k < maxSegments; ++k) {
+                              nearest.push_back(cut[byDistance[k].second]);
+                              nearest.push_back(cut[byDistance[k].second + 1]);
+                          }
+                          cut = std::move(nearest);
+                      }
+                      for (const auto& p : cut) {
+                          const auto uv = sk.plane.toLocal(p);
+                          surfaceLine.push_back(Json::array({uv.x, uv.y}));
+                      }
+                  }
+              }
               return Json{{"sketch", id},
+                          {"surfaceLine", surfaceLine},
+                          {"onSurface", onSurface},
                           {"plane", {{"origin", vec(sk.plane.origin)},
                                      {"normal", vec(sk.plane.normal)},
                                      {"xDir", vec(sk.plane.xDir)},
@@ -970,6 +1200,85 @@ void registerBodyCommands(CommandRegistry& r)
           });
 }
 
+Json frameToJson(const cad::ReferenceFrame& f)
+{
+    const auto v = [](const core::Vec3& p) { return Json::array({p.x, p.y, p.z}); };
+    return Json{{"name", f.name},
+                {"origin", v(f.origin)},
+                {"normal", v(f.normal)},
+                {"xDir", v(f.xDir)},
+                {"yDir", v(f.normal.cross(f.xDir))},
+                {"comment", f.comment}};
+}
+
+Json framesToJson(const cad::Design& d)
+{
+    Json out = Json::array();
+    for (const auto& f : d.frames())
+        out.push_back(frameToJson(f));
+    return Json{{"frames", out}};
+}
+
+core::Vec3 vecParam(const Json& params, const char* key, core::Vec3 fallback)
+{
+    if (!params.contains(key))
+        return fallback;
+    const Json& a = params.at(key);
+    return {a[0].get<double>(), a[1].get<double>(), a[2].get<double>()};
+}
+
+void registerFrameCommands(CommandRegistry& r)
+{
+    const Json vec3 = {{"type", "array"}, {"items", {{"type", "number"}}}, {"minItems", 3}, {"maxItems", 3}};
+    auto withDescription = [](Json schema, const std::string& text) {
+        schema["description"] = text;
+        return schema;
+    };
+    r.add({"frame.set", "Set Reference Frame",
+           "Creates or replaces a named reference frame (work plane): origin, normal (Z axis) and xDir (X axis, "
+           "made orthogonal to the normal), mm. Use the name as sketch.create plane to sketch on it. Changing a "
+           "frame regenerates the sketches that use it. Frames belong to the design (undoable, per variant).",
+           objectSchema({{"name",
+                          {{"type", "string"}, {"minLength", 1}, {"description", "Frame name (not XY / XZ / YZ)."}}},
+                         {"origin", withDescription(vec3, "[x, y, z] in mm, default [0, 0, 0].")},
+                         {"normal", withDescription(vec3, "Z axis / plane normal, default [0, 0, 1].")},
+                         {"xDir", withDescription(vec3, "X axis, default [1, 0, 0].")},
+                         {"comment", {{"type", "string"}}}},
+                        {"name"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              cad::ReferenceFrame f;
+              f.name = params.at("name").get<std::string>();
+              if (const cad::ReferenceFrame* old = design(ctx).frame(f.name))
+                  f = *old;
+              f.origin = vecParam(params, "origin", f.origin);
+              f.normal = vecParam(params, "normal", f.normal);
+              f.xDir = vecParam(params, "xDir", f.xDir);
+              f.comment = params.value("comment", f.comment);
+              designChange(ctx, "Set Frame " + f.name, [&](cad::Design& d) {
+                  d.setFrame(f);
+                  return Json{};
+              });
+              return frameToJson(*design(ctx).frame(f.name));
+          });
+
+    r.add({"frame.remove", "Remove Reference Frame",
+           "Removes a reference frame. Sketches placed on it then report errors.",
+           objectSchema({{"name", {{"type", "string"}, {"minLength", 1}}}}, {"name"}), true},
+          [](CommandContext& ctx, const Json& params) {
+              const auto name = params.at("name").get<std::string>();
+              designChange(ctx, "Remove Frame " + name, [&](cad::Design& d) {
+                  d.removeFrame(name);
+                  return Json{};
+              });
+              return framesToJson(design(ctx));
+          });
+
+    r.add({"frame.list", "Reference frames", "Lists the reference frames (work planes) of the design.",
+           objectSchema(Json::object())},
+          [](CommandContext& ctx, const Json&) { return framesToJson(design(ctx)); });
+}
+
 } // namespace
 
 void registerDesignCommands(CommandRegistry& registry)
@@ -978,6 +1287,7 @@ void registerDesignCommands(CommandRegistry& registry)
     registerFeatureCommands(registry);
     registerTimelineCommands(registry);
     registerBodyCommands(registry);
+    registerFrameCommands(registry);
 }
 
 } // namespace aerocad::commands

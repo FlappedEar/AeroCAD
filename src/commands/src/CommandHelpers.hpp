@@ -82,4 +82,7 @@ inline void pushPartStateUndo(CommandContext& ctx, std::string label, model::Par
 /// Registers selection.* (SelectionCommands.cpp).
 void registerSelectionCommands(CommandRegistry& registry);
 
+/// Registers surface.* (SurfaceCommands.cpp).
+void registerSurfaceCommands(CommandRegistry& registry);
+
 } // namespace aerocad::commands

@@ -2,6 +2,8 @@
 # The Qt Quick desktop application.
 qt_standard_project_setup()
 
+add_subdirectory(style)
+
 set(AEROCAD_APP_SOURCES
     main.cpp
     AppController.cpp
@@ -16,10 +18,21 @@ set(AEROCAD_APP_SOURCES
     LineGeometry.hpp
     InspectGeometry.cpp
     InspectGeometry.hpp
+    GridGeometry.cpp
+    GridGeometry.hpp
     JsonBridge.cpp
     JsonBridge.hpp
+    Preferences.cpp
+    Preferences.hpp
+    UiScript.cpp
+    UiScript.hpp
 )
 qt_add_executable(aerocad ${AEROCAD_APP_SOURCES})
+
+# Design tokens (colours, sizes, icons) shared by every QML file, see docs/ui.md.
+set_source_files_properties(qml/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+
+file(GLOB AEROCAD_ICONS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} CONFIGURE_DEPENDS icons/*.svg)
 
 qt_add_qml_module(aerocad
     URI AeroCAD
@@ -27,6 +40,20 @@ qt_add_qml_module(aerocad
     RESOURCE_PREFIX /qt/qml
     QML_FILES
         qml/Main.qml
+        qml/Theme.qml
+        qml/AppIcon.qml
+        qml/IconButton.qml
+        qml/RibbonButton.qml
+        qml/RibbonGroup.qml
+        qml/RibbonTab.qml
+        qml/PanelHeader.qml
+        qml/ContextActions.qml
+        qml/ActionPopup.qml
+        qml/ActionButton.qml
+        qml/GuidePanel.qml
+        qml/ContextBar.qml
+        qml/PartContextMenu.qml
+        qml/StartCard.qml
         qml/Viewport.qml
         qml/SelectionToolbar.qml
         qml/CameraController.qml
@@ -43,6 +70,10 @@ qt_add_qml_module(aerocad
         qml/SectionPanel.qml
         qml/HeatMapPanel.qml
         qml/HeatMapLegend.qml
+        qml/PreferencesDialog.qml
+        qml/ShortcutsDialog.qml
+    RESOURCES
+        ${AEROCAD_ICONS}
 )
 
 set_target_properties(aerocad PROPERTIES
@@ -58,8 +89,8 @@ set_target_properties(aerocad PROPERTIES
 target_compile_definitions(aerocad PRIVATE AEROCAD_VERSION="${PROJECT_VERSION}")
 target_include_directories(aerocad PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(aerocad PRIVATE
-    Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Quick3D
-    AeroCAD::commands AeroCAD::io)
+    Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::Quick3D
+    AeroCAD::commands AeroCAD::io aerocad_styleplugin)
 if(MSVC)
     target_compile_options(aerocad PRIVATE /utf-8 /Zc:__cplusplus)
 endif()

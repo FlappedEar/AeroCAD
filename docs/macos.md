@@ -78,6 +78,33 @@ open build/vcpkg-macos/bin/AeroCAD.app
     Grow, Shrink, Invert and Clear are in the Properties panel.
   - Navigation stays on the middle button and touchpad (see [ui.md](ui.md)). `Esc` goes
     back to *Navigate*.
+- **Base surface from the selection:** in the Properties panel, set a tolerance and click
+  *Fit surface to selection*. A new part with one smooth NURBS surface (exact B-rep),
+  trimmed to the selection outline, is added. The status bar shows the deviation both
+  ways (mesh to surface and surface to mesh) and whether it is within the tolerance.
+  Works best on compact regions that do not fold over (less than about 180 degrees of
+  wrap); long curved strips get a warning.
+- **Offset and thicken:** select a surface part (for example the fitted one). The
+  *Surface* group in the Properties panel has *Offset* (a new surface moved along the
+  normal by the distance, negative for the other side; use it for clearances) and
+  *Thicken to solid* (a closed solid of the given thickness, outside / inside / both
+  sides of the surface). The fitted surface's normal points the way the mesh faces.
+  *Convert to Body* turns the solid into a timeline body for sketches, fillets, combine.
+- **A part on the curved surface (aileron, flap, a mounting base):** after *Fit surface
+  to selection* a sketch on the new surface starts by itself (or: *Sketch*, then click the
+  scan or a fitted surface); the view turns to the clicked place. What you draw lies on the
+  surface; clicks land on the surface point under the cursor from any view, on scans of any
+  size. Draw the closed outline and click *Finish Sketch*: the *Part on surface* box offers
+  a thickness and a side (inward / outward / both); *Create* makes the solid. On a scan the
+  part follows the skin you see under the outline, bridging holes, with edges exactly on the
+  outline; no selection or fit is needed. (*Properties > Surface > Trim by sketch*
+  gives just the cut-out surface.)
+- **A fin on the surface (canard, dive plane, winglet):** *Sketch*, tick *Fin across the
+  surface* (optionally an angle), then click the scan where the fin stands. The sketch
+  stands across the surface; the orange line is where it cuts the surface. Draw the fin's
+  outline with its root a little past that line, click *Finish Sketch*, set the thickness
+  in *Fin on surface* and click *Create*: the root is cut to the surface, so the fin sits
+  flush on its outer skin (holes and a second layer behind it in the scan are ignored).
 - **Undo / redo:** Cmd+Z / Cmd+Shift+Z (also for selection changes).
 
 ## Troubleshooting

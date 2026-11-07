@@ -9,3 +9,7 @@ CMakeUserPresets.json
 compile_commands.json
 *.user
 .DS_Store
+.venv/
+
+# Local test scan, too large for the repository
+GT86FrontBumper.stl
