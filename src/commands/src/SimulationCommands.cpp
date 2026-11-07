@@ -169,19 +169,20 @@ void registerSimulationCommands(CommandRegistry& r)
               j["defaults"] = cfd::toJson(cfd::Settings{});
               j["runsDirectory"] = runs(ctx).root().string();
               j["imagePull"] = runs(ctx).imagePullStatus();
-              j["setup"] = setupJson(cfd::planEngineSetup(env, cfd::currentPlatform(), cfd::findBrew()));
+              j["setup"] = setupJson(cfd::planEngineSetup(env, cfd::currentPlatform(), cfd::findSetupTools()));
               return j;
           });
 
     r.add({"simulation.install_engine", "Install simulation engine",
            "Does the next step to get a simulation engine (\"Install for me\"): downloads the OpenFOAM image when "
-           "Docker runs, starts Docker Desktop when it is installed (macOS), installs it with Homebrew in a "
-           "Terminal window, or opens the Docker download page. Returns the step taken; call "
+           "Docker runs; on macOS starts Colima, installing the docker command line tool and Colima with Homebrew "
+           "first when missing (in a Terminal window, no Docker Desktop); otherwise opens an install page. Returns "
+           "the step taken; call "
            "simulation.environment to follow the download (imagePull).",
            objectSchema(Json::object())},
           [](CommandContext& ctx, const Json&) {
               const cfd::Environment env = cfd::detectEnvironment();
-              const cfd::SetupStep step = cfd::planEngineSetup(env, cfd::currentPlatform(), cfd::findBrew());
+              const cfd::SetupStep step = cfd::planEngineSetup(env, cfd::currentPlatform(), cfd::findSetupTools());
               Json j = setupJson(step);
               try {
                   if (step.action == "pull") {

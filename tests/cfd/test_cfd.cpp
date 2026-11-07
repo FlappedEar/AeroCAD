@@ -454,21 +454,43 @@ TEST_CASE("Install for me: the next setup step", "[cfd]")
 {
     using cfd::Platform;
     cfd::Environment none;
-    auto step = cfd::planEngineSetup(none, Platform::MacOS, "/opt/homebrew/bin/brew");
+    cfd::SetupTools brewOnly;
+    brewOnly.brew = "/opt/homebrew/bin/brew";
+    // No Docker: install the docker CLI and Colima with Homebrew, never Docker Desktop.
+    auto step = cfd::planEngineSetup(none, Platform::MacOS, brewOnly);
     CHECK(step.action == "terminal");
     REQUIRE(step.command.size() == 5);
     CHECK(step.command[0] == "osascript");
-    CHECK(step.command[4].find("/opt/homebrew/bin/brew install --cask docker-desktop && open -a Docker") !=
-          std::string::npos);
+    CHECK(step.command[4].find("/opt/homebrew/bin/brew install docker colima && /opt/homebrew/bin/colima start "
+                               "--cpu $(sysctl -n hw.ncpu)") != std::string::npos);
+    CHECK(step.command[4].find("docker-desktop") == std::string::npos);
+    CHECK(step.message.find("Colima") != std::string::npos);
+    // Docker Desktop already there but Homebrew too: still Colima.
+    cfd::SetupTools withDesktop = brewOnly;
+    withDesktop.dockerDesktop = true;
+    cfd::Environment cliOnly;
+    cliOnly.docker = "/opt/homebrew/bin/docker";
+    CHECK(cfd::planEngineSetup(cliOnly, Platform::MacOS, withDesktop).action == "terminal");
+    // No Homebrew: the Homebrew page; Docker Desktop is only started when it is all there is.
     step = cfd::planEngineSetup(none, Platform::MacOS, {});
     CHECK(step.action == "browser");
-    CHECK(step.command == std::vector<std::string>{"open", "https://docs.docker.com/desktop/setup/install/mac-install/"});
+    CHECK(step.command == std::vector<std::string>{"open", "https://brew.sh"});
+    cfd::SetupTools desktopOnly;
+    desktopOnly.dockerDesktop = true;
+    CHECK(cfd::planEngineSetup(cliOnly, Platform::MacOS, desktopOnly).command ==
+          std::vector<std::string>{"open", "-a", "Docker"});
     CHECK(cfd::planEngineSetup(none, Platform::Linux, {}).command.front() == "xdg-open");
+
+    // Colima and docker installed, engine stopped: start Colima only.
+    cfd::SetupTools colima;
+    colima.colima = "/usr/local/bin/colima";
+    step = cfd::planEngineSetup(cliOnly, Platform::MacOS, colima);
+    CHECK(step.action == "terminal");
+    CHECK(step.command[4].find("/usr/local/bin/colima start --cpu") != std::string::npos);
+    CHECK(step.command[4].find("install") == std::string::npos);
 
     cfd::Environment installed;
     installed.docker = "/usr/local/bin/docker";
-    CHECK(cfd::planEngineSetup(installed, Platform::MacOS, {}).command ==
-          std::vector<std::string>{"open", "-a", "Docker"});
     CHECK(cfd::planEngineSetup(installed, Platform::Linux, {}).action == "manual");
 
     installed.dockerRunning = true;

@@ -158,10 +158,10 @@ Environment detectEnvironment()
         e.recommended = Backend::Local;
         e.message = "Using the local OpenFOAM installation " + e.openfoamBashrc.string() + ".";
     } else if (!e.docker.empty()) {
-        e.message = "Docker is installed but not running. Start Docker Desktop (or colima / OrbStack) and try again.";
+        e.message = "Docker is installed but not running. Start its engine (Colima: colima start) and try again.";
     } else {
-        e.message = "No simulation engine found. Install Docker Desktop (https://docs.docker.com/desktop/) and start "
-                    "it; AeroCAD runs OpenFOAM " +
+        e.message = "No simulation engine found. Install Docker (on macOS: brew install docker colima, then "
+                    "colima start); AeroCAD runs OpenFOAM " +
                     std::string(kOpenFoamVersion) + " in the official image " + std::string(kDockerImage) + ".";
     }
     return e;
@@ -185,9 +185,29 @@ fs::path findBrew()
     return findExecutable("brew", {"/opt/homebrew/bin/brew", "/usr/local/bin/brew"});
 }
 
-SetupStep planEngineSetup(const Environment& env, Platform platform, const fs::path& brew)
+SetupTools findSetupTools()
 {
-    static const std::string macDownload = "https://docs.docker.com/desktop/setup/install/mac-install/";
+    SetupTools t;
+    t.brew = findBrew();
+    t.colima = findExecutable("colima", {"/opt/homebrew/bin/colima", "/usr/local/bin/colima"});
+    std::error_code ec;
+    t.dockerDesktop = fs::exists("/Applications/Docker.app", ec);
+    return t;
+}
+
+namespace {
+
+/// Opens a Terminal window running `script` (macOS).
+std::vector<std::string> inTerminal(const std::string& script)
+{
+    return {"osascript", "-e", "tell application \"Terminal\" to activate", "-e",
+            "tell application \"Terminal\" to do script \"" + script + "\""};
+}
+
+} // namespace
+
+SetupStep planEngineSetup(const Environment& env, Platform platform, const SetupTools& tools)
+{
     static const std::string linuxInstall = "https://docs.docker.com/engine/install/";
     if (env.dockerRunning && env.imagePresent)
         return {"none", {}, "Docker is running and the OpenFOAM image is present."};
@@ -195,24 +215,35 @@ SetupStep planEngineSetup(const Environment& env, Platform platform, const fs::p
         return {"none", {}, "A local OpenFOAM installation is used."};
     if (env.dockerRunning)
         return {"pull", {}, "Downloading the OpenFOAM image " + std::string(kDockerImage) + " (about 0.4-0.5 GB)."};
-    if (!env.docker.empty()) {
-        if (platform == Platform::MacOS)
-            return {"start", {"open", "-a", "Docker"}, "Starting Docker Desktop. The first start asks you to accept "
-                                                        "its terms; then the OpenFOAM image is downloaded."};
+    if (platform == Platform::MacOS) {
+        // The Docker engine needs a Linux VM on macOS. Colima runs one without a GUI; give it
+        // all cores and half of the memory, since the default (2 CPUs, 2 GB) is too small for
+        // the medium and fine meshes. Changing these on an existing Colima VM restarts it.
+        const std::string start = "colima start --cpu $(sysctl -n hw.ncpu) --memory $(( $(sysctl -n hw.memsize) / "
+                                  "2147483648 ))";
+        if (!tools.colima.empty() && !env.docker.empty())
+            return {"terminal", inTerminal(tools.colima.parent_path().string() + "/" + start),
+                    "Starting Colima (the Docker engine) in a Terminal window; then the OpenFOAM image is "
+                    "downloaded."};
+        if (!tools.brew.empty()) {
+            const std::string bin = tools.brew.parent_path().string() + "/";
+            // A new VM uses Apple's Virtualization framework (vz, with virtiofs mounts): Colima's
+            // own default (qemu) needs QEMU, which Homebrew's colima does not install.
+            return {"terminal",
+                    inTerminal(tools.brew.string() + " install docker colima && " + bin + start + " --vm-type vz"),
+                    "Installing the docker command line tool and Colima (a Docker engine without Docker Desktop) "
+                    "with Homebrew in a Terminal window, then starting Colima; then the OpenFOAM image is "
+                    "downloaded."};
+        }
+        if (!env.docker.empty() && tools.dockerDesktop)
+            return {"start", {"open", "-a", "Docker"},
+                    "Starting Docker Desktop (installed already); then the OpenFOAM image is downloaded."};
+        return {"browser", {"open", "https://brew.sh"},
+                "Opening the Homebrew page: install Homebrew, then press Install for me again to install the "
+                "docker command line tool and Colima."};
+    }
+    if (!env.docker.empty())
         return {"manual", {}, "Docker is installed but not running: start it (sudo systemctl start docker)."};
-    }
-    if (platform == Platform::MacOS && !brew.empty()) {
-        const std::string script = brew.string() + " install --cask docker-desktop && open -a Docker";
-        return {"terminal",
-                {"osascript", "-e", "tell application \"Terminal\" to activate", "-e",
-                 "tell application \"Terminal\" to do script \"" + script + "\""},
-                "Installing Docker Desktop with Homebrew in a Terminal window (it may ask for your password). "
-                "When Docker Desktop has started, the OpenFOAM image is downloaded."};
-    }
-    if (platform == Platform::MacOS)
-        return {"browser", {"open", macDownload},
-                "Opening the Docker Desktop download page: install it, start it, then press Install for me again "
-                "to download the OpenFOAM image."};
     return {"browser", {"xdg-open", linuxInstall},
             "Opening the Docker Engine install page: install it, start it, then press Install for me again."};
 }
