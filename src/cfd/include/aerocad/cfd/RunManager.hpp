@@ -40,6 +40,27 @@ struct Environment {
 /// seconds).
 [[nodiscard]] Environment detectEnvironment();
 
+/// The next step of "Install for me", from what is there now:
+/// - "pull": Docker runs, the OpenFOAM image is missing: download it (in the background);
+/// - "start": Docker is installed but not running: start Docker Desktop (macOS);
+/// - "terminal": no Docker, Homebrew found (macOS): open a Terminal window running
+///   `brew install --cask docker-desktop` (it may ask for the password there), then
+///   start Docker Desktop;
+/// - "browser": no Docker and no Homebrew (or Linux): open the Docker install page;
+/// - "none": ready (Docker with the image, or a local OpenFOAM).
+struct SetupStep {
+    std::string action;
+    std::vector<std::string> command; ///< Program and arguments to run; empty for "pull" / "none".
+    std::string message;              ///< What happens, for the user.
+};
+enum class Platform { MacOS, Linux, Other };
+[[nodiscard]] Platform currentPlatform();
+[[nodiscard]] SetupStep planEngineSetup(const Environment& env, Platform platform,
+                                        const std::filesystem::path& brew);
+/// Homebrew's brew, empty when not installed (also looked for where Finder-started apps
+/// do not see it: /opt/homebrew/bin, /usr/local/bin).
+[[nodiscard]] std::filesystem::path findBrew();
+
 enum class RunState { Running, Finished, Failed, Cancelled, Interrupted };
 [[nodiscard]] std::string_view runStateName(RunState state);
 
@@ -123,6 +144,13 @@ public:
     /// "streamlines". Empty PolyData when the run has not written it (yet).
     [[nodiscard]] PolyData field(const std::string& id, std::string_view kind);
 
+    /// Downloads the OpenFOAM image in the background (`docker pull`, log in
+    /// <root>/image-pull.log). Returns false when a download is already running.
+    bool startImagePull(const std::filesystem::path& docker);
+    /// State of the last download started by this manager: {state: running | finished |
+    /// failed, progress 0..1 (layers done / layers), message}; null when none was started.
+    [[nodiscard]] Json imagePullStatus();
+
     /// A/B comparison: force differences in N, condition check, quality, shared value
     /// ranges for colour scales.
     [[nodiscard]] Json compare(const std::string& a, const std::string& b);
@@ -138,6 +166,7 @@ private:
 
     std::filesystem::path m_root;
     std::map<std::string, std::unique_ptr<Run>> m_runs;
+    std::optional<Process> m_imagePull;
 };
 
 } // namespace aerocad::cfd

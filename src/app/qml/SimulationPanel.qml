@@ -47,6 +47,9 @@ Pane {
     property var comparison: null
     property var fieldStats: ({})
     property string error: ""
+    /// True after "Install for me" until the engine is ready (the environment is polled).
+    property bool installing: false
+    property string setupMessage: ""
     /// 0 = Run (setup and runs), 1 = Results, 2 = A/B.
     property alias tab: tabBar.currentIndex
     property var fieldChoices: [
@@ -67,6 +70,34 @@ Pane {
     function checkEnvironment() {
         const r = controller.execute("simulation.environment")
         environment = r.ok ? r.result : null
+        if (!installing || !environment)
+            return
+        const pull = environment.imagePull
+        if (pull && pull.state === "running")
+            return
+        if (pull && pull.state === "failed") {
+            // Stop here and show why; pressing the button again retries.
+            installing = false
+            setupMessage = pull.message
+        } else if (environment.setup.action === "pull" && !pull) {
+            // Docker came up while installing: go on with the image download (once).
+            installEngine()
+        } else if (environment.setup.action === "none") {
+            installing = false
+            setupMessage = ""
+        }
+    }
+
+    /// One "Install for me" step (simulation.install_engine), then keep checking.
+    function installEngine() {
+        const r = controller.execute("simulation.install_engine")
+        if (!r.ok) {
+            setupMessage = r.error
+            return
+        }
+        installing = true
+        setupMessage = r.result.message
+        checkEnvironment()
     }
 
     function refreshRuns() {
@@ -200,6 +231,13 @@ Pane {
     Component.onCompleted: if (visible) { checkEnvironment(); refreshRuns() }
 
     Timer {
+        interval: 4000
+        repeat: true
+        running: root.visible && root.installing
+        onTriggered: root.checkEnvironment()
+    }
+
+    Timer {
         interval: root.anyRunning ? 1500 : 5000
         repeat: true
         running: root.visible || root.anyRunning
@@ -232,6 +270,44 @@ Pane {
                     text: root.environment ? root.environment.message : qsTr("Checking the simulation engine...")
                 }
                 Button { text: qsTr("Check"); onClicked: root.checkEnvironment() }
+            }
+
+            // "Install for me": the next setup step (download the image, start or install
+            // Docker Desktop, or open the download page), then follow it until ready.
+            ColumnLayout {
+                readonly property var setup: root.environment ? root.environment.setup : null
+                readonly property var pull: root.environment ? root.environment.imagePull : null
+                readonly property bool pulling: !!pull && pull.state === "running"
+                id: setupBox
+                Layout.fillWidth: true
+                visible: !!setup && (setup.action !== "none" || pulling || root.installing)
+                spacing: 4
+                RowLayout {
+                    Layout.fillWidth: true
+                    Button {
+                        visible: !!setupBox.setup && setupBox.setup.action !== "none" && setupBox.setup.action !== "manual"
+                                 && !setupBox.pulling
+                        highlighted: true
+                        text: qsTr("Install for me")
+                        onClicked: root.installEngine()
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        font.pixelSize: 11
+                        color: Theme.textMuted
+                        text: setupBox.pulling || (setupBox.pull && setupBox.pull.state === "failed") ? setupBox.pull.message
+                            : root.setupMessage.length > 0 ? root.setupMessage
+                            : setupBox.setup ? setupBox.setup.message : ""
+                    }
+                }
+                ProgressBar {
+                    Layout.fillWidth: true
+                    visible: setupBox.pulling
+                    from: 0; to: 1
+                    value: setupBox.pull ? setupBox.pull.progress : 0
+                    indeterminate: !!setupBox.pull && setupBox.pull.progress === 0
+                }
             }
 
             TabBar {

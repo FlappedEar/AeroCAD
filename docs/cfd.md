@@ -42,6 +42,21 @@ unpacked; the first run pulls it automatically.
 
 ### macOS
 
+**Install for me** in the CFD panel (command `simulation.install_engine`) does the next
+step each time it is pressed, and then keeps checking until the engine is ready:
+
+- no Docker, Homebrew installed: opens a Terminal window running
+  `brew install --cask docker-desktop && open -a Docker` (Homebrew may ask for your
+  password there; the [docker-desktop cask](https://formulae.brew.sh/cask/docker-desktop)
+  needs macOS 14 or later);
+- no Docker, no Homebrew: opens the Docker Desktop download page;
+- Docker Desktop installed but not running: starts it (the first start asks you to accept
+  its terms);
+- Docker running, image missing: downloads `opencfd/openfoam-default:2506` with a progress
+  bar.
+
+By hand:
+
 1. Install [Docker Desktop for Mac](https://docs.docker.com/desktop/setup/install/mac-install/)
    (Apple silicon build) and start it once.
 2. Optional, to avoid waiting on the first run: `docker pull opencfd/openfoam-default:2506`.

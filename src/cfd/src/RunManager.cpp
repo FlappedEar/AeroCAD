@@ -8,6 +8,7 @@
 #include <ctime>
 #include <fstream>
 #include <limits>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 
@@ -164,6 +165,56 @@ Environment detectEnvironment()
                     std::string(kOpenFoamVersion) + " in the official image " + std::string(kDockerImage) + ".";
     }
     return e;
+}
+
+// --- Engine setup ("Install for me") ----------------------------------------------------
+
+Platform currentPlatform()
+{
+#if defined(__APPLE__)
+    return Platform::MacOS;
+#elif defined(__linux__)
+    return Platform::Linux;
+#else
+    return Platform::Other;
+#endif
+}
+
+fs::path findBrew()
+{
+    return findExecutable("brew", {"/opt/homebrew/bin/brew", "/usr/local/bin/brew"});
+}
+
+SetupStep planEngineSetup(const Environment& env, Platform platform, const fs::path& brew)
+{
+    static const std::string macDownload = "https://docs.docker.com/desktop/setup/install/mac-install/";
+    static const std::string linuxInstall = "https://docs.docker.com/engine/install/";
+    if (env.dockerRunning && env.imagePresent)
+        return {"none", {}, "Docker is running and the OpenFOAM image is present."};
+    if (!env.dockerRunning && !env.openfoamBashrc.empty())
+        return {"none", {}, "A local OpenFOAM installation is used."};
+    if (env.dockerRunning)
+        return {"pull", {}, "Downloading the OpenFOAM image " + std::string(kDockerImage) + " (about 0.4-0.5 GB)."};
+    if (!env.docker.empty()) {
+        if (platform == Platform::MacOS)
+            return {"start", {"open", "-a", "Docker"}, "Starting Docker Desktop. The first start asks you to accept "
+                                                        "its terms; then the OpenFOAM image is downloaded."};
+        return {"manual", {}, "Docker is installed but not running: start it (sudo systemctl start docker)."};
+    }
+    if (platform == Platform::MacOS && !brew.empty()) {
+        const std::string script = brew.string() + " install --cask docker-desktop && open -a Docker";
+        return {"terminal",
+                {"osascript", "-e", "tell application \"Terminal\" to activate", "-e",
+                 "tell application \"Terminal\" to do script \"" + script + "\""},
+                "Installing Docker Desktop with Homebrew in a Terminal window (it may ask for your password). "
+                "When Docker Desktop has started, the OpenFOAM image is downloaded."};
+    }
+    if (platform == Platform::MacOS)
+        return {"browser", {"open", macDownload},
+                "Opening the Docker Desktop download page: install it, start it, then press Install for me again "
+                "to download the OpenFOAM image."};
+    return {"browser", {"xdg-open", linuxInstall},
+            "Opening the Docker Engine install page: install it, start it, then press Install for me again."};
 }
 
 // --- Run --------------------------------------------------------------------------------
@@ -864,6 +915,58 @@ PolyData RunManager::field(const std::string& id, std::string_view kind)
         d.scalars["pressure"] = std::move(pa);
     }
     return d;
+}
+
+bool RunManager::startImagePull(const fs::path& docker)
+{
+    if (m_imagePull && m_imagePull->running())
+        return false;
+    fs::create_directories(m_root);
+    m_imagePull = Process::start({docker.string(), "pull", std::string(kDockerImage)}, m_root,
+                                 m_root / "image-pull.log");
+    return true;
+}
+
+Json RunManager::imagePullStatus()
+{
+    if (!m_imagePull)
+        return nullptr;
+    const bool running = m_imagePull->running();
+    // `docker pull` without a terminal prints one line per layer event:
+    // "<layer>: Pulling fs layer", "<layer>: Pull complete", "<layer>: Already exists".
+    std::ifstream in(m_root / "image-pull.log");
+    std::set<std::string> layers, done;
+    std::string line, last;
+    while (std::getline(in, line)) {
+        if (!line.empty())
+            last = line;
+        const auto colon = line.find(": ");
+        if (colon == std::string::npos)
+            continue;
+        const std::string layer = line.substr(0, colon), what = line.substr(colon + 2);
+        if (what == "Pulling fs layer" || what == "Waiting")
+            layers.insert(layer);
+        else if (what == "Pull complete" || what == "Already exists") {
+            layers.insert(layer);
+            done.insert(layer);
+        }
+    }
+    Json j;
+    if (running) {
+        j["state"] = "running";
+        j["progress"] = layers.empty() ? 0.0 : static_cast<double>(done.size()) / static_cast<double>(layers.size());
+        j["message"] = "Downloading the OpenFOAM image: " + std::to_string(done.size()) + " of " +
+                       std::to_string(layers.size()) + " parts.";
+    } else if (m_imagePull->exitCode() == 0) {
+        j["state"] = "finished";
+        j["progress"] = 1.0;
+        j["message"] = "The OpenFOAM image is ready.";
+    } else {
+        j["state"] = "failed";
+        j["progress"] = 0.0;
+        j["message"] = "Downloading the OpenFOAM image failed: " + last;
+    }
+    return j;
 }
 
 Json RunManager::compare(const std::string& a, const std::string& b)
