@@ -8,6 +8,9 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <tuple>
+#include <vector>
 
 namespace aerocad::cfd {
 
@@ -596,6 +599,39 @@ std::uint64_t meshFingerprint(const TriangleMesh& mesh)
     return hash;
 }
 
+namespace {
+
+/// Fingerprint of a surface that does not depend on the order of its triangles or of the
+/// parts it was gathered from (context: [2, 3] and [3, 2] are the same surroundings, CAD-84).
+/// Each triangle is hashed from its vertex positions, starting at its smallest vertex so the
+/// orientation is kept; the triangle hashes are sorted before they are combined.
+std::uint64_t unorderedSurfaceFingerprint(const TriangleMesh& mesh)
+{
+    const auto& v = mesh.vertices();
+    std::vector<std::uint64_t> hashes;
+    hashes.reserve(mesh.triangles().size());
+    for (const auto& t : mesh.triangles()) {
+        const auto less = [&v](std::uint32_t a, std::uint32_t b) {
+            return std::tie(v[a].x, v[a].y, v[a].z) < std::tie(v[b].x, v[b].y, v[b].z);
+        };
+        std::size_t first = 0;
+        for (std::size_t k = 1; k < 3; ++k)
+            if (less(t[k], t[first]))
+                first = k;
+        std::uint64_t h = fnv1a({});
+        for (std::size_t k = 0; k < 3; ++k) {
+            const Vec3& p = v[t[(first + k) % 3]];
+            for (const double c : {p.x, p.y, p.z})
+                h = fnv1a(std::string_view(reinterpret_cast<const char*>(&c), sizeof(c)), h);
+        }
+        hashes.push_back(h);
+    }
+    std::sort(hashes.begin(), hashes.end());
+    return fnv1a(std::string_view(reinterpret_cast<const char*>(hashes.data()), hashes.size() * sizeof(std::uint64_t)));
+}
+
+} // namespace
+
 std::uint64_t caseGeometryHash(const CaseGeometry& geometry, const Settings& s)
 {
     const CaseInfo info = planCase(geometry, s);
@@ -637,9 +673,10 @@ CaseInfo writeCase(const fs::path& dir, const CaseGeometry& geometry, const Sett
         const std::string contextStl = asciiStl(context, "context");
         writeFile(dir / "constant" / "triSurface" / "context.stl", contextStl);
         info.geometryHash = fnv1a(contextStl, info.geometryHash);
-        // In model coordinates: the case frame is centred on the target part, so the same
-        // surroundings next to a variant of another size are written at other coordinates.
-        info.contextHash = meshFingerprint(geometry.context);
+        // In model coordinates (the case frame is centred on the target part, so the same
+        // surroundings next to a variant of another size are written at other coordinates),
+        // independent of the order of the context parts.
+        info.contextHash = unorderedSurfaceFingerprint(geometry.context);
     }
 
     writeFile(dir / "constant" / "transportProperties",

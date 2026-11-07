@@ -1076,3 +1076,28 @@ TEST_CASE("A target-part variant of another size stays comparable; its domain is
         noted = noted || n.get<std::string>().find("flow domains differ") != std::string::npos;
     CHECK(noted);
 }
+
+TEST_CASE("The same surroundings given in another part order are the same context (CAD-84)", "[cfd]")
+{
+    TempDir tmp;
+    cfd::RunManager runs(tmp.path());
+    cfd::Settings s;
+    s.flowDirection = "+X";
+    const auto first = box({-120, 120, 0}, {240, 240, 45});
+    const auto second = box({300, -200, 0}, {360, -140, 30});
+    cfd::CaseGeometry ab, ba;
+    ab.part = box({0, 0, 0}, {200, 80, 60});
+    ba.part = ab.part;
+    ab.context.append(first);
+    ab.context.append(second);
+    ba.context.append(second);
+    ba.context.append(first);
+    const std::string a = runs.prepare(ab, s, {});
+    const std::string b = runs.prepare(ba, s, {});
+    for (const auto& id : {a, b})
+        fakeFinishedRun(tmp.path() / id, 0.8, 1.0);
+    const auto cmp = runs.compare(a, b);
+    INFO(cmp.dump());
+    CHECK(cmp.at("sameConditions") == true);
+    CHECK(cmp.at("verdict") == "comparable");
+}
