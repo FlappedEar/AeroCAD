@@ -66,7 +66,7 @@ ctest --preset dev
 
 To check a workflow on a real file, `--ui-script <file>` drives the running application:
 each line is a JavaScript statement evaluated in `Main.qml`, with a `ui` object for real
-mouse events (`ui.click`, `ui.drag`, `ui.clickText`), `ui.wheel`, `ui.shot(path)`, `ui.wait(ms)` and
+mouse events (`ui.click`, `ui.drag`, `ui.clickText`), `ui.wheel`, `ui.drop(x, y, [files])` (a file drop), `ui.shot(path)`, `ui.wait(ms)` and
 `ui.log`. See `src/app/UiScript.cpp`. The application exits after the last line.
 
 ## Command scripts and export validation

@@ -36,6 +36,8 @@ public:
     /// Applies a modification to a part, bumps its revision and notifies observers.
     /// The new revision is always previous + 1, even if `fn` overwrites the part with an
     /// older snapshot.
+    /// Strong exception guarantee: `fn` works on a copy, so if it throws the part and its
+    /// revision stay unchanged and no observer is notified.
     /// Returns false when the id is unknown.
     bool modifyPart(PartId id, const std::function<void(Part&)>& fn);
 

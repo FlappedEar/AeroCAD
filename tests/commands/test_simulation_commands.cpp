@@ -434,6 +434,39 @@ TEST_CASE("simulation histories retain malformed middle rows until explicitly re
     CHECK(comparison.data.at("verdict") == (available ? "comparable" : "not comparable"));
 }
 
+TEST_CASE("simulation progress survives an uncommitted timestamp prefix", "[commands][simulation]")
+{
+    RunsDir dir;
+    commands::Session session;
+    const auto run = prepareRun(session, importBox(session));
+    const auto caseDir = dir.path() / run;
+    writeResultFixture(caseDir, false, 1, 120);
+    writeOutput(caseDir / "aerocad.status", "finished\n");
+    const auto coefficients = caseDir / "postProcessing/forceCoeffs/0/coefficient.dat";
+    {
+        std::ofstream append(coefficients, std::ios::app);
+        append << "12";
+    }
+    const auto result = session.execute("simulation.results", {{"run", run}});
+    REQUIRE(result.ok);
+    CHECK(result.data.at("run").at("iteration") == 120);
+    CHECK(result.data.at("history").at("iteration").size() == 120);
+    CHECK(result.data.at("history").at("iteration").back() == 120);
+    CHECK(result.data.at("finalResults").at("available") == false);
+    CHECK(result.data.at("summary").at("cd").is_null());
+
+    // Completing that same write publishes iteration 121 on the next refresh.
+    {
+        std::ofstream append(coefficients, std::ios::app);
+        append << "1 0.8 0.1 0.01\n";
+    }
+    const auto refreshed = session.execute("simulation.results", {{"run", run}});
+    REQUIRE(refreshed.ok);
+    CHECK(refreshed.data.at("run").at("iteration") == 121);
+    CHECK(refreshed.data.at("history").at("iteration").size() == 121);
+    CHECK(refreshed.data.at("history").at("iteration").back() == 121);
+}
+
 TEST_CASE("importing coefficient files is not evidence that a simulation finished", "[commands][simulation]")
 {
     RunsDir dir;

@@ -71,6 +71,7 @@ Table readTable(const fs::path& path)
 {
     Table t;
     std::vector<double> incompleteTimes;
+    bool partialTail = false;
     std::ifstream in(path);
     if (!in)
         return t;
@@ -78,6 +79,12 @@ Table readTable(const fs::path& path)
     while (std::getline(in, line)) {
         if (line.empty())
             continue;
+        // A live writer may have flushed only a prefix of a header, timestamp or
+        // last value. Until the newline arrives, none of it can replace history.
+        if (in.eof()) {
+            partialTail = !split(line).empty();
+            break;
+        }
         if (line[0] == '#') {
             auto words = split(std::string_view(line).substr(1));
             if (!words.empty() && words[0] == "Time" && words.size() > 1) {
@@ -119,7 +126,7 @@ Table readTable(const fs::path& path)
         for (std::size_t c = 0; c < t.columns.size(); ++c)
             t.values[c].push_back(toNumber(words[c + 1]).value_or(std::numeric_limits<double>::quiet_NaN()));
     }
-    t.incomplete = !incompleteTimes.empty();
+    t.incomplete = partialTail || !incompleteTimes.empty();
     return t;
 }
 

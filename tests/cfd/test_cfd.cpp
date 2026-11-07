@@ -331,6 +331,52 @@ TEST_CASE("readTable retains invalid time evidence on short rows", "[cfd]")
     }
 }
 
+TEST_CASE("readTable keeps live history while the last row is still being written", "[cfd]")
+{
+    TempDir tmp;
+    const fs::path path = tmp.path() / "coefficient.dat";
+    std::string history = "# Time Cd Cl\n";
+    for (int time = 1; time <= 120; ++time)
+        history += std::to_string(time) + " 0.8 0.1\n";
+
+    // A refresh can see only the first digits of the next timestamp. Even a
+    // complete-looking row may still have more digits coming in its last value.
+    for (const char* tail : {"12", "121 0.8", "12 0.9 0.2", "# Time Cd"}) {
+        CAPTURE(tail);
+        write(path, history + tail);
+        const auto table = cfd::readTable(path);
+        CHECK(table.incomplete);
+        REQUIRE(table.time.size() == 120);
+        CHECK(table.time.back() == 120);
+        REQUIRE(table.column("Cd") != nullptr);
+        CHECK(table.column("Cd")->size() == 120);
+        CHECK(table.column("Cd")->back() == Approx(0.8));
+    }
+
+    write(path, history + "121 0.9 0.2\n");
+    auto table = cfd::readTable(path);
+    CHECK_FALSE(table.incomplete);
+    CHECK(table.time.size() == 121);
+    CHECK(table.time.back() == 121);
+    CHECK(table.column("Cd")->back() == Approx(0.9));
+
+    // A newline makes a short repeated row committed restart evidence. It must
+    // invalidate the old values rather than silently reuse a previous run.
+    write(path, history + "12\n");
+    table = cfd::readTable(path);
+    CHECK(table.incomplete);
+    CHECK(table.time.size() == 11);
+    CHECK(table.time.back() == 11);
+
+    write(path, history + "# Time Cd\n1 0.9\n");
+    table = cfd::readTable(path);
+    CHECK_FALSE(table.incomplete);
+    CHECK(table.columns == std::vector<std::string>{"Cd"});
+    REQUIRE(table.time.size() == 1);
+    CHECK(table.time.back() == 1);
+    CHECK(table.column("Cd")->back() == Approx(0.9));
+}
+
 TEST_CASE("readVtk reads OpenFOAM legacy polydata", "[cfd]")
 {
     TempDir tmp;

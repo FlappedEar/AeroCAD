@@ -2,6 +2,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <string>
 #include <vector>
@@ -13,6 +14,9 @@ struct UndoEntry {
     std::string label;
     std::function<void()> undo;
     std::function<void()> redo;
+    /// Stable token set by UndoStack::push / mergeLast, unique for the stack's lifetime
+    /// (also across clear()). Lets a caller recognise its own steps later.
+    std::uint64_t id = 0;
 };
 
 class UndoStack {
@@ -35,11 +39,22 @@ public:
 
     void clear();
 
+    /// Token of the last applied entry, 0 when nothing can be undone.
+    [[nodiscard]] std::uint64_t topId() const { return m_index > 0 ? m_entries[m_index - 1].id : 0; }
+    /// Tokens of the last `count` applied entries, oldest first (fewer when fewer are applied).
+    [[nodiscard]] std::vector<std::uint64_t> topIds(std::size_t count) const;
+    /// Whether the entry with token `id` is applied (in the history and not undone).
+    [[nodiscard]] bool isApplied(std::uint64_t id) const;
+
     /// Joins the last `count` applied entries into one step called `label` (a dialog that
     /// ran a helper command on the way, such as making a solid editable before a fillet).
     /// Redo entries are dropped. Returns false (and changes nothing) when fewer than `count`
     /// entries are applied or count < 2.
     bool mergeLast(std::size_t count, std::string label);
+    /// Like mergeLast, but only when the last applied entries are exactly `ids` (oldest
+    /// first): a dialog joins its own steps and never someone else's. Returns false and
+    /// changes nothing otherwise.
+    bool mergeIds(const std::vector<std::uint64_t>& ids, std::string label);
 
     /// The stack's entries and position, without applying anything. Used to make a
     /// temporary change (a dialog preview) and then put the history back exactly as it was,
@@ -60,6 +75,7 @@ private:
     std::vector<UndoEntry> m_entries;
     std::size_t m_index = 0; // entries [0, m_index) are applied
     std::size_t m_limit;
+    std::uint64_t m_nextId = 1;
 };
 
 } // namespace aerocad::model

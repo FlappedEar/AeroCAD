@@ -17,6 +17,7 @@ add_library(aerocad_commands STATIC
     src/ImportStage.cpp
     src/ScanCommands.cpp
     src/Session.cpp
+    src/CommandEffects.cpp
 )
 add_library(AeroCAD::commands ALIAS aerocad_commands)
 target_include_directories(aerocad_commands PUBLIC include PRIVATE src)

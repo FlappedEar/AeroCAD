@@ -38,6 +38,18 @@ std::string formatMm(double value)
     return buffer;
 }
 
+/// The warning for a fit that misses the requested tolerance: the result is kept as an
+/// approximation, and says so in the result, the timeline and the saved feature report.
+std::string toleranceWarning(double p99, double max, double tolerance)
+{
+    char buffer[256];
+    std::snprintf(buffer, sizeof buffer,
+                  "Approximation: the surface is up to %.3g mm from the scan (99%% within %.3g mm), more than "
+                  "the requested tolerance of %.3g mm",
+                  max, p99, tolerance);
+    return buffer;
+}
+
 const model::Part& requireSurfacePart(model::Document& doc, const Json& params)
 {
     const model::Part& source = requirePart(doc, params);
@@ -376,8 +388,11 @@ cad::FeatureEvaluator::Output partOnSurface(const model::Document& doc, const ca
                          {"rmsDeviation", rep.rmsDeviation},
                          {"bridged", rep.bridgedFraction},
                          {"poles", {rep.uPoles, rep.vPoles}},
+                         {"tolerance", tolerance},
                          {"withinTolerance", rep.p99Deviation <= tolerance},
                          {"milliseconds", rep.milliseconds}};
+            if (rep.p99Deviation > tolerance)
+                warnings.push_back(toleranceWarning(rep.p99Deviation, rep.maxDeviation, tolerance));
             if (rep.bridgedFraction > 0.05)
                 warnings.push_back("About " + std::to_string(static_cast<int>(rep.bridgedFraction * 100.0)) +
                                    "% of the outline's area has no skin under it (holes, past the scan's "
@@ -526,9 +541,28 @@ cad::FeatureEvaluator::Output finOnSurface(const model::Document& doc, const cad
         }
     }
 
+    // The worst fit of all fins made: one fin out of tolerance marks the feature.
     Json fitReport;
+    auto addFit = [&](const Json& fit) {
+        if (fit.is_null())
+            return;
+        if (fitReport.is_null()) {
+            fitReport = fit;
+            return;
+        }
+        const bool within = fitReport.value("withinTolerance", true) && fit.value("withinTolerance", true);
+        if (fit.value("p99Deviation", 0.0) > fitReport.value("p99Deviation", 0.0)) {
+            const double maxDeviation = std::max(fit.value("maxDeviation", 0.0), fitReport.value("maxDeviation", 0.0));
+            fitReport = fit;
+            fitReport["maxDeviation"] = maxDeviation;
+        } else {
+            fitReport["maxDeviation"] = std::max(fit.value("maxDeviation", 0.0), fitReport.value("maxDeviation", 0.0));
+        }
+        fitReport["withinTolerance"] = within;
+    };
     // One fin at a placement, its root fillet as big as fits (up to rootFillet).
     auto makeFin = [&](const Placement& at, double& appliedFillet) {
+        Json lastFit; // fit under the most recent build attempt of this fin
         const geometry::Plane& plane = at.plane;
         // Outward: the sketch X axis for a sketch made across the surface.
         const core::Vec3 outward = plane.xDir;
@@ -563,20 +597,22 @@ cad::FeatureEvaluator::Output finOnSurface(const model::Document& doc, const cad
                 const core::MeshProjector projector(*scan.mesh, plane.xDir);
                 geometry::DrapeFitReport rep;
                 auto face = geometry::skinOnScan(projector, area, &rep, options);
-                if (fitReport.is_null())
-                    fitReport = {{"part", scan.id},
-                                 {"method", "draped"},
-                                 {"maxDeviation", rep.maxDeviation},
-                                 {"rmsDeviation", rep.rmsDeviation},
-                                 {"bridged", rep.bridgedFraction},
-                                 {"withinTolerance", rep.p99Deviation <= tolerance},
-                                 {"milliseconds", rep.milliseconds}};
+                lastFit = {{"part", scan.id},
+                           {"method", "draped"},
+                           {"maxDeviation", rep.maxDeviation},
+                           {"p99Deviation", rep.p99Deviation},
+                           {"rmsDeviation", rep.rmsDeviation},
+                           {"bridged", rep.bridgedFraction},
+                           {"tolerance", tolerance},
+                           {"withinTolerance", rep.p99Deviation <= tolerance},
+                           {"milliseconds", rep.milliseconds}};
                 return face;
             } catch (const geometry::SurfaceFitError& e) {
                 throw CommandError(std::string("Could not find the scan under the fin root: ") + e.what());
             }
         };
         auto build = [&](double fillet) {
+            lastFit = nullptr;
             auto finOn = [&](const geometry::Shape& surface) {
                 return geometry::finOnSurface(surface, at.outlines, plane.normal, thickness, outward, fillet);
             };
@@ -621,13 +657,16 @@ cad::FeatureEvaluator::Output finOnSurface(const model::Document& doc, const cad
                 }
                 solid = candidate;
                 appliedFillet = f;
+                addFit(lastFit);
             } catch (const CommandError& e) {
                 if (filletProblem.empty())
                     filletProblem = e.what();
             }
         }
-        if (solid.isNull())
+        if (solid.isNull()) {
             solid = build(0.0);
+            addFit(lastFit);
+        }
         if (rootFillet > 0.0 && appliedFillet == 0.0)
             warnings.push_back(filletProblem + "; the fin was made without a root fillet");
         else if (appliedFillet < rootFillet)
@@ -660,6 +699,10 @@ cad::FeatureEvaluator::Output finOnSurface(const model::Document& doc, const cad
         }
         fillets.push_back(applied);
     }
+    if (!fitReport.is_null() && !fitReport.value("withinTolerance", true))
+        warnings.push_back(toleranceWarning(fitReport.at("p99Deviation").get<double>(),
+                                            fitReport.at("maxDeviation").get<double>(),
+                                            fitReport.at("tolerance").get<double>()));
     cad::FeatureEvaluator::Output out;
     out.bodies = std::move(fins);
     out.bodySlots = std::move(bodySlots);
@@ -973,7 +1016,12 @@ void registerSurfaceCommands(CommandRegistry& r)
                                {"smoothSeams", fit.smoothSeams},
                                {"seamAngleMaxDeg", fit.seamAngleMaxDeg},
                                {"milliseconds", fit.milliseconds}};
-              result["warnings"] = fit.warnings;
+              Json warnings = fit.warnings;
+              if (!allWithin)
+                  warnings.push_back("Approximation: some patches are more than the requested tolerance of " +
+                                     formatMm(options.fit.tolerance) + " mm from the mesh (worst " +
+                                     formatMm(worst) + " mm); see fit.patches");
+              result["warnings"] = warnings;
               return result;
           });
     r.add({"surface.trim_by_sketch", "Trim surface by sketch",

@@ -218,9 +218,30 @@ bool AppController::cancelPreview()
     return true;
 }
 
-bool AppController::mergeHistory(int count, const QString& label)
+double AppController::historyTopId() const
 {
-    if (count < 2 || !m_session.undoStack().mergeLast(static_cast<std::size_t>(count), label.toStdString()))
+    return static_cast<double>(m_session.undoStack().topId());
+}
+
+bool AppController::historyApplied(double id) const
+{
+    return id > 0 && m_session.undoStack().isApplied(static_cast<std::uint64_t>(id));
+}
+
+bool AppController::undoIfTop(double id)
+{
+    if (id <= 0 || m_session.undoStack().topId() != static_cast<std::uint64_t>(id))
+        return false;
+    return execute(QStringLiteral("edit.undo")).value(QStringLiteral("ok")).toBool();
+}
+
+bool AppController::mergeHistoryIds(const QVariantList& ids, const QString& label)
+{
+    std::vector<std::uint64_t> tokens;
+    tokens.reserve(static_cast<std::size_t>(ids.size()));
+    for (const QVariant& v : ids)
+        tokens.push_back(static_cast<std::uint64_t>(v.toDouble()));
+    if (!m_session.undoStack().mergeIds(tokens, label.toStdString()))
         return false;
     emit historyChanged();
     return true;
@@ -509,6 +530,11 @@ bool AppController::autosaveNow()
     }
     setStatusMessage(tr("Recovery copy saved"));
     return true;
+}
+
+bool AppController::hasAutosave() const
+{
+    return QFileInfo::exists(autosavePath());
 }
 
 QStringList AppController::autosaveFiles() const

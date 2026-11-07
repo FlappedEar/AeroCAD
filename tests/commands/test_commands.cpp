@@ -6,6 +6,10 @@
 #include "aerocad/core/Measure.hpp"
 #include "aerocad/geometry/Primitives.hpp"
 #include "aerocad/geometry/Tessellation.hpp"
+#include "aerocad/geometry/Transform.hpp"
+#include "aerocad/project/ProjectFile.hpp"
+
+#include <Standard_ConstructionError.hxx>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -1313,4 +1317,236 @@ TEST_CASE("Part on surface on a timeline body is rebuilt from the body, also whe
     CHECK(p->shape->volume() == Approx(volume).epsilon(0.01));
     std::error_code ec;
     std::filesystem::remove(file, ec);
+}
+
+TEST_CASE("A rejected scale leaves the model, history and dirty state unchanged (CAD-88)", "[commands]")
+{
+    commands::Session session;
+    auto r = session.execute("document.import", {{"path", std::string(AEROCAD_TEST_DATA_DIR) + "/models/dome.step"}});
+    REQUIRE(r.ok);
+    const auto id = r.data.at("id").get<std::uint64_t>();
+    const Json boundsBefore = session.execute("document.bounds").data.at("bounds");
+    const model::Part before = *session.document().part(id);
+    const std::size_t historyBefore = session.undoStack().position();
+    const bool dirtyBefore = session.project().dirty();
+
+    // The audit's factor: used to abort the process with an uncaught Standard_ConstructionError.
+    for (double factor : {1e-310, 1e-7, 1e7}) {
+        r = session.execute("part.scale", {{"id", id}, {"factor", factor}});
+        CHECK_FALSE(r.ok);
+    }
+    // Past the schema (as an undo/redo or a future command could): the kernel layer rejects it.
+    CHECK_THROWS_AS(geometry::scaled(*before.shape, 1e-310, {}), std::invalid_argument);
+
+    const model::Part* after = session.document().part(id);
+    REQUIRE(after != nullptr);
+    CHECK(after->revision == before.revision);
+    CHECK(after->mesh == before.mesh);
+    CHECK(session.undoStack().position() == historyBefore);
+    CHECK(session.project().dirty() == dirtyBefore);
+    CHECK(session.execute("document.bounds").data.at("bounds") == boundsBefore);
+
+    // The session still works afterwards.
+    r = session.execute("part.scale", {{"id", id}, {"factor", 2.0}});
+    CHECK(r.ok);
+}
+
+TEST_CASE("No exception escapes a command, whatever its type (CAD-88)", "[commands]")
+{
+    model::Document document;
+    model::UndoStack undo;
+    commands::CommandContext context{document, undo};
+    commands::CommandRegistry registry;
+    registry.add({"test.kernel", "Kernel failure", "Throws an Open CASCADE exception.", Json::object()},
+                 [](commands::CommandContext&, const Json&) -> Json {
+                     throw Standard_ConstructionError("gp_Trsf::SetScale");
+                 });
+    registry.add({"test.other", "Unknown failure", "Throws a non-standard exception.", Json::object()},
+                 [](commands::CommandContext&, const Json&) -> Json { throw 42; });
+
+    auto r = registry.execute(context, "test.kernel", Json::object());
+    CHECK_FALSE(r.ok);
+    CHECK(r.error.find("Standard_ConstructionError") != std::string::npos);
+    CHECK(r.error.find("gp_Trsf::SetScale") != std::string::npos);
+
+    r = registry.execute(context, "test.other", Json::object());
+    CHECK_FALSE(r.ok);
+    CHECK(r.error.find("unknown error") != std::string::npos);
+}
+
+TEST_CASE("A part edit that throws leaves the part untouched (CAD-88)", "[commands]")
+{
+    model::Document document;
+    model::Part part;
+    part.name = "A";
+    const auto id = document.addPart(part);
+    const auto revision = document.part(id)->revision;
+    int notifications = 0;
+    document.addObserver([&](model::Document::Change, model::PartId) { ++notifications; });
+    CHECK_THROWS(document.modifyPart(id, [](model::Part& p) {
+        p.name = "half way";
+        throw std::runtime_error("kernel failed");
+    }));
+    CHECK(document.part(id)->name == "A");
+    CHECK(document.part(id)->revision == revision);
+    CHECK(notifications == 0);
+}
+
+TEST_CASE("A part whose fit misses the tolerance is kept as a marked approximation (CAD-85)", "[commands][surface]")
+{
+    commands::Session session;
+    auto scan = session.execute("document.import",
+                                {{"path", std::string(AEROCAD_TEST_DATA_DIR) + "/models/dome_scan.stl"}});
+    REQUIRE(scan.ok);
+    const auto scanId = scan.data.at("id").get<model::PartId>();
+    const Json square = Json::array({{{"type", "line"}, {"start", {-15, -15}}, {"end", {15, -15}}},
+                                     {{"type", "line"}, {"start", {15, -15}}, {"end", {15, 15}}},
+                                     {{"type", "line"}, {"start", {15, 15}}, {"end", {-15, 15}}},
+                                     {{"type", "line"}, {"start", {-15, 15}}, {"end", {-15, -15}}}});
+    auto sk = session.execute("sketch.create",
+                              {{"surface", {{"part", scanId}, {"point", {0, 0, 45.7}}}}, {"curves", square}});
+    REQUIRE(sk.ok);
+
+    // The audit's case: 0.01 mm cannot be met on the noisy scan.
+    auto part = session.execute("surface.part_from_sketch",
+                                {{"sketch", sk.data.at("id")}, {"thickness", 2.0}, {"tolerance", 0.01}});
+    INFO(part.toJson().dump());
+    REQUIRE(part.ok);
+    const auto featureId = part.data.at("feature").get<std::uint64_t>();
+    auto timeline = session.execute("timeline.list");
+    Json feature;
+    for (const auto& f : timeline.data.at("features"))
+        if (f.at("id") == featureId)
+            feature = f;
+    REQUIRE(feature.is_object());
+    const Json& fit = feature.at("report").at("fit");
+    CHECK_FALSE(fit.at("withinTolerance").get<bool>());
+    CHECK(fit.at("tolerance").get<double>() == Approx(0.01));
+    CHECK(fit.at("p99Deviation").get<double>() > 0.01);
+    CHECK(fit.at("maxDeviation").get<double>() >= fit.at("p99Deviation").get<double>());
+    CHECK(feature.value("approximate", false));
+    const auto& warnings = feature.at("report").at("warnings");
+    REQUIRE_FALSE(warnings.empty());
+    CHECK(warnings[0].get<std::string>().find("Approximation") != std::string::npos);
+    CHECK(part.data.at("warnings")[0].get<std::string>().find("Approximation") != std::string::npos);
+
+    // The export check names it too.
+    auto check = session.execute("document.export_check", {{"ids", {part.data.at("id")}}});
+    REQUIRE(check.ok);
+    INFO(check.toJson().dump());
+    CHECK(check.data.at("parts")[0].value("approximate", false));
+
+    // An achievable tolerance: no approximation flag.
+    auto loose = session.execute("surface.part_from_sketch",
+                                 {{"sketch", sk.data.at("id")}, {"thickness", 2.0}, {"tolerance", 0.5}});
+    REQUIRE(loose.ok);
+    timeline = session.execute("timeline.list");
+    for (const auto& f : timeline.data.at("features"))
+        if (f.at("id") == loose.data.at("feature"))
+            CHECK_FALSE(f.value("approximate", false));
+}
+
+TEST_CASE("CAD-85: stacked fins are an approximation when any fin misses the tolerance", "[commands][surface]")
+{
+    commands::Session session;
+    auto scan = session.execute("document.import",
+                                {{"path", std::string(AEROCAD_TEST_DATA_DIR) + "/models/dome_scan.stl"}});
+    REQUIRE(scan.ok);
+    const Json fin = Json::array({{{"type", "rectangle"}, {"corner", {-2, -8}}, {"opposite", {10, 8}}}});
+    auto sk = session.execute("sketch.create",
+                              {{"surface", {{"part", scan.data.at("id")}, {"point", {40, 0, 45}}, {"across", true}}},
+                               {"curves", fin}});
+    REQUIRE(sk.ok);
+    // The first fin alone fits within 0.04 mm (p99 about 0.026 mm) ...
+    auto one = session.execute("surface.fin_from_sketch",
+                               {{"sketch", sk.data.at("id")}, {"thickness", 3.0}, {"tolerance", 0.04}});
+    INFO(one.toJson().dump());
+    REQUIRE(one.ok);
+    REQUIRE(one.data.at("fit").at("withinTolerance").get<bool>());
+    // ... the second, 40 mm further down the dome, does not (p99 about 0.06 mm).
+    auto two = session.execute("surface.fin_from_sketch", {{"sketch", sk.data.at("id")},
+                                                           {"thickness", 3.0},
+                                                           {"tolerance", 0.04},
+                                                           {"count", 2},
+                                                           {"spacing", -40.0}});
+    INFO(two.toJson().dump());
+    REQUIRE(two.ok);
+    const Json& fit = two.data.at("fit");
+    CHECK_FALSE(fit.at("withinTolerance").get<bool>());
+    CHECK(fit.at("p99Deviation").get<double>() > 0.04);
+    bool warned = false;
+    for (const auto& w : two.data.at("warnings"))
+        warned = warned || w.get<std::string>().find("Approximation") != std::string::npos;
+    CHECK(warned);
+}
+
+TEST_CASE("CAD-85: fit reports saved before the tolerance was recorded are fitted again on open",
+          "[commands][surface]")
+{
+    const auto file = std::filesystem::temp_directory_path() /
+                      ("aerocad_cad85_" + std::to_string(std::random_device{}()) + ".aerocad");
+    {
+        commands::Session session;
+        auto scan = session.execute("document.import",
+                                    {{"path", std::string(AEROCAD_TEST_DATA_DIR) + "/models/dome_scan.stl"}});
+        REQUIRE(scan.ok);
+        const Json square = Json::array({{{"type", "rectangle"}, {"corner", {-15, -15}}, {"opposite", {15, 15}}}});
+        auto sk = session.execute("sketch.create",
+                                  {{"surface", {{"part", scan.data.at("id")}, {"point", {0, 0, 45.7}}}}, {"curves", square}});
+        REQUIRE(sk.ok);
+        REQUIRE(session.execute("surface.part_from_sketch",
+                                {{"sketch", sk.data.at("id")}, {"thickness", 2.0}, {"tolerance", 0.01}})
+                    .ok);
+        REQUIRE(session.execute("project.save", {{"path", core::pathToUtf8(file)}}).ok);
+    }
+    // Make it look like a file from before CAD-85: no tolerance, no approximation warning.
+    project::ProjectData data = project::loadProject(file);
+    bool edited = false;
+    for (auto& r : data.timelineResults) {
+        Json& report = r.output.report;
+        if (report.is_object() && report.contains("fit")) {
+            report["fit"].erase("tolerance");
+            report["fit"].erase("p99Deviation");
+            report["warnings"] = Json::array();
+            edited = true;
+        }
+    }
+    REQUIRE(edited);
+    project::saveProject(file, data);
+
+    commands::Session session;
+    REQUIRE(session.execute("project.open", {{"path", core::pathToUtf8(file)}}).ok);
+    auto timeline = session.execute("timeline.list");
+    Json feature;
+    for (const auto& f : timeline.data.at("features"))
+        if (f.contains("report") && f.at("report").contains("fit"))
+            feature = f;
+    REQUIRE(feature.is_object());
+    INFO(feature.dump());
+    CHECK(feature.value("approximate", false));
+    CHECK(feature.at("report").at("fit").at("tolerance").get<double>() == Approx(0.01));
+    CHECK(feature.at("report").at("warnings")[0].get<std::string>().find("Approximation") != std::string::npos);
+    std::filesystem::remove(file);
+}
+
+TEST_CASE("CAD-80: replacing the project starts a new generation and drops staged imports", "[commands]")
+{
+    commands::Session session;
+    const std::uint64_t first = session.project().generation;
+    session.importStage().put("/pending/scan.stl", io::ImportResult{});
+    REQUIRE(session.execute("project.new").ok);
+    const std::uint64_t second = session.project().generation;
+    CHECK(second != first);
+    // A file parsed for the old project is not imported into the new one.
+    CHECK_FALSE(session.importStage().take("/pending/scan.stl").has_value());
+
+    // Ordinary edits and saves keep the generation; opening a project changes it.
+    REQUIRE(session.execute("feature.box", {{"size", {10, 10, 10}}}).ok);
+    const auto file = std::filesystem::temp_directory_path() /
+                      ("aerocad_generation_" + std::to_string(std::random_device{}()) + ".aerocad");
+    REQUIRE(session.execute("project.save", {{"path", core::pathToUtf8(file)}}).ok);
+    CHECK(session.project().generation == second);
+    REQUIRE(session.execute("project.open", {{"path", core::pathToUtf8(file)}}).ok);
+    CHECK(session.project().generation != second);
+    std::filesystem::remove(file);
 }

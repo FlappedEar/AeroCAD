@@ -8,6 +8,8 @@ AEROCAD_CFD_DIR=/tmp/cad83/runs xvfb-run build/release/bin/AeroCAD \
 Optional Linux/macOS process-cancellation check (starts a sleeping stand-in, not a solver):
 AEROCAD_CFD_DIR=/tmp/cad83/runs AEROCAD_OPENFOAM_BASHRC=/tmp/cad83/process-fixture.bashrc \
     xvfb-run build/release/bin/AeroCAD tests/data/box_200x80x60.stl --ui-script /tmp/cad83/cancel.ui
+
+For live progress with an unterminated timestamp, use live-tail-fixture.bashrc and live-tail.ui instead.
 """
 
 import argparse
@@ -144,6 +146,42 @@ def main():
               '|| r.history.cd.length !== 20) ui.fail("cancelled output is final or history lost"); })()',
               f"ui.shot({json.dumps(str(output / 'cancelled-results.png'))})"]
     (output / "cancel.ui").write_text("\n".join(cancel) + "\n")
+
+    # A real running process leaves only the first two digits of time 121 on disk.
+    # Its current time, progress and chart must retain all 120 committed samples.
+    live_history = output / "live-history.dat"
+    live_history.write_text("# Time Cd Cl Cs\n"
+                            + "".join(f"{i} 0.8 0.1 0.01\n" for i in range(1, 121)) + "12")
+    live_bashrc = "# Synthetic live output; this is not an OpenFOAM installation.\n"
+    live_bashrc += "mkdir -p postProcessing/forceCoeffs/0\n"
+    live_bashrc += f"cp {shlex.quote(str(live_history))} postProcessing/forceCoeffs/0/coefficient.dat\n"
+    live_bashrc += "printf 'solve\\n' > aerocad.stage\nexec /bin/sleep 60\n"
+    (output / "live-tail-fixture.bashrc").write_text(live_bashrc)
+    live = ["# Real process with a partially written timestamp; not an OpenFOAM calculation.",
+            'ui.clickText("SIMULATE")', "ui.wait(200)", 'ui.clickText("Wind Tunnel")',
+            '(() => { const r = controller.execute("simulation.run", '
+            '{id: 1, backend: "local", label: "Live partial timestamp fixture"}); '
+            'if (!r.ok) { ui.fail(r.error); return }; simulationPanel.refreshRuns(); '
+            'simulationPanel.selectRun(r.result.id); })()', "ui.wait(700)",
+            "simulationPanel.refreshRuns(); simulationPanel.loadResults()", 'ui.clickText("Results")',
+            "ui.wait(300)",
+            '(() => { const r = simulationPanel.results; const s = simulationPanel.activeStatus; '
+            'ui.log("live partial timestamp: " + JSON.stringify(s)); '
+            'if (s.state !== "running" || s.iteration !== 120 || s.progress <= 0.30 '
+            '|| r.finalResults.available || r.summary.cd !== null || r.history.cd.length !== 120 '
+            '|| r.history.iteration[119] !== 120) ui.fail("partial timestamp lost live progress or history"); '
+            'const find = item => item.title === "Coefficients (provisional)" ? item '
+            ': Array.from(item.children).map(find).find(x => x); const chart = find(simulationPanel); '
+            'if (!chart || chart.series[0].y.length !== 120) ui.fail("live chart lost committed samples"); })()',
+            f"ui.shot({json.dumps(str(output / 'live-tail-progress.png'))})",
+            'ui.clickText("Cancel")', "ui.wait(700)",
+            "simulationPanel.refreshRuns(); simulationPanel.loadResults()",
+            '(() => { const r = simulationPanel.results; ui.log("after Cancel: " + JSON.stringify(r.run)); '
+            'if (r.run.state !== "cancelled" '
+            '|| r.run.iteration !== 120 || r.history.cd.length !== 120 || r.finalResults.available) '
+            'ui.fail("cancelled partial timestamp lost history"); })()',
+            f"ui.shot({json.dumps(str(output / 'live-tail-cancelled.png'))})"]
+    (output / "live-tail.ui").write_text("\n".join(live) + "\n")
     print(f"Set AEROCAD_CFD_DIR={runs}; UI script: {output / 'provisional.ui'}")
 
 

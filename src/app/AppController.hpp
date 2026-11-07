@@ -98,8 +98,16 @@ public:
     Q_INVOKABLE QVariantMap preview(const QString& name, const QVariantMap& params = {});
     /// Undoes the preview, if any. Returns true if one was active.
     Q_INVOKABLE bool cancelPreview();
-    /// Joins the last `count` undo steps into one called `label` (see UndoStack::mergeLast).
-    Q_INVOKABLE bool mergeHistory(int count, const QString& label);
+    /// Token of the last undo step (UndoStack::topId), 0 when there is none. A dialog keeps
+    /// the tokens of the steps it made so it never undoes or joins anyone else's.
+    Q_INVOKABLE double historyTopId() const;
+    /// Whether the step with token `id` is still applied.
+    Q_INVOKABLE bool historyApplied(double id) const;
+    /// Undoes the last step only if its token is `id`. Returns true if it did.
+    Q_INVOKABLE bool undoIfTop(double id);
+    /// Joins the steps `ids` (oldest first) into one called `label`, only if they are exactly
+    /// the last applied steps (see UndoStack::mergeIds).
+    Q_INVOKABLE bool mergeHistoryIds(const QVariantList& ids, const QString& label);
     Q_INVOKABLE bool previewActive() const { return m_session.previewActive(); }
     /// Convenience wrapper around document.import for file dialogs and drag & drop.
     Q_INVOKABLE bool importFile(const QUrl& url);
@@ -132,6 +140,8 @@ public:
     Q_INVOKABLE void discardAutosaveFile(const QString& path) { removeAutosave(path); }
     /// Writes the autosave copy now if there are unsaved changes. Returns true if written.
     Q_INVOKABLE bool autosaveNow();
+    /// True if the open project's recovery copy is on disk.
+    Q_INVOKABLE bool hasAutosave() const;
     Q_INVOKABLE void clearRecentProjects();
     Q_INVOKABLE void setStatus(const QString& message) { setStatusMessage(message); }
 

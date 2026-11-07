@@ -3,7 +3,11 @@
 
 #include "ParamsValidation.hpp"
 
+#include "aerocad/geometry/KernelError.hpp"
+
 #include <exception>
+#include <stdexcept>
+#include <string>
 #include <utility>
 
 namespace aerocad::commands {
@@ -28,6 +32,14 @@ void CommandRegistry::add(CommandInfo info, Handler handler)
 bool CommandRegistry::contains(std::string_view name) const
 {
     return m_commands.find(name) != m_commands.end();
+}
+
+void CommandRegistry::setEffects(std::string_view name, const CommandEffects& effects)
+{
+    auto it = m_commands.find(name);
+    if (it == m_commands.end())
+        throw std::invalid_argument("CommandRegistry::setEffects: unknown command " + std::string(name));
+    it->second.info.effects = effects;
 }
 
 const CommandInfo* CommandRegistry::info(std::string_view name) const
@@ -58,12 +70,20 @@ CommandResult CommandRegistry::execute(CommandContext& context, std::string_view
     if (auto err = validateParams(entry.info.params, effective)) {
         result = CommandResult::failure("Invalid parameters for " + entry.info.name + ": " + *err);
     } else {
+        // No exception may leave a command: the UI, scripts and the MCP server all call
+        // through here, and an escaping exception would end the process.
         try {
-            result = CommandResult::success(entry.handler(context, effective));
+            try {
+                result = CommandResult::success(entry.handler(context, effective));
+            } catch (...) {
+                geometry::rethrowAsKernelError(); // Open CASCADE errors are not std::exceptions
+            }
         } catch (const CommandError& e) {
             result = CommandResult::failure(e.what());
         } catch (const std::exception& e) {
             result = CommandResult::failure(entry.info.name + " failed: " + e.what());
+        } catch (...) {
+            result = CommandResult::failure(entry.info.name + " failed: unknown error");
         }
     }
     if (m_listener)

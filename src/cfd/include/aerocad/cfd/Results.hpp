@@ -22,7 +22,7 @@ struct Table {
     std::vector<std::string> columns; ///< Without the leading "Time".
     std::vector<double> time;
     std::vector<std::vector<double>> values; ///< values[column][row]
-    bool incomplete = false; ///< Active history has an unreplaced truncated row; valid rows remain for live charts.
+    bool incomplete = false; ///< A truncated row or uncommitted tail remains; valid rows remain for live charts.
     bool invalidTime = false; ///< A data row had a non-numeric or non-finite time.
 
     [[nodiscard]] const std::vector<double>* column(std::string_view name) const;
@@ -30,7 +30,8 @@ struct Table {
 };
 
 /// Reads a table; missing file = empty table. Non-numeric cells (solver names, true/false)
-/// become NaN. Restarted runs append rows with repeated times; the later row wins.
+/// become NaN. Restarted runs append rows with repeated times; the later committed row wins.
+/// An unterminated last line is incomplete and cannot replace the committed history.
 [[nodiscard]] Table readTable(const std::filesystem::path& path);
 
 /// Legacy ASCII VTK polydata as written by OpenFOAM's surface and set writers.

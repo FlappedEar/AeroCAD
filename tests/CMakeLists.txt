@@ -34,7 +34,7 @@ aerocad_add_test(test_commands
     SOURCES commands/test_commands.cpp commands/test_canards.cpp commands/test_export_commands.cpp commands/test_design_commands.cpp
         commands/test_project_commands.cpp commands/test_scan_commands.cpp commands/test_inspect_commands.cpp
         commands/test_simulation_commands.cpp
-    LIBS AeroCAD::commands)
+    LIBS AeroCAD::commands AeroCAD::geometry_occt AeroCAD::project)
 
 aerocad_add_test(test_mcp
     SOURCES mcp/test_mcp_server.cpp
@@ -78,3 +78,14 @@ set_tests_properties(cfd_validation_ahmed PROPERTIES LABELS "openfoam;validation
 aerocad_add_test(test_e2e
     SOURCES e2e/test_workflow.cpp
     LIBS AeroCAD::commands)
+
+# CAD-88: a scale factor the modelling kernel cannot represent used to abort the process.
+# The command must come back as an error from a live aerocad-cmd process.
+file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/cad88_tiny_scale.json
+    "[{\"name\": \"document.import\", \"params\": {\"path\": \"${CMAKE_CURRENT_SOURCE_DIR}/data/models/dome.step\"}},\n"
+    " {\"name\": \"part.scale\", \"params\": {\"id\": 1, \"factor\": 1e-310}}]\n")
+add_test(NAME cmd_tiny_scale_is_rejected
+    COMMAND aerocad_cmd ${CMAKE_CURRENT_BINARY_DIR}/cad88_tiny_scale.json)
+set_tests_properties(cmd_tiny_scale_is_rejected PROPERTIES
+    PASS_REGULAR_EXPRESSION "\"command\":\"part.scale\",\"error\":\"Invalid parameters"
+    FAIL_REGULAR_EXPRESSION "terminate called|Standard_ConstructionError")
