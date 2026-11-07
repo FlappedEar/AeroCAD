@@ -14,6 +14,10 @@
 #include <string_view>
 #include <vector>
 
+namespace aerocad::cfd {
+class RunManager;
+}
+
 namespace aerocad::commands {
 
 using Json = nlohmann::json;
@@ -32,6 +36,7 @@ struct CommandContext {
     InspectState* inspect = nullptr;           ///< Analyses (inspect.*).
     ProjectState* project = nullptr;           ///< File path, variants (project.*, variant.*).
     ImportStage* importStage = nullptr;        ///< Pre-parsed files for document.import.
+    cfd::RunManager* simulations = nullptr;    ///< Wind tunnel runs (simulation.*).
 };
 
 /// Static description of a command. `params` is a JSON Schema (subset, see

@@ -3,7 +3,7 @@
 # Fast gate for every pull request and push to main: does it compile (warnings are
 # errors) and do the unit tests pass, on Linux (distribution packages) and macOS Apple
 # Silicon (Homebrew). No packaging and no GUI tests; the app smoke test
-# (ctest -L gui) is for local runs.
+# (ctest -L gui) and the OpenFOAM run (ctest -L openfoam) are for local runs.
 name: CI
 
 on:
@@ -48,7 +48,7 @@ jobs:
       - name: Build
         run: cmake --build --preset release --parallel
       - name: Unit tests
-        run: ctest --test-dir build/release --output-on-failure -LE gui --parallel 4
+        run: ctest --test-dir build/release --output-on-failure -LE "gui|openfoam" --parallel 4
       - name: ccache stats
         if: always()
         run: ccache --show-stats
@@ -75,7 +75,7 @@ jobs:
       - name: Build
         run: cmake --build --preset release --parallel
       - name: Unit tests
-        run: ctest --test-dir build/release --output-on-failure -LE gui --parallel 4
+        run: ctest --test-dir build/release --output-on-failure -LE "gui|openfoam" --parallel 4
       - name: ccache stats
         if: always()
         run: ccache --show-stats

@@ -10,6 +10,7 @@ add_library(aerocad_commands STATIC
     src/ExportCommands.cpp
     src/DesignCommands.cpp
     src/InspectCommands.cpp
+    src/SimulationCommands.cpp
     src/ProjectCommands.cpp
     src/SurfaceCommands.cpp
     src/ImportStage.cpp
@@ -19,6 +20,6 @@ add_library(aerocad_commands STATIC
 add_library(AeroCAD::commands ALIAS aerocad_commands)
 target_include_directories(aerocad_commands PUBLIC include PRIVATE src)
 target_link_libraries(aerocad_commands
-    PUBLIC AeroCAD::model AeroCAD::cad AeroCAD::io nlohmann_json::nlohmann_json
+    PUBLIC AeroCAD::model AeroCAD::cad AeroCAD::io AeroCAD::cfd nlohmann_json::nlohmann_json
     PRIVATE AeroCAD::project)
 aerocad_set_warnings(aerocad_commands)
