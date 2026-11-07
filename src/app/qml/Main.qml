@@ -203,7 +203,11 @@ ApplicationWindow {
         for (let row = 0; row < controller.parts.count; ++row) {
             }
         viewport.setViewDirection(Qt.vector3d(pl.normal[0], pl.normal[1], pl.normal[2]))
-        viewport.fitAll()
+        // On a scan, look at the clicked place: the whole model would leave it tiny.
+        if (on && on.point && controller.sceneRadius > 0)
+            viewport.frameAround(on.point, controller.sceneRadius * 0.35)
+        else
+            viewport.fitAll()
     }
 
     /// Ends sketch editing. With `offerPart` (the user finished it), a closed outline drawn
@@ -1020,7 +1024,12 @@ ApplicationWindow {
             markers: featureDialog.visible ? featureDialog.pickedPoints : []
             pickKind: featureDialog.visible ? featureDialog.pickKind : ""
             shownSketch: featureDialog.shownSketch
-            onPartPicked: id => window.selectPart(id)
+            onPartPicked: id => {
+                window.selectPart(id)
+                // A click through a hole of a scan, or next to the model, while choosing where to sketch.
+                if (!id && window.pickingSketchPlane)
+                    window.controller.showStatus(qsTr("Nothing there to sketch on: click on the surface, not a hole in it"))
+            }
             onPartContextRequested: (id, x, y) => {
                 partMenu.info = id ? window.controller.partInfo(id) : ({})
                 partMenu.popup(viewport, x, y)
@@ -1222,6 +1231,8 @@ ApplicationWindow {
                                 if (fin)
                                     window.controller.showStatus(qsTr("Fin \"%1\": %2 mm thick, %3 cm³")
                                         .arg(r.result.name).arg(t).arg((r.result.volume / 1000).toFixed(1)))
+                                else if (r.result.warnings.length > 0)
+                                    window.controller.showStatus(qsTr("Part \"%1\": %2").arg(r.result.name).arg(r.result.warnings[0]))
                                 else
                                     window.controller.showStatus(qsTr("Part \"%1\": %2 mm thick, %3 cm²")
                                         .arg(r.result.name).arg(t).arg((r.result.area / 100).toFixed(1)))

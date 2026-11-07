@@ -64,4 +64,11 @@ struct Part {
     return id;
 }
 
+/// The scan a reference surface was fitted to (surface.fit_selection), 0 for anything else:
+/// a part made from a scan, for one, is a shape of its own and does not stand in for the scan.
+[[nodiscard]] inline PartId fittedScanId(const Part& part)
+{
+    return part.source.rfind("surface.fit_selection of part ", 0) == 0 ? sourcePartId(part) : 0;
+}
+
 } // namespace aerocad::model

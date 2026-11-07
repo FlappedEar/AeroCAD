@@ -89,14 +89,20 @@ core -------+                 transforms, primitives).
   surface is trimmed on its whole underlying B-spline (`extend`), so the edges are the
   outline's and not the ragged border of the brushed region it was fitted to.
   `surface.part_from_sketch` does it in one step from the sketch (it remembers its part
-  in `onSurface`): on a scan it first fits a surface to the triangles under the outline
-  (connected, facing the sketch, inside the outline's rectangle plus a margin), then
-  trims and thickens. A fitted surface whose cut-out is smaller than the outline (drawn
-  past the fitted area) is fitted again on its scan (`model::sourcePartId`) under the
-  whole outline. Such sketches are shown lying on the scan: `Design::syncDocument` splits
-  the curves and the profile fill finely and moves them onto it along the sketch normal
-  (`core::projectOntoMesh`, grid-accelerated), and clicks while sketching ray-cast the
-  surface (`AppController::pickPartSurface`, meshes up to 300k triangles). `across: true`
+  in `onSurface`). On a scan, or a surface fitted to one (`model::fittedScanId`), it uses
+  `geometry::partOnScan`: heights over the sketch plane sampled at the first hit from
+  outside (`core::MeshProjector`), so layers behind the skin never count; the largest
+  sheet under the outline is kept and holes and steep pits are bridged; two B-spline
+  height fields are fitted by tensor-product least squares, the skin and its rolling-ball
+  offset (which cannot fold in sharp details); the sketch coordinates are their
+  parameters, so the outline is laid on them exactly, without booleans, and the walls run
+  along the sketch normal. The fit takes milliseconds on a 3M-triangle scan. Other
+  surfaces are trimmed and thickened. Such sketches are shown lying on the scan:
+  `Design::syncDocument` splits the curves and the profile fill finely and moves them onto
+  it along the sketch normal (`core::projectOntoMesh`); fill over holes or walls is left
+  out, lines run straight across them. Clicks and previews while sketching use a cached
+  `core::MeshProjector` (`AppController::pickPartSurface`, `dropOntoPart`): triangles binned
+  in a grid across the sketch normal; about a millisecond per pointer move at 3M triangles. `across: true`
   sketches stand on the surface instead (X along its normal, through the clicked point;
   turned by `angle` about the normal), for fins: `sketch.profiles` reports where the
   plane cuts the surface (`surfaceLine`, `core::sliceMesh`), which the sketch overlay

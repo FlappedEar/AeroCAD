@@ -64,6 +64,11 @@ ctest --preset dev
   and checks that the model is visible in the viewport. Add `--screenshot out.png` when
   running it by hand to save the frame.
 
+To check a workflow on a real file, `--ui-script <file>` drives the running application:
+each line is a JavaScript statement evaluated in `Main.qml`, with a `ui` object for real
+mouse events (`ui.click`, `ui.drag`, `ui.clickText`), `ui.wheel`, `ui.shot(path)`, `ui.wait(ms)` and
+`ui.log`. See `src/app/UiScript.cpp`. The application exits after the last line.
+
 ## Command scripts and export validation
 
 `aerocad-cmd` (built next to the app, no Qt needed) runs a JSON array of commands, the

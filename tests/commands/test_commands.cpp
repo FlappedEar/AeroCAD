@@ -669,7 +669,9 @@ TEST_CASE("Part on surface: one step from an outline over a scan to a solid", "[
         auto part = session.execute("surface.part_from_sketch", {{"sketch", sketchId}, {"thickness", 1.5}, {"side", "outside"}});
         INFO(part.toJson().dump());
         REQUIRE(part.ok);
-        CHECK_FALSE(part.data.contains("fit")); // the fitted surface is used as it is
+        // Built on the scan the surface came from, under the outline.
+        CHECK(part.data.at("fit").at("part") == scanId);
+        CHECK(part.data.at("fit").at("method") == "draped");
         CHECK(part.data.at("volume").get<double>() == Approx(1.5 * trimmed.data.at("area").get<double>()).epsilon(0.03));
     }
 
@@ -693,6 +695,48 @@ TEST_CASE("Part on surface: one step from an outline over a scan to a solid", "[
         CHECK(part.data.at("warnings").empty());
         CHECK(part.data.at("bounds").at("size").at(0).get<double>() == Approx(40.0).margin(0.3));
         CHECK(part.data.at("bounds").at("size").at(1).get<double>() == Approx(20.0).margin(0.3));
+    }
+
+    SECTION("A part already made from the scan does not stand in for the scan")
+    {
+        auto first = session.execute("sketch.create",
+                                     {{"surface", {{"part", scanId}, {"point", {30, 15, 0}}}},
+                                      {"curves", Json::array({{{"type", "center_rectangle"},
+                                                               {"center", {0, 0}},
+                                                               {"width", 20},
+                                                               {"height", 10}}})}});
+        REQUIRE(first.ok);
+        auto part = session.execute("surface.part_from_sketch", {{"sketch", first.data.at("id")}, {"thickness", 1.0}});
+        REQUIRE(part.ok);
+        const auto solidId = part.data.at("id").get<model::PartId>();
+        // The sketch is hidden with the part, and one undo brings it back and removes the part.
+        auto visibleSketch = [&]() {
+            const auto parts = session.execute("document.parts");
+            for (const auto& p : parts.data.at("parts"))
+                if (p.at("kind") == "sketch" && p.at("featureId") == first.data.at("id"))
+                    return p.at("visible").get<bool>();
+            FAIL("no sketch part");
+            return false;
+        };
+        CHECK_FALSE(visibleSketch());
+        REQUIRE(session.execute("edit.undo").ok);
+        CHECK(visibleSketch());
+        CHECK(session.document().part(solidId) == nullptr);
+        REQUIRE(session.execute("edit.redo").ok);
+        CHECK_FALSE(visibleSketch());
+        REQUIRE(session.document().part(solidId) != nullptr);
+
+        auto second = session.execute("sketch.create",
+                                      {{"surface", {{"part", solidId}}},
+                                       {"curves", Json::array({{{"type", "center_rectangle"},
+                                                                {"center", {0, 0}},
+                                                                {"width", 8},
+                                                                {"height", 4}}})}});
+        REQUIRE(second.ok);
+        // Not silently built on the scan underneath: a solid is no surface to cut from.
+        auto onSolid = session.execute("surface.part_from_sketch", {{"sketch", second.data.at("id")}, {"thickness", 1.0}});
+        INFO(onSolid.toJson().dump());
+        CHECK_FALSE(onSolid.ok);
     }
 
     CHECK_FALSE(session.execute("surface.part_from_sketch", {{"sketch", 99}, {"thickness", 2.0}}).ok);

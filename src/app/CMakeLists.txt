@@ -22,6 +22,8 @@ set(AEROCAD_APP_SOURCES
     JsonBridge.hpp
     Preferences.cpp
     Preferences.hpp
+    UiScript.cpp
+    UiScript.hpp
 )
 qt_add_executable(aerocad ${AEROCAD_APP_SOURCES})
 
