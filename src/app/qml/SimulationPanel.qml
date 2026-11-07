@@ -49,6 +49,9 @@ Pane {
     property string error: ""
     /// True after "Install for me" until the engine is ready (the environment is polled).
     property bool installing: false
+    /// Remote engine: connecting (testing the SSH connection) and the last error.
+    property bool connecting: false
+    property string engineError: ""
     property string setupMessage: ""
     /// 0 = Run (setup and runs), 1 = Results, 2 = A/B.
     property alias tab: tabBar.currentIndex
@@ -86,6 +89,19 @@ Pane {
             installing = false
             setupMessage = ""
         }
+    }
+
+    /// Chooses the engine: "" = this computer, "ssh://user@host" = Docker there.
+    function setEngine(host) {
+        connecting = true
+        engineError = ""
+        const r = controller.execute("simulation.set_engine", { remoteHost: host })
+        connecting = false
+        if (!r.ok) {
+            engineError = r.error
+            return
+        }
+        checkEnvironment()
     }
 
     /// One "Install for me" step (simulation.install_engine), then keep checking.
@@ -324,6 +340,62 @@ Pane {
                     from: 0; to: 1
                     value: setupBox.pull ? setupBox.pull.progress : 0
                     indeterminate: !!setupBox.pull && setupBox.pull.progress === 0
+                }
+            }
+
+            // Where OpenFOAM runs: this computer, or Docker on another machine over SSH.
+            ColumnLayout {
+                id: engineBox
+                readonly property string remoteHost: root.environment && root.environment.remoteHost
+                                                     ? root.environment.remoteHost : ""
+                property bool editing: false
+                Layout.fillWidth: true
+                spacing: 4
+                RowLayout {
+                    Layout.fillWidth: true
+                    Label { text: qsTr("Run on"); font.pixelSize: 11 }
+                    ComboBox {
+                        id: engineChoice
+                        Layout.fillWidth: true
+                        model: [qsTr("This computer"), qsTr("Another machine (Docker over SSH)")]
+                        currentIndex: engineBox.remoteHost.length > 0 || engineBox.editing ? 1 : 0
+                        onActivated: index => {
+                            if (index === 0) {
+                                engineBox.editing = false
+                                if (engineBox.remoteHost.length > 0)
+                                    root.setEngine("")
+                            } else {
+                                engineBox.editing = true
+                            }
+                        }
+                    }
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    visible: engineChoice.currentIndex === 1
+                    TextField {
+                        id: hostField
+                        Layout.fillWidth: true
+                        placeholderText: "ssh://user@host"
+                        text: engineBox.remoteHost
+                        onAccepted: root.setEngine(text.trim())
+                    }
+                    Button {
+                        text: qsTr("Connect")
+                        enabled: hostField.text.trim().length > 0 && !root.connecting
+                        onClicked: root.setEngine(hostField.text.trim())
+                    }
+                }
+                Label {
+                    Layout.fillWidth: true
+                    visible: engineChoice.currentIndex === 1
+                    wrapMode: Text.WordWrap
+                    font.pixelSize: 11
+                    color: root.engineError.length > 0 ? Theme.danger : Theme.textMuted
+                    text: root.connecting ? qsTr("Connecting...")
+                        : root.engineError.length > 0 ? root.engineError
+                        : qsTr("The case is sent to that machine, OpenFOAM runs there and the results come back. "
+                               + "Needs SSH login with a key and Docker there.")
                 }
             }
 

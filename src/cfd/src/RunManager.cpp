@@ -2,6 +2,7 @@
 #include "aerocad/cfd/RunManager.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -127,26 +128,124 @@ Json Environment::toJson() const
            {"image", kDockerImage},
            {"openfoamVersion", kOpenFoamVersion},
            {"openfoamBashrc", openfoamBashrc.string()},
+           {"remoteHost", remoteHost},
+           {"remoteCpus", remoteCpus},
+           {"remoteError", remoteError},
            {"message", message}};
     j["recommendedBackend"] = recommended ? Json(backendName(*recommended)) : Json(nullptr);
     return j;
 }
 
-Environment detectEnvironment()
+bool isValidEngineHost(std::string_view host)
+{
+    if (host.empty())
+        return true;
+    if (host.size() > 255)
+        return false;
+    if (host.rfind("unix://", 0) == 0) // A local socket, e.g. to test the remote path.
+        return host.size() > 7 && std::all_of(host.begin() + 7, host.end(), [](char c) {
+                   return std::isalnum(static_cast<unsigned char>(c)) || c == '/' || c == '.' || c == '-' || c == '_';
+               });
+    if (host.rfind("ssh://", 0) != 0 || host.size() <= 6)
+        return false;
+    // user@host[:port] only: no spaces, quotes or shell characters.
+    return std::all_of(host.begin() + 6, host.end(), [](char c) {
+        return std::isalnum(static_cast<unsigned char>(c)) || c == '@' || c == '.' || c == '-' || c == '_' ||
+               c == ':' || c == '[' || c == ']';
+    });
+}
+
+namespace {
+
+fs::path engineConfigPath() { return RunManager::defaultRoot() / "engine.json"; }
+
+} // namespace
+
+std::string engineHost()
+{
+    if (const std::string over = env("AEROCAD_ENGINE_HOST"); !over.empty())
+        return isValidEngineHost(over) ? over : std::string();
+    std::ifstream in(engineConfigPath());
+    if (!in)
+        return {};
+    try {
+        Json j;
+        in >> j;
+        const std::string host = j.value("remoteHost", std::string());
+        return isValidEngineHost(host) ? host : std::string();
+    } catch (const std::exception&) {
+        return {};
+    }
+}
+
+void setEngineHost(const std::string& host)
+{
+    if (!isValidEngineHost(host))
+        throw std::invalid_argument("The remote engine must be ssh://user@host (optionally :port)");
+    fs::create_directories(engineConfigPath().parent_path());
+    std::ofstream(engineConfigPath()) << Json{{"remoteHost", host}}.dump(2) << "\n";
+}
+
+std::vector<std::string> dockerCommand(const fs::path& docker, const std::string& host)
+{
+    std::vector<std::string> argv{docker.string()};
+    if (!host.empty())
+        argv.insert(argv.end(), {"-H", host});
+    return argv;
+}
+
+Environment detectEnvironment() { return detectEnvironment(engineHost()); }
+
+Environment detectEnvironment(const std::string& remoteHost)
 {
     Environment e;
     e.docker = findDocker();
+    e.remoteHost = remoteHost;
     extendToolPath(e.docker);
     if (!e.docker.empty()) {
-        const auto info = runCommand({e.docker.string(), "info", "--format", "{{.ServerVersion}}"},
-                                     std::chrono::seconds(10));
-        e.dockerRunning = info.exitCode == 0;
-        if (e.dockerRunning) {
-            const auto image = runCommand({e.docker.string(), "image", "inspect", std::string(kDockerImage),
-                                           "--format", "{{.Id}}"},
-                                          std::chrono::seconds(10));
-            e.imagePresent = image.exitCode == 0;
+        // Over SSH every call opens a connection: allow more time.
+        const auto timeout = std::chrono::seconds(e.remoteHost.empty() ? 10 : 25);
+        auto cmd = [&](std::vector<std::string> args) {
+            auto argv = dockerCommand(e.docker, e.remoteHost);
+            argv.insert(argv.end(), args.begin(), args.end());
+            return runCommand(argv, timeout);
+        };
+        const auto info = cmd({"info", "--format", "{{.NCPU}}"});
+        // Some docker versions exit 0 and print 0 CPUs when the daemon does not answer. Warnings
+        // (stderr is in the output too) are on lines of their own.
+        int cpus = 0;
+        {
+            std::istringstream lines(info.output);
+            for (std::string line; std::getline(lines, line);) {
+                while (!line.empty() && std::isspace(static_cast<unsigned char>(line.back())))
+                    line.pop_back();
+                if (!line.empty() && line.find_first_not_of("0123456789") == std::string::npos)
+                    cpus = std::atoi(line.c_str());
+            }
         }
+        e.dockerRunning = info.exitCode == 0 && cpus > 0;
+        if (e.dockerRunning) {
+            if (!e.remoteHost.empty())
+                e.remoteCpus = cpus;
+            e.imagePresent = cmd({"image", "inspect", std::string(kDockerImage), "--format", "{{.Id}}"}).exitCode == 0;
+        } else if (!e.remoteHost.empty()) {
+            e.remoteError = info.output;
+        }
+    }
+    if (!e.remoteHost.empty()) {
+        // A remote engine is used only remotely, never a local OpenFOAM instead.
+        if (e.dockerRunning) {
+            e.recommended = Backend::Docker;
+            e.message = "Remote engine " + e.remoteHost + " (" + std::to_string(e.remoteCpus) + " CPUs) is ready" +
+                        (e.imagePresent ? "." : "; the first run downloads the OpenFOAM image there.");
+        } else {
+            e.message = e.docker.empty() ? "The docker command line tool is needed to reach the remote engine " +
+                                               e.remoteHost + " (macOS: brew install docker)."
+                                         : "Cannot reach Docker on " + e.remoteHost +
+                                               ": check that SSH login with a key works and that this user may run "
+                                               "docker there.";
+        }
+        return e;
     }
     e.openfoamBashrc = findOpenFoamBashrc();
     if (e.dockerRunning) {
@@ -214,7 +313,15 @@ SetupStep planEngineSetup(const Environment& env, Platform platform, const Setup
     if (!env.dockerRunning && !env.openfoamBashrc.empty())
         return {"none", {}, "A local OpenFOAM installation is used."};
     if (env.dockerRunning)
-        return {"pull", {}, "Downloading the OpenFOAM image " + std::string(kDockerImage) + " (about 0.4-0.5 GB)."};
+        return {"pull", {}, "Downloading the OpenFOAM image " + std::string(kDockerImage) + " (about 0.4-0.5 GB)" +
+                                (env.remoteHost.empty() ? std::string(".") : " on " + env.remoteHost + ".")};
+    if (!env.remoteHost.empty()) {
+        // Only the docker command line tool is needed here; the engine runs remotely.
+        if (env.docker.empty() && platform == Platform::MacOS && !tools.brew.empty())
+            return {"terminal", inTerminal(tools.brew.string() + " install docker"),
+                    "Installing the docker command line tool with Homebrew in a Terminal window."};
+        return {"manual", {}, env.message};
+    }
     if (platform == Platform::MacOS) {
         // The Docker engine needs a Linux VM on macOS. Colima runs one without a GUI; give it
         // all cores and half of the memory, since the default (2 CPUs, 2 GB) is too small for
@@ -261,6 +368,7 @@ struct RunManager::Run {
     std::optional<Process> process; ///< Engine started by this RunManager.
     std::optional<Process> stopper; ///< `docker kill` started by cancel().
     fs::path docker;
+    std::string dockerHost; ///< Remote engine the run was started on, empty = this machine.
     RunStatus status;
 };
 
@@ -336,6 +444,60 @@ RunSource sourceFrom(const Json& j)
 }
 
 std::string containerName(const std::string& id) { return "aerocad-cfd-" + id; }
+
+/// Runs a case on a remote Docker engine (no shared directory): copies the case into a new
+/// container, starts it, copies the progress files and results back every 10 s while it
+/// runs, then the final results, and removes the container. Started again after an app
+/// restart, it only follows the container that is already there. Arguments: docker CLI,
+/// host, container name, image; working directory = the local case.
+constexpr const char* kRemoteScript = R"SH(
+set -o pipefail
+DK="$1"; H="$2"; N="$3"; IMG="$4"
+d() { "$DK" -H "$H" "$@"; }
+fetch() {
+    d exec "$N" bash -c 'cd /case && tar -cf - aerocad.stage aerocad.status log.* postProcessing 2>/dev/null' |
+        tar -xf - 2>/dev/null
+}
+if ! d container inspect "$N" >/dev/null 2>&1; then
+    echo "Sending the case to $H"
+    d create --name "$N" -e OMPI_ALLOW_RUN_AS_ROOT=1 -e OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1 "$IMG" -c         'cd /case && ./Allrun; s=$?; tar -cf /tmp/aerocad-results.tar aerocad.* log.* postProcessing 2>/dev/null; exit $s'         >/dev/null || exit 1
+    d cp . "$N:/case" || { d rm -f "$N" >/dev/null 2>&1; exit 1; }
+    d start "$N" >/dev/null || exit 1
+fi
+lost=0
+while :; do
+    if state=$(d container inspect -f '{{.State.Running}}' "$N" 2>&1); then
+        [ "$state" = true ] || break
+        [ "$lost" = 1 ] && echo "Connection to $H is back"
+        lost=0
+        fetch
+    elif [[ "$state" == *"No such container"* ]]; then
+        echo "The container $N is gone from $H"
+        exit 1
+    else
+        # SSH or Docker did not answer: the run goes on there, keep trying.
+        [ "$lost" = 0 ] && echo "No answer from $H, retrying: $state"
+        lost=1
+    fi
+    sleep 10
+done
+code=$(d container inspect -f '{{.State.ExitCode}}' "$N" 2>/dev/null || echo 1)
+for _ in 1 2 3; do
+    if d cp "$N:/tmp/aerocad-results.tar" - | tar -xOf - | tar -xf -; then
+        d rm "$N" >/dev/null 2>&1
+        exit "$code"
+    fi
+    sleep 10
+done
+# Keep the only complete copy of the results; the next start of the app tries again.
+echo "Could not copy the results from $H: the container $N is kept there; restart the app to try again"
+exit 75
+)SH";
+
+std::vector<std::string> remoteArgv(const fs::path& docker, const std::string& host, const std::string& name)
+{
+    return {"/bin/bash", "-c", kRemoteScript, "aerocad-remote", docker.string(), host, name, std::string(kDockerImage)};
+}
 
 /// Progress of the Allrun steps, before / after each.
 double stageProgress(const std::string& stage)
@@ -503,7 +665,21 @@ void RunManager::loadRun(const fs::path& dir)
     run->backend = parseBackend(j.value("backend", std::string("docker"))).value_or(Backend::Docker);
     run->source = sourceFrom(j.value("source", Json::object()));
     run->docker = j.value("docker", std::string());
-    m_runs[run->id] = std::move(run);
+    run->dockerHost = j.value("dockerHost", std::string());
+    Run& r = *run;
+    m_runs[r.id] = std::move(run);
+    // A remote run continues on its host while the app is closed: follow it again.
+    if (!r.dockerHost.empty() && !r.docker.empty()) {
+        std::error_code ec;
+        const std::string status = readFirstLine(r.caseDir / "aerocad.status");
+        if (status.empty() && !fs::exists(r.caseDir / "aerocad.cancelled", ec)) {
+            try {
+                r.process = Process::start(remoteArgv(r.docker, r.dockerHost, containerName(r.id)), r.caseDir,
+                                           r.dir / "log.aerocad");
+            } catch (const std::exception&) {
+            }
+        }
+    }
 }
 
 std::string RunManager::newRunId(const std::string& partName)
@@ -568,10 +744,18 @@ std::string RunManager::start(const CaseGeometry& geometry, const Settings& sett
         throw std::runtime_error("No local OpenFOAM " + std::string(kOpenFoamVersion) +
                                  " found (set AEROCAD_OPENFOAM_BASHRC to its etc/bashrc)");
 
-    const std::string id = create(geometry, settings, source, chosen);
+    const bool remote = chosen == Backend::Docker && !e.remoteHost.empty();
+    Settings effective = settings;
+    if (remote && settings.processes <= 0 && e.remoteCpus > 0)
+        effective.processes = std::clamp(e.remoteCpus, 1, 16); // The remote machine is not shared with the UI.
+    const std::string id = create(geometry, effective, source, chosen);
     Run& run = *m_runs.at(id);
     std::vector<std::string> argv;
-    if (chosen == Backend::Docker) {
+    if (remote) {
+        run.docker = e.docker;
+        run.dockerHost = e.remoteHost;
+        argv = remoteArgv(e.docker, e.remoteHost, containerName(id));
+    } else if (chosen == Backend::Docker) {
         run.docker = e.docker;
         argv = {e.docker.string(), "run", "--rm", "--name", containerName(id)};
 #ifndef _WIN32
@@ -593,7 +777,9 @@ std::string RunManager::start(const CaseGeometry& geometry, const Settings& sett
         in >> j;
     }
     j["docker"] = run.docker.string();
-    j["command"] = argv;
+    if (remote)
+        j["dockerHost"] = run.dockerHost;
+    j["command"] = remote ? Json::array({"remote", run.dockerHost, containerName(id)}) : Json(argv);
     std::ofstream(run.dir / "run.json") << j.dump(2) << "\n";
     std::ofstream(run.caseDir / "aerocad.stage") << "starting\n";
     run.process = Process::start(argv, run.caseDir, run.dir / "log.aerocad");
@@ -735,8 +921,13 @@ bool RunManager::cancel(const std::string& id)
         fs::path docker = run->docker.empty() ? findDocker() : run->docker;
         if (!docker.empty()) {
             try {
-                run->stopper = Process::start({docker.string(), "kill", containerName(id)}, run->dir,
-                                              run->dir / "log.aerocad");
+                auto argv = dockerCommand(docker, run->dockerHost);
+                // A remote container is not started with --rm: remove it, which also stops it.
+                if (run->dockerHost.empty())
+                    argv.insert(argv.end(), {"kill", containerName(id)});
+                else
+                    argv.insert(argv.end(), {"rm", "-f", containerName(id)});
+                run->stopper = Process::start(argv, run->dir, run->dir / "log.aerocad");
             } catch (const std::exception&) {
             }
         }
@@ -948,13 +1139,14 @@ PolyData RunManager::field(const std::string& id, std::string_view kind)
     return d;
 }
 
-bool RunManager::startImagePull(const fs::path& docker)
+bool RunManager::startImagePull(const fs::path& docker, const std::string& host)
 {
     if (m_imagePull && m_imagePull->running())
         return false;
     fs::create_directories(m_root);
-    m_imagePull = Process::start({docker.string(), "pull", std::string(kDockerImage)}, m_root,
-                                 m_root / "image-pull.log");
+    auto argv = dockerCommand(docker, host);
+    argv.insert(argv.end(), {"pull", std::string(kDockerImage)});
+    m_imagePull = Process::start(argv, m_root, m_root / "image-pull.log");
     return true;
 }
 
