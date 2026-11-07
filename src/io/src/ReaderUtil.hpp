@@ -16,7 +16,8 @@
 namespace aerocad::io::detail {
 
 /// The OCCT data exchange readers and writers share global state (Interface_Static
-/// parameters, static controllers), so every use is serialized with this mutex.
+/// parameters, static controllers), so every use is serialized with this mutex. The first
+/// call also routes OCCT's messages from stdout to stderr.
 [[nodiscard]] std::mutex& occtMutex();
 
 /// UTF-8 representation of a path (for messages and for APIs taking UTF-8 char*).

@@ -48,6 +48,17 @@ struct Parameter {
     std::string comment;
 };
 
+/// A named reference frame (work plane): an origin with an orthonormal frame. Sketches can
+/// use it as their plane by name (sketch.create plane: "<frame name>"). Typical use: the
+/// alignment of a scanned or imported reference model.
+struct ReferenceFrame {
+    std::string name;
+    core::Vec3 origin;
+    core::Vec3 normal{0, 0, 1}; ///< Z axis of the frame; the sketch plane normal.
+    core::Vec3 xDir{1, 0, 0};   ///< X axis of the frame (made orthogonal to the normal).
+    std::string comment;
+};
+
 /// Result of evaluating one feature during regeneration.
 struct FeatureStatus {
     enum class State { Ok, Error, Suppressed, RolledBack };
@@ -86,6 +97,7 @@ public:
         /// Number of features before the timeline marker; features after it are rolled
         /// back (not evaluated). New features are inserted at the marker.
         std::size_t marker = 0;
+        std::vector<ReferenceFrame> frames;
     };
 
     [[nodiscard]] const State& state() const { return m_state; }
@@ -117,6 +129,14 @@ public:
     /// Value of a parameter (mm or degrees), std::nullopt if unknown.
     [[nodiscard]] std::optional<double> parameterValue(std::string_view name) const;
 
+    /// Creates or replaces a reference frame (by name) and regenerates. Throws DesignError
+    /// for an invalid name (empty, XY / XZ / YZ) or degenerate axes; the design is
+    /// unchanged then. The axes are normalised, xDir is made orthogonal to the normal.
+    void setFrame(ReferenceFrame frame);
+    void removeFrame(const std::string& name);
+    [[nodiscard]] const std::vector<ReferenceFrame>& frames() const { return m_state.frames; }
+    [[nodiscard]] const ReferenceFrame* frame(std::string_view name) const;
+
     /// Evaluates a number or an expression string with the user parameters.
     [[nodiscard]] double evaluate(const Json& value) const;
 
@@ -132,6 +152,25 @@ public:
     /// kind Body / Sketch. Part ids stay stable for a feature across regenerations,
     /// names and visibility set by the user are kept.
     void syncDocument(model::Document& document);
+
+    /// Empties the design (new / opened project): state, cached results and the part
+    /// bookkeeping of syncDocument().
+    void clear();
+
+    /// Seeds the document part of a timeline feature before the first syncDocument() of a
+    /// loaded project, so parts keep their saved ids, names and visibility.
+    void setPartInfo(FeatureId feature, model::PartId part, std::string name, bool visible);
+
+    /// Part bookkeeping retained by syncDocument(): every timeline feature that had a
+    /// document part in this session, including features that are now suppressed, rolled
+    /// back or only exist in an inactive variant. Name / visibility are as of the last sync.
+    struct PartInfo {
+        FeatureId feature = 0;
+        model::PartId part = 0;
+        std::string name;
+        bool visible = true;
+    };
+    [[nodiscard]] std::vector<PartInfo> partInfos() const;
 
     /// Gives the timeline access to document parts (for "base_body" features that turn an
     /// imported part into a body). Not part of the undoable state.
@@ -171,5 +210,11 @@ private:
 };
 
 [[nodiscard]] std::string_view toString(FeatureStatus::State state);
+
+/// JSON form of the undoable design state (features, parameters, frames, marker), as
+/// stored in project files.
+[[nodiscard]] Json stateToJson(const Design::State& state);
+/// Reads stateToJson() output. Throws DesignError for malformed data.
+[[nodiscard]] Design::State stateFromJson(const Json& json);
 
 } // namespace aerocad::cad

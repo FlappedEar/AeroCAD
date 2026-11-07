@@ -5,6 +5,8 @@
 
 #include <cstddef>
 #include <memory>
+#include <string>
+#include <string_view>
 
 namespace aerocad::geometry {
 
@@ -30,5 +32,12 @@ public:
 private:
     std::shared_ptr<const Impl> m_impl;
 };
+
+/// Serialises a shape in the Open CASCADE BREP text format (exact geometry, lossless).
+/// Returns an empty string for a null shape.
+[[nodiscard]] std::string toBrep(const Shape& shape);
+
+/// Reads a shape written by toBrep(). Returns a null shape when the data is not valid BREP.
+[[nodiscard]] Shape fromBrep(std::string_view data);
 
 } // namespace aerocad::geometry

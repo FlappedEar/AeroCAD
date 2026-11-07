@@ -26,6 +26,7 @@ public:
         RevisionRole,
         KindRole,      ///< "imported", "body" or "sketch"
         FeatureIdRole, ///< Timeline feature of a body / sketch (0 for imported parts)
+        ShapeKindRole, ///< "surface" / "solid" for parts with exact geometry, "" for meshes
     };
     Q_ENUM(Role)
 

@@ -7,10 +7,12 @@ namespace aerocad::commands {
 
 Session::Session()
     : m_simulations(std::make_unique<cfd::RunManager>()),
-      m_context{m_document, m_undoStack, &m_registry, &m_design, m_simulations.get()}
+      m_context{m_document, m_undoStack, &m_registry, &m_design, &m_project, &m_importStage, m_simulations.get()}
 {
     registerBuiltinCommands(m_registry);
     registerDesignCommands(m_registry);
+    registerProjectCommands(m_registry);
+    registerScanCommands(m_registry);
     registerSimulationCommands(m_registry);
     m_design.setPartLookup([this](model::PartId id) { return m_document.part(id); });
 }
@@ -19,10 +21,17 @@ Session::~Session() = default;
 
 CommandResult Session::execute(std::string_view name, const Json& params)
 {
-    const auto* info = m_registry.info(name);
-    if (info != nullptr && info->modifiesDocument)
+    const CommandInfo* info = m_registry.info(name);
+    const bool modifies = info != nullptr && info->modifiesDocument;
+    // Saving must not store a live preview either.
+    if (modifies || name.starts_with("project."))
         cancelPreview();
-    return m_registry.execute(m_context, name, params);
+    const std::uint64_t before = m_project.changes;
+    CommandResult result = m_registry.execute(m_context, name, params);
+    // project.open / project.new reset the counters themselves.
+    if (result.ok && modifies && m_project.changes == before)
+        ++m_project.changes;
+    return result;
 }
 
 CommandResult Session::preview(std::string_view name, const Json& params)
