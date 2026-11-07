@@ -165,16 +165,17 @@ int main(int argc, char* argv[])
         return runSmokeTest(app, engine, controller, scan, parser.value(smokeTest), parser.value(screenshot),
                             parser.value(script));
 
-    if (parser.isSet(mcp))
-        controller.mcp()->setEnabled(true);
-    else
-        controller.mcp()->restoreFromSettings();
+    controller.mcp()->restoreFromSettings();
 
     QMetaObject::invokeMethod(engine.rootObjects().first(), "offerRecovery");
     for (const QString& file : parser.positionalArguments())
         controller.openFile(QUrl::fromLocalFile(file));
     if (parser.isSet(script))
         controller.runScript(parser.value(script));
+    // --mcp is explicit consent for the project loaded by this invocation. A later
+    // recovery or project replacement still revokes it.
+    if (parser.isSet(mcp))
+        controller.mcp()->setEnabled(true);
     if (parser.isSet(uiScript))
         aerocad::app::startUiScript(engine, parser.value(uiScript));
 

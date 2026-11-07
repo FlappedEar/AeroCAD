@@ -14,7 +14,8 @@ namespace aerocad::mcp {
 
 /// MCP server side of the IPC: forwards commands to the running application. Blocking
 /// (the MCP stdio loop handles one request at a time). Connects lazily, so the MCP server
-/// can start before the application and reconnects when the application restarts.
+/// can start before the application. After its first connection it is bound to that access
+/// session; a new grant or application restart requires restarting the MCP server.
 class IpcClient : public Backend {
 public:
     IpcClient(QString endpoint, QString clientName);
@@ -42,6 +43,7 @@ private:
 
     QString m_endpoint;
     QString m_clientName;
+    QString m_accessSession; ///< Retained across reconnects; never silently adopts a new grant.
     std::unique_ptr<QLocalSocket> m_socket;
     QByteArray m_buffer;
     qint64 m_nextId = 1;

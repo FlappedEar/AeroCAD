@@ -12,7 +12,7 @@ namespace aerocad::mcp {
 namespace {
 
 constexpr const char* kNotRunning =
-    "AeroCAD is not reachable. Ask the user to start AeroCAD, click AI > Agent in its toolbar and turn on "
+    "AeroCAD is not reachable. Ask the user to start AeroCAD, click TOOLS > Agent in its toolbar and turn on "
     "'Allow AI agents to use this project' (or start AeroCAD with --mcp). Then call the tool again.";
 
 } // namespace
@@ -113,7 +113,8 @@ bool IpcClient::ensureConnected(QString& error)
                      {"hello",
                       {{"client", m_clientName.toStdString()},
                        {"pid", QCoreApplication::applicationPid()},
-                       {"protocol", kIpcProtocolVersion}}}};
+                       {"protocol", kIpcProtocolVersion},
+                       {"session", m_accessSession.toStdString()}}}};
     m_socket->write(QByteArray::fromStdString(hello.dump() + "\n"));
     m_socket->waitForBytesWritten(2000);
     for (;;) {
@@ -132,6 +133,21 @@ bool IpcClient::ensureConnected(QString& error)
             disconnect();
             return false;
         }
+        const Json result = reply->value("result", Json::object());
+        if (!result.is_object() || !result.contains("protocol") ||
+            result["protocol"] != kIpcProtocolVersion || !result.contains("session") ||
+            !result["session"].is_string() || result["session"].get<std::string>().empty()) {
+            error = QStringLiteral("Incompatible AeroCAD MCP protocol; restart the bundled MCP server");
+            disconnect();
+            return false;
+        }
+        const QString session = QString::fromStdString(result["session"].get<std::string>());
+        if (!m_accessSession.isEmpty() && m_accessSession != session) {
+            m_revoked = true;
+            m_revokeReason = QStringLiteral("The project access session changed");
+            break;
+        }
+        m_accessSession = session;
         return true;
     }
     disconnect();
@@ -157,7 +173,8 @@ commands::CommandResult IpcClient::execute(const std::string& command, const Jso
         return m_revoked ? revoked() : commands::CommandResult::failure(error.toStdString());
 
     const qint64 id = m_nextId++;
-    const Json request{{"id", id}, {"command", command}, {"params", params}};
+    const Json request{{"id", id}, {"session", m_accessSession.toStdString()},
+                       {"command", command}, {"params", params}};
     m_socket->write(QByteArray::fromStdString(request.dump() + "\n"));
     if (!m_socket->waitForBytesWritten(5000) && m_socket->bytesToWrite() > 0) {
         disconnect();
