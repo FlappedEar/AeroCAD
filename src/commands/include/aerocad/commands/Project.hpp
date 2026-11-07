@@ -18,6 +18,9 @@ struct ProjectState {
     std::uint64_t changes = 0;
     /// Value of `changes` at the last save / open.
     std::uint64_t savedChanges = 0;
+    /// Bumped whenever the project is replaced (project.new / project.open). Work started
+    /// for an earlier generation (a background import) must not touch the current one.
+    std::uint64_t generation = 0;
     /// Opened from an autosave copy: unsaved until the next save.
     bool recovered = false;
     cad::VariantSet variants;

@@ -135,6 +135,10 @@ void applyProject(CommandContext& ctx, project::ProjectData data)
             ctx.document.modifyPart(id, [&](model::Part& p) { p.selection = selection; });
     }
     ProjectState& p = projectState(ctx);
+    ++p.generation;
+    // Files parsed for the previous project are not imported into this one.
+    if (ctx.importStage != nullptr)
+        ctx.importStage->clear();
     p.variants = std::move(data.variants);
     p.view = std::move(data.view);
     if (ctx.inspect != nullptr) {

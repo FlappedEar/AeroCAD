@@ -5,6 +5,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstdint>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -244,4 +245,39 @@ TEST_CASE("UndoStack joins the last steps into one", "[model]")
     REQUIRE(stack.undo());
     REQUIRE(stack.undo());
     CHECK(stack.undoLabel().empty());
+}
+
+TEST_CASE("CAD-86: UndoStack tokens identify a caller's own steps", "[model]")
+{
+    model::UndoStack stack;
+    auto step = [&](const std::string& label) { stack.push({label, [] {}, [] {}}); };
+    CHECK(stack.topId() == 0);
+    step("convert");
+    const std::uint64_t convert = stack.topId();
+    step("rename by MCP");
+    const std::uint64_t rename = stack.topId();
+    CHECK(convert != 0);
+    CHECK(rename != convert);
+    CHECK(stack.isApplied(convert));
+    CHECK(stack.topIds(5) == std::vector<std::uint64_t>{convert, rename});
+
+    // Someone else's step is in between: the dialog's steps are not joined.
+    step("combine");
+    const std::uint64_t combine = stack.topId();
+    CHECK_FALSE(stack.mergeIds({convert, combine}, "Combine"));
+    CHECK(stack.size() == 3);
+    // Exactly the last steps: joined, under a new token.
+    REQUIRE(stack.mergeIds({rename, combine}, "joined"));
+    CHECK(stack.size() == 2);
+    CHECK(stack.topId() != combine);
+    CHECK_FALSE(stack.isApplied(combine));
+
+    // Undone steps are no longer applied; tokens are never reused, also after clear().
+    REQUIRE(stack.undo());
+    CHECK(stack.topId() == convert);
+    stack.clear();
+    CHECK_FALSE(stack.isApplied(convert));
+    step("after clear");
+    CHECK(stack.topId() > convert);
+    CHECK(stack.topId() != rename);
 }

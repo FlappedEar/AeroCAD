@@ -210,7 +210,8 @@ QtObject {
                                    Math.max(1000, Math.round((info.triangles ?? 200000) / 4)), "",
                                    qsTr("How many triangles to keep at most."))] }
         case "scale":
-            return { id: id, text: qsTr("Scale"), icon: "scale", enabled: true,
+            return { id: id, text: qsTr("Scale"), icon: "scale", enabled: info.kind === "imported",
+                     reason: qsTr("Scale the imported source instead."),
                      tip: qsTr("Makes the part bigger or smaller, e.g. when a scan came in the wrong unit."),
                      params: [_num("percent", qsTr("Scale"), 100, "%", qsTr("100 % keeps the size, 1000 % turns cm into mm."))] }
 
@@ -337,9 +338,11 @@ QtObject {
                      tip: qsTr("Writes every visible solid (e.g. all the fins) to a folder you choose, each as its own STL for the printer and STEP for CAD. Hide what you do not want printed.") }
         case "moveRotate": {
             const r = role(info)
-            if (r === "body")
+            // Shape role determines which modelling tools fit; ownership determines
+            // whether a transform is a timeline feature or an imported-part edit.
+            if (info.kind === "body")
                 return { id: id, text: qsTr("Move / Rotate…"), icon: "move", enabled: true,
-                         tip: qsTr("Turns the body about an axis and moves it by a distance. Added to the timeline, so it can be edited later. Shortcut M.") }
+                         tip: qsTr("Turns the part about an axis and moves it by a distance. Added to the timeline, so it can be edited later. Shortcut M.") }
             return { id: id, text: qsTr("Move / Rotate…"), icon: "move", enabled: r !== "sketch" && r !== "" && info.kind !== "plane",
                      reason: qsTr("Move the solid the sketch belongs to instead."),
                      tip: qsTr("Turns the part about an axis through its centre and moves it by a distance. Shortcut M."),
@@ -453,7 +456,8 @@ QtObject {
                                { title: qsTr("Thicken"), done: false,
                                  text: qsTr("Turns the piece into a solid with the thickness you type."),
                                  actions: [a("thicken")] }] },
-                         { title: qsTr("More"), steps: [], actions: [...fitted, a("sketchFin"), a("offset"), a("cutWithThis"), a("scale"), a("export"), a("hide"), a("delete")] }] }
+                         { title: qsTr("More"), steps: [], actions: [...fitted, a("sketchFin"), a("offset"), a("cutWithThis"),
+                               info.kind === "body" ? a("editStep") : a("scale"), a("export"), a("hide"), a("delete")] }] }
         }
         if (r === "sketch") {
             const onSurface = sketchSurface(info.featureId) > 0
@@ -667,7 +671,7 @@ QtObject {
         case "export": return host.openExport([pid])
         case "exportForPrint": return host.openPrintExport()
         case "moveRotate": {
-            if (role(info) === "body")
+            if (info.kind === "body")
                 return host.openFeature("move")
             const params = { id: pid }
             const angle = Number(v.angle) || 0

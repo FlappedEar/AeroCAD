@@ -904,6 +904,8 @@ void Design::evaluateFeature(const Feature& f)
         b.shape = geometry::shell(b.shape, idx, ev.num(p, "thickness"));
     } else if (f.type == "combine") {
         Body& target = bodyRef(required(p, "target"));
+        if (target.shape.solidCount() == 0)
+            throw DesignError("Combine target must be a solid body; use a surface as the tool");
         const std::string op = lower(p.value("operation", std::string("join")));
         geometry::BooleanOp bop;
         if (op == "join")
@@ -917,6 +919,7 @@ void Design::evaluateFeature(const Feature& f)
         const bool keepTools = p.value("keepTools", false);
         const bool flip = p.value("flip", false);
         std::vector<FeatureId> tools;
+        Json surfaceTools = Json::array();
         // Imported parts as tools: exact solids are used as they are; surfaces and scans
         // cut the target on one side (Fusion: Split Body, keeping one side).
         std::vector<const model::Part*> partTools;
@@ -934,14 +937,38 @@ void Design::evaluateFeature(const Feature& f)
             const Body& t = bodyRef(ref);
             if (t.id == target.id)
                 throw DesignError("A body cannot be combined with itself");
-            if (std::find(tools.begin(), tools.end(), t.id) == tools.end())
+            if (std::find(tools.begin(), tools.end(), t.id) == tools.end()) {
                 tools.push_back(t.id);
+                if (t.shape.solidCount() == 0)
+                    surfaceTools.push_back({{"id", t.id}, {"name", t.name}});
+            }
         }
         if (tools.empty() && partTools.empty())
             throw DesignError("Select at least one tool body");
+        auto splitWithSurface = [&](const geometry::Shape& input, const geometry::Shape& surface,
+                                    const std::string& name) {
+            if (bop == geometry::BooleanOp::Union)
+                throw DesignError("'" + name +
+                                  "' is a surface or scan and has no volume to join: use Cut (removes what is "
+                                  "behind it) or Intersect (keeps what is behind it)");
+            // Cut keeps the front (outside), Intersect the back; Flip swaps the sides.
+            const bool keepFront = (bop == geometry::BooleanOp::Cut) != flip;
+            try {
+                return geometry::splitBySurface(input, surface, keepFront);
+            } catch (const geometry::OffsetError& e) {
+                throw DesignError(e.what());
+            }
+        };
         geometry::Shape result = target.shape;
-        for (const FeatureId t : tools)
-            result = geometry::boolean(result, m_bodies.at(t).shape, bop);
+        for (const FeatureId t : tools) {
+            if (result.isNull())
+                break;
+            const Body& tool = m_bodies.at(t);
+            // A fitted/trimmed/offset timeline surface is the current evaluated shape,
+            // not a stale document part and not a solid boolean operand.
+            result = tool.shape.solidCount() > 0 ? geometry::boolean(result, tool.shape, bop)
+                                                : splitWithSurface(result, tool.shape, tool.name);
+        }
         for (const model::Part* part : partTools) {
             if (result.isNull())
                 break;
@@ -961,14 +988,7 @@ void Design::evaluateFeature(const Feature& f)
                 surface = scanSurfaceUnder(*part, result.bounds());
             else
                 throw DesignError("Part '" + part->name + "' has no geometry");
-            // Cut keeps what is in front of the surface (outside the scan), Intersect what
-            // is behind it; flip swaps the sides.
-            const bool keepFront = (bop == geometry::BooleanOp::Cut) != flip;
-            try {
-                result = geometry::splitBySurface(result, surface, keepFront);
-            } catch (const geometry::OffsetError& e) {
-                throw DesignError(e.what());
-            }
+            result = splitWithSurface(result, surface, part->name);
         }
         const FeatureId targetId = target.id;
         if (!keepTools) {
@@ -979,6 +999,9 @@ void Design::evaluateFeature(const Feature& f)
             m_bodies.erase(targetId);
         else
             m_bodies.at(targetId).shape = result;
+        // Editors need the evaluated tool kind even after keepTools=false consumed it.
+        // Rebuilt with the feature, this also works when reopening older project files.
+        m_reports[f.id] = {{"surfaceTools", std::move(surfaceTools)}};
     } else if (f.type == "move") {
         // Fusion: Modify > Move/Copy (M). Rotates the body about an axis through `center`
         // (default: the centre of its bounding box), then translates it.

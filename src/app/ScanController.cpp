@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ScanController.hpp"
 
+#include <algorithm>
+#include <cstdint>
+
 #include "AppController.hpp"
 
 #include "aerocad/core/MeshSimplify.hpp"
@@ -48,6 +51,8 @@ ScanController::ScanController(AppController* app, QObject* parent) : QObject(pa
         if (m_jobProgress)
             setProgress(m_jobProgress->load(), m_progressText);
     });
+    // New / Open (from the menu, a script or MCP) ends the imports of the old project.
+    connect(m_app, &AppController::projectChanged, this, &ScanController::dropStaleImports);
     // Parts whose mesh changed or that were removed drop their cached level of detail.
     connect(m_app, &AppController::partChanged, this, [this](quint64 id) {
         auto it = m_lods.find(id);
@@ -117,7 +122,8 @@ bool ScanController::importFile(const QUrl& url)
     // Project files are documents, not meshes: open them directly.
     if (QFileInfo(path).suffix().compare(QStringLiteral("aerocad"), Qt::CaseInsensitive) == 0)
         return m_app->openFile(url);
-    m_queue << QDir::toNativeSeparators(path);
+    // The job belongs to the project open now and keeps the units chosen now.
+    m_queue << ImportJob{QDir::toNativeSeparators(path), m_importUnits, projectGeneration()};
     if (m_job == nullptr && !m_parsed)
         startNextImport();
     return true;
@@ -127,6 +133,21 @@ void ScanController::cancelImport()
 {
     m_queue.clear();
     if (m_jobCancel)
+        m_jobCancel->store(true);
+}
+
+std::uint64_t ScanController::projectGeneration() const
+{
+    return m_app ? m_app->session().project().generation : 0;
+}
+
+void ScanController::dropStaleImports()
+{
+    const std::uint64_t generation = projectGeneration();
+    m_queue.erase(std::remove_if(m_queue.begin(), m_queue.end(),
+                                 [generation](const ImportJob& j) { return j.generation != generation; }),
+                  m_queue.end());
+    if (m_job != nullptr && m_current.generation != generation && m_jobCancel)
         m_jobCancel->store(true);
 }
 
@@ -141,13 +162,14 @@ void ScanController::setProgress(double value, const QString& text)
 
 void ScanController::startNextImport()
 {
+    dropStaleImports();
     if (m_queue.isEmpty() || m_job != nullptr)
         return;
-    m_currentPath = m_queue.takeFirst();
+    m_current = m_queue.takeFirst();
     m_jobProgress = std::make_shared<std::atomic<double>>(0.0);
     m_jobCancel = std::make_shared<std::atomic<bool>>(false);
     auto parsed = std::make_shared<Parsed>();
-    const std::filesystem::path path = core::pathFromUtf8(m_currentPath.toStdString());
+    const std::filesystem::path path = core::pathFromUtf8(m_current.path.toStdString());
     auto progress = m_jobProgress;
     auto cancel = m_jobCancel;
     m_job = QThread::create([path, parsed, progress, cancel] {
@@ -166,7 +188,7 @@ void ScanController::startNextImport()
     });
     m_parsed = parsed;
     connect(m_job, &QThread::finished, this, &ScanController::finishImport);
-    setProgress(0.0, tr("Importing %1…").arg(QFileInfo(m_currentPath).fileName()));
+    setProgress(0.0, tr("Importing %1…").arg(QFileInfo(m_current.path).fileName()));
     m_progressTimer.start();
     m_job->start();
     emit busyChanged();
@@ -181,8 +203,12 @@ void ScanController::finishImport()
     m_jobProgress.reset();
     m_jobCancel.reset();
 
-    const QString name = QFileInfo(m_currentPath).fileName();
-    if (parsed->cancelled) {
+    const QString name = QFileInfo(m_current.path).fileName();
+    if (m_current.generation != projectGeneration()) {
+        // The project it was started for was replaced (New / Open): nothing is added.
+        m_app->showStatus(tr("Import of %1 discarded: the project was replaced").arg(name));
+        m_lastImportOk = false;
+    } else if (parsed->cancelled) {
         m_app->showStatus(tr("Import of %1 cancelled").arg(name));
         m_lastImportOk = false;
     } else if (!parsed->result) {
@@ -191,11 +217,11 @@ void ScanController::finishImport()
         emit importFailed(parsed->error);
     } else {
         setProgress(1.0, tr("Adding %1…").arg(name));
-        const std::string key = m_currentPath.toStdString();
+        const std::string key = m_current.path.toStdString();
         m_app->session().importStage().put(key, std::move(*parsed->result));
         const QVariantMap r = m_app->execute(QStringLiteral("document.import"),
-                                             {{QStringLiteral("path"), m_currentPath},
-                                              {QStringLiteral("units"), m_importUnits}});
+                                             {{QStringLiteral("path"), m_current.path},
+                                              {QStringLiteral("units"), m_current.units}});
         // Never leave a staged result behind (e.g. when the command rejected its params).
         (void)m_app->session().importStage().take(key);
         if (r.value(QStringLiteral("ok")).toBool()) {
@@ -203,12 +229,13 @@ void ScanController::finishImport()
             m_app->showStatus(tr("Imported %1 (%2, %3 triangles, %4)")
                                   .arg(name, data.value(QStringLiteral("format")).toString(),
                                        QLocale().toString(data.value(QStringLiteral("triangles")).toLongLong()),
-                                       m_importUnits));
+                                       m_current.units));
             emit m_app->partImported(data.value(QStringLiteral("id")).toULongLong());
         } else {
             m_lastImportOk = false;
         }
     }
+    m_current = {};
     emit busyChanged();
     startNextImport();
 }

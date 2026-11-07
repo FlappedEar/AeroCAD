@@ -276,6 +276,7 @@ Json bodiesToJson(const cad::Design& d, const model::Document& doc)
                        {"partId", partOf(doc, id, model::PartKind::Body)},
                        {"volume", b.shape.volume()},
                        {"faces", b.shape.faceCount()},
+                       {"solids", b.shape.solidCount()},
                        {"bounds", {{"min", vec(bb.min)}, {"max", vec(bb.max)}}}});
     }
     return out;

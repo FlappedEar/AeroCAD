@@ -263,3 +263,90 @@ TEST_CASE("Approximate fitted references retain measured quality through offset 
     check = run(session, "document.export_check", {{"ids", {solid.at("id")}}});
     CHECK_FALSE(check.at("parts").at(0).value("approximate", false));
 }
+
+TEST_CASE("Move a fitted timeline surface without baking it and rebuild later surface steps",
+          "[commands][surface-timeline][surface-move]")
+{
+    commands::Session session;
+    const auto source = sheet(session);
+    const Json fit = run(session, "surface.fit_selection", {{"id", source}, {"method", "plane"}});
+    const auto surface = fit.at("id").get<model::PartId>();
+    const auto feature = fit.at("feature").get<cad::FeatureId>();
+    const auto moved = run(session, "feature.move", {{"body", feature}, {"angle", 0}, {"translate", {0, 0, 5}}});
+    REQUIRE(session.document().part(surface) != nullptr);
+    CHECK(session.document().part(surface)->featureId == feature);
+    CHECK(session.document().part(surface)->shape->solidCount() == 0);
+    CHECK(session.document().part(surface)->mesh->bounds().max.z == Approx(5).margin(0.001));
+    CHECK(session.document().part(source)->mesh->bounds().max.z == Approx(0).margin(0.001));
+    const Json offset = run(session, "surface.offset", {{"id", surface}, {"distance", 2}});
+    const Json solid = run(session, "surface.thicken", {{"id", offset.at("id")}, {"thickness", 3}});
+    const auto part = solid.at("id").get<model::PartId>();
+    CHECK(session.document().part(part)->mesh->bounds().max.z == Approx(10).margin(0.001));
+    run(session, "feature.edit", {{"id", moved.at("id")}, {"params", {{"translate", {0, 0, 8}}}}});
+    CHECK(session.document().part(part)->mesh->bounds().max.z == Approx(13).margin(0.001));
+    run(session, "edit.undo");
+    CHECK(session.document().part(part)->mesh->bounds().max.z == Approx(10).margin(0.001));
+    run(session, "edit.undo"); // thickness
+    run(session, "edit.undo"); // offset
+    run(session, "edit.undo"); // move
+    REQUIRE(session.document().part(surface) != nullptr);
+    CHECK(session.document().part(surface)->mesh->bounds().max.z == Approx(0).margin(0.001));
+    CHECK(session.design().features().size() == 1);
+    run(session, "edit.redo");
+    CHECK(session.document().part(surface)->mesh->bounds().max.z == Approx(5).margin(0.001));
+}
+
+TEST_CASE("Combine uses timeline surfaces as splitting tools with editable side and tool retention",
+          "[commands][surface-timeline][surface-combine]")
+{
+    commands::Session session;
+    const auto source = sheet(session);
+    const Json fit = run(session, "surface.fit_selection", {{"id", source}, {"method", "plane"}});
+    const auto surface = fit.at("id").get<model::PartId>();
+    const auto tool = fit.at("feature").get<cad::FeatureId>();
+    const auto target = run(session, "feature.box", {{"corner", {5, 5, -4}}, {"size", {10, 10, 10}}}).at("id");
+    const auto volume = [&] { return session.design().bodies().at(target).shape.volume(); };
+    const auto beforeInvalidTarget = session.undoStack().topId();
+    const auto invalidTarget = session.execute("feature.combine",
+                                              {{"target", tool}, {"tools", {target}}, {"operation", "cut"}});
+    REQUIRE_FALSE(invalidTarget.ok);
+    CHECK(invalidTarget.error.find("solid body") != std::string::npos);
+    CHECK(session.undoStack().topId() == beforeInvalidTarget);
+    CHECK(volume() == Approx(1000).margin(0.01));
+    const Json combined = run(session, "feature.combine",
+                              {{"target", target}, {"tools", {tool}}, {"operation", "cut"}, {"keepTools", true}});
+    CHECK(volume() == Approx(600).margin(0.01));
+    REQUIRE(session.document().part(surface) != nullptr);
+    run(session, "feature.edit", {{"id", combined.at("id")}, {"params", {{"flip", true}}}});
+    CHECK(volume() == Approx(400).margin(0.01));
+    run(session, "feature.edit", {{"id", combined.at("id")}, {"params", {{"operation", "intersect"}, {"flip", false}}}});
+    CHECK(volume() == Approx(400).margin(0.01));
+    run(session, "feature.edit", {{"id", combined.at("id")}, {"params", {{"flip", true}}}});
+    CHECK(volume() == Approx(600).margin(0.01));
+    const auto beforeJoin = session.undoStack().topId();
+    const auto featureCount = session.design().features().size();
+    const auto rejected = session.execute("feature.edit", {{"id", combined.at("id")}, {"params", {{"operation", "join"}}}});
+    REQUIRE_FALSE(rejected.ok);
+    CHECK(rejected.error.find("no volume to join") != std::string::npos);
+    CHECK(session.undoStack().topId() == beforeJoin);
+    CHECK(session.design().features().size() == featureCount);
+    CHECK(volume() == Approx(600).margin(0.01));
+    REQUIRE(session.document().part(surface) != nullptr);
+    run(session, "part.transform", {{"id", source}, {"translate", {0, 0, 2}}});
+    CHECK(volume() == Approx(400).margin(0.01)); // The current evaluated surface, not a stale document copy.
+    run(session, "edit.undo");
+    CHECK(volume() == Approx(600).margin(0.01));
+    run(session, "feature.edit", {{"id", combined.at("id")}, {"params", {{"keepTools", false}}}});
+    CHECK(session.document().part(surface) == nullptr);
+    CHECK(volume() == Approx(600).margin(0.01));
+    // Reopened editors cannot find consumed tools in bodies; the evaluated report
+    // retains their actual kind so applying unchanged does not remove Flip.
+    const auto timeline = run(session, "timeline.list");
+    const auto& report = timeline.at("features").back().at("report");
+    REQUIRE(report.at("surfaceTools").size() == 1);
+    CHECK(report.at("surfaceTools").at(0).at("id") == tool);
+    CHECK_FALSE(report.at("surfaceTools").at(0).at("name").get<std::string>().empty());
+    run(session, "edit.undo");
+    REQUIRE(session.document().part(surface) != nullptr);
+    CHECK(volume() == Approx(600).margin(0.01));
+}
