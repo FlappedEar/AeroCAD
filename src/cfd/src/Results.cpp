@@ -93,11 +93,16 @@ Table readTable(const fs::path& path)
         if (t.columns.empty())
             continue;
         const auto words = split(line);
-        if (words.size() < 1 + t.columns.size())
+        if (words.size() < 1 + t.columns.size()) {
+            t.incomplete = true;
             continue; // Partially written last line.
+        }
+        t.incomplete = false;
         const auto time = toNumber(words[0]);
-        if (!time)
+        if (!time || !std::isfinite(*time)) {
+            t.invalidTime = true;
             continue;
+        }
         // Drop rows a restart is about to overwrite.
         while (!t.time.empty() && t.time.back() >= *time) {
             t.time.pop_back();
@@ -232,6 +237,7 @@ Json QualityReport::toJson() const
            {"solverConverged", solverConverged},
            {"failedMeshChecks", failedMeshChecks},
            {"finalResiduals", finalResiduals},
+           {"checks", checks},
            {"warnings", warnings}};
     j["meshOk"] = meshOk ? Json(*meshOk) : Json(nullptr);
     j["cells"] = cells ? Json(*cells) : Json(nullptr);
@@ -279,31 +285,113 @@ int lastSolverIteration(const fs::path& caseDir)
 QualityReport assessQuality(const fs::path& caseDir)
 {
     QualityReport q;
+    auto record = [&](const std::string& name, const std::string& state, const std::string& reason = {}) {
+        q.checks[name] = state;
+        if (!reason.empty())
+            q.warnings.push_back(reason);
+    };
     const std::string check = readText(caseDir / "log.checkMesh");
-    if (!check.empty()) {
-        if (auto cells = numberAfter(check, "    cells:"))
-            q.cells = static_cast<std::int64_t>(*cells);
-        if (check.find("Mesh OK.") != std::string::npos) {
-            q.meshOk = true;
-        } else if (const auto pos = check.find("Failed "); pos != std::string::npos) {
-            q.meshOk = false;
-            q.failedMeshChecks = static_cast<int>(numberAfter(check, "Failed ", pos).value_or(1.0));
-            q.warnings.push_back("checkMesh: " + std::to_string(q.failedMeshChecks) + " mesh check(s) failed");
-        }
+    if (auto cells = numberAfter(check, "    cells:");
+        cells && std::isfinite(*cells) && *cells >= 0 &&
+        *cells < static_cast<double>(std::numeric_limits<std::int64_t>::max()))
+        q.cells = static_cast<std::int64_t>(*cells);
+    const auto meshPass = check.rfind("Mesh OK.");
+    const auto meshFail = check.rfind("Failed ");
+    if (meshFail != std::string::npos && (meshPass == std::string::npos || meshFail > meshPass)) {
+        q.meshOk = false;
+        const auto count = numberAfter(check, "Failed ", meshFail);
+        q.failedMeshChecks = count && std::isfinite(*count) && *count > 0 && *count < std::numeric_limits<int>::max()
+                                 ? static_cast<int>(*count)
+                                 : 1;
+        record("mesh", "failed", "checkMesh: " + std::to_string(q.failedMeshChecks) + " mesh check(s) failed");
+    } else if (meshPass != std::string::npos) {
+        q.meshOk = true;
+        record("mesh", "passed");
+    } else {
+        record("mesh", "missing", "checkMesh: no completed mesh verdict");
     }
 
     const std::string solver = readText(caseDir / "log.simpleFoam");
-    q.solverConverged = solver.find("SIMPLE solution converged") != std::string::npos;
-    if (const auto pos = solver.rfind("time step continuity errors"); pos != std::string::npos)
-        q.continuityError = numberAfter(solver, "sum local =", pos);
+    // An earlier convergence marker must not validate a later, incomplete restart,
+    // including one interrupted during startup before its first iteration.
+    std::size_t stepStart = 0;
+    for (std::size_t start = 0; start < solver.size();) {
+        const auto end = solver.find('\n', start);
+        const auto line = std::string_view(solver).substr(start, end == std::string::npos ? end : end - start);
+        const auto execColon = line.find_first_not_of(" \t", 4);
+        const bool startup = line == "Create time" ||
+                             (line.starts_with("Exec") && execColon != std::string_view::npos &&
+                              line[execColon] == ':');
+        if (startup || line.starts_with("Time = "))
+            stepStart = start;
+        if (end == std::string::npos)
+            break;
+        start = end + 1;
+    }
+    const std::string_view lastStep = std::string_view(solver).substr(stepStart);
+    std::optional<double> iteration;
+    if (lastStep.starts_with("Time = "))
+        iteration = numberAfter(lastStep, "Time = ");
+    q.solverConverged = lastStep.find("SIMPLE solution converged") != std::string_view::npos;
+    const bool ended = lastStep.find("\nEnd\n") != std::string_view::npos || lastStep.ends_with("\nEnd");
+    if (lastStep.find("FOAM FATAL") != std::string_view::npos) {
+        q.solverConverged = false;
+        record("convergence", "failed", "solver: fatal error in the final solver step");
+    } else if (!ended || !iteration || !std::isfinite(*iteration)) {
+        record("convergence", "missing", "solver: missing or incomplete final solver log");
+    } else if (!q.solverConverged) {
+        record("convergence", "failed", "solver: finished without reaching the preset convergence targets");
+    } else {
+        record("convergence", "passed");
+    }
+    const auto continuityPos = lastStep.rfind("time step continuity errors");
+    if (continuityPos != std::string_view::npos)
+        q.continuityError = numberAfter(lastStep, "sum local =", continuityPos);
+    if (!q.continuityError && continuityPos != std::string_view::npos &&
+        lastStep.find("sum local =", continuityPos) != std::string_view::npos) {
+        record("massBalance", "failed", "mass balance: invalid continuity error");
+    } else if (!q.continuityError) {
+        record("massBalance", "missing", "mass balance: no continuity error for the final solver step");
+    } else if (!std::isfinite(*q.continuityError) || *q.continuityError < 0) {
+        record("massBalance", "failed", "mass balance: invalid continuity error");
+    } else if (*q.continuityError > 1e-3) {
+        record("massBalance", "failed", "mass balance: continuity error above 1e-3");
+    } else {
+        record("massBalance", "passed");
+    }
 
     const Table residuals = readTable(caseDir / "postProcessing" / "solverInfo" / "0" / "solverInfo.dat");
-    for (const char* field : {"Ux", "Uy", "Uz", "p", "k", "omega"})
-        if (const auto* col = residuals.column(std::string(field) + "_initial"); col && !col->empty())
-            q.finalResiduals[field] = col->back();
+    for (const char* field : {"Ux", "Uy", "Uz", "p", "k", "omega"}) {
+        const std::string name = std::string("residual.") + field;
+        const auto* col = residuals.column(std::string(field) + "_initial");
+        if (col && !col->empty())
+            q.finalResiduals[field] = col->back(); // Retain diagnostics, including rejected values.
+        if (residuals.invalidTime || (col && !col->empty() && (!std::isfinite(col->back()) || col->back() < 0))) {
+            record(name, "failed", std::string(field) + ": invalid residual data");
+        } else if (!col || col->empty() || residuals.incomplete || !iteration || residuals.time.back() != *iteration) {
+            record(name, "missing", std::string(field) + ": no complete residual for the final solver step");
+        } else if (const double target = std::string_view(field) == "p" ? 1e-4 : 1e-5; col->back() >= target) {
+            // Match external-flow-v1 residualControl in CaseWriter, including velocity and turbulence.
+            record(name, "failed", std::string(field) + ": residual has not reached the preset target " +
+                                      (std::string_view(field) == "p" ? "1e-4" : "1e-5"));
+        } else {
+            record(name, "passed");
+        }
+    }
 
     const Table coeffs = readTable(caseDir / "postProcessing" / "forceCoeffs" / "0" / "coefficient.dat");
-    if (const auto* cd = coeffs.column("Cd"); cd && cd->size() >= 20) {
+    bool invalidCoefficients = coeffs.invalidTime;
+    bool missingCoefficients = coeffs.incomplete || coeffs.time.size() < 20 || !iteration ||
+                               (!coeffs.time.empty() && coeffs.time.back() != *iteration);
+    for (const char* field : {"Cd", "Cl", "Cs"}) {
+        const auto* col = coeffs.column(field);
+        missingCoefficients = missingCoefficients || !col || col->empty();
+        if (col)
+            invalidCoefficients = invalidCoefficients ||
+                                  std::any_of(col->begin(), col->end(), [](double v) { return !std::isfinite(v); });
+    }
+    // Keep a usable Cd diagnostic even when other required evidence is missing.
+    if (const auto* cd = coeffs.column("Cd"); !invalidCoefficients && cd && cd->size() >= 20) {
         const std::size_t start = cd->size() - std::max<std::size_t>(cd->size() / 5, 10);
         double lo = std::numeric_limits<double>::max(), hi = std::numeric_limits<double>::lowest(), sum = 0;
         for (std::size_t i = start; i < cd->size(); ++i) {
@@ -312,21 +400,35 @@ QualityReport assessQuality(const fs::path& caseDir)
             sum += (*cd)[i];
         }
         const double mean = sum / static_cast<double>(cd->size() - start);
-        if (std::abs(mean) > 1e-12)
+        if (!std::isfinite(sum) || !std::isfinite(hi - lo)) {
+            invalidCoefficients = true;
+        } else if (std::abs(mean) > 1e-12) {
             q.cdFluctuation = (hi - lo) / std::abs(mean);
+            invalidCoefficients = !std::isfinite(*q.cdFluctuation);
+        }
+    }
+    if (invalidCoefficients) {
+        record("forceStability", "failed", "force coefficients: non-finite, invalid or overflowing data");
+    } else if (missingCoefficients) {
+        record("forceStability", "missing",
+               "force coefficients: need at least 20 complete Cd/Cl/Cs samples through the final solver step");
+    } else if (!q.cdFluctuation) {
+        record("forceStability", "missing",
+               "force coefficients: Cd is too close to zero to assess relative fluctuation");
+    } else if (*q.cdFluctuation > 0.02) {
+        record("forceStability", "failed",
+               "Cd still changes by more than 2 % over the last 20 % of the iterations");
+    } else {
+        record("forceStability", "passed");
     }
 
-    // Thresholds of the preset. They flag results to be read with care; they are not a
-    // validation of the physics (that is CAD-52).
-    if (q.continuityError && *q.continuityError > 1e-3)
-        q.warnings.push_back("mass balance: continuity error above 1e-3");
-    if (q.cdFluctuation && *q.cdFluctuation > 0.02)
-        q.warnings.push_back("Cd still changes by more than 2 % over the last 20 % of the iterations");
-    if (auto it = q.finalResiduals.find("p"); it != q.finalResiduals.end() && it->second > 1e-2)
-        q.warnings.push_back("pressure residual above 1e-2");
-
-    const bool enough = q.meshOk.has_value() && q.cdFluctuation.has_value();
-    q.status = !enough ? "unknown" : q.warnings.empty() ? "ok" : "warning";
+    // Failed evidence takes precedence over missing evidence. An OK verdict needs every
+    // required check to pass; neither this nor the thresholds validate the physics.
+    const bool failed =
+        std::any_of(q.checks.begin(), q.checks.end(), [](const auto& c) { return c.second == "failed"; });
+    const bool missing =
+        std::any_of(q.checks.begin(), q.checks.end(), [](const auto& c) { return c.second == "missing"; });
+    q.status = failed ? "warning" : missing ? "unknown" : "ok";
     return q;
 }
 

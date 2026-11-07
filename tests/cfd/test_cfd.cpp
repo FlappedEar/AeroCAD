@@ -92,14 +92,15 @@ void fakeFinishedRun(const fs::path& dir, double cd, double dragN, double liftN 
     coeffs << "# Force and moment coefficients\n# Time Cd Cd(f) Cd(r) Cl Cl(f) Cl(r) CmPitch CmRoll CmYaw Cs Cs(f) "
               "Cs(r)\n";
     forces << "# Force\n# Time total_x total_y total_z pressure_x pressure_y pressure_z viscous_x viscous_y viscous_z\n";
-    residuals << "# Solver information\n# Time U_solver Ux_initial Ux_final Ux_iters p_solver p_initial p_final "
-                 "p_iters p_converged\n";
+    residuals << "# Solver information\n# Time U_solver Ux_initial Ux_final Ux_iters Uy_initial Uz_initial "
+                 "p_solver p_initial p_final p_iters p_converged k_initial omega_initial\n";
     for (int i = 1; i <= 100; ++i) {
         const double c = cd + 0.5 / i; // Converges to cd.
         const double f = dragN * c / cd;
         coeffs << i << ' ' << c << " 0 0 0.1 0 0 0 0 0 0.01 0 0\n";
         forces << i << ' ' << f << " 0.01 " << liftN << ' ' << f * 0.9 << " 0 0 " << f * 0.1 << " 0 0\n";
-        residuals << i << " smoothSolver " << 1.0 / i << " 0 3 GAMG " << 0.1 / i << " 0 3 true\n";
+        residuals << i << " smoothSolver " << 1e-4 / i << " 0 3 " << 1e-4 / i << ' ' << 1e-4 / i
+                  << " GAMG " << 1e-3 / i << " 0 3 true " << 1e-4 / i << ' ' << 1e-4 / i << '\n';
     }
     write(dir / "postProcessing" / "forceCoeffs" / "0" / "coefficient.dat", coeffs.str());
     write(dir / "postProcessing" / "forces" / "0" / "force.dat", forces.str());
@@ -314,7 +315,7 @@ TEST_CASE("Quality report from logs and histories", "[cfd]")
     CHECK(q.cells == 19893);
     CHECK(q.solverConverged);
     CHECK(q.continuityError == Approx(2.4e-5));
-    CHECK(q.finalResiduals.at("p") == Approx(0.001));
+    CHECK(q.finalResiduals.at("p") == Approx(1e-5));
     REQUIRE(q.cdFluctuation);
     CHECK(*q.cdFluctuation < 0.02);
     CHECK(q.status == "ok");
@@ -324,6 +325,185 @@ TEST_CASE("Quality report from logs and histories", "[cfd]")
     CHECK(bad.meshOk == false);
     CHECK(bad.failedMeshChecks == 2);
     CHECK(bad.status == "warning");
+}
+
+TEST_CASE("Quality report never accepts missing convergence evidence", "[cfd][quality]")
+{
+    TempDir tmp;
+    fakeFinishedRun(tmp.path(), 0.8, 1.0);
+    fs::remove(tmp.path() / "log.simpleFoam");
+    fs::remove(tmp.path() / "postProcessing" / "solverInfo" / "0" / "solverInfo.dat");
+
+    const auto q = cfd::assessQuality(tmp.path());
+    CHECK(q.meshOk == true);
+    REQUIRE(q.cdFluctuation);
+    CHECK_FALSE(q.solverConverged);
+    CHECK(q.status == "unknown");
+    CHECK_FALSE(q.warnings.empty());
+    CHECK(q.checks.at("convergence") == "missing");
+    CHECK(q.checks.at("massBalance") == "missing");
+    CHECK(q.checks.at("residual.p") == "missing");
+}
+
+TEST_CASE("Quality report accepts complete current evidence", "[cfd][quality]")
+{
+    TempDir tmp;
+    fakeFinishedRun(tmp.path(), 0.8, 1.0);
+    SECTION("complete log with the standard startup banner")
+    {
+        write(tmp.path() / "log.simpleFoam",
+              "Exec   : simpleFoam\nDate   : fixture\nCreate time\n\nTime = 100\n"
+              "time step continuity errors : sum local = 1e-5, global = 1e-7\n"
+              "ExecutionTime = 1 s  ClockTime = 1 s\nSIMPLE solution converged in 100 iterations\nEnd\n");
+    }
+    SECTION("abridged log without a banner") {}
+
+    const auto q = cfd::assessQuality(tmp.path());
+    CHECK(q.status == "ok");
+    CHECK(q.warnings.empty());
+    REQUIRE(q.checks.size() == 10);
+    for (const auto& [name, state] : q.checks) {
+        INFO(name);
+        CHECK(state == "passed");
+    }
+    CHECK(q.toJson().at("checks").at("convergence") == "passed");
+}
+
+TEST_CASE("Quality report requires complete current evidence", "[cfd][quality]")
+{
+    TempDir tmp;
+    fakeFinishedRun(tmp.path(), 0.8, 1.0);
+    const auto solver = tmp.path() / "log.simpleFoam";
+    const auto residuals = tmp.path() / "postProcessing" / "solverInfo" / "0" / "solverInfo.dat";
+    const auto coefficients = tmp.path() / "postProcessing" / "forceCoeffs" / "0" / "coefficient.dat";
+
+    SECTION("missing mesh verdict") { fs::remove(tmp.path() / "log.checkMesh"); }
+    SECTION("missing residual file") { fs::remove(residuals); }
+    SECTION("missing force history") { fs::remove(coefficients); }
+    SECTION("truncated solver log")
+    {
+        std::string log = slurp(solver);
+        log.erase(log.rfind("End"));
+        write(solver, log);
+    }
+    SECTION("interrupted restart after a converged run")
+    {
+        write(solver, slurp(solver) + "Time = 101\nSolving for Ux");
+    }
+    SECTION("interrupted restart before its first iteration")
+    {
+        write(solver, slurp(solver) + "Exec   : simpleFoam\nDate   : fixture\n");
+    }
+    SECTION("interrupted restart with a suppressed banner")
+    {
+        write(solver, slurp(solver) + "Create time\n\nCreate mesh for time = 0\n");
+    }
+    SECTION("truncated newest residual row") { write(residuals, slurp(residuals) + "101 smoothSolver 1e-8"); }
+    SECTION("truncated newest coefficient row") { write(coefficients, slurp(coefficients) + "101 0.8"); }
+    SECTION("residuals do not reach final iteration")
+    {
+        write(residuals, "# Time Ux_initial Uy_initial Uz_initial p_initial k_initial omega_initial\n"
+                         "99 1e-6 1e-6 1e-6 1e-5 1e-6 1e-6\n");
+    }
+    SECTION("one turbulence field absent")
+    {
+        write(residuals, "# Time Ux_initial Uy_initial Uz_initial p_initial k_initial\n"
+                         "100 1e-6 1e-6 1e-6 1e-5 1e-6\n");
+    }
+
+    const auto q = cfd::assessQuality(tmp.path());
+    CHECK(q.status == "unknown");
+    CHECK_FALSE(q.warnings.empty());
+}
+
+TEST_CASE("Quality report rejects failed convergence and invalid mass balance", "[cfd][quality]")
+{
+    TempDir tmp;
+    fakeFinishedRun(tmp.path(), 0.8, 1.0);
+    const auto solver = tmp.path() / "log.simpleFoam";
+
+    SECTION("solver ends without meeting residual targets")
+    {
+        write(solver, "Time = 100\ntime step continuity errors : sum local = 1e-5, global = 1e-7\nEnd\n");
+        const auto q = cfd::assessQuality(tmp.path());
+        CHECK(q.status == "warning");
+        CHECK_FALSE(q.solverConverged);
+        CHECK(q.checks.at("convergence") == "failed");
+    }
+    SECTION("fatal error after convergence marker")
+    {
+        write(solver, slurp(solver) + "FOAM FATAL ERROR: synthetic fixture\n");
+        const auto q = cfd::assessQuality(tmp.path());
+        CHECK(q.status == "warning");
+        CHECK_FALSE(q.solverConverged);
+        CHECK(q.checks.at("convergence") == "failed");
+    }
+    SECTION("nonfinite negative and excessive continuity error")
+    {
+        for (const std::string value : {"nan", "inf", "-1", "0.01"}) {
+            INFO(value);
+            write(solver, "Time = 100\ntime step continuity errors : sum local = " + value +
+                              ", global = 1e-7\nSIMPLE solution converged in 100 iterations\nEnd\n");
+            const auto q = cfd::assessQuality(tmp.path());
+            CHECK(q.status == "warning");
+            CHECK(q.checks.at("massBalance") == "failed");
+            CHECK_FALSE(q.warnings.empty());
+        }
+    }
+    SECTION("failed evidence takes precedence over missing evidence")
+    {
+        fs::remove(solver);
+        write(tmp.path() / "log.checkMesh", "Failed 2 mesh checks.\n");
+        CHECK(cfd::assessQuality(tmp.path()).status == "warning");
+    }
+}
+
+TEST_CASE("Quality report validates every velocity pressure and turbulence residual", "[cfd][quality]")
+{
+    TempDir tmp;
+    fakeFinishedRun(tmp.path(), 0.8, 1.0);
+    const std::vector<std::string> fields{"Ux", "Uy", "Uz", "p", "k", "omega"};
+    for (std::size_t field = 0; field < fields.size(); ++field) {
+        for (const std::string invalid : {"0.1", "nan", "inf", "-0.1"}) {
+            INFO(fields[field]);
+            INFO(invalid);
+            std::ostringstream data;
+            data << "# Time Ux_initial Uy_initial Uz_initial p_initial k_initial omega_initial\n100";
+            for (std::size_t i = 0; i < fields.size(); ++i)
+                data << ' ' << (i == field ? invalid : "1e-6");
+            data << '\n';
+            write(tmp.path() / "postProcessing" / "solverInfo" / "0" / "solverInfo.dat", data.str());
+            const auto q = cfd::assessQuality(tmp.path());
+            CHECK(q.status == "warning");
+            CHECK(q.checks.at("residual." + fields[field]) == "failed");
+            CHECK(q.finalResiduals.contains(fields[field]));
+        }
+    }
+}
+
+TEST_CASE("Quality report rejects nonfinite coefficients and iteration values", "[cfd][quality]")
+{
+    TempDir tmp;
+    fakeFinishedRun(tmp.path(), 0.8, 1.0);
+    const std::vector<std::string> fields{"Time", "Cd", "Cl", "Cs"};
+    for (std::size_t field = 0; field < fields.size(); ++field) {
+        for (const std::string invalid : {"nan", "inf", "1e999"}) {
+            INFO(fields[field]);
+            INFO(invalid);
+            std::ostringstream data;
+            data << "# Time Cd Cl Cs\n";
+            for (int row = 1; row <= 100; ++row) {
+                const std::vector<std::string> good{std::to_string(row), "0.8", "0.1", "0.01"};
+                for (std::size_t i = 0; i < fields.size(); ++i)
+                    data << (i == 0 ? "" : " ") << (row == 100 && i == field ? invalid : good[i]);
+                data << '\n';
+            }
+            write(tmp.path() / "postProcessing" / "forceCoeffs" / "0" / "coefficient.dat", data.str());
+            const auto q = cfd::assessQuality(tmp.path());
+            CHECK(q.status == "warning");
+            CHECK(q.checks.at("forceStability") == "failed");
+        }
+    }
 }
 
 #ifndef _WIN32
