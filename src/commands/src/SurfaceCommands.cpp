@@ -83,65 +83,6 @@ std::vector<VisibilityChange> replacedByPart(const model::Document& doc, cad::Fe
     return changes;
 }
 
-/// Adds parts built from `shapes` (with their names) and pushes one undo entry that removes
-/// them again, so one undo takes back the parts and the `changes` that came with them.
-std::vector<Json> addShapeParts(CommandContext& ctx, const model::Part& source,
-                                const std::vector<std::pair<geometry::Shape, std::string>>& shapes,
-                                const std::string& origin, const std::string& undoTitle,
-                                const std::vector<VisibilityChange>& changes = {})
-{
-    model::Document& doc = ctx.document;
-    // `source` may live in the document, whose parts can move as parts are added.
-    const std::string provenance = origin + " of part " + std::to_string(source.id);
-    std::vector<model::Part> parts;
-    std::vector<model::PartId> ids;
-    for (const auto& [shape, name] : shapes) {
-        model::Part part;
-        part.name = name;
-        part.source = provenance;
-        part.mesh = std::make_shared<const core::TriangleMesh>(geometry::tessellate(shape));
-        part.shape = shape;
-        part.id = doc.addPart(part);
-        ids.push_back(part.id);
-        parts.push_back(part);
-    }
-    std::vector<VisibilityChange> before;
-    for (const auto& c : changes) {
-        if (const model::Part* p = doc.part(c.id); p != nullptr && p->visible != c.visible) {
-            before.push_back({c.id, p->visible});
-            doc.modifyPart(c.id, [&](model::Part& q) { q.visible = c.visible; });
-        }
-    }
-    const std::string title = undoTitle + " " + (parts.size() == 1 ? parts.front().name
-                                                                    : std::to_string(parts.size()) + " parts");
-    ctx.undoStack.push({title,
-                        [&doc, ids, before]() {
-                            for (const auto id : ids)
-                                doc.removePart(id);
-                            for (const auto& c : before)
-                                doc.modifyPart(c.id, [&](model::Part& q) { q.visible = c.visible; });
-                        },
-                        [&doc, parts, before]() {
-                            for (const auto& part : parts)
-                                doc.addPart(part);
-                            for (const auto& c : before)
-                                doc.modifyPart(c.id, [&](model::Part& q) { q.visible = !c.visible; });
-                        }});
-    std::vector<Json> results;
-    for (const auto id : ids)
-        results.push_back(partToJson(*doc.part(id)));
-    return results;
-}
-
-/// Adds a part built from `shape` and pushes an undo entry that removes it again, so one undo
-/// takes back the part and the `changes` that came with it.
-Json addShapePart(CommandContext& ctx, const model::Part& source, const geometry::Shape& shape,
-                  const std::string& name, const std::string& origin, const std::string& undoTitle,
-                  const std::vector<VisibilityChange>& changes = {})
-{
-    return addShapeParts(ctx, source, {{shape, name}}, origin, undoTitle, changes).front();
-}
-
 const cad::SketchResult& requireSketch(CommandContext& ctx, const Json& id)
 {
     if (ctx.design == nullptr)
@@ -302,6 +243,10 @@ const model::Part* standingPart(const model::Document& doc, const cad::Design& d
     scratch.featureId = body;
     scratch.shape = it->second.shape;
     scratch.mesh = std::make_shared<const core::TriangleMesh>(geometry::tessellate(it->second.shape));
+    // On open there is no document copy yet. Preserve the fitted-scan fallback for
+    // part_on_surface / fin_on_surface from the persistent upstream definition.
+    if (const auto* f = d.feature(cad::featureOfBody(body)); f != nullptr && f->type == "fit_selection")
+        scratch.source = "surface.fit_selection of part " + std::to_string(f->params.at("id").get<model::PartId>());
     return &scratch;
 }
 
@@ -718,7 +663,223 @@ cad::FeatureEvaluator::Output finOnSurface(const model::Document& doc, const cad
     return out;
 }
 
-/// Adds a feature built on a surface or scan (part_on_surface, fin_on_surface) to the
+/// Connectivity fingerprint for a saved triangle selection. Coordinates may change (move,
+/// scale, alignment), but silently reinterpreting indices after remeshing is unsafe.
+std::string topologyFingerprint(const core::TriangleMesh& mesh)
+{
+    std::uint64_t h = 1469598103934665603ull;
+    for (const auto& triangle : mesh.triangles())
+        for (const auto index : triangle) {
+            h ^= index;
+            h *= 1099511628211ull;
+        }
+    return std::to_string(mesh.vertexCount()) + ":" + std::to_string(mesh.triangleCount()) + ":" + std::to_string(h);
+}
+
+int integerOption(const cad::Design& d, const Json& params, const char* key, int fallback, int min, int max)
+{
+    const double value = d.evaluate(params.value(key, Json(fallback)));
+    if (!std::isfinite(value) || value != std::trunc(value) || value < min || value > max)
+        throw CommandError(std::string(key) + " must be an integer between " + std::to_string(min) + " and " + std::to_string(max));
+    return static_cast<int>(value);
+}
+
+cad::FeatureEvaluator::Output surfaceStep(const model::Document& doc, const cad::Design& d, const cad::Feature& f)
+{
+    const Json& params = f.params;
+    model::Part scratch;
+    const auto partId = params.at("id").get<model::PartId>();
+    const model::Part* found = standingPart(doc, d, partId, scratch);
+    if (found == nullptr)
+        throw CommandError("No part with id " + std::to_string(partId));
+    model::Part source = *found;
+    const bool fitting = f.type == "fit_selection" || f.type == "fit_regions";
+    if (fitting) {
+        if (!source.mesh || source.mesh->triangleCount() == 0)
+            throw CommandError("Part " + std::to_string(partId) + " has no mesh");
+        const bool useSelection = f.type == "fit_selection" || params.value("useSelection", false);
+        if (useSelection) {
+            const auto triangles = params.value("triangles", core::TriangleSet{});
+            if (triangles.empty())
+                throw CommandError("The fit has no saved region; select a region and create a replacement fit");
+            if (params.value("topology", std::string()) != topologyFingerprint(*source.mesh))
+                throw CommandError("The source mesh topology changed; select the intended region and create a replacement fit");
+            if (std::any_of(triangles.begin(), triangles.end(), [&](auto i) { return i >= source.mesh->triangleCount(); }))
+                throw CommandError("The saved selection contains an invalid triangle");
+            source.selection = std::make_shared<const core::TriangleSet>(triangles);
+        }
+        if (f.type == "fit_selection") {
+            // One smooth surface over a large part of a scan takes minutes and cannot follow
+            // it anyway. A part drawn on the scan needs no selection or fit.
+            constexpr std::size_t maxTriangles = 200000;
+            if (source.selection->size() > maxTriangles)
+                throw CommandError("The selected area is too large for one smooth surface (" +
+                                   std::to_string(source.selection->size()) + " triangles, at most " +
+                                   std::to_string(maxTriangles) +
+                                   "). Select a smaller area, or use Sketch and click the scan: a part drawn there "
+                                   "follows the scan without a fitted surface");
+
+            geometry::SurfaceFitOptions options;
+            options.tolerance = d.evaluate(params.value("tolerance", Json(options.tolerance)));
+            options.gridSize = params.contains("gridSize") ? integerOption(d, params, "gridSize", 0, 4, 200) : 0;
+            const std::string method = params.value("method", std::string("auto"));
+            if (method != "auto" && method != "plane" && method != "unfold")
+                throw CommandError("Unknown surface fit method");
+            if (!(options.tolerance > 0) || (options.gridSize != 0 && (options.gridSize < 4 || options.gridSize > 200)))
+                throw CommandError("Invalid fit tolerance or grid size");
+            options.method = method == "plane"    ? geometry::SurfaceFitMethod::Plane
+                             : method == "unfold" ? geometry::SurfaceFitMethod::Unfold
+                                                  : geometry::SurfaceFitMethod::Auto;
+            geometry::SurfaceFitResult fit;
+            try {
+                fit = geometry::fitSurface(*source.mesh, *source.selection, options);
+            } catch (const geometry::SurfaceFitError& e) {
+                throw CommandError(e.what());
+            }
+
+            const auto& rep = fit.report;
+            Json result;
+            result["fit"] = {{"meshToSurfaceMax", rep.meshToSurfaceMax},
+                             {"maxDeviation", std::max(rep.meshToSurfaceMax, rep.surfaceToMeshMax)},
+                             {"meshToSurfaceRms", rep.meshToSurfaceRms},
+                             {"surfaceToMeshMax", rep.surfaceToMeshMax},
+                             {"outsideTrimMax", rep.outsideTrimMax},
+                             {"tolerance", options.tolerance},
+                             {"withinTolerance", rep.withinTolerance},
+                             {"poles", {rep.uPoles, rep.vPoles}},
+                             {"trimmed", rep.trimmed},
+                             {"holes", rep.holes},
+                             {"method", rep.method},
+                             {"milliseconds", rep.milliseconds}};
+            result["warnings"] = rep.warnings;
+            return {{{fit.face, params.value("name", source.name + " surface")}}, {}, result};
+        }
+        geometry::RegionFitOptions options;
+        options.creaseAngleDeg = d.evaluate(params.value("creaseAngle", Json(options.creaseAngleDeg)));
+        options.fit.tolerance = d.evaluate(params.value("tolerance", Json(options.fit.tolerance)));
+        options.blendRings = integerOption(d, params, "blendRings", options.blendRings, 0, 50);
+        if (!(options.fit.tolerance > 0) || !(options.creaseAngleDeg > 0 && options.creaseAngleDeg <= 180) ||
+            options.blendRings < 0 || options.blendRings > 50)
+            throw CommandError("Invalid region fit tolerance, crease angle or blend rings");
+        geometry::RegionFitResult fit;
+        try {
+            fit = geometry::fitRegions(*source.mesh, useSelection ? *source.selection : core::TriangleSet{},
+                                       options);
+        } catch (const geometry::SurfaceFitError& e) {
+            throw CommandError(e.what());
+        }
+        Json result;
+        Json patches = Json::array();
+        double worst = 0.0;
+        double maxDeviation = 0.0;
+        bool allWithin = true;
+        for (const auto& p : fit.patches) {
+            Json j{{"triangles", p.triangles.size()}};
+            if (p.error.empty()) {
+                j["meshToSurfaceMax"] = p.report.meshToSurfaceMax;
+                j["surfaceToMeshMax"] = p.report.surfaceToMeshMax;
+                j["withinTolerance"] = p.report.withinTolerance;
+                j["method"] = p.report.method;
+                worst = std::max(worst, p.report.meshToSurfaceMax);
+                maxDeviation = std::max({maxDeviation, p.report.meshToSurfaceMax, p.report.surfaceToMeshMax});
+                allWithin = allWithin && p.report.withinTolerance;
+            } else {
+                j["error"] = p.error;
+                allWithin = false;
+            }
+            patches.push_back(std::move(j));
+        }
+        result["fit"] = {{"patches", patches},
+                         {"faces", fit.faces},
+                         {"freeEdges", fit.freeEdges},
+                         {"solid", fit.solid},
+                         {"volume", fit.volume},
+                         {"meshToSurfaceMax", worst},
+                         {"maxDeviation", maxDeviation},
+                         {"withinTolerance", allWithin},
+                         {"tolerance", options.fit.tolerance},
+                         {"sewTolerance", fit.sewTolerance},
+                         {"smoothSeams", fit.smoothSeams},
+                         {"seamAngleMaxDeg", fit.seamAngleMaxDeg},
+                         {"milliseconds", fit.milliseconds}};
+        Json warnings = fit.warnings;
+        if (!allWithin)
+            warnings.push_back("Approximation: some patches are more than the requested tolerance of " +
+                               formatMm(options.fit.tolerance) + " mm from the mesh (worst " +
+                               formatMm(worst) + " mm); see fit.patches");
+        result["warnings"] = warnings;
+        return {{{fit.shape, params.value("name", source.name + (fit.solid ? " solid" : " surfaces"))}}, {}, result};
+    }
+    if (source.kind == model::PartKind::Sketch || !source.shape || source.shape->isNull())
+        throw CommandError("Part " + std::to_string(partId) + " has no exact surface; fit a surface first");
+    // Clearance, trimming and thickness do not improve the fitted reference's quality.
+    // Keep its fit report visible on the final part and in export checks (CAD-85).
+    Json inherited = Json::object();
+    if (source.kind == model::PartKind::Body) {
+        const Json report = d.status(cad::featureOfBody(source.featureId)).report;
+        if (report.is_object() && report.contains("fit")) {
+            inherited["fit"] = report.at("fit");
+            inherited["warnings"] = report.value("warnings", Json::array());
+            inherited["fitInherited"] = true;
+            inherited["fitSourceFeature"] = report.value("fitSourceFeature", cad::featureOfBody(source.featureId));
+            if (!report.value("fitInherited", false))
+                for (auto& warning : inherited["warnings"])
+                    warning = "Reference fit: " + warning.get<std::string>();
+        }
+    }
+    if (f.type == "trim_by_sketch") {
+        const auto& sk = sketchOf(d, params);
+        const auto outlines = sketchOutlines(sk, params);
+        const std::string keep = params.value("keep", std::string("inside"));
+        if (keep != "inside" && keep != "outside")
+            throw CommandError("Keep must be inside or outside");
+        geometry::Shape shape;
+        try {
+            shape = geometry::trimSurface(*source.shape, outlines, sk.plane.normal, keep != "outside",
+                                          params.value("extend", true));
+        } catch (const geometry::OffsetError& e) {
+            throw CommandError(e.what());
+        }
+        Json result = inherited;
+        result["area"] = geometry::surfaceArea(shape);
+        result["faces"] = shape.faceCount();
+        result["keep"] = keep;
+        return {{{shape, params.value("name", source.name + " " + sk.name)}}, {}, result};
+    }
+    if (f.type == "offset_surface") {
+        const double distance = d.evaluate(params.at("distance"));
+        geometry::Shape shape;
+        try {
+            shape = geometry::offsetSurface(*source.shape, distance);
+        } catch (const geometry::OffsetError& e) {
+            throw CommandError(e.what());
+        }
+        Json result = inherited;
+        result["distance"] = distance;
+        result["area"] = geometry::surfaceArea(shape);
+        return {{{shape, params.value("name", source.name + " offset")}}, {}, result};
+    }
+    const double thickness = positive(d, params, "thickness");
+    const std::string sideName = params.value("side", std::string("outside"));
+    if (sideName != "inside" && sideName != "outside" && sideName != "both")
+        throw CommandError("Side must be inside, outside or both");
+    const geometry::ThickenSide side = sideName == "inside" ? geometry::ThickenSide::Inside
+                                       : sideName == "both" ? geometry::ThickenSide::Both
+                                                            : geometry::ThickenSide::Outside;
+    geometry::Shape shape;
+    try {
+        shape = geometry::thickenSurface(*source.shape, thickness, side);
+    } catch (const geometry::OffsetError& e) {
+        throw CommandError(e.what());
+    }
+    Json result = inherited;
+    result["thickness"] = thickness;
+    result["side"] = sideName;
+    result["volume"] = shape.volume();
+    return {{{shape, params.value("name", source.name + " solid")}}, {}, result};
+}
+
+/// Adds a feature built on a surface or scan to the
 /// timeline as one undo step. Like the timeline's own features it can later be edited,
 /// suppressed or deleted and follows edits of its sketch. The sketch is hidden (Fusion
 /// hides used sketches); a surface fitted just to draw on is hidden and its scan shown.
@@ -728,15 +889,18 @@ Json addSurfaceFeature(CommandContext& ctx, const std::string& type, const Json&
         throw CommandError("No design in this session");
     cad::Design& d = *ctx.design;
     model::Document& doc = ctx.document;
-    const auto& sk = requireSketch(ctx, params.at("sketch"));
-    const model::PartId partId = surfacePartOf(d, params);
-    if (partId == 0)
-        throw CommandError("Sketch " + sk.name + " was not made " + (type == "fin_on_surface" ? "on" : "over") +
-                           " a surface; give the surface part `id`");
-    const model::Part* source = doc.part(partId);
-    if (source == nullptr)
-        throw CommandError("No part with id " + std::to_string(partId));
-    const std::vector<VisibilityChange> changes = replacedByPart(doc, sk.id, *source);
+    std::vector<VisibilityChange> changes;
+    if (type == "part_on_surface" || type == "fin_on_surface") {
+        const auto& sk = requireSketch(ctx, params.at("sketch"));
+        const model::PartId partId = surfacePartOf(d, params);
+        if (partId == 0)
+            throw CommandError("Sketch " + sk.name + " was not made " + (type == "fin_on_surface" ? "on" : "over") +
+                               " a surface; give the surface part `id`");
+        const model::Part* source = doc.part(partId);
+        if (source == nullptr)
+            throw CommandError("No part with id " + std::to_string(partId));
+        changes = replacedByPart(doc, sk.id, *source);
+    }
 
     const cad::Design::State before = d.state();
     cad::FeatureId id = 0;
@@ -801,6 +965,27 @@ Json addSurfaceFeature(CommandContext& ctx, const std::string& type, const Json&
     return result;
 }
 
+/// Create the persistent definition, including the region selected at creation time.
+Json addSurfaceStep(CommandContext& ctx, const std::string& type, const Json& params, const std::string& label)
+{
+    Json stored = params;
+    const model::Part& source = requirePart(ctx.document, params);
+    if (type == "fit_selection" || type == "fit_regions") {
+        const bool hasSelection = source.selection && !source.selection->empty();
+        const bool useSelection = type == "fit_selection" || params.value("useSelection", hasSelection);
+        if (useSelection && !hasSelection)
+            throw CommandError("Select a region on part " + std::to_string(source.id) + " first");
+        stored["useSelection"] = useSelection;
+        if (hasSelection && source.mesh) {
+            stored["triangles"] = *source.selection;
+            stored["topology"] = topologyFingerprint(*source.mesh);
+        }
+    } else {
+        (void)requireSurfacePart(ctx.document, params);
+    }
+    return addSurfaceFeature(ctx, type, stored, label);
+}
+
 } // namespace
 
 void registerSurfaceFeatures(cad::Design& design, const model::Document& document)
@@ -812,6 +997,7 @@ void registerSurfaceFeatures(cad::Design& design, const model::Document& documen
     struct Seen {
         std::uint64_t revision;
         std::weak_ptr<const core::TriangleMesh> mesh;
+        geometry::Shape shape;
         std::string fingerprint;
     };
     auto seen = std::make_shared<std::map<model::PartId, Seen>>();
@@ -821,9 +1007,15 @@ void registerSurfaceFeatures(cad::Design& design, const model::Document& documen
         if (p == nullptr)
             return "missing";
         auto it = seen->find(id);
-        if (it == seen->end() || it->second.revision != p->revision || it->second.mesh.lock() != p->mesh) {
-            const std::string fp = p->mesh ? meshFingerprint(*p->mesh) : std::string("empty");
-            it = seen->insert_or_assign(id, Seen{p->revision, p->mesh, fp}).first;
+        const geometry::Shape shape = p->shape.value_or(geometry::Shape{});
+        if (it == seen->end() || it->second.revision != p->revision || it->second.mesh.lock() != p->mesh ||
+            it->second.shape.impl() != shape.impl()) {
+            std::string fp = p->mesh ? meshFingerprint(*p->mesh) : std::string("empty");
+            // Exact surface operations read the B-rep, not the display tessellation.
+            // A replaced shape may deliberately retain the same mesh (or have no mesh).
+            if (!shape.isNull())
+                fp += ";brep:" + shapeFingerprint(shape);
+            it = seen->insert_or_assign(id, Seen{p->revision, p->mesh, shape, fp}).first;
         }
         return it->second.fingerprint;
     };
@@ -833,8 +1025,17 @@ void registerSurfaceFeatures(cad::Design& design, const model::Document& documen
         // A timeline body: its geometry as evaluated before this step (see standingPart).
         if (const cad::FeatureId body = timelineBodyOf(*dp, partId); body != 0) {
             const auto it = dp->bodies().find(body);
-            return std::to_string(partId) + ":body:" +
-                   (it == dp->bodies().end() ? std::string("missing") : shapeFingerprint(it->second.shape));
+            std::string key = std::to_string(partId) + ":body:" +
+                              (it == dp->bodies().end() ? std::string("missing") : shapeFingerprint(it->second.shape));
+            if (f.type == "trim_by_sketch" || f.type == "offset_surface" || f.type == "thicken_surface")
+                key += ";report:" + dp->status(cad::featureOfBody(body)).report.dump();
+            // Part/fin-on-surface can extend past the fitted patch on its original scan.
+            if (const auto* upstream = dp->feature(cad::featureOfBody(body));
+                upstream != nullptr && upstream->type == "fit_selection") {
+                const auto scan = upstream->params.at("id").get<model::PartId>();
+                key += ";" + std::to_string(scan) + ":" + fingerprint(scan);
+            }
+            return key;
         }
         std::string key = std::to_string(partId) + ":" + fingerprint(partId);
         if (const model::Part* p = doc->part(partId); p != nullptr)
@@ -850,10 +1051,12 @@ void registerSurfaceFeatures(cad::Design& design, const model::Document& documen
                                {inputs, [doc](const cad::Feature& f, const cad::Design& d) {
                                     return finOnSurface(*doc, d, f.params);
                                 }});
-}
+    for (const std::string type : {"fit_selection", "fit_regions", "trim_by_sketch", "offset_surface", "thicken_surface"})
+        design.setFeatureEvaluator(type, {inputs, [doc](const cad::Feature& f, const cad::Design& d) {
+                                             return surfaceStep(*doc, d, f);
+                                         }});
 
-namespace {
-} // namespace
+}
 
 void registerSurfaceCommands(CommandRegistry& r)
 {
@@ -881,60 +1084,7 @@ void registerSurfaceCommands(CommandRegistry& r)
                {"id"}),
            true},
           [](CommandContext& ctx, const Json& params) {
-              const model::Part& source = requirePart(ctx.document, params);
-              if (!source.mesh || !source.selection || source.selection->empty())
-                  throw CommandError("Select a region on part " + std::to_string(source.id) + " first");
-              // One smooth surface over a large part of a scan takes minutes and cannot follow
-              // it anyway. A part drawn on the scan needs no selection or fit.
-              constexpr std::size_t maxTriangles = 200000;
-              if (source.selection->size() > maxTriangles)
-                  throw CommandError("The selected area is too large for one smooth surface (" +
-                                     std::to_string(source.selection->size()) + " triangles, at most " +
-                                     std::to_string(maxTriangles) +
-                                     "). Select a smaller area, or use Sketch and click the scan: a part drawn there "
-                                     "follows the scan without a fitted surface");
-
-              geometry::SurfaceFitOptions options;
-              options.tolerance = params.value("tolerance", options.tolerance);
-              options.gridSize = params.value("gridSize", options.gridSize);
-              const std::string method = params.value("method", std::string("auto"));
-              options.method = method == "plane"    ? geometry::SurfaceFitMethod::Plane
-                               : method == "unfold" ? geometry::SurfaceFitMethod::Unfold
-                                                    : geometry::SurfaceFitMethod::Auto;
-              geometry::SurfaceFitResult fit;
-              try {
-                  fit = geometry::fitSurface(*source.mesh, *source.selection, options);
-              } catch (const geometry::SurfaceFitError& e) {
-                  throw CommandError(e.what());
-              }
-
-              model::Part part;
-              part.name = params.contains("name") ? params["name"].get<std::string>() : source.name + " surface";
-              part.source = "surface.fit_selection of part " + std::to_string(source.id);
-              part.mesh = std::make_shared<const core::TriangleMesh>(geometry::tessellate(fit.face));
-              part.shape = fit.face;
-
-              model::Document& doc = ctx.document;
-              const model::PartId id = doc.addPart(part);
-              part.id = id;
-              ctx.undoStack.push({"Fit surface " + part.name, [&doc, id]() { doc.removePart(id); },
-                                  [&doc, part]() { doc.addPart(part); }});
-
-              const auto& rep = fit.report;
-              Json result = partToJson(*doc.part(id));
-              result["fit"] = {{"meshToSurfaceMax", rep.meshToSurfaceMax},
-                               {"meshToSurfaceRms", rep.meshToSurfaceRms},
-                               {"surfaceToMeshMax", rep.surfaceToMeshMax},
-                               {"outsideTrimMax", rep.outsideTrimMax},
-                               {"tolerance", options.tolerance},
-                               {"withinTolerance", rep.withinTolerance},
-                               {"poles", {rep.uPoles, rep.vPoles}},
-                               {"trimmed", rep.trimmed},
-                               {"holes", rep.holes},
-                               {"method", rep.method},
-                               {"milliseconds", rep.milliseconds}};
-              result["warnings"] = rep.warnings;
-              return result;
+              return addSurfaceStep(ctx, "fit_selection", params, "Fit surface");
           });
     r.add({"surface.fit_regions", "Fit surfaces to mesh",
            "Turns a scanned mesh (or its region selection) into exact geometry: splits it into smooth patches at "
@@ -964,65 +1114,7 @@ void registerSurfaceCommands(CommandRegistry& r)
                {"id"}),
            true},
           [](CommandContext& ctx, const Json& params) {
-              const model::Part& source = requirePart(ctx.document, params);
-              if (!source.mesh || source.mesh->triangleCount() == 0)
-                  throw CommandError("Part " + std::to_string(source.id) + " has no mesh");
-              const bool hasSelection = source.selection && !source.selection->empty();
-              const bool useSelection = params.value("useSelection", hasSelection);
-              if (useSelection && !hasSelection)
-                  throw CommandError("Select a region on part " + std::to_string(source.id) + " first");
-
-              geometry::RegionFitOptions options;
-              options.creaseAngleDeg = params.value("creaseAngle", options.creaseAngleDeg);
-              options.fit.tolerance = params.value("tolerance", options.fit.tolerance);
-              options.blendRings = params.value("blendRings", options.blendRings);
-              geometry::RegionFitResult fit;
-              try {
-                  fit = geometry::fitRegions(*source.mesh, useSelection ? *source.selection : core::TriangleSet{},
-                                             options);
-              } catch (const geometry::SurfaceFitError& e) {
-                  throw CommandError(e.what());
-              }
-              Json result = addShapePart(ctx, source, fit.shape,
-                                         params.value("name", source.name + (fit.solid ? " solid" : " surfaces")),
-                                         "surface.fit_regions", "Fit surfaces");
-              Json patches = Json::array();
-              double worst = 0.0;
-              bool allWithin = true;
-              for (const auto& p : fit.patches) {
-                  Json j{{"triangles", p.triangles.size()}};
-                  if (p.error.empty()) {
-                      j["meshToSurfaceMax"] = p.report.meshToSurfaceMax;
-                      j["surfaceToMeshMax"] = p.report.surfaceToMeshMax;
-                      j["withinTolerance"] = p.report.withinTolerance;
-                      j["method"] = p.report.method;
-                      worst = std::max(worst, p.report.meshToSurfaceMax);
-                      allWithin = allWithin && p.report.withinTolerance;
-                  } else {
-                      j["error"] = p.error;
-                      allWithin = false;
-                  }
-                  patches.push_back(std::move(j));
-              }
-              result["fit"] = {{"patches", patches},
-                               {"faces", fit.faces},
-                               {"freeEdges", fit.freeEdges},
-                               {"solid", fit.solid},
-                               {"volume", fit.volume},
-                               {"meshToSurfaceMax", worst},
-                               {"withinTolerance", allWithin},
-                               {"tolerance", options.fit.tolerance},
-                               {"sewTolerance", fit.sewTolerance},
-                               {"smoothSeams", fit.smoothSeams},
-                               {"seamAngleMaxDeg", fit.seamAngleMaxDeg},
-                               {"milliseconds", fit.milliseconds}};
-              Json warnings = fit.warnings;
-              if (!allWithin)
-                  warnings.push_back("Approximation: some patches are more than the requested tolerance of " +
-                                     formatMm(options.fit.tolerance) + " mm from the mesh (worst " +
-                                     formatMm(worst) + " mm); see fit.patches");
-              result["warnings"] = warnings;
-              return result;
+              return addSurfaceStep(ctx, "fit_regions", params, "Fit surfaces");
           });
     r.add({"surface.trim_by_sketch", "Trim surface by sketch",
            "Projects the closed profiles of a sketch onto a curved surface part along the sketch normal and keeps "
@@ -1046,23 +1138,7 @@ void registerSurfaceCommands(CommandRegistry& r)
                         {"id", "sketch"}),
            true},
           [](CommandContext& ctx, const Json& params) {
-              const model::Part& source = requireSurfacePart(ctx.document, params);
-              const auto& sk = requireSketch(ctx, params.at("sketch"));
-              const auto outlines = sketchOutlines(sk, params);
-              const std::string keep = params.value("keep", std::string("inside"));
-              geometry::Shape shape;
-              try {
-                  shape = geometry::trimSurface(*source.shape, outlines, sk.plane.normal, keep != "outside",
-                                                params.value("extend", true));
-              } catch (const geometry::OffsetError& e) {
-                  throw CommandError(e.what());
-              }
-              Json result = addShapePart(ctx, source, shape, params.value("name", source.name + " " + sk.name),
-                                         "surface.trim_by_sketch", "Trim surface");
-              result["area"] = geometry::surfaceArea(shape);
-              result["faces"] = shape.faceCount();
-              result["keep"] = keep;
-              return result;
+              return addSurfaceStep(ctx, "trim_by_sketch", params, "Trim surface");
           });
     r.add({"surface.part_from_sketch", "Part on surface",
            "One step from a sketch outline to a solid part that follows a curved surface or scan, e.g. an aileron "
@@ -1147,19 +1223,7 @@ void registerSurfaceCommands(CommandRegistry& r)
                         {"id", "distance"}),
            true},
           [](CommandContext& ctx, const Json& params) {
-              const model::Part& source = requireSurfacePart(ctx.document, params);
-              const double distance = params.at("distance").get<double>();
-              geometry::Shape shape;
-              try {
-                  shape = geometry::offsetSurface(*source.shape, distance);
-              } catch (const geometry::OffsetError& e) {
-                  throw CommandError(e.what());
-              }
-              Json result = addShapePart(ctx, source, shape, params.value("name", source.name + " offset"),
-                                         "surface.offset", "Offset");
-              result["distance"] = distance;
-              result["area"] = geometry::surfaceArea(shape);
-              return result;
+              return addSurfaceStep(ctx, "offset_surface", params, "Offset surface");
           });
 
     r.add({"surface.thicken", "Thicken surface",
@@ -1173,24 +1237,7 @@ void registerSurfaceCommands(CommandRegistry& r)
                         {"id", "thickness"}),
            true},
           [](CommandContext& ctx, const Json& params) {
-              const model::Part& source = requireSurfacePart(ctx.document, params);
-              const double thickness = params.at("thickness").get<double>();
-              const std::string sideName = params.value("side", std::string("outside"));
-              const geometry::ThickenSide side = sideName == "inside" ? geometry::ThickenSide::Inside
-                                                 : sideName == "both" ? geometry::ThickenSide::Both
-                                                                      : geometry::ThickenSide::Outside;
-              geometry::Shape shape;
-              try {
-                  shape = geometry::thickenSurface(*source.shape, thickness, side);
-              } catch (const geometry::OffsetError& e) {
-                  throw CommandError(e.what());
-              }
-              Json result = addShapePart(ctx, source, shape, params.value("name", source.name + " solid"),
-                                         "surface.thicken", "Thicken");
-              result["thickness"] = thickness;
-              result["side"] = sideName;
-              result["volume"] = shape.volume();
-              return result;
+              return addSurfaceStep(ctx, "thicken_surface", params, "Thicken surface");
           });
 }
 

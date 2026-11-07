@@ -18,7 +18,7 @@ using PartId = std::uint64_t;
 /// What a part represents in the document.
 enum class PartKind {
     Imported, ///< Reference model loaded from a file (mesh and/or B-rep).
-    Body,     ///< Solid produced by the design timeline (CAD features).
+    Body,     ///< Solid or surface produced by the design timeline (CAD features).
     Sketch,   ///< Sketch of the design timeline (curves and profiles).
     Plane,    ///< Construction plane of the design timeline (drawn as a square).
 };
@@ -70,6 +70,14 @@ struct Part {
 [[nodiscard]] inline PartId fittedScanId(const Part& part)
 {
     return part.source.rfind("surface.fit_selection of part ", 0) == 0 ? sourcePartId(part) : 0;
+}
+
+/// Older surface commands stored only a baked result. Its history cannot be recovered;
+/// keep it explicitly frozen even if new editable features use it as a reference.
+[[nodiscard]] inline bool frozenSurfaceResult(const Part& part)
+{
+    return part.kind == PartKind::Imported && part.featureId == 0 && part.source.rfind("surface.", 0) == 0 &&
+           sourcePartId(part) != 0;
 }
 
 } // namespace aerocad::model

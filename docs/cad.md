@@ -152,6 +152,6 @@ created with `frame.set` can be used by name. Saving, variants and frames: see
 - Constraint inference while drawing (Fusion adds coincident/horizontal/... automatically);
   today the UI adds them explicitly.
 - Full persistent topological naming (references use index, or a point with matching hints).
-- Extrude "to object" / up to a surface, loft, sweep, thicken, offset surface (CAD-69..71).
+- Extrude "to object" / up to a surface.
 - Dense scans as bodies: `feature.base_body` refuses meshes above 50 000 triangles; those need
   region selection and surface fitting (CAD-67).

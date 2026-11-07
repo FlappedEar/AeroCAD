@@ -206,7 +206,9 @@ QtObject {
             hole: "hole", base_body: "mesh-to-body", sweep: "sweep", loft: "loft", mirror: "mirror",
             pattern: "pattern", rectangular_pattern: "pattern", circular_pattern: "circular-pattern",
             plane: "plane", body: "body", imported: "mesh", mesh: "mesh",
-            part_on_surface: "surface", fin_on_surface: "surface", move: "move"
+            part_on_surface: "surface", fin_on_surface: "surface", move: "move",
+            fit_selection: "surface", fit_regions: "surface", trim_by_sketch: "section",
+            offset_surface: "plane", thicken_surface: "thickness"
         }
         return map[type] || "tool"
     }

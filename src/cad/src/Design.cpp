@@ -131,7 +131,8 @@ const std::vector<std::string>& Design::featureTypes()
     static const std::vector<std::string> types{"sketch", "extrude", "revolve", "fillet", "chamfer",
                                                 "shell",  "combine", "box",     "cylinder", "base_body", "hole",
                                                 "mirror",  "rectangular_pattern", "circular_pattern", "loft", "sweep", "plane",
-                                                "part_on_surface", "fin_on_surface", "move"};
+                                                "part_on_surface", "fin_on_surface", "move", "fit_selection",
+                                                "fit_regions", "trim_by_sketch", "offset_surface", "thicken_surface"};
     return types;
 }
 
@@ -220,7 +221,10 @@ std::size_t Design::indexOf(FeatureId id) const
 
 std::string Design::defaultName(const std::string& type) const
 {
-    std::string base = type == "part_on_surface" ? "PartOnSurface" : type == "fin_on_surface" ? "Fin" : type;
+    std::string base = type == "part_on_surface" ? "PartOnSurface" : type == "fin_on_surface" ? "Fin"
+                     : type == "fit_selection" ? "FitSurface" : type == "fit_regions" ? "FitPatches"
+                     : type == "trim_by_sketch" ? "TrimSurface" : type == "offset_surface" ? "OffsetSurface"
+                     : type == "thicken_surface" ? "ThickenSurface" : type;
     base[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(base[0])));
     for (int n = 1;; ++n) {
         const std::string candidate = base + std::to_string(n);
@@ -1715,6 +1719,20 @@ void Design::syncDocument(model::Document& document)
         document.removePart(id);
 
     for (auto& [fid, w] : wanted) {
+        // Preserve the provenance contract used by deviation inspection and sketch
+        // draping. The dependency itself lives in the feature's saved params.
+        std::string source;
+        if (const Feature* f = feature(featureOfBody(fid)); f != nullptr && f->params.contains("id")) {
+            std::string operation;
+            if (f->type == "fit_selection" || f->type == "fit_regions" || f->type == "trim_by_sketch")
+                operation = f->type;
+            else if (f->type == "offset_surface")
+                operation = "offset";
+            else if (f->type == "thicken_surface")
+                operation = "thicken";
+            if (!operation.empty())
+                source = "surface." + operation + " of part " + std::to_string(f->params.at("id").get<model::PartId>());
+        }
         const model::Part* existing = nullptr;
         for (const auto& part : document.parts()) {
             if (part.kind == w.kind && part.featureId == fid) {
@@ -1731,6 +1749,7 @@ void Design::syncDocument(model::Document& document)
                     part.selection.reset();
                 part.mesh = w.mesh;
                 part.shape = w.shape;
+                part.source = source;
                 part.edgeSegments = w.segments;
                 if (w.kind == model::PartKind::Sketch && w.consumed && !wasConsumed)
                     part.visible = false; // Fusion hides a sketch once a feature uses it
@@ -1746,6 +1765,7 @@ void Design::syncDocument(model::Document& document)
             part.featureId = fid;
             part.mesh = w.mesh;
             part.shape = w.shape;
+            part.source = source;
             part.edgeSegments = std::move(w.segments);
             part.visible = !(w.kind == model::PartKind::Sketch && w.consumed);
             if (auto meta = m_partMeta.find(fid); meta != m_partMeta.end()) {

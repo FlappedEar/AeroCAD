@@ -133,13 +133,12 @@ TEST_CASE("Workflow: import, select, fit, offset, thicken, cut, export, save, re
     const Json offset = run(s, "surface.offset", {{"id", fitted.at("id")}, {"distance", 2}, {"name", "Clearance"}});
     CHECK(offset.at("bounds").at("max")[2].get<double>() > top + 1);
 
-    // 3. Modelling: a 3 mm shell on the clearance surface, turned into a timeline body,
+    // 3. Modelling: a 3 mm shell on the clearance surface, already a timeline body,
     //    with a mounting hole whose diameter is a user parameter.
     const Json solid = run(s, "surface.thicken", {{"id", offset.at("id")}, {"thickness", 3}, {"name", "Cover"}});
     const double shellVolume = solid.at("volume").get<double>();
     CHECK(shellVolume > 1000);
-    const auto bodyId =
-        run(s, "feature.base_body", {{"part", solid.at("id")}, {"name", "Cover"}}).at("id").get<std::uint64_t>();
+    const auto bodyId = solid.at("feature").get<std::uint64_t>();
     CHECK(body(s, bodyId).at("volume").get<double>() == Approx(shellVolume).epsilon(1e-3));
     run(s, "parameter.set", {{"name", "holeD"}, {"expression", "12 mm"}});
     const Json hole = run(s, "feature.cylinder",
@@ -194,6 +193,20 @@ TEST_CASE("Workflow: import, select, fit, offset, thicken, cut, export, save, re
     run(reopened, "edit.undo");
     CHECK(body(reopened, bodyId).at("volume").get<double>() == Approx(cutVolume).epsilon(1e-6));
     CHECK(body(reopened, bodyId).at("partId").get<std::uint64_t>() == bodyPart);
+
+    // Clearance and wall thickness remain independent timeline steps on the curved
+    // scan, including after reopen and before the mounting-hole feature is replayed.
+    const double beforeClearance = partById(reopened, bodyPart).at("bounds").at("max")[2].get<double>();
+    run(reopened, "feature.edit", {{"id", offset.at("feature")}, {"params", {{"distance", 4}}}});
+    const double moreClearance = partById(reopened, bodyPart).at("bounds").at("max")[2].get<double>();
+    CHECK(moreClearance > beforeClearance + 1.8);
+    CHECK(reopened.design().feature(bodyId)->params.at("thickness") == 3);
+    run(reopened, "feature.edit", {{"id", bodyId}, {"params", {{"thickness", 4}}}});
+    CHECK(partById(reopened, bodyPart).at("bounds").at("max")[2].get<double>() > moreClearance + 0.8);
+    CHECK(reopened.design().feature(offset.at("feature"))->params.at("distance") == 4);
+    run(reopened, "edit.undo");
+    run(reopened, "edit.undo");
+    CHECK(body(reopened, bodyId).at("volume").get<double>() == Approx(cutVolume).epsilon(1e-6));
 }
 
 TEST_CASE("Workflow on an imperfect scan: open, noisy mesh with a hole", "[e2e][commands][scan]")

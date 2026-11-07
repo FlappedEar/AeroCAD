@@ -27,6 +27,7 @@ public:
         KindRole,      ///< "imported", "body" or "sketch"
         FeatureIdRole, ///< Timeline feature of a body / sketch (0 for imported parts)
         ShapeKindRole, ///< "surface" / "solid" for parts with exact geometry, "" for meshes
+        FrozenRole,    ///< Legacy baked surface result without editable history
     };
     Q_ENUM(Role)
 

@@ -161,6 +161,32 @@ Pane {
             { key: "angle", type: "expr", label: qsTr("Total angle (deg)"), init: 360 },
             { key: "operation", type: "choice", label: qsTr("Operation"), init: "join", options: patternOperations }] },
         // Built on a scan or surface: fitting the skin takes seconds, so no live preview.
+        fit_selection: { title: qsTr("Fit Surface"), command: "surface.fit_selection", slow: true, fields: [
+            { key: "id", type: "reference", label: qsTr("Source part") },
+            { key: "tolerance", type: "expr", label: qsTr("Tolerance (mm)"), init: 0.25 },
+            { key: "method", type: "choice", label: qsTr("Fit method"), init: "auto", options: [
+                { value: "auto", label: qsTr("Automatic") }, { value: "plane", label: qsTr("Plane") },
+                { value: "unfold", label: qsTr("Unfold") }] }] },
+        fit_regions: { title: qsTr("Fit Patches"), command: "surface.fit_regions", slow: true, fields: [
+            { key: "id", type: "reference", label: qsTr("Source part") },
+            { key: "tolerance", type: "expr", label: qsTr("Tolerance (mm)"), init: 0.25 },
+            { key: "creaseAngle", type: "expr", label: qsTr("Crease angle (deg)"), init: 30 },
+            { key: "blendRings", type: "expr", label: qsTr("Blend rings"), init: 6 }] },
+        trim_by_sketch: { title: qsTr("Trim Surface"), command: "surface.trim_by_sketch", slow: true, fields: [
+            { key: "id", type: "reference", label: qsTr("Source surface") },
+            { key: "sketch", type: "sketch", label: qsTr("Outline sketch") },
+            { key: "keep", type: "choice", label: qsTr("Keep"), init: "inside", options: [
+                { value: "inside", label: qsTr("Inside the outline") }, { value: "outside", label: qsTr("Outside the outline") }] },
+            { key: "extend", type: "bool", label: qsTr("Extend fitted surface"), init: true }] },
+        offset_surface: { title: qsTr("Offset Surface"), command: "surface.offset", slow: true, fields: [
+            { key: "id", type: "reference", label: qsTr("Source surface") },
+            { key: "distance", type: "expr", label: qsTr("Clearance (mm)"), init: 2 }] },
+        thicken_surface: { title: qsTr("Thicken Surface"), command: "surface.thicken", slow: true, fields: [
+            { key: "id", type: "reference", label: qsTr("Source surface") },
+            { key: "thickness", type: "expr", label: qsTr("Thickness (mm)"), init: 3 },
+            { key: "side", type: "choice", label: qsTr("Direction"), init: "outside", options: [
+                { value: "outside", label: qsTr("Out of the surface") }, { value: "inside", label: qsTr("Into the surface") },
+                { value: "both", label: qsTr("Both sides") }] }] },
         part_on_surface: { title: qsTr("Part on Surface"), command: "surface.part_from_sketch", slow: true, fields: [
             { key: "sketch", type: "sketch", label: qsTr("Outline sketch") },
             { key: "thickness", type: "expr", label: qsTr("Thickness"), init: 2 },
@@ -529,6 +555,7 @@ Pane {
                     sourceComponent: {
                         switch (fieldItem.field.type) {
                         case "expr": return exprEditor
+                        case "reference": return referenceEditor
                         case "choice": return choiceEditor
                         case "bool": return boolEditor
                         case "sketch": return sketchEditor
@@ -561,6 +588,16 @@ Pane {
             Item { Layout.fillWidth: true }
             Button { text: qsTr("Cancel"); onClicked: root.close() }
             Button { text: qsTr("OK"); highlighted: true; onClicked: root.apply() }
+        }
+    }
+
+    Component {
+        id: referenceEditor
+        Label {
+            property var field: parent ? parent.field : ({})
+            readonly property var source: controller.partInfo(Number(root.values[field.key] || 0))
+            text: source && source.id ? source.name + " (#" + source.id + ")" : qsTr("Missing source")
+            elide: Text.ElideRight
         }
     }
 

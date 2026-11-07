@@ -213,8 +213,11 @@ Json exportCheck(const std::vector<const model::Part*>& parts, io::FileFormat fo
                 r["approximate"] = true;
                 char text[200];
                 std::snprintf(text, sizeof text,
-                              "Approximation: its surface is up to %.3g mm from the scan, more than the requested "
-                              "fit tolerance of %.3g mm.",
+                              st.report.value("fitInherited", false)
+                                  ? "Approximation: the reference fit is up to %.3g mm from the scan, more than its "
+                                    "requested tolerance of %.3g mm (before offset or thickness)."
+                                  : "Approximation: its surface is up to %.3g mm from the scan, more than the requested "
+                                    "fit tolerance of %.3g mm.",
                               fit.value("maxDeviation", 0.0), fit.value("tolerance", 0.0));
                 warningList.push_back(text);
             }

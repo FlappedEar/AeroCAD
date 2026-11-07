@@ -39,8 +39,12 @@ QtObject {
     function role(info) {
         if (!info || !info.id)
             return ""
-        if (info.kind === "sketch" || info.kind === "body")
+        if (info.kind === "sketch")
             return info.kind
+        if (info.hasBrep && (info.faces ?? 0) > 0 && (info.solids ?? 0) === 0)
+            return "surface"
+        if (info.kind === "body")
+            return "body"
         if (info.hasBrep && (info.solids ?? 0) > 0)
             return "solid"
         if (info.hasBrep && (info.faces ?? 0) > 0)

@@ -33,7 +33,7 @@ aerocad_add_test(test_model
 aerocad_add_test(test_commands
     SOURCES commands/test_commands.cpp commands/test_canards.cpp commands/test_export_commands.cpp commands/test_design_commands.cpp
         commands/test_project_commands.cpp commands/test_scan_commands.cpp commands/test_inspect_commands.cpp
-        commands/test_simulation_commands.cpp commands/test_source_regeneration.cpp
+        commands/test_simulation_commands.cpp commands/test_source_regeneration.cpp commands/test_surface_timeline.cpp
     LIBS AeroCAD::commands AeroCAD::geometry_occt AeroCAD::project)
 
 aerocad_add_test(test_mcp
