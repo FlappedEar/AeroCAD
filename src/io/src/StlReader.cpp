@@ -44,16 +44,23 @@ bool startsWithSolid(const std::string& data)
     return view.size() >= 5 && detail::iequals(view.substr(0, 5), "solid");
 }
 
-void parseBinary(const std::string& data, std::size_t count, ImportResult& result)
+void parseBinary(const std::string& data, std::size_t count, ImportResult& result, detail::ProgressReporter& progress)
 {
     detail::WarningSink warnings(result.warnings);
     core::MeshBuilder builder;
+    builder.reserve(count);
     const auto* bytes = reinterpret_cast<const unsigned char*>(data.data());
     std::size_t skipped = 0;
+
+    // Facets are decoded into a small buffer and welded in batches (see MeshBuilder::addTriangles).
+    constexpr std::size_t kBatch = 256;
+    core::Vec3 corners[kBatch * 3];
+    std::size_t pending = 0;
     for (std::size_t i = 0; i < count; ++i) {
+        progress.update(i, count);
         // Facet layout: normal (3 floats), 3 vertices (9 floats), attribute byte count (u16).
         const unsigned char* facet = bytes + kBinaryPrefix + i * kFacetSize + 12;
-        core::Vec3 v[3];
+        core::Vec3* v = corners + pending * 3;
         for (int k = 0; k < 3; ++k) {
             const unsigned char* p = facet + 12 * k;
             v[k] = {static_cast<double>(readF32le(p)), static_cast<double>(readF32le(p + 4)),
@@ -63,14 +70,18 @@ void parseBinary(const std::string& data, std::size_t count, ImportResult& resul
             ++skipped;
             continue;
         }
-        builder.addTriangle(v[0], v[1], v[2]);
+        if (++pending == kBatch) {
+            builder.addTriangles(corners, pending);
+            pending = 0;
+        }
     }
+    builder.addTriangles(corners, pending);
     if (skipped > 0)
         warnings.add("Skipped " + std::to_string(skipped) + " facet(s) with invalid coordinates");
     result.mesh = builder.take();
 }
 
-void parseAscii(const std::string& data, ImportResult& result)
+void parseAscii(const std::string& data, ImportResult& result, detail::ProgressReporter& progress)
 {
     // Tolerant parser: every "vertex x y z" statement contributes one corner and every
     // three corners form a triangle. Other keywords (facet normal, outer loop, ...) are
@@ -85,6 +96,7 @@ void parseAscii(const std::string& data, ImportResult& result)
     bool facetBad = false;
 
     while (true) {
+        progress.update(data.size() - rest.size(), data.size());
         const std::string_view token = detail::nextToken(rest);
         if (token.empty())
             break;
@@ -127,8 +139,9 @@ void parseAscii(const std::string& data, ImportResult& result)
 
 } // namespace
 
-ImportResult readStl(const std::filesystem::path& path)
+ImportResult readStl(const std::filesystem::path& path, const ImportOptions& options)
 {
+    detail::ProgressReporter progress(options);
     const std::string data = detail::readFileBytes(path);
     const std::string name = detail::pathToUtf8(path);
 
@@ -157,15 +170,18 @@ ImportResult readStl(const std::filesystem::path& path)
 
     try {
         if (binary)
-            parseBinary(data, count, result);
+            parseBinary(data, count, result, progress);
         else
-            parseAscii(data, result);
+            parseAscii(data, result, progress);
+    } catch (const ImportCancelled&) {
+        throw;
     } catch (const ImportError& e) {
         throw ImportError(name + ": " + e.what());
     }
 
     if (result.mesh.isEmpty())
         throw ImportError("STL file contains no triangles: " + name);
+    progress.finish();
     return result;
 }
 

@@ -126,6 +126,11 @@ Not mapped yet: Press Pull (Q), Move (M), Trim (T), Offset (O), Project (P),
 Construction (X) and Measure (I). 1/2/3 select the region selection tools on meshes,
 see "Region selection" in [macos.md](macos.md).
 
+## Scans
+
+Scan Tools (toolbar INSERT > Scan) holds repair, units / calibration and orientation for
+imported meshes; see [scans.md](scans.md).
+
 ## Modelling
 
 See [cad.md](cad.md) for the timeline and the commands behind the tools.

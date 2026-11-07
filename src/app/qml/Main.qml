@@ -14,6 +14,7 @@ ApplicationWindow {
     id: window
 
     required property AppController controller
+    required property ScanController scan
     property var selectedPartId: 0
     readonly property bool isMac: Qt.platform.os === "osx" || Qt.platform.os === "macos"
 
@@ -235,6 +236,7 @@ ApplicationWindow {
 
     /// Opens a feature dialog, pre-filled from the selection (Fusion: select, then press E).
     function openFeature(type) {
+        scanPanel.close()
         const initial = {}
         const info = selectedInfo()
         if (activeSketch) {
@@ -387,7 +389,7 @@ ApplicationWindow {
         id: importDialog
         title: qsTr("Import 3D file")
         nameFilters: window.controller.importNameFilters
-        onAccepted: window.controller.importFile(selectedFile)
+        onAccepted: window.scan.importFile(selectedFile)
     }
 
     FileDialog {
@@ -593,6 +595,20 @@ ApplicationWindow {
         enabled: !!window.selectedPartId && window.selectedInfo().kind === "imported"
         onTriggered: window.controller.execute("feature.base_body", { part: window.selectedPartId })
     }
+    Action {
+        id: scanToolsAction
+        text: qsTr("Scan &Tools...")
+        checkable: true
+        checked: scanPanel.visible
+        onTriggered: {
+            if (scanPanel.visible) {
+                scanPanel.close()
+            } else {
+                featureDialog.close()
+                scanPanel.open()
+            }
+        }
+    }
     Action { id: parametersAction; text: qsTr("Change &Parameters..."); onTriggered: parametersDialog.open() }
     Action { id: lineAction; text: qsTr("&Line"); shortcut: "L"; enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "line"; onTriggered: window.sketchTool_("line") }
     Action { id: rectangleAction; text: qsTr("&Rectangle"); shortcut: "R"; enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "rectangle"; onTriggered: window.sketchTool_("rectangle") }
@@ -620,6 +636,8 @@ ApplicationWindow {
                 return
             if (featureDialog.visible)
                 featureDialog.close()
+            else if (scanPanel.visible)
+                scanPanel.close()
             else if (window.pickingSketchPlane)
                 window.pickingSketchPlane = false
             else if (window.activeSketch && viewport.sketchOverlay.points.length > 0)
@@ -721,6 +739,8 @@ ApplicationWindow {
             MenuItem { action: duplicateVariantAction }
             MenuItem { action: toggleVariantAction }
             MenuItem { action: deleteVariantAction }
+            MenuSeparator {}
+            MenuItem { action: scanToolsAction }
         }
         Menu {
             title: qsTr("&Sketch")
@@ -946,6 +966,7 @@ ApplicationWindow {
                 caption: qsTr("INSERT")
                 ToolCommand { action: importAction; text: qsTr("Import"); iconName: "import" }
                 ToolCommand { action: convertAction; text: qsTr("To Body"); iconName: "mesh-to-body" }
+                ToolCommand { action: scanToolsAction; text: qsTr("Scan"); iconName: "mesh" }
             }
             ToolSeparator {}
             ToolGroup {
@@ -1045,11 +1066,12 @@ ApplicationWindow {
             selectedPartId: window.selectedPartId
             sketch: window.activeSketch
             sketchTool: window.sketchTool
-            selectionToolsEnabled: !featureDialog.visible && !window.pickingSketchPlane
+            selectionToolsEnabled: !featureDialog.visible && !window.pickingSketchPlane && !scanPanel.pickMode
             snapToNearestSurface: window.pickingSketchPlane
             property bool snappedClick: false
             onSnappedToNearestSurface: snappedClick = true
-            markers: featureDialog.visible ? featureDialog.pickedPoints : []
+            markers: featureDialog.visible ? featureDialog.pickedPoints
+                   : scanPanel.visible ? scanPanel.pickedPoints : []
             pickKind: featureDialog.visible ? featureDialog.pickKind : ""
             shownSketch: featureDialog.shownSketch
             unpickablePlane: featureDialog.visible ? featureDialog.ownPlane : -1
@@ -1083,6 +1105,8 @@ ApplicationWindow {
                         window.controller.showStatus(qsTr("That was a hole in the surface: sketching on the surface next to it"))
                 } else if (featureDialog.visible) {
                     featureDialog.addPick(info, point)
+                } else if (scanPanel.visible && scanPanel.pickMode) {
+                    scanPanel.addPick(id, point)
                 }
             }
             onCurveDrawn: curve => {
@@ -1140,6 +1164,32 @@ ApplicationWindow {
                 anchors.top: parent.top
                 anchors.margins: 8
                 controller: window.controller
+            }
+
+            ScanPanel {
+                id: scanPanel
+                anchors.left: parent.left
+                anchors.top: parent.top
+                anchors.margins: 8
+                controller: window.controller
+                scan: window.scan
+                partId: window.selectedPartId
+            }
+
+            // Import progress (files are parsed in the background).
+            Pane {
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: 56
+                visible: window.scan.busy
+                padding: 10
+                RowLayout {
+                    spacing: 10
+                    Label { text: window.scan.progressText }
+                    ProgressBar { from: 0; to: 1; value: window.scan.progress; Layout.preferredWidth: 220 }
+                    Label { text: Math.round(window.scan.progress * 100) + " %" }
+                    Button { text: qsTr("Cancel"); onClicked: window.scan.cancelImport() }
+                }
             }
 
             // Create Sketch: pick a plane or a planar face (Fusion shows the origin planes).
@@ -1282,7 +1332,7 @@ ApplicationWindow {
                 anchors.fill: parent
                 onDropped: drop => {
                     for (const url of drop.urls)
-                        window.controller.importFile(url)
+                        window.scan.importFile(url)
                 }
             }
         }

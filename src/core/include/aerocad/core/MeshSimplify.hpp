@@ -13,7 +13,8 @@ namespace aerocad::core {
 /// keep the full-resolution mesh.
 ///
 /// The grid size is chosen so the result has at most about `targetTriangles` triangles.
-/// Meshes already at or below the target are returned unchanged.
+/// Meshes already at or below the target are returned unchanged, and so are meshes that
+/// clustering would collapse completely (the result is never empty for a non-empty input).
 [[nodiscard]] TriangleMesh decimateToTarget(const TriangleMesh& mesh, std::size_t targetTriangles);
 
 /// One clustering pass with a given cell size (mm).

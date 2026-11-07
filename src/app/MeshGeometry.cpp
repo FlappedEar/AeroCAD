@@ -2,6 +2,7 @@
 #include "MeshGeometry.hpp"
 
 #include "AppController.hpp"
+#include "ScanController.hpp"
 
 #include <QByteArray>
 #include <QVector3D>
@@ -25,6 +26,9 @@ void MeshGeometry::setController(AppController* controller)
     m_controller = controller;
     if (m_controller)
         m_connection = connect(m_controller, &AppController::partChanged, this, &MeshGeometry::onPartChanged);
+    if (!m_lodConnection && ScanController::instance() != nullptr)
+        m_lodConnection = connect(ScanController::instance(), &ScanController::displayMeshReady, this,
+                                  &MeshGeometry::onPartChanged);
     m_builtMesh = nullptr;
     rebuild();
     emit controllerChanged();
@@ -49,13 +53,18 @@ void MeshGeometry::onPartChanged(quint64 id)
 void MeshGeometry::rebuild()
 {
     const model::Part* part = m_controller ? m_controller->part(m_partId) : nullptr;
-    // Only the mesh (and whether it is a B-rep tessellation) affects the GPU data; other
-    // part changes such as the selection or the name do not need a re-upload.
-    if (part != nullptr && part->mesh == m_builtMesh && part->shape.has_value() == m_builtWithShape)
+    // Big meshes are drawn at a reduced level of detail (ScanController); the document
+    // keeps the full mesh. nullptr while the reduced mesh is being computed.
+    std::shared_ptr<const core::TriangleMesh> display;
+    if (part != nullptr)
+        display = ScanController::instance() != nullptr ? ScanController::instance()->displayMesh(*part) : part->mesh;
+    // Only the drawn mesh (and whether it is a B-rep tessellation) affects the GPU data;
+    // other part changes such as the selection or the name do not need a re-upload.
+    if (part != nullptr && display == m_builtMesh && part->shape.has_value() == m_builtWithShape)
         return;
 
     clear();
-    if (part == nullptr || !part->mesh || part->mesh->isEmpty()) {
+    if (part == nullptr || !display || display->isEmpty()) {
         // Keep a valid (empty) layout: Qt Quick 3D rejects a zero stride, and sketches
         // without closed profiles have no triangles.
         setStride(6 * static_cast<int>(sizeof(float)));
@@ -68,7 +77,7 @@ void MeshGeometry::rebuild()
 
     // Model coordinates are Z-up millimetres; the scene converts Z-up to Qt's Y-up with
     // a parent node rotation, so positions are uploaded unchanged.
-    const core::TriangleMesh& mesh = *part->mesh;
+    const core::TriangleMesh& mesh = *display;
     constexpr int floatsPerVertex = 6; // position + normal
     const auto& vertices = mesh.vertices();
     auto put = [](float*& out, const core::Vec3& v, const core::Vec3& n) {
@@ -124,7 +133,7 @@ void MeshGeometry::rebuild()
                  QQuick3DGeometry::Attribute::F32Type);
     setBounds(QVector3D(static_cast<float>(box.min.x), static_cast<float>(box.min.y), static_cast<float>(box.min.z)),
               QVector3D(static_cast<float>(box.max.x), static_cast<float>(box.max.y), static_cast<float>(box.max.z)));
-    m_builtMesh = part->mesh;
+    m_builtMesh = display;
     m_builtWithShape = part->shape.has_value();
     update();
 }
