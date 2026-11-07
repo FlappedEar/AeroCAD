@@ -1008,6 +1008,44 @@ TEST_CASE("RunManager: runs from an earlier session", "[cfd]")
     CHECK(runs.remove(id));
 }
 
+#ifndef _WIN32
+TEST_CASE("Listing runs only reads; a remote run is followed again at start-up (CAD-81)", "[cfd]")
+{
+    // A remote run started by another session and not finished yet. Its "docker" is a stand-in
+    // that records each call, so following the run (which starts the remote fetch) is visible.
+    TempDir root;
+    TempDir bin;
+    const fs::path calls = bin.path() / "calls";
+    const fs::path docker = bin.path() / "docker";
+    write(docker, "#!/bin/sh\necho \"$@\" >> \"" + calls.string() + "\"\nexit 1\n");
+    fs::permissions(docker, fs::perms::owner_all, fs::perm_options::add);
+
+    cfd::RunManager runs(root.path());
+    CHECK(runs.list().empty());
+    const fs::path dir = root.path() / "20261107-120000-wing";
+    const nlohmann::json j{{"id", dir.filename().string()}, {"created", "2026-11-07T12:00:00Z"}, {"backend", "docker"},
+                           {"docker", docker.string()}, {"dockerHost", "ssh://arek@build-box"}};
+    write(dir / "run.json", j.dump());
+
+    // Found by a later listing (simulation.list): reported, but nothing is started or written.
+    runs.rescan();
+    const auto listed = runs.list();
+    REQUIRE(listed.size() == 1);
+    CHECK(listed[0].state == cfd::RunState::Interrupted);
+    CHECK(listed[0].message.find("ssh://arek@build-box") != std::string::npos);
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    CHECK_FALSE(fs::exists(calls));
+    CHECK_FALSE(fs::exists(dir / "log.aerocad"));
+
+    // A new session takes it over at start-up.
+    cfd::RunManager next(root.path());
+    for (int i = 0; i < 50 && !fs::exists(calls); ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    CHECK(fs::exists(calls));
+    CHECK(fs::exists(dir / "log.aerocad"));
+}
+#endif
+
 TEST_CASE("Remote engine host: validation and docker command line", "[cfd]")
 {
     CHECK(cfd::isValidEngineHost(""));

@@ -120,7 +120,9 @@ machine (up to 16 processes), and every 10 s the progress files, logs and
 `postProcessing/` are copied back, so the panel shows progress as usual. At the end the
 results are copied back and the container is removed. The mesh and field files stay out of
 the copy, so `case.foam` of a remote run does not open in ParaView. When the app is closed
-the run continues there, and the app follows it again on the next start. Cancel removes
+the run continues there, and the app follows it again on the next start. Listing runs
+(`simulation.list`, the panel refresh) only reads: a remote run that another open AeroCAD
+window started is shown, but only that window follows it. Cancel removes
 the container. Install for me downloads the OpenFOAM image on that machine.
 
 ### Linux

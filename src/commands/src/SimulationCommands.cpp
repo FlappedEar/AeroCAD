@@ -346,7 +346,9 @@ void registerSimulationCommands(CommandRegistry& r)
               return statusJson(ctx, *runs(ctx).status(requireRun(ctx, params)));
           });
 
-    r.add({"simulation.list", "List simulations", "Lists all simulation runs, oldest first.",
+    r.add({"simulation.list", "List simulations",
+           "Lists all simulation runs, oldest first. Only reads: a remote run started by another AeroCAD "
+           "session is listed but not followed here (that session follows it, or this app after a restart).",
            objectSchema(Json::object())},
           [](CommandContext& ctx, const Json&) {
               runs(ctx).rescan();
