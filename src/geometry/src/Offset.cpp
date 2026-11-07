@@ -595,21 +595,30 @@ Shape finOnSurface(const Shape& surface, const std::vector<Shape>& outlines, con
             }
             return balance;
         };
+        // First the side, from all the outlines together: every root is then carried down
+        // away from that one side, so no extension ends up kept as fin material.
+        std::vector<TopoDS_Shape> drawn;
+        double centroidSide = 0.0;
         for (const auto& o : outlines) {
             if (o.isNull())
                 continue;
-            TopoDS_Shape outline = o.impl()->shape;
+            drawn.push_back(o.impl()->shape);
+            if (surf.IsNull())
+                continue;
+            GProp_GProps area;
+            BRepGProp::SurfaceProperties(drawn.back(), area);
+            if (const auto h = heightAbove(surf, area.CentreOfMass(), out)) {
+                drawnSide += splitArea(drawn.back());
+                centroidSide += *h * area.Mass();
+            }
+        }
+        const bool drawnAbove = drawnSide != 0.0 ? drawnSide > 0.0 : centroidSide >= 0.0;
+        for (TopoDS_Shape outline : drawn) {
             if (!surf.IsNull()) {
-                // The fin stands on the side of the surface more of its outline lies on.
                 GProp_GProps area;
                 BRepGProp::SurfaceProperties(outline, area);
-                const auto side = heightAbove(surf, area.CentreOfMass(), out);
-                if (side) {
-                    const double balance = splitArea(outline);
-                    drawnSide += balance;
-                    const bool above = balance != 0.0 ? balance > 0.0 : *side >= 0.0;
-                    outline = extendRoot(outline, surf, above ? out : -out);
-                }
+                if (heightAbove(surf, area.CentreOfMass(), out))
+                    outline = extendRoot(outline, surf, drawnAbove ? out : -out);
             }
             gp_Trsf back;
             back.SetTranslation(dir * (-0.5 * thickness));
@@ -653,7 +662,7 @@ Shape finOnSurface(const Shape& surface, const std::vector<Shape>& outlines, con
         if (sides[0].empty() || sides[1].empty())
             throw OffsetError("The fin outline does not reach through the surface; draw its root a little into the "
                               "surface (past the surface line in the sketch)");
-        const bool alongOut = drawnSide != 0.0 ? drawnSide > 0.0 : volume[0] >= volume[1];
+        const bool alongOut = drawnSide != 0.0 || centroidSide != 0.0 ? drawnAbove : volume[0] >= volume[1];
         const std::vector<TopoDS_Shape>& kept = alongOut ? sides[0] : sides[1];
         TopoDS_Shape result;
         if (rootFillet > 0.0) {

@@ -752,6 +752,26 @@ TEST_CASE("Part on surface: one step from an outline over a scan to a solid", "[
         INFO(triFin.toJson().dump());
         REQUIRE(triFin.ok);
         CHECK(triFin.data.at("bounds").at("max").at(2).get<double>() < -0.5 + 0.5);
+
+        // Two outlines, most of the first above the surface and most of the second below:
+        // one side is kept for both, and neither root extension is kept as fin.
+        auto outlineBox = [](double x0, double x1, double y0, double y1) {
+            return Json::array({{{"type", "line"}, {"start", {x0, y0}}, {"end", {x1, y0}}},
+                                {{"type", "line"}, {"start", {x1, y0}}, {"end", {x1, y1}}},
+                                {{"type", "line"}, {"start", {x1, y1}}, {"end", {x0, y1}}},
+                                {{"type", "line"}, {"start", {x0, y1}}, {"end", {x0, y0}}}});
+        };
+        Json pair = outlineBox(-1, 10, -15, -5);
+        for (auto& c : outlineBox(-2, 1, 5, 15))
+            pair.push_back(c);
+        auto two = session.execute(
+            "sketch.create",
+            {{"surface", {{"part", scanId}, {"point", {40, 15, -0.5}}, {"across", true}}}, {"curves", pair}});
+        REQUIRE(two.ok);
+        auto twoFins = session.execute("surface.fin_from_sketch", {{"sketch", two.data.at("id")}, {"thickness", 2.0}});
+        INFO(twoFins.toJson().dump());
+        REQUIRE(twoFins.ok);
+        CHECK(twoFins.data.at("volume").get<double>() == Approx(2.0 * (10.0 * 10.0 + 1.0 * 10.0)).epsilon(0.1));
     }
 
     SECTION("An arc that bulges far past its defining points is covered")
