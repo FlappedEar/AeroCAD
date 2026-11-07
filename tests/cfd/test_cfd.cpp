@@ -73,7 +73,7 @@ void write(const fs::path& p, const std::string& text)
 
 /// Writes the output files of a finished solver run into a case directory, in the
 /// formats OpenFOAM v2506 writes them (abridged).
-void fakeFinishedRun(const fs::path& dir, double cd, double dragN)
+void fakeFinishedRun(const fs::path& dir, double cd, double dragN, double liftN = 0.2)
 {
     std::ostringstream coeffs, forces, residuals;
     coeffs << "# Force and moment coefficients\n# Time Cd Cd(f) Cd(r) Cl Cl(f) Cl(r) CmPitch CmRoll CmYaw Cs Cs(f) "
@@ -85,7 +85,7 @@ void fakeFinishedRun(const fs::path& dir, double cd, double dragN)
         const double c = cd + 0.5 / i; // Converges to cd.
         const double f = dragN * c / cd;
         coeffs << i << ' ' << c << " 0 0 0.1 0 0 0 0 0 0.01 0 0\n";
-        forces << i << ' ' << f << " 0.01 0.2 " << f * 0.9 << " 0 0 " << f * 0.1 << " 0 0\n";
+        forces << i << ' ' << f << " 0.01 " << liftN << ' ' << f * 0.9 << " 0 0 " << f * 0.1 << " 0 0\n";
         residuals << i << " smoothSolver " << 1.0 / i << " 0 3 GAMG " << 0.1 / i << " 0 3 true\n";
     }
     write(dir / "postProcessing" / "forceCoeffs" / "0" / "coefficient.dat", coeffs.str());
@@ -510,6 +510,97 @@ TEST_CASE("Install for me: the next setup step", "[cfd]")
     CHECK(pull.at("state") == "failed");
     CHECK(pull.at("message").get<std::string>().find("no space left") != std::string::npos);
 #endif
+}
+
+TEST_CASE("RunManager: mesh sensitivity of an A/B difference", "[cfd]")
+{
+    TempDir tmp;
+    cfd::RunManager runs(tmp.path());
+    cfd::CaseGeometry ga, gb;
+    ga.part = box({0, 0, 0}, {200, 80, 60});
+    gb.part = box({0, 0, 0}, {200, 80, 70});
+    auto run = [&](const cfd::CaseGeometry& g, cfd::MeshLevel mesh, double dragN) {
+        cfd::Settings s;
+        s.flowDirection = "+X";
+        s.mesh = mesh;
+        const std::string id = runs.prepare(g, s, {});
+        fakeFinishedRun(tmp.path() / id, dragN, dragN);
+        return id;
+    };
+    const std::string a = run(ga, cfd::MeshLevel::Coarse, 1.0);
+    const std::string b = run(gb, cfd::MeshLevel::Coarse, 1.1);
+    auto cmp = runs.compare(a, b);
+    CHECK(cmp.at("meshSensitivity").at("status") == "not assessed");
+    CHECK(cmp.at("meshSensitivity").at("suggestedMesh") == "medium");
+    CHECK(cmp.at("verdict") == "comparable");
+
+    // Same A and B on the medium mesh: difference 0.10 N -> 0.12 N, it holds.
+    const std::string am = run(ga, cfd::MeshLevel::Medium, 1.0);
+    const std::string bm = run(gb, cfd::MeshLevel::Medium, 1.12);
+    CHECK(runs.sameCaseOnOtherMeshes(a).at("medium").front().id == am);
+    cmp = runs.compare(a, b);
+    const auto& ms = cmp.at("meshSensitivity");
+    CHECK(ms.at("status") == "holds");
+    CHECK(ms.at("decidingForce") == "dragN");
+    CHECK(ms.at("message") == "The drag difference holds on the finer mesh.");
+    CHECK(ms.at("levels").size() == 2);
+    CHECK(ms.at("dragN").at("difference").get<double>() == Approx(0.12).epsilon(0.02));
+    CHECK(ms.at("dragN").at("change").get<double>() == Approx(0.02).epsilon(0.1));
+    CHECK(cmp.at("verdict") == "comparable");
+    CHECK(runs.compare(am, bm).at("meshSensitivity").at("status") == "holds"); // Same pair, seen from medium.
+
+    // On the fine mesh the difference shrinks to 0.03 N: changed by more than half of itself.
+    run(ga, cfd::MeshLevel::Fine, 1.0);
+    run(gb, cfd::MeshLevel::Fine, 1.03);
+    cmp = runs.compare(a, b);
+    CHECK(cmp.at("meshSensitivity").at("status") == "inconclusive");
+    CHECK(cmp.at("meshSensitivity").at("meshes") == nlohmann::json{"medium", "fine"});
+    CHECK(cmp.at("meshSensitivity").at("message").get<std::string>().rfind("The drag difference changes", 0) == 0);
+    CHECK(cmp.at("verdict") == "difference inconclusive");
+
+    // Other conditions (speed) are a different case, not another mesh level.
+    cfd::Settings fast;
+    fast.flowDirection = "+X";
+    fast.speed = 30;
+    fast.mesh = cfd::MeshLevel::Medium;
+    fakeFinishedRun(tmp.path() / runs.prepare(ga, fast, {}), 1.0, 2.0);
+    CHECK(runs.sameCaseOnOtherMeshes(a).at("medium").size() == 1);
+}
+
+TEST_CASE("RunManager: mesh check names a smaller force that does not hold", "[cfd]")
+{
+    TempDir tmp;
+    cfd::RunManager runs(tmp.path());
+    cfd::CaseGeometry ga, gb;
+    ga.part = box({0, 0, 0}, {200, 80, 60});
+    gb.part = box({0, 0, 0}, {200, 80, 70});
+    auto run = [&](const cfd::CaseGeometry& g, cfd::MeshLevel mesh, double dragN, double liftN) {
+        cfd::Settings s;
+        s.flowDirection = "+X";
+        s.mesh = mesh;
+        const std::string id = runs.prepare(g, s, {});
+        fakeFinishedRun(tmp.path() / id, dragN, dragN, liftN);
+        return id;
+    };
+    // Drag difference -0.65 N -> -0.75 N holds; lift difference +0.03 N -> -0.22 N flips.
+    const std::string a = run(ga, cfd::MeshLevel::Coarse, 3.73, -0.19);
+    const std::string b = run(gb, cfd::MeshLevel::Coarse, 3.08, -0.16);
+    run(ga, cfd::MeshLevel::Medium, 3.80, 0.05);
+    run(gb, cfd::MeshLevel::Medium, 3.05, -0.17);
+    const auto ms = runs.compare(a, b).at("meshSensitivity");
+    CHECK(ms.at("status") == "holds");
+    CHECK(ms.at("liftN").at("signChanged") == true);
+    CHECK(ms.at("message") ==
+          "The drag difference holds on the finer mesh. The smaller lift difference does not (it changes sign).");
+
+    // A refined run with quality warnings: no mesh verdict from it.
+    const std::string cm = run(ga, cfd::MeshLevel::Fine, 3.80, 0.05);
+    run(gb, cfd::MeshLevel::Fine, 3.05, -0.17);
+    write(tmp.path() / cm / "log.checkMesh", "Mesh stats\n    cells:            19893\n\nFailed 2 mesh checks.\n\nEnd\n");
+    const auto cmp = runs.compare(a, b);
+    CHECK(cmp.at("meshSensitivity").at("status") == "check quality");
+    CHECK(cmp.at("meshSensitivity").at("message").get<std::string>().find("fine mesh") != std::string::npos);
+    CHECK(cmp.at("verdict") == "check quality");
 }
 
 TEST_CASE("RunManager: runs from an earlier session", "[cfd]")

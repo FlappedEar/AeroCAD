@@ -969,6 +969,162 @@ Json RunManager::imagePullStatus()
     return j;
 }
 
+namespace {
+
+int meshRank(const std::string& level)
+{
+    const auto parsed = parseMeshLevel(level);
+    return parsed ? static_cast<int>(*parsed) : -1;
+}
+
+} // namespace
+
+std::map<std::string, std::vector<RunStatus>> RunManager::sameCaseOnOtherMeshes(const std::string& id)
+{
+    std::map<std::string, std::vector<RunStatus>> out;
+    const auto self = caseInfo(id);
+    if (!self)
+        return out;
+    const Json settings = toJson(self->settings);
+    for (const RunStatus& other : list()) {
+        if (other.id == id || (other.state != RunState::Finished && other.state != RunState::Running))
+            continue;
+        const auto info = caseInfo(other.id);
+        if (!info || info->geometryHash != self->geometryHash || info->settings.mesh == self->settings.mesh)
+            continue;
+        if (differingConditions(settings, toJson(info->settings)) != std::vector<std::string>{"mesh"})
+            continue;
+        out[std::string(meshLevelName(info->settings.mesh))].push_back(other);
+    }
+    return out;
+}
+
+Json RunManager::meshSensitivity(const std::string& a, const std::string& b)
+{
+    const auto infoA = caseInfo(a);
+    if (!infoA)
+        return Json{{"status", "not assessed"}, {"levels", Json::array()}, {"message", "No case information."}};
+    const std::string own(meshLevelName(infoA->settings.mesh));
+    auto othersA = sameCaseOnOtherMeshes(a);
+    auto othersB = sameCaseOnOtherMeshes(b);
+
+    // A and B per mesh level: the compared pair, and the newest finished pair per other level.
+    struct Pair {
+        std::string mesh, a, b;
+    };
+    std::vector<Pair> pairs{{own, a, b}};
+    bool pending = false;
+    auto newestFinished = [](const std::vector<RunStatus>& runs) -> std::optional<std::string> {
+        std::optional<std::string> best;
+        for (const RunStatus& r : runs) // Run ids start with the creation time.
+            if (r.state == RunState::Finished && (!best || r.id > *best))
+                best = r.id;
+        return best;
+    };
+    for (const auto& [mesh, runsA] : othersA) {
+        const auto itB = othersB.find(mesh);
+        const auto fa = newestFinished(runsA);
+        const auto fb = itB != othersB.end() ? newestFinished(itB->second) : std::nullopt;
+        if (fa && fb) {
+            pairs.push_back({mesh, *fa, *fb});
+            continue;
+        }
+        auto running = [](const std::vector<RunStatus>& runs) {
+            return std::any_of(runs.begin(), runs.end(), [](const RunStatus& r) { return r.state == RunState::Running; });
+        };
+        pending = pending || running(runsA) || (itB != othersB.end() && running(itB->second));
+    }
+    for (const auto& [mesh, runsB] : othersB)
+        if (othersA.count(mesh) == 0)
+            pending = pending || std::any_of(runsB.begin(), runsB.end(),
+                                             [](const RunStatus& r) { return r.state == RunState::Running; });
+    std::sort(pairs.begin(), pairs.end(), [](const Pair& x, const Pair& y) { return meshRank(x.mesh) < meshRank(y.mesh); });
+
+    Json levels = Json::array();
+    std::map<std::string, std::vector<double>> differences; // Force -> difference per level (coarse first).
+    std::vector<bool> levelOk; // Both runs of the level have quality status ok.
+    for (const Pair& p : pairs) {
+        const Json ra = results(p.a, 2);
+        const Json rb = results(p.b, 2);
+        const Json& sa = ra.at("summary");
+        const Json& sb = rb.at("summary");
+        const bool ok = ra.at("quality").at("status") == "ok" && rb.at("quality").at("status") == "ok";
+        levelOk.push_back(ok);
+        Json level{{"mesh", p.mesh}, {"a", p.a}, {"b", p.b}, {"qualityOk", ok}};
+        for (const char* key : {"dragN", "liftN"}) {
+            if (!sa.at(key).is_number() || !sb.at(key).is_number())
+                continue;
+            const double d = sb.at(key).get<double>() - sa.at(key).get<double>();
+            level[key] = {{"a", sa.at(key)}, {"b", sb.at(key)}, {"difference", d}};
+            differences[key].push_back(d);
+        }
+        levels.push_back(std::move(level));
+    }
+
+    Json j{{"levels", levels}};
+    const bool complete = differences["dragN"].size() == pairs.size() && differences["liftN"].size() == pairs.size();
+    if (pairs.size() < 2 || !complete) {
+        j["status"] = pending ? "pending" : "not assessed";
+        const int rank = meshRank(own);
+        const std::string next = rank < 2 ? std::string(meshLevelName(static_cast<MeshLevel>(rank + 1)))
+                                          : std::string(meshLevelName(static_cast<MeshLevel>(rank - 1)));
+        j["suggestedMesh"] = next;
+        j["message"] = pending ? "Waiting for the runs on the other mesh level."
+                               : "Run A and B on the " + next + " mesh too to check that the difference holds.";
+        return j;
+    }
+
+    // The assessment uses the two finest levels: their runs must be trustworthy first.
+    const std::size_t n = pairs.size();
+    for (const std::size_t i : {n - 2, n - 1}) {
+        if (!levelOk[i]) {
+            j["status"] = "check quality";
+            j["meshes"] = {pairs[n - 2].mesh, pairs[n - 1].mesh};
+            j["message"] = "A run on the " + pairs[i].mesh +
+                           " mesh has quality warnings: check it before reading the mesh check.";
+            return j;
+        }
+    }
+
+    // Two finest levels: the difference on the finer one, and how much refinement moved it.
+    std::string deciding;
+    double largest = -1.0;
+    bool inconclusive = false;
+    for (const char* key : {"dragN", "liftN"}) {
+        const auto& d = differences[key];
+        const double fine = d[d.size() - 1], coarse = d[d.size() - 2];
+        const double change = std::abs(fine - coarse);
+        const bool flips = fine * coarse < 0.0;
+        const bool unsure = flips || (change > 0.0 && change >= 0.5 * std::abs(fine)); // No change: holds.
+        j[key] = {{"difference", fine},
+                  {"previousDifference", coarse},
+                  {"change", change},
+                  {"signChanged", flips},
+                  {"status", unsure ? "inconclusive" : "holds"}};
+        if (std::abs(fine) > largest) {
+            largest = std::abs(fine);
+            deciding = key;
+            inconclusive = unsure;
+        }
+    }
+    // The verdict follows the force with the larger A/B difference (drag for most parts,
+    // lift for wings and diffusers); both are reported.
+    j["decidingForce"] = deciding;
+    j["status"] = inconclusive ? "inconclusive" : "holds";
+    j["meshes"] = {pairs[pairs.size() - 2].mesh, pairs.back().mesh};
+    const char* other = deciding == "dragN" ? "liftN" : "dragN";
+    auto name = [](const std::string& key) { return key == "dragN" ? std::string("drag") : std::string("lift"); };
+    std::string message =
+        inconclusive ? "The " + name(deciding) +
+                           " difference changes with the mesh about as much as its own size: difference inconclusive."
+                     : "The " + name(deciding) + " difference holds on the finer mesh.";
+    if (j[other].at("status") == "inconclusive")
+        message += " The smaller " + name(other) + " difference does not" +
+                   (j[other].at("signChanged").get<bool>() ? " (it changes sign)." : ".");
+    j["message"] = message;
+    return j;
+}
+
 Json RunManager::compare(const std::string& a, const std::string& b)
 {
     const Json ra = results(a);
@@ -1011,11 +1167,14 @@ Json RunManager::compare(const std::string& a, const std::string& b)
         notes.emplace_back("Reference areas differ (" + std::to_string(areaA) + " vs " + std::to_string(areaB) +
                            " m^2); coefficients of B are rescaled to the area of A.");
     j["quality"] = {{"a", ra.at("quality")}, {"b", rb.at("quality")}};
-    // Mesh-refinement sensitivity of the difference is not assessed yet (CAD-54).
+    const Json sensitivity = diff.empty() ? meshSensitivity(a, b) : Json{{"status", "not assessed"}};
+    j["meshSensitivity"] = sensitivity;
     j["verdict"] = !diff.empty() ? "not comparable"
-                   : (ra.at("quality").at("status") == "ok" && rb.at("quality").at("status") == "ok")
-                       ? "comparable"
-                       : "check quality";
+                   : !(ra.at("quality").at("status") == "ok" && rb.at("quality").at("status") == "ok")
+                       ? "check quality"
+                   : sensitivity.at("status") == "check quality" ? "check quality"
+                   : sensitivity.at("status") == "inconclusive" ? "difference inconclusive"
+                                                                 : "comparable";
 
     // Shared colour scales for the field views.
     Json scales = Json::object();

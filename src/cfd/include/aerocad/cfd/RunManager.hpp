@@ -152,8 +152,21 @@ public:
     [[nodiscard]] Json imagePullStatus();
 
     /// A/B comparison: force differences in N, condition check, quality, shared value
-    /// ranges for colour scales.
+    /// ranges for colour scales, and how the difference changes with the mesh (when the
+    /// same A and B were also run on another mesh level, see meshSensitivity()).
     [[nodiscard]] Json compare(const std::string& a, const std::string& b);
+
+    /// Sensitivity of the A/B force difference to mesh refinement. Looks for finished runs
+    /// of the same case as A and as B (same geometry and conditions) on other mesh levels.
+    /// With two levels, the difference on the finer one is "inconclusive" when it changed
+    /// by at least half of itself between the levels, or changed sign; otherwise it
+    /// "holds". Status "not assessed" when only one level exists, "pending" while a run
+    /// on another level is still running.
+    [[nodiscard]] Json meshSensitivity(const std::string& a, const std::string& b);
+
+    /// Finished or running runs of the same case as `id` (same geometry hash and
+    /// conditions) on another mesh level, by level name.
+    [[nodiscard]] std::map<std::string, std::vector<RunStatus>> sameCaseOnOtherMeshes(const std::string& id);
 
 private:
     struct Run;

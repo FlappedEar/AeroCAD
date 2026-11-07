@@ -592,6 +592,16 @@ std::uint64_t meshFingerprint(const TriangleMesh& mesh)
     return hash;
 }
 
+std::uint64_t caseGeometryHash(const CaseGeometry& geometry, const Settings& s)
+{
+    const CaseInfo info = planCase(geometry, s);
+    const TriangleMesh context = toCaseMesh(geometry.context, info.frame);
+    std::uint64_t hash = fnv1a(asciiStl(toCaseMesh(geometry.part, info.frame), "part"));
+    if (!context.isEmpty())
+        hash = fnv1a(asciiStl(context, "context"), hash);
+    return hash;
+}
+
 CaseInfo writeCase(const fs::path& dir, const CaseGeometry& geometry, const Settings& s)
 {
     CaseInfo info = planCase(geometry, s);
