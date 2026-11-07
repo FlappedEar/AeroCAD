@@ -218,9 +218,14 @@ bool AppController::cancelPreview()
 
 QVariantMap AppController::execute(const QString& name, const QVariantMap& params)
 {
+    return toVariant(executeCommand(name.toStdString(), toJson(params)).toJson()).toMap();
+}
+
+commands::CommandResult AppController::executeCommand(const std::string& name, const commands::Json& params)
+{
     const bool hadPreview = m_session.previewActive();
-    const commands::CommandResult result = m_session.execute(name.toStdString(), toJson(params));
-    const auto* info = m_session.registry().info(name.toStdString());
+    const commands::CommandResult result = m_session.execute(name, params);
+    const auto* info = m_session.registry().info(name);
     // A command that ended a live preview (e.g. project.save) also changed the document
     // back; the feature dialog rebuilds its preview on historyChanged.
     if ((info != nullptr && info->modifiesDocument) || (hadPreview && !m_session.previewActive()))
@@ -229,7 +234,7 @@ QVariantMap AppController::execute(const QString& name, const QVariantMap& param
 
     if (!result.ok)
         setStatusMessage(QString::fromStdString(result.error));
-    return toVariant(result.toJson()).toMap();
+    return result;
 }
 
 bool AppController::importFile(const QUrl& url)

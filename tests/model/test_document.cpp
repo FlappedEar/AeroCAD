@@ -139,3 +139,17 @@ TEST_CASE("UndoStack respects its limit", "[model]")
     CHECK(stack.size() == 3);
     CHECK(stack.undoLabel() == "4");
 }
+
+TEST_CASE("Document revision increases on every change", "[model]")
+{
+    Document doc;
+    CHECK(doc.revision() == 0);
+    const auto a = doc.addPart(makePart("a"));
+    CHECK(doc.revision() == 1);
+    doc.modifyPart(a, [](model::Part& p) { p.name = "b"; });
+    CHECK(doc.revision() == 2);
+    CHECK_FALSE(doc.modifyPart(999, [](model::Part&) {}));
+    CHECK(doc.revision() == 2);
+    doc.removePart(a);
+    CHECK(doc.revision() == 3);
+}

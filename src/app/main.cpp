@@ -127,6 +127,9 @@ int main(int argc, char* argv[])
                                   QStringLiteral("With --smoke-test: save the rendered window to <png>."),
                                   QStringLiteral("png"));
     parser.addOption(screenshot);
+    QCommandLineOption mcp(QStringLiteral("mcp"),
+                           QStringLiteral("Allow AI agents (MCP clients such as Claude) to use the project."));
+    parser.addOption(mcp);
     QCommandLineOption script(QStringLiteral("run"),
                               QStringLiteral("Run a JSON command script (array of {name, params}) after loading files."),
                               QStringLiteral("script.json"));
@@ -160,6 +163,11 @@ int main(int argc, char* argv[])
     if (parser.isSet(smokeTest))
         return runSmokeTest(app, engine, controller, scan, parser.value(smokeTest), parser.value(screenshot),
                             parser.value(script));
+
+    if (parser.isSet(mcp))
+        controller.mcp()->setEnabled(true);
+    else
+        controller.mcp()->restoreFromSettings();
 
     QMetaObject::invokeMethod(engine.rootObjects().first(), "offerRecovery");
     for (const QString& file : parser.positionalArguments())

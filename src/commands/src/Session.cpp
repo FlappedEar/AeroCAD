@@ -11,6 +11,7 @@ Session::Session()
                 m_simulations.get()}
 {
     registerBuiltinCommands(m_registry);
+    registerAgentCommands(m_registry);
     registerDesignCommands(m_registry);
     registerInspectCommands(m_registry);
     registerProjectCommands(m_registry);

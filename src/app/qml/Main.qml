@@ -569,6 +569,18 @@ ApplicationWindow {
         }
     }
 
+    Action {
+        id: agentAccessAction
+        text: qsTr("AI &Agent Access...")
+        onTriggered: mcpPanel.open()
+    }
+
+    McpPanel {
+        id: mcpPanel
+        anchors.centerIn: Overlay.overlay
+        access: window.controller.mcp
+    }
+
     // Modelling tools. Single-letter shortcuts are Fusion's defaults
     // (https://www.autodesk.com/shortcuts/fusion-360): E Extrude, F Fillet, L Line,
     // R 2-point Rectangle, C Center Diameter Circle.
@@ -774,6 +786,7 @@ ApplicationWindow {
             MenuItem { action: visibilityAction }
             MenuItem { action: deleteAction }
             MenuSeparator {}
+            MenuItem { action: agentAccessAction }
             MenuItem { action: preferencesAction }
         }
         Menu {
@@ -1084,6 +1097,15 @@ ApplicationWindow {
                 ToolCommand { action: sectionAction; text: qsTr("Section"); iconName: "section" }
                 ToolCommand { action: deviationAction; text: qsTr("Deviation"); iconName: "deviation" }
                 ToolCommand { action: thicknessAction; text: qsTr("Thickness"); iconName: "thickness" }
+            }
+            ToolSeparator {}
+            ToolGroup {
+                caption: qsTr("AI")
+                ToolCommand {
+                    action: agentAccessAction
+                    text: window.controller.mcp.clients.length > 0 ? qsTr("Agent \u25CF")
+                          : window.controller.mcp.listening ? qsTr("Agent \u25CB") : qsTr("Agent")
+                }
             }
 
             // SKETCH tab (contextual, while a sketch is edited).
