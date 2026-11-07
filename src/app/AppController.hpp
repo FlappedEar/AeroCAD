@@ -14,6 +14,7 @@
 #include <QTimer>
 #include <QVariantList>
 #include <QUrl>
+#include <QVariantList>
 #include <QVariantMap>
 #include <QVector3D>
 #include <QVector>
@@ -132,6 +133,8 @@ public:
     Q_INVOKABLE void clearRecentProjects();
     Q_INVOKABLE void setStatus(const QString& message) { setStatusMessage(message); }
 
+    /// Colour map stops (low to high) used for a result scalar, for legends.
+    Q_INVOKABLE QVariantList colormap(const QString& scalar) const;
     /// Part details for the properties panel ({} for unknown ids).
     Q_INVOKABLE QVariantMap partInfo(quint64 id) const;
 

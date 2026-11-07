@@ -57,6 +57,10 @@ Item {
     /// Model-space points to mark (selections of the open feature dialog).
     property var markers: []
     readonly property alias sketchOverlay: sketchOverlay
+    /// Simulation result fields to draw: [{run, kind, scalar, min, max}] (SimulationPanel).
+    property var simulationFields: []
+    /// Parts not drawn (e.g. while their pressure map is shown in their place).
+    property var hiddenPartIds: []
 
     property bool fitPending: false
 
@@ -414,7 +418,8 @@ Item {
                         mode: InspectGeometry.HeatMap
                     }
 
-                    visible: partVisible || (kind === "sketch" && featureId == root.shownSketch)
+                    visible: (partVisible || (kind === "sketch" && featureId == root.shownSketch))
+                             && root.hiddenPartIds.indexOf(partId) < 0
                     pickable: (root.pickKind === "" || kind === root.pickKind)
                               && !(kind === "plane" && featureId == root.unpickablePlane)
                     geometry: sectioned ? clippedGeometry : heatMapped ? heatGeometry : plainGeometry
@@ -519,6 +524,29 @@ Item {
                             baseColor: partModel.kind === "sketch" ? Theme.sketchColor
                                      : partModel.kind === "plane" ? Theme.planeEdge : Theme.edgeColor
                         }
+                    }
+                }
+            }
+
+            // Simulation results, coloured per vertex and unlit so colours match the legend.
+            Repeater3D {
+                model: root.simulationFields
+                delegate: Model {
+                    required property var modelData
+                    pickable: false
+                    geometry: FieldGeometry {
+                        controller: root.controller
+                        run: modelData.run
+                        kind: modelData.kind
+                        scalar: modelData.scalar
+                        rangeMin: modelData.min
+                        rangeMax: modelData.max
+                    }
+                    materials: DefaultMaterial {
+                        vertexColorsEnabled: true
+                        lighting: DefaultMaterial.NoLighting
+                        cullMode: Material.NoCulling
+                        lineWidth: 2
                     }
                 }
             }

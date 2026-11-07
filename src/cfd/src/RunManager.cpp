@@ -229,6 +229,8 @@ Json sourceJson(const RunSource& s)
     return Json{{"partId", s.partId},
                 {"partName", s.partName},
                 {"partRevision", s.partRevision},
+                // As a string: JSON numbers above 2^53 lose precision in JavaScript.
+                {"partFingerprint", std::to_string(s.partFingerprint)},
                 {"contextPartIds", s.contextPartIds},
                 {"label", s.label}};
 }
@@ -239,6 +241,13 @@ RunSource sourceFrom(const Json& j)
     s.partId = j.value("partId", std::uint64_t{0});
     s.partName = j.value("partName", std::string());
     s.partRevision = j.value("partRevision", std::uint64_t{0});
+    if (const auto it = j.find("partFingerprint"); it != j.end() && it->is_string()) {
+        try {
+            s.partFingerprint = std::stoull(it->get<std::string>());
+        } catch (const std::exception&) {
+            s.partFingerprint = 0;
+        }
+    }
     s.contextPartIds = j.value("contextPartIds", std::vector<std::uint64_t>{});
     s.label = j.value("label", std::string());
     return s;

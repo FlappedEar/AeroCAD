@@ -82,6 +82,18 @@ QtObject {
     readonly property color regionColor: "#ff9a3c"
     /// Overlay palettes drawn over the 3D view (navigation bar, selection tools).
     readonly property color overlay: pick(Qt.rgba(1, 1, 1, 0.92), Qt.rgba(0.15, 0.16, 0.18, 0.92))
+    /// Chart series (simulation histories), in order of use.
+    readonly property color chart1: pick("#1f6fc4", "#5aa3f0")
+    readonly property color chart2: pick("#c9302c", "#f07a6f")
+    readonly property color chart3: pick("#2c8a3e", "#5fcb7a")
+    readonly property color chart4: pick("#7b4bb8", "#b08de6")
+    readonly property color chart5: pick("#d97706", "#f5ad4e")
+    readonly property color chart6: pick("#0e8a99", "#4fc6d3")
+    /// Chart grid lines.
+    readonly property color chartGrid: pick(Qt.rgba(0, 0, 0, 0.12), Qt.rgba(1, 1, 1, 0.12))
+    /// Rows of the two runs (or variants) being compared.
+    readonly property color compareA: pick(Qt.rgba(0.14, 0.39, 0.92, 0.14), Qt.rgba(0.30, 0.55, 1.0, 0.22))
+    readonly property color compareB: pick(Qt.rgba(0.85, 0.47, 0.02, 0.16), Qt.rgba(0.96, 0.68, 0.30, 0.22))
 
     // --- Typography -------------------------------------------------------------------
     // Pixel sizes; the platform UI font (SF Pro on macOS, Segoe UI on Windows, the desktop

@@ -20,6 +20,8 @@ ApplicationWindow {
 
     property bool browserVisible: true
     property bool propertiesVisible: true
+    /// Wind tunnel panel (replaces Properties while open).
+    property bool simulationVisible: false
 
     /// Sketch being edited ({id, origin, normal, xDir, yDir}) or null.
     property var activeSketch: null
@@ -622,6 +624,16 @@ ApplicationWindow {
             }
         }
     }
+    Action {
+        id: cfdAction
+        text: qsTr("&Wind Tunnel (CFD)")
+        checkable: true
+        checked: window.simulationVisible
+        onTriggered: {
+            window.simulationVisible = checked
+            checked = Qt.binding(() => window.simulationVisible)
+        }
+    }
     Action { id: parametersAction; text: qsTr("Change &Parameters..."); onTriggered: parametersDialog.open() }
     Action { id: lineAction; text: qsTr("&Line"); shortcut: "L"; enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "line"; onTriggered: window.sketchTool_("line") }
     Action { id: rectangleAction; text: qsTr("&Rectangle"); shortcut: "R"; enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "rectangle"; onTriggered: window.sketchTool_("rectangle") }
@@ -867,6 +879,10 @@ ApplicationWindow {
             MenuItem { action: clearAnalysesAction }
         }
         Menu {
+            title: qsTr("S&imulate")
+            MenuItem { action: cfdAction }
+        }
+        Menu {
             title: qsTr("&View")
             MenuItem { action: fitAction }
             MenuItem { action: homeAction }
@@ -1107,6 +1123,11 @@ ApplicationWindow {
                           : window.controller.mcp.listening ? qsTr("Agent \u25CB") : qsTr("Agent")
                 }
             }
+            ToolSeparator {}
+            ToolGroup {
+                caption: qsTr("SIMULATE")
+                ToolCommand { action: cfdAction; text: qsTr("CFD"); iconName: "wind-tunnel" }
+            }
 
             // SKETCH tab (contextual, while a sketch is edited).
             ToolGroup {
@@ -1192,6 +1213,8 @@ ApplicationWindow {
             pickKind: featureDialog.visible ? featureDialog.pickKind : ""
             shownSketch: featureDialog.shownSketch
             unpickablePlane: featureDialog.visible ? featureDialog.ownPlane : -1
+            simulationFields: window.simulationVisible ? simulationPanel.viewportFields : []
+            hiddenPartIds: window.simulationVisible ? simulationPanel.hiddenPartIds : []
             overlayLines: measurePanel.overlayLines
             onSectionDragged: delta => sectionPanel.moveBy(delta)
             onPartPicked: id => {
@@ -1490,13 +1513,23 @@ ApplicationWindow {
 
         PropertiesPanel {
             id: properties
-            visible: window.propertiesVisible
+            visible: window.propertiesVisible && !window.simulationVisible
             SplitView.preferredWidth: 280
             SplitView.minimumWidth: 200
             controller: window.controller
             registry: contextActions
             popup: actionPopup
             partId: window.selectedPartId
+        }
+
+        SimulationPanel {
+            id: simulationPanel
+            objectName: "simulationPanel"
+            visible: window.simulationVisible
+            SplitView.preferredWidth: 400
+            SplitView.minimumWidth: 300
+            controller: window.controller
+            selectedPartId: window.selectedPartId
         }
     }
 

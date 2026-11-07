@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "AppController.hpp"
 
+#include "FieldGeometry.hpp"
 #include "InspectGeometry.hpp"
 #include "JsonBridge.hpp"
 
@@ -824,6 +825,14 @@ void AppController::setStatusMessage(const QString& message)
         return;
     m_statusMessage = message;
     emit statusMessageChanged();
+}
+
+QVariantList AppController::colormap(const QString& scalar) const
+{
+    QVariantList out;
+    for (int i = 0; i <= 8; ++i)
+        out.append(FieldGeometry::mapColor(scalar, i / 8.0));
+    return out;
 }
 
 } // namespace aerocad::app

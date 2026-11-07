@@ -48,6 +48,7 @@ struct RunSource {
     std::uint64_t partId = 0;
     std::string partName;
     std::uint64_t partRevision = 0;
+    std::uint64_t partFingerprint = 0; ///< meshFingerprint of the part; 0 = unknown (imported run).
     std::vector<std::uint64_t> contextPartIds;
     std::string label; ///< Optional user label, e.g. "A" / "B" / "with lip".
 };
