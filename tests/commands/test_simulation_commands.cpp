@@ -133,6 +133,21 @@ TEST_CASE("simulation.propose_run and a prepared run", "[commands][simulation]")
     CHECK_FALSE(session.execute("simulation.refine", {{"run", refined}, {"mesh", "medium"}}).ok);
     CHECK(session.execute("simulation.delete", {{"run", refined}}).ok);
 
+    // Other parts in the flow changed since the run: a refinement would be another case.
+    const auto ctxPart = session.execute("document.import", {{"path", AEROCAD_TEST_DATA_DIR "/box_200x80x60.stl"}});
+    REQUIRE(ctxPart.ok);
+    const auto ctxId = ctxPart.data.at("id").get<std::uint64_t>();
+    REQUIRE(session.execute("part.scale", {{"id", ctxId}, {"factor", 0.5}}).ok);
+    r = session.execute("simulation.run", {{"id", id}, {"context", {ctxId}}, {"prepareOnly", true}});
+    REQUIRE(r.ok);
+    const std::string withContext = r.data.at("id");
+    REQUIRE(session.execute("part.scale", {{"id", ctxId}, {"factor", 1.5}}).ok);
+    r = session.execute("simulation.refine", {{"run", withContext}, {"prepareOnly", true}});
+    CHECK_FALSE(r.ok);
+    CHECK(r.error.find("has changed") != std::string::npos);
+    CHECK(session.execute("simulation.delete", {{"run", withContext}}).ok);
+    REQUIRE(session.execute("part.remove", {{"id", ctxId}}).ok);
+
     // The part is gone (or another document has a part with the same id): not its source.
     REQUIRE(session.execute("part.remove", {{"id", id}}).ok);
     r = session.execute("simulation.status", {{"run", run}});

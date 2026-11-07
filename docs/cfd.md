@@ -177,7 +177,9 @@ it. The difference **holds** when it changed by less than half of itself and kep
 sign; otherwise it is **inconclusive** and the verdict becomes `difference
 inconclusive`. Drag and lift are both checked; the verdict follows the one with the
 larger difference, and the message also names the other force when its difference does
-not hold. Runs count as the same case when the geometry hash and all
+not hold. When a run on one of those two levels has quality warnings the status is
+**check quality** (verdict `check quality`). `simulation.refine` refuses a run whose part or
+other parts in the flow have changed since it ran. Runs count as the same case when the geometry hash and all
 conditions except the mesh level are equal.
 
 ## Tests

@@ -592,6 +592,15 @@ TEST_CASE("RunManager: mesh check names a smaller force that does not hold", "[c
     CHECK(ms.at("liftN").at("signChanged") == true);
     CHECK(ms.at("message") ==
           "The drag difference holds on the finer mesh. The smaller lift difference does not (it changes sign).");
+
+    // A refined run with quality warnings: no mesh verdict from it.
+    const std::string cm = run(ga, cfd::MeshLevel::Fine, 3.80, 0.05);
+    run(gb, cfd::MeshLevel::Fine, 3.05, -0.17);
+    write(tmp.path() / cm / "log.checkMesh", "Mesh stats\n    cells:            19893\n\nFailed 2 mesh checks.\n\nEnd\n");
+    const auto cmp = runs.compare(a, b);
+    CHECK(cmp.at("meshSensitivity").at("status") == "check quality");
+    CHECK(cmp.at("meshSensitivity").at("message").get<std::string>().find("fine mesh") != std::string::npos);
+    CHECK(cmp.at("verdict") == "check quality");
 }
 
 TEST_CASE("RunManager: runs from an earlier session", "[cfd]")

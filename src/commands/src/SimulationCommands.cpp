@@ -296,6 +296,11 @@ void registerSimulationCommands(CommandRegistry& r)
               settings["context"] = status->source.contextPartIds;
               settings["label"] = status->source.label;
               const RunInput in = collectInput(ctx, settings);
+              // The surroundings must also be unchanged, or this is a different case.
+              if (cfd::caseGeometryHash(in.geometry, in.settings) != info->geometryHash)
+                  throw CommandError("The geometry of run '" + id +
+                                     "' has changed since it ran (the part or the other parts in the flow): start a "
+                                     "new run instead");
               std::string newId;
               try {
                   newId = params.value("prepareOnly", false) ? runs(ctx).prepare(in.geometry, in.settings, in.source)

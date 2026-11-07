@@ -1042,10 +1042,15 @@ Json RunManager::meshSensitivity(const std::string& a, const std::string& b)
 
     Json levels = Json::array();
     std::map<std::string, std::vector<double>> differences; // Force -> difference per level (coarse first).
+    std::vector<bool> levelOk; // Both runs of the level have quality status ok.
     for (const Pair& p : pairs) {
-        const Json sa = results(p.a, 2).at("summary");
-        const Json sb = results(p.b, 2).at("summary");
-        Json level{{"mesh", p.mesh}, {"a", p.a}, {"b", p.b}};
+        const Json ra = results(p.a, 2);
+        const Json rb = results(p.b, 2);
+        const Json& sa = ra.at("summary");
+        const Json& sb = rb.at("summary");
+        const bool ok = ra.at("quality").at("status") == "ok" && rb.at("quality").at("status") == "ok";
+        levelOk.push_back(ok);
+        Json level{{"mesh", p.mesh}, {"a", p.a}, {"b", p.b}, {"qualityOk", ok}};
         for (const char* key : {"dragN", "liftN"}) {
             if (!sa.at(key).is_number() || !sb.at(key).is_number())
                 continue;
@@ -1067,6 +1072,18 @@ Json RunManager::meshSensitivity(const std::string& a, const std::string& b)
         j["message"] = pending ? "Waiting for the runs on the other mesh level."
                                : "Run A and B on the " + next + " mesh too to check that the difference holds.";
         return j;
+    }
+
+    // The assessment uses the two finest levels: their runs must be trustworthy first.
+    const std::size_t n = pairs.size();
+    for (const std::size_t i : {n - 2, n - 1}) {
+        if (!levelOk[i]) {
+            j["status"] = "check quality";
+            j["meshes"] = {pairs[n - 2].mesh, pairs[n - 1].mesh};
+            j["message"] = "A run on the " + pairs[i].mesh +
+                           " mesh has quality warnings: check it before reading the mesh check.";
+            return j;
+        }
     }
 
     // Two finest levels: the difference on the finer one, and how much refinement moved it.
@@ -1155,6 +1172,7 @@ Json RunManager::compare(const std::string& a, const std::string& b)
     j["verdict"] = !diff.empty() ? "not comparable"
                    : !(ra.at("quality").at("status") == "ok" && rb.at("quality").at("status") == "ok")
                        ? "check quality"
+                   : sensitivity.at("status") == "check quality" ? "check quality"
                    : sensitivity.at("status") == "inconclusive" ? "difference inconclusive"
                                                                  : "comparable";
 
