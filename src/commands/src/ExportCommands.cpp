@@ -8,6 +8,8 @@
 #include "aerocad/io/Export.hpp"
 #include "aerocad/model/Document.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <deque>
 #include <filesystem>
 #include <string>
@@ -276,8 +278,14 @@ void registerExportForPrint(CommandRegistry& r)
               std::unordered_set<std::string> stems;
               std::vector<std::string> problems;
               for (const model::Part* p : parts) {
+                  // Compared without case: on macOS and Windows "Fin" and "fin" are one file.
+                  auto folded = [](std::string s) {
+                      std::transform(s.begin(), s.end(), s.begin(),
+                                     [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                      return s;
+                  };
                   std::string stem = fileStem(p->name);
-                  for (int k = 2; !stems.insert(stem).second; ++k)
+                  for (int k = 2; !stems.insert(folded(stem)).second; ++k)
                       stem = fileStem(p->name) + " " + std::to_string(k);
                   const core::TriangleMesh* mesh = stl ? fileMesh(*p, meshes) : nullptr;
                   if (stl) {

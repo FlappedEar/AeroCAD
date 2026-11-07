@@ -75,12 +75,14 @@ std::vector<Json> addShapeParts(CommandContext& ctx, const model::Part& source,
                                 const std::vector<VisibilityChange>& changes = {})
 {
     model::Document& doc = ctx.document;
+    // `source` may live in the document, whose parts can move as parts are added.
+    const std::string provenance = origin + " of part " + std::to_string(source.id);
     std::vector<model::Part> parts;
     std::vector<model::PartId> ids;
     for (const auto& [shape, name] : shapes) {
         model::Part part;
         part.name = name;
-        part.source = origin + " of part " + std::to_string(source.id);
+        part.source = provenance;
         part.mesh = std::make_shared<const core::TriangleMesh>(geometry::tessellate(shape));
         part.shape = shape;
         part.id = doc.addPart(part);

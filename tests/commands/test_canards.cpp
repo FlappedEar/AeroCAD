@@ -13,9 +13,11 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
-#include <random>
 #include <memory>
+#include <random>
+#include <set>
 
 using namespace aerocad;
 using commands::Json;
@@ -250,4 +252,23 @@ TEST_CASE("Canards exported for printing: one STL and one STEP per fin", "[comma
         if (f.at("format") == "stl")  // finer than the view's mesh, for a smooth print
             CHECK(f.at("triangles").get<std::size_t>() > fin.at("triangles").get<std::size_t>());
     }
+    // Names that differ only in case still get files of their own (one file on macOS).
+    const std::string first = fins.data.at("fins")[0].at("name").get<std::string>();
+    std::string shouted = first;
+    for (auto& c : shouted)
+        c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    REQUIRE(scene.session.execute("part.rename", {{"id", fins.data.at("fins")[1].at("id")}, {"name", shouted}}).ok);
+    const auto dir2 = dir / "case";
+    auto cased = scene.session.execute("document.export_for_print",
+                                       {{"folder", core::pathToUtf8(dir2)}, {"ids", {fins.data.at("fins")[0].at("id"), fins.data.at("fins")[1].at("id")}}});
+    INFO(cased.toJson().dump());
+    REQUIRE(cased.ok);
+    std::set<std::string> lower;
+    for (const auto& f : cased.data.at("files")) {
+        std::string s = f.at("path").get<std::string>();
+        for (auto& c : s)
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        lower.insert(s);
+    }
+    CHECK(lower.size() == 4);
 }
