@@ -112,10 +112,19 @@ Item {
     function pickNearPart(x, y) {
         const near = modelSpace.mapPositionFromScene(view.mapTo3DScene(Qt.vector3d(x, y, 0)))
         const far = modelSpace.mapPositionFromScene(view.mapTo3DScene(Qt.vector3d(x, y, 100)))
-        const hit = controller.pickNearSurface(near, far.minus(near), 4)
+        const eye = modelSpace.mapPositionFromScene(view.camera.scenePosition)
+        // The angle is measured from the eye: `near` is on the near clipping plane, which
+        // moves towards the model as the camera backs off. A parallel view has no eye; one
+        // is placed behind the view as far as a perspective camera would see its height.
+        let from = eye
+        if (root.orthographic) {
+            const dir = far.minus(near).normalized()
+            const h = view.height / orthoCamera.verticalMagnification
+            from = near.minus(dir.times(h / 2 / Math.tan(camera.fieldOfView * Math.PI / 360)))
+        }
+        const hit = controller.pickNearSurface(from, far.minus(from), 4)
         if (!hit.partId)
             return null
-        const eye = modelSpace.mapPositionFromScene(view.camera.scenePosition)
         return { partId: hit.partId, point: hit.point, distance: hit.point.minus(eye).length(), snapped: true }
     }
 
