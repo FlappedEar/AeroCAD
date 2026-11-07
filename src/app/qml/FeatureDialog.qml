@@ -167,7 +167,8 @@ Pane {
             { key: "thickness", type: "expr", label: qsTr("Thickness"), init: 3 },
             { key: "rootFillet", type: "expr", label: qsTr("Root fillet"), init: 0 },
             { key: "count", type: "expr", label: qsTr("Number of fins"), init: 1 },
-            { key: "spacing", type: "expr", label: qsTr("Spacing"), init: 40, showIf: v => Number(v.count) > 1 },
+            // Hidden only for a plain 1: an expression count may be more, and a hidden field is dropped.
+            { key: "spacing", type: "expr", label: qsTr("Spacing"), init: 40, showIf: v => !(Number(v.count) <= 1) },
             { key: "mirror", type: "bool", label: qsTr("Also on the other side") }] }
     })
 
