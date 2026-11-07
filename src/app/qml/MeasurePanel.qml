@@ -368,11 +368,18 @@ Pane {
             text: qsTr("In the view")
             font.bold: true
         }
-        Repeater {
+        // Scrolls when many are kept, so every remove button stays reachable.
+        ListView {
+            Layout.fillWidth: true
+            Layout.preferredHeight: Math.min(contentHeight, 170)
+            visible: root.kept.length > 0
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
             model: root.kept
             delegate: RowLayout {
                 required property var modelData
-                Layout.fillWidth: true
+                width: ListView.view.width
                 Label {
                     Layout.fillWidth: true
                     elide: Text.ElideRight

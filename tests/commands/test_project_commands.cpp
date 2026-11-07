@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "aerocad/commands/Inspect.hpp"
 #include "aerocad/commands/Session.hpp"
 #include "aerocad/core/Path.hpp"
 #include "aerocad/geometry/Primitives.hpp"
@@ -367,4 +368,16 @@ TEST_CASE("Kept dimensions follow edits and are saved with the project", "[comma
     list = run(s, "inspect.dimensions")["dimensions"];
     REQUIRE(list.size() == 1);
     CHECK(list[0].contains("error"));
+}
+
+TEST_CASE("Damaged kept dimensions in a file are skipped", "[commands][project][inspect]")
+{
+    const auto dims = commands::dimensionsFromJson(Json::parse(
+        R"([{"a":{"point":[0,0,0]},"id":"bad"},{"a":{"point":[1,0,0]},"show":3},{"a":5},7,{"a":{"point":[2,0,0]},"id":4,"show":"angle","b":"x"}])"));
+    REQUIRE(dims.size() == 3);
+    CHECK(dims[0].id == 0);
+    CHECK(dims[1].show == "distance");
+    CHECK(dims[2].id == 4);
+    CHECK(dims[2].show == "angle");
+    CHECK(dims[2].b.is_null());
 }

@@ -100,10 +100,12 @@ std::vector<Dimension> dimensionsFromJson(const nlohmann::json& list)
         if (!j.is_object() || !j.contains("a") || !j["a"].is_object())
             continue; // a damaged entry is dropped, not the whole project
         Dimension d;
-        d.id = j.value("id", std::uint64_t{0});
-        d.show = j.value("show", std::string("distance"));
+        if (j.contains("id") && j["id"].is_number_unsigned())
+            d.id = j["id"].get<std::uint64_t>();
+        if (j.contains("show") && j["show"].is_string())
+            d.show = j["show"].get<std::string>();
         d.a = j["a"];
-        d.b = j.contains("b") ? j["b"] : Json();
+        d.b = j.contains("b") && j["b"].is_object() ? j["b"] : Json();
         out.push_back(std::move(d));
     }
     return out;
