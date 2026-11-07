@@ -861,10 +861,9 @@ void RunManager::refresh(Run& run)
         s.state = RunState::Failed;
         s.message = "Simulation engine exited with code " + std::to_string(run.process->exitCode().value_or(-1)) +
                     ": " + errorSummary(run.dir / "log.aerocad");
-    } else if (run.imported && !coeffs.empty()) {
-        s.state = RunState::Finished;
     } else {
-        // Started by an earlier session of the app: still running if it wrote recently.
+        // Imported cases and runs from an earlier session need the same completion
+        // marker. Coefficient files alone may belong to a still-running or interrupted run.
         const auto newest = newestLogTime(run.caseDir);
         const bool recent = newest && fs::file_time_type::clock::now() - *newest < std::chrono::minutes(3);
         s.state = recent ? RunState::Running : RunState::Interrupted;
@@ -996,15 +995,19 @@ Json sampled(const std::vector<double>* values, const std::vector<std::size_t>& 
     return out;
 }
 
-/// Mean over the last 20 % of the iterations (at least the last one).
+/// Mean over the last 20 % of the iterations (at least the last one). Every retained
+/// sample must be finite, including those before the averaging window.
 std::optional<double> tailMean(const std::vector<double>* v)
 {
-    if (v == nullptr || v->empty())
+    if (v == nullptr || v->empty() || !std::all_of(v->begin(), v->end(), [](double x) { return std::isfinite(x); }))
         return std::nullopt;
     const std::size_t start = v->size() - std::max<std::size_t>(1, v->size() / 5);
     double sum = 0;
-    for (std::size_t i = start; i < v->size(); ++i)
+    for (std::size_t i = start; i < v->size(); ++i) {
         sum += (*v)[i];
+        if (!std::isfinite(sum))
+            return std::nullopt;
+    }
     return sum / static_cast<double>(v->size() - start);
 }
 
@@ -1055,6 +1058,30 @@ Json RunManager::results(const std::string& id, int maxPoints)
                     {"viscousDragN", opt(tailMean(forces.column("viscous_x")))},
                     {"iterations", coeffs.time.size()},
                     {"averaging", "mean over the last 20 % of the iterations"}};
+
+    // Histories are useful while solving, but their current tail is not a final result.
+    // Keep this gate independent of the numerical quality checks: even apparently good
+    // partial output must never become a final summary or an A/B verdict.
+    constexpr const char* resultKeys[] = {"cd", "cl", "cs", "dragN", "liftN", "sideN", "pressureDragN", "viscousDragN"};
+    std::vector<std::string> reasons;
+    if (st->state != RunState::Finished)
+        reasons.emplace_back("The run has not finished successfully (" + std::string(runStateName(st->state)) + ").");
+    if (std::any_of(std::begin(resultKeys), std::end(resultKeys), [&](const char* key) {
+            return !j.at("summary").at(key).is_number();
+        }))
+        reasons.emplace_back("Required coefficient or force results are missing or non-finite.");
+    if (coeffs.incomplete || forces.incomplete || coeffs.invalidTime || forces.invalidTime)
+        reasons.emplace_back("Coefficient or force output contains an incomplete row or invalid iteration.");
+    if (!coeffs.empty() && !forces.empty() &&
+        (!std::isfinite(coeffs.time.back()) || !std::isfinite(forces.time.back()) ||
+         coeffs.time != forces.time))
+        reasons.emplace_back("Force and coefficient outputs do not cover the same valid iterations.");
+    const bool finalAvailable = reasons.empty();
+    j["finalResults"] = {{"available", finalAvailable}, {"reasons", reasons}};
+    j["provisional"] = !finalAvailable;
+    if (!finalAvailable)
+        for (const char* key : resultKeys)
+            j["summary"][key] = nullptr;
 
     const auto ci = sampleIndices(coeffs.time.size(), maxPoints);
     const auto fi = sampleIndices(forces.time.size(), maxPoints);
@@ -1353,6 +1380,14 @@ Json RunManager::compare(const std::string& a, const std::string& b)
     const Json ra = results(a);
     const Json rb = results(b);
     Json j{{"a", ra.at("run").at("id")}, {"b", rb.at("run").at("id")}};
+    j["states"] = {{"a", ra.at("run").at("state")}, {"b", rb.at("run").at("state")}};
+    std::vector<std::string> reasons;
+    for (const auto& reason : ra.at("finalResults").at("reasons"))
+        reasons.emplace_back("Run A: " + reason.get<std::string>());
+    for (const auto& reason : rb.at("finalResults").at("reasons"))
+        reasons.emplace_back("Run B: " + reason.get<std::string>());
+    const bool finalAvailable = reasons.empty();
+    j["reasons"] = reasons;
 
     const Json ca = ra.value("conditions", Json::object());
     const Json cb = rb.value("conditions", Json::object());
@@ -1390,9 +1425,11 @@ Json RunManager::compare(const std::string& a, const std::string& b)
         notes.emplace_back("Reference areas differ (" + std::to_string(areaA) + " vs " + std::to_string(areaB) +
                            " m^2); coefficients of B are rescaled to the area of A.");
     j["quality"] = {{"a", ra.at("quality")}, {"b", rb.at("quality")}};
-    const Json sensitivity = diff.empty() ? meshSensitivity(a, b) : Json{{"status", "not assessed"}};
+    const Json sensitivity = finalAvailable && diff.empty()
+                                 ? meshSensitivity(a, b)
+                                 : Json{{"status", "not assessed"}, {"levels", Json::array()}};
     j["meshSensitivity"] = sensitivity;
-    j["verdict"] = !diff.empty() ? "not comparable"
+    j["verdict"] = !finalAvailable || !diff.empty() ? "not comparable"
                    : !(ra.at("quality").at("status") == "ok" && rb.at("quality").at("status") == "ok")
                        ? "check quality"
                    : sensitivity.at("status") == "check quality" ? "check quality"
@@ -1404,12 +1441,14 @@ Json RunManager::compare(const std::string& a, const std::string& b)
     for (const auto& [kind, scalar] :
          std::vector<std::pair<const char*, const char*>>{{"surface", "Cp"}, {"sectionHorizontal", "speed"}}) {
         double lo = std::numeric_limits<double>::max(), hi = std::numeric_limits<double>::lowest();
-        for (const auto& id : {a, b}) {
-            const PolyData d = field(id, kind);
-            if (auto it = d.scalars.find(scalar); it != d.scalars.end()) {
-                const auto [l, h] = range(it->second);
-                lo = std::min(lo, l);
-                hi = std::max(hi, h);
+        if (finalAvailable) {
+            for (const auto& id : {a, b}) {
+                const PolyData d = field(id, kind);
+                if (auto it = d.scalars.find(scalar); it != d.scalars.end()) {
+                    const auto [l, h] = range(it->second);
+                    lo = std::min(lo, l);
+                    hi = std::max(hi, h);
+                }
             }
         }
         if (lo <= hi)

@@ -22,7 +22,7 @@ struct Table {
     std::vector<std::string> columns; ///< Without the leading "Time".
     std::vector<double> time;
     std::vector<std::vector<double>> values; ///< values[column][row]
-    bool incomplete = false; ///< Last data row was truncated; earlier rows remain available for live charts.
+    bool incomplete = false; ///< Active history has an unreplaced truncated row; valid rows remain for live charts.
     bool invalidTime = false; ///< A data row had a non-numeric or non-finite time.
 
     [[nodiscard]] const std::vector<double>* column(std::string_view name) const;
