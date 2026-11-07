@@ -59,6 +59,14 @@ enum class ThickenSide {
 [[nodiscard]] Shape finOnSurface(const Shape& surface, const std::vector<Shape>& outlines, const core::Vec3& normal,
                                  double thickness, const core::Vec3& outward, double rootFillet = 0.0);
 
+/// Cuts a solid with a surface (face or shell, e.g. a surface fitted to a scan) and keeps
+/// what lies on one side of it: `keepFront` keeps the side the surface normal points to
+/// (outside the scan for fitted surfaces), otherwise the side behind it. A single face is
+/// taken on its whole underlying B-spline, past its trim, so it reaches across the solid.
+/// Returns a null shape when nothing of the solid lies on that side; throws OffsetError
+/// when the surface does not cut the solid at all ("does not reach").
+[[nodiscard]] Shape splitBySurface(const Shape& solid, const Shape& surface, bool keepFront);
+
 /// Area of all faces in mm^2.
 [[nodiscard]] double surfaceArea(const Shape& shape);
 

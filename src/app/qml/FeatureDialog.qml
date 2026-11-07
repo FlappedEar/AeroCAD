@@ -100,10 +100,11 @@ Pane {
             { key: "faces", type: "facePicks", label: qsTr("Faces to remove"), hint: qsTr("Click faces (none: closed hollow)") },
             { key: "thickness", type: "expr", label: qsTr("Thickness"), init: 1 }] },
         combine: { title: qsTr("Combine"), command: "feature.combine", fields: [
-            { key: "target", type: "body", label: qsTr("Target body") },
-            { key: "tools", type: "bodyList", label: qsTr("Tool body") },
+            { key: "target", type: "targetPick", label: qsTr("Target body"), hint: qsTr("Click the body to change") },
+            { key: "tools", type: "toolPicks", label: qsTr("Tool bodies"), hint: qsTr("Click bodies, a surface or the scan") },
             { key: "operation", type: "choice", label: qsTr("Operation"), init: "join", options: operations.slice(1) },
-            { key: "keepTools", type: "bool", label: qsTr("Keep tools") }] },
+            { key: "flip", type: "bool", label: qsTr("Flip side"), showIf: v => (v.tools || []).some(t => typeof t === "object") },
+            { key: "keepTools", type: "bool", label: qsTr("Keep tools"), showIf: v => (v.tools || []).some(t => typeof t !== "object") }] },
         hole: { title: qsTr("Hole"), command: "feature.hole", fields: [
             { key: "body", type: "body", label: qsTr("Body") },
             { key: "point", type: "pointPick", label: qsTr("Position"), hint: qsTr("Click on a planar face") },
@@ -210,7 +211,11 @@ Pane {
         editId = featureId || 0
         error = ""
         type = featureType
-        const firstPick = s.fields.find(f => f.type.endsWith("Picks") || f.type === "pointPick" || f.type === "planePick")
+        // The first selection still to make receives viewport picks (Combine with a target
+        // already set starts with the tools).
+        const pickFields = s.fields.filter(f => f.type.endsWith("Picks") || f.type === "pointPick" || f.type === "planePick"
+                                                || f.type === "targetPick")
+        const firstPick = pickFields.find(f => v[f.key] === undefined) || pickFields[0]
         pickKey = firstPick ? firstPick.key : ""
         previewTimer.restart()
         return true
@@ -245,6 +250,8 @@ Pane {
             return ""
         if (f.type === "planePick")
             return "" // faces of bodies and construction planes
+        if (f.type === "toolPicks")
+            return "" // bodies, solids, surfaces and scans
         // "solid": bodies and exact solids outside the timeline, made editable when picked.
         return f.type === "profilePicks" ? "sketch" : "solid"
     }
@@ -349,6 +356,35 @@ Pane {
         if (!spec || !pickKey || !part || !part.id)
             return
         const field = spec.fields.find(f => f.key === pickKey)
+        if (field.type === "targetPick") {
+            const b = asBody(part)
+            if (!b)
+                return
+            setValue(pickKey, b.featureId)
+            // Like Fusion: the tools are picked next.
+            const tools = spec.fields.find(f => f.type === "toolPicks")
+            if (tools)
+                pickKey = tools.key
+            return
+        }
+        if (field.type === "toolPicks") {
+            // Bodies by id; anything else (a fin or STEP solid, a surface, the scan) as a part.
+            let ref
+            if (part.kind === "body")
+                ref = part.featureId
+            else if (part.kind === "imported")
+                ref = { part: part.id }
+            else
+                return
+            const target = spec.fields.find(f => f.type === "targetPick")
+            if (target && ref === values[target.key])
+                return
+            const list = (values[pickKey] || []).filter(t => JSON.stringify(t) !== JSON.stringify(ref))
+            if (list.length === (values[pickKey] || []).length)
+                list.push(ref) // a second click on a picked tool removes it
+            setValue(pickKey, list)
+            return
+        }
         if (field.type === "planePick") {
             if (part.kind === "plane")
                 setValue(pickKey, { plane: part.featureId })
@@ -473,6 +509,8 @@ Pane {
                         case "sketch": return sketchEditor
                         case "body": return bodyEditor
                         case "bodyList": return bodyListEditor
+                        case "targetPick": return namedPickEditor
+                        case "toolPicks": return namedPickEditor
                         case "sketchList": return sketchListEditor
                         case "pathSketch": return pathSketchEditor
                         case "planePick": return planeEditor
@@ -623,6 +661,43 @@ Pane {
             valueRole: "id"
             currentIndex: root.values[field.key] ? root.timeline.bodies.findIndex(b => b.id === root.values[field.key][0]) : -1
             onActivated: root.setValue(field.key, [currentValue])
+        }
+    }
+    /// Name of a picked body (feature id) or part ({part: id}).
+    function pickName(ref) {
+        if (typeof ref === "object" && ref)
+            return controller.partInfo(ref.part).name || qsTr("Part %1").arg(ref.part)
+        const b = (timeline.bodies || []).find(b => b.id === ref)
+        if (b)
+            return b.name
+        // A body made a moment ago (a solid made editable on the way): not in the timeline
+        // snapshot yet.
+        const r = controller.execute("document.parts")
+        const p = r.ok ? r.result.parts.find(p => p.kind === "body" && p.featureId === ref) : null
+        return p ? p.name : String(ref)
+    }
+
+    Component {
+        id: namedPickEditor
+        // Bodies picked in the viewport, by name (Combine target and tools).
+        RowLayout {
+            property var field: parent ? parent.field : ({})
+            readonly property var picked: {
+                const v = root.values[field.key]
+                return v === undefined ? [] : Array.isArray(v) ? v : [v]
+            }
+            Button {
+                Layout.fillWidth: true
+                checkable: true
+                checked: root.pickKey === field.key
+                text: picked.length > 0 ? picked.map(r => root.pickName(r)).join(", ") : field.hint
+                onClicked: root.pickKey = field.key
+            }
+            ToolButton {
+                text: "✕"
+                visible: picked.length > 0
+                onClicked: root.setValue(field.key, undefined)
+            }
         }
     }
     Component {

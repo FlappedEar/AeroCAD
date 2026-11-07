@@ -5,6 +5,8 @@
 #include "aerocad/cad/SketchSolver.hpp"
 #include "aerocad/core/MeshSelection.hpp"
 #include "aerocad/geometry/Modeling.hpp"
+#include "aerocad/geometry/Offset.hpp"
+#include "aerocad/geometry/SurfaceFit.hpp"
 #include "aerocad/geometry/Tessellation.hpp"
 #include "aerocad/geometry/Transform.hpp"
 
@@ -64,6 +66,53 @@ bool isValidParameterName(const std::string& n)
 }
 
 } // namespace
+
+geometry::Shape Design::scanSurfaceUnder(const model::Part& scan, const core::BoundingBox& body)
+{
+    // The scan around the body: the body's box grown by a margin, so the fitted surface
+    // reaches past the body on every side.
+    const core::Vec3 size = body.max - body.min;
+    const double margin = 0.15 * size.length() + 3.0;
+    core::BoundingBox region;
+    region.extend(body.min - core::Vec3{margin, margin, margin});
+    region.extend(body.max + core::Vec3{margin, margin, margin});
+    for (const auto& c : m_scanSurfaces) {
+        if (c.part == scan.id && c.revision == scan.revision && (c.region.min - region.min).length() < 1e-6 &&
+            (c.region.max - region.max).length() < 1e-6)
+            return c.face;
+    }
+    const auto& vertices = scan.mesh->vertices();
+    auto inside = [&](const core::Vec3& v) {
+        return v.x >= region.min.x && v.x <= region.max.x && v.y >= region.min.y && v.y <= region.max.y &&
+               v.z >= region.min.z && v.z <= region.max.z;
+    };
+    core::TriangleSet near;
+    const auto& triangles = scan.mesh->triangles();
+    for (std::size_t i = 0; i < triangles.size(); ++i) {
+        const auto& t = triangles[i];
+        if (inside(vertices[t[0]]) && inside(vertices[t[1]]) && inside(vertices[t[2]]))
+            near.push_back(static_cast<std::uint32_t>(i));
+    }
+    if (near.size() < 10)
+        throw DesignError("The scan '" + scan.name + "' does not reach the body");
+    constexpr std::size_t maxTriangles = 200000;
+    if (near.size() > maxTriangles)
+        throw DesignError("The scan around the body is too dense to fit (" + std::to_string(near.size()) +
+                          " triangles, at most " + std::to_string(maxTriangles) +
+                          "); reduce it first (Scan > Simplify)");
+    geometry::SurfaceFitResult fit;
+    try {
+        fit = geometry::fitSurface(*scan.mesh, near);
+    } catch (const geometry::SurfaceFitError& e) {
+        throw DesignError(std::string("Could not fit a surface to the scan under the body: ") + e.what());
+    }
+    if (fit.face.isNull())
+        throw DesignError("Could not fit a surface to the scan under the body");
+    if (m_scanSurfaces.size() >= 8)
+        m_scanSurfaces.erase(m_scanSurfaces.begin());
+    m_scanSurfaces.push_back({scan.id, scan.revision, region, fit.face});
+    return fit.face;
+}
 
 std::string_view toString(FeatureStatus::State state)
 {
@@ -853,19 +902,61 @@ void Design::evaluateFeature(const Feature& f)
         else
             throw DesignError("Unknown operation '" + op + "' (join, cut, intersect)");
         const bool keepTools = p.value("keepTools", false);
+        const bool flip = p.value("flip", false);
         std::vector<FeatureId> tools;
+        // Imported parts as tools: exact solids are used as they are; surfaces and scans
+        // cut the target on one side (Fusion: Split Body, keeping one side).
+        std::vector<const model::Part*> partTools;
         for (const auto& ref : required(p, "tools")) {
+            if (ref.is_object() && has(ref, "part")) {
+                const auto partId = ref.at("part").get<model::PartId>();
+                const model::Part* part = m_partLookup ? m_partLookup(partId) : nullptr;
+                if (part == nullptr)
+                    throw DesignError("No part with id " + std::to_string(partId));
+                if (part->kind != model::PartKind::Imported)
+                    throw DesignError("Part '" + part->name + "' is a timeline part: use its body as the tool");
+                partTools.push_back(part);
+                continue;
+            }
             const Body& t = bodyRef(ref);
             if (t.id == target.id)
                 throw DesignError("A body cannot be combined with itself");
             if (std::find(tools.begin(), tools.end(), t.id) == tools.end())
                 tools.push_back(t.id);
         }
-        if (tools.empty())
+        if (tools.empty() && partTools.empty())
             throw DesignError("Select at least one tool body");
         geometry::Shape result = target.shape;
         for (const FeatureId t : tools)
             result = geometry::boolean(result, m_bodies.at(t).shape, bop);
+        for (const model::Part* part : partTools) {
+            if (result.isNull())
+                break;
+            const bool solidTool = part->shape && !part->shape->isNull() && part->shape->solidCount() > 0;
+            if (solidTool) {
+                result = geometry::boolean(result, *part->shape, bop);
+                continue;
+            }
+            if (bop == geometry::BooleanOp::Union)
+                throw DesignError("'" + part->name +
+                                  "' is a surface or scan and has no volume to join: use Cut (removes what is "
+                                  "behind it) or Intersect (keeps what is behind it)");
+            geometry::Shape surface;
+            if (part->shape && !part->shape->isNull())
+                surface = *part->shape;
+            else if (part->mesh)
+                surface = scanSurfaceUnder(*part, result.bounds());
+            else
+                throw DesignError("Part '" + part->name + "' has no geometry");
+            // Cut keeps what is in front of the surface (outside the scan), Intersect what
+            // is behind it; flip swaps the sides.
+            const bool keepFront = (bop == geometry::BooleanOp::Cut) != flip;
+            try {
+                result = geometry::splitBySurface(result, surface, keepFront);
+            } catch (const geometry::OffsetError& e) {
+                throw DesignError(e.what());
+            }
+        }
         const FeatureId targetId = target.id;
         if (!keepTools) {
             for (const FeatureId t : tools)
@@ -1180,6 +1271,7 @@ void Design::clear()
     m_sketchConsumed.clear();
     m_partMeta.clear();
     m_convertedParts.clear();
+    m_scanSurfaces.clear();
     regenerate();
 }
 

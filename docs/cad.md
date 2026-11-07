@@ -30,6 +30,15 @@ use the same operations, and every change is one undo step.
 - **Exact solids outside the timeline** (fins, fitted solids, STEP imports) can be filleted,
   chamfered, shelled and drilled directly in the UI: the dialog makes them editable
   (`feature.base_body`) on the way.
+- **Combine with parts outside the timeline**: a tool can be any imported part. An exact
+  solid (a fin, a STEP part) is joined, cut or intersected like a body. A surface or a scan
+  cuts the target on one side, like Fusion's Split Body keeping one piece: Cut removes what
+  is behind the surface (inside the scan, against its triangles' normals), so a part sits
+  flush on the car; Intersect keeps only that; `flip` swaps the sides. For a scan, a smooth
+  B-spline surface is fitted to the scan around the target (its box plus a margin, at most
+  200 000 triangles) and cached, so the cut face is clean, not faceted.
+  In the UI: Combine, click the target, then click the tools (bodies, solids, a surface or
+  the scan); with a scan or surface selected, "Cut a part to this shape" presets it as the tool.
 - **Marker**: `timeline.set_marker` rolls the model back; new features are inserted at it.
 - Failing features: a new or edited feature that fails is rejected (nothing changes).
   Features that break because of an earlier change stay in the timeline with
@@ -57,7 +66,7 @@ use the same operations, and every change is one undo step.
 | `feature.chamfer` | Chamfer | `edges`, `type` equal_distance (default) / two_distances (`distance`, `distance2`) / distance_angle (`distance`, `angle`), `flip` swaps the first face |
 | `feature.shell` | Shell | `faces` to remove, `thickness` |
 | `feature.hole` | Hole (H) | `point` on a planar face, `diameter`, `depth` or through all |
-| `feature.combine` | Combine | `target`, `tools`, join / cut / intersect, `keepTools` |
+| `feature.combine` | Combine, Split Body | `target`, `tools` (bodies, or imported parts `{part: id}`), join / cut / intersect, `keepTools`, `flip` |
 | `feature.box`, `feature.cylinder` | Box, Cylinder | primitives with an operation |
 | `feature.base_body` | Mesh to BRep / base feature | imported part as a body: B-rep as is, meshes as faceted B-rep (coplanar triangles merged, max 50 000 triangles) |
 | `feature.edit` / `rename` / `suppress` / `delete` | timeline context menu | edit = JSON merge patch of params |
