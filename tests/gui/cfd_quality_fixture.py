@@ -50,6 +50,7 @@ def main():
         # Deliberately mark both fixtures finished: status alone must not imply quality OK.
         (case / "aerocad.stage").write_text("done\n")
         (case / "aerocad.status").write_text("finished\n")
+        (case / "aerocad.engine").write_text("v2506\n")
 
     lines = ["# Synthetic result presentation only; no solver was run.", "ui.wait(800)",
              'ui.clickText("SIMULATE")', "ui.wait(250)", 'ui.clickText("Wind Tunnel")', "ui.wait(700)"]
