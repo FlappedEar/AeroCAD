@@ -231,6 +231,7 @@ conditions except the mesh level are equal.
 ## Tests
 
 `ctest -L openfoam` runs a box through the whole pipeline in OpenFOAM (about a minute
-with Docker; skipped when no engine is found). It is not part of the CI gate. The unit
+with Docker; skipped when no engine is found). On macOS its case goes under `~/.aerocad/test-runs/`,
+because the engine's VM shares only the home directory, not `$TMPDIR`. It is not part of the CI gate. The unit
 tests (`test_cfd`, `test_commands`) cover case generation, parsing, quality checks, the
 run manager and the commands without an engine.

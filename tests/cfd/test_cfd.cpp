@@ -9,6 +9,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <random>
@@ -21,12 +22,24 @@ namespace fs = std::filesystem;
 
 namespace {
 
+// Case directories are mounted into the engine's container. On macOS the engine's Linux VM
+// (Colima, Docker Desktop) shares only the home directory by default, not $TMPDIR
+// (/var/folders/...), so cases go under the home directory there.
+fs::path caseTempRoot()
+{
+#ifdef __APPLE__
+    if (const char* home = std::getenv("HOME"); home != nullptr && *home != '\0')
+        return fs::path(home) / ".aerocad" / "test-runs";
+#endif
+    return fs::temp_directory_path();
+}
+
 class TempDir {
 public:
     TempDir()
     {
         std::random_device rd;
-        m_path = fs::temp_directory_path() / ("aerocad_cfd_" + std::to_string(rd()));
+        m_path = caseTempRoot() / ("aerocad_cfd_" + std::to_string(rd()));
         fs::create_directories(m_path);
     }
     ~TempDir()
