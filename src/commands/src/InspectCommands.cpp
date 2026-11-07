@@ -49,6 +49,66 @@ void InspectState::clear()
     changed();
 }
 
+std::uint64_t InspectState::addDimension(Dimension dimension)
+{
+    dimension.id = m_nextDimension++;
+    m_dimensions.push_back(std::move(dimension));
+    changed();
+    return m_dimensions.back().id;
+}
+
+bool InspectState::removeDimension(std::uint64_t id)
+{
+    const auto it = std::find_if(m_dimensions.begin(), m_dimensions.end(), [id](const Dimension& d) { return d.id == id; });
+    if (it == m_dimensions.end())
+        return false;
+    m_dimensions.erase(it);
+    changed();
+    return true;
+}
+
+void InspectState::setDimensions(std::vector<Dimension> dimensions)
+{
+    m_dimensions = std::move(dimensions);
+    m_nextDimension = 1;
+    for (auto& d : m_dimensions) {
+        if (d.id == 0)
+            d.id = m_nextDimension;
+        m_nextDimension = std::max(m_nextDimension, d.id + 1);
+    }
+    changed();
+}
+
+nlohmann::json dimensionsToJson(const std::vector<Dimension>& dimensions)
+{
+    Json list = Json::array();
+    for (const Dimension& d : dimensions) {
+        Json j{{"id", d.id}, {"show", d.show}, {"a", d.a}};
+        if (!d.b.is_null())
+            j["b"] = d.b;
+        list.push_back(std::move(j));
+    }
+    return list;
+}
+
+std::vector<Dimension> dimensionsFromJson(const nlohmann::json& list)
+{
+    std::vector<Dimension> out;
+    if (!list.is_array())
+        return out;
+    for (const Json& j : list) {
+        if (!j.is_object() || !j.contains("a") || !j["a"].is_object())
+            continue; // a damaged entry is dropped, not the whole project
+        Dimension d;
+        d.id = j.value("id", std::uint64_t{0});
+        d.show = j.value("show", std::string("distance"));
+        d.a = j["a"];
+        d.b = j.contains("b") ? j["b"] : Json();
+        out.push_back(std::move(d));
+    }
+    return out;
+}
+
 void InspectState::changed()
 {
     ++m_revision;
@@ -679,6 +739,69 @@ Json heatMapJson(const HeatMap& h)
     return j;
 }
 
+Json measure(CommandContext& ctx, const Json& params)
+{
+    const Entity a = resolveEntity(ctx, params["a"], "a");
+    Json out{{"a", entityToJson(a)}};
+    if (!params.contains("b")) {
+        if (const auto t = thicknessAt(ctx, a))
+            out["thickness"] = Json{{"value", round9(t->distance)},
+                                    {"pointA", vec(t->pointA)},
+                                    {"pointB", vec(t->pointB)}};
+        return out;
+    }
+    const Entity b = resolveEntity(ctx, params["b"], "b");
+    out["b"] = entityToJson(b);
+    const Separation s = separation(ctx, a, b);
+    out["distance"] = round9(s.distance);
+    out["pointA"] = vec(s.a);
+    out["pointB"] = vec(s.b);
+    out["delta"] = vec({round9(s.b.x - s.a.x), round9(s.b.y - s.a.y), round9(s.b.z - s.a.z)});
+    out["method"] = s.method;
+    if (const auto angle = entityAngle(a, b))
+        out["angle"] = round9(*angle);
+    return out;
+}
+
+/// A kept dimension measured now: {id, show, a, b, value, unit, pointA, pointB} or, when a
+/// selection no longer resolves (the part is gone), {id, show, error}.
+Json dimensionJson(CommandContext& ctx, const Dimension& d)
+{
+    Json out{{"id", d.id}, {"show", d.show}, {"a", d.a}};
+    if (!d.b.is_null())
+        out["b"] = d.b;
+    Json params{{"a", d.a}};
+    if (!d.b.is_null())
+        params["b"] = d.b;
+    Json m;
+    try {
+        m = measure(ctx, params);
+    } catch (const std::exception& e) {
+        out["error"] = e.what();
+        return out;
+    }
+    auto set = [&](double value, const Json& pa, const Json& pb, const std::string& unit) {
+        out["value"] = value;
+        out["pointA"] = pa;
+        out["pointB"] = pb;
+        out["unit"] = unit;
+    };
+    const Json& first = m.at("a");
+    if (d.show == "distance" && m.contains("distance"))
+        set(m["distance"], m["pointA"], m["pointB"], "mm");
+    else if (d.show == "angle" && m.contains("angle"))
+        set(m["angle"], m["pointA"], m["pointB"], "deg");
+    else if (d.show == "thickness" && m.contains("thickness"))
+        set(m["thickness"]["value"], m["thickness"]["pointA"], m["thickness"]["pointB"], "mm");
+    else if (d.show == "radius" && first.contains("radius"))
+        set(first["radius"], first["position"], first["position"], "mm");
+    else if (d.show == "length" && first.contains("length"))
+        set(first["length"], first["position"], first["position"], "mm");
+    else
+        out["error"] = "The selection no longer has a " + d.show;
+    return out;
+}
+
 void registerMeasure(CommandRegistry& r)
 {
     r.add({"inspect.measure", "Measure",
@@ -690,28 +813,7 @@ void registerMeasure(CommandRegistry& r)
            "Exact on B-rep parts and sketch curves; on meshes (scans) distances are to the triangle surface.",
            objectSchema({{"a", entitySchema("First selection.")}, {"b", entitySchema("Second selection (optional).")}},
                         {"a"})},
-          [](CommandContext& ctx, const Json& params) {
-              const Entity a = resolveEntity(ctx, params["a"], "a");
-              Json out{{"a", entityToJson(a)}};
-              if (!params.contains("b")) {
-                  if (const auto t = thicknessAt(ctx, a))
-                      out["thickness"] = Json{{"value", round9(t->distance)},
-                                              {"pointA", vec(t->pointA)},
-                                              {"pointB", vec(t->pointB)}};
-                  return out;
-              }
-              const Entity b = resolveEntity(ctx, params["b"], "b");
-              out["b"] = entityToJson(b);
-              const Separation s = separation(ctx, a, b);
-              out["distance"] = round9(s.distance);
-              out["pointA"] = vec(s.a);
-              out["pointB"] = vec(s.b);
-              out["delta"] = vec({round9(s.b.x - s.a.x), round9(s.b.y - s.a.y), round9(s.b.z - s.a.z)});
-              out["method"] = s.method;
-              if (const auto angle = entityAngle(a, b))
-                  out["angle"] = round9(*angle);
-              return out;
-          });
+          [](CommandContext& ctx, const Json& params) { return measure(ctx, params); });
 
     r.add({"inspect.clearance", "Clearance",
            "Minimum clearance between two parts and the closest points. For two B-rep solids also reports "
@@ -724,6 +826,78 @@ void registerMeasure(CommandRegistry& r)
               if (ida == idb)
                   throw CommandError("Clearance needs two different parts");
               return measureClearance(ctx, requirePart(ctx.document, ida), requirePart(ctx.document, idb));
+          });
+
+    r.add({"inspect.add_dimension", "Keep Dimension",
+           "Keeps a measurement in the 3D view as a dimension (Measure > Keep in view): the selections as for "
+           "inspect.measure and what to show (distance or angle between two selections; thickness, radius or "
+           "length of one). The value is measured again whenever it is shown, so it follows edits, and it is "
+           "saved with the project. Fails when the selections do not give that value now.",
+           objectSchema({{"a", entitySchema("First selection.")},
+                         {"b", entitySchema("Second selection (distance, angle).")},
+                         {"show", {{"type", "string"},
+                                   {"enum", {"distance", "angle", "thickness", "radius", "length"}},
+                                   {"description", "Default: distance with two selections, else thickness."}}}},
+                        {"a"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              Dimension d;
+              d.a = params.at("a");
+              d.b = params.contains("b") ? params.at("b") : Json();
+              d.show = params.value("show", d.b.is_null() ? "thickness" : "distance");
+              const bool two = !d.b.is_null();
+              if (two != (d.show == "distance" || d.show == "angle"))
+                  throw CommandError(two ? "With two selections show a distance or an angle"
+                                         : "With one selection show a thickness, radius or length");
+              Json check = dimensionJson(ctx, d);
+              if (check.contains("error"))
+                  throw CommandError(check["error"].get<std::string>());
+              // Keep what was picked (the edge, not "whatever is near the click"), so the
+              // dimension stays on the same kind of element when the model changes.
+              const Json measured = measure(ctx, two ? Json{{"a", d.a}, {"b", d.b}} : Json{{"a", d.a}});
+              for (auto [sel, key] : {std::pair{&d.a, "a"}, std::pair{&d.b, "b"}}) {
+                  if (sel->is_null() || !sel->contains("point") || sel->value("pick", "auto") != "auto")
+                      continue;
+                  const std::string kind = measured.at(key).value("kind", "");
+                  if (kind == "vertex" || kind == "edge" || kind == "face") {
+                      (*sel)["pick"] = kind;
+                      sel->erase("tolerance");
+                  }
+              }
+              check["a"] = d.a;
+              if (two)
+                  check["b"] = d.b;
+              d.id = state(ctx).addDimension(d);
+              check["id"] = d.id;
+              return check;
+          });
+
+    r.add({"inspect.dimensions", "Dimensions",
+           "The dimensions kept in the view, each measured now: id, show, value with unit (mm or deg) and the "
+           "points it is drawn between; error instead when a selection is gone.",
+           objectSchema(Json::object())},
+          [](CommandContext& ctx, const Json&) {
+              Json list = Json::array();
+              for (const Dimension& d : state(ctx).dimensions())
+                  list.push_back(dimensionJson(ctx, d));
+              return Json{{"dimensions", list}};
+          });
+
+    r.add({"inspect.remove_dimension", "Remove Dimension",
+           "Removes a kept dimension by id, or all of them (all: true).",
+           objectSchema({{"id", {{"type", "integer"}, {"minimum", 1}}}, {"all", {{"type", "boolean"}}}}), true},
+          [](CommandContext& ctx, const Json& params) {
+              InspectState& st = state(ctx);
+              if (params.value("all", false)) {
+                  const auto n = st.dimensions().size();
+                  st.setDimensions({});
+                  return Json{{"removed", n}};
+              }
+              if (!params.contains("id"))
+                  throw CommandError("Give the id of the dimension, or all: true");
+              if (!st.removeDimension(params.at("id").get<std::uint64_t>()))
+                  throw CommandError("No dimension with id " + std::to_string(params.at("id").get<std::uint64_t>()));
+              return Json{{"removed", 1}};
           });
 }
 

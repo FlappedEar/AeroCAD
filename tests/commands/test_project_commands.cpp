@@ -308,3 +308,63 @@ TEST_CASE("Imported parts can be duplicated", "[commands][project]")
     run(s, "edit.undo");
     CHECK(s.document().partCount() == 1);
 }
+
+TEST_CASE("Kept dimensions follow edits and are saved with the project", "[commands][project][inspect]")
+{
+    TempDir dir;
+    commands::Session s;
+    const Json box = run(s, "feature.box", {{"size", {40, 30, 6}}});
+    model::PartId part = 0;
+    for (const auto& p : s.document().parts())
+        if (p.kind == model::PartKind::Body)
+            part = p.id;
+    REQUIRE(part != 0);
+
+    // Thickness under the top face, and the distance between the end faces.
+    const Json t = run(s, "inspect.add_dimension", {{"a", {{"part", part}, {"pick", "face"}, {"point", {20, 15, 6}}}}});
+    CHECK(t["show"] == "thickness");
+    CHECK(t["value"].get<double>() == Approx(6));
+    const Json d = run(s, "inspect.add_dimension",
+                       {{"a", {{"part", part}, {"pick", "face"}, {"point", {0, 15, 3}}}},
+                        {"b", {{"part", part}, {"pick", "face"}, {"point", {40, 15, 3}}}}});
+    CHECK(d["value"].get<double>() == Approx(40));
+    CHECK(d["unit"] == "mm");
+    // What a selection cannot give is refused.
+    CHECK_FALSE(s.execute("inspect.add_dimension", {{"a", {{"part", part}, {"pick", "face"}, {"point", {20, 15, 6}}}},
+                                                    {"show", "radius"}})
+                    .ok);
+    CHECK_FALSE(s.execute("inspect.add_dimension", {{"a", {{"point", {0, 0, 0}}}}, {"show", "distance"}}).ok);
+    CHECK(run(s, "project.info").at("dirty").get<bool>());
+
+    // A thicker box: the kept thickness follows.
+    run(s, "feature.edit", {{"id", box.at("id")}, {"params", {{"size", {40, 30, 8}}}}});
+    Json list = run(s, "inspect.dimensions")["dimensions"];
+    REQUIRE(list.size() == 2);
+    CHECK(list[0]["value"].get<double>() == Approx(8));
+    CHECK(list[1]["value"].get<double>() == Approx(40));
+
+    const std::string path = dir.file("dims.aerocad");
+    run(s, "project.save", {{"path", path}, {"view", {{"camera", {{"distance", 100}}}}}});
+    run(s, "project.new");
+    CHECK(run(s, "inspect.dimensions")["dimensions"].empty());
+    const Json opened = run(s, "project.open", {{"path", path}});
+    CHECK(opened["view"]["camera"]["distance"] == 100);
+    list = run(s, "inspect.dimensions")["dimensions"];
+    REQUIRE(list.size() == 2);
+    CHECK(list[0]["value"].get<double>() == Approx(8));
+
+    // Removing one, then all; a new dimension does not reuse an id.
+    run(s, "inspect.remove_dimension", {{"id", list[0]["id"]}});
+    CHECK(run(s, "inspect.dimensions")["dimensions"].size() == 1);
+    const Json again = run(s, "inspect.add_dimension", {{"a", {{"part", part}, {"pick", "face"}, {"point", {20, 15, 8}}}}});
+    CHECK(again["id"].get<std::uint64_t>() > list[1]["id"].get<std::uint64_t>());
+    CHECK(run(s, "inspect.remove_dimension", {{"all", true}})["removed"] == 2);
+    CHECK_FALSE(s.execute("inspect.remove_dimension", {{"id", 99}}).ok);
+
+    // A gone part shows an error instead of a value.
+    run(s, "inspect.add_dimension", {{"a", {{"part", part}, {"pick", "face"}, {"point", {20, 15, 8}}}}});
+    run(s, "feature.delete", {{"id", box.at("id")}});
+    list = run(s, "inspect.dimensions")["dimensions"];
+    REQUIRE(list.size() == 1);
+    CHECK(list[0].contains("error"));
+}

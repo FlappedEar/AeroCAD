@@ -24,6 +24,78 @@ Pane {
     property var result: null
     property string error: ""
 
+    /// Dimensions kept in the view (inspect.dimensions), measured again after every change.
+    property var kept: []
+    /// Kept dimensions as viewport overlay lines; shown whether the panel is open or not.
+    readonly property var keptLines: kept.filter(d => d.value !== undefined).map(d => ({
+        a: d.pointA, b: d.pointB, label: dimensionLabel(d), color: "#1f6fd1"
+    }))
+
+    function refreshKept() {
+        const r = controller.execute("inspect.dimensions", {})
+        kept = r.ok ? r.result.dimensions : []
+    }
+
+    function dimensionLabel(d) {
+        if (d.value === undefined)
+            return ""
+        if (d.show === "angle")
+            return fmt(d.value) + "°"
+        const prefix = d.show === "thickness" ? "t " : d.show === "radius" ? "R " : d.show === "length" ? "L " : ""
+        return prefix + fmt(d.value) + " mm"
+    }
+
+    function dimensionName(d) {
+        const what = d.show === "distance" ? qsTr("Distance") : d.show === "angle" ? qsTr("Angle")
+                   : d.show === "thickness" ? qsTr("Thickness") : d.show === "radius" ? qsTr("Radius") : qsTr("Length")
+        return what + ": " + (d.value !== undefined ? dimensionLabel(d) : qsTr("not found"))
+    }
+
+    /// What "Keep in view" keeps for the current result: distance for two selections,
+    /// otherwise the thickness, radius or length of the one.
+    readonly property string keepShow: {
+        if (!result)
+            return ""
+        if (selB)
+            return result.distance !== undefined ? "distance" : ""
+        if (result.thickness)
+            return "thickness"
+        if (result.a && result.a.radius !== undefined)
+            return "radius"
+        if (result.a && result.a.length !== undefined)
+            return "length"
+        return ""
+    }
+
+    function keep(show) {
+        if (!selA || !show)
+            return
+        const params = { a: strip(selA), show: show }
+        if (selB)
+            params.b = strip(selB)
+        const r = controller.execute("inspect.add_dimension", params)
+        if (r.ok) {
+            refreshKept()
+            restart()
+        } else {
+            error = r.error
+        }
+    }
+
+    function removeKept(id) {
+        const params = id ? { id: id } : { all: true }
+        controller.execute("inspect.remove_dimension", params)
+        refreshKept()
+    }
+
+    Connections {
+        target: root.controller
+        function onInspectChanged() { root.refreshKept() }
+        function onHistoryChanged() { root.refreshKept() }
+        function onBoundsChanged() { root.refreshKept() }
+    }
+    Component.onCompleted: refreshKept()
+
     /// Lines for the viewport overlay.
     readonly property var overlayLines: {
         if (!active || !result)
@@ -274,6 +346,54 @@ Pane {
             wrapMode: Text.WordWrap
             Layout.fillWidth: true
         }
+        RowLayout {
+            visible: root.keepShow !== ""
+            Button {
+                text: qsTr("Keep in view")
+                highlighted: true
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Keep this %1 as a dimension in the view; it updates when the model changes and is saved with the project").arg(root.keepShow)
+                onClicked: root.keep(root.keepShow)
+            }
+            Button {
+                visible: !!root.result && root.result.angle !== undefined
+                text: qsTr("Keep angle")
+                onClicked: root.keep("angle")
+            }
+        }
+
+        // Dimensions kept in the view.
+        Label {
+            visible: root.kept.length > 0
+            text: qsTr("In the view")
+            font.bold: true
+        }
+        Repeater {
+            model: root.kept
+            delegate: RowLayout {
+                required property var modelData
+                Layout.fillWidth: true
+                Label {
+                    Layout.fillWidth: true
+                    elide: Text.ElideRight
+                    text: root.dimensionName(modelData)
+                    color: modelData.value !== undefined ? palette.text : "#c62828"
+                }
+                ToolButton {
+                    text: "✕"
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Remove from the view")
+                    onClicked: root.removeKept(modelData.id)
+                }
+            }
+        }
+        Button {
+            visible: root.kept.length > 1
+            text: qsTr("Remove all")
+            flat: true
+            onClicked: root.removeKept(0)
+        }
+
         RowLayout {
             Button { text: qsTr("Restart"); onClicked: root.restart() }
             Item { Layout.fillWidth: true }

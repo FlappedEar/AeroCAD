@@ -59,6 +59,17 @@ Json projectInfo(CommandContext& ctx)
     return j;
 }
 
+/// Kept dimensions go into the (otherwise UI-owned) view object of the file.
+void storeDimensions(const CommandContext& ctx, Json& view)
+{
+    if (!view.is_object())
+        view = Json::object();
+    if (ctx.inspect != nullptr && !ctx.inspect->dimensions().empty())
+        view["dimensions"] = dimensionsToJson(ctx.inspect->dimensions());
+    else
+        view.erase("dimensions");
+}
+
 /// Collects the current session as project data.
 project::ProjectData snapshot(CommandContext& ctx)
 {
@@ -80,6 +91,7 @@ project::ProjectData snapshot(CommandContext& ctx)
     data.design = ctx.design->state();
     data.variants = p.variants;
     data.view = p.view;
+    storeDimensions(ctx, data.view);
     data.generator = p.generator;
     return data;
 }
@@ -115,6 +127,13 @@ void applyProject(CommandContext& ctx, project::ProjectData data)
     ProjectState& p = projectState(ctx);
     p.variants = std::move(data.variants);
     p.view = std::move(data.view);
+    if (ctx.inspect != nullptr) {
+        // Analyses belong to the project shown: a new or opened one starts without any.
+        ctx.inspect->clear();
+        ctx.inspect->setDimensions(p.view.is_object() && p.view.contains("dimensions")
+                                       ? dimensionsFromJson(p.view["dimensions"])
+                                       : std::vector<Dimension>{});
+    }
 }
 
 /// Marks the project as just opened / saved: nothing unsaved.
@@ -175,8 +194,10 @@ void registerFileCommands(CommandRegistry& r)
                                           : "The project has no file yet: give a path (Save As)");
               const std::filesystem::path path = withExtension(target);
               project::ProjectData data = snapshot(ctx);
-              if (params.contains("view"))
+              if (params.contains("view")) {
                   data.view = params.at("view");
+                  storeDimensions(ctx, data.view);
+              }
               if (copy)
                   data.originalPath = p.path;
               std::string bytes;

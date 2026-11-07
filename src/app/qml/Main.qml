@@ -1289,7 +1289,7 @@ ApplicationWindow {
             unpickablePlane: featureDialog.visible ? featureDialog.ownPlane : -1
             simulationFields: window.simulationVisible ? simulationPanel.viewportFields : []
             hiddenPartIds: window.simulationVisible ? simulationPanel.hiddenPartIds : []
-            overlayLines: measurePanel.overlayLines
+            overlayLines: measurePanel.keptLines.concat(measurePanel.overlayLines)
             pickSketchLines: measurePanel.active
             onSectionDragged: delta => sectionPanel.moveBy(delta)
             onPartPicked: id => {
