@@ -1322,7 +1322,8 @@ void Design::evaluateExternal(const Feature& f, const FeatureEvaluator& ev)
         const auto& [shape, name] = out->bodies[k];
         if (shape.isNull())
             continue;
-        const FeatureId id = k == 0 ? f.id : extraBodyId(f.id, static_cast<unsigned>(k));
+        const unsigned slot = k < out->bodySlots.size() ? out->bodySlots[k] : static_cast<unsigned>(k);
+        const FeatureId id = slot == 0 ? f.id : extraBodyId(f.id, slot);
         m_bodies[id] = Body{id, name, shape};
     }
     m_reports[f.id] = out->report;

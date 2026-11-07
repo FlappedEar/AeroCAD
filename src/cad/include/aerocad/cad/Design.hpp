@@ -91,6 +91,9 @@ struct FeatureEvaluator {
     struct Output {
         /// Bodies made, first one first; each with its default name.
         std::vector<std::pair<geometry::Shape, std::string>> bodies;
+        /// Stable slot of each body (its id is extraBodyId(feature, slot), slot 0 the feature
+        /// id), so a body keeps its id when bodies before it come and go. Empty: by position.
+        std::vector<unsigned> bodySlots;
         Json report;
     };
     /// Fingerprint of the document inputs (parts the feature reads, by content); with the

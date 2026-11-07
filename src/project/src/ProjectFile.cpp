@@ -189,7 +189,10 @@ std::string encodeProject(const ProjectData& data)
                 continue;
             const std::string entry = "results/" + std::to_string(r.feature) + "-" + std::to_string(k) + ".brep";
             blobs.emplace_back(entry, geometry::toBrep(shape));
-            bodies.push_back({{"name", name}, {"brep", entry}});
+            Json body{{"name", name}, {"brep", entry}};
+            if (k < r.output.bodySlots.size())
+                body["slot"] = r.output.bodySlots[k];
+            bodies.push_back(std::move(body));
         }
         results.push_back({{"feature", r.feature}, {"key", r.key}, {"report", r.output.report}, {"bodies", bodies}});
     }
@@ -328,7 +331,11 @@ ProjectData decodeImpl(std::string_view bytes)
                 if (shape.isNull())
                     throw ProjectError("invalid B-rep");
                 r.output.bodies.emplace_back(std::move(shape), b.value("name", ""));
+                if (b.contains("slot"))
+                    r.output.bodySlots.push_back(b.at("slot").get<unsigned>());
             }
+            if (!r.output.bodySlots.empty() && r.output.bodySlots.size() != r.output.bodies.size())
+                throw ProjectError("slots do not match bodies");
             if (!r.output.bodies.empty())
                 data.timelineResults.push_back(std::move(r));
         } catch (const std::exception&) {

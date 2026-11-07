@@ -293,6 +293,9 @@ const model::Part* standingPart(const model::Document& doc, const cad::Design& d
     return &scratch;
 }
 
+/// First body slot of mirrored fins (see FeatureEvaluator::Output::bodySlots).
+constexpr std::size_t kMirrorSlot = 1000;
+
 /// part_on_surface: the solid of surface.part_from_sketch (see its description).
 cad::FeatureEvaluator::Output partOnSurface(const model::Document& doc, const cad::Design& d, const Json& params)
 {
@@ -635,6 +638,7 @@ cad::FeatureEvaluator::Output finOnSurface(const model::Document& doc, const cad
 
     const std::string baseName = params.value("name", sk.name + " fin");
     std::vector<std::pair<geometry::Shape, std::string>> fins;
+    std::vector<unsigned> bodySlots;
     std::vector<double> fillets;
     for (std::size_t k = 0; k < placements.size(); ++k) {
         double applied = 0.0;
@@ -645,6 +649,9 @@ cad::FeatureEvaluator::Output finOnSurface(const model::Document& doc, const cad
             if (!mirrorReport.is_null())
                 name += mirroredFin ? " (mirror)" : "";
             fins.emplace_back(makeFin(placements[k], applied), name);
+            // Each fin keeps its id when the count changes or a fin before it fails:
+            // its place in the stack, mirrored fins from slot 1000.
+            bodySlots.push_back(static_cast<unsigned>(mirroredFin ? kMirrorSlot + n : n));
         } catch (const CommandError& e) {
             if (k == 0)
                 throw;
@@ -655,6 +662,7 @@ cad::FeatureEvaluator::Output finOnSurface(const model::Document& doc, const cad
     }
     cad::FeatureEvaluator::Output out;
     out.bodies = std::move(fins);
+    out.bodySlots = std::move(bodySlots);
     Json perFin = Json::array();
     for (std::size_t k = 0; k < out.bodies.size(); ++k)
         perFin.push_back({{"rootFillet", fillets[k]}, {"volume", out.bodies[k].first.volume()}});
@@ -719,17 +727,14 @@ Json addSurfaceFeature(CommandContext& ctx, const std::string& type, const Json&
                         }});
 
     // The bodies' parts, first one first, with what the feature reports.
+    std::vector<const model::Part*> made;
+    for (const auto& q : doc.parts())
+        if (q.kind == model::PartKind::Body && cad::featureOfBody(q.featureId) == id)
+            made.push_back(&q);
+    std::sort(made.begin(), made.end(), [](const model::Part* a, const model::Part* b) { return a->featureId < b->featureId; });
     std::vector<Json> parts;
-    for (unsigned k = 0;; ++k) {
-        const cad::FeatureId body = k == 0 ? id : cad::extraBodyId(id, k);
-        const model::Part* p = nullptr;
-        for (const auto& q : doc.parts())
-            if (q.kind == model::PartKind::Body && q.featureId == body)
-                p = &q;
-        if (p == nullptr)
-            break;
+    for (const model::Part* p : made)
         parts.push_back(partToJson(*p));
-    }
     if (parts.empty())
         throw CommandError("The feature made no part");
     const Json report = d.status(id).report;

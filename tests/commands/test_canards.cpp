@@ -236,6 +236,34 @@ TEST_CASE("Canards on both sides: mirrored in the scan's centre plane, each on i
         CHECK(fins[k + 2].at("volume").get<double>() == Approx(fins[k].at("volume").get<double>()).epsilon(0.05));
         CHECK(fins[k + 2].at("name").get<std::string>().find("(mirror)") != std::string::npos);
     }
+
+    // One fin a side instead of two: the first mirrored fin keeps its id and its part.
+    const auto mirrorBody = fins[2].at("featureId").get<cad::FeatureId>();
+    const auto mirrorPart = fins[2].at("id").get<model::PartId>();
+    auto single = scene.session.execute("feature.edit", {{"id", both.data.at("feature")}, {"params", {{"count", 1}}}});
+    INFO(single.toJson().dump());
+    REQUIRE(single.ok);
+    const model::Part* p = scene.session.document().part(mirrorPart);
+    REQUIRE(p != nullptr);
+    CHECK(p->featureId == mirrorBody);
+    REQUIRE(p->mesh);
+    CHECK(p->mesh->bounds().max.x < -300.0);
+    std::size_t bodies = 0;
+    for (const auto& q : scene.session.document().parts())
+        bodies += q.kind == model::PartKind::Body ? 1 : 0;
+    CHECK(bodies == 2);
+
+    // Saved and opened again: the stored fins come back with the same ids, without refitting.
+    const auto file = std::filesystem::temp_directory_path() / ("aerocad_fins_" + std::to_string(std::random_device{}()) + ".aerocad");
+    REQUIRE(scene.session.execute("project.save", {{"path", core::pathToUtf8(file)}}).ok);
+    commands::Session reopened;
+    REQUIRE(reopened.execute("project.open", {{"path", core::pathToUtf8(file)}}).ok);
+    CHECK(reopened.design().evaluatorRuns() == 0);
+    const model::Part* q = reopened.document().part(mirrorPart);
+    REQUIRE(q != nullptr);
+    CHECK(q->featureId == mirrorBody);
+    std::error_code ec;
+    std::filesystem::remove(file, ec);
 }
 
 TEST_CASE("Canards exported for printing: one STL and one STEP per fin", "[commands][fit][canard][export]")

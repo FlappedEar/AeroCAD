@@ -45,7 +45,9 @@ Manifest (version 1):
   fingerprint (`key`) of their inputs: params, user parameters, sketch geometry and the scan's
   content. On open a step whose key still matches uses them instead of fitting the scan again;
   anything else (no entry, another key, unreadable data) is rebuilt. Only the active variant's
-  results are stored.
+  results are stored. Each body has `name`, `brep` and, for a step with several bodies,
+  `slot`: its stable place (a fin's place in the stack, mirrored fins from 1000), which gives
+  the body's id.
 - `timelineParts` keeps the part ids, names and visibility of bodies and sketches, so ids
   that scripts or an agent hold stay valid after reopening.
 - `view` is the camera, opaque to the format (written by the UI).
