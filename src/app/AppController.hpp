@@ -132,6 +132,8 @@ public:
     Q_INVOKABLE void discardAutosaveFile(const QString& path) { removeAutosave(path); }
     /// Writes the autosave copy now if there are unsaved changes. Returns true if written.
     Q_INVOKABLE bool autosaveNow();
+    /// True if the open project's recovery copy is on disk.
+    Q_INVOKABLE bool hasAutosave() const;
     Q_INVOKABLE void clearRecentProjects();
     Q_INVOKABLE void setStatus(const QString& message) { setStatusMessage(message); }
 

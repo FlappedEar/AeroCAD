@@ -511,6 +511,11 @@ bool AppController::autosaveNow()
     return true;
 }
 
+bool AppController::hasAutosave() const
+{
+    return QFileInfo::exists(autosavePath());
+}
+
 QStringList AppController::autosaveFiles() const
 {
     QDir dir(autosaveDir());

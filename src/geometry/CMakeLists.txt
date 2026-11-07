@@ -13,6 +13,7 @@ add_library(aerocad_geometry STATIC
     src/RegionFit.cpp
     src/Offset.cpp
     src/DrapeFit.cpp
+    src/KernelError.cpp
 )
 add_library(AeroCAD::geometry ALIAS aerocad_geometry)
 target_include_directories(aerocad_geometry PUBLIC include PRIVATE occt/include)

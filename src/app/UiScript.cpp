@@ -9,14 +9,18 @@
 //   ui.drag(600, 400, 700, 400, "middle", "shift", 8)
 //   ui.clickText("Sketch on the scan")
 //   ui.shot("/tmp/sketch.png")
+//   ui.drop(640, 400, ["model.stl"])
 #include "UiScript.hpp"
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QDropEvent>
+#include <QFileInfo>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QImage>
 #include <QJSValue>
+#include <QMimeData>
 #include <QMouseEvent>
 #include <QPointer>
 #include <QQmlApplicationEngine>
@@ -25,6 +29,7 @@
 #include <QQuickItem>
 #include <QQuickWindow>
 #include <QTimer>
+#include <QUrl>
 #include <QWheelEvent>
 
 #include <algorithm>
@@ -102,6 +107,25 @@ public:
         QWheelEvent event(local, m_window->mapToGlobal(local), QPoint(dx, dy), QPoint(dx, dy), Qt::NoButton, m,
                           Qt::ScrollUpdate, false);
         QCoreApplication::sendEvent(m_window, &event);
+    }
+
+    /// Drops files at (x, y) as a file manager does: drag enter, move and drop events with
+    /// file URLs. Relative paths are resolved against the working directory.
+    Q_INVOKABLE void drop(qreal x, qreal y, const QStringList& paths)
+    {
+        QMimeData data;
+        QList<QUrl> urls;
+        for (const QString& path : paths)
+            urls << QUrl::fromLocalFile(QFileInfo(path).absoluteFilePath());
+        data.setUrls(urls);
+        const QPoint at(qRound(x), qRound(y));
+        const Qt::DropActions actions = Qt::CopyAction | Qt::LinkAction;
+        QDragEnterEvent enter(at, actions, &data, Qt::LeftButton, Qt::NoModifier);
+        QCoreApplication::sendEvent(m_window, &enter);
+        QDragMoveEvent move(at, actions, &data, Qt::LeftButton, Qt::NoModifier);
+        QCoreApplication::sendEvent(m_window, &move);
+        QDropEvent dropEvent(QPointF(at), actions, &data, Qt::LeftButton, Qt::NoModifier);
+        QCoreApplication::sendEvent(m_window, &dropEvent);
     }
 
     /// Clicks the visible, enabled item showing exactly this text.

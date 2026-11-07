@@ -178,8 +178,14 @@ void InspectGeometry::rebuild()
     }
     // Cap.
     core::TriangleMesh cap;
-    if (s.cap)
-        cap = geometry::triangulateRegion(curves, s.plane);
+    if (s.cap) {
+        // Drawn while rendering: a kernel failure must only drop the cap, never end the app.
+        try {
+            cap = geometry::triangulateRegion(curves, s.plane);
+        } catch (...) {
+            cap = core::TriangleMesh{};
+        }
+    }
     if (cap.isEmpty())
         setEmptyGeometry();
     else

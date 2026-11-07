@@ -7,7 +7,14 @@
 
 namespace aerocad::geometry {
 
+/// Smallest and largest accepted uniform scale factor. Outside this range the result is not
+/// meaningful in millimetres (and very small factors make the kernel reject the transform).
+inline constexpr double kMinScaleFactor = 1e-6;
+inline constexpr double kMaxScaleFactor = 1e6;
+
 /// Returns a copy of the shape uniformly scaled about `origin`.
+/// Throws std::invalid_argument for a factor outside [kMinScaleFactor, kMaxScaleFactor] or a
+/// non-finite origin, and KernelError if the kernel fails.
 [[nodiscard]] Shape scaled(const Shape& shape, double factor, const core::Vec3& origin);
 
 /// Returns a copy of the shape translated by `offset`.

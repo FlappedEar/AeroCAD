@@ -132,6 +132,29 @@ if(AEROCAD_BUILD_TESTS)
     add_test(NAME app_combobox_popup_test
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/combobox_popup.ui)
     set_tests_properties(app_combobox_popup_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-79: dropping a project file asks about unsaved changes like File > Open. The
+    # fixture writes project B and a broken project file next to a copy of a mesh; the
+    # recovery copies go to a private data directory.
+    set(_drop ${CMAKE_CURRENT_BINARY_DIR}/gui-drop)
+    file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/gui-drop-setup.json
+        "[{\"name\": \"feature.box\", \"params\": {\"size\": [30, 20, 10]}},\n"
+        " {\"name\": \"project.save\", \"params\": {\"path\": \"${_drop}/drop/B.aerocad\"}}]\n")
+    file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/gui-drop-setup.cmake
+        "file(REMOVE_RECURSE \"${_drop}\")\n"
+        "file(MAKE_DIRECTORY \"${_drop}/drop\" \"${_drop}/data\")\n"
+        "file(COPY_FILE \"${PROJECT_SOURCE_DIR}/tests/data/tetrahedron.stl\" \"${_drop}/drop/tetrahedron.stl\")\n"
+        "file(WRITE \"${_drop}/drop/broken.aerocad\" \"not a project\")\n"
+        "execute_process(COMMAND \"\${CMD}\" \"${CMAKE_CURRENT_BINARY_DIR}/gui-drop-setup.json\" RESULT_VARIABLE rc)\n"
+        "if(NOT rc EQUAL 0 OR NOT EXISTS \"${_drop}/drop/B.aerocad\")\n  message(FATAL_ERROR \"could not write B.aerocad\")\nendif()\n")
+    add_test(NAME app_drop_project_setup
+        COMMAND ${CMAKE_COMMAND} -DCMD=$<TARGET_FILE:aerocad_cmd> -P ${CMAKE_CURRENT_BINARY_DIR}/gui-drop-setup.cmake)
+    set_tests_properties(app_drop_project_setup PROPERTIES LABELS gui FIXTURES_SETUP gui_drop)
+    add_test(NAME app_drop_project_unsaved_test
+        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/tetrahedron.stl
+                --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/drop_project_unsaved.ui
+        WORKING_DIRECTORY ${_drop})
+    set_tests_properties(app_drop_project_unsaved_test PROPERTIES LABELS gui TIMEOUT 90 FIXTURES_REQUIRED gui_drop
+        ENVIRONMENT "XDG_DATA_HOME=${_drop}/data;XDG_CONFIG_HOME=${_drop}/data")
     # Runs a coarse OpenFOAM case, so it needs the engine (label openfoam, not in CI). The
     # runs directory is in the build tree: under the home directory on macOS, which the
     # engine's VM can mount.

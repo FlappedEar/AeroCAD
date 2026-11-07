@@ -1,0 +1,34 @@
+# CAD-79: dropping a project file onto the viewport goes through the same unsaved-changes
+# check as File > Open. Cancel keeps the current project and its recovery copy, a project
+# that fails to open keeps it too, and dropped meshes are still imported.
+# Run from a directory holding drop/B.aerocad and drop/broken.aerocad (see src/app/CMakeLists.txt):
+#   AeroCAD tests/data/tetrahedron.stl --ui-script <this file>
+ui.wait(1500)
+(() => { const n = controller.execute("document.parts").result.parts.length; ui.log("A: " + n + " part(s), dirty " + controller.projectDirty); if (n !== 1 || !controller.projectDirty) ui.fail("A should have one unsaved part") })()
+(() => { if (!controller.autosaveNow() || !controller.hasAutosave()) ui.fail("no recovery copy of A") })()
+# 1. Drop B onto the viewport: the unsaved-changes question appears, nothing is replaced yet.
+ui.drop(640, 420, ["drop/B.aerocad"])
+ui.wait(500)
+(() => { if (!unsavedDialog.visible) ui.fail("dropping a project did not ask about unsaved changes"); if (controller.projectName === "B") ui.fail("B replaced A before the answer") })()
+ui.shot("drop_1_unsaved_prompt.png")
+ui.clickText("Cancel")
+ui.wait(500)
+(() => { const n = controller.execute("document.parts").result.parts.length; ui.log("after Cancel: " + controller.projectName + ", " + n + " part(s), dirty " + controller.projectDirty + ", recovery copy " + controller.hasAutosave()); if (n !== 1 || !controller.projectDirty || controller.projectName === "B") ui.fail("Cancel did not keep A"); if (!controller.hasAutosave()) ui.fail("Cancel removed A's recovery copy") })()
+# 2. A file that cannot be opened: Discard, the open fails, A and its recovery copy stay.
+ui.drop(640, 420, ["drop/broken.aerocad"])
+ui.wait(500)
+(() => { if (!unsavedDialog.visible) ui.fail("no unsaved-changes question for the broken file") })()
+ui.clickText("Discard")
+ui.wait(500)
+(() => { const n = controller.execute("document.parts").result.parts.length; ui.log("after failed open: " + controller.projectName + ", " + n + " part(s), recovery copy " + controller.hasAutosave() + ", status: " + controller.statusMessage); if (n !== 1 || !controller.projectDirty) ui.fail("a failed open changed A"); if (!controller.hasAutosave()) ui.fail("a failed open removed A's recovery copy") })()
+# 3. Discard and open B for real.
+ui.drop(640, 420, ["drop/B.aerocad"])
+ui.wait(500)
+ui.clickText("Discard")
+ui.wait(1000)
+(() => { ui.log("after Discard: " + controller.projectName + ", dirty " + controller.projectDirty + ", question shown " + unsavedDialog.visible); if (controller.projectName !== "B" || controller.projectDirty) ui.fail("Discard did not open B") })()
+ui.shot("drop_2_opened_b.png")
+# 4. A clean project: dropping a mesh imports it without a question.
+ui.drop(640, 420, ["drop/tetrahedron.stl"])
+ui.wait(1500)
+(() => { const parts = controller.execute("document.parts").result.parts; ui.log("after dropping a mesh: " + parts.map(p => p.name).join(", ") + "; question shown " + unsavedDialog.visible); if (unsavedDialog.visible) ui.fail("dropping a mesh asked about unsaved changes"); if (!parts.some(p => p.name.indexOf("tetrahedron") >= 0)) ui.fail("the dropped mesh was not imported") })()
