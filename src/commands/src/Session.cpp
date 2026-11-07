@@ -7,11 +7,13 @@ namespace aerocad::commands {
 
 Session::Session()
     : m_simulations(std::make_unique<cfd::RunManager>()),
-      m_context{m_document, m_undoStack, &m_registry, &m_design, &m_project, &m_importStage, m_simulations.get()}
+      m_context{m_document, m_undoStack, &m_registry, &m_design, &m_inspect, &m_project, &m_importStage,
+                m_simulations.get()}
 {
     registerBuiltinCommands(m_registry);
     registerAgentCommands(m_registry);
     registerDesignCommands(m_registry);
+    registerInspectCommands(m_registry);
     registerProjectCommands(m_registry);
     registerScanCommands(m_registry);
     registerSimulationCommands(m_registry);

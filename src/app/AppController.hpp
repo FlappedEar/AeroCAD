@@ -7,6 +7,7 @@
 #include "aerocad/commands/Session.hpp"
 #include "aerocad/core/MeshSelection.hpp"
 
+#include <QColor>
 #include <QLockFile>
 #include <QObject>
 #include <QStringList>
@@ -42,6 +43,9 @@ class AppController : public QObject {
     Q_PROPERTY(QStringList importNameFilters READ importNameFilters CONSTANT)
     Q_PROPERTY(QStringList exportNameFilters READ exportNameFilters CONSTANT)
     Q_PROPERTY(QString version READ version CONSTANT)
+    /// Changes whenever an Inspect analysis (section, heat map) changes; bind to it to
+    /// re-evaluate inspectInfo() / sectionCuts().
+    Q_PROPERTY(int inspectRevision READ inspectRevision NOTIFY inspectChanged)
     Q_PROPERTY(QString projectName READ projectName NOTIFY projectChanged)
     Q_PROPERTY(QString projectPath READ projectPath NOTIFY projectChanged)
     Q_PROPERTY(bool projectDirty READ projectDirty NOTIFY projectChanged)
@@ -163,6 +167,17 @@ public:
     /// selection. nullptr when there is none.
     [[nodiscard]] const core::TriangleSet* displayedSelection(quint64 id) const;
 
+    [[nodiscard]] int inspectRevision() const;
+    /// Active analyses for QML: {section: {enabled, origin, normal, cap}, heatMap: {enabled,
+    /// kind, part, reference, rangeMin, rangeMax, stats}}.
+    Q_INVOKABLE QVariantMap inspectInfo() const;
+    /// True when the section analysis cuts this part.
+    Q_INVOKABLE bool sectionCuts(quint64 id) const;
+    /// True when the heat map is shown on this part (and still matches its mesh).
+    Q_INVOKABLE bool showsHeatMap(quint64 id) const;
+    /// Heat map colour for t in [0, 1], for the legend.
+    Q_INVOKABLE QColor heatColor(double t) const;
+
     /// Access for C++ views (MeshGeometry).
     [[nodiscard]] const model::Part* part(quint64 id) const;
     [[nodiscard]] commands::Session& session() { return m_session; }
@@ -178,6 +193,7 @@ signals:
     void selectionPreviewChanged(quint64 id);
     /// Emitted after runScript() so the view can frame the result.
     void scriptFinished();
+    void inspectChanged();
     void projectChanged();
     void recentProjectsChanged();
     void autosaveSecondsChanged();
@@ -192,6 +208,10 @@ private:
     mutable std::unique_ptr<core::MeshProjector> m_projector;
 
     void setStatusMessage(const QString& message);
+    /// Runs the heat map again after its parts changed (or clears it when they are gone).
+    void refreshHeatMap();
+
+    bool m_heatMapRefreshQueued = false;
     bool openProject(const QString& path, bool recover);
     bool saveTo(const QString& path, const QVariantMap& view);
     void addRecent(const QString& path);

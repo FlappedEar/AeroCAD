@@ -23,6 +23,7 @@ namespace aerocad::commands {
 using Json = nlohmann::json;
 
 class CommandRegistry;
+class InspectState;
 struct ProjectState;
 class ImportStage;
 
@@ -32,6 +33,7 @@ struct CommandContext {
     model::UndoStack& undoStack;
     const CommandRegistry* registry = nullptr; ///< For introspection (commands.list).
     cad::Design* design = nullptr;             ///< Parametric timeline (sketch.*, feature.*).
+    InspectState* inspect = nullptr;           ///< Analyses (inspect.*).
     ProjectState* project = nullptr;           ///< File path, variants (project.*, variant.*).
     ImportStage* importStage = nullptr;        ///< Pre-parsed files for document.import.
     cfd::RunManager* simulations = nullptr;    ///< Wind tunnel runs (simulation.*).

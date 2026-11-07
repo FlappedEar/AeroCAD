@@ -236,7 +236,7 @@ ApplicationWindow {
 
     /// Opens a feature dialog, pre-filled from the selection (Fusion: select, then press E).
     function openFeature(type) {
-        scanPanel.close()
+        closeToolPanels()
         const initial = {}
         const info = selectedInfo()
         if (activeSketch) {
@@ -617,6 +617,7 @@ ApplicationWindow {
                 scanPanel.close()
             } else {
                 featureDialog.close()
+                closeToolPanels()
                 scanPanel.open()
             }
         }
@@ -641,12 +642,84 @@ ApplicationWindow {
     Action { id: fixAction; text: qsTr("Fix/Unfix"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "fix"; onTriggered: window.sketchTool_("fix") }
     Action { id: slotAction; text: qsTr("Sl&ot"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "slot"; onTriggered: window.sketchTool_("slot") }
 
+    // Inspect (Fusion: I = Measure).
+    /// Closes the panels that share the top-left corner of the view (Measure, heat maps, Scan Tools).
+    function closeToolPanels() {
+        measurePanel.close()
+        heatMapPanel.close()
+        scanPanel.close()
+    }
+    Action {
+        id: measureAction
+        text: qsTr("&Measure")
+        shortcut: "I"
+        onTriggered: {
+            featureDialog.close()
+            heatMapPanel.close()
+            scanPanel.close()
+            measurePanel.open("auto")
+        }
+    }
+    Action {
+        id: clearanceAction
+        text: qsTr("&Interference / Clearance")
+        onTriggered: {
+            featureDialog.close()
+            heatMapPanel.close()
+            scanPanel.close()
+            measurePanel.open("body")
+        }
+    }
+    Action {
+        id: sectionAction
+        text: qsTr("&Section Analysis")
+        checkable: true
+        checked: sectionPanel.active
+        onTriggered: {
+            if (sectionPanel.active)
+                sectionPanel.close()
+            else
+                sectionPanel.open()
+            checked = Qt.binding(() => sectionPanel.active)
+        }
+    }
+    Action {
+        id: deviationAction
+        text: qsTr("&Deviation Map (Scan vs Part)")
+        onTriggered: {
+            measurePanel.close()
+            scanPanel.close()
+            heatMapPanel.open("deviation", window.selectedPartId)
+        }
+    }
+    Action {
+        id: thicknessAction
+        text: qsTr("&Thickness Map")
+        onTriggered: {
+            measurePanel.close()
+            scanPanel.close()
+            heatMapPanel.open("thickness", window.selectedPartId)
+        }
+    }
+    Action {
+        id: clearAnalysesAction
+        text: qsTr("&Clear Analyses")
+        onTriggered: {
+            sectionPanel.close()
+            window.controller.execute("inspect.clear")
+        }
+    }
+
     Shortcut {
         sequence: "Esc"
         onActivated: {
             if (viewport.leaveSelectionTool())
                 return
-            if (featureDialog.visible)
+            if (measurePanel.active)
+                measurePanel.close()
+            else if (heatMapPanel.active)
+                heatMapPanel.close()
+            else if (featureDialog.visible)
                 featureDialog.close()
             else if (scanPanel.visible)
                 scanPanel.close()
@@ -781,6 +854,17 @@ ApplicationWindow {
             }
             MenuSeparator {}
             MenuItem { action: finishSketchAction }
+        }
+        Menu {
+            title: qsTr("&Inspect")
+            MenuItem { action: measureAction }
+            MenuItem { action: clearanceAction }
+            MenuSeparator {}
+            MenuItem { action: sectionAction }
+            MenuItem { action: deviationAction }
+            MenuItem { action: thicknessAction }
+            MenuSeparator {}
+            MenuItem { action: clearAnalysesAction }
         }
         Menu {
             title: qsTr("&View")
@@ -1007,6 +1091,15 @@ ApplicationWindow {
 
             ToolSeparator {}
             ToolGroup {
+                caption: qsTr("INSPECT")
+                ToolCommand { action: measureAction; text: qsTr("Measure"); iconName: "measure" }
+                ToolCommand { action: clearanceAction; text: qsTr("Clearance"); iconName: "clearance" }
+                ToolCommand { action: sectionAction; text: qsTr("Section"); iconName: "section" }
+                ToolCommand { action: deviationAction; text: qsTr("Deviation"); iconName: "deviation" }
+                ToolCommand { action: thicknessAction; text: qsTr("Thickness"); iconName: "thickness" }
+            }
+            ToolSeparator {}
+            ToolGroup {
                 caption: qsTr("AI")
                 ToolCommand {
                     action: agentAccessAction
@@ -1089,15 +1182,18 @@ ApplicationWindow {
             selectedPartId: window.selectedPartId
             sketch: window.activeSketch
             sketchTool: window.sketchTool
-            selectionToolsEnabled: !featureDialog.visible && !window.pickingSketchPlane && !scanPanel.pickMode
+            selectionToolsEnabled: !featureDialog.visible && !window.pickingSketchPlane && !measurePanel.active
+                                   && !scanPanel.pickMode
             snapToNearestSurface: window.pickingSketchPlane
             property bool snappedClick: false
             onSnappedToNearestSurface: snappedClick = true
             markers: featureDialog.visible ? featureDialog.pickedPoints
-                   : scanPanel.visible ? scanPanel.pickedPoints : []
+                   : scanPanel.visible ? scanPanel.pickedPoints : measurePanel.markers
             pickKind: featureDialog.visible ? featureDialog.pickKind : ""
             shownSketch: featureDialog.shownSketch
             unpickablePlane: featureDialog.visible ? featureDialog.ownPlane : -1
+            overlayLines: measurePanel.overlayLines
+            onSectionDragged: delta => sectionPanel.moveBy(delta)
             onPartPicked: id => {
                 window.selectPart(id)
                 // A click through a hole of a scan, or next to the model, while choosing where to sketch.
@@ -1130,6 +1226,8 @@ ApplicationWindow {
                     featureDialog.addPick(info, point)
                 } else if (scanPanel.visible && scanPanel.pickMode) {
                     scanPanel.addPick(id, point)
+                } else if (measurePanel.active) {
+                    measurePanel.addPick(info, point)
                 }
             }
             onCurveDrawn: curve => {
@@ -1185,6 +1283,36 @@ ApplicationWindow {
                 id: featureDialog
                 anchors.left: parent.left
                 anchors.top: parent.top
+                anchors.margins: 8
+                controller: window.controller
+            }
+
+            MeasurePanel {
+                id: measurePanel
+                anchors.left: parent.left
+                anchors.top: parent.top
+                anchors.margins: 8
+                controller: window.controller
+                pickTolerance: () => viewport.pickTolerance()
+            }
+            HeatMapPanel {
+                id: heatMapPanel
+                anchors.left: parent.left
+                anchors.top: parent.top
+                anchors.margins: 8
+                controller: window.controller
+            }
+            SectionPanel {
+                id: sectionPanel
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.topMargin: 150 // below the ViewCube
+                anchors.rightMargin: 8
+                controller: window.controller
+            }
+            HeatMapLegend {
+                anchors.left: parent.left
+                anchors.bottom: parent.bottom
                 anchors.margins: 8
                 controller: window.controller
             }

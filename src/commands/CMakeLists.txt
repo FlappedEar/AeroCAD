@@ -10,6 +10,7 @@ add_library(aerocad_commands STATIC
     src/SelectionCommands.cpp
     src/ExportCommands.cpp
     src/DesignCommands.cpp
+    src/InspectCommands.cpp
     src/SimulationCommands.cpp
     src/ProjectCommands.cpp
     src/SurfaceCommands.cpp

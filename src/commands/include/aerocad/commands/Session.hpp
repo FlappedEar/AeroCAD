@@ -2,6 +2,7 @@
 #pragma once
 
 #include "aerocad/commands/CommandRegistry.hpp"
+#include "aerocad/commands/Inspect.hpp"
 #include "aerocad/commands/Project.hpp"
 #include "aerocad/commands/ImportStage.hpp"
 
@@ -19,6 +20,8 @@ void registerAgentCommands(CommandRegistry& registry);
 /// Registers the CAD commands (sketch.*, feature.*, timeline.*, parameter.*, body.*).
 void registerDesignCommands(CommandRegistry& registry);
 
+/// Registers the Inspect commands (inspect.*: measure, clearance, section, heat maps).
+void registerInspectCommands(CommandRegistry& registry);
 /// Registers the project commands (project.* save / open / new, variant.* A/B variants).
 void registerProjectCommands(CommandRegistry& registry);
 /// Registers the scan commands (mesh.*, part.align, part.calibrate, part.transform, ...).
@@ -53,6 +56,8 @@ public:
     [[nodiscard]] const model::UndoStack& undoStack() const { return m_undoStack; }
     [[nodiscard]] cad::Design& design() { return m_design; }
     [[nodiscard]] const cad::Design& design() const { return m_design; }
+    [[nodiscard]] InspectState& inspect() { return m_inspect; }
+    [[nodiscard]] const InspectState& inspect() const { return m_inspect; }
     [[nodiscard]] ProjectState& project() { return m_project; }
     [[nodiscard]] const ProjectState& project() const { return m_project; }
     /// Simulation runs; stored in cfd::RunManager::defaultRoot().
@@ -66,6 +71,7 @@ private:
     model::Document m_document;
     model::UndoStack m_undoStack;
     cad::Design m_design;
+    InspectState m_inspect;
     ProjectState m_project;
     CommandRegistry m_registry;
     ImportStage m_importStage;
