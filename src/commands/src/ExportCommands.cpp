@@ -2,6 +2,7 @@
 // Export and mesh validity commands.
 #include "ExportCommands.hpp"
 
+#include "aerocad/cad/Design.hpp"
 #include "aerocad/core/MeshCheck.hpp"
 #include "aerocad/core/MeshQuery.hpp"
 #include "aerocad/core/Path.hpp"
@@ -185,7 +186,8 @@ double round3(double v)
 
 /// Checks parts before they are written (see document.export_check). `format` decides what
 /// is an error: STL / 3MF need a watertight mesh, STEP needs exact geometry.
-Json exportCheck(const std::vector<const model::Part*>& parts, io::FileFormat format, double minWall, bool print = false)
+Json exportCheck(const std::vector<const model::Part*>& parts, io::FileFormat format, double minWall, bool print = false,
+                 const cad::Design* design = nullptr)
 {
     Json results = Json::array();
     std::size_t errors = 0;
@@ -203,6 +205,20 @@ Json exportCheck(const std::vector<const model::Part*>& parts, io::FileFormat fo
         if (step && !exact)
             errorList.push_back("Mesh only, STEP needs exact geometry. Export it as STL or 3MF, "
                                 "or turn it into a body first (Mesh to BRep).");
+        if (design != nullptr && p->kind == model::PartKind::Body && p->featureId != 0) {
+            const cad::FeatureStatus st = design->status(cad::featureOfBody(p->featureId));
+            if (st.report.is_object() && st.report.contains("fit") && st.report["fit"].is_object() &&
+                !st.report["fit"].value("withinTolerance", true)) {
+                const Json& fit = st.report["fit"];
+                r["approximate"] = true;
+                char text[200];
+                std::snprintf(text, sizeof text,
+                              "Approximation: its surface is up to %.3g mm from the scan, more than the requested "
+                              "fit tolerance of %.3g mm.",
+                              fit.value("maxDeviation", 0.0), fit.value("tolerance", 0.0));
+                warningList.push_back(text);
+            }
+        }
         if (exact) {
             const bool valid = geometry::isValid(*p->shape);
             r["validBrep"] = valid;
@@ -331,7 +347,7 @@ void registerCheck(CommandRegistry& r)
               if (params.contains("format") && !print)
                   format = parseFormat(params, {});
               const auto parts = print ? selectPrintParts(ctx.document, params) : selectParts(ctx.document, params);
-              return exportCheck(parts, format, params.value("minWall", kDefaultMinWall), print);
+              return exportCheck(parts, format, params.value("minWall", kDefaultMinWall), print, ctx.design);
           });
 
 }

@@ -113,8 +113,15 @@ void applyProject(CommandContext& ctx, project::ProjectData data)
             selections.emplace_back(t.id, t.selection);
         d.setPartInfo(t.feature, t.id, std::move(t.name), t.visible);
     }
-    for (auto& r : data.timelineResults)
+    for (auto& r : data.timelineResults) {
+        // Fit reports saved before CAD-85 lack the requested tolerance and the
+        // approximation warning: those features are fitted again instead of reused.
+        const Json& report = r.output.report;
+        if (report.is_object() && report.contains("fit") && report["fit"].is_object() &&
+            !report["fit"].contains("tolerance"))
+            continue;
         d.seedResult(std::move(r));
+    }
     d.restore(std::move(data.design));
     d.syncDocument(ctx.document);
     // Region selections on regenerated parts: indices are kept only while they fit the

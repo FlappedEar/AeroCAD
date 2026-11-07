@@ -488,6 +488,11 @@ Pane {
             if (conversions > 0)
                 controller.mergeHistory(conversions + 1, spec.title)
             conversions = 0
+            // A kept approximation (fit tolerance missed) or another caveat must not pass silently.
+            const res = r.result || {}
+            const warnings = res.warnings || (res.report && res.report.warnings) || []
+            if (warnings.length > 0)
+                controller.showStatus(qsTr("%1: %2").arg(spec.title).arg(warnings[0]))
             close()
         } else {
             error = r.error

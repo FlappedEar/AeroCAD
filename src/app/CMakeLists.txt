@@ -165,6 +165,12 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/touchpad_gestures.ui)
     set_tests_properties(app_touchpad_gestures_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-85: a fit that misses its tolerance is marked as an approximation in the UI.
+    add_test(NAME app_fit_tolerance_warning_test
+        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl
+                --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/fit_tolerance_warning.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_fit_tolerance_warning_test PROPERTIES LABELS gui TIMEOUT 120)
     # Runs a coarse OpenFOAM case, so it needs the engine (label openfoam, not in CI). The
     # runs directory is in the build tree: under the home directory on macOS, which the
     # engine's VM can mount.

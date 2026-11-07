@@ -1,0 +1,18 @@
+# CAD-85: a part whose surface fit misses the requested tolerance is kept, but marked as an
+# approximation everywhere the user looks: the timeline chip, its tooltip, the status bar
+# after editing it, and the export check.
+#   AeroCAD tests/data/models/dome_scan.stl --ui-script <this file>
+ui.wait(1500)
+(() => { const sq = [{type: "line", start: [-15, -15], end: [15, -15]}, {type: "line", start: [15, -15], end: [15, 15]}, {type: "line", start: [15, 15], end: [-15, 15]}, {type: "line", start: [-15, 15], end: [-15, -15]}]; const sk = controller.execute("sketch.create", {surface: {part: 1, point: [0, 0, 45.7]}, curves: sq}); if (!sk.ok) ui.fail("sketch: " + sk.error); const r = controller.execute("surface.part_from_sketch", {sketch: sk.result.id, thickness: 2, tolerance: 0.01}); if (!r.ok) ui.fail("part: " + r.error); ui.log("part warnings: " + JSON.stringify(r.result.warnings)); if (!r.result.warnings.length || r.result.warnings[0].indexOf("Approximation") !== 0) ui.fail("no approximation warning in the result") })()
+ui.wait(1500)
+(() => { const f = timelineBar.timeline.features.find(x => x.type === "part_on_surface"); ui.log("timeline: approximate " + (f && f.approximate) + ", status " + (f && f.status)); if (!f || f.approximate !== true) ui.fail("the timeline does not mark the approximation") })()
+ui.shot("fit_1_timeline_warning.png")
+# Edit the feature and press OK with the mouse: the warning reaches the status bar.
+(() => { window.editFeature(timelineBar.timeline.features.find(x => x.type === "part_on_surface")) })()
+ui.wait(3000)
+ui.shot("fit_2_edit_dialog.png")
+ui.clickText("OK")
+ui.wait(5000)
+(() => { ui.log("status: " + controller.statusMessage); if (controller.statusMessage.indexOf("Approximation") < 0) ui.fail("editing closed the dialog without the warning") })()
+ui.shot("fit_3_status_warning.png")
+(() => { const body = controller.execute("document.parts").result.parts.find(p => p.kind === "body"); const c = controller.execute("document.export_check", {ids: [body.id]}); ui.log("export check: " + JSON.stringify(c.result.parts[0].warnings)); if (!c.result.parts[0].approximate) ui.fail("the export check does not list the approximation") })()
