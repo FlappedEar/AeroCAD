@@ -196,12 +196,25 @@ OpenFOAM v2506 environment elsewhere and register the result with `simulation.im
 histories (Cd, Cl, Cs, forces), residuals and a quality report:
 
 - volume mesh: `checkMesh` verdict and cell count,
+- convergence: the final solver step must report SIMPLE convergence and a completed log,
 - mass balance: last time-step continuity error (warning above 1e-3),
-- residuals: initial residuals of the last iteration (warning when p > 1e-2),
-- force history: band of Cd over the last 20 % of the iterations (warning above 2 %).
+- residuals: all final initial residuals must meet the existing `external-flow-v1` targets:
+  p below 1e-4 and Ux, Uy, Uz, k and omega below 1e-5,
+- force history: at least 20 complete, finite Cd/Cl/Cs samples; band of Cd over the last
+  20 % of the iterations (at least 10 samples; warning above 2 %).
 
-Status `ok` / `warning` / `unknown`. These checks flag results to read with care; they
-are not a validation of the physics.
+The quality report's `checks` object records `passed`, `failed` or `missing` for each
+required check. Status is `ok` only when every check passed, `warning` when any failed,
+and otherwise `unknown` because evidence is missing. `warnings` explains failed and missing
+checks in the results panel. Truncated histories, stale residuals/coefficients that do not
+reach the final logged iteration, and non-finite data cannot receive a clean verdict.
+Available raw diagnostics remain in the report even if another required check is missing.
+These checks flag results to read with care; they are not a validation of the physics.
+`tests/gui/cfd_quality_fixture.py` prepares synthetic missing/complete-evidence cases and
+a mouse-driven `--ui-script` check of the Results panel. Its screenshots demonstrate reporting,
+not a numerical solver run; see the script's usage for the local-only GUI check.
+An inspected [missing-evidence example](images/audit/cad-82-quality-evidence.png) shows the
+synthetic case's `unknown` verdict and the reasons displayed in the real Results panel.
 
 `simulation.field` summarises the field outputs: `surface` (pressure on the part as
 p, Cp and Pa), `sectionHorizontal` / `sectionVertical` (planes through the part centre,

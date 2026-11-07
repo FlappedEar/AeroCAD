@@ -22,6 +22,8 @@ struct Table {
     std::vector<std::string> columns; ///< Without the leading "Time".
     std::vector<double> time;
     std::vector<std::vector<double>> values; ///< values[column][row]
+    bool incomplete = false; ///< Last data row was truncated; earlier rows remain available for live charts.
+    bool invalidTime = false; ///< A data row had a non-numeric or non-finite time.
 
     [[nodiscard]] const std::vector<double>* column(std::string_view name) const;
     [[nodiscard]] bool empty() const { return time.empty(); }
@@ -59,6 +61,8 @@ struct QualityReport {
     /// Relative band (max - min) / |mean| of Cd over the last 20 % of the iterations.
     std::optional<double> cdFluctuation;
     std::vector<std::string> warnings;
+    /// Required evidence: "passed", "failed" or "missing" for each check.
+    std::map<std::string, std::string> checks;
     /// "ok", "warning" or "unknown" (not enough data).
     std::string status = "unknown";
 
