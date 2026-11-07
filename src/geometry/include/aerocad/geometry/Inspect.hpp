@@ -86,4 +86,12 @@ struct SubShapeProperties {
 [[nodiscard]] core::TriangleMesh triangulateRegion(const std::vector<core::Polyline>& loops,
                                                    const core::CutPlane& plane);
 
+/// Replaces the larger of the mesh-based distances `values` (one per point, NaN = none)
+/// by the exact distance to `shape`, keeping each value's sign: those above `threshold`,
+/// largest first, at most `maxCount`. A triangulation of a sewn shape can be off the
+/// exact surface near its edges by up to the sewing tolerance. Returns how many were
+/// replaced.
+std::size_t refineShapeDistances(const Shape& shape, const std::vector<core::Vec3>& points, std::vector<double>& values,
+                                 double threshold, std::size_t maxCount);
+
 } // namespace aerocad::geometry
