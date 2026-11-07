@@ -3,6 +3,7 @@
 #include "CommandHelpers.hpp"
 
 #include "aerocad/cad/Design.hpp"
+#include "aerocad/core/MeshCheck.hpp"
 #include "aerocad/core/MeshSelection.hpp"
 #include "aerocad/geometry/DrapeFit.hpp"
 #include "aerocad/geometry/Offset.hpp"
@@ -13,6 +14,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <limits>
 #include <memory>
 #include <string>
@@ -21,6 +23,13 @@
 namespace aerocad::commands {
 
 namespace {
+
+std::string formatMm(double value)
+{
+    char buffer[32];
+    std::snprintf(buffer, sizeof buffer, "%.2g", value);
+    return buffer;
+}
 
 const model::Part& requireSurfacePart(model::Document& doc, const Json& params)
 {
@@ -489,7 +498,9 @@ void registerSurfaceCommands(CommandRegistry& r)
            "surface: {part, point, across: true}; sketch X points outward along the surface normal), the outline "
            "is extruded `thickness` mm symmetrically about the sketch plane, and its root is cut where it passes "
            "through the surface, so the root follows the surface exactly. Draw the root a little into the "
-           "surface (x < 0). On a scan a smooth surface is first fitted under the root.",
+           "surface (x < 0). On a scan a smooth surface is first fitted under the root. With rootFillet the root "
+           "flares into the surface with a concave fillet of that radius, tangent to it (a stronger joint, more "
+           "area to glue a printed fin on).",
            objectSchema({{"sketch", {{"type", "integer"}, {"minimum", 1}, {"description", "Sketch feature id."}}},
                          {"id", idParam()},
                          {"thickness", {{"type", "number"}, {"exclusiveMinimum", 0}, {"description", "mm."}}},
@@ -499,6 +510,10 @@ void registerSurfaceCommands(CommandRegistry& r)
                            {"description", "Profile indices (sketch.profiles); default all."}}},
                          {"tolerance",
                           {{"type", "number"}, {"exclusiveMinimum", 0}, {"description", "Fit tolerance (scan), mm. Default 0.25."}}},
+                         {"rootFillet",
+                          {{"type", "number"},
+                           {"minimum", 0},
+                           {"description", "Radius of the fillet where the fin meets the surface, mm; 0 (default) for none. At most twice the thickness; when it does not fit, a smaller one is used and a warning says so."}}},
                          {"name", {{"type", "string"}, {"description", "Name of the new part."}}}},
                         {"sketch", "thickness"}),
            true},
@@ -521,6 +536,7 @@ void registerSurfaceCommands(CommandRegistry& r)
               if (source->kind == model::PartKind::Sketch)
                   throw CommandError("Part " + std::to_string(partId) + " is a sketch");
               const double thickness = params.at("thickness").get<double>();
+              const double rootFillet = params.value("rootFillet", 0.0);
               const double tolerance = params.value("tolerance", geometry::SurfaceFitOptions{}.tolerance);
               // Outward: the sketch X axis for a sketch made across the surface.
               const core::Vec3 outward = sk.plane.xDir;
@@ -533,9 +549,11 @@ void registerSurfaceCommands(CommandRegistry& r)
                   const auto [u0, v0, u1, v1] = outlineBounds(sk, outlines);
                   (void)u0;
                   (void)u1;
-                  const double margin = std::max(5.0, 0.1 * (v1 - v0));
+                  // Room around the root for its fillet to land on the surface.
+                  const double flare = rootFillet > 0.0 ? 2.0 * rootFillet + 2.0 : 0.0;
+                  const double margin = std::max(5.0, 0.1 * (v1 - v0)) + flare;
                   const double half = 0.5 * thickness;
-                  const double across = std::max(5.0, 2.0 * thickness);
+                  const double across = std::max(5.0, 2.0 * thickness) + flare;
                   geometry::DrapeArea area;
                   area.origin = sk.plane.origin;
                   area.x = sk.plane.yDir();
@@ -567,38 +585,74 @@ void registerSurfaceCommands(CommandRegistry& r)
                       throw CommandError(std::string("Could not find the scan under the fin root: ") + e.what());
                   }
               };
-              auto finOn = [&](const geometry::Shape& surface) {
-                  return geometry::finOnSurface(surface, outlines, sk.plane.normal, thickness, outward);
-              };
-
-              geometry::Shape solid;
-              try {
-                  if (source->shape && !source->shape->isNull()) {
-                      try {
-                          solid = finOn(*source->shape);
-                      } catch (const geometry::OffsetError&) {
-                          // The fitted surface may not reach under the whole root: fit again
-                          // on the scan it came from.
-                          const model::Part* scan = ctx.document.part(model::fittedScanId(*source));
-                          if (scan == nullptr || !scan->mesh || scan->shape)
-                              throw;
-                          solid = finOn(fitUnder(*scan));
+              auto build = [&](double fillet) {
+                  auto finOn = [&](const geometry::Shape& surface) {
+                      return geometry::finOnSurface(surface, outlines, sk.plane.normal, thickness, outward, fillet);
+                  };
+                  geometry::Shape solid;
+                  try {
+                      if (source->shape && !source->shape->isNull()) {
+                          try {
+                              solid = finOn(*source->shape);
+                          } catch (const geometry::OffsetError&) {
+                              // The fitted surface may not reach under the whole root: fit again
+                              // on the scan it came from.
+                              const model::Part* scan = ctx.document.part(model::fittedScanId(*source));
+                              if (scan == nullptr || !scan->mesh || scan->shape)
+                                  throw;
+                              solid = finOn(fitUnder(*scan));
+                          }
+                      } else {
+                          if (!source->mesh || source->mesh->triangleCount() == 0)
+                              throw CommandError("Part " + std::to_string(partId) + " has no surface");
+                          solid = finOn(fitUnder(*source));
                       }
-                  } else {
-                      if (!source->mesh || source->mesh->triangleCount() == 0)
-                          throw CommandError("Part " + std::to_string(partId) + " has no surface");
-                      solid = finOn(fitUnder(*source));
+                  } catch (const geometry::OffsetError& e) {
+                      throw CommandError(e.what());
                   }
-              } catch (const geometry::OffsetError& e) {
-                  throw CommandError(e.what());
+                  return solid;
+              };
+              // A fillet that does not fit must not cost the fin: smaller radii are tried (a
+              // rolling ball wider than the fin's ends or the surface's bumps folds over
+              // itself, which shows as a mesh that is not watertight), then none; said so.
+              Json warnings = Json::array();
+              double appliedFillet = 0.0;
+              geometry::Shape solid;
+              std::string filletProblem;
+              // Wider than twice the fin's thickness, a fillet is past what a canard needs and
+              // what the fillet algorithm handles in good time.
+              const double largest = std::min(rootFillet, 2.0 * thickness);
+              const double smallest = std::max(0.5, 0.2 * largest);
+              for (double f = largest; f > 0.0 && solid.isNull(); f = f * 0.6 >= smallest ? f * 0.6 : 0.0) {
+                  try {
+                      geometry::Shape candidate = build(f);
+                      if (!core::checkMesh(core::weldVertices(geometry::tessellate(candidate))).watertight()) {
+                          filletProblem = "A root fillet of " + formatMm(f) + " mm folds over itself here";
+                          continue;
+                      }
+                      solid = candidate;
+                      appliedFillet = f;
+                  } catch (const CommandError& e) {
+                      if (filletProblem.empty())
+                          filletProblem = e.what();
+                  }
               }
+              if (solid.isNull())
+                  solid = build(0.0);
+              if (rootFillet > 0.0 && appliedFillet == 0.0)
+                  warnings.push_back(filletProblem + "; the fin was made without a root fillet");
+              else if (appliedFillet < rootFillet)
+                  warnings.push_back("A root fillet of " + formatMm(rootFillet) + " mm does not fit this fin; it got " +
+                                     formatMm(appliedFillet) + " mm");
               Json result = addShapePart(ctx, *source, solid, params.value("name", sk.name + " fin"),
                                          "surface.fin_from_sketch", "Fin on surface",
                                          replacedByPart(ctx.document, sk.id, *source));
               result["thickness"] = thickness;
+              result["rootFillet"] = appliedFillet;
               result["volume"] = solid.volume();
               if (!fitReport.is_null())
                   result["fit"] = fitReport;
+              result["warnings"] = warnings;
               return result;
           });
     r.add({"surface.offset", "Offset surface",

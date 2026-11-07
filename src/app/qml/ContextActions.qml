@@ -225,7 +225,8 @@ QtObject {
             return { id: id, text: qsTr("Fin on surface"), icon: "thickness", enabled: ok, primary: true,
                      reason: qsTr("The sketch needs a closed outline."),
                      tip: qsTr("Gives the fin outline a thickness (half each side of the sketch) and cuts its root to the surface, so it sits flush on it."),
-                     params: [_num("thickness", qsTr("Thickness"), 2, "mm")] }
+                     params: [_num("thickness", qsTr("Thickness"), 2, "mm"),
+                              _num("rootFillet", qsTr("Root fillet"), 2, "mm", qsTr("Rounds the joint between the fin and the surface; 0 for a sharp joint."))] }
         }
         case "editSketch":
             return { id: id, text: qsTr("Edit sketch"), icon: "sketch", enabled: true,
@@ -567,8 +568,10 @@ QtObject {
             return _selectResult(r)
         }
         case "finOnSurface": {
-            const r = controller.execute("surface.fin_from_sketch", { sketch: info.featureId, thickness: v.thickness })
-            if (r.ok)
+            const r = controller.execute("surface.fin_from_sketch", { sketch: info.featureId, thickness: v.thickness, rootFillet: v.rootFillet || 0 })
+            if (r.ok && r.result.warnings.length > 0)
+                controller.showStatus(qsTr("Fin \"%1\": %2").arg(r.result.name).arg(r.result.warnings[0]))
+            else if (r.ok)
                 controller.showStatus(qsTr("Fin \"%1\": %2 mm thick, %3 cm³. Next: export it.")
                                       .arg(r.result.name).arg(v.thickness).arg((r.result.volume / 1000).toFixed(1)))
             return _selectResult(r)

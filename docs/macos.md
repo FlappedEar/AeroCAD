@@ -106,6 +106,10 @@ open build/vcpkg-macos/bin/AeroCAD.app
   outline with its root a little past that line, click *Finish Sketch*, set the thickness
   in *Fin on surface* and click *Create*: the root is cut to the surface, so the fin sits
   flush on its outer skin (holes and a second layer behind it in the scan are ignored).
+  A straight root drawn across a curved surface is carried on down where the surface
+  falls away under it, so the fin never hangs in the air at the ends of its chord.
+  *Root fillet* (default 2 mm, 0 for none) rounds the joint to the surface; when a radius
+  does not fit, the fin is made without it and the status bar says so.
 - **Undo / redo:** Cmd+Z / Cmd+Shift+Z (also for selection changes).
 
 ## Troubleshooting

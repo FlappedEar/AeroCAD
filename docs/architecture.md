@@ -124,7 +124,13 @@ core -------+                 transforms, primitives).
   the fin, so the root lies exactly on the surface. On a scan the surface under the root
   is `geometry::skinOnScan`: the same first-skin-from-outside height-field fit as
   `partOnScan` (`core::MeshProjector` along the surface normal), so an inner layer,
-  holes and flipped triangles do not pull the root into the scan.
+  holes and flipped triangles do not pull the root into the scan. Before the cut, root
+  edges (middle under the surface) are carried down along the neighbouring edges' lines
+  (`extendRoot`), so the root reaches through a curved surface everywhere and its
+  intersection never lands on an outline corner. `rootFillet`: the blank is fused with a
+  pad (the surface around the root swept down past it), the edges where the fin walls meet
+  the pad top are filleted (`BRepFilletAPI_MakeFillet`), and the pad is cut away again,
+  leaving concave fillets tangent to the surface.
 
 ## Not yet decided / next steps
 

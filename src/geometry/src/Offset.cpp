@@ -5,6 +5,19 @@
 
 #include <BRepAlgoAPI_Common.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
+#include <BRepAlgoAPI_Fuse.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_MakePolygon.hxx>
+#include <BRepBuilderAPI_MakeWire.hxx>
+#include <TopoDS_Vertex.hxx>
+#include <BRepAdaptor_Curve.hxx>
+#include <BRepAdaptor_Surface.hxx>
+#include <BRepFilletAPI_MakeFillet.hxx>
+#include <ShapeUpgrade_UnifySameDomain.hxx>
+#include <optional>
+#include <TopExp.hxx>
+#include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
+#include <TopTools_MapOfShape.hxx>
 #include <BRepAlgoAPI_Splitter.hxx>
 #include <GeomAPI_ProjectPointOnSurf.hxx>
 #include <BRepBndLib.hxx>
@@ -31,7 +44,10 @@
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
 
+#include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <limits>
 #include <string>
 
 namespace aerocad::geometry {
@@ -97,6 +113,310 @@ TopoDS_Shape untrimmed(const TopoDS_Shape& s)
     // Keep the face's normal (the side the mesh faced).
     full.Orientation(face.Orientation());
     return full;
+}
+
+/// Height of `p` above the surface along `up` (negative: under it), or nothing when it does
+/// not project onto the surface.
+std::optional<double> heightAbove(const Handle(Geom_Surface)& surf, const gp_Pnt& p, const gp_Vec& up)
+{
+    GeomAPI_ProjectPointOnSurf projector(p, surf);
+    if (projector.NbPoints() == 0)
+        return std::nullopt;
+    return gp_Vec(projector.NearestPoint(), p).Dot(up);
+}
+
+gp_Vec faceNormal(const TopoDS_Face& face)
+{
+    BRepAdaptor_Surface surface(face);
+    gp_Pnt p;
+    gp_Vec du, dv;
+    surface.D1(0.5 * (surface.FirstUParameter() + surface.LastUParameter()),
+               0.5 * (surface.FirstVParameter() + surface.LastVParameter()), p, du, dv);
+    gp_Vec n = du.Crossed(dv);
+    if (face.Orientation() == TopAbs_REVERSED)
+        n.Reverse();
+    return n;
+}
+
+/// The fin outline with its root carried on down past the surface. A root drawn straight
+/// across a curved surface can come out of it towards the ends of the chord (a bumper
+/// corner falls away under it), or cross it right at the corners of the outline, where the
+/// root's edge would be cut into slivers. The root edges (those whose middle is under the
+/// surface) are moved straight down, along -`up` in the outline's plane, and the edges next
+/// to them carried on along their own direction: the leading and trailing edges continue
+/// cleanly through the surface. The part under the surface is cut off later.
+TopoDS_Shape extendRoot(const TopoDS_Shape& outline, const Handle(Geom_Surface)& surf, const gp_Vec& up)
+{
+    TopTools_IndexedDataMapOfShapeListOfShape vertexEdges;
+    TopExp::MapShapesAndAncestors(outline, TopAbs_VERTEX, TopAbs_EDGE, vertexEdges);
+    TopTools_MapOfShape rootEdges;
+    std::vector<TopoDS_Edge> roots;
+    std::vector<double> depths;
+    for (TopExp_Explorer e(outline, TopAbs_EDGE); e.More(); e.Next()) {
+        const TopoDS_Edge edge = TopoDS::Edge(e.Current());
+        if (rootEdges.Contains(edge))
+            continue;
+        BRepAdaptor_Curve curve(edge);
+        const double t0 = curve.FirstParameter(), t1 = curve.LastParameter();
+        const auto mid = heightAbove(surf, curve.Value(0.5 * (t0 + t1)), up);
+        if (!mid || *mid >= 0.0)
+            continue;
+        const gp_Vec along(curve.Value(t0), curve.Value(t1));
+        if (along.Magnitude() < 1e-6 || std::abs(along.Normalized().Dot(up)) > 0.9)
+            continue; // a closed or upright edge has no width to carry down
+        double high = *mid;
+        for (int i = 0; i <= 8; ++i)
+            if (const auto h = heightAbove(surf, curve.Value(t0 + (t1 - t0) * i / 8.0), up))
+                high = std::max(high, *h);
+        rootEdges.Add(edge);
+        roots.push_back(edge);
+        depths.push_back(std::max(high, 0.0) + 2.0);
+    }
+    if (roots.empty())
+        return outline;
+
+    // Where an end of a root edge goes: on down along the neighbouring edge's own line
+    // (when that runs downwards), else straight down; `depth` under the end.
+    auto carried = [&](const TopoDS_Edge& root, const TopoDS_Vertex& v, double depth) {
+        const gp_Pnt p = BRep_Tool::Pnt(v);
+        gp_Vec down = -up;
+        const int index = vertexEdges.FindIndex(v);
+        if (index > 0) {
+            for (TopTools_ListIteratorOfListOfShape it(vertexEdges(index)); it.More(); it.Next()) {
+                const TopoDS_Edge next = TopoDS::Edge(it.Value());
+                if (next.IsSame(root) || rootEdges.Contains(next))
+                    continue;
+                BRepAdaptor_Curve curve(next);
+                const double t = BRep_Tool::Parameter(v, next);
+                gp_Pnt q;
+                gp_Vec d;
+                curve.D1(t, q, d);
+                if (d.Magnitude() < 1e-9)
+                    continue;
+                // Pointing back out of the neighbouring edge, past the vertex.
+                gp_Vec back = d.Normalized();
+                if (std::abs(t - curve.FirstParameter()) < std::abs(t - curve.LastParameter()))
+                    back.Reverse();
+                if (back.Dot(-up) > 0.3)
+                    down = back;
+            }
+        }
+        return p.Translated(down * (depth / down.Dot(-up)));
+    };
+
+    TopTools_ListOfShape sweeps;
+    for (std::size_t k = 0; k < roots.size(); ++k) {
+        TopoDS_Vertex a, b;
+        TopExp::Vertices(roots[k], a, b);
+        const gp_Pnt pa = BRep_Tool::Pnt(a), pb = BRep_Tool::Pnt(b);
+        const gp_Pnt qa = carried(roots[k], a, depths[k]), qb = carried(roots[k], b, depths[k]);
+        BRepBuilderAPI_MakeWire wire;
+        wire.Add(roots[k]);
+        if (pb.Distance(qb) > 1e-6)
+            wire.Add(BRepBuilderAPI_MakeEdge(pb, qb).Edge());
+        wire.Add(BRepBuilderAPI_MakeEdge(qb, qa).Edge());
+        if (pa.Distance(qa) > 1e-6)
+            wire.Add(BRepBuilderAPI_MakeEdge(qa, pa).Edge());
+        if (!wire.IsDone())
+            continue;
+        BRepBuilderAPI_MakeFace face(wire.Wire(), true);
+        if (!face.IsDone())
+            continue;
+        // Facing the same way as the outline, so the two merge into one face.
+        TopoDS_Face f = face.Face();
+        if (faceNormal(f).Dot(faceNormal(TopoDS::Face(TopExp_Explorer(outline, TopAbs_FACE).Current()))) < 0.0)
+            f.Reverse();
+        sweeps.Append(f);
+    }
+    if (sweeps.IsEmpty())
+        return outline;
+    TopTools_ListOfShape args;
+    args.Append(outline);
+    BRepAlgoAPI_Fuse fuse;
+    fuse.SetArguments(args);
+    fuse.SetTools(sweeps);
+    fuse.SetRunParallel(false);
+    fuse.Build();
+    if (!fuse.IsDone() || fuse.HasErrors())
+        return outline;
+    // One face, its collinear edges (a leading edge and its continuation) merged.
+    ShapeUpgrade_UnifySameDomain unify(fuse.Shape(), true, true, false);
+    unify.Build();
+    const TopoDS_Shape merged = unify.Shape();
+    TopExp_Explorer faces(merged, TopAbs_FACE);
+    if (!faces.More())
+        return outline;
+    const TopoDS_Shape face = faces.Current();
+    faces.Next();
+    return faces.More() ? outline : face; // could not be merged into one outline: leave it
+}
+
+std::string mm(double value)
+{
+    char buffer[32];
+    std::snprintf(buffer, sizeof buffer, "%g", value);
+    return buffer;
+}
+
+/// All images of `shape` in the result of a boolean: what it became, or itself when untouched.
+template <class Algo>
+void addImages(Algo& algo, const TopoDS_Shape& shape, TopTools_MapOfShape& into)
+{
+    if (algo.IsDeleted(shape))
+        return;
+    const TopTools_ListOfShape& modified = algo.Modified(shape);
+    if (modified.IsEmpty()) {
+        into.Add(shape);
+        return;
+    }
+    for (TopTools_ListIteratorOfListOfShape it(modified); it.More(); it.Next())
+        into.Add(it.Value());
+}
+
+/// The fin blanks (outlines extruded, root reaching through `surface`) standing on the
+/// `up` side, with a concave fillet of `radius` mm where they meet the surface, and nothing
+/// below the surface. A pad under the root (the surface around it, swept down past the
+/// root) is fused with the blanks, the edges where the fin walls meet the pad's top (the
+/// surface) are filleted, and the pad is cut away again: the fillets flare out exactly
+/// onto the surface, tangent to it.
+TopoDS_Shape filletedFin(const TopTools_ListOfShape& blanks, const TopoDS_Shape& surface, const gp_Vec& up,
+                         const gp_Vec& across, double radius, const Handle(Geom_Surface)& surf)
+{
+    // A frame on the surface under the fin: `a` across its thickness, `b` along its chord.
+    gp_Vec a = across - up * across.Dot(up);
+    if (a.Magnitude() < 1e-9)
+        throw OffsetError("The fin plane lies along the surface");
+    a.Normalize();
+    const gp_Vec b = up.Crossed(a);
+    Bnd_Box box;
+    for (TopTools_ListIteratorOfListOfShape it(blanks); it.More(); it.Next())
+        BRepBndLib::Add(it.Value(), box);
+    double xs[2], ys[2], zs[2];
+    box.Get(xs[0], ys[0], zs[0], xs[1], ys[1], zs[1]);
+    double a0 = std::numeric_limits<double>::max(), a1 = -a0, b0 = a0, b1 = -a0, u0 = a0, u1 = -a0;
+    for (const double x : xs)
+        for (const double y : ys)
+            for (const double z : zs) {
+                const gp_Vec p(x, y, z);
+                a0 = std::min(a0, p.Dot(a));
+                a1 = std::max(a1, p.Dot(a));
+                b0 = std::min(b0, p.Dot(b));
+                b1 = std::max(b1, p.Dot(b));
+                u0 = std::min(u0, p.Dot(up));
+                u1 = std::max(u1, p.Dot(up));
+            }
+    const double margin = 2.0 * radius + 1.0;
+    auto corner = [&](double s, double t) {
+        const gp_Vec p = a * s + b * t;
+        return gp_Pnt(p.X(), p.Y(), p.Z());
+    };
+    BRepBuilderAPI_MakePolygon rect(corner(a0 - margin, b0 - margin), corner(a1 + margin, b0 - margin),
+                                    corner(a1 + margin, b1 + margin), corner(a0 - margin, b1 + margin), true);
+    BRepBuilderAPI_MakeFace rectFace(rect.Wire(), true);
+    if (!rectFace.IsDone())
+        throw OffsetError("Could not outline the fin root");
+    const core::Vec3 upDir{up.X(), up.Y(), up.Z()};
+    TopoDS_Shape top;
+    try {
+        top = occt(trimSurface(wrapShape(surface), {wrapShape(rectFace.Face())}, upDir, true, false));
+    } catch (const OffsetError&) {
+        throw OffsetError("The surface does not reach around the fin root for a fillet of " + mm(radius) +
+                          " mm");
+    }
+    TopExp_Explorer topFaces(top, TopAbs_FACE);
+    const TopoDS_Face topFace = TopoDS::Face(topFaces.Current());
+    topFaces.Next();
+    if (topFaces.More())
+        throw OffsetError("The surface folds under the fin root; the root fillet needs one smooth piece of it");
+    Bnd_Box topBox;
+    BRepBndLib::Add(topFace, topBox);
+    topBox.Get(xs[0], ys[0], zs[0], xs[1], ys[1], zs[1]);
+    double topHigh = -std::numeric_limits<double>::max();
+    for (const double x : xs)
+        for (const double y : ys)
+            for (const double z : zs)
+                topHigh = std::max(topHigh, gp_Vec(x, y, z).Dot(up));
+    // Deep enough that every bit of the blank under the surface is inside the pad.
+    const double depth = std::max(topHigh, u1) - u0 + 1.0;
+    BRepPrimAPI_MakePrism padMaker(topFace, up * -depth);
+    if (!padMaker.IsDone())
+        throw OffsetError("Could not build the pad for the root fillet");
+    const TopoDS_Shape pad = padMaker.Shape();
+
+    TopTools_ListOfShape tools;
+    tools.Append(pad);
+    BRepAlgoAPI_Fuse fuse;
+    fuse.SetArguments(blanks);
+    fuse.SetTools(tools);
+    fuse.SetRunParallel(false);
+    fuse.Build();
+    if (!fuse.IsDone() || fuse.HasErrors())
+        throw OffsetError("Joining the fin to the surface for the root fillet failed");
+    TopTools_MapOfShape topImages, finImages;
+    addImages(fuse, topFace, topImages);
+    for (TopTools_ListIteratorOfListOfShape it(blanks); it.More(); it.Next())
+        for (TopExp_Explorer f(it.Value(), TopAbs_FACE); f.More(); f.Next())
+            addImages(fuse, f.Current(), finImages);
+    TopTools_IndexedDataMapOfShapeListOfShape edgeFaces;
+    TopExp::MapShapesAndAncestors(fuse.Shape(), TopAbs_EDGE, TopAbs_FACE, edgeFaces);
+    BRepFilletAPI_MakeFillet fillet(fuse.Shape());
+    int rootEdges = 0;
+    for (int i = 1; i <= edgeFaces.Extent(); ++i) {
+        bool onTop = false, onFin = false;
+        for (TopTools_ListIteratorOfListOfShape it(edgeFaces(i)); it.More(); it.Next()) {
+            onTop = onTop || topImages.Contains(it.Value());
+            onFin = onFin || finImages.Contains(it.Value());
+        }
+        if (onTop && onFin) {
+            fillet.Add(radius, TopoDS::Edge(edgeFaces.FindKey(i)));
+            ++rootEdges;
+        }
+    }
+    if (rootEdges == 0)
+        throw OffsetError("The fin outline does not reach through the surface; draw its root a little into the "
+                          "surface (past the surface line in the sketch)");
+    try {
+        fillet.Build();
+    } catch (const Standard_Failure&) {
+    }
+    if (!fillet.IsDone())
+        throw OffsetError("A root fillet of " + mm(radius) + " mm does not fit this fin; try a smaller radius");
+
+    BRepAlgoAPI_Cut cut(fillet.Shape(), pad);
+    if (!cut.IsDone() || cut.HasErrors())
+        throw OffsetError("Cutting the fin back to the surface after the root fillet failed");
+    std::vector<TopoDS_Shape> kept;
+    for (TopExp_Explorer e(cut.Shape(), TopAbs_SOLID); e.More(); e.Next()) {
+        GProp_GProps props;
+        BRepGProp::VolumeProperties(e.Current(), props);
+        if (std::abs(props.Mass()) < 1e-6)
+            continue;
+        GeomAPI_ProjectPointOnSurf projector(props.CentreOfMass(), surf);
+        if (projector.NbPoints() > 0 && gp_Vec(projector.NearestPoint(), props.CentreOfMass()).Dot(up) <= 0.0)
+            continue;
+        kept.push_back(e.Current());
+    }
+    if (kept.empty())
+        throw OffsetError("The root fillet left nothing of the fin");
+    TopoDS_Shape result;
+    if (kept.size() == 1) {
+        result = kept.front();
+    } else {
+        TopoDS_Compound c;
+        BRep_Builder builder;
+        builder.MakeCompound(c);
+        for (const auto& k : kept)
+            builder.Add(c, k);
+        result = c;
+    }
+    if (!BRepCheck_Analyzer(result).IsValid()) {
+        ShapeFix_Shape fix(result);
+        fix.Perform();
+        result = fix.Shape();
+        if (!BRepCheck_Analyzer(result).IsValid())
+            throw OffsetError("The root fillet produced invalid geometry; try a smaller radius");
+    }
+    return result;
 }
 
 } // namespace
@@ -228,7 +548,7 @@ Shape trimSurface(const Shape& surface, const std::vector<Shape>& outlines, cons
 }
 
 Shape finOnSurface(const Shape& surface, const std::vector<Shape>& outlines, const core::Vec3& normal,
-                   double thickness, const core::Vec3& outward)
+                   double thickness, const core::Vec3& outward, double rootFillet)
 {
     TopoDS_Shape s = occt(surface);
     requireSurface(s);
@@ -237,6 +557,8 @@ Shape finOnSurface(const Shape& surface, const std::vector<Shape>& outlines, con
         throw OffsetError("No closed outline for the fin");
     if (!std::isfinite(thickness) || thickness <= 0.0)
         throw OffsetError("Thickness must be positive");
+    if (!std::isfinite(rootFillet) || rootFillet < 0.0)
+        throw OffsetError("The root fillet radius must be 0 (none) or positive");
     const double len = normal.length();
     const double outLen = outward.length();
     if (!(len > 0.0) || !(outLen > 0.0))
@@ -244,14 +566,27 @@ Shape finOnSurface(const Shape& surface, const std::vector<Shape>& outlines, con
     const gp_Vec dir(normal.x / len, normal.y / len, normal.z / len);
     const gp_Vec out(outward.x / outLen, outward.y / outLen, outward.z / outLen);
     try {
-        // The fin before the cut: the outlines extruded half the thickness each way.
+        Handle(Geom_Surface) surf;
+        for (TopExp_Explorer e(s, TopAbs_FACE); e.More() && surf.IsNull(); e.Next())
+            surf = BRep_Tool::Surface(TopoDS::Face(e.Current()));
+        // The fin before the cut: the outlines, their roots carried down past the surface,
+        // extruded half the thickness each way.
         TopTools_ListOfShape blanks;
         for (const auto& o : outlines) {
             if (o.isNull())
                 continue;
+            TopoDS_Shape outline = o.impl()->shape;
+            if (!surf.IsNull()) {
+                // The fin stands on the side of the surface its outline mostly lies on.
+                GProp_GProps area;
+                BRepGProp::SurfaceProperties(outline, area);
+                const auto side = heightAbove(surf, area.CentreOfMass(), out);
+                if (side)
+                    outline = extendRoot(outline, surf, *side >= 0.0 ? out : -out);
+            }
             gp_Trsf back;
             back.SetTranslation(dir * (-0.5 * thickness));
-            const TopoDS_Shape start = BRepBuilderAPI_Transform(o.impl()->shape, back, true).Shape();
+            const TopoDS_Shape start = BRepBuilderAPI_Transform(outline, back, true).Shape();
             BRepPrimAPI_MakePrism prism(start, dir * thickness);
             if (!prism.IsDone())
                 throw OffsetError("Could not extrude the fin outline");
@@ -273,9 +608,6 @@ Shape finOnSurface(const Shape& surface, const std::vector<Shape>& outlines, con
         // Sort the pieces by the side of the surface their centre lies on, and keep the
         // side with more of the fin: the root dipping into the surface is cut off, whichever
         // way the outline was drawn.
-        Handle(Geom_Surface) surf;
-        for (TopExp_Explorer e(s, TopAbs_FACE); e.More() && surf.IsNull(); e.Next())
-            surf = BRep_Tool::Surface(TopoDS::Face(e.Current()));
         std::vector<TopoDS_Shape> sides[2];
         double volume[2] = {0.0, 0.0};
         for (TopExp_Explorer e(splitter.Shape(), TopAbs_SOLID); e.More(); e.Next()) {
@@ -294,9 +626,12 @@ Shape finOnSurface(const Shape& surface, const std::vector<Shape>& outlines, con
         if (sides[0].empty() || sides[1].empty())
             throw OffsetError("The fin outline does not reach through the surface; draw its root a little into the "
                               "surface (past the surface line in the sketch)");
-        const std::vector<TopoDS_Shape>& kept = volume[0] >= volume[1] ? sides[0] : sides[1];
+        const bool alongOut = volume[0] >= volume[1];
+        const std::vector<TopoDS_Shape>& kept = alongOut ? sides[0] : sides[1];
         TopoDS_Shape result;
-        if (kept.size() == 1) {
+        if (rootFillet > 0.0) {
+            result = filletedFin(blanks, s, alongOut ? out : -out, dir, rootFillet, surf);
+        } else if (kept.size() == 1) {
             result = kept.front();
         } else {
             TopoDS_Compound c;
