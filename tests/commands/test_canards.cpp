@@ -6,12 +6,15 @@
 #include "aerocad/commands/Session.hpp"
 #include "aerocad/core/Align.hpp"
 #include "aerocad/core/MeshCheck.hpp"
+#include "aerocad/core/Path.hpp"
 #include "aerocad/core/Symmetry.hpp"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <filesystem>
+#include <random>
 #include <memory>
 
 using namespace aerocad;
@@ -204,5 +207,47 @@ TEST_CASE("Canards on both sides: mirrored in the scan's centre plane, each on i
               Approx(-fins[k].at("bounds").at("max").at(0).get<double>()).margin(2.0));
         CHECK(fins[k + 2].at("volume").get<double>() == Approx(fins[k].at("volume").get<double>()).epsilon(0.05));
         CHECK(fins[k + 2].at("name").get<std::string>().find("(mirror)") != std::string::npos);
+    }
+}
+
+TEST_CASE("Canards exported for printing: one STL and one STEP per fin", "[commands][fit][canard][export]")
+{
+    BumperScene scene;
+    const Json sk = scene.sketchAt(30.0, 120.0);
+    auto fins = scene.session.execute("surface.fin_from_sketch",
+                                      {{"sketch", sk.at("id")}, {"thickness", 3.0}, {"rootFillet", 2.0}, {"count", 2}, {"spacing", -55.0}});
+    REQUIRE(fins.ok);
+    const auto dir = std::filesystem::temp_directory_path() / ("aerocad_print_" + std::to_string(std::random_device{}()));
+    struct Cleanup {
+        std::filesystem::path p;
+        ~Cleanup() { std::filesystem::remove_all(p); }
+    } cleanup{dir};
+
+    // The scan is not a solid: asked for, it stops the export before anything is written.
+    auto refused = scene.session.execute("document.export_for_print",
+                                         {{"folder", core::pathToUtf8(dir)}, {"ids", {scene.scanId, fins.data.at("id")}}});
+    CHECK_FALSE(refused.ok);
+    CHECK((!std::filesystem::exists(dir) || std::filesystem::is_empty(dir)));
+
+    // By default: the visible solids, i.e. the two fins (not the scan).
+    auto out = scene.session.execute("document.export_for_print", {{"folder", core::pathToUtf8(dir)}});
+    INFO(out.toJson().dump());
+    REQUIRE(out.ok);
+    CHECK(out.data.at("parts") == 2);
+    REQUIRE(out.data.at("files").size() == 4);
+    for (const auto& f : out.data.at("files")) {
+        const std::string path = f.at("path").get<std::string>();
+        REQUIRE(std::filesystem::exists(core::pathFromUtf8(path)));
+        auto back = scene.session.execute("document.import", {{"path", path}});
+        INFO(path);
+        REQUIRE(back.ok);
+        const auto* part = scene.session.document().part(back.data.at("id").get<model::PartId>());
+        REQUIRE(part != nullptr);
+        CHECK(core::checkMesh(core::weldVertices(*part->mesh)).watertight());
+        const auto& fin = fins.data.at("fins")[f.at("id") == fins.data.at("fins")[0].at("id") ? 0 : 1];
+        CHECK(core::checkMesh(core::weldVertices(*part->mesh)).signedVolume ==
+              Approx(fin.at("volume").get<double>()).epsilon(0.02));
+        if (f.at("format") == "stl")  // finer than the view's mesh, for a smooth print
+            CHECK(f.at("triangles").get<std::size_t>() > fin.at("triangles").get<std::size_t>());
     }
 }

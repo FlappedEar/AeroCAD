@@ -115,6 +115,12 @@ open build/vcpkg-macos/bin/AeroCAD.app
   where it lands. *Both sides* also makes them on the other side of the car, mirrored in
   the scan's own centre plane (found from the scan; or pick the YZ / XZ / XY plane) and
   fitted to the skin there. One undo takes them all back.
+- **Print files:** select a solid and click *Export for printing...* (also *File > Export
+  for Printing...* and *Export > For Printing*), then pick a folder: every visible solid is
+  written as its own `<name>.stl` (finely tessellated, mm) and `<name>.step`. The scan is
+  not a solid, so it is left out; hide any solid you do not want. If one is not watertight,
+  nothing is written and the message says which. *File > Export* also writes exact parts
+  with the fine mesh now.
 - **Undo / redo:** Cmd+Z / Cmd+Shift+Z (also for selection changes).
 
 ## Troubleshooting
