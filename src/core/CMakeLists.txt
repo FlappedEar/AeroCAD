@@ -8,6 +8,7 @@ add_library(aerocad_core STATIC
     src/MeshQuery.cpp
     src/MeshSection.cpp
     src/Align.cpp
+    src/Symmetry.cpp
     src/MeshRepair.cpp
     src/MeshSimplify.cpp
     src/Units.cpp

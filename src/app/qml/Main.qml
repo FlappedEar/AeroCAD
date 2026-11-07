@@ -1459,6 +1459,48 @@ ApplicationWindow {
                         Label { text: qsTr("mm") }
                     }
                     RowLayout {
+                        visible: !!window.partOnSurfaceSketch && window.partOnSurfaceSketch.across
+                        Label { text: qsTr("Fins") }
+                        SpinBox {
+                            id: finCount
+                            objectName: "finCount"
+                            from: 1
+                            to: 6
+                            value: 1
+                            Layout.preferredWidth: 96
+                            ToolTip.visible: hovered
+                            ToolTip.text: qsTr("More than one: copies of the fin stacked across the sketch, each set on the surface where it lands.")
+                        }
+                        Label { text: qsTr("spaced"); visible: finCount.value > 1 }
+                        TextField {
+                            id: finSpacing
+                            objectName: "finSpacing"
+                            visible: finCount.value > 1
+                            Layout.preferredWidth: 56
+                            text: "40"
+                            validator: DoubleValidator { decimals: 2; notation: DoubleValidator.StandardNotation }
+                            ToolTip.visible: hovered
+                            ToolTip.text: qsTr("Distance between the fins, mm. Negative puts the copies on the other side.")
+                        }
+                        Label { text: qsTr("mm"); visible: finCount.value > 1 }
+                    }
+                    RowLayout {
+                        visible: !!window.partOnSurfaceSketch && window.partOnSurfaceSketch.across
+                        CheckBox {
+                            id: finMirror
+                            objectName: "finMirror"
+                            text: qsTr("Both sides")
+                            ToolTip.visible: hovered
+                            ToolTip.text: qsTr("Also makes the fins on the other side of the car, mirrored in its centre plane and set on the surface there.")
+                        }
+                        ComboBox {
+                            id: finMirrorPlane
+                            visible: finMirror.checked
+                            Layout.preferredWidth: 200
+                            model: [qsTr("Scan's centre plane"), qsTr("YZ plane"), qsTr("XZ plane"), qsTr("XY plane")]
+                        }
+                    }
+                    RowLayout {
                         Button {
                             text: qsTr("Create")
                             highlighted: true
@@ -1472,9 +1514,15 @@ ApplicationWindow {
                                 try { rf = Number.fromLocaleString(Qt.locale(), finRootFillet.text) } catch (e) { rf = Number(finRootFillet.text.replace(",", ".")) }
                                 if (fin && !(rf >= 0))
                                     return window.controller.showStatus(qsTr("Enter the root fillet in mm (0 for none)"))
+                                let spacing = 40
+                                try { spacing = Number.fromLocaleString(Qt.locale(), finSpacing.text) } catch (e) { spacing = Number(finSpacing.text.replace(",", ".")) }
+                                if (fin && finCount.value > 1 && !(Math.abs(spacing) > 0))
+                                    return window.controller.showStatus(qsTr("Enter the spacing between the fins in mm"))
                                 const r = fin
                                     ? window.controller.execute("surface.fin_from_sketch",
-                                        { sketch: window.partOnSurfaceSketch.id, thickness: t, rootFillet: rf })
+                                        { sketch: window.partOnSurfaceSketch.id, thickness: t, rootFillet: rf,
+                                          count: finCount.value, spacing: spacing, mirror: finMirror.checked,
+                                          mirrorPlane: ["auto", "yz", "xz", "xy"][finMirrorPlane.currentIndex] })
                                     : window.controller.execute("surface.part_from_sketch",
                                         { sketch: window.partOnSurfaceSketch.id, thickness: t,
                                           side: ["inside", "outside", "both"][partSide.currentIndex] })
@@ -1484,6 +1532,12 @@ ApplicationWindow {
                                 window.selectPart(r.result.id)
                                 if (fin && r.result.warnings.length > 0)
                                     window.controller.showStatus(qsTr("Fin \"%1\": %2").arg(r.result.name).arg(r.result.warnings[0]))
+                                else if (fin && r.result.mirror)
+                                    window.controller.showStatus(qsTr("%1 fins, %2 mm thick, on both sides of the %3")
+                                        .arg(r.result.fins.length).arg(t)
+                                        .arg(r.result.mirror.source === "scan" ? qsTr("scan's centre plane") : r.result.mirror.source.toUpperCase() + qsTr(" plane")))
+                                else if (fin && r.result.fins.length > 1)
+                                    window.controller.showStatus(qsTr("%1 fins, %2 mm thick").arg(r.result.fins.length).arg(t))
                                 else if (fin)
                                     window.controller.showStatus(qsTr("Fin \"%1\": %2 mm thick, %3 cm³")
                                         .arg(r.result.name).arg(t).arg((r.result.volume / 1000).toFixed(1)))

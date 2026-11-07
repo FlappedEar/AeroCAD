@@ -4,7 +4,9 @@
 #include "SyntheticBumper.hpp"
 
 #include "aerocad/commands/Session.hpp"
+#include "aerocad/core/Align.hpp"
 #include "aerocad/core/MeshCheck.hpp"
+#include "aerocad/core/Symmetry.hpp"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -108,4 +110,99 @@ TEST_CASE("Canard on a noisy scanned bumper corner, with a root fillet", "[comma
     const double expected = (1.0 - 3.14159 / 4.0) * r * r * 2.0 * 80.0;
     CHECK(added > 0.5 * expected);
     CHECK(added < 1.6 * expected);
+}
+
+TEST_CASE("A stacked pair of canards in one go, each root on the skin, one undo", "[commands][fit][canard]")
+{
+    BumperScene scene;
+    const Json sk = scene.sketchAt(40.0, 170.0);
+    // The bumper leans in towards the bottom: the second fin, 60 mm down the sketch normal,
+    // has to move in to reach the skin.
+    auto pair = scene.session.execute("surface.fin_from_sketch", {{"sketch", sk.at("id")},
+                                                                  {"thickness", 3.0},
+                                                                  {"rootFillet", 2.0},
+                                                                  {"count", 2},
+                                                                  {"spacing", -60.0}});
+    INFO(pair.toJson().dump());
+    REQUIRE(pair.ok);
+    CHECK(pair.data.at("warnings").empty());
+    const auto& fins = pair.data.at("fins");
+    REQUIRE(fins.size() == 2);
+    const double z0 = (fins[0].at("bounds").at("min").at(2).get<double>() + fins[0].at("bounds").at("max").at(2).get<double>()) / 2;
+    const double z1 = (fins[1].at("bounds").at("min").at(2).get<double>() + fins[1].at("bounds").at("max").at(2).get<double>()) / 2;
+    CHECK(z0 - z1 == Approx(60.0 * sk.at("params").at("plane").at("normal").at(2).get<double>()).margin(3.0));
+    for (const auto& f : fins) {
+        CHECK(f.at("rootFillet").get<double>() == 2.0);
+        const model::Part& fin = scene.part(f);
+        CHECK(core::checkMesh(core::weldVertices(*fin.mesh)).watertight());
+        double deepest = 0, nearest = 0;
+        scene.rootOnSkin(fin, deepest, nearest);
+        CHECK(deepest > -0.6);
+        CHECK(nearest < 0.6);
+    }
+    // Same fin, same size: the copy is the same outline.
+    CHECK(fins[1].at("volume").get<double>() == Approx(fins[0].at("volume").get<double>()).epsilon(0.05));
+
+    const auto parts = scene.session.document().parts().size();
+    REQUIRE(scene.session.execute("edit.undo", Json::object()).ok);
+    CHECK(scene.session.document().parts().size() == parts - 2);
+    REQUIRE(scene.session.execute("edit.redo", Json::object()).ok);
+    CHECK(scene.session.document().parts().size() == parts);
+}
+
+TEST_CASE("The centre plane of a scanned bumper is found, also turned and moved", "[canard][symmetry]")
+{
+    const testing::SyntheticBumper bumper;
+    core::TriangleMesh mesh = bumper.mesh();
+    auto plane = core::findSymmetryPlane(mesh);
+    REQUIRE(plane);
+    CHECK(std::abs(plane->normal.x) > 0.999);
+    CHECK(std::abs(plane->point.dot(plane->normal)) < 1.5);
+    CHECK(plane->match > 0.8);
+
+    // Turned 10 degrees about Z and moved: the plane goes with it.
+    const core::Affine pose{core::Mat3::rotation({0, 0, 1}, 10.0 * 3.14159265358979 / 180.0), {120, -40, 15}};
+    core::transformMesh(mesh, pose);
+    plane = core::findSymmetryPlane(mesh);
+    REQUIRE(plane);
+    const core::Vec3 expected = pose.linear * core::Vec3{1, 0, 0};
+    CHECK(std::abs(plane->normal.dot(expected)) > 0.999);
+    CHECK(std::abs((pose.translation - plane->point).dot(plane->normal)) < 1.5);
+}
+
+TEST_CASE("Canards on both sides: mirrored in the scan's centre plane, each on its own skin", "[commands][fit][canard]")
+{
+    BumperScene scene;
+    const Json sk = scene.sketchAt(30.0, 120.0);
+    auto both = scene.session.execute("surface.fin_from_sketch", {{"sketch", sk.at("id")},
+                                                                  {"thickness", 3.0},
+                                                                  {"rootFillet", 2.0},
+                                                                  {"count", 2},
+                                                                  {"spacing", -55.0},
+                                                                  {"mirror", true}});
+    INFO(both.toJson().dump());
+    REQUIRE(both.ok);
+    CHECK(both.data.at("warnings").empty());
+    CHECK(both.data.at("mirror").at("source") == "scan");
+    CHECK(std::abs(both.data.at("mirror").at("normal").at(0).get<double>()) > 0.999);
+    const auto& fins = both.data.at("fins");
+    REQUIRE(fins.size() == 4);
+    for (std::size_t k = 0; k < 4; ++k) {
+        const model::Part& fin = scene.part(fins[k]);
+        CHECK(core::checkMesh(core::weldVertices(*fin.mesh)).watertight());
+        double deepest = 0, nearest = 0;
+        scene.rootOnSkin(fin, deepest, nearest);
+        CHECK(deepest > -0.6);
+        CHECK(nearest < 0.6);
+        // Right side first, then the left.
+        const double cx = (fins[k].at("bounds").at("min").at(0).get<double>() + fins[k].at("bounds").at("max").at(0).get<double>()) / 2;
+        CHECK((k < 2 ? cx > 300.0 : cx < -300.0));
+    }
+    // Mirror images: the same x extent with the sign turned, the same volume.
+    for (std::size_t k = 0; k < 2; ++k) {
+        CHECK(fins[k + 2].at("bounds").at("min").at(0).get<double>() ==
+              Approx(-fins[k].at("bounds").at("max").at(0).get<double>()).margin(2.0));
+        CHECK(fins[k + 2].at("volume").get<double>() == Approx(fins[k].at("volume").get<double>()).epsilon(0.05));
+        CHECK(fins[k + 2].at("name").get<std::string>().find("(mirror)") != std::string::npos);
+    }
 }
