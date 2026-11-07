@@ -275,9 +275,10 @@ private:
     };
     std::map<FeatureId, PartMeta> m_partMeta;
     PartLookup m_partLookup;
-    /// Mesh to B-rep conversions are slow: cached per part id and revision.
+    /// Mesh to B-rep conversions are slow: cached by immutable mesh identity. A part
+    /// restored after removal may reuse its id and revision with different geometry.
     struct ConvertedPart {
-        std::uint64_t revision = 0;
+        std::weak_ptr<const core::TriangleMesh> mesh;
         geometry::Shape shape;
     };
     std::map<model::PartId, ConvertedPart> m_convertedParts;

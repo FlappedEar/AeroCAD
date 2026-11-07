@@ -53,6 +53,12 @@ use the same operations, and every change is one undo step.
   Features that break because of an earlier change stay in the timeline with
   `status: "error"` and a message, like Fusion's red timeline icons.
 
+Scaling an imported source or replacing its geometry rebuilds the dependent timeline
+bodies before Inspect, saving or export uses them. Undo and Redo restore the source and
+its dependent bodies together, in one step. A rejected source edit leaves the model and
+history unchanged. If an accepted source change prevents dependent features from
+rebuilding, AeroCAD reports the problem; Undo restores the previous source.
+
 ## Commands
 
 | Command | Fusion | Notes |
