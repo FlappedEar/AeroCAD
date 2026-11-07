@@ -161,7 +161,10 @@ public:
 
     [[nodiscard]] std::optional<CaseInfo> caseInfo(const std::string& id);
 
-    /// Histories, summary in N, quality report. Throws std::runtime_error for unknown ids.
+    /// Histories, summary in N, quality report. Summary values are null until successful
+    /// completion with complete finite coefficient/force output; finalResults reports
+    /// availability and reasons. Histories remain available, marked provisional when
+    /// final results are unavailable. Throws std::runtime_error for unknown ids.
     [[nodiscard]] Json results(const std::string& id, int maxPoints = 400);
 
     /// Field data for the result view, converted to model coordinates (mm):
@@ -179,6 +182,8 @@ public:
     /// A/B comparison: force differences in N, condition check, quality, shared value
     /// ranges for colour scales, and how the difference changes with the mesh (when the
     /// same A and B were also run on another mesh level, see meshSensitivity()).
+    /// Both runs must have final results; otherwise no deltas/scales are returned and
+    /// the verdict is "not comparable", with states and blocking reasons.
     [[nodiscard]] Json compare(const std::string& a, const std::string& b);
 
     /// Sensitivity of the A/B force difference to mesh refinement. Looks for finished runs

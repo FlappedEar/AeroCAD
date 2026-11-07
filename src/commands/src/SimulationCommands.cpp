@@ -378,7 +378,9 @@ void registerSimulationCommands(CommandRegistry& r)
     r.add({"simulation.results", "Simulation results",
            "Results of a run: summary (Cd, Cl, Cs; drag, lift, side force in N, averaged over the last 20 % of the "
            "iterations), histories per iteration, residuals, quality checks (mesh, mass balance, residuals, force "
-           "convergence) and the simulation conditions.",
+           "convergence) and the simulation conditions. Summary values are null until the run finishes successfully "
+           "with complete finite force/coefficient outputs; finalResults gives availability and reasons. "
+           "Histories remain available and provisional is true until final results are available.",
            objectSchema({{"run", runIdParam()},
                          {"maxPoints",
                           {{"type", "integer"},
@@ -421,7 +423,8 @@ void registerSimulationCommands(CommandRegistry& r)
     r.add({"simulation.compare", "Compare simulations",
            "A/B comparison of two runs: drag/lift/side force differences in N and %, coefficients on a shared "
            "reference area, whether the conditions (speed, direction, mesh, preset, ...) match, quality of both, "
-           "and shared colour scale ranges. For a variant without a finished run, the values are null. "
+           "and shared colour scale ranges. Both runs need successful completion and complete finite force/coefficient "
+           "outputs; otherwise verdict is not comparable, deltas/scales are empty, and states/reasons explain why. "
            "meshSensitivity tells whether the difference holds on another mesh level (A and B run there too, see "
            "simulation.refine); verdict \"difference inconclusive\" when refinement changes it about as much as its "
            "size.",

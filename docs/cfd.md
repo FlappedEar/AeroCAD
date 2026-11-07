@@ -189,11 +189,22 @@ the open document still has the run's part (same id and same geometry).
 
 `simulation.run` with `prepareOnly: true` only writes the case; run `./Allrun` in an
 OpenFOAM v2506 environment elsewhere and register the result with `simulation.import`.
+Imported cases require the same `aerocad.status = finished` completion marker as local
+runs. Existing coefficient files alone do not establish successful completion.
 
 ## Results and checks
 
-`simulation.results` returns the summary (mean over the last 20 % of the iterations),
-histories (Cd, Cl, Cs, forces), residuals and a quality report:
+`simulation.results` returns a final summary (mean over the last 20 % of the iterations)
+only after successful completion with complete, finite coefficient and force output
+covering the same iterations. Otherwise all summary metrics are `null` and
+`finalResults.available` is false, with explanations in `finalResults.reasons` and the
+lifecycle state in `run.state`. Prepared, running, interrupted, cancelled and failed
+runs cannot supply final results. Histories (Cd, Cl, Cs, forces) and residuals remain
+available for monitoring; `provisional` marks data that is not final, also labelled in
+the app's charts. Non-finite values anywhere in the required histories and unreplaced
+truncated rows block final results, including before the averaging window. A repeated
+or restarted iteration replaces the earlier data at and after that time; valid sparse
+sampling is supported. Numerical quality is assessed separately in the quality report:
 
 - volume mesh: `checkMesh` verdict and cell count,
 - convergence: the final solver step must report SIMPLE convergence and a completed log,
@@ -229,6 +240,12 @@ colour scale ranges (Cp on the surface, speed in the sections). Verdict:
 `comparable`, `difference inconclusive`, `check quality` or `not comparable`. Variants of very different size get
 different domain and mesh sizes, which is reported as a note.
 
+Both runs must have final results. Otherwise the verdict is `not comparable`, force
+and coefficient differences and shared colour scales are empty, and `states` / `reasons`
+explain which run is unfinished or has incomplete output. Partial histories remain in
+`simulation.results`; they are never used for a final A/B or mesh-sensitivity verdict.
+Field visualisations are optional: a valid force comparison does not require VTK maps.
+
 **Mesh check.** A difference found on one mesh can be an artefact of that mesh.
 `simulation.refine {run, mesh}` runs the same case (same part, surroundings and conditions)
 on another mesh level; run it for A and for B (in the app: *Run A and B on the medium
@@ -250,3 +267,12 @@ with Docker; skipped when no engine is found). On macOS its case goes under `~/.
 because the engine's VM shares only the home directory, not `$TMPDIR`. It is not part of the CI gate. The unit
 tests (`test_cfd`, `test_commands`) cover case generation, parsing, quality checks, the
 run manager and the commands without an engine.
+
+`tests/gui/cfd_provisional_fixture.py` generates synthetic partial/finished outputs and
+real-GUI scripts for the final-result gate. It checks provisional charts, blocked A/B
+values, light/dark presentation and independent colour scales for an incomplete pair.
+Its optional cancellation script starts and cancels a real sleeping child process with
+synthetic output; it does not run or validate OpenFOAM. The script's usage examples show
+how to reproduce both checks.
+
+![Prepared runs cannot receive a final A/B verdict (synthetic output)](images/audit/cad-83-provisional-results.png)

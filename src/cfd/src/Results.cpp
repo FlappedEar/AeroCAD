@@ -70,6 +70,8 @@ const std::vector<double>* Table::column(std::string_view name) const
 Table readTable(const fs::path& path)
 {
     Table t;
+    std::vector<double> incompleteTimes;
+    bool partialTail = false;
     std::ifstream in(path);
     if (!in)
         return t;
@@ -77,6 +79,12 @@ Table readTable(const fs::path& path)
     while (std::getline(in, line)) {
         if (line.empty())
             continue;
+        // A live writer may have flushed only a prefix of a header, timestamp or
+        // last value. Until the newline arrives, none of it can replace history.
+        if (in.eof()) {
+            partialTail = !split(line).empty();
+            break;
+        }
         if (line[0] == '#') {
             auto words = split(std::string_view(line).substr(1));
             if (!words.empty() && words[0] == "Time" && words.size() > 1) {
@@ -84,6 +92,7 @@ Table readTable(const fs::path& path)
                 if (cols != t.columns) {
                     // New header (first one, or the function object changed): restart.
                     t = Table{};
+                    incompleteTimes.clear();
                     t.columns.assign(cols.begin(), cols.end());
                     t.values.assign(t.columns.size(), {});
                 }
@@ -93,26 +102,31 @@ Table readTable(const fs::path& path)
         if (t.columns.empty())
             continue;
         const auto words = split(line);
-        if (words.size() < 1 + t.columns.size()) {
-            t.incomplete = true;
-            continue; // Partially written last line.
-        }
-        t.incomplete = false;
+        if (words.empty())
+            continue;
         const auto time = toNumber(words[0]);
         if (!time || !std::isfinite(*time)) {
             t.invalidTime = true;
             continue;
         }
-        // Drop rows a restart is about to overwrite.
+        // A repeated/restarted time replaces both old samples and truncated rows.
+        // A later time alone cannot repair a malformed row in the middle of a history.
+        while (!incompleteTimes.empty() && incompleteTimes.back() >= *time)
+            incompleteTimes.pop_back();
         while (!t.time.empty() && t.time.back() >= *time) {
             t.time.pop_back();
             for (auto& c : t.values)
                 c.pop_back();
         }
+        if (words.size() < 1 + t.columns.size()) {
+            incompleteTimes.push_back(*time);
+            continue;
+        }
         t.time.push_back(*time);
         for (std::size_t c = 0; c < t.columns.size(); ++c)
             t.values[c].push_back(toNumber(words[c + 1]).value_or(std::numeric_limits<double>::quiet_NaN()));
     }
+    t.incomplete = partialTail || !incompleteTimes.empty();
     return t;
 }
 
