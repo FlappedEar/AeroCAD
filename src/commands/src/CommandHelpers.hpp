@@ -2,6 +2,7 @@
 // Helpers shared by the built-in command implementations (private to the module).
 #pragma once
 
+#include "aerocad/cad/Design.hpp"
 #include "aerocad/commands/CommandRegistry.hpp"
 
 #include <string>
@@ -87,5 +88,9 @@ void registerSelectionCommands(CommandRegistry& registry);
 
 /// Registers surface.* (SurfaceCommands.cpp).
 void registerSurfaceCommands(CommandRegistry& registry);
+
+/// Lets the design timeline build part_on_surface and fin_on_surface features from the
+/// document's scans and surfaces (SurfaceCommands.cpp).
+void registerSurfaceFeatures(cad::Design& design, const model::Document& document);
 
 } // namespace aerocad::commands

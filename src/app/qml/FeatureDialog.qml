@@ -154,7 +154,21 @@ Pane {
             { key: "axis", type: "choice", label: qsTr("Axis"), init: "Z", options: axes },
             { key: "count", type: "expr", label: qsTr("Quantity"), init: 6 },
             { key: "angle", type: "expr", label: qsTr("Total angle (deg)"), init: 360 },
-            { key: "operation", type: "choice", label: qsTr("Operation"), init: "join", options: patternOperations }] }
+            { key: "operation", type: "choice", label: qsTr("Operation"), init: "join", options: patternOperations }] },
+        // Built on a scan or surface: fitting the skin takes seconds, so no live preview.
+        part_on_surface: { title: qsTr("Part on Surface"), command: "surface.part_from_sketch", slow: true, fields: [
+            { key: "sketch", type: "sketch", label: qsTr("Outline sketch") },
+            { key: "thickness", type: "expr", label: qsTr("Thickness"), init: 2 },
+            { key: "side", type: "choice", label: qsTr("Direction"), init: "inside", options: [
+                { value: "inside", label: qsTr("Into the surface") }, { value: "outside", label: qsTr("Out of the surface") },
+                { value: "both", label: qsTr("Both sides") }] }] },
+        fin_on_surface: { title: qsTr("Fin on Surface"), command: "surface.fin_from_sketch", slow: true, fields: [
+            { key: "sketch", type: "sketch", label: qsTr("Fin sketch") },
+            { key: "thickness", type: "expr", label: qsTr("Thickness"), init: 3 },
+            { key: "rootFillet", type: "expr", label: qsTr("Root fillet"), init: 0 },
+            { key: "count", type: "expr", label: qsTr("Number of fins"), init: 1 },
+            { key: "spacing", type: "expr", label: qsTr("Spacing"), init: 40, showIf: v => Number(v.count) > 1 },
+            { key: "mirror", type: "bool", label: qsTr("Also on the other side") }] }
     })
 
     readonly property var spec: specs[type] || null
@@ -268,7 +282,7 @@ Pane {
     }
 
     function runPreview() {
-        if (!spec)
+        if (!spec || spec.slow)
             return
         undoPreview()
         const r = submit(true)

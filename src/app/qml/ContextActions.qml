@@ -93,6 +93,16 @@ QtObject {
 
     // --- Actions -----------------------------------------------------------------------
 
+    /// The timeline feature that made a body (several fins share one), or null.
+    function ownFeature(info) {
+        void revision
+        if (!info || info.kind !== "body")
+            return null
+        const r = controller.execute("timeline.list")
+        const id = info.featureId % 1099511627776 // 2^40: see cad::featureOfBody
+        return r.ok ? (r.result.features.find(f => f.id === id) ?? null) : null
+    }
+
     /// True for a surface piece made by "Cut out by sketch" (its next step is Thicken).
     function isCutOut(info) {
         return String(info.source ?? "").startsWith("surface.trim_by_sketch")
@@ -240,6 +250,12 @@ QtObject {
                                                                { value: "yz", label: qsTr("Both, YZ plane") },
                                                                { value: "xz", label: qsTr("Both, XZ plane") }],
                                       qsTr("Also makes the fins on the other side of the car, mirrored and set on the surface there."))] }
+        }
+        case "editStep": {
+            const f = ownFeature(info)
+            return { id: id, text: qsTr("Edit step"), icon: f ? Theme.featureIcon(f.type) : "tool", enabled: !!f,
+                     reason: qsTr("This body has no step of its own in the timeline."),
+                     tip: qsTr("Changes the settings of the timeline step that made this body; the model is rebuilt.") }
         }
         case "editSketch":
             return { id: id, text: qsTr("Edit sketch"), icon: "sketch", enabled: true,
@@ -437,7 +453,7 @@ QtObject {
                                  : qsTr("An exact solid from a file or a fit. Make it editable to add fillets, holes and cuts, or export it as it is."),
                  sections: editable
                      ? [{ title: qsTr("Change the shape"), steps: [],
-                          actions: [a("sketchOnFace"), a("fillet"), a("chamfer"), a("shell"), a("hole"), a("combine")] },
+                          actions: [a("editStep"), a("sketchOnFace"), a("fillet"), a("chamfer"), a("shell"), a("hole"), a("combine")] },
                         { title: qsTr("More"), steps: [], actions: [a("export"), a("hide"), a("delete")] }]
                      : [{ title: qsTr("Use it"), steps: [
                               { title: qsTr("Export for printing or CAD"), done: false,
@@ -606,6 +622,10 @@ QtObject {
         }
         case "finishSketch": return host.finishSketch(true)
         case "editSketch": return host.editFeature({ type: "sketch", id: info.featureId })
+        case "editStep": {
+            const f = ownFeature(info)
+            return f ? host.editFeature(f) : null
+        }
         case "extrude": return host.openFeature("extrude")
         case "revolve": return host.openFeature("revolve")
         case "sketchOnFace": return host.startCreateSketch()

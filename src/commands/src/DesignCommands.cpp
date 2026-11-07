@@ -256,6 +256,8 @@ Json featureToJson(const cad::Design& d, const cad::Feature& f, std::size_t inde
            {"status", std::string(cad::toString(st.state))}};
     if (!st.message.empty())
         j["error"] = st.message;
+    if (!st.report.is_null())
+        j["report"] = st.report;
     return j;
 }
 

@@ -14,6 +14,7 @@
 #include <array>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
 #include <map>
 #include <memory>
 #include <numbers>
@@ -129,7 +130,8 @@ const std::vector<std::string>& Design::featureTypes()
 {
     static const std::vector<std::string> types{"sketch", "extrude", "revolve", "fillet", "chamfer",
                                                 "shell",  "combine", "box",     "cylinder", "base_body", "hole",
-                                                "mirror",  "rectangular_pattern", "circular_pattern", "loft", "sweep", "plane"};
+                                                "mirror",  "rectangular_pattern", "circular_pattern", "loft", "sweep", "plane",
+                                                "part_on_surface", "fin_on_surface"};
     return types;
 }
 
@@ -202,16 +204,19 @@ const Feature* Design::feature(FeatureId id) const
 
 std::size_t Design::indexOf(FeatureId id) const
 {
-    for (std::size_t i = 0; i < m_state.features.size(); ++i) {
-        if (m_state.features[i].id == id)
-            return i;
+    // A body id of a feature with several bodies stands for that feature.
+    for (const FeatureId want : {id, featureOfBody(id)}) {
+        for (std::size_t i = 0; i < m_state.features.size(); ++i) {
+            if (m_state.features[i].id == want)
+                return i;
+        }
     }
     throw DesignError("No feature with id " + std::to_string(id));
 }
 
 std::string Design::defaultName(const std::string& type) const
 {
-    std::string base = type;
+    std::string base = type == "part_on_surface" ? "PartOnSurface" : type == "fin_on_surface" ? "Fin" : type;
     base[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(base[0])));
     for (int n = 1;; ++n) {
         const std::string candidate = base + std::to_string(n);
@@ -303,7 +308,7 @@ void Design::setMarker(std::size_t marker)
 FeatureStatus Design::status(FeatureId id) const
 {
     auto it = m_statuses.find(id);
-    return it == m_statuses.end() ? FeatureStatus{FeatureStatus::State::Error, "Unknown feature"} : it->second;
+    return it == m_statuses.end() ? FeatureStatus{FeatureStatus::State::Error, "Unknown feature", nullptr} : it->second;
 }
 
 // ---------------------------------------------------------------------------------------
@@ -1224,9 +1229,70 @@ void Design::evaluateFeature(const Feature& f)
         if (!box.isEmpty())
             size = std::max(size, 0.6 * (box.max - box.min).length());
         m_planes[f.id] = {f.id, f.name, pl, size};
+    } else if (auto custom = m_evaluators.find(f.type); custom != m_evaluators.end()) {
+        evaluateExternal(f, custom->second);
     } else {
         throw DesignError("Unknown feature type '" + f.type + "'");
     }
+}
+
+void Design::setFeatureEvaluator(const std::string& type, FeatureEvaluator evaluator)
+{
+    m_evaluators[type] = std::move(evaluator);
+    m_evaluated.clear();
+}
+
+void Design::evaluateExternal(const Feature& f, const FeatureEvaluator& ev)
+{
+    // The sketch it is built from: used (hidden like Fusion), and part of the cache key.
+    std::string key = f.type + "\n" + f.params.dump() + "\n";
+    for (const auto& prm : m_state.parameters) {
+        const auto v = parameterValue(prm.name);
+        key += prm.name + "=" + (v ? std::to_string(*v) : std::string("?")) + ";";
+    }
+    if (f.params.contains("sketch") && f.params.at("sketch").is_number_integer()) {
+        const auto sid = f.params.at("sketch").get<FeatureId>();
+        auto it = m_sketches.find(sid);
+        if (it == m_sketches.end())
+            throw DesignError("No sketch " + std::to_string(sid) + " at this point of the timeline");
+        it->second.consumed = true;
+        const auto& pl = it->second.plane;
+        char buf[256];
+        std::snprintf(buf, sizeof buf, "\n%.17g %.17g %.17g %.17g %.17g %.17g %.17g %.17g %.17g\n", pl.origin.x,
+                      pl.origin.y, pl.origin.z, pl.normal.x, pl.normal.y, pl.normal.z, pl.xDir.x, pl.xDir.y, pl.xDir.z);
+        key += buf;
+        for (const auto& pt : geometry::edgeSegments(it->second.geometry.curves)) {
+            std::snprintf(buf, sizeof buf, "%.12g,%.12g,%.12g;", pt.x, pt.y, pt.z);
+            key += buf;
+        }
+    }
+    if (ev.inputs)
+        key += "\n" + ev.inputs(f);
+
+    auto& cache = m_evaluated[f.id];
+    const FeatureEvaluator::Output* out = nullptr;
+    for (const auto& e : cache)
+        if (e.key == key)
+            out = &e.output;
+    if (out == nullptr) {
+        ++m_evaluatorRuns;
+        FeatureEvaluator::Output fresh = ev.evaluate(f, *this);
+        if (fresh.bodies.empty())
+            throw DesignError("The feature produced no solid");
+        constexpr std::size_t keep = 4;
+        if (cache.size() >= keep)
+            cache.erase(cache.begin());
+        cache.push_back({std::move(key), std::move(fresh)});
+        out = &cache.back().output;
+    }
+    for (std::size_t k = 0; k < out->bodies.size(); ++k) {
+        const auto& [shape, name] = out->bodies[k];
+        if (shape.isNull())
+            continue;
+        const FeatureId id = k == 0 ? f.id : extraBodyId(f.id, static_cast<unsigned>(k));
+        m_bodies[id] = Body{id, name, shape};
+    }
+    m_reports[f.id] = out->report;
 }
 
 void Design::setFrame(ReferenceFrame fr)
@@ -1272,6 +1338,7 @@ void Design::clear()
     m_partMeta.clear();
     m_convertedParts.clear();
     m_scanSurfaces.clear();
+    m_evaluated.clear();
     regenerate();
 }
 
@@ -1301,6 +1368,7 @@ void Design::regenerate()
     m_sketches.clear();
     m_planes.clear();
     m_statuses.clear();
+    m_reports.clear();
     m_bodyCounter = 0;
     for (std::size_t i = 0; i < m_state.features.size(); ++i) {
         const Feature& f = m_state.features[i];
@@ -1312,6 +1380,8 @@ void Design::regenerate()
         } else {
             try {
                 evaluateFeature(f);
+                if (auto r = m_reports.find(f.id); r != m_reports.end())
+                    st.report = r->second;
             } catch (const std::exception& e) {
                 st.state = FeatureStatus::State::Error;
                 st.message = e.what();

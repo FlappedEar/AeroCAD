@@ -204,7 +204,8 @@ QtObject {
             chamfer: "chamfer", shell: "shell", combine: "combine", box: "box", cylinder: "cylinder",
             hole: "hole", base_body: "mesh-to-body", sweep: "sweep", loft: "loft", mirror: "mirror",
             pattern: "pattern", rectangular_pattern: "pattern", circular_pattern: "circular-pattern",
-            plane: "plane", body: "body", imported: "mesh", mesh: "mesh"
+            plane: "plane", body: "body", imported: "mesh", mesh: "mesh",
+            part_on_surface: "surface", fin_on_surface: "surface"
         }
         return map[type] || "tool"
     }
