@@ -572,6 +572,9 @@ Shape finOnSurface(const Shape& surface, const std::vector<Shape>& outlines, con
         // The fin before the cut: the outlines, their roots carried down past the surface,
         // extruded half the thickness each way.
         TopTools_ListOfShape blanks;
+        // Which side the fin stands on, told by the outlines as drawn (area above the surface
+        // against area under it): the extended root must not change it.
+        double drawnSide = 0.0;
         for (const auto& o : outlines) {
             if (o.isNull())
                 continue;
@@ -581,8 +584,10 @@ Shape finOnSurface(const Shape& surface, const std::vector<Shape>& outlines, con
                 GProp_GProps area;
                 BRepGProp::SurfaceProperties(outline, area);
                 const auto side = heightAbove(surf, area.CentreOfMass(), out);
-                if (side)
+                if (side) {
+                    drawnSide += (*side >= 0.0 ? 1.0 : -1.0) * area.Mass();
                     outline = extendRoot(outline, surf, *side >= 0.0 ? out : -out);
+                }
             }
             gp_Trsf back;
             back.SetTranslation(dir * (-0.5 * thickness));
@@ -626,7 +631,7 @@ Shape finOnSurface(const Shape& surface, const std::vector<Shape>& outlines, con
         if (sides[0].empty() || sides[1].empty())
             throw OffsetError("The fin outline does not reach through the surface; draw its root a little into the "
                               "surface (past the surface line in the sketch)");
-        const bool alongOut = volume[0] >= volume[1];
+        const bool alongOut = drawnSide != 0.0 ? drawnSide > 0.0 : volume[0] >= volume[1];
         const std::vector<TopoDS_Shape>& kept = alongOut ? sides[0] : sides[1];
         TopoDS_Shape result;
         if (rootFillet > 0.0) {

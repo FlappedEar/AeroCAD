@@ -727,6 +727,18 @@ TEST_CASE("Part on surface: one step from an outline over a scan to a solid", "[
         auto refused = session.execute("surface.fin_from_sketch", {{"sketch", floating.data.at("id")}, {"thickness", 3.0}});
         CHECK_FALSE(refused.ok);
         CHECK(refused.toJson().dump().find("root") != std::string::npos);
+
+        // A low fin with its root only just into the surface: the root carried down does not
+        // turn it into a fin on the inner side.
+        auto low = session.execute(
+            "sketch.create", {{"surface", {{"part", scanId}, {"point", {40, 15, -0.5}}, {"across", true}}},
+                              {"curves", Json::array({{{"type", "rectangle"}, {"corner", {-0.2, -8}}, {"opposite", {1.5, 8}}}})}});
+        REQUIRE(low.ok);
+        auto lowFin = session.execute("surface.fin_from_sketch", {{"sketch", low.data.at("id")}, {"thickness", 2.0}});
+        INFO(lowFin.toJson().dump());
+        REQUIRE(lowFin.ok);
+        CHECK(lowFin.data.at("volume").get<double>() == Approx(2.0 * 16.0 * 1.5).epsilon(0.2));
+        CHECK(lowFin.data.at("bounds").at("max").at(2).get<double>() > -0.5 + 1.2);
     }
 
     SECTION("An arc that bulges far past its defining points is covered")
