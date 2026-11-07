@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "aerocad/geometry/Primitives.hpp"
 #include "aerocad/model/Document.hpp"
 #include "aerocad/model/UndoStack.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -153,6 +155,71 @@ TEST_CASE("Document revision increases on every change", "[model]")
     CHECK(doc.revision() == 2);
     doc.removePart(a);
     CHECK(doc.revision() == 3);
+}
+
+TEST_CASE("Only imported geometry changes invalidate source dependencies", "[model][source]")
+{
+    Document doc;
+    CHECK(doc.importedGeometryRevision() == 0);
+    const auto source = doc.addPart(makePart("source"));
+    const auto original = *doc.part(source);
+    CHECK(doc.importedGeometryRevision() == 1);
+    doc.modifyPart(source, [](model::Part& p) {
+        p.name = "renamed";
+        p.visible = false;
+        p.selection = std::make_shared<const core::TriangleSet>(core::TriangleSet{0});
+    });
+    CHECK(doc.importedGeometryRevision() == 1);
+    doc.modifyPart(source, [](model::Part& p) { p.mesh = makePart("replacement").mesh; });
+    CHECK(doc.importedGeometryRevision() == 2);
+    doc.modifyPart(source, [&](model::Part& p) { p = original; });
+    CHECK(doc.importedGeometryRevision() == 3);
+
+    auto body = makePart("body");
+    body.kind = model::PartKind::Body;
+    const auto derived = doc.addPart(body);
+    doc.modifyPart(derived, [](model::Part& p) { p.mesh = makePart("derived update").mesh; });
+    doc.removePart(derived);
+    CHECK(doc.importedGeometryRevision() == 3);
+    auto removed = doc.removePart(source);
+    CHECK(doc.importedGeometryRevision() == 4);
+    doc.addPart(*removed);
+    CHECK(doc.importedGeometryRevision() == 5);
+    doc.modifyPart(source, [](model::Part& p) { p.kind = model::PartKind::Body; });
+    CHECK(doc.importedGeometryRevision() == 6);
+}
+
+TEST_CASE("A throwing imported geometry edit preserves handles and revisions", "[model][source]")
+{
+    Document doc;
+    auto part = makePart("source");
+    part.shape = geometry::makeBox(1, 2, 3);
+    const auto source = doc.addPart(part);
+    const auto original = *doc.part(source);
+    const auto documentRevision = doc.revision();
+    const auto sourceRevision = doc.importedGeometryRevision();
+    int notifications = 0;
+    doc.addObserver([&](Document::Change, model::PartId) { ++notifications; });
+
+    CHECK_THROWS_AS(doc.modifyPart(source, [](model::Part& updated) {
+        updated.mesh = makePart("replacement").mesh;
+        updated.shape = geometry::makeBox(4, 5, 6);
+        updated.kind = model::PartKind::Body;
+        updated.name = "partial update";
+        throw std::runtime_error("geometry edit failed");
+    }), std::runtime_error);
+
+    REQUIRE(doc.part(source));
+    CHECK(doc.part(source)->id == original.id);
+    CHECK(doc.part(source)->name == original.name);
+    CHECK(doc.part(source)->kind == original.kind);
+    CHECK(doc.part(source)->mesh == original.mesh);
+    REQUIRE(doc.part(source)->shape);
+    CHECK(doc.part(source)->shape->impl() == original.shape->impl());
+    CHECK(doc.part(source)->revision == original.revision);
+    CHECK(doc.revision() == documentRevision);
+    CHECK(doc.importedGeometryRevision() == sourceRevision);
+    CHECK(notifications == 0);
 }
 
 TEST_CASE("UndoStack joins the last steps into one", "[model]")
