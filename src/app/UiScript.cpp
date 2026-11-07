@@ -118,13 +118,17 @@ public:
         for (const QString& path : paths)
             urls << QUrl::fromLocalFile(QFileInfo(path).absoluteFilePath());
         data.setUrls(urls);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 16, 0)
+        const QPointF at(x, y); // the QPoint constructors are deprecated from Qt 6.16
+#else
         const QPoint at(qRound(x), qRound(y));
+#endif
         const Qt::DropActions actions = Qt::CopyAction | Qt::LinkAction;
         QDragEnterEvent enter(at, actions, &data, Qt::LeftButton, Qt::NoModifier);
         QCoreApplication::sendEvent(m_window, &enter);
         QDragMoveEvent move(at, actions, &data, Qt::LeftButton, Qt::NoModifier);
         QCoreApplication::sendEvent(m_window, &move);
-        QDropEvent dropEvent(QPointF(at), actions, &data, Qt::LeftButton, Qt::NoModifier);
+        QDropEvent dropEvent(at, actions, &data, Qt::LeftButton, Qt::NoModifier);
         QCoreApplication::sendEvent(m_window, &dropEvent);
     }
 
