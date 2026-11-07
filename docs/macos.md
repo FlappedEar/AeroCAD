@@ -54,7 +54,8 @@ open build/vcpkg-macos/bin/AeroCAD.app
 ## Using the app
 
 - **Import:** File > Import (Cmd+O), or drag a file onto the 3D view.
-  Formats: STL, OBJ, 3MF, STEP/STP, IGES/IGS, BREP.
+  Formats: STL, OBJ, PLY (ASCII and binary meshes; point clouds are not supported), 3MF,
+  STEP/STP, IGES/IGS, BREP.
 - **Navigation** follows Autodesk Fusion's defaults (see [ui.md](ui.md)):
   **pan** = middle drag or two-finger swipe, **orbit** = Shift + middle drag or
   Shift + two-finger swipe, **zoom** = scroll wheel or pinch. Without a middle button,
@@ -104,7 +105,7 @@ open build/vcpkg-macos/bin/AeroCAD.app
   stands across the surface; the orange line is where it cuts the surface. Draw the fin's
   outline with its root a little past that line, click *Finish Sketch*, set the thickness
   in *Fin on surface* and click *Create*: the root is cut to the surface, so the fin sits
-  flush on it.
+  flush on its outer skin (holes and a second layer behind it in the scan are ignored).
 - **Undo / redo:** Cmd+Z / Cmd+Shift+Z (also for selection changes).
 
 ## Troubleshooting

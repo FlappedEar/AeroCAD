@@ -15,6 +15,7 @@
 #include <TopoDS_Face.hxx>
 
 #include <algorithm>
+#include <vector>
 
 namespace aerocad::geometry {
 
@@ -40,15 +41,26 @@ core::TriangleMesh tessellate(const Shape& shape, const TessellationParams& para
         const bool reversed = face.Orientation() == TopAbs_REVERSED;
         const auto base = static_cast<std::uint32_t>(mesh.vertexCount());
 
+        std::vector<core::Vec3> nodes;
+        nodes.reserve(static_cast<std::size_t>(tri->NbNodes()));
         for (int i = 1; i <= tri->NbNodes(); ++i) {
             const gp_Pnt p = tri->Node(i).Transformed(trsf);
-            mesh.addVertex({p.X(), p.Y(), p.Z()});
+            nodes.push_back({p.X(), p.Y(), p.Z()});
+            mesh.addVertex(nodes.back());
         }
         for (int i = 1; i <= tri->NbTriangles(); ++i) {
             int n1 = 0, n2 = 0, n3 = 0;
             tri->Triangle(i).Get(n1, n2, n3);
             if (reversed)
                 std::swap(n2, n3);
+            // Faces that close at a pole (B-spline domes, revolved arcs ending on the axis)
+            // get triangles with two nodes at the same point. They carry no surface and
+            // would make the mesh check report a degenerate triangle.
+            const auto& a = nodes[static_cast<std::size_t>(n1 - 1)];
+            const auto& b = nodes[static_cast<std::size_t>(n2 - 1)];
+            const auto& c = nodes[static_cast<std::size_t>(n3 - 1)];
+            if (a == b || b == c || a == c)
+                continue;
             mesh.addTriangle(base + static_cast<std::uint32_t>(n1 - 1),
                              base + static_cast<std::uint32_t>(n2 - 1),
                              base + static_cast<std::uint32_t>(n3 - 1));

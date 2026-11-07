@@ -21,6 +21,20 @@ namespace aerocad::geometry {
 /// scans: throws ModelingError above `maxTriangles`.
 [[nodiscard]] Shape meshToBrep(const core::TriangleMesh& mesh, std::size_t maxTriangles = 50000);
 
+/// Copies of a shape mirrored about a plane, or turned about an axis (degrees). Moving
+/// is translated() in Transform.hpp.
+[[nodiscard]] Shape mirrored(const Shape& shape, const core::Vec3& planeOrigin, const core::Vec3& planeNormal);
+[[nodiscard]] Shape rotated(const Shape& shape, const core::Vec3& axisOrigin, const core::Vec3& axisDirection,
+                            double angleDegrees);
+
+/// Loft through planar profile faces (Fusion: Loft), in order. `solid` closes the ends;
+/// `ruled` uses straight segments between sections. Profiles with one hole each (rings) give
+/// a hollow loft; other hole layouts throw ModelingError.
+[[nodiscard]] Shape loft(const std::vector<Shape>& sections, bool solid = true, bool ruled = false);
+
+/// Sweeps profile faces along a path of connected edges (Fusion: Sweep).
+[[nodiscard]] Shape sweep(const Shape& profileFaces, const Shape& pathEdges);
+
 /// Combines shapes into one compound (null shapes are skipped).
 [[nodiscard]] Shape makeCompound(const std::vector<Shape>& shapes);
 

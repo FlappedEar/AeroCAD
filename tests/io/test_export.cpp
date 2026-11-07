@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "aerocad/core/MeshCheck.hpp"
 #include "aerocad/core/Path.hpp"
+#include "aerocad/geometry/Modeling.hpp"
 #include "aerocad/geometry/Primitives.hpp"
+#include "aerocad/geometry/Sketch.hpp"
 #include "aerocad/geometry/Tessellation.hpp"
 #include "aerocad/io/Export.hpp"
 #include "aerocad/io/Import.hpp"
@@ -161,6 +163,36 @@ TEST_CASE("STEP export round trip keeps exact geometry in mm", "[io][export][ste
     CHECK(back.shape->bounds().size().z == Approx(40.0).margin(0.1)); // bounds include the tolerance gap
     CHECK(back.shape->bounds().size().z > 39.99);
     CHECK(dir.entries() == 1);
+}
+
+TEST_CASE("STEP export round trip keeps a revolved dome closed at its pole", "[io][export][step]")
+{
+    // An arc that ends on the axis: the revolved face closes at a pole. OCCT writes such a
+    // face without the degenerated edge and loses it on reading unless it is converted.
+    using geometry::SketchCurve;
+    const auto sketch = geometry::buildSketch(
+        geometry::Plane::xz(),
+        {{SketchCurve::Kind::Line, {{0, 0}, {120, 0}}},
+         {SketchCurve::Kind::Line, {{120, 0}, {120, 15}}},
+         {SketchCurve::Kind::Arc, {{120, 15}, {70, 38}, {0, 45}}},
+         {SketchCurve::Kind::Line, {{0, 45}, {0, 0}}}});
+    REQUIRE(sketch.profiles.size() == 1);
+    const geometry::Shape dome = geometry::revolve(sketch.profiles[0], {0, 0, 0}, {0, 0, 1}, 360);
+    const double volume = dome.volume();
+    REQUIRE(volume > 1.4e6);
+
+    TempDir dir;
+    const fs::path path = dir.file("dome.step");
+    io::exportFile(path, {{"dome", nullptr, &dome}});
+    const io::ImportResult back = io::importFile(path);
+    REQUIRE(back.shape.has_value());
+    CHECK(back.shape->solidCount() == 1);
+    CHECK(back.shape->volume() == Approx(volume).epsilon(1e-4));
+    // The tessellation, not the shape bounds: B-spline bounds include the control points.
+    CHECK(back.mesh.bounds().size().z == Approx(45.7).margin(0.1));
+    const core::MeshCheck check = core::checkMesh(back.mesh);
+    CHECK(check.problems().empty());
+    CHECK(check.watertight());
 }
 
 TEST_CASE("Export errors", "[io][export][errors]")

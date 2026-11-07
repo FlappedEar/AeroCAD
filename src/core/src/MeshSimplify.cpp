@@ -112,8 +112,15 @@ TriangleMesh decimateToTarget(const TriangleMesh& mesh, std::size_t targetTriang
     for (int iteration = 0; iteration < 6 && result.triangleCount() > targetTriangles; ++iteration) {
         const double ratio = static_cast<double>(result.triangleCount()) / static_cast<double>(targetTriangles);
         cell *= std::sqrt(ratio) * 1.05;
-        result = clusterVertices(mesh, cell);
+        TriangleMesh next = clusterVertices(mesh, cell);
+        if (next.isEmpty())
+            break; // keep the last result that still has geometry
+        result = std::move(next);
     }
+    // Clustering cannot reduce some meshes (e.g. many tiny disconnected pieces) without
+    // collapsing everything; never hand back an empty mesh for a non-empty input.
+    if (result.isEmpty())
+        return mesh;
     return result;
 }
 

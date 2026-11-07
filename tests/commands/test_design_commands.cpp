@@ -326,3 +326,121 @@ TEST_CASE("Design commands: previews keep the undo history", "[commands][preview
     run(s, "edit.redo");
     CHECK(s.design().bodies().size() == 2);
 }
+
+TEST_CASE("Design commands: mirror and patterns", "[commands][cad][pattern]")
+{
+    commands::Session s;
+    const Json box = run(s, "feature.box", {{"size", {10, 10, 10}}, {"corner", {5, 0, 0}}});
+    const auto id = box.at("id").get<std::uint64_t>();
+    Json r = run(s, "feature.mirror", {{"body", id}, {"plane", "YZ"}});
+    CHECK(r.at("bodies")[0].at("volume").get<double>() == Approx(2000));
+    CHECK(r.at("bodies")[0].at("bounds").at("min")[0].get<double>() == Approx(-15));
+    run(s, "edit.undo");
+
+    r = run(s, "feature.rectangular_pattern",
+            {{"body", id}, {"count", 3}, {"spacing", 20}, {"count2", 2}, {"spacing2", 15}});
+    CHECK(r.at("bodies")[0].at("volume").get<double>() == Approx(6000));
+    CHECK(r.at("bodies")[0].at("bounds").at("max")[0].get<double>() == Approx(55));
+    run(s, "edit.undo");
+
+    r = run(s, "feature.circular_pattern", {{"body", id}, {"count", 4}, {"operation", "new_body"}});
+    REQUIRE(r.at("bodies").size() == 2);
+    CHECK(r.at("bodies")[1].at("volume").get<double>() == Approx(3000));
+}
+
+TEST_CASE("Design commands: loft and sweep", "[commands][cad][pattern]")
+{
+    commands::Session s;
+    const Json a = run(s, "sketch.create",
+                       {{"plane", "XY"},
+                        {"curves", Json::array({{{"type", "center_rectangle"}, {"center", {0, 0}}, {"width", 20}, {"height", 20}}})}});
+    const Json b = run(s, "sketch.create",
+                       {{"plane", "XY"},
+                        {"offset", 30},
+                        {"curves", Json::array({{{"type", "center_rectangle"}, {"center", {0, 0}}, {"width", 10}, {"height", 10}}})}});
+    const Json loft = run(s, "feature.loft", {{"sections", Json::array({a.at("id"), b.at("id")})}});
+    // Frustum of a square pyramid: h/3 (A1 + A2 + sqrt(A1 A2)).
+    CHECK(loft.at("bodies")[0].at("volume").get<double>() == Approx(30.0 / 3 * (400 + 100 + 200)).epsilon(1e-4));
+
+    commands::Session t;
+    const Json prof = run(t, "sketch.create",
+                          {{"plane", "XY"}, {"curves", Json::array({{{"type", "circle"}, {"center", {0, 0}}, {"radius", 2}}})}});
+    const Json path = run(t, "sketch.create",
+                          {{"plane", "XZ"}, {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {0, 40}}}})}});
+    const Json sw = run(t, "feature.sweep", {{"sketch", prof.at("id")}, {"path", {{"sketch", path.at("id")}}}});
+    CHECK(sw.at("bodies")[0].at("volume").get<double>() == Approx(std::numbers::pi * 4 * 40).epsilon(1e-4));
+}
+
+TEST_CASE("Design commands: construction planes carry sketches", "[commands][cad][plane]")
+{
+    commands::Session s;
+    run(s, "parameter.set", {{"name", "h"}, {"expression", "12"}});
+    const Json pl = run(s, "feature.plane", {{"base", "XY"}, {"offset", "h"}});
+    const auto plId = pl.at("id").get<std::uint64_t>();
+    CHECK(pl.at("plane").at("origin")[2].get<double>() == Approx(12));
+
+    // A sketch on the plane follows it when the parameter changes.
+    const Json sk = run(s, "sketch.create",
+                        {{"plane", {{"plane", plId}}},
+                         {"curves", Json::array({{{"type", "center_rectangle"}, {"center", {0, 0}}, {"width", 10}, {"height", 10}}})}});
+    Json r = run(s, "feature.extrude", {{"sketch", sk.at("id")}, {"distance", 5}});
+    CHECK(r.at("bodies")[0].at("bounds").at("min")[2].get<double>() == Approx(12));
+    run(s, "parameter.set", {{"name", "h"}, {"expression", "20"}});
+    r = run(s, "timeline.list");
+    CHECK(r.at("bodies")[0].at("bounds").at("min")[2].get<double>() == Approx(20));
+
+    // Plane at angle: XY turned 90 degrees about its x axis has a normal along -Y or +Y.
+    r = run(s, "feature.plane", {{"base", "XY"}, {"angle", 90}});
+    CHECK(std::abs(r.at("plane").at("normal")[1].get<double>()) == Approx(1));
+
+    // Midplane between the XY plane and the top face of the body (z = 25).
+    r = run(s, "feature.plane", {{"base", "XY"}, {"base2", {{"body", r.at("bodies")[0].at("id")}, {"point", {0, 0, 25}}}}});
+    CHECK(r.at("plane").at("origin")[2].get<double>() == Approx(12.5));
+
+    // Through three points; collinear points are rejected.
+    r = run(s, "feature.plane", {{"points", Json::array({{0, 0, 0}, {10, 0, 0}, {0, 0, 10}})}});
+    CHECK(std::abs(r.at("plane").at("normal")[1].get<double>()) == Approx(1));
+    const auto bad = s.execute("feature.plane", {{"points", Json::array({{0, 0, 0}, {1, 0, 0}, {2, 0, 0}})}});
+    CHECK_FALSE(bad.ok);
+
+    // The plane is a part of kind "plane" in the document.
+    const Json parts = run(s, "document.parts");
+    bool found = false;
+    for (const auto& p : parts.at("parts"))
+        found = found || p.at("kind") == "plane";
+    CHECK(found);
+}
+
+TEST_CASE("Design commands: loft of rings stays hollow", "[commands][cad][pattern]")
+{
+    commands::Session s;
+    auto ring = [&](double z, double inner) {
+        const Json sk = run(s, "sketch.create",
+                            {{"plane", "XY"},
+                             {"offset", z},
+                             {"curves", Json::array({{{"type", "circle"}, {"center", {0, 0}}, {"radius", 10}},
+                                                     {{"type", "circle"}, {"center", {0, 0}}, {"radius", inner}}})}});
+        const auto id = sk.at("id").get<std::uint64_t>();
+        const Json profiles = run(s, "sketch.profiles", {{"sketch", id}});
+        std::size_t best = 0;
+        double area = 0;
+        for (const auto& p : profiles.at("profiles")) {
+            if (p.at("area").get<double>() > area) {
+                area = p.at("area").get<double>();
+                best = p.at("index").get<std::size_t>();
+            }
+        }
+        return Json{{"sketch", id}, {"profile", best}};
+    };
+    const Json a = ring(0, 5);
+    const Json b = ring(10, 5);
+    const Json r = run(s, "feature.loft", {{"sections", Json::array({a, b})}});
+    CHECK(r.at("bodies")[0].at("volume").get<double>() == Approx(3.14159265358979 * (100 - 25) * 10).epsilon(1e-3));
+
+    // A ring and a disk cannot be matched.
+    const Json disk = run(s, "sketch.create",
+                          {{"plane", "XY"},
+                           {"offset", 20},
+                           {"curves", Json::array({{{"type", "circle"}, {"center", {0, 0}}, {"radius", 8}}})}});
+    CHECK_FALSE(s.execute("feature.loft", {{"sections", Json::array({b, disk.at("id")})}}).ok);
+}

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "AppController.hpp"
+#include "ScanController.hpp"
 #include "UiScript.hpp"
 
 #include <QCommandLineParser>
@@ -26,14 +27,16 @@ namespace {
 /// --smoke-test <file>: import the file, wait for frames to be rendered, verify, quit.
 /// Exit code 0 on success. Used by CTest (app_smoke_test) and CI.
 int runSmokeTest(QGuiApplication& app, QQmlApplicationEngine& engine, aerocad::app::AppController& controller,
-                 const QString& file, const QString& screenshotPath, const QString& scriptPath)
+                 aerocad::app::ScanController& scan, const QString& file, const QString& screenshotPath, const QString& scriptPath)
 {
     auto* window = engine.rootObjects().isEmpty() ? nullptr : qobject_cast<QQuickWindow*>(engine.rootObjects().first());
     if (window == nullptr) {
         std::fprintf(stderr, "smoke test: no root window\n");
         return 2;
     }
-    if (!controller.openFile(QUrl::fromLocalFile(file))) {
+    // Same path as File > Import: parsed on a worker thread, then document.import
+    // (project files are opened directly).
+    if (!scan.importFile(QUrl::fromLocalFile(file)) || !scan.waitForImports()) {
         std::fprintf(stderr, "smoke test: import failed: %s\n", qPrintable(controller.statusMessage()));
         return 3;
     }
@@ -41,6 +44,7 @@ int runSmokeTest(QGuiApplication& app, QQmlApplicationEngine& engine, aerocad::a
         std::fprintf(stderr, "smoke test: script failed: %s\n", qPrintable(controller.statusMessage()));
         return 7;
     }
+    scan.waitForDisplayMeshes();
 
     // Keep requesting frames (nothing animates, so the window would otherwise go idle),
     // then grab the window and check that the model is actually on screen. The viewport
@@ -141,10 +145,12 @@ int main(int argc, char* argv[])
     QQuickStyle::setStyle(QStringLiteral("AeroCADStyle"));
 
     aerocad::app::AppController controller;
+    aerocad::app::ScanController scan(&controller);
 
     QQmlApplicationEngine engine;
     engine.addImportPath(QStringLiteral("qrc:/qt/qml"));
-    engine.setInitialProperties({{QStringLiteral("controller"), QVariant::fromValue(&controller)}});
+    engine.setInitialProperties({{QStringLiteral("controller"), QVariant::fromValue(&controller)},
+                                 {QStringLiteral("scan"), QVariant::fromValue(&scan)}});
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app,
                      [] { QCoreApplication::exit(1); }, Qt::QueuedConnection);
     engine.load(QUrl(QStringLiteral("qrc:/qt/qml/AeroCAD/qml/Main.qml")));
@@ -152,7 +158,7 @@ int main(int argc, char* argv[])
         return 1;
 
     if (parser.isSet(smokeTest))
-        return runSmokeTest(app, engine, controller, parser.value(smokeTest), parser.value(screenshot),
+        return runSmokeTest(app, engine, controller, scan, parser.value(smokeTest), parser.value(screenshot),
                             parser.value(script));
 
     QMetaObject::invokeMethod(engine.rootObjects().first(), "offerRecovery");

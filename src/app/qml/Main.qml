@@ -14,6 +14,7 @@ ApplicationWindow {
     id: window
 
     required property AppController controller
+    required property ScanController scan
     property var selectedPartId: 0
     readonly property bool isMac: Qt.platform.os === "osx" || Qt.platform.os === "macos"
 
@@ -120,8 +121,8 @@ ApplicationWindow {
         if (!selectedPartId)
             return
         const info = controller.partInfo(selectedPartId)
-        // Bodies and sketches come from the timeline: delete the feature that made them.
-        if (info.kind === "body" || info.kind === "sketch")
+        // Bodies, sketches and planes come from the timeline: delete the feature that made them.
+        if (info.kind === "body" || info.kind === "sketch" || info.kind === "plane")
             controller.execute("feature.delete", { id: info.featureId })
         else
             controller.execute("part.remove", { id: selectedPartId })
@@ -235,6 +236,7 @@ ApplicationWindow {
 
     /// Opens a feature dialog, pre-filled from the selection (Fusion: select, then press E).
     function openFeature(type) {
+        scanPanel.close()
         const initial = {}
         const info = selectedInfo()
         if (activeSketch) {
@@ -387,7 +389,7 @@ ApplicationWindow {
         id: importDialog
         title: qsTr("Import 3D file")
         nameFilters: window.controller.importNameFilters
-        onAccepted: window.controller.importFile(selectedFile)
+        onAccepted: window.scan.importFile(selectedFile)
     }
 
     FileDialog {
@@ -581,11 +583,31 @@ ApplicationWindow {
     Action { id: chamferAction; text: qsTr("C&hamfer"); onTriggered: window.openFeature("chamfer") }
     Action { id: shellAction; text: qsTr("S&hell"); onTriggered: window.openFeature("shell") }
     Action { id: combineAction; text: qsTr("Co&mbine"); onTriggered: window.openFeature("combine") }
+    Action { id: planeAction; text: qsTr("Construction &Plane"); enabled: !window.activeSketch; onTriggered: window.openFeature("plane") }
+    Action { id: loftAction; text: qsTr("&Loft"); enabled: !window.activeSketch; onTriggered: window.openFeature("loft") }
+    Action { id: sweepAction; text: qsTr("S&weep"); enabled: !window.activeSketch; onTriggered: window.openFeature("sweep") }
+    Action { id: mirrorAction; text: qsTr("M&irror"); enabled: !window.activeSketch; onTriggered: window.openFeature("mirror") }
+    Action { id: rectPatternAction; text: qsTr("&Rectangular Pattern"); enabled: !window.activeSketch; onTriggered: window.openFeature("rectangular_pattern") }
+    Action { id: circPatternAction; text: qsTr("C&ircular Pattern"); enabled: !window.activeSketch; onTriggered: window.openFeature("circular_pattern") }
     Action {
         id: convertAction
         text: qsTr("Convert to &Body")
         enabled: !!window.selectedPartId && window.selectedInfo().kind === "imported"
         onTriggered: window.controller.execute("feature.base_body", { part: window.selectedPartId })
+    }
+    Action {
+        id: scanToolsAction
+        text: qsTr("Scan &Tools...")
+        checkable: true
+        checked: scanPanel.visible
+        onTriggered: {
+            if (scanPanel.visible) {
+                scanPanel.close()
+            } else {
+                featureDialog.close()
+                scanPanel.open()
+            }
+        }
     }
     Action { id: parametersAction; text: qsTr("Change &Parameters..."); onTriggered: parametersDialog.open() }
     Action { id: lineAction; text: qsTr("&Line"); shortcut: "L"; enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "line"; onTriggered: window.sketchTool_("line") }
@@ -614,6 +636,8 @@ ApplicationWindow {
                 return
             if (featureDialog.visible)
                 featureDialog.close()
+            else if (scanPanel.visible)
+                scanPanel.close()
             else if (window.pickingSketchPlane)
                 window.pickingSketchPlane = false
             else if (window.activeSketch && viewport.sketchOverlay.points.length > 0)
@@ -686,9 +710,22 @@ ApplicationWindow {
             MenuSeparator {}
             MenuItem { action: extrudeAction }
             MenuItem { action: revolveAction }
+            MenuItem { action: sweepAction }
+            MenuItem { action: loftAction }
             MenuItem { action: boxAction }
             MenuItem { action: cylinderAction }
             MenuItem { action: holeAction }
+            MenuSeparator {}
+            MenuItem { action: mirrorAction }
+            Menu {
+                title: qsTr("&Pattern")
+                MenuItem { action: rectPatternAction }
+                MenuItem { action: circPatternAction }
+            }
+        }
+        Menu {
+            title: qsTr("C&onstruct")
+            MenuItem { action: planeAction }
         }
         Menu {
             title: qsTr("&Modify")
@@ -702,6 +739,8 @@ ApplicationWindow {
             MenuItem { action: duplicateVariantAction }
             MenuItem { action: toggleVariantAction }
             MenuItem { action: deleteVariantAction }
+            MenuSeparator {}
+            MenuItem { action: scanToolsAction }
         }
         Menu {
             title: qsTr("&Sketch")
@@ -903,6 +942,12 @@ ApplicationWindow {
                 ToolCommand { action: holeAction; text: qsTr("Hole"); iconName: "hole" }
                 ToolCommand { action: boxAction; text: qsTr("Box"); iconName: "box" }
                 ToolCommand { action: cylinderAction; text: qsTr("Cylinder"); iconName: "cylinder" }
+                ToolCommand { action: sweepAction; text: qsTr("Sweep"); iconName: "sweep" }
+                ToolCommand { action: loftAction; text: qsTr("Loft"); iconName: "loft" }
+                ToolCommand { action: mirrorAction; text: qsTr("Mirror"); iconName: "mirror" }
+                ToolCommand { action: rectPatternAction; text: qsTr("Pattern"); iconName: "pattern" }
+                ToolCommand { action: circPatternAction; text: qsTr("Circular Pattern"); iconName: "circular-pattern" }
+                ToolCommand { action: planeAction; text: qsTr("Plane"); iconName: "plane" }
             }
             ToolSeparator {}
             ToolGroup {
@@ -921,6 +966,7 @@ ApplicationWindow {
                 caption: qsTr("INSERT")
                 ToolCommand { action: importAction; text: qsTr("Import"); iconName: "import" }
                 ToolCommand { action: convertAction; text: qsTr("To Body"); iconName: "mesh-to-body" }
+                ToolCommand { action: scanToolsAction; text: qsTr("Scan"); iconName: "mesh" }
             }
             ToolSeparator {}
             ToolGroup {
@@ -1020,13 +1066,15 @@ ApplicationWindow {
             selectedPartId: window.selectedPartId
             sketch: window.activeSketch
             sketchTool: window.sketchTool
-            selectionToolsEnabled: !featureDialog.visible && !window.pickingSketchPlane
+            selectionToolsEnabled: !featureDialog.visible && !window.pickingSketchPlane && !scanPanel.pickMode
             snapToNearestSurface: window.pickingSketchPlane
             property bool snappedClick: false
             onSnappedToNearestSurface: snappedClick = true
-            markers: featureDialog.visible ? featureDialog.pickedPoints : []
+            markers: featureDialog.visible ? featureDialog.pickedPoints
+                   : scanPanel.visible ? scanPanel.pickedPoints : []
             pickKind: featureDialog.visible ? featureDialog.pickKind : ""
             shownSketch: featureDialog.shownSketch
+            unpickablePlane: featureDialog.visible ? featureDialog.ownPlane : -1
             onPartPicked: id => {
                 window.selectPart(id)
                 // A click through a hole of a scan, or next to the model, while choosing where to sketch.
@@ -1045,6 +1093,8 @@ ApplicationWindow {
                     const at = [point.x, point.y, point.z]
                     if (info.kind === "body")
                         window.createSketch({ face: { body: info.featureId, point: at } })
+                    else if (info.kind === "plane")
+                        window.createSketch({ plane: { plane: info.featureId } })
                     else if (info.kind === "imported")
                         // A fitted surface or a scan: sketch over its best-fit plane, then
                         // trim the surface with the outline (Properties > Surface).
@@ -1055,6 +1105,8 @@ ApplicationWindow {
                         window.controller.showStatus(qsTr("That was a hole in the surface: sketching on the surface next to it"))
                 } else if (featureDialog.visible) {
                     featureDialog.addPick(info, point)
+                } else if (scanPanel.visible && scanPanel.pickMode) {
+                    scanPanel.addPick(id, point)
                 }
             }
             onCurveDrawn: curve => {
@@ -1112,6 +1164,32 @@ ApplicationWindow {
                 anchors.top: parent.top
                 anchors.margins: 8
                 controller: window.controller
+            }
+
+            ScanPanel {
+                id: scanPanel
+                anchors.left: parent.left
+                anchors.top: parent.top
+                anchors.margins: 8
+                controller: window.controller
+                scan: window.scan
+                partId: window.selectedPartId
+            }
+
+            // Import progress (files are parsed in the background).
+            Pane {
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: 56
+                visible: window.scan.busy
+                padding: 10
+                RowLayout {
+                    spacing: 10
+                    Label { text: window.scan.progressText }
+                    ProgressBar { from: 0; to: 1; value: window.scan.progress; Layout.preferredWidth: 220 }
+                    Label { text: Math.round(window.scan.progress * 100) + " %" }
+                    Button { text: qsTr("Cancel"); onClicked: window.scan.cancelImport() }
+                }
             }
 
             // Create Sketch: pick a plane or a planar face (Fusion shows the origin planes).
@@ -1254,7 +1332,7 @@ ApplicationWindow {
                 anchors.fill: parent
                 onDropped: drop => {
                     for (const url of drop.urls)
-                        window.controller.importFile(url)
+                        window.scan.importFile(url)
                 }
             }
         }

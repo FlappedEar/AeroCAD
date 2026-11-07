@@ -518,15 +518,24 @@ TopoDS_Shape buildSolid(const TopoDS_Shape& outline, const gp_Pln& plane, const 
 
 } // namespace
 
-DrapedPart partOnScan(const core::MeshProjector& scan, const DrapeArea& area, const std::vector<Shape>& outlines,
-                      double thickness, ThickenSide side, const DrapeFitOptions& options)
+namespace {
+
+/// The skin under the area: samples, gaps filled, and its B-spline poles refined until
+/// the skin under the inside rectangle is followed within the tolerance.
+struct SkinFit {
+    Raster raster;
+    std::vector<double> skin;
+    std::vector<double> poles;
+    int pu = 0;
+    int pv = 0;
+    DrapeFitReport report;
+};
+
+SkinFit fitSkin(const core::MeshProjector& scan, const DrapeArea& area, const DrapeFitOptions& options)
 {
-    const auto started = std::chrono::steady_clock::now();
     const double wide = area.u1 - area.u0, high = area.v1 - area.v0;
     if (!(wide > 0.0) || !(high > 0.0))
         throw SurfaceFitError("The outline is empty");
-    if (!(thickness > 0.0))
-        throw SurfaceFitError("Thickness must be positive");
     const double longest = std::max(wide, high);
     const double finest = std::max(options.minSpacing, longest / 64.0);
 
@@ -547,33 +556,34 @@ DrapedPart partOnScan(const core::MeshProjector& scan, const DrapeArea& area, co
         }
     if (insideKnown < 16)
         throw SurfaceFitError("The scan is not under the outline (seen along the sketch normal)");
-    const std::vector<double> skin = fillGaps(raster);
+    std::vector<double> skin = fillGaps(raster);
 
-    DrapedPart result;
+    SkinFit result;
+    result.raster = std::move(raster);
+    result.skin = std::move(skin);
     result.report.bridgedFraction = 1.0 - static_cast<double>(insideKnown) / static_cast<double>(insideSamples);
 
     // Refine the control net until the skin is followed within the tolerance.
-    std::vector<double> skinPoles;
     int pu = 0, pv = 0;
     for (double spacing = std::max(finest, longest / 16.0);; spacing = std::max(finest, spacing * 0.5)) {
-        pu = std::clamp(static_cast<int>(std::ceil(wide / spacing)) + 3, 4, raster.nu);
-        pv = std::clamp(static_cast<int>(std::ceil(high / spacing)) + 3, 4, raster.nv);
-        const AxisFit fitU(raster.nu, pu), fitV(raster.nv, pv);
-        skinPoles = solvePoles(skin, raster, fitU, fitV, pu, pv);
+        pu = std::clamp(static_cast<int>(std::ceil(wide / spacing)) + 3, 4, result.raster.nu);
+        pv = std::clamp(static_cast<int>(std::ceil(high / spacing)) + 3, 4, result.raster.nv);
+        const AxisFit fitU(result.raster.nu, pu), fitV(result.raster.nv, pv);
+        result.poles = solvePoles(result.skin, result.raster, fitU, fitV, pu, pv);
 
         // Deviation on the skin under the outline.
         std::vector<float> deviations;
         deviations.reserve(insideKnown);
         double squares = 0.0, worst = 0.0;
-        for (int j = 0; j < raster.nv; ++j) {
-            const double v = area.v0 + j * raster.dv;
+        for (int j = 0; j < result.raster.nv; ++j) {
+            const double v = area.v0 + j * result.raster.dv;
             if (v < area.insideV0 || v > area.insideV1)
                 continue;
             const auto& wv = fitV.weights(j);
             const int fv = fitV.first(j);
-            for (int i = 0; i < raster.nu; ++i) {
-                const double u = area.u0 + i * raster.du;
-                if (u < area.insideU0 || u > area.insideU1 || !raster.known[raster.at(i, j)])
+            for (int i = 0; i < result.raster.nu; ++i) {
+                const double u = area.u0 + i * result.raster.du;
+                if (u < area.insideU0 || u > area.insideU1 || !result.raster.known[result.raster.at(i, j)])
                     continue;
                 const auto& wu = fitU.weights(i);
                 const int fu = fitU.first(i);
@@ -581,8 +591,8 @@ DrapedPart partOnScan(const core::MeshProjector& scan, const DrapeArea& area, co
                 for (int b = 0; b < 4; ++b)
                     for (int a = 0; a < 4; ++a)
                         z += wv[static_cast<std::size_t>(b)] * wu[static_cast<std::size_t>(a)] *
-                             skinPoles[static_cast<std::size_t>(fv + b) * pu + static_cast<std::size_t>(fu + a)];
-                const double d = std::abs(z - raster.z[raster.at(i, j)]);
+                             result.poles[static_cast<std::size_t>(fv + b) * pu + static_cast<std::size_t>(fu + a)];
+                const double d = std::abs(z - result.raster.z[result.raster.at(i, j)]);
                 worst = std::max(worst, d);
                 squares += d * d;
                 deviations.push_back(static_cast<float>(d));
@@ -597,8 +607,28 @@ DrapedPart partOnScan(const core::MeshProjector& scan, const DrapeArea& area, co
         if (result.report.p99Deviation <= options.tolerance || spacing <= finest)
             break;
     }
+    result.pu = pu;
+    result.pv = pv;
     result.report.uPoles = pu;
     result.report.vPoles = pv;
+    return result;
+}
+
+} // namespace
+
+DrapedPart partOnScan(const core::MeshProjector& scan, const DrapeArea& area, const std::vector<Shape>& outlines,
+                      double thickness, ThickenSide side, const DrapeFitOptions& options)
+{
+    const auto started = std::chrono::steady_clock::now();
+    if (!(thickness > 0.0))
+        throw SurfaceFitError("Thickness must be positive");
+    SkinFit fit = fitSkin(scan, area, options);
+    const Raster& raster = fit.raster;
+    const std::vector<double>& skin = fit.skin;
+    const std::vector<double>& skinPoles = fit.poles;
+    const int pu = fit.pu, pv = fit.pv;
+    DrapedPart result;
+    result.report = fit.report;
 
     const AxisFit fitU(raster.nu, pu), fitV(raster.nv, pv);
     std::vector<double> lower, upper;
@@ -650,6 +680,26 @@ DrapedPart partOnScan(const core::MeshProjector& scan, const DrapeArea& area, co
         throw SurfaceFitError(std::string("Could not build the part: ") + e.GetMessageString());
     }
     return result;
+}
+
+Shape skinOnScan(const core::MeshProjector& scan, const DrapeArea& area, DrapeFitReport* report,
+                 const DrapeFitOptions& options)
+{
+    const auto started = std::chrono::steady_clock::now();
+    const SkinFit fit = fitSkin(scan, area, options);
+    try {
+        BRepBuilderAPI_MakeFace face(makeSurface(area, fit.poles, fit.pu, fit.pv), Precision::Confusion());
+        if (!face.IsDone())
+            throw SurfaceFitError("Could not build the skin surface");
+        if (report != nullptr) {
+            *report = fit.report;
+            report->milliseconds =
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+        }
+        return wrapShape(face.Face());
+    } catch (const Standard_Failure& e) {
+        throw SurfaceFitError(std::string("Could not build the skin surface: ") + e.GetMessageString());
+    }
 }
 
 } // namespace aerocad::geometry

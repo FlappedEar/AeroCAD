@@ -44,6 +44,8 @@ Item {
     property string pickKind: ""
     /// Sketch feature shown even when hidden (the sketch a feature dialog works on).
     property var shownSketch: -1
+    /// Construction plane that clicks pass through (the one a dialog is creating).
+    property var unpickablePlane: -1
     property var sketchCurves: []
     property var sketchConstraints: []
     property int sketchDegreesOfFreedom: -1
@@ -392,17 +394,19 @@ Item {
                     readonly property bool selected: partId === root.selectedPartId
 
                     visible: partVisible || (kind === "sketch" && featureId == root.shownSketch)
-                    pickable: root.pickKind === "" || kind === root.pickKind
+                    pickable: (root.pickKind === "" || kind === root.pickKind)
+                              && !(kind === "plane" && featureId == root.unpickablePlane)
                     geometry: MeshGeometry {
                         controller: root.controller
                         partId: partModel.partId
                     }
-                    // Fusion-like colours: grey bodies, translucent orange sketch profiles.
+                    // Fusion-like colours: grey bodies, translucent orange sketch profiles and planes.
                     materials: PrincipledMaterial {
-                        baseColor: partModel.selected ? Theme.selectedColor
+                        baseColor: partModel.selected ? (partModel.kind === "plane" ? Theme.planeSelected : Theme.selectedColor)
                                  : partModel.kind === "sketch" ? Theme.sketchProfile
+                                 : partModel.kind === "plane" ? Theme.planeFill
                                  : partModel.kind === "body" ? Theme.bodyColor : Theme.meshColor
-                        alphaMode: partModel.kind === "sketch" ? PrincipledMaterial.Blend : PrincipledMaterial.Default
+                        alphaMode: partModel.kind === "sketch" || partModel.kind === "plane" ? PrincipledMaterial.Blend : PrincipledMaterial.Default
                         metalness: 0.0
                         roughness: 0.45
                         specularAmount: 0.35
@@ -438,7 +442,8 @@ Item {
                         }
                         materials: PrincipledMaterial {
                             lighting: PrincipledMaterial.NoLighting
-                            baseColor: partModel.kind === "sketch" ? Theme.sketchColor : Theme.edgeColor
+                            baseColor: partModel.kind === "sketch" ? Theme.sketchColor
+                                     : partModel.kind === "plane" ? Theme.planeEdge : Theme.edgeColor
                         }
                     }
                 }
