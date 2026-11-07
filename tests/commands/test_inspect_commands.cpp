@@ -170,6 +170,14 @@ TEST_CASE("inspect.measure: wall thickness, axis angles and sketch curves", "[co
                                                   {"b", {{"part", box2}, {"pick", "body"}}}});
     CHECK(toBox["a"]["kind"] == "vertex");
     CHECK(toBox["distance"].get<double>() == Approx(std::hypot(10.0, 50.0)));
+
+    // A whole sketch against a mesh inside its circle: measured to the curves, not the
+    // filled disk.
+    const auto inside = addMesh(s, "Inside", geometry::translated(geometry::makeBox(2, 2, 2), {-1, -51, -1}));
+    const Json whole = run(s, "inspect.measure", {{"a", {{"part", sketch}}}, {"b", {{"part", inside}, {"pick", "body"}}}});
+    CHECK(whole["distance"].get<double>() == Approx(5 - std::sqrt(2.0)).epsilon(0.01));
+    const Json clearance = run(s, "inspect.clearance", {{"a", sketch}, {"b", inside}});
+    CHECK(clearance["distance"].get<double>() == Approx(5 - std::sqrt(2.0)).epsilon(0.01));
 }
 
 TEST_CASE("inspect.clearance between B-rep bodies and meshes", "[commands][inspect]")

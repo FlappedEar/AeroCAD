@@ -398,8 +398,9 @@ Separation separation(CommandContext& ctx, const Entity& a, const Entity& b)
     }
     // A selected face / edge / vertex of a B-rep against a mesh body: measure from that
     // sub-shape only (sampled), not from its whole part.
-    const bool subA = a.exact && a.sub.kind != geometry::SubShape::Kind::Whole;
-    const bool subB = b.exact && b.sub.kind != geometry::SubShape::Kind::Whole;
+    // A whole sketch counts too: its display mesh is the profile fill, not the curves.
+    const bool subA = a.exact && (a.sub.kind != geometry::SubShape::Kind::Whole || a.owned);
+    const bool subB = b.exact && (b.sub.kind != geometry::SubShape::Kind::Whole || b.owned);
     if (subA || subB) {
         const Entity& sub = subA ? a : b;
         const Entity& body = subA ? b : a;
@@ -496,16 +497,21 @@ std::optional<double> entityAngle(const Entity& a, const Entity& b)
 
 Json measureClearance(CommandContext& ctx, const model::Part& a, const model::Part& b)
 {
-    Entity ea;
-    ea.kind = "body";
-    ea.part = &a;
-    ea.exact = a.shape && !a.shape->isNull();
-    ea.shape = ea.exact ? &*a.shape : nullptr;
-    Entity eb;
-    eb.kind = "body";
-    eb.part = &b;
-    eb.exact = b.shape && !b.shape->isNull();
-    eb.shape = eb.exact ? &*b.shape : nullptr;
+    auto bodyEntity = [&ctx](const model::Part& p) {
+        Entity e;
+        e.kind = "body";
+        e.part = &p;
+        if (p.shape && !p.shape->isNull()) {
+            e.shape = &*p.shape;
+        } else if (p.kind == model::PartKind::Sketch) {
+            e.owned = sketchShape(ctx, p); // its curves, not the profile fill
+            e.shape = e.owned.get();
+        }
+        e.exact = e.shape != nullptr;
+        return e;
+    };
+    const Entity ea = bodyEntity(a);
+    const Entity eb = bodyEntity(b);
     if (!ea.exact)
         requireMeshPart(ctx.document, a.id);
     if (!eb.exact)
@@ -515,10 +521,10 @@ Json measureClearance(CommandContext& ctx, const model::Part& a, const model::Pa
              {"pointA", vec(s.a)},
              {"pointB", vec(s.b)},
              {"method", s.method}};
-    if (ea.exact && eb.exact && a.shape->solidCount() > 0 && b.shape->solidCount() > 0) {
+    if (ea.exact && eb.exact && ea.shape->solidCount() > 0 && eb.shape->solidCount() > 0) {
         double volume = 0.0;
         try {
-            volume = geometry::interferenceVolume(*a.shape, *b.shape);
+            volume = geometry::interferenceVolume(*ea.shape, *eb.shape);
         } catch (const geometry::ModelingError& err) {
             throw CommandError(err.what());
         }
