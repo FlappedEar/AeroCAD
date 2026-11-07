@@ -51,9 +51,13 @@ enum class ThickenSide {
 /// kept, so it does not matter which way the outline was drawn. The root face lies
 /// exactly on the curved surface. A single-face surface is taken on its whole B-spline
 /// (see trimSurface).
-/// Throws OffsetError when the outline does not reach through the surface.
+/// With `rootFillet` > 0 the fin flares into the surface with a concave fillet of that
+/// radius (mm) all round its root, tangent to the surface: a stronger joint and a bigger
+/// face to glue a printed fin on; the root face still lies exactly on the surface.
+/// Throws OffsetError when the outline does not reach through the surface, or the fillet
+/// does not fit (a radius too big for the fin or the surface around it).
 [[nodiscard]] Shape finOnSurface(const Shape& surface, const std::vector<Shape>& outlines, const core::Vec3& normal,
-                                 double thickness, const core::Vec3& outward);
+                                 double thickness, const core::Vec3& outward, double rootFillet = 0.0);
 
 /// Area of all faces in mm^2.
 [[nodiscard]] double surfaceArea(const Shape& shape);

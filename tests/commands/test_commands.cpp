@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "aerocad/commands/Session.hpp"
+#include "aerocad/core/MeshCheck.hpp"
 #include "aerocad/core/MeshSelection.hpp"
 #include "aerocad/core/Path.hpp"
 #include "aerocad/core/Measure.hpp"
@@ -695,6 +696,17 @@ TEST_CASE("Part on surface: one step from an outline over a scan to a solid", "[
         // Where it was clicked, not in the middle of the surface.
         const auto& fb = finOnFit.data.at("bounds");
         CHECK((fb.at("min").at(0).get<double>() + fb.at("max").at(0).get<double>()) / 2 == Approx(20.0).margin(1.0));
+        // With a root fillet on the fitted surface: one closed solid, flared on both sides.
+        auto flared = session.execute("surface.fin_from_sketch",
+                                      {{"sketch", onFit.data.at("id")}, {"thickness", 2.0}, {"rootFillet", 2.0}});
+        INFO(flared.toJson().dump());
+        REQUIRE(flared.ok);
+        CHECK(flared.data.at("volume").get<double>() > finOnFit.data.at("volume").get<double>());
+        // The fin stands across Y here (2 mm thick, leaning with the surface): 2 x r wider.
+        CHECK(flared.data.at("bounds").at("size").at(1).get<double>() ==
+              Approx(fb.at("size").at(1).get<double>() + 2 * 2.0).margin(0.6));
+        CHECK(core::checkMesh(core::weldVertices(
+                  *session.document().part(flared.data.at("id").get<model::PartId>())->mesh)).watertight());
 
         // Drawn the other way (most of it on the inner side): the bigger side is kept.
         auto flipped = session.execute(
@@ -715,6 +727,51 @@ TEST_CASE("Part on surface: one step from an outline over a scan to a solid", "[
         auto refused = session.execute("surface.fin_from_sketch", {{"sketch", floating.data.at("id")}, {"thickness", 3.0}});
         CHECK_FALSE(refused.ok);
         CHECK(refused.toJson().dump().find("root") != std::string::npos);
+
+        // A low fin with its root only just into the surface: the root carried down does not
+        // turn it into a fin on the inner side.
+        auto low = session.execute(
+            "sketch.create", {{"surface", {{"part", scanId}, {"point", {40, 15, -0.5}}, {"across", true}}},
+                              {"curves", Json::array({{{"type", "rectangle"}, {"corner", {-0.2, -8}}, {"opposite", {1.5, 8}}}})}});
+        REQUIRE(low.ok);
+        auto lowFin = session.execute("surface.fin_from_sketch", {{"sketch", low.data.at("id")}, {"thickness", 2.0}});
+        INFO(lowFin.toJson().dump());
+        REQUIRE(lowFin.ok);
+        CHECK(lowFin.data.at("volume").get<double>() == Approx(2.0 * 16.0 * 1.5).epsilon(0.2));
+        CHECK(lowFin.data.at("bounds").at("max").at(2).get<double>() > -0.5 + 1.2);
+
+        // A triangle whose centroid is outside but most of whose area is inside: the bigger
+        // side is kept, as drawn.
+        auto tri = session.execute(
+            "sketch.create", {{"surface", {{"part", scanId}, {"point", {40, 15, -0.5}}, {"across", true}}},
+                              {"curves", Json::array({{{"type", "line"}, {"start", {-10, -10}}, {"end", {-10, 10}}},
+                                                      {{"type", "line"}, {"start", {-10, 10}}, {"end", {22, 0}}},
+                                                      {{"type", "line"}, {"start", {22, 0}}, {"end", {-10, -10}}}})}});
+        REQUIRE(tri.ok);
+        auto triFin = session.execute("surface.fin_from_sketch", {{"sketch", tri.data.at("id")}, {"thickness", 2.0}});
+        INFO(triFin.toJson().dump());
+        REQUIRE(triFin.ok);
+        CHECK(triFin.data.at("bounds").at("max").at(2).get<double>() < -0.5 + 0.5);
+
+        // Two outlines, most of the first above the surface and most of the second below:
+        // one side is kept for both, and neither root extension is kept as fin.
+        auto outlineBox = [](double x0, double x1, double y0, double y1) {
+            return Json::array({{{"type", "line"}, {"start", {x0, y0}}, {"end", {x1, y0}}},
+                                {{"type", "line"}, {"start", {x1, y0}}, {"end", {x1, y1}}},
+                                {{"type", "line"}, {"start", {x1, y1}}, {"end", {x0, y1}}},
+                                {{"type", "line"}, {"start", {x0, y1}}, {"end", {x0, y0}}}});
+        };
+        Json pair = outlineBox(-1, 10, -15, -5);
+        for (auto& c : outlineBox(-2, 1, 5, 15))
+            pair.push_back(c);
+        auto two = session.execute(
+            "sketch.create",
+            {{"surface", {{"part", scanId}, {"point", {40, 15, -0.5}}, {"across", true}}}, {"curves", pair}});
+        REQUIRE(two.ok);
+        auto twoFins = session.execute("surface.fin_from_sketch", {{"sketch", two.data.at("id")}, {"thickness", 2.0}});
+        INFO(twoFins.toJson().dump());
+        REQUIRE(twoFins.ok);
+        CHECK(twoFins.data.at("volume").get<double>() == Approx(2.0 * (10.0 * 10.0 + 1.0 * 10.0)).epsilon(0.1));
     }
 
     SECTION("An arc that bulges far past its defining points is covered")
@@ -988,4 +1045,48 @@ TEST_CASE("Fin on a scan with a layer behind the skin and holes: the root sits o
     const double volume = fin.data.at("volume").get<double>();
     CHECK(volume > 3.0 * 50.0 * 30.0);
     CHECK(volume < 3.0 * 50.0 * 30.0 * 1.15);
+
+    // With a root fillet: the same fin flares into the skin, tangent to it, and is still one
+    // closed solid sitting on the outer skin.
+    auto filleted = session.execute("surface.fin_from_sketch",
+                                    {{"sketch", sk.data.at("id")}, {"thickness", 3.0}, {"rootFillet", 4.0}});
+    INFO(filleted.toJson().dump());
+    REQUIRE(filleted.ok);
+    CHECK(filleted.data.at("rootFillet").get<double>() == 4.0);
+    const auto* flared = session.document().part(filleted.data.at("id").get<model::PartId>());
+    REQUIRE(flared != nullptr);
+    CHECK(core::checkMesh(core::weldVertices(*flared->mesh)).watertight());
+    // A concave fillet adds (1 - pi/4) r^2 of section along the root, which runs 2 x 50 + 2 x 3 mm.
+    const double added = filleted.data.at("volume").get<double>() - volume;
+    const double expected = (1.0 - 3.14159 / 4.0) * 16.0 * 106.0;
+    CHECK(added > 0.6 * expected);
+    CHECK(added < 1.4 * expected);
+    double rootWidth = 0.0, flaredDeepest = -1e9;
+    for (const auto& q : flared->mesh->vertices()) {
+        CHECK(q.y < skinY(q.x, q.z) + 0.1);
+        flaredDeepest = std::max(flaredDeepest, q.y - skinY(q.x, q.z));
+        if (q.y > skinY(q.x, q.z) - 0.3 && std::abs(q.x) < 10.0)
+            rootWidth = std::max(rootWidth, std::abs(q.z - 40.0));
+    }
+    CHECK(flaredDeepest > -0.1);
+    // On the skin, the fillets reach r beyond each side of the 3 mm fin.
+    CHECK(rootWidth == Approx(1.5 + 4.0).margin(0.6));
+
+    // A fillet that cannot fit does not cost the fin: it gets a smaller one or none, and
+    // says so.
+    auto huge = session.execute("surface.fin_from_sketch",
+                                {{"sketch", sk.data.at("id")}, {"thickness", 3.0}, {"rootFillet", 40.0}});
+    INFO(huge.toJson().dump());
+    REQUIRE(huge.ok);
+    CHECK(huge.data.at("rootFillet").get<double>() < 40.0);
+    REQUIRE(huge.data.at("warnings").size() == 1);
+    CHECK(huge.data.at("warnings").at(0).get<std::string>().find("root fillet of 40 mm") != std::string::npos);
+    // Absurdly big: the skin is still fitted for the radius actually tried.
+    auto absurd = session.execute("surface.fin_from_sketch",
+                                  {{"sketch", sk.data.at("id")}, {"thickness", 3.0}, {"rootFillet", 10000.0}});
+    INFO(absurd.toJson().dump());
+    REQUIRE(absurd.ok);
+    CHECK(absurd.data.at("rootFillet").get<double>() <= 6.0);
+    CHECK(core::checkMesh(core::weldVertices(
+              *session.document().part(huge.data.at("id").get<model::PartId>())->mesh)).watertight());
 }

@@ -1447,7 +1447,7 @@ ApplicationWindow {
                     }
                     Label {
                         text: parent.fin
-                              ? qsTr("Gives the outline a thickness (half each side of the sketch)\nand cuts its root to the surface, so it sits flush on it.")
+                              ? qsTr("Gives the outline a thickness (half each side of the sketch)\nand cuts its root to the surface, so it sits flush on it.\nThe root fillet rounds the joint to the surface.")
                               : qsTr("Cuts the outline out of the surface under it and gives it a thickness.\nThe edges follow the outline; the part follows the surface.")
                         color: Theme.textMuted
                     }
@@ -1468,6 +1468,20 @@ ApplicationWindow {
                         }
                     }
                     RowLayout {
+                        visible: !!window.partOnSurfaceSketch && window.partOnSurfaceSketch.across
+                        Label { text: qsTr("Root fillet") }
+                        TextField {
+                            id: finRootFillet
+                            objectName: "finRootFillet"
+                            Layout.preferredWidth: 56
+                            text: "2"
+                            validator: DoubleValidator { bottom: 0; decimals: 3; notation: DoubleValidator.StandardNotation }
+                            ToolTip.visible: hovered
+                            ToolTip.text: qsTr("Rounds the joint between the fin and the surface (0 for a sharp joint).")
+                        }
+                        Label { text: qsTr("mm") }
+                    }
+                    RowLayout {
                         Button {
                             text: qsTr("Create")
                             highlighted: true
@@ -1477,9 +1491,13 @@ ApplicationWindow {
                                 if (!(t > 0))
                                     return window.controller.showStatus(qsTr("Enter the thickness in mm"))
                                 const fin = window.partOnSurfaceSketch.across
+                                let rf = 0
+                                try { rf = Number.fromLocaleString(Qt.locale(), finRootFillet.text) } catch (e) { rf = Number(finRootFillet.text.replace(",", ".")) }
+                                if (fin && !(rf >= 0))
+                                    return window.controller.showStatus(qsTr("Enter the root fillet in mm (0 for none)"))
                                 const r = fin
                                     ? window.controller.execute("surface.fin_from_sketch",
-                                        { sketch: window.partOnSurfaceSketch.id, thickness: t })
+                                        { sketch: window.partOnSurfaceSketch.id, thickness: t, rootFillet: rf })
                                     : window.controller.execute("surface.part_from_sketch",
                                         { sketch: window.partOnSurfaceSketch.id, thickness: t,
                                           side: ["inside", "outside", "both"][partSide.currentIndex] })
@@ -1487,7 +1505,9 @@ ApplicationWindow {
                                     return
                                 window.partOnSurfaceSketch = null
                                 window.selectPart(r.result.id)
-                                if (fin)
+                                if (fin && r.result.warnings.length > 0)
+                                    window.controller.showStatus(qsTr("Fin \"%1\": %2").arg(r.result.name).arg(r.result.warnings[0]))
+                                else if (fin)
                                     window.controller.showStatus(qsTr("Fin \"%1\": %2 mm thick, %3 cm³")
                                         .arg(r.result.name).arg(t).arg((r.result.volume / 1000).toFixed(1)))
                                 else if (r.result.warnings.length > 0)
