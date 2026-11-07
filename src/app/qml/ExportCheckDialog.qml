@@ -17,6 +17,7 @@ Dialog {
     property var check: ({ parts: [], summary: "", canExport: true, minWall: 0 })
     /// Called when the user exports anyway.
     property var onExport: null
+    property bool changedSinceCheck: false
 
     readonly property var problemParts: (check.parts || []).filter(p => p.status !== "ok")
     readonly property var thinPart: {
@@ -32,9 +33,10 @@ Dialog {
     modal: true
     width: 560
 
-    function show(result, exportAction) {
+    function show(result, exportAction, changed) {
         check = result
         onExport = exportAction
+        changedSinceCheck = !!changed
         open()
     }
 
@@ -44,8 +46,15 @@ Dialog {
 
         Label {
             Layout.fillWidth: true
+            visible: root.changedSinceCheck
             wrapMode: Text.Wrap
-            text: root.check.canExport
+            text: qsTr("The design or export settings changed. Review this updated check before exporting.")
+        }
+
+        Label {
+            Layout.fillWidth: true
+            wrapMode: Text.Wrap
+            text: root.check.passed ? qsTr("The current export check passed.") : root.check.canExport
                   ? qsTr("The file can be written, but look at these first.")
                   : qsTr("Fix these first, or the file will not open or print correctly.")
         }
@@ -116,7 +125,7 @@ Dialog {
             }
         }
         Button {
-            text: qsTr("Export Anyway")
+            text: root.check.passed ? qsTr("Export") : qsTr("Export Anyway")
             visible: root.check.canExport
             DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
         }
@@ -126,5 +135,10 @@ Dialog {
         }
     }
 
-    onAccepted: if (onExport) onExport()
+    onAccepted: {
+        const action = onExport
+        onExport = null
+        if (action) action()
+    }
+    onRejected: onExport = null
 }

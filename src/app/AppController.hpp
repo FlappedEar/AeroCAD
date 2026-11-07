@@ -113,8 +113,10 @@ public:
     Q_INVOKABLE bool importFile(const QUrl& url);
     /// Convenience wrapper around document.export for the save dialog. `ids` empty means
     /// all visible parts. Returns {ok, error?, warnings: [string]}; the status bar shows
-    /// the outcome.
-    Q_INVOKABLE QVariantMap exportFile(const QUrl& url, const QVariantList& ids = {});
+    /// the outcome. Meshes must pass the writer's validity check; expectedState binds a
+    /// GUI preflight approval to its project, document revision, part set and format.
+    Q_INVOKABLE QVariantMap exportFile(const QUrl& url, const QVariantList& ids = {},
+                                      const QString& expectedState = {});
     /// Runs a JSON command script: an array of {"name": ..., "params": {...}} objects (the
     /// same calls an MCP client makes). Stops at the first failing command. Returns false
     /// and sets the status message on errors.

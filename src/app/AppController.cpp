@@ -284,12 +284,15 @@ bool AppController::importFile(const QUrl& url)
     return true;
 }
 
-QVariantMap AppController::exportFile(const QUrl& url, const QVariantList& ids)
+QVariantMap AppController::exportFile(const QUrl& url, const QVariantList& ids, const QString& expectedState)
 {
     const QString path = url.isLocalFile() ? url.toLocalFile() : url.toString();
-    QVariantMap params{{QStringLiteral("path"), QDir::toNativeSeparators(path)}};
+    QVariantMap params{{QStringLiteral("path"), QDir::toNativeSeparators(path)},
+                       {QStringLiteral("requireValid"), true}};
     if (!ids.isEmpty())
         params.insert(QStringLiteral("ids"), ids);
+    if (!expectedState.isEmpty())
+        params.insert(QStringLiteral("expectedState"), expectedState);
     const QVariantMap r = execute(QStringLiteral("document.export"), params);
     if (!r.value(QStringLiteral("ok")).toBool())
         return {{QStringLiteral("ok"), false}, {QStringLiteral("error"), r.value(QStringLiteral("error"))}};

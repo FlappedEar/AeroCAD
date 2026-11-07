@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+file(REMOVE_RECURSE "@CAD92_DIR@")
+file(MAKE_DIRECTORY "@CAD92_DIR@/data")
+file(WRITE "@CAD92_DIR@/open.stl"
+    "solid open\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid open\n")
+foreach(name blocked guard deleted empty)
+    file(WRITE "@CAD92_DIR@/${name}.stl" "previous ${name} output")
+endforeach()
+file(WRITE "@CAD92_DIR@/setup.json"
+    "[{\"name\":\"feature.box\",\"params\":{\"size\":[20,20,0.2]}},"
+    "{\"name\":\"project.save\",\"params\":{\"path\":\"@CAD92_DIR@/fixture.aerocad\"}}]")
+execute_process(COMMAND "${CMD}" "@CAD92_DIR@/setup.json" RESULT_VARIABLE rc)
+if(NOT rc EQUAL 0)
+    message(FATAL_ERROR "Could not create CAD-92 fixture")
+endif()

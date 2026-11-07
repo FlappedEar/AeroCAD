@@ -130,6 +130,17 @@ show up as a small share of thin surface.
 `warnings`, `watertight`, `manifold`, `validBrep`, `volume` and `minWall {thinnest, at,
 thinAreaPercent, limit}`.
 
+Before **Export Anyway** writes, the application runs the check again. If the project,
+variant, document, exported part set, or wall limit changed, the updated report needs a
+new confirmation; a failed check writes nothing. GUI STL/3MF exports also require the
+writer's mesh validity check to pass.
+
+The check also returns an opaque `state` string. Commands `document.export` and
+`document.export_for_print` accept it as optional `expectedState`; a changed project,
+document, effective part IDs, or export mode is rejected before writing. The GUI uses
+this guard and separately binds warning consent to the checked wall limit. The token
+is local to the running session and is not a printability certificate.
+
 ### Writing a print-file set
 
 **File > Export for Printing** (`document.export_for_print`) stages every STL/STEP

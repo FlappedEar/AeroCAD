@@ -1,0 +1,74 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CAD-92: drive the real export controls, with command/MCP-equivalent edits while
+# their warning modal is open. The file picker is supplied a deterministic path;
+# confirmations use actual mouse clicks. CTest checks output bytes after this run.
+ui.wait(500)
+Preferences.minWallThickness = 0.8
+window.ribbonTab = "solid"
+ui.clickText("All Visible")
+ui.wait(300)
+(() => { if (!exportDialog.visible) ui.fail("toolbar did not open export"); exportDialog.selectedFile = "file://@CAD92_DIR@/blocked.stl"; exportDialog.accepted(); exportDialog.close() })()
+ui.wait(250)
+(() => { if (!exportCheckDialog.visible || !exportCheckDialog.check.canExport || exportCheckDialog.check.warnings !== 1) ui.fail("expected the thin-wall warning") })()
+(() => { const r = controller.execute("document.import", {path: "@CAD92_DIR@/open.stl"}); if (!r.ok) ui.fail(r.error) })()
+ui.clickText("Export Anyway")
+ui.wait(250)
+(() => { ui.log("after open surface: " + JSON.stringify(exportCheckDialog.check)); if (!exportCheckDialog.visible || exportCheckDialog.check.canExport || !exportCheckDialog.changedSinceCheck) ui.fail("stale warning approved an open mesh") })()
+ui.shot("@CAD92_DIR@/blocked-current-geometry.png")
+# Bypassing the warning UI must still hit the mesh validity guard in the wrapper.
+(() => { const r = controller.exportFile("file://@CAD92_DIR@/guard.stl", []); if (r.ok || r.error.indexOf("not watertight") < 0) ui.fail("GUI writer did not require valid meshes") })()
+ui.clickText("Cancel")
+(() => { const open = controller.execute("document.parts").result.parts.find(p => p.name === "open"); if (!open || !controller.execute("part.remove", {id: open.id}).ok) ui.fail("could not remove open surface") })()
+# Unchanged warnings remain exportable after one confirmation.
+window.openExport([])
+ui.wait(250)
+exportDialog.selectedFile = "file://@CAD92_DIR@/approved.stl"; exportDialog.accepted(); exportDialog.close()
+ui.wait(250)
+ui.clickText("Export Anyway")
+ui.wait(250)
+(() => { if (exportCheckDialog.visible || exportMessage.visible || controller.statusMessage.indexOf("Exported") < 0) ui.fail("unchanged warning could not be approved") })()
+# A failed preflight after deletion must never fall through to writing.
+window.openExport([controller.execute("document.parts").result.parts[0].id])
+ui.wait(250)
+exportDialog.selectedFile = "file://@CAD92_DIR@/deleted.stl"; exportDialog.accepted(); exportDialog.close()
+ui.wait(250)
+(() => { const r = controller.execute("feature.delete", {id: controller.execute("document.parts").result.parts[0].featureId}); if (!r.ok) ui.fail(r.error) })()
+ui.clickText("Export Anyway")
+ui.wait(250)
+(() => { if (!exportMessage.visible || exportMessage.title !== "Export failed" || exportMessage.text.indexOf("No part with id") < 0) ui.fail("failed selected-part preflight did not stop export") })()
+exportMessage.close()
+# An initially failed preflight (empty Export All) also writes nothing.
+window.openExport([])
+ui.wait(250)
+exportDialog.selectedFile = "file://@CAD92_DIR@/empty.stl"; exportDialog.accepted(); exportDialog.close()
+ui.wait(250)
+(() => { if (!exportMessage.visible || exportMessage.text.indexOf("No visible parts") < 0) ui.fail("empty export did not fail closed") })()
+exportMessage.close()
+# A wall-limit change needs fresh consent even when the new result is clean.
+(() => { const r = controller.execute("feature.box", {name:"thin",size:[20,20,0.2]}); if (!r.ok) ui.fail(r.error) })()
+window.openExport([])
+ui.wait(250)
+exportDialog.selectedFile = "file://@CAD92_DIR@/new-limit.stl"; exportDialog.accepted(); exportDialog.close()
+ui.wait(250)
+Preferences.minWallThickness = 0
+ui.clickText("Export Anyway")
+ui.wait(250)
+(() => { if (!exportCheckDialog.visible || !exportCheckDialog.check.passed || !exportCheckDialog.changedSinceCheck) ui.fail("changed wall limit reused old consent") })()
+ui.shot("@CAD92_DIR@/changed-wall-limit.png")
+ui.clickText("Export")
+ui.wait(250)
+(() => { if (exportCheckDialog.visible || exportMessage.visible) ui.fail("fresh clean check could not be confirmed") })()
+# Print export must refresh the effective part set, then allow a new confirmation.
+Preferences.minWallThickness = 0.8
+ui.clickText("For Printing")
+ui.wait(250)
+printFolderDialog.selectedFolder = "file://@CAD92_DIR@/print"; printFolderDialog.accepted(); printFolderDialog.close()
+ui.wait(250)
+(() => { if (!exportCheckDialog.visible || exportCheckDialog.check.parts.length !== 1) ui.fail("print preflight missing"); const r = controller.execute("feature.box", {name:"late",size:[10,10,0.1]}); if (!r.ok) ui.fail(r.error) })()
+ui.clickText("Export Anyway")
+ui.wait(250)
+(() => { ui.log("updated print report: " + JSON.stringify(exportCheckDialog.check)); if (!exportCheckDialog.visible || exportCheckDialog.check.parts.length !== 2 || !exportCheckDialog.changedSinceCheck) ui.fail("print export reused the old part-set approval") })()
+ui.shot("@CAD92_DIR@/changed-print-selection.png")
+ui.clickText("Export Anyway")
+ui.wait(250)
+(() => { if (exportCheckDialog.visible || exportMessage.visible || controller.statusMessage.indexOf("2 part(s) written") < 0) ui.fail("fresh print approval did not write both parts") })()

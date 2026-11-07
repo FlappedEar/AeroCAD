@@ -5,6 +5,7 @@
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <filesystem>
@@ -82,6 +83,88 @@ model::PartId addPrintBox(commands::Session& session, const std::string& name = 
 }
 
 } // namespace
+
+TEST_CASE("Export approval is rejected after its document or request changes", "[commands][export][preflight]")
+{
+    TempDir dir;
+    commands::Session session;
+    const auto first = addPrintBox(session, "first");
+    const auto second = addPrintBox(session, "second");
+    const bool print = GENERATE(false, true);
+    const auto check = session.execute("document.export_check", {{"ids", {first}}, {"print", print}, {"minWall", 0}});
+    REQUIRE(check.ok);
+    REQUIRE(check.data.at("passed") == true);
+    const std::string path = dir.file("first.stl");
+    writeFile(path, "previous STL");
+    Json params{{"ids", {first}}, {"expectedState", check.data.at("state")}};
+    if (print) {
+        params["folder"] = dir.file("");
+    } else {
+        params["path"] = path;
+        params["requireValid"] = true;
+    }
+
+    SECTION("different selected part without a document change") { params["ids"] = {second}; }
+    SECTION("different visibility") {
+        REQUIRE(session.execute("part.set_visible", {{"id", second}, {"visible", false}}).ok);
+    }
+    SECTION("deleted selected part") {
+        REQUIRE(session.execute("feature.delete", {{"id", session.document().part(first)->featureId}}).ok);
+    }
+    SECTION("new project reusing part ids") {
+        REQUIRE(session.execute("project.new").ok);
+        addPrintBox(session, "first");
+    }
+    SECTION("different active variant") { REQUIRE(session.execute("variant.create").ok); }
+    SECTION("new geometry") { addMeshPart(session, "open surface", false); }
+
+    const auto result = session.execute(print ? "document.export_for_print" : "document.export", params);
+    CHECK_FALSE(result.ok);
+    CHECK(readFile(path) == "previous STL");
+    CHECK(std::distance(fs::directory_iterator(core::pathFromUtf8(dir.file(""))), fs::directory_iterator{}) == 1);
+}
+
+TEST_CASE("Export All approval follows its current visible part set", "[commands][export][preflight]")
+{
+    TempDir dir;
+    commands::Session session;
+    addPrintBox(session);
+    const bool print = GENERATE(false, true);
+    const auto check = session.execute("document.export_check", {{"print", print}, {"minWall", 0}});
+    REQUIRE(check.ok);
+    addPrintBox(session, "added after check");
+    const Json params = print ? Json{{"folder", dir.file("new")}, {"expectedState", check.data.at("state")}}
+                              : Json{{"path", dir.file("new.stl")}, {"expectedState", check.data.at("state")}};
+    const auto result = session.execute(print ? "document.export_for_print" : "document.export", params);
+    CHECK_FALSE(result.ok);
+    CHECK_THAT(result.error, ContainsSubstring("changed after the check"));
+    CHECK(fs::is_empty(core::pathFromUtf8(dir.file(""))));
+}
+
+TEST_CASE("Current export approvals work and cannot be reused for another format", "[commands][export][preflight]")
+{
+    TempDir dir;
+    commands::Session session;
+    addPrintBox(session);
+    const std::string format = GENERATE("stl", "3mf", "step");
+    const auto check = session.execute("document.export_check", {{"format", format}, {"minWall", 0}});
+    REQUIRE(check.ok);
+    REQUIRE(session.execute("document.parts").ok); // a read does not invalidate approval
+    const std::string path = dir.file("part." + format);
+    REQUIRE(session.execute("document.export",
+                            {{"path", path}, {"requireValid", true}, {"expectedState", check.data.at("state")}}).ok);
+    CHECK(fs::file_size(core::pathFromUtf8(path)) > 0);
+    const auto changed = session.execute("document.export", {{"path", dir.file("different.stl")},
+                                                              {"format", format == "stl" ? "3mf" : "stl"},
+                                                              {"expectedState", check.data.at("state")}});
+    CHECK_FALSE(changed.ok);
+    CHECK_FALSE(fs::exists(core::pathFromUtf8(dir.file("different.stl"))));
+
+    const auto printCheck = session.execute("document.export_check", {{"print", true}, {"minWall", 0}});
+    REQUIRE(printCheck.ok);
+    CHECK(session.execute("document.export_for_print",
+                          {{"folder", dir.file("print")}, {"expectedState", printCheck.data.at("state")}}).ok);
+}
 
 TEST_CASE("Print export preserves old files when a later destination is invalid", "[commands][export][transaction]")
 {
