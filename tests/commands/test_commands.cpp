@@ -1161,6 +1161,29 @@ TEST_CASE("Part on surface is a timeline step: edit, follow the sketch, delete, 
     CHECK(partVolume() == Approx(volume).epsilon(1e-6));
     CHECK(session.design().evaluatorRuns() == runs + 2); // undo used the cached results
 
+    // A small parameter in an amplified expression: every change of it rebuilds the step.
+    REQUIRE(session.execute("parameter.set", {{"name", "f"}, {"expression", "0.000001"}}).ok);
+    REQUIRE(session.execute("feature.edit", {{"id", featureId}, {"params", {{"thickness", "f * 2000000"}}}}).ok);
+    CHECK(partVolume() == Approx(volume).epsilon(1e-6));
+    REQUIRE(session.execute("parameter.set", {{"name", "f"}, {"expression", "0.0000014"}}).ok);
+    CHECK(partVolume() == Approx(1.4 * volume).epsilon(0.03));
+    REQUIRE(session.execute("edit.undo").ok);
+    REQUIRE(session.execute("edit.undo").ok);
+    REQUIRE(session.execute("edit.undo").ok);
+    CHECK(partVolume() == Approx(volume).epsilon(1e-6));
+
+    // The outline turned into construction geometry: same edges, no profile, so the step
+    // is rebuilt and reports it instead of keeping the old part.
+    {
+        Json construction = rect(30);
+        construction[0]["construction"] = true;
+        REQUIRE(session.execute("feature.edit", {{"id", sketchId}, {"params", {{"curves", construction}}}}).ok);
+        const Json tl = timeline();
+        CHECK(tl.at("features").at(1).at("status") == "error");
+        REQUIRE(session.execute("edit.undo").ok);
+        CHECK(timeline().at("features").at(1).at("status") == "ok");
+    }
+
     // A thickness that cannot be built is refused and changes nothing.
     CHECK_FALSE(session.execute("feature.edit", {{"id", featureId}, {"params", {{"thickness", -1.0}}}}).ok);
     CHECK(partVolume() == Approx(volume).epsilon(1e-6));

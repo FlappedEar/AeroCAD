@@ -1252,7 +1252,10 @@ void Design::evaluateExternal(const Feature& f, const FeatureEvaluator& ev)
     std::string key = f.type + "\n" + f.params.dump() + "\n";
     for (const auto& prm : m_state.parameters) {
         const auto v = parameterValue(prm.name);
-        key += prm.name + "=" + (v ? std::to_string(*v) : std::string("?")) + ";";
+        char value[32] = "?";
+        if (v)
+            std::snprintf(value, sizeof value, "%.17g", *v); // round-trip precision
+        key += prm.name + "=" + value + ";";
     }
     if (f.params.contains("sketch") && f.params.at("sketch").is_number_integer()) {
         const auto sid = f.params.at("sketch").get<FeatureId>();
@@ -1268,6 +1271,15 @@ void Design::evaluateExternal(const Feature& f, const FeatureEvaluator& ev)
         for (const auto& pt : geometry::edgeSegments(it->second.geometry.curves)) {
             std::snprintf(buf, sizeof buf, "%.12g,%.12g,%.12g;", pt.x, pt.y, pt.z);
             key += buf;
+        }
+        // The profiles too: turning an outline into construction geometry keeps its edges
+        // but removes its profile.
+        for (const auto& profile : it->second.geometry.profiles) {
+            key += "\nprofile:";
+            for (const auto& pt : geometry::edgeSegments(profile)) {
+                std::snprintf(buf, sizeof buf, "%.12g,%.12g,%.12g;", pt.x, pt.y, pt.z);
+                key += buf;
+            }
         }
     }
     if (ev.inputs)
