@@ -403,19 +403,34 @@ ApplicationWindow {
         nameFilters: window.controller.exportNameFilters
         defaultSuffix: selectedNameFilter.extensions.length ? selectedNameFilter.extensions[0] : "stl"
         onAccepted: {
-            const r = window.controller.exportFile(selectedFile, partIds)
-            if (!r.ok) {
-                exportMessage.title = qsTr("Export failed")
-                exportMessage.text = r.error
-                exportMessage.open()
-            } else if (r.warnings.length) {
-                exportMessage.title = qsTr("Exported with warnings")
-                exportMessage.text = qsTr("The file was written, but some meshes are not watertight solids. " +
-                                          "Slicers and CFD meshers may reject or repair them.\n\n") +
-                                     r.warnings.join("\n")
-                exportMessage.open()
-            }
+            // Check first; write straight away when everything is fine.
+            const file = selectedFile
+            const ids = partIds
+            const name = file.toString().toLowerCase()
+            const format = name.endsWith(".3mf") ? "3mf" : (name.endsWith(".step") || name.endsWith(".stp")) ? "step" : "stl"
+            const params = { format: format, minWall: Preferences.minWallThickness }
+            if (ids.length)
+                params.ids = ids
+            const c = window.controller.execute("document.export_check", params)
+            if (c.ok && !c.result.passed)
+                exportCheckDialog.show(c.result, () => window.writeExport(file, ids))
+            else
+                window.writeExport(file, ids)
         }
+    }
+
+    function writeExport(file, ids) {
+        const r = window.controller.exportFile(file, ids)
+        if (!r.ok) {
+            exportMessage.title = qsTr("Export failed")
+            exportMessage.text = r.error
+            exportMessage.open()
+        }
+    }
+
+    ExportCheckDialog {
+        id: exportCheckDialog
+        controller: window.controller
     }
 
     MessageDialog {
@@ -430,16 +445,24 @@ ApplicationWindow {
         onAccepted: {
             const url = selectedFolder.toString()
             const folder = decodeURIComponent(url.replace(/^file:\/\/\/(?=[A-Za-z]:)|^file:\/\/(?=\/)/, ""))
-            const r = window.controller.execute("document.export_for_print", { folder: folder })
-            if (!r.ok) {
-                exportMessage.title = qsTr("Nothing was exported")
-                exportMessage.text = r.error
-                exportMessage.open()
-                return
-            }
-            window.controller.showStatus(qsTr("%1 part(s) written to %2 (STL and STEP each)")
-                                         .arg(r.result.parts).arg(r.result.folder))
+            const c = window.controller.execute("document.export_check", { print: true, minWall: Preferences.minWallThickness })
+            if (c.ok && !c.result.passed)
+                exportCheckDialog.show(c.result, () => window.writePrintFiles(folder))
+            else
+                window.writePrintFiles(folder)
         }
+    }
+
+    function writePrintFiles(folder) {
+        const r = window.controller.execute("document.export_for_print", { folder: folder })
+        if (!r.ok) {
+            exportMessage.title = qsTr("Nothing was exported")
+            exportMessage.text = r.error
+            exportMessage.open()
+            return
+        }
+        window.controller.showStatus(qsTr("%1 part(s) written to %2 (STL and STEP each)")
+                                     .arg(r.result.parts).arg(r.result.folder))
     }
 
     function openPrintExport() {

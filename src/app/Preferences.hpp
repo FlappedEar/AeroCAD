@@ -26,6 +26,7 @@ class Preferences : public QObject {
     Q_PROPERTY(bool invertZoom READ invertZoom WRITE setInvertZoom NOTIFY invertZoomChanged)
     Q_PROPERTY(bool invertOrbit READ invertOrbit WRITE setInvertOrbit NOTIFY invertOrbitChanged)
     Q_PROPERTY(int autosaveSeconds READ autosaveSeconds WRITE setAutosaveSeconds NOTIFY autosaveSecondsChanged)
+    Q_PROPERTY(double minWallThickness READ minWallThickness WRITE setMinWallThickness NOTIFY minWallThicknessChanged)
     Q_PROPERTY(QVariantList lengthUnits READ lengthUnits CONSTANT)
     Q_PROPERTY(QVariantList themes READ themes CONSTANT)
     Q_PROPERTY(QVariantList mouseProfiles READ mouseProfiles CONSTANT)
@@ -54,6 +55,10 @@ public:
     /// autosave reads ("project/autosaveSeconds").
     [[nodiscard]] int autosaveSeconds() const { return m_autosaveSeconds; }
     void setAutosaveSeconds(int seconds);
+
+    /// Thinnest wall the export check accepts for 3D printing, mm (0 = no wall check).
+    [[nodiscard]] double minWallThickness() const { return m_minWallThickness; }
+    void setMinWallThickness(double mm);
 
     /// [{value, label}] lists for the preferences dialog.
     [[nodiscard]] static QVariantList lengthUnits();
@@ -86,6 +91,7 @@ signals:
     void invertZoomChanged();
     void invertOrbitChanged();
     void autosaveSecondsChanged();
+    void minWallThicknessChanged();
 
 private:
 
@@ -95,6 +101,7 @@ private:
     bool m_invertZoom = false;
     bool m_invertOrbit = false;
     int m_autosaveSeconds = 120;
+    double m_minWallThickness = 0.8;
 };
 
 } // namespace aerocad::app

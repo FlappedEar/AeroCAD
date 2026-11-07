@@ -19,12 +19,15 @@ const QString kMouseKey = QStringLiteral("navigation/mouseProfile");
 const QString kInvertZoomKey = QStringLiteral("navigation/invertZoom");
 const QString kInvertOrbitKey = QStringLiteral("navigation/invertOrbit");
 const QString kAutosaveKey = QStringLiteral("project/autosaveSeconds");
+const QString kMinWallKey = QStringLiteral("export/minWallThickness");
 
 const QString kDefaultUnit = QStringLiteral("mm");
 const QString kDefaultTheme = QStringLiteral("system");
 const QString kDefaultMouse = QStringLiteral("fusion");
 constexpr int kDefaultAutosave = 120;
 constexpr int kMaxAutosave = 3600;
+constexpr double kDefaultMinWall = 0.8;
+constexpr double kMaxMinWall = 20.0;
 
 QVariantMap option(const QString& value, const QString& label)
 {
@@ -54,6 +57,7 @@ Preferences::Preferences(QObject* parent) : QObject(parent)
     m_invertZoom = s.value(kInvertZoomKey, false).toBool();
     m_invertOrbit = s.value(kInvertOrbitKey, false).toBool();
     m_autosaveSeconds = std::clamp(s.value(kAutosaveKey, kDefaultAutosave).toInt(), 0, kMaxAutosave);
+    m_minWallThickness = std::clamp(s.value(kMinWallKey, kDefaultMinWall).toDouble(), 0.0, kMaxMinWall);
 
 }
 
@@ -115,6 +119,16 @@ void Preferences::setAutosaveSeconds(int seconds)
     m_autosaveSeconds = seconds;
     QSettings().setValue(kAutosaveKey, seconds);
     emit autosaveSecondsChanged();
+}
+
+void Preferences::setMinWallThickness(double mm)
+{
+    mm = std::clamp(std::isfinite(mm) ? mm : kDefaultMinWall, 0.0, kMaxMinWall);
+    if (mm == m_minWallThickness)
+        return;
+    m_minWallThickness = mm;
+    QSettings().setValue(kMinWallKey, mm);
+    emit minWallThicknessChanged();
 }
 
 QVariantList Preferences::lengthUnits()
@@ -190,6 +204,7 @@ void Preferences::resetToDefaults()
     setInvertZoom(false);
     setInvertOrbit(false);
     setAutosaveSeconds(kDefaultAutosave);
+    setMinWallThickness(kDefaultMinWall);
 }
 
 } // namespace aerocad::app

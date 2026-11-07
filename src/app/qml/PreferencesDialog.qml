@@ -105,6 +105,24 @@ Dialog {
             Label { text: qsTr("minutes") }
         }
 
+        Label { text: qsTr("Export"); font.bold: true; Layout.columnSpan: 2; Layout.topMargin: 6 }
+
+        Label { text: qsTr("Thinnest wall") }
+        RowLayout {
+            // Tenths of a millimetre; 0 turns the wall check off.
+            SpinBox {
+                id: minWall
+                from: 0
+                to: 100
+                editable: true
+                value: Math.round(Preferences.minWallThickness * 10)
+                textFromValue: (v, locale) => v === 0 ? qsTr("off") : Number(v / 10).toLocaleString(locale, "f", 1)
+                valueFromText: (text, locale) => text === qsTr("off") ? 0 : Math.round(Number.fromLocaleString(locale, text) * 10)
+                onValueModified: Preferences.minWallThickness = value / 10
+            }
+            Label { text: qsTr("mm, checked before export (3D printing)") }
+        }
+
         Item { Layout.columnSpan: 2; Layout.preferredHeight: 4 }
         Button {
             Layout.columnSpan: 2

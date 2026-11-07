@@ -85,6 +85,12 @@ struct SurfaceDistance {
 [[nodiscard]] std::vector<double> vertexThickness(const MeshBvh& mesh,
                                                   double maxThickness = std::numeric_limits<double>::infinity());
 
+/// Wall thickness per triangle: the distance from its centre along the inward normal to
+/// the opposite side of the same mesh. NaN where the ray leaves the mesh or exceeds
+/// `maxThickness`. vertexThickness() takes the smallest value around each vertex.
+[[nodiscard]] std::vector<double> triangleThickness(const MeshBvh& mesh,
+                                                    double maxThickness = std::numeric_limits<double>::infinity());
+
 /// Area-weighted vertex normals (unit length; zero for unused vertices). Vertices with
 /// identical coordinates are not merged.
 [[nodiscard]] std::vector<Vec3> vertexNormals(const TriangleMesh& mesh);

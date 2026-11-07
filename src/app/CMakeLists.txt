@@ -70,6 +70,7 @@ qt_add_qml_module(aerocad
         qml/McpPanel.qml
         qml/SketchOverlay.qml
         qml/SketchConstraintLayer.qml
+        qml/ExportCheckDialog.qml
         qml/FeatureDialog.qml
         qml/TimelineBar.qml
         qml/ParametersDialog.qml

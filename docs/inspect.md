@@ -78,6 +78,32 @@ Only one heat map is active at a time. It applies to the meshes it was computed 
 (`HeatMap::mesh`, `HeatMap::referenceMesh`); when one of them changes (an edit, undo), the app
 runs the analysis again with the same parameters, or clears it when a part is gone.
 
+## Check before export
+
+Every export (File > Export Selected / All Visible / For Printing) first runs
+`document.export_check`. When everything passes, the file is written straight away. Otherwise a
+dialog lists each part with what is wrong, in plain words:
+
+| Check | STL / 3MF / print | STEP |
+|---|---|---|
+| Closed solid (no open edges, every edge shared by two faces) | error | warning |
+| Consistent, outward normals; no degenerate triangles | error | warning |
+| Exact geometry (B-rep) present | print: warning (STL only) | error |
+| B-rep passes the validity check | warning | warning |
+| Walls thinner than the limit (thinnest wall, where, share of the surface) | warning | warning |
+
+Errors leave only **Cancel**; warnings allow **Export Anyway**. **Show Thin Walls** colours the
+part with the thinnest wall by thickness: red is thinner than the limit, blue twice the limit
+or more. The limit is set in Preferences > Export > Thinnest wall (default 0.8 mm, two
+perimeters of a 0.4 mm nozzle; "off" skips the check). The wall is measured from each
+triangle of the export mesh straight inwards to the opposite side, so sharp trailing edges
+show up as a small share of thin surface.
+
+`document.export_check {format?, ids?, minWall?, print?}` writes nothing and returns
+`passed`, `canExport`, `summary` and per part `status` (ok / warning / error), `errors`,
+`warnings`, `watertight`, `manifold`, `validBrep`, `volume` and `minWall {thinnest, at,
+thinAreaPercent, limit}`.
+
 ## User interface
 
 - **Measure** (Inspect menu, toolbar, key **I**): a panel like Fusion's. Click a first and a
