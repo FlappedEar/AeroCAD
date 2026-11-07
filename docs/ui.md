@@ -130,8 +130,10 @@ see "Region selection" in [macos.md](macos.md).
 
 See [cad.md](cad.md) for the timeline and the commands behind the tools.
 
-- **Create Sketch**: click a planar face of a body, or pick XY / XZ / YZ. The view turns to
-  look at the sketch. Tools: Line (chains; right-click or Esc ends), Rectangle, Circle, Arc
+- **Create Sketch**: click a planar face of a body, a scan or a fitted surface, or pick
+  XY / XZ / YZ. A click into a hole of a scan (a grille opening) takes the surface next to
+  it, within 4 degrees of the click, and the status bar says so. The view turns to look at
+  the sketch. Tools: Line (chains; right-click or Esc ends), Rectangle, Circle, Arc
   (start, end, point on arc), Polygon, Slot. Points snap to existing points and to a grid
   that follows the zoom. While drawing, type a number (or `width, height` for rectangles)
   and press Enter to set the size; expressions such as `w / 2` keep the sketch parametric.
