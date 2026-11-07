@@ -290,7 +290,7 @@ Pane {
             }
 
             // "Install for me": the next setup step (download the image, start or install
-            // Docker Desktop, or open the download page), then follow it until ready.
+            // Colima (the Docker engine) with Homebrew, or open an install page), then follow it until ready.
             ColumnLayout {
                 readonly property var setup: root.environment ? root.environment.setup : null
                 readonly property var pull: root.environment ? root.environment.imagePull : null

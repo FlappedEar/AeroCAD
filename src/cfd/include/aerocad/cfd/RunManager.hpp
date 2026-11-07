@@ -42,11 +42,12 @@ struct Environment {
 
 /// The next step of "Install for me", from what is there now:
 /// - "pull": Docker runs, the OpenFOAM image is missing: download it (in the background);
-/// - "start": Docker is installed but not running: start Docker Desktop (macOS);
-/// - "terminal": no Docker, Homebrew found (macOS): open a Terminal window running
-///   `brew install --cask docker-desktop` (it may ask for the password there), then
-///   start Docker Desktop;
-/// - "browser": no Docker and no Homebrew (or Linux): open the Docker install page;
+/// - "terminal" (macOS): open a Terminal window that starts Colima, installing the docker
+///   command line tool and Colima with Homebrew first when they are missing (no Docker
+///   Desktop);
+/// - "start" (macOS): no Homebrew but Docker Desktop is installed: start it;
+/// - "browser": macOS without Homebrew (Homebrew page) or Linux without Docker (install page);
+/// - "manual": Linux, Docker installed but not running;
 /// - "none": ready (Docker with the image, or a local OpenFOAM).
 struct SetupStep {
     std::string action;
@@ -55,11 +56,17 @@ struct SetupStep {
 };
 enum class Platform { MacOS, Linux, Other };
 [[nodiscard]] Platform currentPlatform();
-[[nodiscard]] SetupStep planEngineSetup(const Environment& env, Platform platform,
-                                        const std::filesystem::path& brew);
+/// What is installed for the setup steps (macOS).
+struct SetupTools {
+    std::filesystem::path brew;   ///< Homebrew's brew, empty when not installed.
+    std::filesystem::path colima; ///< Colima, empty when not installed.
+    bool dockerDesktop = false;   ///< /Applications/Docker.app exists.
+};
+[[nodiscard]] SetupStep planEngineSetup(const Environment& env, Platform platform, const SetupTools& tools);
 /// Homebrew's brew, empty when not installed (also looked for where Finder-started apps
 /// do not see it: /opt/homebrew/bin, /usr/local/bin).
 [[nodiscard]] std::filesystem::path findBrew();
+[[nodiscard]] SetupTools findSetupTools();
 
 enum class RunState { Running, Finished, Failed, Cancelled, Interrupted };
 [[nodiscard]] std::string_view runStateName(RunState state);

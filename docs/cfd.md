@@ -42,33 +42,42 @@ unpacked; the first run pulls it automatically.
 
 ### macOS
 
+Docker Desktop is not needed. The Docker engine needs a Linux VM on macOS;
+[Colima](https://github.com/abiosoft/colima) (MIT, command line only) runs one, and the
+`docker` command line tool from Homebrew talks to it.
+
 **Install for me** in the CFD panel (command `simulation.install_engine`) does the next
 step each time it is pressed, and then keeps checking until the engine is ready:
 
-- no Docker, Homebrew installed: opens a Terminal window running
-  `brew install --cask docker-desktop && open -a Docker` (Homebrew may ask for your
-  password there; the [docker-desktop cask](https://formulae.brew.sh/cask/docker-desktop)
-  needs macOS 14 or later);
-- no Docker, no Homebrew: opens the Docker Desktop download page;
-- Docker Desktop installed but not running: starts it (the first start asks you to accept
-  its terms);
-- Docker running, image missing: downloads `opencfd/openfoam-default:2506` with a progress
+- Homebrew installed, docker or Colima missing: opens a Terminal window running
+  `brew install docker colima && colima start --cpu <all cores> --memory <half of the RAM> --vm-type vz`
+  (Apple's Virtualization framework; Colima's default, QEMU, is not installed by Homebrew's
+  colima);
+- docker and Colima installed, engine not running: opens a Terminal window running the same
+  `colima start`;
+- no Homebrew: starts Docker Desktop if it is already installed, otherwise opens
+  [brew.sh](https://brew.sh) (install Homebrew, then press the button again);
+- engine running, image missing: downloads `opencfd/openfoam-default:2506` with a progress
   bar.
+
+Colima's default VM (2 CPUs, 2 GiB memory) is too small for the medium and fine meshes,
+hence `--cpu` and `--memory`. After a restart of the Mac, press Install for me again (or
+run `colima start`), or start Colima at login with `brew services start colima`.
 
 By hand:
 
-1. Install [Docker Desktop for Mac](https://docs.docker.com/desktop/setup/install/mac-install/)
-   (Apple silicon build) and start it once.
-2. Optional, to avoid waiting on the first run: `docker pull opencfd/openfoam-default:2506`.
-3. In AeroCAD run `simulation.environment` (or open the CFD panel): it should report
+1. `brew install docker colima`
+2. `colima start --cpu 8 --memory 8 --vm-type vz` (adapt to the machine)
+3. Optional, to avoid waiting on the first run: `docker pull opencfd/openfoam-default:2506`.
+4. In AeroCAD run `simulation.environment` (or open the CFD panel): it should report
    Docker running.
 
-Runs are stored in `~/.aerocad/cfd/<run id>/` (override with `AEROCAD_CFD_DIR`), which
-Docker Desktop can mount because it shares `/Users` by default. A runs directory
-outside the shared folders will not work.
+Runs are stored in `~/.aerocad/cfd/<run id>/` (override with `AEROCAD_CFD_DIR`). The
+engine's VM must be able to mount that directory: Colima mounts the home directory writable
+by default (and so does Docker Desktop), so a runs directory outside it will not work.
 
-Other Docker engines with the same `docker` CLI (colima, OrbStack) should work as long
-as the runs directory is mounted into their VM; this has not been tested.
+Docker Desktop and OrbStack work too (same `docker` CLI). OrbStack needs a paid licence
+for commercial use ([OrbStack licensing](https://docs.orbstack.dev/licensing)).
 
 The app finds `docker` in `PATH` and in the usual install locations
 (`/usr/local/bin`, `/opt/homebrew/bin`, `~/.docker/bin`, `~/.orbstack/bin`, Docker.app),
