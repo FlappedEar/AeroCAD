@@ -77,7 +77,7 @@ QtObject {
     /// The part a sketch was drawn on (sketch.create {surface}), or 0.
     function sketchSurface(featureId) {
         if (!(featureId > 0))
-            return 0 // nothing selected (e.g. the toolbar asks for a non-sketch)
+            return 0 // no sketch (the toolbar asks without a part)
         const r = controller.execute("sketch.profiles", { sketch: featureId })
         return r.ok && r.result.onSurface ? (r.result.onSurface.part ?? 0) : 0
     }
@@ -85,14 +85,14 @@ QtObject {
     /// True for a sketch drawn across a surface (a fin).
     function sketchAcross(featureId) {
         if (!(featureId > 0))
-            return false // nothing selected (e.g. the toolbar asks for a non-sketch)
+            return false // no sketch (the toolbar asks without a part)
         const r = controller.execute("sketch.profiles", { sketch: featureId })
         return r.ok && !!r.result.onSurface && !!r.result.onSurface.across
     }
 
     function sketchHasProfiles(featureId) {
         if (!(featureId > 0))
-            return false // nothing selected (e.g. the toolbar asks for a non-sketch)
+            return false // no sketch (the toolbar asks without a part)
         const r = controller.execute("sketch.profiles", { sketch: featureId })
         return r.ok && (r.result.profiles ?? []).length > 0
     }

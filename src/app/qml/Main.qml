@@ -1071,7 +1071,9 @@ ApplicationWindow {
         required property string actionId
         property string needs: ""
         readonly property var offered: window.selectionActions.find(a => a.id === actionId)
-        readonly property var act: offered ?? contextActions.action(actionId, window.selectionInfo)
+        // Not offered: only its icon and tip are needed, so no part is passed (the action
+        // would otherwise query e.g. a body as a sketch and report errors in the status bar).
+        readonly property var act: offered ?? contextActions.action(actionId, ({}))
         iconName: act.icon ?? "tool"
         enabled: !!offered && !!offered.enabled && !window.activeSketch
         help: (!offered ? needs : !offered.enabled ? (offered.reason ?? "") : "")
