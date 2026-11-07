@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "McpAccess.hpp"
 #include "PartListModel.hpp"
 
 #include "aerocad/commands/Session.hpp"
 #include "aerocad/core/MeshSelection.hpp"
 
+#include <QColor>
 #include <QLockFile>
 #include <QObject>
 #include <QStringList>
@@ -31,6 +33,7 @@ class AppController : public QObject {
     QML_ELEMENT
     QML_UNCREATABLE("Created by main()")
     Q_PROPERTY(aerocad::app::PartListModel* parts READ parts CONSTANT)
+    Q_PROPERTY(aerocad::app::McpAccess* mcp READ mcp CONSTANT)
     Q_PROPERTY(QVector3D sceneCenter READ sceneCenter NOTIFY boundsChanged)
     Q_PROPERTY(double sceneRadius READ sceneRadius NOTIFY boundsChanged)
     Q_PROPERTY(bool canUndo READ canUndo NOTIFY historyChanged)
@@ -41,6 +44,9 @@ class AppController : public QObject {
     Q_PROPERTY(QStringList importNameFilters READ importNameFilters CONSTANT)
     Q_PROPERTY(QStringList exportNameFilters READ exportNameFilters CONSTANT)
     Q_PROPERTY(QString version READ version CONSTANT)
+    /// Changes whenever an Inspect analysis (section, heat map) changes; bind to it to
+    /// re-evaluate inspectInfo() / sectionCuts().
+    Q_PROPERTY(int inspectRevision READ inspectRevision NOTIFY inspectChanged)
     Q_PROPERTY(QString projectName READ projectName NOTIFY projectChanged)
     Q_PROPERTY(QString projectPath READ projectPath NOTIFY projectChanged)
     Q_PROPERTY(bool projectDirty READ projectDirty NOTIFY projectChanged)
@@ -56,6 +62,8 @@ public:
     explicit AppController(QObject* parent = nullptr);
 
     [[nodiscard]] PartListModel* parts() { return &m_parts; }
+    /// AI agent (MCP) access to this project.
+    [[nodiscard]] McpAccess* mcp() { return &m_mcp; }
     /// Centre of all visible parts in scene coordinates (Y-up), see Viewport.qml.
     [[nodiscard]] QVector3D sceneCenter() const;
     /// Radius of the bounding sphere of all visible parts (mm); 0 when empty.
@@ -81,6 +89,9 @@ public:
 
     /// Runs a command. Returns {ok: bool, result: object} or {ok: false, error: string}.
     Q_INVOKABLE QVariantMap execute(const QString& name, const QVariantMap& params = {});
+    /// Same as execute() for C++ callers such as the MCP access (AI agent): JSON in and out,
+    /// with the same UI notifications (history, status, framing of imported parts).
+    commands::CommandResult executeCommand(const std::string& name, const commands::Json& params);
     /// Runs a command as a live preview (feature dialogs): the previous preview is undone
     /// first, the undo/redo history is left as it was, and a failure is not shown in the
     /// status bar. Any other document change ends the preview.
@@ -159,6 +170,17 @@ public:
     /// selection. nullptr when there is none.
     [[nodiscard]] const core::TriangleSet* displayedSelection(quint64 id) const;
 
+    [[nodiscard]] int inspectRevision() const;
+    /// Active analyses for QML: {section: {enabled, origin, normal, cap}, heatMap: {enabled,
+    /// kind, part, reference, rangeMin, rangeMax, stats}}.
+    Q_INVOKABLE QVariantMap inspectInfo() const;
+    /// True when the section analysis cuts this part.
+    Q_INVOKABLE bool sectionCuts(quint64 id) const;
+    /// True when the heat map is shown on this part (and still matches its mesh).
+    Q_INVOKABLE bool showsHeatMap(quint64 id) const;
+    /// Heat map colour for t in [0, 1], for the legend.
+    Q_INVOKABLE QColor heatColor(double t) const;
+
     /// Access for C++ views (MeshGeometry).
     [[nodiscard]] const model::Part* part(quint64 id) const;
     [[nodiscard]] commands::Session& session() { return m_session; }
@@ -174,6 +196,7 @@ signals:
     void selectionPreviewChanged(quint64 id);
     /// Emitted after runScript() so the view can frame the result.
     void scriptFinished();
+    void inspectChanged();
     void projectChanged();
     void recentProjectsChanged();
     void autosaveSecondsChanged();
@@ -188,6 +211,10 @@ private:
     mutable std::unique_ptr<core::MeshProjector> m_projector;
 
     void setStatusMessage(const QString& message);
+    /// Runs the heat map again after its parts changed (or clears it when they are gone).
+    void refreshHeatMap();
+
+    bool m_heatMapRefreshQueued = false;
     bool openProject(const QString& path, bool recover);
     bool saveTo(const QString& path, const QVariantMap& view);
     void addRecent(const QString& path);
@@ -214,6 +241,7 @@ private:
     std::optional<BrushStroke> m_brush;
     PartListModel m_parts;
     QString m_statusMessage;
+    McpAccess m_mcp{*this};
     QStringList m_recent;
     QTimer m_autosaveTimer;
     /// Held while this process owns an autosave file, so other instances do not offer it

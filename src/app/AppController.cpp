@@ -2,10 +2,12 @@
 #include "AppController.hpp"
 
 #include "FieldGeometry.hpp"
-
+#include "InspectGeometry.hpp"
 #include "JsonBridge.hpp"
 
 #include "aerocad/core/Path.hpp"
+
+#include <cmath>
 #include "aerocad/io/Import.hpp"
 
 #include <QCoreApplication>
@@ -51,7 +53,103 @@ AppController::AppController(QObject* parent) : QObject(parent), m_parts(m_sessi
             return;
         emit partChanged(id);
         emit boundsChanged();
+        // A heat map belongs to a mesh: recompute it when its parts change. Queued, because
+        // this runs inside the command that changed the part.
+        const commands::HeatMap& h = m_session.inspect().heatMap();
+        if (h.enabled && (id == h.part || id == h.reference) && !m_heatMapRefreshQueued) {
+            m_heatMapRefreshQueued = true;
+            QMetaObject::invokeMethod(this, &AppController::refreshHeatMap, Qt::QueuedConnection);
+        }
     });
+    m_session.inspect().setListener([this]() { emit inspectChanged(); });
+}
+
+void AppController::refreshHeatMap()
+{
+    m_heatMapRefreshQueued = false;
+    commands::InspectState& inspect = m_session.inspect();
+    const commands::HeatMap h = inspect.heatMap();
+    if (!h.enabled)
+        return;
+    const model::Part* measured = part(h.part);
+    const bool referenceGone = h.kind == commands::HeatMap::Kind::Deviation && part(h.reference) == nullptr;
+    if (measured == nullptr || referenceGone) {
+        inspect.setHeatMap({});
+        return;
+    }
+    // Visibility or name changes keep the meshes: nothing to recompute.
+    const model::Part* reference = part(h.reference);
+    if (measured->mesh == h.mesh &&
+        (h.kind != commands::HeatMap::Kind::Deviation || (reference != nullptr && reference->mesh == h.referenceMesh)))
+        return;
+    const char* name = h.kind == commands::HeatMap::Kind::Deviation ? "inspect.deviation" : "inspect.thickness";
+    const commands::CommandResult r = m_session.execute(name, h.params);
+    if (!r.ok) {
+        inspect.setHeatMap({});
+        setStatusMessage(tr("Heat map cleared: %1").arg(QString::fromStdString(r.error)));
+    }
+}
+
+int AppController::inspectRevision() const
+{
+    return static_cast<int>(m_session.inspect().revision() & 0x7fffffff);
+}
+
+QVariantMap AppController::inspectInfo() const
+{
+    const commands::InspectState& st = m_session.inspect();
+    const auto& s = st.section();
+    auto vec = [](const core::Vec3& v) { return QVariantList{v.x, v.y, v.z}; };
+    QVariantMap section{{QStringLiteral("enabled"), s.enabled},
+                        {QStringLiteral("origin"), vec(s.plane.origin)},
+                        {QStringLiteral("normal"), vec(s.plane.normal)},
+                        {QStringLiteral("cap"), s.cap}};
+    const auto& h = st.heatMap();
+    QVariantMap heat{{QStringLiteral("enabled"), h.enabled}};
+    if (h.enabled) {
+        heat.insert({{QStringLiteral("kind"), h.kind == commands::HeatMap::Kind::Deviation ? QStringLiteral("deviation")
+                                                                                             : QStringLiteral("thickness")},
+                     {QStringLiteral("part"), QVariant::fromValue<quint64>(h.part)},
+                     {QStringLiteral("reference"), QVariant::fromValue<quint64>(h.reference)},
+                     {QStringLiteral("rangeMin"), h.rangeMin},
+                     {QStringLiteral("rangeMax"), h.rangeMax},
+                     {QStringLiteral("min"), h.stats.min},
+                     {QStringLiteral("max"), h.stats.max},
+                     {QStringLiteral("mean"), h.stats.mean},
+                     {QStringLiteral("rms"), h.stats.rms},
+                     {QStringLiteral("stddev"), h.stats.stddev}});
+        if (h.kind == commands::HeatMap::Kind::Deviation && h.params.contains("tolerance") && h.values &&
+            h.stats.count > 0) {
+            const double tol = h.params["tolerance"].get<double>();
+            std::size_t within = 0;
+            for (const double v : *h.values)
+                within += std::isfinite(v) && std::abs(v) <= tol ? 1 : 0;
+            heat.insert(QStringLiteral("tolerance"), tol);
+            heat.insert(QStringLiteral("withinTolerance"),
+                        100.0 * static_cast<double>(within) / static_cast<double>(h.stats.count));
+        }
+    }
+    return {{QStringLiteral("section"), section}, {QStringLiteral("heatMap"), heat}};
+}
+
+bool AppController::sectionCuts(quint64 id) const
+{
+    const model::Part* p = part(id);
+    return p != nullptr && p->kind != model::PartKind::Sketch && m_session.inspect().section().cuts(id);
+}
+
+bool AppController::showsHeatMap(quint64 id) const
+{
+    const auto& h = m_session.inspect().heatMap();
+    const model::Part* p = part(id);
+    return h.enabled && h.part == id && p != nullptr && p->mesh == h.mesh;
+}
+
+QColor AppController::heatColor(double t) const
+{
+    float c[4];
+    InspectGeometry::heatColor(t, c);
+    return QColor::fromRgbF(c[0], c[1], c[2], c[3]);
 }
 
 QVector3D AppController::sceneCenter() const
@@ -121,9 +219,14 @@ bool AppController::cancelPreview()
 
 QVariantMap AppController::execute(const QString& name, const QVariantMap& params)
 {
+    return toVariant(executeCommand(name.toStdString(), toJson(params)).toJson()).toMap();
+}
+
+commands::CommandResult AppController::executeCommand(const std::string& name, const commands::Json& params)
+{
     const bool hadPreview = m_session.previewActive();
-    const commands::CommandResult result = m_session.execute(name.toStdString(), toJson(params));
-    const auto* info = m_session.registry().info(name.toStdString());
+    const commands::CommandResult result = m_session.execute(name, params);
+    const auto* info = m_session.registry().info(name);
     // A command that ended a live preview (e.g. project.save) also changed the document
     // back; the feature dialog rebuilds its preview on historyChanged.
     if ((info != nullptr && info->modifiesDocument) || (hadPreview && !m_session.previewActive()))
@@ -132,7 +235,7 @@ QVariantMap AppController::execute(const QString& name, const QVariantMap& param
 
     if (!result.ok)
         setStatusMessage(QString::fromStdString(result.error));
-    return toVariant(result.toJson()).toMap();
+    return result;
 }
 
 bool AppController::importFile(const QUrl& url)
@@ -577,7 +680,29 @@ QVariantMap AppController::pickSurface(const QVector3D& origin, const QVector3D&
     for (const auto& p : m_session.document().parts()) {
         if (!p.visible || !p.mesh)
             continue;
-        const auto hit = core::raycast(*p.mesh, o, d);
+        std::optional<core::RayHit> hit;
+        const commands::SectionAnalysis& section = m_session.inspect().section();
+        if (p.kind != model::PartKind::Sketch && section.cuts(p.id)) {
+            // Section view: only the kept half is drawn, so only it can be picked.
+            const core::Vec3 n = section.plane.normal.normalized();
+            const double s = section.plane.distance(o);
+            const double ds = d.dot(n); // change of the plane distance per unit t
+            if (s > 0.0) {
+                if (ds < 0.0) {
+                    const double t0 = s / -ds; // where the ray enters the kept half
+                    hit = core::raycast(*p.mesh, o + d * t0, d);
+                    if (hit)
+                        hit->distance += t0;
+                }
+            } else {
+                hit = core::raycast(*p.mesh, o, d);
+                if (hit && section.plane.distance(hit->point) > 1e-9) {
+                    hit.reset();
+                }
+            }
+        } else {
+            hit = core::raycast(*p.mesh, o, d);
+        }
         if (hit && (!best || hit->distance < best->distance)) {
             best = hit;
             bestPart = p.id;

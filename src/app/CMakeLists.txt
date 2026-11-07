@@ -16,12 +16,16 @@ set(AEROCAD_APP_SOURCES
     SelectionGeometry.hpp
     LineGeometry.cpp
     LineGeometry.hpp
+    InspectGeometry.cpp
+    InspectGeometry.hpp
     GridGeometry.cpp
     GridGeometry.hpp
     FieldGeometry.cpp
     FieldGeometry.hpp
     JsonBridge.cpp
     JsonBridge.hpp
+    McpAccess.cpp
+    McpAccess.hpp
     Preferences.cpp
     Preferences.hpp
     ScanController.cpp
@@ -63,11 +67,16 @@ qt_add_qml_module(aerocad
         qml/PropertiesPanel.qml
         qml/ViewCube.qml
         qml/NavigationBar.qml
+        qml/McpPanel.qml
         qml/SketchOverlay.qml
         qml/SketchConstraintLayer.qml
         qml/FeatureDialog.qml
         qml/TimelineBar.qml
         qml/ParametersDialog.qml
+        qml/MeasurePanel.qml
+        qml/SectionPanel.qml
+        qml/HeatMapPanel.qml
+        qml/HeatMapLegend.qml
         qml/PreferencesDialog.qml
         qml/ShortcutsDialog.qml
         qml/ScanPanel.qml
@@ -91,7 +100,17 @@ target_compile_definitions(aerocad PRIVATE AEROCAD_VERSION="${PROJECT_VERSION}")
 target_include_directories(aerocad PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(aerocad PRIVATE
     Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::Quick3D
-    AeroCAD::commands AeroCAD::io aerocad_styleplugin)
+    AeroCAD::commands AeroCAD::io AeroCAD::mcp_ipc aerocad_styleplugin)
+
+# Bundle the MCP server with the application: next to the executable, and inside the
+# macOS app bundle (Contents/MacOS) so the app can show its path to the user.
+add_dependencies(aerocad aerocad_mcp_server)
+if(APPLE)
+    add_custom_command(TARGET aerocad POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:aerocad_mcp_server>
+                $<TARGET_BUNDLE_CONTENT_DIR:aerocad>/MacOS/
+        VERBATIM)
+endif()
 if(MSVC)
     target_compile_options(aerocad PRIVATE /utf-8 /Zc:__cplusplus)
 endif()

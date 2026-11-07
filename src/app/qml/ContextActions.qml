@@ -92,6 +92,16 @@ QtObject {
         return String(info.source ?? "").startsWith("surface.trim_by_sketch")
     }
 
+    /// The scan a fitted surface or solid was made from (surface.fit_selection /
+    /// surface.fit_regions), or 0 when it is gone.
+    function fitSource(info) {
+        const m = /^surface\.fit_(selection|regions) of part (\d+)$/.exec(String(info.source ?? ""))
+        if (!m)
+            return 0
+        const id = Number(m[2])
+        return controller.parts.rowOf(id) >= 0 ? id : 0
+    }
+
     function _num(key, label, value, unit, help) {
         return { key: key, label: label, type: "number", value: value, unit: unit || "", help: help || "" }
     }
@@ -147,6 +157,14 @@ QtObject {
                      tip: qsTr("Splits the scan at its sharp edges, fits a smooth surface to each patch and sews them together. A closed scan becomes a solid."),
                      params: [_num("tolerance", qsTr("Tolerance"), 0.25, "mm",
                                    qsTr("How far the surfaces may deviate from the scan."))] }
+        case "fitDeviation": {
+            const scan = fitSource(info)
+            return { id: id, text: qsTr("Show deviation from the scan"), icon: "deviation", enabled: scan > 0,
+                     reason: qsTr("The scan this was fitted to is gone."),
+                     tip: qsTr("Colours the scan by its distance to this part: green within the tolerance, red outside, blue inside. This part is hidden meanwhile; Inspect > Clear Analyses turns the colours off."),
+                     params: [_num("tolerance", qsTr("Tolerance"), 0.25, "mm",
+                                   qsTr("Deviations up to this are green; the colours reach full red or blue at twice this."))] }
+        }
         case "sketchOnScan":
             return { id: id, text: qsTr("Sketch on the scan"), icon: "sketch", enabled: true, primary: !selected,
                      tip: qsTr("Starts a sketch on a plane fitted to the scan where you click (or over the selected area). Draw the outline of the part, then click Finish Sketch.") }
@@ -294,6 +312,8 @@ QtObject {
         const a = id => action(id, info)
         const r = role(info)
         const selected = (info.selectedTriangles ?? 0) > 0
+        // A surface or solid fitted to a scan can show how far the scan is from it.
+        const fitted = r !== "mesh" && fitSource(info) > 0 ? [a("fitDeviation")] : []
         if (host.activeSketch) {
             return { title: qsTr("Drawing a sketch"), icon: "sketch", plainTitle: true,
                      intro: qsTr("You are drawing in a sketch. The tools are on the SKETCH tab at the top."),
@@ -361,7 +381,7 @@ QtObject {
                                { title: qsTr("Thicken"), done: false,
                                  text: qsTr("Turns the piece into a solid with the thickness you type."),
                                  actions: [a("thicken")] }] },
-                         { title: qsTr("More"), steps: [], actions: [a("sketchFin"), a("offset"), a("scale"), a("export"), a("hide"), a("delete")] }] }
+                         { title: qsTr("More"), steps: [], actions: [...fitted, a("sketchFin"), a("offset"), a("scale"), a("export"), a("hide"), a("delete")] }] }
         }
         if (r === "sketch") {
             const onSurface = sketchSurface(info.featureId) > 0
@@ -399,7 +419,7 @@ QtObject {
                               { title: qsTr("Or keep designing"), done: false,
                                 text: qsTr("Make it editable to add fillets, holes and cuts; the changes appear in the timeline."),
                                 actions: [a("solidToBody")] }] },
-                        { title: qsTr("More"), steps: [], actions: [a("scale"), a("hide"), a("delete")] }] }
+                        { title: qsTr("More"), steps: [], actions: [...fitted, a("scale"), a("hide"), a("delete")] }] }
     }
 
     /// Every action for the selection, flat (context bar and right-click menu).
@@ -486,6 +506,23 @@ QtObject {
                 controller.showStatus(msg)
             }
             return _selectResult(r)
+        }
+        case "fitDeviation": {
+            const scan = fitSource(info)
+            const tol = v.tolerance > 0 ? v.tolerance : 0.25
+            // Scan points beyond a few tolerances are not on this fit (e.g. the rest of the
+            // scan around a fitted area): they stay uncoloured.
+            const r = controller.execute("inspect.deviation", { measured: scan, reference: pid, tolerance: tol,
+                                                                range: 2 * tol, maxDistance: Math.max(1, 8 * tol) })
+            if (r.ok) {
+                // The coloured scan and the fit overlap exactly: show the scan, hide the fit.
+                controller.execute("part.set_visible", { id: scan, visible: true })
+                controller.execute("part.set_visible", { id: pid, visible: false })
+                controller.showStatus(qsTr("Scan coloured by its distance to \"%1\" (hidden; V shows it again): %2% of the points within ±%3 mm, largest %4 mm. Inspect > Clear Analyses removes the colours.")
+                    .arg(info.name).arg(Number(r.result.withinTolerance ?? 0).toFixed(1)).arg(tol)
+                    .arg(Number(Math.max(Math.abs(r.result.stats.min), Math.abs(r.result.stats.max))).toFixed(3)))
+            }
+            return r
         }
         case "sketchOnScan":
             if ((info.selectedTriangles ?? 0) > 0)

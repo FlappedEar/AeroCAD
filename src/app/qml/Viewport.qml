@@ -396,17 +396,37 @@ Item {
                     required property var featureId
                     property var pickPartId: partId
                     readonly property bool selected: partId === root.selectedPartId
+                    // Inspect: section view (cut + cap) and heat map replace the plain mesh.
+                    readonly property bool sectioned: root.controller.inspectRevision >= 0
+                                                      && root.controller.sectionCuts(partId)
+                    readonly property bool heatMapped: root.controller.inspectRevision >= 0
+                                                       && root.controller.showsHeatMap(partId) && !heatGeometry.empty
+                    readonly property color capColor: kind === "body" ? "#d2584a" : "#3b82c4"
+
+                    readonly property MeshGeometry plainGeometry: MeshGeometry {
+                        controller: root.controller
+                        partId: partModel.partId
+                    }
+                    readonly property InspectGeometry clippedGeometry: InspectGeometry {
+                        controller: root.controller
+                        partId: partModel.sectioned ? partModel.partId : 0
+                        mode: InspectGeometry.Clipped
+                    }
+                    readonly property InspectGeometry heatGeometry: InspectGeometry {
+                        controller: root.controller
+                        partId: partModel.partId
+                        mode: InspectGeometry.HeatMap
+                    }
 
                     visible: (partVisible || (kind === "sketch" && featureId == root.shownSketch))
                              && root.hiddenPartIds.indexOf(partId) < 0
                     pickable: (root.pickKind === "" || kind === root.pickKind)
                               && !(kind === "plane" && featureId == root.unpickablePlane)
-                    geometry: MeshGeometry {
-                        controller: root.controller
-                        partId: partModel.partId
-                    }
+                    geometry: sectioned ? clippedGeometry : heatMapped ? heatGeometry : plainGeometry
                     // Fusion-like colours: grey bodies, translucent orange sketch profiles and planes.
-                    materials: PrincipledMaterial {
+                    materials: heatMapped && !sectioned ? [heatMaterial] : [plainMaterial]
+                    PrincipledMaterial {
+                        id: plainMaterial
                         baseColor: partModel.selected ? (partModel.kind === "plane" ? Theme.planeSelected : Theme.selectedColor)
                                  : partModel.kind === "sketch" ? Theme.sketchProfile
                                  : partModel.kind === "plane" ? Theme.planeFill
@@ -415,12 +435,21 @@ Item {
                         metalness: 0.0
                         roughness: 0.45
                         specularAmount: 0.35
+                        // In a section the inside is drawn by the model below.
+                        cullMode: partModel.sectioned ? Material.BackFaceCulling : Material.NoCulling
+                    }
+                    DefaultMaterial {
+                        id: heatMaterial
+                        vertexColorsEnabled: true
+                        diffuseColor: "white"
+                        specularAmount: 0.1
                         cullMode: Material.NoCulling
                     }
 
                     // Region selection highlight.
                     Model {
-                        visible: !selectionGeometry.empty
+                        // Hidden in a section view: the highlight is not clipped.
+                        visible: !selectionGeometry.empty && !partModel.sectioned
                         pickable: false
                         geometry: SelectionGeometry {
                             id: selectionGeometry
@@ -436,9 +465,54 @@ Item {
                         }
                     }
 
-                    // Sketch curves and body edges.
+
+                    // Section: the inside of the cut part (back faces) in the cap colour, so
+                    // open meshes such as scans still read as cut material.
                     Model {
-                        visible: !lines.empty
+                        visible: partModel.sectioned && !partModel.clippedGeometry.empty
+                        pickable: false
+                        geometry: partModel.clippedGeometry
+                        materials: PrincipledMaterial {
+                            lighting: PrincipledMaterial.NoLighting
+                            baseColor: Qt.darker(partModel.capColor, 1.35)
+                            cullMode: Material.FrontFaceCulling
+                        }
+                    }
+                    // Section cap (closed section loops).
+                    Model {
+                        visible: partModel.sectioned && !capGeometry.empty
+                        pickable: false
+                        geometry: InspectGeometry {
+                            id: capGeometry
+                            controller: root.controller
+                            partId: partModel.sectioned ? partModel.partId : 0
+                            mode: InspectGeometry.Cap
+                        }
+                        materials: PrincipledMaterial {
+                            baseColor: partModel.capColor
+                            roughness: 0.8
+                            cullMode: Material.NoCulling
+                        }
+                    }
+                    // Section curves.
+                    Model {
+                        visible: partModel.sectioned && !outlineGeometry.empty
+                        pickable: false
+                        geometry: InspectGeometry {
+                            id: outlineGeometry
+                            controller: root.controller
+                            partId: partModel.sectioned ? partModel.partId : 0
+                            mode: InspectGeometry.Outline
+                        }
+                        materials: PrincipledMaterial {
+                            lighting: PrincipledMaterial.NoLighting
+                            baseColor: Qt.darker(partModel.capColor, 2.2)
+                        }
+                    }
+
+                    // Sketch curves and body edges (hidden in a section: they are not clipped).
+                    Model {
+                        visible: !lines.empty && !partModel.sectioned
                         pickable: false
                         geometry: LineGeometry {
                             id: lines
@@ -745,6 +819,157 @@ Item {
             border.color: "white"
             border.width: 1.5
         }
+    }
+
+    /// Measurement lines: [{a: [x, y, z], b: [x, y, z], label: string}] in model space.
+    property var overlayLines: []
+    /// Pick radius for vertices and edges at the current zoom (mm), ~8 px.
+    function pickTolerance() {
+        const w = cameraInput.worldPerPixel()
+        return isFinite(w) && w > 0 ? w * 8 : 0.5
+    }
+
+    Canvas {
+        id: overlayCanvas
+        anchors.fill: parent
+        readonly property var projected: {
+            cameraInput.pitch; cameraInput.yaw; cameraInput.distance; pivot.position; root.width; root.height
+            root.orthographic
+            return root.overlayLines.map(l => ({
+                a: root.viewPoint(Qt.vector3d(l.a[0], l.a[1], l.a[2])),
+                b: root.viewPoint(Qt.vector3d(l.b[0], l.b[1], l.b[2])),
+                label: l.label || ""
+            }))
+        }
+        onProjectedChanged: requestPaint()
+        onPaint: {
+            const ctx = getContext("2d")
+            ctx.reset()
+            for (const l of projected) {
+                ctx.strokeStyle = "#ff8a00"
+                ctx.lineWidth = 2
+                ctx.setLineDash([6, 4])
+                ctx.beginPath()
+                ctx.moveTo(l.a.x, l.a.y)
+                ctx.lineTo(l.b.x, l.b.y)
+                ctx.stroke()
+                ctx.setLineDash([])
+                for (const p of [l.a, l.b]) {
+                    ctx.fillStyle = "#ff8a00"
+                    ctx.beginPath()
+                    ctx.arc(p.x, p.y, 4.5, 0, 2 * Math.PI)
+                    ctx.fill()
+                }
+                if (l.label) {
+                    const mx = (l.a.x + l.b.x) / 2
+                    const my = (l.a.y + l.b.y) / 2
+                    ctx.font = "bold 13px sans-serif"
+                    const w = ctx.measureText(l.label).width + 12
+                    ctx.fillStyle = "rgba(255, 255, 255, 0.92)"
+                    ctx.strokeStyle = "#ff8a00"
+                    ctx.lineWidth = 1
+                    ctx.fillRect(mx - w / 2, my - 22, w, 20)
+                    ctx.strokeRect(mx - w / 2, my - 22, w, 20)
+                    ctx.fillStyle = "#1d2228"
+                    ctx.fillText(l.label, mx - w / 2 + 6, my - 7)
+                }
+            }
+        }
+    }
+
+    // Section plane manipulator (Fusion: drag the arrow to move the plane).
+    Item {
+        id: sectionHandle
+        anchors.fill: parent
+        readonly property var section: root.controller.inspectRevision >= 0
+                                       ? root.controller.inspectInfo().section : ({ enabled: false })
+        /// Arrow length in mm: a fifth of the model size.
+        readonly property real arrowLength: Math.max(root.controller.sceneRadius * 0.4, 1)
+        readonly property var ends: {
+            cameraInput.pitch; cameraInput.yaw; cameraInput.distance; pivot.position; root.width; root.height
+            root.orthographic
+            if (!section.enabled)
+                return null
+            const o = Qt.vector3d(section.origin[0], section.origin[1], section.origin[2])
+            const n = Qt.vector3d(section.normal[0], section.normal[1], section.normal[2])
+            return { o: root.viewPoint(o), tip: root.viewPoint(o.plus(n.times(arrowLength))) }
+        }
+        visible: !!ends
+        signal moved(real delta)
+
+        Canvas {
+            anchors.fill: parent
+            readonly property var ends: sectionHandle.ends
+            onEndsChanged: requestPaint()
+            onPaint: {
+                const ctx = getContext("2d")
+                ctx.reset()
+                if (!ends)
+                    return
+                const dx = ends.tip.x - ends.o.x
+                const dy = ends.tip.y - ends.o.y
+                const len = Math.hypot(dx, dy)
+                ctx.strokeStyle = "#1f6fd1"
+                ctx.fillStyle = "#1f6fd1"
+                ctx.lineWidth = 3
+                ctx.beginPath()
+                ctx.moveTo(ends.o.x, ends.o.y)
+                ctx.lineTo(ends.tip.x, ends.tip.y)
+                ctx.stroke()
+                if (len > 1) {
+                    const ux = dx / len
+                    const uy = dy / len
+                    ctx.beginPath()
+                    ctx.moveTo(ends.tip.x + ux * 12, ends.tip.y + uy * 12)
+                    ctx.lineTo(ends.tip.x - uy * 7, ends.tip.y + ux * 7)
+                    ctx.lineTo(ends.tip.x + uy * 7, ends.tip.y - ux * 7)
+                    ctx.closePath()
+                    ctx.fill()
+                }
+                ctx.beginPath()
+                ctx.arc(ends.o.x, ends.o.y, 5, 0, 2 * Math.PI)
+                ctx.fill()
+            }
+        }
+        // Grab area around the arrow tip.
+        Rectangle {
+            visible: !!sectionHandle.ends
+            x: sectionHandle.ends ? sectionHandle.ends.tip.x - width / 2 : 0
+            y: sectionHandle.ends ? sectionHandle.ends.tip.y - height / 2 : 0
+            width: 28
+            height: 28
+            radius: 14
+            color: arrowDrag.active ? "#331f6fd1" : "transparent"
+            border.color: "#1f6fd1"
+            border.width: 1.5
+            DragHandler {
+                id: arrowDrag
+                target: null
+                property point last
+                onActiveChanged: last = centroid.scenePosition
+                onCentroidChanged: {
+                    if (!active || !sectionHandle.ends)
+                        return
+                    const p = centroid.scenePosition
+                    const e = sectionHandle.ends
+                    const dx = e.tip.x - e.o.x
+                    const dy = e.tip.y - e.o.y
+                    const len2 = dx * dx + dy * dy
+                    if (len2 < 1)
+                        return
+                    // Mouse motion along the projected arrow, in arrow lengths.
+                    const t = ((p.x - last.x) * dx + (p.y - last.y) * dy) / len2
+                    last = p
+                    sectionHandle.moved(t * sectionHandle.arrowLength)
+                }
+            }
+        }
+    }
+    /// Emitted while the section arrow is dragged: move the plane by `delta` mm along its normal.
+    signal sectionDragged(real delta)
+    Connections {
+        target: sectionHandle
+        function onMoved(delta) { root.sectionDragged(delta) }
     }
 
     SketchOverlay {

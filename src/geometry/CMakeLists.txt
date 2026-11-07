@@ -8,6 +8,7 @@ add_library(aerocad_geometry STATIC
     src/Transform.cpp
     src/Sketch.cpp
     src/Modeling.cpp
+    src/Inspect.cpp
     src/SurfaceFit.cpp
     src/RegionFit.cpp
     src/Offset.cpp

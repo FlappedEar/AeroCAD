@@ -91,6 +91,8 @@ void Document::clear()
 
 void Document::notify(Change change, PartId id)
 {
+    if (change == Change::Added || change == Change::Removed || change == Change::Modified)
+        ++m_revision;
     // Copy so observers may (un)register during notification.
     const auto observers = m_observers;
     for (const auto& [_, observer] : observers)

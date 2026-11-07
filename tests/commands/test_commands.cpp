@@ -2,12 +2,16 @@
 #include "aerocad/commands/Session.hpp"
 #include "aerocad/core/MeshSelection.hpp"
 #include "aerocad/core/Path.hpp"
+#include "aerocad/core/Measure.hpp"
+#include "aerocad/geometry/Primitives.hpp"
+#include "aerocad/geometry/Tessellation.hpp"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <random>
 #include <string>
 
@@ -179,6 +183,80 @@ TEST_CASE("Listener sees every executed command", "[commands]")
     session.execute("document.parts");
     session.execute("edit.undo");
     CHECK(seen == std::vector<std::string>{"document.parts", "edit.undo"});
+}
+
+TEST_CASE("project.get_context reports units, revision and parts", "[commands][agent]")
+{
+    TempStl file;
+    commands::Session session;
+    auto r = session.execute("project.get_context");
+    REQUIRE(r.ok);
+    CHECK(r.data.at("units").at("length") == "mm");
+    CHECK(r.data.at("revision") == 0);
+    CHECK(r.data.at("parts").empty());
+
+    REQUIRE(session.execute("document.import", {{"path", file.utf8()}, {"name", "Tetra"}}).ok);
+    r = session.execute("project.get_context");
+    REQUIRE(r.ok);
+    CHECK(r.data.at("revision").get<std::uint64_t>() > 0);
+    REQUIRE(r.data.at("parts").size() == 1);
+    CHECK(r.data.at("parts")[0].at("name") == "Tetra");
+    CHECK(r.data.at("parts")[0].at("bounds").at("size")[2].get<double>() == Approx(10.0));
+    CHECK(r.data.at("history").at("canUndo") == true);
+}
+
+TEST_CASE("geometry.measure: distance, part, point and clearance", "[commands][agent]")
+{
+    TempStl file;
+    commands::Session session;
+
+    auto r = session.execute("geometry.measure", {{"kind", "distance"}, {"points", {{0, 0, 0}, {3, 4, 0}}}});
+    REQUIRE(r.ok);
+    CHECK(r.data.at("distance").get<double>() == Approx(5.0));
+    CHECK(r.data.at("unit") == "mm");
+
+    const auto a = session.execute("document.import", {{"path", file.utf8()}}).data.at("id").get<std::uint64_t>();
+    r = session.execute("geometry.measure", {{"kind", "part"}, {"id", a}});
+    REQUIRE(r.ok);
+    CHECK(r.data.at("volume").get<double>() == Approx(1000.0 / 6.0));
+    CHECK(r.data.at("closed") == true);
+    CHECK(r.data.at("warnings").empty());
+
+    r = session.execute("geometry.measure", {{"kind", "point_to_part"}, {"id", a}, {"point", {2, 2, -4}}});
+    REQUIRE(r.ok);
+    CHECK(r.data.at("distance").get<double>() == Approx(4.0));
+
+    // Second tetrahedron, half size, moved to x = 15..20: 5 mm from the first one.
+    const auto b = session.execute("document.import", {{"path", file.utf8()}}).data.at("id").get<std::uint64_t>();
+    REQUIRE(session.execute("part.scale", {{"id", b}, {"factor", 0.5}, {"origin", {30, 0, 0}}}).ok);
+    r = session.execute("geometry.measure", {{"kind", "clearance"}, {"id", a}, {"other_id", b}});
+    REQUIRE(r.ok);
+    CHECK(r.data.at("distance").get<double>() == Approx(5.0));
+    CHECK_FALSE(r.data.at("method").get<std::string>().empty());
+
+    // Missing kind-specific parameters are reported clearly.
+    r = session.execute("geometry.measure", {{"kind", "point_to_part"}, {"id", a}});
+    CHECK_FALSE(r.ok);
+    CHECK(r.error.find("point") != std::string::npos);
+    r = session.execute("geometry.measure", {{"kind", "volume"}});
+    CHECK_FALSE(r.ok);
+}
+
+TEST_CASE("geometry.measure: B-rep parts are closed with exact volume", "[commands][agent]")
+{
+    commands::Session session;
+    model::Part box;
+    box.name = "Box";
+    box.shape = geometry::makeBox(10, 20, 30);
+    box.mesh = std::make_shared<const core::TriangleMesh>(geometry::tessellate(*box.shape));
+    const auto id = session.document().addPart(box);
+
+    const auto r = session.execute("geometry.measure", {{"kind", "part"}, {"id", id}});
+    REQUIRE(r.ok);
+    CHECK(r.data.at("closed") == true);
+    CHECK(r.data.at("openEdges") == 0);
+    CHECK(r.data.at("volume").get<double>() == Approx(6000.0));
+    CHECK(core::openEdgeCount(*box.mesh) == 0); // per-face tessellation vertices are welded
 }
 
 namespace {
@@ -367,6 +445,19 @@ TEST_CASE("Fit surfaces to a whole mesh gives a solid part", "[commands][fit]")
     CHECK(r.data.at("fit").at("withinTolerance") == true);
     CHECK(r.data.at("hasBrep") == true);
     CHECK(r.data.at("fit").at("smoothSeams") == 0); // a box has creases only
+    // The app's "Show deviation from the scan": the scan coloured by its distance to the fit.
+    CHECK(r.data.at("source") == "surface.fit_regions of part " + std::to_string(id));
+    auto dev = session.execute(
+        "inspect.deviation",
+        {{"measured", id}, {"reference", r.data.at("id")}, {"tolerance", 0.25}, {"range", 0.5}, {"maxDistance", 2.0}});
+    INFO(dev.toJson().dump());
+    REQUIRE(dev.ok);
+    CHECK(dev.data.at("withinTolerance").get<double>() > 99.0);
+    // Measured on the exact surfaces, not the display mesh: it agrees with the fit report.
+    const double largest = std::max(std::abs(dev.data.at("stats").at("min").get<double>()),
+                                    std::abs(dev.data.at("stats").at("max").get<double>()));
+    CHECK(largest < r.data.at("fit").at("meshToSurfaceMax").get<double>() + 0.01);
+    REQUIRE(session.execute("inspect.clear").ok);
     CHECK(session.document().partCount() == 2);
     // The solid can become a timeline body.
     CHECK(session.execute("feature.base_body", {{"part", r.data.at("id")}}).ok);

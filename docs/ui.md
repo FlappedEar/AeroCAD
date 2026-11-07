@@ -118,12 +118,13 @@ has focus):
 | Center Diameter Circle (in a sketch) | C | yes |
 | Sketch Dimension (in a sketch) | D | yes |
 | Cancel the current curve / dialog, then leave the sketch | Esc | yes |
+| Measure (Inspect) | I | yes |
 
 Save As, Import and the variant commands (Modify > Duplicate as New Variant, Toggle A/B)
 have no shortcut (Fusion's list has no Save As).
 
 Not mapped yet: Press Pull (Q), Move (M), Trim (T), Offset (O), Project (P),
-Construction (X) and Measure (I). 1/2/3 select the region selection tools on meshes,
+Construction (X). 1/2/3 select the region selection tools on meshes,
 see "Region selection" in [macos.md](macos.md).
 
 ## Scans
@@ -171,6 +172,12 @@ See [cad.md](cad.md) for the timeline and the commands behind the tools.
 - **Parameters**: Modify > Change Parameters, user parameters used in expressions.
 - Command scripts: `AeroCAD --run script.json` runs a JSON array of `{name, params}`
   commands at start-up, the same calls an AI agent makes through MCP.
+
+## Inspect
+
+The **Inspect** menu and toolbar group hold Measure (I), Interference / Clearance, Section
+Analysis, Deviation Map (scan vs part), Thickness Map and Clear Analyses. See
+[inspect.md](inspect.md).
 
 ## Wind tunnel (CFD)
 
