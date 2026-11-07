@@ -72,10 +72,17 @@ Pane {
         environment = r.ok ? r.result : null
         if (!installing || !environment)
             return
-        // Docker came up while installing: go on with the image download.
-        if (environment.setup.action === "pull" && !(environment.imagePull && environment.imagePull.state === "running"))
+        const pull = environment.imagePull
+        if (pull && pull.state === "running")
+            return
+        if (pull && pull.state === "failed") {
+            // Stop here and show why; pressing the button again retries.
+            installing = false
+            setupMessage = pull.message
+        } else if (environment.setup.action === "pull" && !pull) {
+            // Docker came up while installing: go on with the image download (once).
             installEngine()
-        else if (environment.setup.action === "none" && !(environment.imagePull && environment.imagePull.state === "running")) {
+        } else if (environment.setup.action === "none") {
             installing = false
             setupMessage = ""
         }
