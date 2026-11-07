@@ -749,3 +749,76 @@ TEST_CASE("Part on surface: one step from an outline over a scan to a solid", "[
     REQUIRE(plainProfiles.ok);
     CHECK(plainProfiles.data.at("surfaceLine").empty());
 }
+
+TEST_CASE("Sketch and part next to a grille opening of a noisy bumper scan", "[commands][fit]")
+{
+    // A bumper-like scan: 600 x 300 mm, curved both ways, facing +Y, 3 mm sampling,
+    // 0.3 mm noise and a few spikes, with a 200 x 60 mm grille opening.
+    std::mt19937 rng(7);
+    std::normal_distribution<double> noise(0.0, 0.3);
+    std::uniform_real_distribution<double> unit(0.0, 1.0);
+    const int nu = 200;
+    const int nw = 100;
+    auto skin = [](double u, double w) { return -u * u / 1200.0 - (w - 150.0) * (w - 150.0) / 1500.0; };
+    std::vector<core::Vec3> v;
+    std::vector<core::TriangleMesh::Triangle> t;
+    for (int j = 0; j <= nw; ++j)
+        for (int i = 0; i <= nu; ++i) {
+            const double u = -300.0 + 3.0 * i, w = 3.0 * j;
+            double y = skin(u, w) + noise(rng);
+            if (unit(rng) < 0.002)
+                y += 4.0 * (unit(rng) - 0.5); // scanner spikes
+            v.push_back({u, y, w});
+        }
+    auto idx = [](int i, int j) { return static_cast<std::uint32_t>(j * (nu + 1) + i); };
+    auto inGrille = [](double u, double w) { return std::abs(u) < 100.0 && w > 80.0 && w < 140.0; };
+    for (int j = 0; j < nw; ++j)
+        for (int i = 0; i < nu; ++i) {
+            if (inGrille(-300.0 + 3.0 * (i + 0.5), 3.0 * (j + 0.5)))
+                continue;
+            t.push_back({idx(i, j), idx(i + 1, j + 1), idx(i + 1, j)});
+            t.push_back({idx(i, j), idx(i, j + 1), idx(i + 1, j + 1)});
+        }
+    model::Part scanPart;
+    scanPart.name = "Bumper scan";
+    scanPart.mesh = std::make_shared<const core::TriangleMesh>(core::TriangleMesh(std::move(v), std::move(t)));
+    commands::Session session;
+    const auto scanId = session.document().addPart(scanPart);
+    const auto& mesh = *session.document().part(scanId)->mesh;
+
+    // Clicked from 2 m in front, in the middle of the grille: the ray goes through.
+    const core::Vec3 eye{0, 2000, 110};
+    const core::Vec3 ray{0, -1, 0};
+    REQUIRE_FALSE(core::raycast(mesh, eye, ray));
+    const auto near = core::nearestToRay(mesh, eye, ray, 4.0);
+    REQUIRE(near);
+    // On the rim of the opening, the nearer of its top and bottom edges.
+    CHECK(std::abs(near->point.x) < 100.0);
+    CHECK((std::abs(near->point.z - 80.0) < 4.0 || std::abs(near->point.z - 140.0) < 4.0));
+
+    auto sk = session.execute("sketch.create",
+                              {{"surface", {{"part", scanId}, {"point", {near->point.x, near->point.y, near->point.z}}}},
+                               {"curves", Json::array({{{"type", "center_rectangle"},
+                                                        {"center", {0, 0}},
+                                                        {"width", 80},
+                                                        {"height", 100}}})}});
+    INFO(sk.toJson().dump());
+    REQUIRE(sk.ok);
+    // Over the skin around the click, below the opening; tall enough to reach into it.
+    const auto& origin = sk.data.at("params").at("plane").at("origin");
+    CHECK(origin.at(2).get<double>() > 20.0);
+    CHECK(origin.at(2).get<double>() < 80.0);
+    const auto sketchId = sk.data.at("id").get<std::uint64_t>();
+
+    auto part = session.execute("surface.part_from_sketch", {{"sketch", sketchId}, {"thickness", 2.0}, {"side", "outside"}});
+    INFO(part.toJson().dump());
+    REQUIRE(part.ok);
+    CHECK(part.data.at("fit").at("method") == "draped");
+    // Follows the noisy skin about as closely as its noise, spikes and all.
+    CHECK(part.data.at("fit").at("rmsDeviation").get<double>() < 0.6);
+    // Part of the outline is over the opening: bridged, and said so.
+    CHECK(part.data.at("fit").at("bridged").get<double>() > 0.05);
+    CHECK_FALSE(part.data.at("warnings").empty());
+    CHECK(part.data.at("volume").get<double>() > 0.0);
+    CHECK(part.data.at("volume").get<double>() == Approx(2.0 * part.data.at("area").get<double>()).epsilon(0.05));
+}

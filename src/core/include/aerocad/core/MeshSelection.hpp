@@ -62,6 +62,13 @@ struct RayHit {
 /// triangle sides. Brute force (Moller-Trumbore); fine for one query per pointer event.
 [[nodiscard]] std::optional<RayHit> raycast(const TriangleMesh& mesh, const Vec3& origin, const Vec3& direction);
 
+/// For a ray that misses the mesh (a click into a hole of a scan, such as a grille
+/// opening, or just past its edge): the mesh vertex seen closest to the ray from `origin`,
+/// within `maxAngleDeg` of it, as a hit on a triangle using that vertex. `distance` is along
+/// the ray, in units of |direction|. Empty when no vertex in front of `origin` is that close.
+[[nodiscard]] std::optional<RayHit> nearestToRay(const TriangleMesh& mesh, const Vec3& origin, const Vec3& direction,
+                                                 double maxAngleDeg);
+
 /// A mesh seen from outside along one direction: triangles binned in a grid across it, for
 /// fast queries on scans of millions of triangles (build: under a second; queries:
 /// microseconds). Keeps a reference to `mesh`, which must outlive it.

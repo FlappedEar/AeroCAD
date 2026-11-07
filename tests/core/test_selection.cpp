@@ -406,3 +406,38 @@ TEST_CASE("projectOntoMesh drapes points onto a curved sheet", "[core][selection
     CHECK(out[2].x == Approx(33.5));
     CHECK(out[3].z == Approx(10.0)); // missed: stays
 }
+
+TEST_CASE("nearestToRay: a click into a hole takes the surface at its edge", "[core][selection]")
+{
+    // A 20 x 20 plate at z = 0 with a 6 x 6 opening in the middle (cells 7..12).
+    MeshBuilder b;
+    for (int i = 0; i < 20; ++i)
+        for (int j = 0; j < 20; ++j) {
+            if (i >= 7 && i < 13 && j >= 7 && j < 13)
+                continue;
+            const Vec3 p00{double(i), double(j), 0}, p10{double(i + 1), double(j), 0};
+            const Vec3 p01{double(i), double(j + 1), 0}, p11{double(i + 1), double(j + 1), 0};
+            b.addTriangle(p00, p10, p11);
+            b.addTriangle(p00, p11, p01);
+        }
+    const TriangleMesh m = b.take();
+    const Vec3 origin{10.2, 10.6, 100};
+    const Vec3 down{0, 0, -2};
+    REQUIRE_FALSE(raycast(m, origin, down)); // through the opening
+
+    const auto hit = nearestToRay(m, origin, down, 4.0);
+    REQUIRE(hit);
+    // The nearest point of the opening's rim: (10, 13) is 2.4 off the ray, any other more.
+    CHECK(hit->point.x == Approx(10.0));
+    CHECK(hit->point.y == Approx(13.0));
+    CHECK(hit->point.z == Approx(0.0));
+    CHECK(hit->distance == Approx(50.0)); // in units of |direction|
+    const auto& tri = m.triangles()[hit->triangle];
+    CHECK(((m.vertices()[tri[0]] - hit->point).length() < 1e-12 || (m.vertices()[tri[1]] - hit->point).length() < 1e-12 ||
+           (m.vertices()[tri[2]] - hit->point).length() < 1e-12));
+
+    // Too far from anything for the angle, behind the origin, or a degenerate ray.
+    CHECK_FALSE(nearestToRay(m, origin, down, 1.0));
+    CHECK_FALSE(nearestToRay(m, {10.2, 10.6, -100}, down, 4.0));
+    CHECK_FALSE(nearestToRay(m, origin, {0, 0, 0}, 4.0));
+}
