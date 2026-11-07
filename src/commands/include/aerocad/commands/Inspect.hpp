@@ -75,6 +75,9 @@ public:
     /// the display mesh, whose deflection is often larger than a fit tolerance.
     [[nodiscard]] std::shared_ptr<const core::TriangleMesh> denseMesh(const geometry::Shape& shape, double deflection);
 
+    /// True when the mesh has no open edges (a closed solid, not a scan); cached.
+    [[nodiscard]] bool closedMesh(const std::shared_ptr<const core::TriangleMesh>& mesh);
+
 private:
     void changed();
 
@@ -89,6 +92,7 @@ private:
         std::shared_ptr<const core::TriangleMesh> mesh;
     };
     std::vector<Dense> m_denseCache;
+    std::vector<std::pair<std::shared_ptr<const core::TriangleMesh>, bool>> m_closedCache;
 };
 
 } // namespace aerocad::commands

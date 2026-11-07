@@ -1267,6 +1267,7 @@ ApplicationWindow {
             simulationFields: window.simulationVisible ? simulationPanel.viewportFields : []
             hiddenPartIds: window.simulationVisible ? simulationPanel.hiddenPartIds : []
             overlayLines: measurePanel.overlayLines
+            pickSketchLines: measurePanel.active
             onSectionDragged: delta => sectionPanel.moveBy(delta)
             onPartPicked: id => {
                 window.selectPart(id)

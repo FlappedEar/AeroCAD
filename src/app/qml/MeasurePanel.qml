@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Inspect > Measure (Fusion: I). Click one or two selections in the viewport; the panel shows
-// their properties, the minimum distance with X/Y/Z deltas and the angle between planar faces
-// or straight edges. Body selection measures the clearance between parts (with interference
+// their properties (and the wall thickness under one face or mesh point), the minimum
+// distance with X/Y/Z deltas and the angle between planar faces, straight edges and axes.
+// Sketch lines can be picked too. Body selection measures the clearance between parts (with interference
 // for B-rep solids). Everything runs through inspect.measure / inspect.clearance.
 import QtQuick
 import QtQuick.Controls
@@ -29,6 +30,9 @@ Pane {
             return []
         if (result.pointA && result.pointB)
             return [{ a: result.pointA, b: result.pointB, label: fmt(result.distance) + " mm" }]
+        if (result.thickness)
+            return [{ a: result.thickness.pointA, b: result.thickness.pointB,
+                      label: qsTr("t %1 mm").arg(fmt(result.thickness.value)) }]
         return []
     }
     /// Points to mark for single selections.
@@ -37,7 +41,7 @@ Pane {
             return []
         const out = []
         for (const s of [selA, selB])
-            if (s && s.point && !(result && result.pointA))
+            if (s && s.point && !(result && (result.pointA || result.thickness)))
                 out.push(s.point)
         return out
     }
@@ -211,6 +215,16 @@ Pane {
                         Label { text: modelData[1]; Layout.fillWidth: true; elide: Text.ElideRight }
                     }
                 }
+            }
+        }
+
+        // Wall thickness under a single selection (a face of a solid, a closed mesh).
+        RowLayout {
+            visible: !!root.result && !!root.result.thickness
+            Label { text: qsTr("Thickness"); font.bold: true; Layout.preferredWidth: 70 }
+            Label {
+                text: root.result && root.result.thickness ? root.fmt(root.result.thickness.value) + " mm" : ""
+                font.bold: true
             }
         }
 

@@ -759,6 +759,56 @@ QVariantMap AppController::pickNearSurface(const QVector3D& origin, const QVecto
             {QStringLiteral("snapped"), true}};
 }
 
+QVariantMap AppController::pickSketchLine(const QVector3D& origin, const QVector3D& direction,
+                                          double maxDistance) const
+{
+    const core::Vec3 o{origin.x(), origin.y(), origin.z()};
+    core::Vec3 d{direction.x(), direction.y(), direction.z()};
+    if (!(d.length() > 0.0) || !(maxDistance > 0.0))
+        return {};
+    d = d.normalized();
+    double bestGap = maxDistance;
+    double bestT = 0.0;
+    core::Vec3 bestPoint{};
+    model::PartId bestPart = 0;
+    for (const auto& p : m_session.document().parts()) {
+        if (!p.visible || p.kind != model::PartKind::Sketch)
+            continue;
+        const auto& segs = p.edgeSegments;
+        for (std::size_t i = 0; i + 1 < segs.size(); i += 2) {
+            // Closest points of the ray o + t d and the segment a + s (b - a), s in [0, 1].
+            const core::Vec3 a = segs[i];
+            const core::Vec3 u = segs[i + 1] - a;
+            const core::Vec3 w = a - o;
+            const double uu = u.dot(u);
+            const double ud = u.dot(d);
+            const double denom = uu - ud * ud;
+            double sParam = 0.0;
+            if (uu > 0.0)
+                sParam = denom > 1e-12 * uu ? (ud * w.dot(d) - w.dot(u)) / denom : 0.0;
+            sParam = std::clamp(sParam, 0.0, 1.0);
+            const core::Vec3 q = a + u * sParam;
+            const double t = (q - o).dot(d);
+            if (t <= 0.0)
+                continue;
+            const double gap = (q - (o + d * t)).length();
+            // The nearest line to the ray; between equally near ones the one in front.
+            if (gap < bestGap - 1e-9 || (bestPart != 0 && gap <= bestGap + 1e-9 && t < bestT)) {
+                bestGap = gap;
+                bestT = t;
+                bestPoint = q;
+                bestPart = p.id;
+            }
+        }
+    }
+    if (bestPart == 0)
+        return {};
+    return {{QStringLiteral("partId"), QVariant::fromValue<quint64>(bestPart)},
+            {QStringLiteral("point"), QVector3D(static_cast<float>(bestPoint.x), static_cast<float>(bestPoint.y),
+                                                static_cast<float>(bestPoint.z))},
+            {QStringLiteral("distance"), bestT}};
+}
+
 const core::MeshProjector& AppController::projectorFor(const std::shared_ptr<const core::TriangleMesh>& mesh,
                                                        const core::Vec3& outward) const
 {

@@ -148,6 +148,11 @@ public:
     /// pickSurface's map plus snapped: true; {} when nothing is that close.
     Q_INVOKABLE QVariantMap pickNearSurface(const QVector3D& origin, const QVector3D& direction,
                                             double maxAngleDeg) const;
+    /// The visible sketch line closest to a ray (model coordinates), within `maxDistance`
+    /// mm of it: {partId, point (on the line, QVector3D), distance (along the ray)}, or {}.
+    /// Measure picks sketch curves with it: they have no surface to ray-cast.
+    Q_INVOKABLE QVariantMap pickSketchLine(const QVector3D& origin, const QVector3D& direction,
+                                           double maxDistance) const;
     /// `point` moved along `normal` onto the first skin of part `id` (and the scan it was
     /// fitted from) seen from outside, for drawing sketch previews where the draped sketch
     /// is shown; `point` itself on a miss.

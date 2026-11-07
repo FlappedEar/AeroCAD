@@ -93,6 +93,85 @@ TEST_CASE("inspect.measure: points, faces, edges, angle", "[commands][inspect]")
     CHECK_FALSE(r.ok);
 }
 
+TEST_CASE("inspect.measure: wall thickness, axis angles and sketch curves", "[commands][inspect]")
+{
+    commands::Session s;
+    const auto box = addBrep(s, "Box", geometry::makeBox(10, 20, 30));
+
+    // A face of a solid: straight through to the opposite wall.
+    const Json face = run(s, "inspect.measure", {{"a", {{"part", box}, {"pick", "face"}, {"point", {0, 10, 15}}}}});
+    REQUIRE(face.contains("thickness"));
+    CHECK(face["thickness"]["value"].get<double>() == Approx(10));
+    CHECK(face["thickness"]["pointB"][0].get<double>() == Approx(10));
+    const Json top = run(s, "inspect.measure", {{"a", {{"part", box}, {"pick", "face"}, {"point", {5, 10, 30}}}}});
+    CHECK(top["thickness"]["value"].get<double>() == Approx(30));
+    // Two selections report a distance, not a thickness.
+    const Json two = run(s, "inspect.measure",
+                         {{"a", {{"part", box}, {"point", {0, 10, 15}}}}, {"b", {{"part", box}, {"point", {10, 10, 15}}}}});
+    CHECK_FALSE(two.contains("thickness"));
+
+    // A closed mesh (an STL part): the same on its triangles.
+    const auto stl = addMesh(s, "Box STL", geometry::translated(geometry::makeBox(4, 4, 4), {50, 0, 0}));
+    const Json meshPoint = run(s, "inspect.measure", {{"a", {{"part", stl}, {"point", {52, 2, 4}}}}});
+    REQUIRE(meshPoint.contains("thickness"));
+    CHECK(meshPoint["thickness"]["value"].get<double>() == Approx(4).margin(1e-6));
+
+    // An open mesh (a scan) has no wall thickness.
+    {
+        model::Part sheet;
+        sheet.name = "Sheet";
+        auto m = std::make_shared<core::TriangleMesh>();
+        m->addVertex({100, 0, 0});
+        m->addVertex({110, 0, 0});
+        m->addVertex({110, 10, 0});
+        m->addVertex({100, 10, 0});
+        m->addTriangle(0, 1, 2);
+        m->addTriangle(0, 2, 3);
+        sheet.mesh = m;
+        const auto id = s.document().addPart(sheet);
+        const Json open = run(s, "inspect.measure", {{"a", {{"part", id}, {"point", {105, 5, 0}}}}});
+        CHECK_FALSE(open.contains("thickness"));
+    }
+
+    // A hole axis (cylinder face) against faces: parallel to a side face, square to the top.
+    const auto cyl = addBrep(s, "Cyl", geometry::translated(geometry::makeCylinder(4, 10), {0, 40, 0}));
+    const Json side = run(s, "inspect.measure", {{"a", {{"part", cyl}, {"pick", "face"}, {"point", {4, 40, 5}}}},
+                                                 {"b", {{"part", box}, {"pick", "face"}, {"point", {0, 10, 15}}}}});
+    CHECK(side["angle"].get<double>() == Approx(0).margin(1e-6));
+    const Json square = run(s, "inspect.measure", {{"a", {{"part", cyl}, {"pick", "face"}, {"point", {4, 40, 5}}}},
+                                                   {"b", {{"part", box}, {"pick", "face"}, {"point", {5, 10, 30}}}}});
+    CHECK(square["angle"].get<double>() == Approx(90));
+
+    // Sketch curves: a circle and a line on XY, measured exactly.
+    const auto sk = s.execute("sketch.create",
+                              {{"plane", "XY"},
+                               {"curves", Json::array({{{"type", "circle"}, {"center", {0, -50}}, {"radius", 5}},
+                                                       {{"type", "line"}, {"start", {10, -50}}, {"end", {20, -50}}}})}});
+    INFO(sk.toJson().dump());
+    REQUIRE(sk.ok);
+    model::PartId sketch = 0;
+    for (const auto& p : s.document().parts())
+        if (p.kind == model::PartKind::Sketch)
+            sketch = p.id;
+    REQUIRE(sketch != 0);
+    const Json circle = run(s, "inspect.measure", {{"a", {{"part", sketch}, {"point", {0, -45.05, 0}}, {"tolerance", 0.5}}}});
+    CHECK(circle["a"]["kind"] == "edge");
+    CHECK(circle["a"]["type"] == "circle");
+    CHECK(circle["a"]["radius"].get<double>() == Approx(5));
+    const Json between = run(s, "inspect.measure", {{"a", {{"part", sketch}, {"point", {5, -50, 0}}, {"tolerance", 0.5}}},
+                                                    {"b", {{"part", sketch}, {"point", {15, -50, 0}}, {"tolerance", 0.5}}}});
+    CHECK(between["b"]["length"].get<double>() == Approx(10));
+    CHECK(between["distance"].get<double>() == Approx(5));
+    CHECK(between["method"] == "exact");
+    // Sketch to solid: from the line end (20, -50, 0) to the box corner (10, 0, 0). (The
+    // design replaced the hand-made bodies above when the sketch was added.)
+    const auto box2 = addBrep(s, "Box 2", geometry::makeBox(10, 20, 30));
+    const Json toBox = run(s, "inspect.measure", {{"a", {{"part", sketch}, {"point", {20, -50, 0}}, {"tolerance", 0.5}}},
+                                                  {"b", {{"part", box2}, {"pick", "body"}}}});
+    CHECK(toBox["a"]["kind"] == "vertex");
+    CHECK(toBox["distance"].get<double>() == Approx(std::hypot(10.0, 50.0)));
+}
+
 TEST_CASE("inspect.clearance between B-rep bodies and meshes", "[commands][inspect]")
 {
     commands::Session s;

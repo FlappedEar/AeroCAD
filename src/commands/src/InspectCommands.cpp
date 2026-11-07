@@ -5,7 +5,10 @@
 #include "aerocad/commands/Inspect.hpp"
 #include "aerocad/commands/Session.hpp"
 
+#include "aerocad/cad/Design.hpp"
+#include "aerocad/core/Measure.hpp"
 #include "aerocad/geometry/Inspect.hpp"
+#include "aerocad/geometry/Sketch.hpp"
 #include "aerocad/geometry/Modeling.hpp"
 #include "aerocad/geometry/Tessellation.hpp"
 
@@ -64,6 +67,19 @@ std::shared_ptr<const core::MeshBvh> InspectState::bvh(const std::shared_ptr<con
     if (m_bvhCache.size() > kCacheSize)
         m_bvhCache.resize(kCacheSize);
     return built;
+}
+
+bool InspectState::closedMesh(const std::shared_ptr<const core::TriangleMesh>& mesh)
+{
+    for (const auto& [m, closed] : m_closedCache)
+        if (m == mesh)
+            return closed;
+    const bool closed = core::openEdgeCount(*mesh) == 0;
+    m_closedCache.insert(m_closedCache.begin(), {mesh, closed});
+    constexpr std::size_t kCacheSize = 4;
+    if (m_closedCache.size() > kCacheSize)
+        m_closedCache.resize(kCacheSize);
+    return closed;
 }
 
 std::shared_ptr<const core::TriangleMesh> InspectState::denseMesh(const geometry::Shape& shape, double deflection)
@@ -149,6 +165,37 @@ const model::Part& requireMeshPart(const model::Document& doc, model::PartId id)
     return p;
 }
 
+/// The curves of a sketch part as edges: exact lines, arcs and circles on the sketch plane,
+/// or, for a sketch laid onto a surface, the drawn (draped) polylines.
+std::shared_ptr<const geometry::Shape> sketchShape(CommandContext& ctx, const model::Part& part)
+{
+    if (ctx.design != nullptr) {
+        const auto& sketches = ctx.design->sketches();
+        if (const auto it = sketches.find(part.featureId); it != sketches.end() && !it->second.curves.empty()) {
+            const cad::Feature* f = ctx.design->feature(part.featureId);
+            const bool draped = f != nullptr && f->params.contains("onSurface") &&
+                                !f->params.at("onSurface").value("across", false);
+            if (!draped) {
+                try {
+                    auto shape = std::make_shared<const geometry::Shape>(
+                        geometry::curveEdges(it->second.plane, it->second.curves));
+                    if (!shape->isNull())
+                        return shape;
+                } catch (const geometry::ModelingError&) {
+                    // Fall back to the drawn lines.
+                }
+            }
+        }
+    }
+    if (part.edgeSegments.size() < 2)
+        throw CommandError("Sketch '" + part.name + "' has no curves to measure");
+    try {
+        return std::make_shared<const geometry::Shape>(geometry::polylineEdges(part.edgeSegments));
+    } catch (const geometry::ModelingError& err) {
+        throw CommandError(err.what());
+    }
+}
+
 // --- Measure entities ----------------------------------------------------------------------
 
 /// A resolved measurement selection.
@@ -157,6 +204,8 @@ struct Entity {
     const model::Part* part = nullptr;
     geometry::SubShape sub;           ///< For B-rep vertex/edge/face/body.
     bool exact = false;               ///< B-rep sub-shape (otherwise point or mesh body).
+    const geometry::Shape* shape = nullptr; ///< The part's shape, or `owned` for sketches.
+    std::shared_ptr<const geometry::Shape> owned;
     core::Vec3 point{};               ///< The picked / given point.
 };
 
@@ -194,7 +243,14 @@ Entity resolveEntity(CommandContext& ctx, const Json& j, const char* name)
         return e;
     }
     e.part = &requirePart(ctx.document, j["part"].get<model::PartId>());
-    const bool brep = e.part->shape.has_value() && !e.part->shape->isNull();
+    if (e.part->shape && !e.part->shape->isNull()) {
+        e.shape = &*e.part->shape;
+    } else if (e.part->kind == model::PartKind::Sketch) {
+        // Sketches are measured on their curves (lines, arcs, circles), as drawn.
+        e.owned = sketchShape(ctx, *e.part);
+        e.shape = e.owned.get();
+    }
+    const bool brep = e.shape != nullptr;
 
     auto byIndex = [&](const char* key, geometry::SubShape::Kind kind) {
         if (!brep)
@@ -202,7 +258,7 @@ Entity resolveEntity(CommandContext& ctx, const Json& j, const char* name)
         e.kind = key;
         e.sub = {kind, j[key].get<std::size_t>()};
         e.exact = true;
-        const auto props = geometry::subShapeProperties(*e.part->shape, e.sub);
+        const auto props = geometry::subShapeProperties(*e.shape, e.sub);
         e.point = props.point;
     };
     for (const auto& [key, kind] : {std::pair{"face", geometry::SubShape::Kind::Face},
@@ -232,7 +288,7 @@ Entity resolveEntity(CommandContext& ctx, const Json& j, const char* name)
         e.kind = "point";
         return e;
     }
-    const geometry::Shape& shape = *e.part->shape;
+    const geometry::Shape& shape = *e.shape;
     if (pick == "auto") {
         const double tol = j.contains("tolerance") ? j["tolerance"].get<double>()
                                                    : std::max(shape.bounds().diagonal() * 0.01, 1e-6);
@@ -279,7 +335,7 @@ Json entityToJson(const Entity& e)
     if (e.exact) {
         if (e.sub.kind != geometry::SubShape::Kind::Whole)
             j["index"] = e.sub.index;
-        const auto props = geometry::subShapeProperties(*e.part->shape, e.sub);
+        const auto props = geometry::subShapeProperties(*e.shape, e.sub);
         j["type"] = props.type;
         if (props.area > 0)
             j["area"] = round9(props.area);
@@ -315,15 +371,15 @@ Separation separation(CommandContext& ctx, const Entity& a, const Entity& b)
         return {(b.point - a.point).length(), a.point, b.point, "exact"};
     try {
         if (pointA && b.exact) {
-            const auto d = geometry::distance(a.point, *b.part->shape, b.sub);
+            const auto d = geometry::distance(a.point, *b.shape, b.sub);
             return {d.distance, d.pointA, d.pointB, "exact"};
         }
         if (pointB && a.exact) {
-            const auto d = geometry::distance(b.point, *a.part->shape, a.sub);
+            const auto d = geometry::distance(b.point, *a.shape, a.sub);
             return {d.distance, d.pointB, d.pointA, "exact"};
         }
         if (a.exact && b.exact) {
-            const auto d = geometry::distance(*a.part->shape, a.sub, *b.part->shape, b.sub);
+            const auto d = geometry::distance(*a.shape, a.sub, *b.shape, b.sub);
             return {d.distance, d.pointA, d.pointB, "exact"};
         }
     } catch (const geometry::ModelingError& err) {
@@ -350,8 +406,8 @@ Separation separation(CommandContext& ctx, const Entity& a, const Entity& b)
         const auto meshBvh = st.bvh(requireMeshPart(ctx.document, body.part->id).mesh);
         std::optional<core::SurfaceDistance> best; // pointA on the sub-shape, pointB on the mesh
         try {
-            const double step = std::max(sub.part->shape->bounds().diagonal() * 0.002, 1e-4);
-            for (const core::Vec3& p : geometry::subShapePoints(*sub.part->shape, sub.sub, step)) {
+            const double step = std::max(sub.shape->bounds().diagonal() * 0.002, 1e-4);
+            for (const core::Vec3& p : geometry::subShapePoints(*sub.shape, sub.sub, step)) {
                 const auto hit = meshBvh->closestPoint(p, best ? best->distance : std::numeric_limits<double>::infinity());
                 if (hit && (!best || hit->distance < best->distance))
                     best = core::SurfaceDistance{hit->distance, p, hit->point};
@@ -359,7 +415,7 @@ Separation separation(CommandContext& ctx, const Entity& a, const Entity& b)
             // Faces: also project the mesh vertices onto the face.
             if (sub.sub.kind == geometry::SubShape::Kind::Face) {
                 const core::MeshBvh faceBvh(std::make_shared<const core::TriangleMesh>(
-                    geometry::subShapeMesh(*sub.part->shape, sub.sub)));
+                    geometry::subShapeMesh(*sub.shape, sub.sub)));
                 for (const core::Vec3& v : body.part->mesh->vertices()) {
                     const auto hit = faceBvh.closestPoint(v, best ? best->distance : std::numeric_limits<double>::infinity());
                     if (hit && (!best || hit->distance < best->distance))
@@ -381,20 +437,53 @@ Separation separation(CommandContext& ctx, const Entity& a, const Entity& b)
     return {d->distance, d->pointA, d->pointB, "mesh"};
 }
 
+/// Wall thickness under a single selection: a face of a solid (exact) or a point on a
+/// closed mesh (STL / 3MF part). Open meshes such as scans have no thickness.
+std::optional<geometry::ShapeDistance> thicknessAt(CommandContext& ctx, const Entity& e)
+{
+    if (e.part == nullptr)
+        return std::nullopt;
+    if (e.exact && e.part->shape && e.sub.kind == geometry::SubShape::Kind::Face) {
+        try {
+            return geometry::wallThickness(*e.part->shape, e.sub, e.point);
+        } catch (const geometry::ModelingError&) {
+            return std::nullopt;
+        }
+    }
+    if (e.kind != "point" || e.part->shape || e.part->kind == model::PartKind::Sketch || !e.part->mesh ||
+        e.part->mesh->isEmpty())
+        return std::nullopt;
+    InspectState& st = state(ctx);
+    if (!st.closedMesh(e.part->mesh))
+        return std::nullopt;
+    const auto bvh = st.bvh(e.part->mesh);
+    const auto at = bvh->closestPoint(e.point);
+    if (!at)
+        return std::nullopt;
+    const core::Vec3 inward = e.part->mesh->faceNormal(at->triangle) * -1.0;
+    if (inward.length() == 0.0)
+        return std::nullopt;
+    const double eps = std::max(e.part->mesh->bounds().diagonal() * 1e-7, 1e-9);
+    const auto hit = bvh->raycast(at->point + inward * eps, inward);
+    if (!hit)
+        return std::nullopt;
+    return geometry::ShapeDistance{hit->t + eps, at->point, hit->point};
+}
+
 double angleDegrees(const core::Vec3& a, const core::Vec3& b)
 {
     const double c = std::clamp(a.normalized().dot(b.normalized()), -1.0, 1.0);
     return std::acos(c) * 180.0 / std::numbers::pi;
 }
 
-/// Angle between two planar faces / straight edges (Fusion Measure: angle between the
-/// selections), or std::nullopt.
+/// Angle between two planar faces / straight edges / axes of round faces and circles
+/// (Fusion Measure: angle between the selections), or std::nullopt.
 std::optional<double> entityAngle(const Entity& a, const Entity& b)
 {
     if (!a.exact || !b.exact)
         return std::nullopt;
-    const auto da = geometry::subShapeDirection(*a.part->shape, a.sub);
-    const auto db = geometry::subShapeDirection(*b.part->shape, b.sub);
+    const auto da = geometry::subShapeDirection(*a.shape, a.sub);
+    const auto db = geometry::subShapeDirection(*b.shape, b.sub);
     if (!da || !db)
         return std::nullopt;
     const double theta = angleDegrees(da->vector, db->vector);
@@ -411,10 +500,12 @@ Json measureClearance(CommandContext& ctx, const model::Part& a, const model::Pa
     ea.kind = "body";
     ea.part = &a;
     ea.exact = a.shape && !a.shape->isNull();
+    ea.shape = ea.exact ? &*a.shape : nullptr;
     Entity eb;
     eb.kind = "body";
     eb.part = &b;
     eb.exact = b.shape && !b.shape->isNull();
+    eb.shape = eb.exact ? &*b.shape : nullptr;
     if (!ea.exact)
         requireMeshPart(ctx.document, a.id);
     if (!eb.exact)
@@ -586,16 +677,23 @@ void registerMeasure(CommandRegistry& r)
 {
     r.add({"inspect.measure", "Measure",
            "Measures one or two selections like Fusion's Inspect > Measure: with one selection its "
-           "properties (position, length, area, radius, volume); with two the minimum distance, the closest "
-           "points, the X/Y/Z deltas and, for planar faces / straight edges, the angle in degrees. Exact on "
-           "B-rep parts; on meshes (scans) distances are to the triangle surface.",
+           "properties (position, length, area, radius, volume) and, on a face of a solid or a point of a "
+           "closed mesh, the wall thickness there (thickness: value, pointA on the surface, pointB on the "
+           "opposite wall); with two the minimum distance, the closest points, the X/Y/Z deltas and, for "
+           "planar faces, straight edges and the axes of round faces and circles, the angle in degrees. "
+           "Exact on B-rep parts and sketch curves; on meshes (scans) distances are to the triangle surface.",
            objectSchema({{"a", entitySchema("First selection.")}, {"b", entitySchema("Second selection (optional).")}},
                         {"a"})},
           [](CommandContext& ctx, const Json& params) {
               const Entity a = resolveEntity(ctx, params["a"], "a");
               Json out{{"a", entityToJson(a)}};
-              if (!params.contains("b"))
+              if (!params.contains("b")) {
+                  if (const auto t = thicknessAt(ctx, a))
+                      out["thickness"] = Json{{"value", round9(t->distance)},
+                                              {"pointA", vec(t->pointA)},
+                                              {"pointB", vec(t->pointB)}};
                   return out;
+              }
               const Entity b = resolveEntity(ctx, params["b"], "b");
               out["b"] = entityToJson(b);
               const Separation s = separation(ctx, a, b);

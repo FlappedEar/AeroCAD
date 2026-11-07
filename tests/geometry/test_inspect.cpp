@@ -1,10 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "aerocad/geometry/Inspect.hpp"
+#include "aerocad/geometry/Modeling.hpp"
 #include "aerocad/geometry/Primitives.hpp"
 #include "aerocad/geometry/Tessellation.hpp"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+
+#include <cmath>
+#include <numbers>
+#include <vector>
 
 using namespace aerocad;
 using Catch::Approx;
@@ -65,4 +70,31 @@ TEST_CASE("Mesh distances are refined on the exact faces up and down", "[geometr
     CHECK(values[1] == Approx(2.0).margin(1e-6));
     CHECK(values[2] == Approx(-0.5).margin(1e-6));
     CHECK(values[3] == 0.01);
+}
+
+TEST_CASE("Drawn sketch lines become one edge per smooth stretch", "[geometry][inspect]")
+{
+    // A quarter circle of radius 10 in 30 segments, then a sharp turn into a 5 mm line.
+    std::vector<core::Vec3> segs;
+    core::Vec3 prev{10, 0, 0};
+    for (int i = 1; i <= 30; ++i) {
+        const double a = (std::numbers::pi / 2.0) * i / 30.0;
+        const core::Vec3 p{10 * std::cos(a), 10 * std::sin(a), 0};
+        segs.push_back(prev);
+        segs.push_back(p);
+        prev = p;
+    }
+    segs.push_back(prev);
+    segs.push_back(prev + core::Vec3{0, -5, 0});
+    const geometry::Shape shape = geometry::polylineEdges(segs);
+    const auto all = geometry::edges(shape);
+    REQUIRE(all.size() == 2);
+    double arc = 0.0;
+    double line = 0.0;
+    for (const auto& e : all)
+        (e.length > 6 ? arc : line) = e.length;
+    CHECK(arc == Approx(10 * std::numbers::pi / 2).epsilon(0.01));
+    CHECK(line == Approx(5));
+    CHECK(geometry::distance(core::Vec3{0, 0, 0}, shape, {}).distance == Approx(std::hypot(0.0, 5.0)).epsilon(0.02));
+    CHECK_THROWS(geometry::polylineEdges({}));
 }
