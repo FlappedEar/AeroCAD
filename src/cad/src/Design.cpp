@@ -131,7 +131,7 @@ const std::vector<std::string>& Design::featureTypes()
     static const std::vector<std::string> types{"sketch", "extrude", "revolve", "fillet", "chamfer",
                                                 "shell",  "combine", "box",     "cylinder", "base_body", "hole",
                                                 "mirror",  "rectangular_pattern", "circular_pattern", "loft", "sweep", "plane",
-                                                "part_on_surface", "fin_on_surface"};
+                                                "part_on_surface", "fin_on_surface", "move"};
     return types;
 }
 
@@ -975,6 +975,35 @@ void Design::evaluateFeature(const Feature& f)
             m_bodies.erase(targetId);
         else
             m_bodies.at(targetId).shape = result;
+    } else if (f.type == "move") {
+        // Fusion: Modify > Move/Copy (M). Rotates the body about an axis through `center`
+        // (default: the centre of its bounding box), then translates it.
+        Body& body = bodyRef(required(p, "body"));
+        core::Affine tf;
+        const double angle = ev.num(p, "angle", 0.0);
+        if (std::abs(angle) > 1e-12) {
+            core::Vec3 axis{0, 0, 1};
+            const Json a = p.value("axis", Json("Z"));
+            if (a.is_string()) {
+                const std::string n = lower(a.get<std::string>());
+                if (n == "x")
+                    axis = {1, 0, 0};
+                else if (n == "y")
+                    axis = {0, 1, 0};
+                else if (n != "z")
+                    throw DesignError("Unknown axis '" + a.get<std::string>() + "' (X, Y, Z or [x, y, z])");
+            } else {
+                axis = ev.vec3(a);
+            }
+            if (axis.length() < 1e-12)
+                throw DesignError("Rotation axis is zero");
+            const core::Vec3 c = has(p, "center") ? ev.vec3(p.at("center")) : body.shape.bounds().center();
+            const core::Mat3 rot = core::Mat3::rotation(axis.normalized(), angle * std::numbers::pi / 180.0);
+            tf = core::Affine{rot, c - rot * c};
+        }
+        if (has(p, "translate"))
+            tf = core::Affine::translationBy(ev.vec3(p.at("translate"))).after(tf);
+        body.shape = geometry::transformed(body.shape, tf);
     } else if (f.type == "mirror" || f.type == "rectangular_pattern" || f.type == "circular_pattern") {
         // Fusion: Mirror, Rectangular Pattern, Circular Pattern of a body. "join" (default)
         // merges the copies into the body, "new_body" makes one new body of the copies.

@@ -50,10 +50,24 @@ Clicking another tab while a sketch is edited finishes the sketch.
 
 | Action | Mouse | Touchpad / Magic Mouse |
 |---|---|---|
-| Pan | Middle drag | Two-finger swipe |
-| Orbit | Shift + middle drag | Shift + two-finger swipe |
-| Zoom | Wheel | Pinch |
+| Orbit | Shift + middle drag, or right drag | Shift + two-finger swipe |
+| Pan | Middle drag, or Shift + right drag | Ctrl (⌘) + two-finger swipe |
+| Zoom | Wheel | Two-finger swipe up/down, or pinch |
 | Select | Left click | Click |
+| Context menu | Right click (without dragging) | Two-finger click |
+
+Zoom moves towards the point under the pointer and keeps it there, so the wheel brings in
+whatever you point at. Dragging to orbit turns the view around the point of the model under
+the pointer when the drag starts (around the view centre when it starts next to the model).
+
+Right drag is not in Fusion's default scheme: it is there for mice without a middle button
+(Magic Mouse, most Mac mice) and for touchpads. A right click that does not move still opens
+the context menu, as in Rhino and Onshape.
+
+On macOS every mouse wheel also reports a pixel delta; only devices that macOS marks as
+smooth-scrolling (trackpads, Magic Mouse) count as a touchpad, so a mouse wheel always
+zooms. **Edit › Preferences › "Two-finger scroll on a touchpad pans"** makes the touchpad
+swipe pan instead (pinch and Ctrl + swipe then zoom).
 
 The left button is reserved for selection. The navigation bar's **Orbit**, **Pan** and **Zoom**
 tools temporarily map left drag to that navigation (useful without a middle button); click the
@@ -73,7 +87,26 @@ On macOS, Ctrl here is the Command key (Qt's mapping). "Reverse zoom direction" 
 wheel and drag zoom; "Reverse orbit direction" flips orbiting. By default the model follows
 the pointer or the fingers, the same way for the mouse and the touchpad.
 
-Not implemented yet: Fusion's "orbit around point" (Shift + click + middle drag).
+## Right-click menu
+
+The menu lists only what can be done with what is under the pointer:
+
+- **On a part**: its type and name, the recommended next step (★, the same as in the
+  guide), the other steps that can be done now (at most five, the rest under **More**),
+  then **Move / Rotate…** (M), **Zoom to this**, **Hide** / **Show** (V) and **Delete** (Del).
+  Disabled actions are left out; the guide in Properties says why something is not possible
+  yet.
+- **On empty space**: **Fit All** (F6), **Home View**, **Orthographic** / **Perspective**,
+  **Show All Parts** when something is hidden, **Undo** / **Redo**, **Import** and
+  **New sketch**.
+
+## Move / Rotate
+
+**Move/Rotate** (SOLID › MODIFY, MESH › PREPARE, right-click menu, key M as in Fusion's
+Move/Copy) turns the selected part about the X, Y or Z axis through its centre and moves it
+by a distance. On a body it is a timeline step (`feature.move`) that can be edited later; on
+a scan, surface or imported solid it changes the part directly (`part.transform`). Undo
+reverts either.
 
 ## Preferences
 

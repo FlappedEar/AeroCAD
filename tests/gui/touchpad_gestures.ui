@@ -1,0 +1,23 @@
+# Touchpad gestures from a fresh start, as macOS sends them (begin / update / end):
+# a gesture that starts sideways must still pan or orbit (a WheelHandler only takes
+# events along its orientation until it is active), and a diagonal swipe is applied once.
+# Run: AeroCAD tests/data/box_200x80x60.stl --ui-script <this file>
+Qt.createQmlObject('import QtQuick; Item { objectName: "padTest"; visible: false; property var s: ({}); function at() { const p = viewport.mapToItem(null, viewport.width / 2 + 20, viewport.height / 2 + 10); return Qt.point(p.x, p.y) } function cam() { return viewport.cameraState() } function wpp() { return 2 * cam().distance * Math.tan(20 * Math.PI / 180) / viewport.height } function moved(a, b) { return Math.hypot(a.pivot[0] - b.pivot[0], a.pivot[1] - b.pivot[1], a.pivot[2] - b.pivot[2]) } function gesture(dx, dy, mods, steps) { const p = at(); ui.wheel(p.x, p.y, dx, dy, mods, "begin"); for (let i = 1; i < steps; ++i) ui.wheel(p.x, p.y, dx, dy, mods, "update"); ui.wheel(p.x, p.y, 0, 0, mods, "end") } function check(name, before, wantPan, wantYaw, wantDistance) { const a = cam(); const pan = moved(a, before); const w = wpp(); ui.log(name + ": pan " + pan.toFixed(3) + " mm (want " + (wantPan === null ? "any" : (wantPan * w).toFixed(3)) + "), yaw " + before.yaw.toFixed(2) + " -> " + a.yaw.toFixed(2) + ", distance " + before.distance.toFixed(2) + " -> " + a.distance.toFixed(2)); if (wantPan !== null && Math.abs(pan - wantPan * w) > Math.max(0.05 * wantPan * w, 1e-3)) ui.fail(name + ": panned " + pan + " mm, want " + wantPan * w); if (Math.abs((a.yaw - before.yaw) - wantYaw) > 0.01) ui.fail(name + ": yaw changed by " + (a.yaw - before.yaw) + ", want " + wantYaw); if (wantDistance === "same" && Math.abs(a.distance - before.distance) > 1e-6) ui.fail(name + ": zoomed"); if (wantDistance === "closer" && !(a.distance < before.distance * 0.99)) ui.fail(name + ": did not zoom in") } }', window.contentItem)
+ui.wait(800)
+viewport.fitAll()
+ui.wait(300)
+# 1. Scroll set to pan: a sideways swipe from a fresh start pans by the finger distance.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "padTest"); t.s.pref = Preferences.touchpadScrollPans; Preferences.touchpadScrollPans = true; const b = t.cam(); t.gesture(25, 0, "", 2); t.check("sideways pan", b, 50, 0, "same") })()
+ui.wait(300)
+# 2. Scroll set to zoom: Ctrl + sideways swipe pans.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "padTest"); Preferences.touchpadScrollPans = false; const b = t.cam(); t.gesture(30, 0, "ctrl", 1); t.check("ctrl sideways pan", b, 30, 0, "same") })()
+ui.wait(300)
+# 3. Shift + sideways swipe orbits (0.3 degrees per pixel; the model follows the fingers).
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "padTest"); const b = t.cam(); t.gesture(30, 0, "shift", 1); t.check("shift sideways orbit", b, 0, -9, "same") })()
+ui.wait(300)
+# 4. A diagonal swipe is applied once, not by both handlers.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "padTest"); Preferences.touchpadScrollPans = true; const b = t.cam(); t.gesture(20, 20, "", 1); t.check("diagonal pan", b, Math.hypot(20, 20), 0, "same") })()
+ui.wait(300)
+# 5. A sideways gesture followed by a vertical one (scroll = zoom) still zooms once.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "padTest"); Preferences.touchpadScrollPans = false; t.gesture(0, 0, "", 1); const b = t.cam(); t.gesture(0, 30, "", 1); t.check("vertical zoom", b, null, 0, "closer") })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "padTest"); Preferences.touchpadScrollPans = t.s.pref })()
