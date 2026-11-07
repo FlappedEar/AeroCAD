@@ -17,6 +17,9 @@ Units are millimetres and degrees, model space is Z-up.
 | `inspect.section {...}` | Section view: cuts the parts with a plane, caps the cut and reports section curves and areas per part. |
 | `inspect.deviation {measured, reference, ...}` | Colours `measured` (e.g. a scan) by its signed distance to `reference` (e.g. the CAD body). |
 | `inspect.thickness {id, ...}` | Colours a part by wall thickness. |
+| `inspect.add_dimension {a, b?, show?}` | Keeps a measurement in the view as a dimension (saved with the project). |
+| `inspect.dimensions` | The kept dimensions, each measured now. |
+| `inspect.remove_dimension {id \| all}` | Removes one or all kept dimensions. |
 | `inspect.state` | The active section and heat map. |
 | `inspect.clear {what?}` | Turns off the section and/or the heat map. |
 
@@ -48,6 +51,17 @@ on the opposite wall) when the selection is a face of a solid (exact: from the p
 onto the face, straight in against its normal, to the first other wall) or a point on a closed
 mesh (an STL or 3MF part; along the triangle's inward normal). Open meshes such as scans have
 no thickness.
+
+### Kept dimensions
+
+`inspect.add_dimension` stores the selections (as for `inspect.measure`) and what to show:
+`distance` or `angle` for two selections, `thickness`, `radius` or `length` for one (default
+distance with two, thickness with one). It fails when the selections do not give that value.
+An `auto` pick is stored as the kind it resolved to (vertex, edge or face), so the dimension
+stays on that kind of element. Dimensions are measured again whenever they are listed: after an
+edit each selection is the element of that kind nearest its stored point, so a dimension
+follows a changed size; one whose part is gone reports `error` instead of a value. They are
+saved in the project file (in the view object, `view.dimensions`) and cleared by `project.new`.
 
 ### Section analysis
 
@@ -120,7 +134,11 @@ thinAreaPercent, limit}`.
 
 - **Measure** (Inspect menu, toolbar, key **I**): a panel like Fusion's. Click a first and a
   second selection; a third click starts over. One face shows its wall thickness under the click,
-  drawn across the wall. Sketch lines and circles can be clicked too (within the pick radius). *Selection filter*: Face / Edge / Vertex (picks
+  drawn across the wall. Sketch lines and circles can be clicked too (within the pick radius).
+  **Keep in view** keeps the result as a blue dimension that stays in the view after the panel
+  closes (distance for two selections; thickness, radius or length for one; **Keep angle** for
+  the angle) and updates when the model changes. The panel lists the kept dimensions under
+  *In the view*, with a button to remove each one or all. *Selection filter*: Face / Edge / Vertex (picks
   within ~8 px of a vertex or edge, otherwise the face), Body (clearance between parts, with
   interference for B-rep solids) or Point. The closest points are joined by a dashed line with
   the distance. *Precision* sets the decimals.

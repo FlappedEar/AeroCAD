@@ -51,6 +51,20 @@ struct HeatMap {
     nlohmann::json params;
 };
 
+/// A measurement kept in the view (Measure > Keep): the selections as inspect.measure takes
+/// them, measured again whenever it is shown, so it follows edits. Saved with the project.
+struct Dimension {
+    std::uint64_t id = 0;
+    nlohmann::json a;                ///< First selection.
+    nlohmann::json b;                ///< Second selection, null for one.
+    std::string show = "distance";   ///< distance, angle, thickness, radius, length
+};
+
+/// Kept dimensions as stored in a project file (view.dimensions) and back; entries that
+/// cannot be read are skipped.
+[[nodiscard]] nlohmann::json dimensionsToJson(const std::vector<Dimension>& dimensions);
+[[nodiscard]] std::vector<Dimension> dimensionsFromJson(const nlohmann::json& list);
+
 class InspectState {
 public:
     using Listener = std::function<void()>;
@@ -61,6 +75,12 @@ public:
     void setSection(SectionAnalysis section);
     void setHeatMap(HeatMap map);
     void clear();
+
+    [[nodiscard]] const std::vector<Dimension>& dimensions() const { return m_dimensions; }
+    /// Adds a dimension and returns its id (dimension.id is ignored).
+    std::uint64_t addDimension(Dimension dimension);
+    bool removeDimension(std::uint64_t id);
+    void setDimensions(std::vector<Dimension> dimensions);
 
     /// Called after every change.
     void setListener(Listener listener) { m_listener = std::move(listener); }
@@ -83,6 +103,8 @@ private:
 
     SectionAnalysis m_section;
     HeatMap m_heatMap;
+    std::vector<Dimension> m_dimensions;
+    std::uint64_t m_nextDimension = 1;
     std::uint64_t m_revision = 0;
     Listener m_listener;
     std::vector<std::shared_ptr<const core::MeshBvh>> m_bvhCache;

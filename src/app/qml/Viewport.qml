@@ -844,7 +844,7 @@ Item {
         }
     }
 
-    /// Measurement lines: [{a: [x, y, z], b: [x, y, z], label: string}] in model space.
+    /// Measurement lines: [{a: [x, y, z], b: [x, y, z], label: string, color?}] in model space.
     property var overlayLines: []
     /// Pick radius for vertices and edges at the current zoom (mm), ~8 px.
     function pickTolerance() {
@@ -861,7 +861,8 @@ Item {
             return root.overlayLines.map(l => ({
                 a: root.viewPoint(Qt.vector3d(l.a[0], l.a[1], l.a[2])),
                 b: root.viewPoint(Qt.vector3d(l.b[0], l.b[1], l.b[2])),
-                label: l.label || ""
+                label: l.label || "",
+                color: l.color || "#ff8a00"
             }))
         }
         onProjectedChanged: requestPaint()
@@ -869,7 +870,7 @@ Item {
             const ctx = getContext("2d")
             ctx.reset()
             for (const l of projected) {
-                ctx.strokeStyle = "#ff8a00"
+                ctx.strokeStyle = l.color
                 ctx.lineWidth = 2
                 ctx.setLineDash([6, 4])
                 ctx.beginPath()
@@ -878,7 +879,7 @@ Item {
                 ctx.stroke()
                 ctx.setLineDash([])
                 for (const p of [l.a, l.b]) {
-                    ctx.fillStyle = "#ff8a00"
+                    ctx.fillStyle = l.color
                     ctx.beginPath()
                     ctx.arc(p.x, p.y, 4.5, 0, 2 * Math.PI)
                     ctx.fill()
@@ -889,7 +890,7 @@ Item {
                     ctx.font = "bold 13px sans-serif"
                     const w = ctx.measureText(l.label).width + 12
                     ctx.fillStyle = "rgba(255, 255, 255, 0.92)"
-                    ctx.strokeStyle = "#ff8a00"
+                    ctx.strokeStyle = l.color
                     ctx.lineWidth = 1
                     ctx.fillRect(mx - w / 2, my - 22, w, 20)
                     ctx.strokeRect(mx - w / 2, my - 22, w, 20)
