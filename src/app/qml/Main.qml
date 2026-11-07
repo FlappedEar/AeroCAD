@@ -236,8 +236,7 @@ ApplicationWindow {
 
     /// Opens a feature dialog, pre-filled from the selection (Fusion: select, then press E).
     function openFeature(type) {
-        closeInspectPanels()
-        scanPanel.close()
+        closeToolPanels()
         const initial = {}
         const info = selectedInfo()
         if (activeSketch) {
@@ -606,6 +605,7 @@ ApplicationWindow {
                 scanPanel.close()
             } else {
                 featureDialog.close()
+                closeToolPanels()
                 scanPanel.open()
             }
         }
@@ -631,9 +631,11 @@ ApplicationWindow {
     Action { id: slotAction; text: qsTr("Sl&ot"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "slot"; onTriggered: window.sketchTool_("slot") }
 
     // Inspect (Fusion: I = Measure).
-    function closeInspectPanels() {
+    /// Closes the panels that share the top-left corner of the view (Measure, heat maps, Scan Tools).
+    function closeToolPanels() {
         measurePanel.close()
         heatMapPanel.close()
+        scanPanel.close()
     }
     Action {
         id: measureAction
@@ -642,6 +644,7 @@ ApplicationWindow {
         onTriggered: {
             featureDialog.close()
             heatMapPanel.close()
+            scanPanel.close()
             measurePanel.open("auto")
         }
     }
@@ -651,6 +654,7 @@ ApplicationWindow {
         onTriggered: {
             featureDialog.close()
             heatMapPanel.close()
+            scanPanel.close()
             measurePanel.open("body")
         }
     }
@@ -672,6 +676,7 @@ ApplicationWindow {
         text: qsTr("&Deviation Map (Scan vs Part)")
         onTriggered: {
             measurePanel.close()
+            scanPanel.close()
             heatMapPanel.open("deviation", window.selectedPartId)
         }
     }
@@ -680,6 +685,7 @@ ApplicationWindow {
         text: qsTr("&Thickness Map")
         onTriggered: {
             measurePanel.close()
+            scanPanel.close()
             heatMapPanel.open("thickness", window.selectedPartId)
         }
     }
@@ -1154,7 +1160,8 @@ ApplicationWindow {
             selectedPartId: window.selectedPartId
             sketch: window.activeSketch
             sketchTool: window.sketchTool
-            selectionToolsEnabled: !featureDialog.visible && !window.pickingSketchPlane && !scanPanel.pickMode && !measurePanel.active
+            selectionToolsEnabled: !featureDialog.visible && !window.pickingSketchPlane && !measurePanel.active
+                                   && !scanPanel.pickMode
             snapToNearestSurface: window.pickingSketchPlane
             property bool snappedClick: false
             onSnappedToNearestSurface: snappedClick = true
@@ -1258,32 +1265,6 @@ ApplicationWindow {
                 controller: window.controller
             }
 
-            ScanPanel {
-                id: scanPanel
-                anchors.left: parent.left
-                anchors.top: parent.top
-                anchors.margins: 8
-                controller: window.controller
-                scan: window.scan
-                partId: window.selectedPartId
-            }
-
-            // Import progress (files are parsed in the background).
-            Pane {
-                anchors.horizontalCenter: parent.horizontalCenter
-                anchors.bottom: parent.bottom
-                anchors.bottomMargin: 56
-                visible: window.scan.busy
-                padding: 10
-                RowLayout {
-                    spacing: 10
-                    Label { text: window.scan.progressText }
-                    ProgressBar { from: 0; to: 1; value: window.scan.progress; Layout.preferredWidth: 220 }
-                    Label { text: Math.round(window.scan.progress * 100) + " %" }
-                    Button { text: qsTr("Cancel"); onClicked: window.scan.cancelImport() }
-                }
-            }
-
             MeasurePanel {
                 id: measurePanel
                 anchors.left: parent.left
@@ -1312,6 +1293,32 @@ ApplicationWindow {
                 anchors.bottom: parent.bottom
                 anchors.margins: 8
                 controller: window.controller
+            }
+
+            ScanPanel {
+                id: scanPanel
+                anchors.left: parent.left
+                anchors.top: parent.top
+                anchors.margins: 8
+                controller: window.controller
+                scan: window.scan
+                partId: window.selectedPartId
+            }
+
+            // Import progress (files are parsed in the background).
+            Pane {
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: 56
+                visible: window.scan.busy
+                padding: 10
+                RowLayout {
+                    spacing: 10
+                    Label { text: window.scan.progressText }
+                    ProgressBar { from: 0; to: 1; value: window.scan.progress; Layout.preferredWidth: 220 }
+                    Label { text: Math.round(window.scan.progress * 100) + " %" }
+                    Button { text: qsTr("Cancel"); onClicked: window.scan.cancelImport() }
+                }
             }
 
             // Create Sketch: pick a plane or a planar face (Fusion shows the origin planes).
