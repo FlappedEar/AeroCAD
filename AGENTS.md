@@ -7,6 +7,7 @@ working agreement in Confluence:
 
 - Task queue: Jira CAD board; audit findings under epic CAD-76.
 - Code and cross-review: GitHub pull requests in this repository, Jira key in the PR title.
-- Done = merged, green CI, unit tests, tested in the real GUI, verified by the other agent.
+- Done = merged, green CI, unit tests, tested in the real GUI (behaviour changes), verified by
+  the other agent on the current PR head.
 - Code, comments, docs, Jira, Confluence and PRs in English.
 - Build, test and coding rules: [CONTRIBUTING.md](CONTRIBUTING.md), [docs/building.md](docs/building.md).
