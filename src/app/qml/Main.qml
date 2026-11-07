@@ -726,6 +726,41 @@ ApplicationWindow {
     Action { id: fixAction; text: qsTr("Fix/Unfix"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "fix"; onTriggered: window.sketchTool_("fix") }
     Action { id: slotAction; text: qsTr("Sl&ot"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "slot"; onTriggered: window.sketchTool_("slot") }
 
+    // Scan area selection tools (shortcuts 1/2/3 are in Viewport.qml).
+    Action {
+        id: regionToolAction
+        text: qsTr("Select &Area")
+        enabled: viewport.selectionToolsAvailable
+        checkable: true
+        checked: viewport.tool === "region"
+        onTriggered: {
+            viewport.tool = viewport.tool === "region" ? "navigate" : "region"
+            checked = Qt.binding(() => viewport.tool === "region")
+        }
+    }
+    Action {
+        id: lassoToolAction
+        text: qsTr("&Lasso Selection")
+        enabled: viewport.selectionToolsAvailable
+        checkable: true
+        checked: viewport.tool === "lasso"
+        onTriggered: {
+            viewport.tool = viewport.tool === "lasso" ? "navigate" : "lasso"
+            checked = Qt.binding(() => viewport.tool === "lasso")
+        }
+    }
+    Action {
+        id: brushToolAction
+        text: qsTr("&Paint Selection")
+        enabled: viewport.selectionToolsAvailable
+        checkable: true
+        checked: viewport.tool === "brush"
+        onTriggered: {
+            viewport.tool = viewport.tool === "brush" ? "navigate" : "brush"
+            checked = Qt.binding(() => viewport.tool === "brush")
+        }
+    }
+
     // Inspect (Fusion: I = Measure).
     /// Closes the panels that share the top-left corner of the view (Measure, heat maps, Scan Tools).
     function closeToolPanels() {
@@ -1028,6 +1063,21 @@ ApplicationWindow {
 
     component ToolGroup: RibbonGroup {}
     component ToolCommand: RibbonButton {}
+    /// A ribbon command for a guided action (ContextActions.qml) on the selected part, the
+    /// same one the context bar and the right-click menu offer: enabled when the action is
+    /// offered for the selection, and values it needs are asked for in the action popup.
+    /// `needs` says what to select when the action is not offered.
+    component GuidedCommand: RibbonButton {
+        required property string actionId
+        property string needs: ""
+        readonly property var offered: window.selectionActions.find(a => a.id === actionId)
+        readonly property var act: offered ?? contextActions.action(actionId, window.selectionInfo)
+        iconName: act.icon ?? "tool"
+        enabled: !!offered && !!offered.enabled && !window.activeSketch
+        help: (!offered ? needs : !offered.enabled ? (offered.reason ?? "") : "")
+              + (act.tip ? (!offered || !offered.enabled ? "\n" : "") + act.tip : "")
+        onClicked: actionPopup.request(act, window.selectionInfo, this)
+    }
     component ToolSeparator: Rectangle {
         property string tab: "solid"
         visible: !parent || parent.currentTab === undefined || parent.currentTab === tab
@@ -1037,6 +1087,14 @@ ApplicationWindow {
         implicitWidth: 1
         color: Theme.separator
     }
+
+    /// The selected part (controller.partInfo) and what can be done with it
+    /// (ContextActions.actions), shared by the context bar and the ribbon's guided commands.
+    readonly property var selectionInfo: {
+        void contextActions.revision
+        return window.selectedPartId ? window.controller.partInfo(window.selectedPartId) : ({})
+    }
+    readonly property var selectionActions: window.selectedPartId ? contextActions.actions(window.selectionInfo) : []
 
     /// Ribbon tab the user picked; the SKETCH tab shows while a sketch is edited.
     property string ribbonTab: "solid"
@@ -1057,6 +1115,11 @@ ApplicationWindow {
             Repeater {
                 model: [
                     { tab: "solid", text: qsTr("SOLID") },
+                    { tab: "surface", text: qsTr("SURFACE") },
+                    { tab: "mesh", text: qsTr("MESH") },
+                    { tab: "inspect", text: qsTr("INSPECT") },
+                    { tab: "simulate", text: qsTr("SIMULATE") },
+                    { tab: "tools", text: qsTr("TOOLS") },
                     { tab: "sketch", text: qsTr("SKETCH") }
                 ]
                 delegate: RibbonTab {
@@ -1119,6 +1182,7 @@ ApplicationWindow {
             height: implicitHeight
             spacing: Theme.space1
 
+            // SOLID tab: parametric modelling in the timeline.
             ToolGroup {
                 caption: qsTr("CREATE")
                 maxVisible: 6
@@ -1133,7 +1197,6 @@ ApplicationWindow {
                 ToolCommand { action: mirrorAction; text: qsTr("Mirror"); iconName: "mirror" }
                 ToolCommand { action: rectPatternAction; text: qsTr("Pattern"); iconName: "pattern" }
                 ToolCommand { action: circPatternAction; text: qsTr("Circular Pattern"); iconName: "circular-pattern" }
-                ToolCommand { action: planeAction; text: qsTr("Plane"); iconName: "plane" }
             }
             ToolSeparator {}
             ToolGroup {
@@ -1149,10 +1212,14 @@ ApplicationWindow {
             }
             ToolSeparator {}
             ToolGroup {
+                caption: qsTr("CONSTRUCT")
+                ToolCommand { action: planeAction; text: qsTr("Plane"); iconName: "plane" }
+            }
+            ToolSeparator {}
+            ToolGroup {
                 caption: qsTr("INSERT")
                 ToolCommand { action: importAction; text: qsTr("Import"); iconName: "import" }
-                ToolCommand { action: convertAction; text: qsTr("To Body"); iconName: "mesh-to-body" }
-                ToolCommand { action: scanToolsAction; text: qsTr("Scan"); iconName: "mesh" }
+                GuidedCommand { actionId: "solidToBody"; text: qsTr("Make Editable"); needs: qsTr("Select a solid from a file or a fit first.") }
             }
             ToolSeparator {}
             ToolGroup {
@@ -1179,28 +1246,134 @@ ApplicationWindow {
                 ToolCommand { action: exportPrintAction; text: qsTr("For Printing"); iconName: "export" }
             }
 
-            ToolSeparator {}
+            // SURFACE tab: smooth (NURBS) surfaces fitted to a scan, and parts made on them.
             ToolGroup {
-                caption: qsTr("INSPECT")
+                tab: "surface"
+                caption: qsTr("CREATE")
+                GuidedCommand { actionId: "fitSurface"; text: qsTr("Fit Surface"); needs: qsTr("Select an area of a scan first (MESH tab, SELECT).") }
+                GuidedCommand { actionId: "fitWhole"; text: qsTr("Scan to Solid"); needs: qsTr("Select a scan first.") }
+                GuidedCommand { actionId: "offset"; text: qsTr("Offset"); needs: qsTr("Select a surface first.") }
+            }
+            ToolSeparator { tab: "surface" }
+            ToolGroup {
+                tab: "surface"
+                caption: qsTr("SKETCH")
+                GuidedCommand { actionId: "sketchOnSurface"; text: qsTr("Outline"); needs: qsTr("Select a surface first.") }
+                GuidedCommand { actionId: "sketchFin"; text: qsTr("Fin Sketch"); needs: qsTr("Select a scan or a surface first.") }
+            }
+            ToolSeparator { tab: "surface" }
+            ToolGroup {
+                tab: "surface"
+                caption: qsTr("MODIFY")
+                GuidedCommand { actionId: "trim"; text: qsTr("Cut Out"); needs: qsTr("Select a surface first.") }
+                GuidedCommand { actionId: "thicken"; text: qsTr("Thicken"); needs: qsTr("Select a surface first.") }
+                GuidedCommand { actionId: "cutWithThis"; text: qsTr("Cut to Shape"); needs: qsTr("Select a surface or a scan first.") }
+            }
+            ToolSeparator { tab: "surface" }
+            ToolGroup {
+                tab: "surface"
+                caption: qsTr("PART")
+                GuidedCommand { actionId: "partOnSurface"; text: qsTr("Part on Surface"); needs: qsTr("Select a sketch drawn on a surface or a scan first.") }
+                GuidedCommand { actionId: "finOnSurface"; text: qsTr("Fin"); needs: qsTr("Select a fin sketch (Fin Sketch) first.") }
+            }
+            ToolSeparator { tab: "surface" }
+            ToolGroup {
+                tab: "surface"
+                caption: qsTr("CHECK")
+                GuidedCommand { actionId: "fitDeviation"; text: qsTr("Fit Deviation"); needs: qsTr("Select a surface or solid fitted to a scan first.") }
+            }
+
+            // MESH tab: scans (triangle meshes): select, prepare, convert.
+            ToolGroup {
+                tab: "mesh"
+                caption: qsTr("INSERT")
+                ToolCommand { action: importAction; text: qsTr("Import"); iconName: "import" }
+                ToolCommand { action: scanToolsAction; text: qsTr("Scan Tools"); iconName: "mesh" }
+            }
+            ToolSeparator { tab: "mesh" }
+            ToolGroup {
+                tab: "mesh"
+                caption: qsTr("SELECT")
+                maxVisible: 6
+                ToolCommand { action: regionToolAction; text: qsTr("Area"); iconName: "select-click" }
+                ToolCommand { action: lassoToolAction; text: qsTr("Lasso"); iconName: "lasso" }
+                ToolCommand { action: brushToolAction; text: qsTr("Paint"); iconName: "brush" }
+                GuidedCommand { actionId: "growSelection"; text: qsTr("Grow"); needs: qsTr("Select an area of a scan first.") }
+                GuidedCommand { actionId: "shrinkSelection"; text: qsTr("Shrink"); needs: qsTr("Select an area of a scan first.") }
+                GuidedCommand { actionId: "clearSelection"; text: qsTr("Clear"); needs: qsTr("Nothing is selected.") }
+            }
+            ToolSeparator { tab: "mesh" }
+            ToolGroup {
+                tab: "mesh"
+                caption: qsTr("PREPARE")
+                GuidedCommand { actionId: "repair"; text: qsTr("Repair"); needs: qsTr("Select a scan first.") }
+                GuidedCommand { actionId: "simplify"; text: qsTr("Simplify"); needs: qsTr("Select a scan first.") }
+                GuidedCommand { actionId: "scale"; text: qsTr("Scale"); needs: qsTr("Select a part first.") }
+            }
+            ToolSeparator { tab: "mesh" }
+            ToolGroup {
+                tab: "mesh"
+                caption: qsTr("DESIGN ON SCAN")
+                GuidedCommand { actionId: "sketchOnScan"; text: qsTr("Sketch on Scan"); needs: qsTr("Select a scan first.") }
+                GuidedCommand { actionId: "sketchFin"; text: qsTr("Fin Sketch"); needs: qsTr("Select a scan or a surface first.") }
+            }
+            ToolSeparator { tab: "mesh" }
+            ToolGroup {
+                tab: "mesh"
+                caption: qsTr("CONVERT")
+                GuidedCommand { actionId: "fitSurface"; text: qsTr("Fit Surface"); needs: qsTr("Select an area of a scan first.") }
+                GuidedCommand { actionId: "fitWhole"; text: qsTr("Scan to Solid"); needs: qsTr("Select a scan first.") }
+                GuidedCommand { actionId: "toBody"; text: qsTr("To Body"); needs: qsTr("Select a scan or mesh first.") }
+            }
+            ToolSeparator { tab: "mesh" }
+            ToolGroup {
+                tab: "mesh"
+                caption: qsTr("EXPORT")
+                ToolCommand { action: exportSelectedAction; text: qsTr("Selected"); iconName: "export" }
+            }
+
+            // INSPECT tab.
+            ToolGroup {
+                tab: "inspect"
+                caption: qsTr("MEASURE")
                 ToolCommand { action: measureAction; text: qsTr("Measure"); iconName: "measure" }
                 ToolCommand { action: clearanceAction; text: qsTr("Clearance"); iconName: "clearance" }
+            }
+            ToolSeparator { tab: "inspect" }
+            ToolGroup {
+                tab: "inspect"
+                caption: qsTr("ANALYSIS")
                 ToolCommand { action: sectionAction; text: qsTr("Section"); iconName: "section" }
                 ToolCommand { action: deviationAction; text: qsTr("Deviation"); iconName: "deviation" }
                 ToolCommand { action: thicknessAction; text: qsTr("Thickness"); iconName: "thickness" }
+                GuidedCommand { actionId: "fitDeviation"; text: qsTr("Fit Deviation"); needs: qsTr("Select a surface or solid fitted to a scan first.") }
+                ToolCommand { action: clearAnalysesAction; text: qsTr("Clear"); iconName: "close" }
             }
-            ToolSeparator {}
+
+            // SIMULATE tab.
             ToolGroup {
+                tab: "simulate"
+                caption: qsTr("AERODYNAMICS")
+                ToolCommand { action: cfdAction; text: qsTr("Wind Tunnel"); iconName: "wind-tunnel" }
+            }
+
+            // TOOLS tab.
+            ToolGroup {
+                tab: "tools"
                 caption: qsTr("AI")
                 ToolCommand {
                     action: agentAccessAction
-                    text: window.controller.mcp.clients.length > 0 ? qsTr("Agent \u25CF")
-                          : window.controller.mcp.listening ? qsTr("Agent \u25CB") : qsTr("Agent")
+                    text: window.controller.mcp.clients.length > 0 ? qsTr("Agent ●")
+                          : window.controller.mcp.listening ? qsTr("Agent ○") : qsTr("Agent")
                 }
             }
-            ToolSeparator {}
+            ToolSeparator { tab: "tools" }
             ToolGroup {
-                caption: qsTr("SIMULATE")
-                ToolCommand { action: cfdAction; text: qsTr("CFD"); iconName: "wind-tunnel" }
+                tab: "tools"
+                caption: qsTr("UTILITIES")
+                ToolCommand { action: parametersAction; text: qsTr("Parameters"); iconName: "parameters" }
+                ToolCommand { action: shortcutsAction; text: qsTr("Shortcuts"); iconName: "keyboard" }
+                ToolCommand { action: preferencesAction; text: qsTr("Preferences"); iconName: "settings" }
             }
 
             // SKETCH tab (contextual, while a sketch is edited).
@@ -1365,7 +1538,7 @@ ApplicationWindow {
                          && !window.pickingSketchPlane
                 registry: contextActions
                 popup: actionPopup
-                info: { void contextActions.revision; return window.selectedPartId ? window.controller.partInfo(window.selectedPartId) : ({}) }
+                info: window.selectionInfo
             }
 
             StartCard {
