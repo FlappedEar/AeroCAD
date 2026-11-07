@@ -1172,6 +1172,16 @@ TEST_CASE("Part on surface is a timeline step: edit, follow the sketch, delete, 
     REQUIRE(session.execute("edit.undo").ok);
     CHECK(partVolume() == Approx(volume).epsilon(1e-6));
 
+    // A broken parameter the step does not use leaves it alone.
+    REQUIRE(session.execute("parameter.set", {{"name", "a"}, {"expression", "1"}}).ok);
+    REQUIRE(session.execute("parameter.set", {{"name", "b"}, {"expression", "a * 2"}}).ok);
+    REQUIRE(session.execute("parameter.remove", {{"name", "a"}}).ok);
+    CHECK(timeline().at("features").at(1).at("status") == "ok");
+    CHECK(partVolume() == Approx(volume).epsilon(1e-6));
+    REQUIRE(session.execute("edit.undo").ok);
+    REQUIRE(session.execute("edit.undo").ok);
+    REQUIRE(session.execute("edit.undo").ok);
+
     // The outline turned into construction geometry: same edges, no profile, so the step
     // is rebuilt and reports it instead of keeping the old part.
     {

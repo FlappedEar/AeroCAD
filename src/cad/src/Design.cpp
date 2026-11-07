@@ -1251,10 +1251,15 @@ void Design::evaluateExternal(const Feature& f, const FeatureEvaluator& ev)
     // The sketch it is built from: used (hidden like Fusion), and part of the cache key.
     std::string key = f.type + "\n" + f.params.dump() + "\n";
     for (const auto& prm : m_state.parameters) {
-        const auto v = parameterValue(prm.name);
+        // A parameter that cannot be evaluated (one it uses was removed) only fails the
+        // features that use it, not every step on a scan.
         char value[32] = "?";
-        if (v)
-            std::snprintf(value, sizeof value, "%.17g", *v); // round-trip precision
+        try {
+            if (const auto v = parameterValue(prm.name))
+                std::snprintf(value, sizeof value, "%.17g", *v); // round-trip precision
+        } catch (const std::exception&) {
+            std::snprintf(value, sizeof value, "invalid");
+        }
         key += prm.name + "=" + value + ";";
     }
     if (f.params.contains("sketch") && f.params.at("sketch").is_number_integer()) {
