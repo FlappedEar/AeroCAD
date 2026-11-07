@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
+add_subdirectory(buildinfo)
 add_subdirectory(core)
 add_subdirectory(geometry)
 add_subdirectory(io)

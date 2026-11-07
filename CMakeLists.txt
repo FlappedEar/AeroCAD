@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.24)
 
+# No version number: builds are identified by their build stamp (date, time, git hash),
+# see src/buildinfo.
 project(AeroCAD
-    VERSION 0.1.0
     DESCRIPTION "CAD application for designing parts on top of arbitrary 3D models"
     LANGUAGES C CXX)
 

@@ -2,6 +2,7 @@
 #include "AppController.hpp"
 #include "ScanController.hpp"
 #include "UiScript.hpp"
+#include "aerocad/BuildInfo.hpp"
 
 #include <QCommandLineParser>
 #include <QColor>
@@ -113,7 +114,7 @@ int main(int argc, char* argv[])
     QGuiApplication app(argc, argv);
     QGuiApplication::setApplicationName(QStringLiteral("AeroCAD"));
     QGuiApplication::setOrganizationName(QStringLiteral("FlappedEar"));
-    QGuiApplication::setApplicationVersion(QStringLiteral(AEROCAD_VERSION));
+    QGuiApplication::setApplicationVersion(QString::fromUtf8(aerocad::buildStamp()));
 
     QCommandLineParser parser;
     parser.setApplicationDescription(QStringLiteral("AeroCAD"));

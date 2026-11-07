@@ -4,6 +4,7 @@
 // JSON-RPC). Tool calls are forwarded to the running AeroCAD application over local IPC;
 // with --headless they run in an in-process document instead (no GUI, for scripting and
 // tests). stdout carries only protocol messages; diagnostics go to stderr.
+#include "aerocad/BuildInfo.hpp"
 #include "aerocad/mcp/IpcClient.hpp"
 #include "aerocad/mcp/IpcProtocol.hpp"
 #include "aerocad/mcp/McpServer.hpp"
@@ -20,7 +21,7 @@ int main(int argc, char* argv[])
 {
     QCoreApplication app(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("aerocad-mcp"));
-    QCoreApplication::setApplicationVersion(QStringLiteral(AEROCAD_VERSION));
+    QCoreApplication::setApplicationVersion(QString::fromUtf8(aerocad::buildStamp()));
 
     QCommandLineParser parser;
     parser.setApplicationDescription(
@@ -52,14 +53,14 @@ int main(int argc, char* argv[])
         const QString endpoint =
             parser.isSet(socket) ? parser.value(socket) : QString::fromStdString(aerocad::mcp::defaultIpcEndpoint());
         auto client = std::make_unique<aerocad::mcp::IpcClient>(
-            endpoint, QStringLiteral("MCP client (aerocad-mcp %1)").arg(QStringLiteral(AEROCAD_VERSION)));
+            endpoint, QStringLiteral("MCP client (aerocad-mcp %1)").arg(QString::fromUtf8(aerocad::buildStamp())));
         ipc = client.get();
         backend = std::move(client);
         std::fprintf(stderr, "aerocad-mcp: forwarding tool calls to AeroCAD at %s\n", qPrintable(endpoint));
     }
 
     aerocad::mcp::McpServer server(localSession.registry(), *backend,
-                                   {"aerocad", "AeroCAD", std::string(AEROCAD_VERSION)});
+                                   {"aerocad", "AeroCAD", std::string(aerocad::buildStamp())});
     std::string line;
     while (std::getline(std::cin, line)) {
         std::optional<std::string> response;
@@ -71,7 +72,7 @@ int main(int argc, char* argv[])
         }
         if (ipc != nullptr && !server.clientName().empty())
             ipc->setClientName(QStringLiteral("%1 (aerocad-mcp %2)")
-                                   .arg(QString::fromStdString(server.clientName()), QStringLiteral(AEROCAD_VERSION)));
+                                   .arg(QString::fromStdString(server.clientName()), QString::fromUtf8(aerocad::buildStamp())));
         if (response) {
             std::cout << *response << '\n';
             std::cout.flush();

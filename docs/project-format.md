@@ -21,7 +21,7 @@ Manifest (version 1):
 {
   "format": "aerocad.project",
   "version": 1,
-  "generator": "AeroCAD 0.1.0",
+  "generator": "AeroCAD 2026.11.07-0747 (1a2b3c4)",
   "savedAt": "2026-11-06T14:00:00Z",
   "units": "mm",
   "upAxis": "Z",
