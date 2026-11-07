@@ -90,6 +90,21 @@ open build/vcpkg-macos/bin/AeroCAD.app
   *Thicken to solid* (a closed solid of the given thickness, outside / inside / both
   sides of the surface). The fitted surface's normal points the way the mesh faces.
   *Convert to Body* turns the solid into a timeline body for sketches, fillets, combine.
+- **A part on the curved surface (aileron, flap, a mounting base):** after *Fit surface
+  to selection* a sketch on the new surface starts by itself (or: *Sketch*, then click the
+  scan or a fitted surface); the view turns to the clicked place. What you draw lies on the
+  surface; clicks land on the surface point under the cursor from any view, on scans of any
+  size. Draw the closed outline and click *Finish Sketch*: the *Part on surface* box offers
+  a thickness and a side (inward / outward / both); *Create* makes the solid. On a scan the
+  part follows the skin you see under the outline, bridging holes, with edges exactly on the
+  outline; no selection or fit is needed. (*Properties > Surface > Trim by sketch*
+  gives just the cut-out surface.)
+- **A fin on the surface (canard, dive plane, winglet):** *Sketch*, tick *Fin across the
+  surface* (optionally an angle), then click the scan where the fin stands. The sketch
+  stands across the surface; the orange line is where it cuts the surface. Draw the fin's
+  outline with its root a little past that line, click *Finish Sketch*, set the thickness
+  in *Fin on surface* and click *Create*: the root is cut to the surface, so the fin sits
+  flush on it.
 - **Undo / redo:** Cmd+Z / Cmd+Shift+Z (also for selection changes).
 
 ## Troubleshooting

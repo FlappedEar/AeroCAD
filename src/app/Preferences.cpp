@@ -3,7 +3,6 @@
 
 #include <QKeySequence>
 #include <QLocale>
-#include <QPalette>
 #include <QSettings>
 
 #include <algorithm>
@@ -18,6 +17,7 @@ const QString kUnitKey = QStringLiteral("display/lengthUnit");
 const QString kThemeKey = QStringLiteral("display/theme");
 const QString kMouseKey = QStringLiteral("navigation/mouseProfile");
 const QString kInvertZoomKey = QStringLiteral("navigation/invertZoom");
+const QString kInvertOrbitKey = QStringLiteral("navigation/invertOrbit");
 const QString kAutosaveKey = QStringLiteral("project/autosaveSeconds");
 
 const QString kDefaultUnit = QStringLiteral("mm");
@@ -37,67 +37,6 @@ bool contains(const QVariantList& options, const QString& value)
                        [&](const QVariant& o) { return o.toMap().value(QStringLiteral("value")).toString() == value; });
 }
 
-QPalette darkPalette()
-{
-    QPalette p;
-    const QColor window(0x2b, 0x2d, 0x30);
-    const QColor base(0x1f, 0x20, 0x23);
-    const QColor text(0xe6, 0xe6, 0xe6);
-    const QColor disabled(0x80, 0x80, 0x80);
-    const QColor highlight(0x2f, 0x7e, 0xd8);
-    p.setColor(QPalette::Window, window);
-    p.setColor(QPalette::WindowText, text);
-    p.setColor(QPalette::Base, base);
-    p.setColor(QPalette::AlternateBase, window);
-    p.setColor(QPalette::ToolTipBase, base);
-    p.setColor(QPalette::ToolTipText, text);
-    p.setColor(QPalette::PlaceholderText, disabled);
-    p.setColor(QPalette::Text, text);
-    p.setColor(QPalette::Button, QColor(0x3a, 0x3c, 0x40));
-    p.setColor(QPalette::ButtonText, text);
-    p.setColor(QPalette::BrightText, Qt::white);
-    p.setColor(QPalette::Light, QColor(0x4a, 0x4c, 0x50));
-    p.setColor(QPalette::Midlight, QColor(0x42, 0x44, 0x48));
-    p.setColor(QPalette::Mid, QColor(0x33, 0x35, 0x38));
-    p.setColor(QPalette::Dark, QColor(0x18, 0x19, 0x1b));
-    p.setColor(QPalette::Shadow, Qt::black);
-    p.setColor(QPalette::Highlight, highlight);
-    p.setColor(QPalette::HighlightedText, Qt::white);
-    p.setColor(QPalette::Link, highlight.lighter(130));
-    for (const auto role : {QPalette::WindowText, QPalette::Text, QPalette::ButtonText})
-        p.setColor(QPalette::Disabled, role, disabled);
-    return p;
-}
-
-QPalette lightPalette()
-{
-    QPalette p;
-    const QColor window(0xf0, 0xf0, 0xf0);
-    const QColor text(0x1d, 0x1d, 0x1f);
-    const QColor disabled(0x9a, 0x9a, 0x9a);
-    p.setColor(QPalette::Window, window);
-    p.setColor(QPalette::WindowText, text);
-    p.setColor(QPalette::Base, Qt::white);
-    p.setColor(QPalette::AlternateBase, QColor(0xf7, 0xf7, 0xf7));
-    p.setColor(QPalette::ToolTipBase, QColor(0xff, 0xff, 0xdc));
-    p.setColor(QPalette::ToolTipText, text);
-    p.setColor(QPalette::PlaceholderText, disabled);
-    p.setColor(QPalette::Text, text);
-    p.setColor(QPalette::Button, QColor(0xe8, 0xe8, 0xe8));
-    p.setColor(QPalette::ButtonText, text);
-    p.setColor(QPalette::BrightText, Qt::white);
-    p.setColor(QPalette::Light, Qt::white);
-    p.setColor(QPalette::Midlight, QColor(0xe3, 0xe3, 0xe3));
-    p.setColor(QPalette::Mid, QColor(0xb8, 0xb8, 0xb8));
-    p.setColor(QPalette::Dark, QColor(0xa0, 0xa0, 0xa0));
-    p.setColor(QPalette::Shadow, QColor(0x50, 0x50, 0x50));
-    p.setColor(QPalette::Highlight, QColor(0x2f, 0x7e, 0xd8));
-    p.setColor(QPalette::HighlightedText, Qt::white);
-    for (const auto role : {QPalette::WindowText, QPalette::Text, QPalette::ButtonText})
-        p.setColor(QPalette::Disabled, role, disabled);
-    return p;
-}
-
 } // namespace
 
 Preferences::Preferences(QObject* parent) : QObject(parent)
@@ -113,6 +52,7 @@ Preferences::Preferences(QObject* parent) : QObject(parent)
     if (!contains(mouseProfiles(), m_mouseProfile))
         m_mouseProfile = kDefaultMouse;
     m_invertZoom = s.value(kInvertZoomKey, false).toBool();
+    m_invertOrbit = s.value(kInvertOrbitKey, false).toBool();
     m_autosaveSeconds = std::clamp(s.value(kAutosaveKey, kDefaultAutosave).toInt(), 0, kMaxAutosave);
 
 }
@@ -147,6 +87,15 @@ void Preferences::setMouseProfile(const QString& profile)
     m_mouseProfile = profile;
     QSettings().setValue(kMouseKey, profile);
     emit mouseProfileChanged();
+}
+
+void Preferences::setInvertOrbit(bool invert)
+{
+    if (invert == m_invertOrbit)
+        return;
+    m_invertOrbit = invert;
+    QSettings().setValue(kInvertOrbitKey, invert);
+    emit invertOrbitChanged();
 }
 
 void Preferences::setInvertZoom(bool invert)
@@ -239,40 +188,8 @@ void Preferences::resetToDefaults()
     setTheme(kDefaultTheme);
     setMouseProfile(kDefaultMouse);
     setInvertZoom(false);
+    setInvertOrbit(false);
     setAutosaveSeconds(kDefaultAutosave);
-}
-
-QVariantMap Preferences::colors() const
-{
-    if (m_theme == QLatin1String("system"))
-        return {};
-    const QPalette p = m_theme == QLatin1String("dark") ? darkPalette() : lightPalette();
-    const std::pair<const char*, QPalette::ColorRole> roles[] = {
-        {"window", QPalette::Window},
-        {"windowText", QPalette::WindowText},
-        {"base", QPalette::Base},
-        {"alternateBase", QPalette::AlternateBase},
-        {"toolTipBase", QPalette::ToolTipBase},
-        {"toolTipText", QPalette::ToolTipText},
-        {"placeholderText", QPalette::PlaceholderText},
-        {"text", QPalette::Text},
-        {"button", QPalette::Button},
-        {"buttonText", QPalette::ButtonText},
-        {"brightText", QPalette::BrightText},
-        {"light", QPalette::Light},
-        {"midlight", QPalette::Midlight},
-        {"mid", QPalette::Mid},
-        {"dark", QPalette::Dark},
-        {"shadow", QPalette::Shadow},
-        {"highlight", QPalette::Highlight},
-        {"highlightedText", QPalette::HighlightedText},
-        {"link", QPalette::Link},
-    };
-    QVariantMap out;
-    for (const auto& [name, role] : roles)
-        out.insert(QString::fromLatin1(name), p.color(QPalette::Active, role));
-    out.insert(QStringLiteral("disabledText"), p.color(QPalette::Disabled, QPalette::Text));
-    return out;
 }
 
 } // namespace aerocad::app

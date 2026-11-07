@@ -127,6 +127,18 @@ public:
     /// Nearest hit of a ray (model coordinates) with the visible parts' meshes:
     /// {partId, point (QVector3D), triangle}, or {} when nothing is hit.
     Q_INVOKABLE QVariantMap pickSurface(const QVector3D& origin, const QVector3D& direction) const;
+    /// For a click that misses (into a hole of a scan, such as a grille opening): the
+    /// visible surface point seen closest to the ray, within `maxAngleDeg` of it, as
+    /// pickSurface's map plus snapped: true; {} when nothing is that close.
+    Q_INVOKABLE QVariantMap pickNearSurface(const QVector3D& origin, const QVector3D& direction,
+                                            double maxAngleDeg) const;
+    /// `point` moved along `normal` onto the first skin of part `id` (and the scan it was
+    /// fitted from) seen from outside, for drawing sketch previews where the draped sketch
+    /// is shown; `point` itself on a miss.
+    Q_INVOKABLE QVector3D dropOntoPart(quint64 id, const QVector3D& point, const QVector3D& normal) const;
+    /// Like pickSurface, on one part only (and the scan it was fitted from, which reaches
+    /// further); {} on a miss.
+    Q_INVOKABLE QVariantMap pickPartSurface(quint64 id, const QVector3D& origin, const QVector3D& direction) const;
 
     /// Shows a message in the status bar.
     Q_INVOKABLE void showStatus(const QString& message) { setStatusMessage(message); }
@@ -166,6 +178,12 @@ signals:
     void projectOpened(const QVariantMap& view);
 
 private:
+    /// Shared fast queries on one mesh (scans of millions of triangles), cached.
+    [[nodiscard]] const core::MeshProjector& projectorFor(const std::shared_ptr<const core::TriangleMesh>& mesh,
+                                                          const core::Vec3& outward) const;
+    mutable std::shared_ptr<const core::TriangleMesh> m_projectorMesh;
+    mutable std::unique_ptr<core::MeshProjector> m_projector;
+
     void setStatusMessage(const QString& message);
     bool openProject(const QString& path, bool recover);
     bool saveTo(const QString& path, const QVariantMap& view);

@@ -25,43 +25,41 @@ ApplicationWindow {
     property string sketchTool: ""
     /// True while Create Sketch waits for a plane or a face.
     property bool pickingSketchPlane: false
+    /// Sketch drawn over a surface or scan, just finished: offers "Part on surface".
+    property var partOnSurfaceSketch: null
 
     width: 1400
     height: 860
     visible: true
 
-    // Preferences > Theme: explicit light / dark colours, or the platform's palette.
-    // Popups and dialogs inherit the window palette. Groups are set one by one, because
-    // setting palette.<role> would also overwrite the disabled colours.
-    SystemPalette { id: systemPalette; colorGroup: SystemPalette.Active }
-    SystemPalette { id: disabledPalette; colorGroup: SystemPalette.Disabled }
-    readonly property var paletteRoles: ["window", "windowText", "base", "alternateBase", "toolTipBase",
-        "toolTipText", "placeholderText", "text", "button", "buttonText", "brightText", "light", "midlight",
-        "mid", "dark", "shadow", "highlight", "highlightedText", "link"]
-    readonly property var dimmedRoles: ["windowText", "text", "buttonText"]
-
-    function applyTheme(initial) {
-        const c = Preferences.colors
-        const system = c.window === undefined
-        if (system && initial)
-            return // keep the platform palette untouched
-        for (const role of paletteRoles) {
-            const active = system ? systemPalette[role] : c[role]
-            const disabled = system ? disabledPalette[role]
-                                    : (dimmedRoles.includes(role) ? c.disabledText : c[role])
-            if (active === undefined)
-                continue
-            palette.active[role] = active
-            palette.inactive[role] = active
-            if (disabled !== undefined)
-                palette.disabled[role] = disabled
+    // One palette for every control, built from the Theme tokens (Preferences > Theme:
+    // follow the system, light or dark). The Basic style draws everything from the palette,
+    // so menus, dialogs, fields and panels all switch together. Popups inherit it.
+    // Groups are set one by one, because palette.<role> would also overwrite the disabled
+    // colours.
+    function applyTheme() {
+        const c = {
+            window: Theme.surface, windowText: Theme.text, base: Theme.field,
+            alternateBase: Theme.surfaceRaised, toolTipBase: Theme.tooltip, toolTipText: Theme.tooltipText,
+            placeholderText: Theme.textFaint, text: Theme.text, button: Theme.surfaceRaised,
+            buttonText: Theme.text, brightText: Theme.accentText, light: Theme.surfaceRaised,
+            midlight: Theme.border, mid: Theme.borderStrong, dark: Theme.borderStrong, shadow: Theme.shadow,
+            highlight: Theme.accent, highlightedText: Theme.accentText, link: Theme.accent
+        }
+        const dimmed = ["windowText", "text", "buttonText"]
+        for (const role in c) {
+            palette.active[role] = c[role]
+            palette.inactive[role] = c[role]
+            palette.disabled[role] = dimmed.includes(role) ? Theme.textFaint : c[role]
         }
     }
 
-    Component.onCompleted: applyTheme(true)
+    font.pixelSize: Theme.fontBody
+    color: Theme.chrome
+    Component.onCompleted: applyTheme()
     Connections {
-        target: Preferences
-        function onThemeChanged() { window.applyTheme(false) }
+        target: Theme
+        function onDarkChanged() { window.applyTheme() }
     }
 
     title: (controller.projectDirty ? "*" : "") + controller.projectName
@@ -76,6 +74,38 @@ ApplicationWindow {
 
     function selectPart(id) {
         selectedPartId = id
+    }
+
+    // --- Guided actions (ContextActions.qml) --------------------------------------------
+
+    function openImport() { importDialog.open() }
+
+    /// Region selection tool: "region", "lasso", "brush" or "navigate".
+    function setSelectionTool(tool) { viewport.tool = tool }
+
+    /// Selects the body a timeline feature made (e.g. after Convert to body).
+    function selectBodyOfFeature(featureId) {
+        const r = controller.execute("document.parts")
+        const part = r.ok ? r.result.parts.find(p => p.kind === "body" && p.featureId === featureId) : null
+        if (part)
+            selectPart(part.id)
+    }
+
+    ContextActions {
+        id: contextActions
+        controller: window.controller
+        host: window
+    }
+
+    ActionPopup {
+        id: actionPopup
+        registry: contextActions
+    }
+
+    PartContextMenu {
+        id: partMenu
+        registry: contextActions
+        popupHelper: actionPopup
     }
 
     function toggleSelectedVisibility() {
@@ -103,10 +133,22 @@ ApplicationWindow {
 
     // --- Modelling ----------------------------------------------------------------------
 
-    function startCreateSketch() {
+    /// Create Sketch: pick a plane, face or surface. `across` (optional) presets "Fin
+    /// across the surface".
+    function startCreateSketch(across) {
+        if (across !== undefined)
+            sketchAcross.checked = across
+        partOnSurfaceSketch = null
         finishSketch()
         featureDialog.close()
         pickingSketchPlane = true
+    }
+
+    /// Fin angle from the Create Sketch pane, degrees.
+    function finAngle() {
+        let a = 0
+        try { a = Number.fromLocaleString(Qt.locale(), sketchAngle.text) } catch (e) { a = Number(sketchAngle.text.replace(",", ".")) }
+        return isFinite(a) ? a : 0
     }
 
     function createSketch(params) {
@@ -140,11 +182,14 @@ ApplicationWindow {
     }
 
     function enterSketch(id) {
-        const r = controller.execute("sketch.profiles", { sketch: id })
+        const r = controller.execute("sketch.profiles", { sketch: id, surfaceLine: true })
         if (!r.ok)
             return
         const pl = r.result.plane
-        activeSketch = { id: id, origin: pl.origin, normal: pl.normal, xDir: pl.xDir, yDir: pl.yDir }
+        const on = r.result.onSurface
+        activeSketch = { id: id, origin: pl.origin, normal: pl.normal, xDir: pl.xDir, yDir: pl.yDir,
+                         surfacePart: on ? on.part : 0, across: !!(on && on.across),
+                         surfaceLine: r.result.surfaceLine || [] }
         sketchTool = "line"
         refreshSketchSnaps()
         // Show the sketch while editing it (Fusion hides sketches once they are used).
@@ -158,10 +203,24 @@ ApplicationWindow {
         for (let row = 0; row < controller.parts.count; ++row) {
             }
         viewport.setViewDirection(Qt.vector3d(pl.normal[0], pl.normal[1], pl.normal[2]))
-        viewport.fitAll()
+        // On a scan, look at the clicked place: the whole model would leave it tiny.
+        if (on && on.point && controller.sceneRadius > 0)
+            viewport.frameAround(on.point, controller.sceneRadius * 0.35)
+        else
+            viewport.fitAll()
     }
 
-    function finishSketch() {
+    /// Ends sketch editing. With `offerPart` (the user finished it), a closed outline drawn
+    /// over a surface or scan offers to make the part on that surface right away.
+    function finishSketch(offerPart) {
+        // Any other way out (new project, variant switch, a feature dialog) drops the offer.
+        partOnSurfaceSketch = null
+        if (offerPart && activeSketch) {
+            const r = controller.execute("sketch.profiles", { sketch: activeSketch.id })
+            if (r.ok && r.result.onSurface && r.result.profiles.length > 0)
+                partOnSurfaceSketch = { id: activeSketch.id, part: r.result.onSurface.part,
+                                        across: !!r.result.onSurface.across }
+        }
         activeSketch = null
         sketchTool = ""
         viewport.sketchCurves = []
@@ -512,7 +571,7 @@ ApplicationWindow {
     // (https://www.autodesk.com/shortcuts/fusion-360): E Extrude, F Fillet, L Line,
     // R 2-point Rectangle, C Center Diameter Circle.
     Action { id: createSketchAction; text: qsTr("Create &Sketch"); onTriggered: window.startCreateSketch() }
-    Action { id: finishSketchAction; text: qsTr("Finish Sketch"); enabled: !!window.activeSketch; onTriggered: window.finishSketch() }
+    Action { id: finishSketchAction; text: qsTr("Finish Sketch"); enabled: !!window.activeSketch; onTriggered: window.finishSketch(true) }
     Action { id: extrudeAction; text: qsTr("&Extrude"); shortcut: "E"; onTriggered: window.openFeature("extrude") }
     Action { id: revolveAction; text: qsTr("Re&volve"); onTriggered: window.openFeature("revolve") }
     Action { id: boxAction; text: qsTr("&Box"); onTriggered: window.openFeature("box") }
@@ -560,7 +619,9 @@ ApplicationWindow {
             else if (window.activeSketch && viewport.sketchOverlay.points.length > 0)
                 viewport.sketchOverlay.reset()
             else if (window.activeSketch)
-                window.finishSketch()
+                window.finishSketch(true)
+            else if (window.partOnSurfaceSketch)
+                window.partOnSurfaceSketch = null
         }
     }
 
@@ -735,79 +796,131 @@ ApplicationWindow {
         }
     }
 
-    // --- Toolbar: grouped commands with captions, as in Fusion's toolbar ---------------
+    // --- Toolbar: tabs and grouped commands, as in Fusion's toolbar -------------------
+    // ToolGroup / ToolCommand are the ribbon's building blocks (RibbonGroup.qml,
+    // RibbonButton.qml): a group has a caption with a drop-down of all its commands and
+    // belongs to a tab (tab: "solid" by default). See docs/ui.md, "Toolbar".
 
-    component ToolGroup: ColumnLayout {
-        property string caption
-        default property alias buttons: row.data
-        spacing: 0
+    component ToolGroup: RibbonGroup {}
+    component ToolCommand: RibbonButton {}
+    component ToolSeparator: Rectangle {
+        property string tab: "solid"
+        visible: !parent || parent.currentTab === undefined || parent.currentTab === tab
+        Layout.fillHeight: true
+        Layout.topMargin: 6
+        Layout.bottomMargin: 6
+        implicitWidth: 1
+        color: Theme.separator
+    }
+
+    /// Ribbon tab the user picked; the SKETCH tab shows while a sketch is edited.
+    property string ribbonTab: "solid"
+    readonly property string currentRibbonTab: activeSketch ? "sketch" : ribbonTab
+
+    header: Rectangle {
+        implicitHeight: tabRow.height + ribbon.implicitHeight + 1
+        color: Theme.chrome
+
+        // Tabs and quick-access commands.
         RowLayout {
-            id: row
+            id: tabRow
+            anchors.left: parent.left
+            anchors.right: parent.right
+            height: 32
             spacing: 0
-        }
-        Label {
-            Layout.alignment: Qt.AlignHCenter
-            text: parent.caption
-            font.pixelSize: 10
-            font.bold: true
-            opacity: 0.6
-        }
-    }
 
-    component ToolCommand: ToolButton {
-        display: AbstractButton.TextOnly
-    }
+            Repeater {
+                model: [
+                    { tab: "solid", text: qsTr("SOLID") },
+                    { tab: "sketch", text: qsTr("SKETCH") }
+                ]
+                delegate: RibbonTab {
+                    required property var modelData
+                    Layout.fillHeight: true
+                    Layout.leftMargin: index === 0 ? Theme.space2 : 0
+                    required property int index
+                    text: modelData.text
+                    // The SKETCH tab is contextual: shown only while editing a sketch.
+                    visible: modelData.tab !== "sketch" || !!window.activeSketch
+                    current: window.currentRibbonTab === modelData.tab
+                    onClicked: {
+                        // SKETCH is contextual (it follows activeSketch), so it is never
+                        // stored: the ribbon returns to the user's tab when the sketch ends.
+                        if (modelData.tab === "sketch")
+                            return
+                        if (window.activeSketch)
+                            window.finishSketch()
+                        window.ribbonTab = modelData.tab
+                    }
+                }
+            }
 
-    header: ToolBar {
+            Item { Layout.fillWidth: true }
+
+            IconButton { action: undoAction; iconName: "undo"; tip: undoAction.text.replace("&", "") }
+            IconButton { action: redoAction; iconName: "redo"; tip: redoAction.text.replace("&", "") }
+            Rectangle { implicitWidth: 1; implicitHeight: 16; color: Theme.separator; Layout.leftMargin: 4; Layout.rightMargin: 4 }
+            IconButton {
+                iconName: Theme.dark ? "theme-light" : "theme-dark"
+                tip: Theme.dark ? qsTr("Switch to light theme") : qsTr("Switch to dark theme")
+                onClicked: Preferences.theme = Theme.dark ? "light" : "dark"
+            }
+            IconButton {
+                Layout.rightMargin: Theme.space2
+                action: preferencesAction
+                iconName: "settings"
+                tip: qsTr("Preferences")
+            }
+        }
+
+        Rectangle {
+            id: ribbonBackground
+            anchors.top: tabRow.bottom
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: 1
+            color: Theme.surface
+            Rectangle { anchors.top: parent.top; width: parent.width; height: 1; color: Theme.border }
+        }
+
         RowLayout {
-            anchors.fill: parent
-            anchors.leftMargin: 6
-            spacing: 6
-            ToolGroup {
-                caption: qsTr("EDIT")
-                ToolCommand { action: undoAction; text: qsTr("Undo") }
-                ToolCommand { action: redoAction; text: qsTr("Redo") }
-            }
-            ToolSeparator {}
-            ToolGroup {
-                caption: qsTr("INSERT")
-                ToolCommand { action: importAction; text: qsTr("Import") }
-                ToolCommand { action: convertAction; text: qsTr("To Body") }
-            }
-            ToolSeparator {}
+            id: ribbon
+            /// Read by RibbonGroup to show the groups of the current tab only.
+            property string currentTab: window.currentRibbonTab
+            anchors.top: tabRow.bottom
+            anchors.left: parent.left
+            anchors.leftMargin: Theme.space2
+            height: implicitHeight
+            spacing: Theme.space1
+
             ToolGroup {
                 caption: qsTr("CREATE")
-                visible: !window.activeSketch
-                ToolCommand { action: createSketchAction; text: qsTr("Sketch") }
-                ToolCommand { action: extrudeAction; text: qsTr("Extrude") }
-                ToolCommand { action: revolveAction; text: qsTr("Revolve") }
-                ToolCommand { action: boxAction; text: qsTr("Box") }
-                ToolCommand { action: cylinderAction; text: qsTr("Cylinder") }
-                ToolCommand { action: holeAction; text: qsTr("Hole") }
-            }
-            ToolGroup {
-                caption: qsTr("SKETCH")
-                visible: !!window.activeSketch
-                ToolCommand { action: lineAction; text: qsTr("Line") }
-                ToolCommand { action: rectangleAction; text: qsTr("Rectangle") }
-                ToolCommand { action: circleAction; text: qsTr("Circle") }
-                ToolCommand { action: arcAction; text: qsTr("Arc") }
-                ToolCommand { action: polygonAction; text: qsTr("Polygon") }
-                ToolCommand { action: slotAction; text: qsTr("Slot") }
-                ToolCommand { action: dimensionAction; text: qsTr("Dimension") }
-                ToolCommand { action: extrudeAction; text: qsTr("Extrude") }
-                ToolCommand { action: finishSketchAction; text: qsTr("Finish Sketch") }
+                maxVisible: 6
+                ToolCommand { action: createSketchAction; text: qsTr("Sketch"); iconName: "sketch" }
+                ToolCommand { action: extrudeAction; text: qsTr("Extrude"); iconName: "extrude" }
+                ToolCommand { action: revolveAction; text: qsTr("Revolve"); iconName: "revolve" }
+                ToolCommand { action: holeAction; text: qsTr("Hole"); iconName: "hole" }
+                ToolCommand { action: boxAction; text: qsTr("Box"); iconName: "box" }
+                ToolCommand { action: cylinderAction; text: qsTr("Cylinder"); iconName: "cylinder" }
             }
             ToolSeparator {}
             ToolGroup {
                 caption: qsTr("MODIFY")
-                ToolCommand { action: filletAction; text: qsTr("Fillet") }
-                ToolCommand { action: chamferAction; text: qsTr("Chamfer") }
-                ToolCommand { action: shellAction; text: qsTr("Shell") }
-                ToolCommand { action: combineAction; text: qsTr("Combine") }
-                ToolCommand { action: parametersAction; text: qsTr("Parameters") }
-                ToolCommand { action: visibilityAction; text: qsTr("Show/Hide") }
-                ToolCommand { action: deleteAction; text: qsTr("Delete") }
+                maxVisible: 6
+                ToolCommand { action: filletAction; text: qsTr("Fillet"); iconName: "fillet" }
+                ToolCommand { action: chamferAction; text: qsTr("Chamfer"); iconName: "chamfer" }
+                ToolCommand { action: shellAction; text: qsTr("Shell"); iconName: "shell" }
+                ToolCommand { action: combineAction; text: qsTr("Combine"); iconName: "combine" }
+                ToolCommand { action: parametersAction; text: qsTr("Parameters"); iconName: "parameters" }
+                ToolCommand { action: deleteAction; text: qsTr("Delete"); iconName: "delete" }
+                ToolCommand { action: visibilityAction; text: qsTr("Show/Hide"); iconName: "visible" }
+            }
+            ToolSeparator {}
+            ToolGroup {
+                caption: qsTr("INSERT")
+                ToolCommand { action: importAction; text: qsTr("Import"); iconName: "import" }
+                ToolCommand { action: convertAction; text: qsTr("To Body"); iconName: "mesh-to-body" }
             }
             ToolSeparator {}
             ToolGroup {
@@ -829,18 +942,55 @@ ApplicationWindow {
             ToolSeparator {}
             ToolGroup {
                 caption: qsTr("EXPORT")
-                ToolCommand { action: exportSelectedAction; text: qsTr("Selected") }
-                ToolCommand { action: exportAllAction; text: qsTr("All") }
+                ToolCommand { action: exportSelectedAction; text: qsTr("Selected"); iconName: "export" }
+                ToolCommand { action: exportAllAction; text: qsTr("All Visible"); iconName: "export" }
             }
-            ToolSeparator {}
+
+            // SKETCH tab (contextual, while a sketch is edited).
             ToolGroup {
-                caption: qsTr("VIEW")
-                ToolCommand { action: fitAction; text: qsTr("Fit") }
-                ToolCommand { action: homeAction; text: qsTr("Home") }
-                ToolCommand { action: orthoAction; text: qsTr("Ortho") }
+                tab: "sketch"
+                caption: qsTr("CREATE")
+                ToolCommand { action: lineAction; text: qsTr("Line"); iconName: "line" }
+                ToolCommand { action: rectangleAction; text: qsTr("Rectangle"); iconName: "rectangle" }
+                ToolCommand { action: circleAction; text: qsTr("Circle"); iconName: "circle" }
+                ToolCommand { action: arcAction; text: qsTr("Arc"); iconName: "arc" }
+                ToolCommand { action: polygonAction; text: qsTr("Polygon"); iconName: "polygon" }
+                ToolCommand { action: slotAction; text: qsTr("Slot"); iconName: "slot" }
+                ToolCommand { action: dimensionAction; text: qsTr("Dimension"); iconName: "dimension" }
             }
-            Item { Layout.fillWidth: true }
+            ToolSeparator { tab: "sketch" }
+            ToolGroup {
+                tab: "sketch"
+                caption: qsTr("CONSTRAINTS")
+                maxVisible: 6
+                ToolCommand { action: horizontalAction; text: qsTr("Horizontal"); iconName: "horizontal" }
+                ToolCommand { action: verticalAction; text: qsTr("Vertical"); iconName: "vertical" }
+                ToolCommand { action: coincidentAction; text: qsTr("Coincident"); iconName: "coincident" }
+                ToolCommand { action: tangentAction; text: qsTr("Tangent"); iconName: "tangent" }
+                ToolCommand { action: perpendicularAction; text: qsTr("Perpendicular"); iconName: "perpendicular" }
+                ToolCommand { action: parallelAction; text: qsTr("Parallel"); iconName: "parallel" }
+                ToolCommand { action: equalAction; text: qsTr("Equal"); iconName: "equal" }
+                ToolCommand { action: concentricAction; text: qsTr("Concentric"); iconName: "concentric" }
+                ToolCommand { action: midpointAction; text: qsTr("Midpoint"); iconName: "midpoint" }
+                ToolCommand { action: collinearAction; text: qsTr("Collinear"); iconName: "collinear" }
+                ToolCommand { action: fixAction; text: qsTr("Fix/Unfix"); iconName: "fix" }
+            }
+            ToolSeparator { tab: "sketch" }
+            ToolGroup {
+                tab: "sketch"
+                caption: qsTr("SOLID")
+                ToolCommand { action: extrudeAction; text: qsTr("Extrude"); iconName: "extrude" }
+                ToolCommand { action: revolveAction; text: qsTr("Revolve"); iconName: "revolve" }
+            }
+            ToolSeparator { tab: "sketch" }
+            ToolGroup {
+                tab: "sketch"
+                caption: qsTr("FINISH")
+                ToolCommand { action: finishSketchAction; text: qsTr("Finish Sketch"); iconName: "finish-sketch"; primary: true }
+            }
         }
+
+        Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.border }
     }
 
     SplitView {
@@ -855,6 +1005,11 @@ ApplicationWindow {
             controller: window.controller
             selectedPartId: window.selectedPartId
             onPartSelected: id => window.selectPart(id)
+            onPartContextRequested: (id, item, x, y) => {
+                window.selectPart(id)
+                partMenu.info = window.controller.partInfo(id)
+                partMenu.popup(item, x, y)
+            }
         }
 
         Viewport {
@@ -866,15 +1021,38 @@ ApplicationWindow {
             sketch: window.activeSketch
             sketchTool: window.sketchTool
             selectionToolsEnabled: !featureDialog.visible && !window.pickingSketchPlane
+            snapToNearestSurface: window.pickingSketchPlane
+            property bool snappedClick: false
+            onSnappedToNearestSurface: snappedClick = true
             markers: featureDialog.visible ? featureDialog.pickedPoints : []
             pickKind: featureDialog.visible ? featureDialog.pickKind : ""
             shownSketch: featureDialog.shownSketch
-            onPartPicked: id => window.selectPart(id)
+            onPartPicked: id => {
+                window.selectPart(id)
+                // A click through a hole of a scan, or next to the model, while choosing where to sketch.
+                if (!id && window.pickingSketchPlane)
+                    window.controller.showStatus(qsTr("Nothing there to sketch on: click on or next to the surface"))
+            }
+            onPartContextRequested: (id, x, y) => {
+                partMenu.info = id ? window.controller.partInfo(id) : ({})
+                partMenu.popup(viewport, x, y)
+            }
             onPointPicked: (id, point) => {
                 const info = window.controller.partInfo(id)
                 if (window.pickingSketchPlane) {
+                    const snapped = viewport.snappedClick
+                    viewport.snappedClick = false
+                    const at = [point.x, point.y, point.z]
                     if (info.kind === "body")
-                        window.createSketch({ face: { body: info.featureId, point: [point.x, point.y, point.z] } })
+                        window.createSketch({ face: { body: info.featureId, point: at } })
+                    else if (info.kind === "imported")
+                        // A fitted surface or a scan: sketch over its best-fit plane, then
+                        // trim the surface with the outline (Properties > Surface).
+                        window.createSketch({ surface: sketchAcross.checked
+                                                  ? { part: id, point: at, across: true, angle: window.finAngle() }
+                                                  : { part: id, point: at } })
+                    if (snapped && window.activeSketch)
+                        window.controller.showStatus(qsTr("That was a hole in the surface: sketching on the surface next to it"))
                 } else if (featureDialog.visible) {
                     featureDialog.addPick(info, point)
                 }
@@ -904,6 +1082,30 @@ ApplicationWindow {
                 window.refreshSketchSnaps()
             }
 
+            // What can be done with the selection, next to it (ContextActions.qml).
+            ContextBar {
+                id: contextBar
+                // Above the navigation bar, clear of the selection tools and ViewCube.
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: 60
+                maximumWidth: parent.width - 2 * Theme.space4
+                width: Math.min(implicitWidth, maximumWidth)
+                visible: !!window.selectedPartId && !window.activeSketch && !featureDialog.visible
+                         && !window.pickingSketchPlane
+                registry: contextActions
+                popup: actionPopup
+                info: { void contextActions.revision; return window.selectedPartId ? window.controller.partInfo(window.selectedPartId) : ({}) }
+            }
+
+            StartCard {
+                anchors.centerIn: parent
+                visible: window.controller.parts.count === 0 && !window.activeSketch && !featureDialog.visible
+                         && !window.pickingSketchPlane
+                registry: contextActions
+                popup: actionPopup
+            }
+
             FeatureDialog {
                 id: featureDialog
                 anchors.left: parent.left
@@ -918,16 +1120,133 @@ ApplicationWindow {
                 anchors.top: parent.top
                 anchors.margins: 8
                 visible: window.pickingSketchPlane
-                padding: 12
+                padding: Theme.space3
+                background: Rectangle {
+                    color: Theme.overlay
+                    border.color: Theme.border
+                    radius: Theme.radius
+                }
                 ColumnLayout {
-                    Label { text: qsTr("Create Sketch"); font.bold: true; font.pixelSize: 15 }
-                    Label { text: qsTr("Click a planar face of a body, or pick an origin plane:"); opacity: 0.75 }
+                    Label { text: qsTr("Create Sketch"); font.weight: Font.DemiBold; font.pixelSize: Theme.fontTitle }
+                    Label {
+                        text: qsTr("Click a planar face of a body, a fitted surface or a scan\n(sketch over its best-fit plane), or pick an origin plane:")
+                        color: Theme.textMuted
+                    }
                     RowLayout {
                         Button { text: qsTr("XY (Top)"); onClicked: window.createSketch({ plane: "XY" }) }
                         Button { text: qsTr("XZ (Front)"); onClicked: window.createSketch({ plane: "XZ" }) }
                         Button { text: qsTr("YZ (Right)"); onClicked: window.createSketch({ plane: "YZ" }) }
                     }
+                    // A fin (canard, winglet) stands across the surface instead of lying on it.
+                    RowLayout {
+                        CheckBox {
+                            id: sketchAcross
+                            objectName: "sketchAcross"
+                            text: qsTr("Fin across the surface")
+                        }
+                        Label { text: qsTr("Angle"); enabled: sketchAcross.checked }
+                        TextField {
+                            id: sketchAngle
+                            enabled: sketchAcross.checked
+                            Layout.preferredWidth: 48
+                            text: "0"
+                            validator: DoubleValidator { bottom: -90; top: 90; decimals: 1; notation: DoubleValidator.StandardNotation }
+                        }
+                        Label { text: qsTr("°"); enabled: sketchAcross.checked }
+                    }
+                    Label {
+                        visible: sketchAcross.checked
+                        text: qsTr("Click where the fin stands. Draw its side view above the surface line,\nwith the root a little below it; the root is cut to the surface.")
+                        color: Theme.textMuted
+                    }
+                    Button {
+                        readonly property var info: window.pickingSketchPlane ? window.selectedInfo() : ({})
+                        visible: (info.selectedTriangles ?? 0) > 0
+                        text: qsTr("Over selection on %1").arg(info.name ?? "")
+                        onClicked: window.createSketch({ surface: sketchAcross.checked
+                            ? { part: window.selectedPartId, useSelection: true, across: true, angle: window.finAngle() }
+                            : { part: window.selectedPartId, useSelection: true } })
+                    }
                     Button { text: qsTr("Cancel"); onClicked: window.pickingSketchPlane = false }
+                }
+            }
+
+            // After a sketch over a surface or scan: cut the outline out of the surface and
+            // thicken it, in one step.
+            Pane {
+                objectName: "partOnSurfacePane"
+                anchors.left: parent.left
+                anchors.top: parent.top
+                anchors.margins: 8
+                visible: !!window.partOnSurfaceSketch && !window.activeSketch && !window.pickingSketchPlane
+                         && !featureDialog.visible
+                padding: Theme.space3
+                background: Rectangle {
+                    color: Theme.overlay
+                    border.color: Theme.border
+                    radius: Theme.radius
+                }
+                ColumnLayout {
+                    readonly property bool fin: !!window.partOnSurfaceSketch && window.partOnSurfaceSketch.across
+                    Label {
+                        text: parent.fin ? qsTr("Fin on surface") : qsTr("Part on surface")
+                        font.weight: Font.DemiBold
+                        font.pixelSize: Theme.fontTitle
+                    }
+                    Label {
+                        text: parent.fin
+                              ? qsTr("Gives the outline a thickness (half each side of the sketch)\nand cuts its root to the surface, so it sits flush on it.")
+                              : qsTr("Cuts the outline out of the surface under it and gives it a thickness.\nThe edges follow the outline; the part follows the surface.")
+                        color: Theme.textMuted
+                    }
+                    RowLayout {
+                        Label { text: qsTr("Thickness") }
+                        TextField {
+                            id: partThickness
+                            Layout.preferredWidth: 56
+                            text: "2"
+                            validator: DoubleValidator { bottom: 0.001; decimals: 3; notation: DoubleValidator.StandardNotation }
+                        }
+                        Label { text: qsTr("mm") }
+                        ComboBox {
+                            id: partSide
+                            visible: !(window.partOnSurfaceSketch && window.partOnSurfaceSketch.across)
+                            Layout.preferredWidth: 120
+                            model: [qsTr("Inward"), qsTr("Outward"), qsTr("Both sides")]
+                        }
+                    }
+                    RowLayout {
+                        Button {
+                            text: qsTr("Create")
+                            highlighted: true
+                            onClicked: {
+                                let t = NaN
+                                try { t = Number.fromLocaleString(Qt.locale(), partThickness.text) } catch (e) { t = Number(partThickness.text.replace(",", ".")) }
+                                if (!(t > 0))
+                                    return window.controller.showStatus(qsTr("Enter the thickness in mm"))
+                                const fin = window.partOnSurfaceSketch.across
+                                const r = fin
+                                    ? window.controller.execute("surface.fin_from_sketch",
+                                        { sketch: window.partOnSurfaceSketch.id, thickness: t })
+                                    : window.controller.execute("surface.part_from_sketch",
+                                        { sketch: window.partOnSurfaceSketch.id, thickness: t,
+                                          side: ["inside", "outside", "both"][partSide.currentIndex] })
+                                if (!r.ok)
+                                    return
+                                window.partOnSurfaceSketch = null
+                                window.selectPart(r.result.id)
+                                if (fin)
+                                    window.controller.showStatus(qsTr("Fin \"%1\": %2 mm thick, %3 cm³")
+                                        .arg(r.result.name).arg(t).arg((r.result.volume / 1000).toFixed(1)))
+                                else if (r.result.warnings.length > 0)
+                                    window.controller.showStatus(qsTr("Part \"%1\": %2").arg(r.result.name).arg(r.result.warnings[0]))
+                                else
+                                    window.controller.showStatus(qsTr("Part \"%1\": %2 mm thick, %3 cm²")
+                                        .arg(r.result.name).arg(t).arg((r.result.area / 100).toFixed(1)))
+                            }
+                        }
+                        Button { text: qsTr("Not now"); onClicked: window.partOnSurfaceSketch = null }
+                    }
                 }
             }
 
@@ -946,6 +1265,8 @@ ApplicationWindow {
             SplitView.preferredWidth: 280
             SplitView.minimumWidth: 200
             controller: window.controller
+            registry: contextActions
+            popup: actionPopup
             partId: window.selectedPartId
         }
     }
@@ -958,27 +1279,62 @@ ApplicationWindow {
             controller: window.controller
             onEditRequested: feature => window.editFeature(feature)
         }
-        ToolBar {
-        Layout.fillWidth: true
-        RowLayout {
-            anchors.fill: parent
-            anchors.leftMargin: 8
-            anchors.rightMargin: 8
-            Label {
-                Layout.fillWidth: true
-                text: window.controller.statusMessage
-                elide: Text.ElideRight
+        // Status bar: last command result on the left, navigation hint and units on the right.
+        Rectangle {
+            Layout.fillWidth: true
+            implicitHeight: Theme.statusBarHeight
+            color: Theme.chrome
+            Rectangle { width: parent.width; height: 1; color: Theme.border }
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: Theme.space3
+                anchors.rightMargin: Theme.space3
+                spacing: Theme.space3
+                Rectangle {
+                    implicitWidth: 6
+                    implicitHeight: 6
+                    radius: 3
+                    color: window.controller.statusMessage.length > 0 ? Theme.success : Theme.textFaint
+                }
+                Text {
+                    Layout.fillWidth: true
+                    text: window.controller.statusMessage
+                    color: Theme.textMuted
+                    font.pixelSize: Theme.fontSmall
+                    elide: Text.ElideRight
+                }
+                Text {
+                    Layout.maximumWidth: window.width * 0.5
+                    text: Preferences.mouseProfile === "solidworks"
+                          ? qsTr("Orbit: middle drag · Pan: Ctrl+middle · Zoom: wheel")
+                          : Preferences.mouseProfile === "blender"
+                            ? qsTr("Orbit: middle drag · Pan: Shift+middle · Zoom: wheel")
+                            : qsTr("Pan: middle drag · Orbit: Shift+middle · Zoom: wheel · Fit: F6")
+                    color: Theme.textFaint
+                    font.pixelSize: Theme.fontSmall
+                    elide: Text.ElideLeft
+                }
+                Rectangle { implicitWidth: 1; implicitHeight: 14; color: Theme.border }
+                AbstractButton {
+                    implicitWidth: shortcutsLabel.implicitWidth
+                    implicitHeight: shortcutsLabel.implicitHeight
+                    hoverEnabled: true
+                    onClicked: shortcutsAction.trigger()
+                    contentItem: Text {
+                        id: shortcutsLabel
+                        text: qsTr("Shortcuts %1").arg(Preferences.shortcutText(shortcutsAction.shortcut))
+                        color: parent.hovered ? Theme.accent : Theme.textFaint
+                        font.pixelSize: Theme.fontSmall
+                    }
+                }
+                Rectangle { implicitWidth: 1; implicitHeight: 14; color: Theme.border }
+                Text {
+                    text: Preferences.lengthUnit
+                    color: Theme.textMuted
+                    font.pixelSize: Theme.fontSmall
+                    font.weight: Font.DemiBold
+                }
             }
-            Label {
-                text: Preferences.mouseProfile === "solidworks"
-                      ? qsTr("Orbit: middle drag · Pan: Ctrl+middle drag · Zoom: wheel, Shift+middle drag · Shortcuts: %1").arg(Preferences.shortcutText(shortcutsAction.shortcut))
-                      : Preferences.mouseProfile === "blender"
-                        ? qsTr("Orbit: middle drag · Pan: Shift+middle drag · Zoom: wheel, Ctrl+middle drag · Shortcuts: %1").arg(Preferences.shortcutText(shortcutsAction.shortcut))
-                        : qsTr("Pan: middle drag · Orbit: Shift+middle drag · Zoom: wheel · Touchpad: two-finger pan, Shift+two-finger orbit, pinch zoom · Fit: F6 · Shortcuts: %1").arg(Preferences.shortcutText(shortcutsAction.shortcut))
-                opacity: 0.6
-                elide: Text.ElideLeft
-            }
-        }
         }
     }
 

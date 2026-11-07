@@ -97,7 +97,7 @@ Dialog {
             Layout.fillWidth: true
             visible: root.error !== ""
             text: root.error
-            color: "#b3261e"
+            color: Theme.danger
             wrapMode: Text.WordWrap
         }
     }

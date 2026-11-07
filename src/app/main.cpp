@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "AppController.hpp"
+#include "UiScript.hpp"
 
 #include <QCommandLineParser>
 #include <QColor>
@@ -7,6 +8,8 @@
 #include <QImage>
 #include <QQmlApplicationEngine>
 #include <QQuickItem>
+#include <QQuickStyle>
+#include <QtQml/qqmlextensionplugin.h>
 #include <QQuickWindow>
 #include <QTimer>
 #include <QUrl>
@@ -14,6 +17,9 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cstdio>
+
+// The application style (src/app/style), linked statically.
+Q_IMPORT_QML_PLUGIN(AeroCADStylePlugin)
 
 namespace {
 
@@ -121,9 +127,18 @@ int main(int argc, char* argv[])
                               QStringLiteral("Run a JSON command script (array of {name, params}) after loading files."),
                               QStringLiteral("script.json"));
     parser.addOption(script);
+    QCommandLineOption uiScript(QStringLiteral("ui-script"),
+                                QStringLiteral("Drive the UI from a script after loading files, then exit (UiScript.cpp)."),
+                                QStringLiteral("script.js"));
+    parser.addOption(uiScript);
     parser.addPositionalArgument(QStringLiteral("files"), QStringLiteral("Projects (.aerocad) or 3D files to open."),
                                  QStringLiteral("[files...]"));
     parser.process(app);
+
+    // AeroCAD's own style (src/app/style, falling back to Basic) draws every control with
+    // the Theme.qml tokens, so light and dark look the same on every platform. The native
+    // macOS and Windows styles ignore parts of the palette and mix system colours in.
+    QQuickStyle::setStyle(QStringLiteral("AeroCADStyle"));
 
     aerocad::app::AppController controller;
 
@@ -145,6 +160,8 @@ int main(int argc, char* argv[])
         controller.openFile(QUrl::fromLocalFile(file));
     if (parser.isSet(script))
         controller.runScript(parser.value(script));
+    if (parser.isSet(uiScript))
+        aerocad::app::startUiScript(engine, parser.value(uiScript));
 
     return QGuiApplication::exec();
 }

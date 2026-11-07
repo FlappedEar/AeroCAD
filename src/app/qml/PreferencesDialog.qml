@@ -77,6 +77,13 @@ Dialog {
             onToggled: Preferences.invertZoom = checked
         }
 
+        Item { width: 1; height: 1 }
+        CheckBox {
+            text: qsTr("Reverse orbit direction")
+            checked: Preferences.invertOrbit
+            onToggled: Preferences.invertOrbit = checked
+        }
+
         Label { text: qsTr("Project"); font.bold: true; Layout.columnSpan: 2; Layout.topMargin: 6 }
 
         Label { text: qsTr("Autosave") }

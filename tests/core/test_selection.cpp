@@ -294,3 +294,150 @@ TEST_CASE("Smooth region: winding from edge direction, sharp folds stay bends", 
     CHECK(flatAdj.windingFlipped(0, 0));
     CHECK(selectSmoothRegion(flat, flatAdj, 0, {}).size() == 2);
 }
+
+namespace {
+
+/// A wavy sheet over [0, 40]^2 facing +Z, and a second layer `below` under it with a square
+/// hole through the upper sheet (the triangles over [15, 25]^2 are missing).
+TriangleMesh layeredSheet(double below)
+{
+    std::vector<Vec3> v;
+    std::vector<TriangleMesh::Triangle> t;
+    const int n = 40;
+    for (const double dz : {0.0, -below}) {
+        const auto base = static_cast<std::uint32_t>(v.size());
+        for (int j = 0; j <= n; ++j)
+            for (int i = 0; i <= n; ++i)
+                v.push_back({double(i), double(j), std::sin(i * 0.1) + dz});
+        auto idx = [&](int i, int j) { return base + static_cast<std::uint32_t>(j * (n + 1) + i); };
+        for (int j = 0; j < n; ++j)
+            for (int i = 0; i < n; ++i) {
+                if (dz == 0.0 && i >= 15 && i < 25 && j >= 15 && j < 25)
+                    continue;
+                t.push_back({idx(i, j), idx(i + 1, j), idx(i + 1, j + 1)});
+                t.push_back({idx(i, j), idx(i + 1, j + 1), idx(i, j + 1)});
+            }
+    }
+    return TriangleMesh(std::move(v), std::move(t));
+}
+
+} // namespace
+
+TEST_CASE("MeshProjector finds the skin seen from outside, never a layer behind it", "[core][selection]")
+{
+    const TriangleMesh mesh = layeredSheet(3.0);
+    const MeshProjector projector(mesh, {0, 0, 1});
+
+    // From any height along the line: the upper sheet.
+    for (const double z : {50.0, 0.0, -50.0}) {
+        const auto hit = projector.drop({5.5, 7.5, z});
+        REQUIRE(hit.has_value());
+        CHECK(hit->z == Approx(std::sin(0.55)).margin(0.02));
+    }
+    // Through the hole: the layer behind is the first thing met.
+    const auto through = projector.drop({20.5, 20.5, 50.0});
+    REQUIRE(through.has_value());
+    CHECK(through->z == Approx(std::sin(2.05) - 3.0).margin(0.02));
+    // Past the edge.
+    CHECK_FALSE(projector.drop({60, 5, 0}).has_value());
+    CHECK_FALSE(projector.drop({41, 5, 0}).has_value());
+}
+
+TEST_CASE("MeshProjector ray casts match the brute force ones", "[core][selection]")
+{
+    const TriangleMesh mesh = layeredSheet(3.0);
+    const MeshProjector projector(mesh, {0.3, -0.2, 1.0});
+    int hits = 0;
+    for (int k = 0; k < 400; ++k) {
+        // Rays from all around, straight down to grazing, some missing.
+        const double a = k * 0.37, b = 0.05 + 0.0037 * k;
+        const Vec3 origin{20 + 60 * std::cos(a), 20 + 60 * std::sin(a), 5 + 40 * b};
+        const Vec3 target{(k * 7) % 50 - 5.0, (k * 13) % 50 - 5.0, 0.0};
+        const Vec3 direction = target - origin;
+        const auto expected = raycast(mesh, origin, direction);
+        const auto actual = projector.raycast(origin, direction);
+        REQUIRE(expected.has_value() == actual.has_value());
+        if (expected) {
+            CHECK(actual->distance == Approx(expected->distance).margin(1e-9));
+            ++hits;
+        }
+    }
+    CHECK(hits > 100);
+    // Starting past the mesh and pointing away.
+    CHECK_FALSE(projector.raycast({100, 100, 10}, {1, 1, 0}).has_value());
+}
+
+TEST_CASE("projectOntoMesh takes the skin from outside and reports misses", "[core][selection]")
+{
+    const TriangleMesh mesh = layeredSheet(3.0);
+    const std::vector<Vec3> pts{{5.5, 7.5, -10}, {60, 60, 10}};
+    std::vector<char> missed;
+    const auto out = projectOntoMesh(mesh, pts, {0, 0, 1}, nullptr, &missed);
+    CHECK(out[0].z == Approx(std::sin(0.55)).margin(0.02));
+    CHECK(missed[0] == 0);
+    CHECK(missed[1] != 0);
+    CHECK(out[1].z == Approx(10.0));
+}
+
+TEST_CASE("projectOntoMesh drapes points onto a curved sheet", "[core][selection]")
+{
+    std::vector<Vec3> v;
+    std::vector<TriangleMesh::Triangle> t;
+    const int n = 40;
+    for (int j = 0; j <= n; ++j)
+        for (int i = 0; i <= n; ++i)
+            v.push_back({double(i), double(j), 0.01 * (i - 20) * (i - 20)});
+    auto idx = [](int i, int j) { return static_cast<std::uint32_t>(j * (n + 1) + i); };
+    for (int j = 0; j < n; ++j)
+        for (int i = 0; i < n; ++i) {
+            t.push_back({idx(i, j), idx(i + 1, j), idx(i + 1, j + 1)});
+            t.push_back({idx(i, j), idx(i + 1, j + 1), idx(i, j + 1)});
+        }
+    const TriangleMesh mesh(std::move(v), std::move(t));
+    // Points on a plane above, one below, one off the sheet.
+    const std::vector<Vec3> pts{{5, 5, 10}, {20, 20, 10}, {33.5, 12.25, -3}, {60, 60, 10}};
+    std::size_t hits = 0;
+    const auto out = projectOntoMesh(mesh, pts, {0, 0, -1}, &hits);
+    REQUIRE(out.size() == 4);
+    CHECK(hits == 3);
+    CHECK(out[0].z == Approx(0.01 * 15 * 15).margin(0.02));
+    CHECK(out[1].z == Approx(0.0).margin(0.02));
+    CHECK(out[2].z == Approx(0.01 * 13.5 * 13.5).margin(0.02));
+    CHECK(out[2].x == Approx(33.5));
+    CHECK(out[3].z == Approx(10.0)); // missed: stays
+}
+
+TEST_CASE("nearestToRay: a click into a hole takes the surface at its edge", "[core][selection]")
+{
+    // A 20 x 20 plate at z = 0 with a 6 x 6 opening in the middle (cells 7..12).
+    MeshBuilder b;
+    for (int i = 0; i < 20; ++i)
+        for (int j = 0; j < 20; ++j) {
+            if (i >= 7 && i < 13 && j >= 7 && j < 13)
+                continue;
+            const Vec3 p00{double(i), double(j), 0}, p10{double(i + 1), double(j), 0};
+            const Vec3 p01{double(i), double(j + 1), 0}, p11{double(i + 1), double(j + 1), 0};
+            b.addTriangle(p00, p10, p11);
+            b.addTriangle(p00, p11, p01);
+        }
+    const TriangleMesh m = b.take();
+    const Vec3 origin{10.2, 10.6, 100};
+    const Vec3 down{0, 0, -2};
+    REQUIRE_FALSE(raycast(m, origin, down)); // through the opening
+
+    const auto hit = nearestToRay(m, origin, down, 4.0);
+    REQUIRE(hit);
+    // The nearest point of the opening's rim: (10, 13) is 2.4 off the ray, any other more.
+    CHECK(hit->point.x == Approx(10.0));
+    CHECK(hit->point.y == Approx(13.0));
+    CHECK(hit->point.z == Approx(0.0));
+    CHECK(hit->distance == Approx(50.0)); // in units of |direction|
+    const auto& tri = m.triangles()[hit->triangle];
+    CHECK(((m.vertices()[tri[0]] - hit->point).length() < 1e-12 || (m.vertices()[tri[1]] - hit->point).length() < 1e-12 ||
+           (m.vertices()[tri[2]] - hit->point).length() < 1e-12));
+
+    // Too far from anything for the angle, behind the origin, or a degenerate ray.
+    CHECK_FALSE(nearestToRay(m, origin, down, 1.0));
+    CHECK_FALSE(nearestToRay(m, {10.2, 10.6, -100}, down, 4.0));
+    CHECK_FALSE(nearestToRay(m, origin, {0, 0, 0}, 4.0));
+}

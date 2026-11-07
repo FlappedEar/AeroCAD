@@ -70,9 +70,7 @@ double Shape::volume() const
     double total = 0.0;
     for (TopExp_Explorer ex(m_impl->shape, TopAbs_SOLID); ex.More(); ex.Next()) {
         GProp_GProps props;
-        // Adaptive integration to a relative error of 1e-6: the fixed Gauss rule of the
-        // default overload is off by several percent on B-spline faces with many spans
-        // (fitted scan surfaces, thickened shells, converted surfaces of revolution).
+        // Adaptive: the fixed Gauss rule can be off by several % on finely trimmed faces.
         BRepGProp::VolumeProperties(ex.Current(), props, 1e-6);
         total += props.Mass();
     }

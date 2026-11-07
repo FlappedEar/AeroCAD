@@ -8,7 +8,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import AeroCAD
 
-ToolBar {
+Rectangle {
     id: root
 
     required property AppController controller
@@ -31,65 +31,93 @@ ToolBar {
         function onHistoryChanged() { root.refresh() }
     }
 
-    readonly property var symbols: ({
-        sketch: "✎", extrude: "▮", revolve: "◔", fillet: "◜", chamfer: "◸", shell: "▢",
-        combine: "⊕", box: "■", cylinder: "●"
-    })
+    implicitHeight: 40
+    color: Theme.chrome
+
+    Rectangle { width: parent.width; height: 1; color: Theme.border }
 
     RowLayout {
         anchors.fill: parent
-        anchors.leftMargin: 6
+        anchors.leftMargin: Theme.space2
+        anchors.rightMargin: Theme.space2
         spacing: 2
 
-        ToolButton { text: "⏮"; ToolTip.text: qsTr("Go to beginning"); ToolTip.visible: hovered; onClicked: root.setMarker(0) }
-        ToolButton { text: "◀"; ToolTip.text: qsTr("Step back"); ToolTip.visible: hovered; onClicked: root.setMarker(root.timeline.marker - 1) }
-        ToolButton { text: "▶"; ToolTip.text: qsTr("Step forward"); ToolTip.visible: hovered; onClicked: root.setMarker(root.timeline.marker + 1) }
-        ToolButton { text: "⏭"; ToolTip.text: qsTr("Go to end"); ToolTip.visible: hovered; onClicked: root.setMarker(root.timeline.features.length) }
-        ToolSeparator {}
+        IconButton { iconName: "timeline-start"; tip: qsTr("Go to beginning"); onClicked: root.setMarker(0) }
+        IconButton { iconName: "timeline-back"; tip: qsTr("Step back"); onClicked: root.setMarker(root.timeline.marker - 1) }
+        IconButton { iconName: "chevron-right"; tip: qsTr("Step forward"); onClicked: root.setMarker(root.timeline.marker + 1) }
+        IconButton { iconName: "timeline-end"; tip: qsTr("Go to end"); onClicked: root.setMarker(root.timeline.features.length) }
+        Rectangle { implicitWidth: 1; implicitHeight: 20; color: Theme.separator; Layout.leftMargin: Theme.space1; Layout.rightMargin: Theme.space1 }
 
         ListView {
             id: list
             Layout.fillWidth: true
-            Layout.preferredHeight: 30
+            Layout.preferredHeight: 32
             orientation: ListView.Horizontal
-            spacing: 3
+            spacing: 2
             clip: true
+            boundsBehavior: Flickable.StopAtBounds
             model: root.timeline.features
 
-            delegate: Rectangle {
+            // Fusion-style feature chips: icon and name; the marker is a handle after the
+            // last active feature.
+            delegate: Item {
                 id: chip
                 required property var modelData
                 required property int index
                 readonly property var feature: modelData
                 readonly property bool inactive: feature.status === "suppressed" || feature.status === "rolled_back"
-                width: chipLabel.implicitWidth + 16
-                height: 26
-                radius: 4
-                color: feature.status === "error" ? "#f4c7c3" : chipMouse.containsMouse ? "#dfe8f5" : "#eef1f5"
-                border.color: feature.status === "error" ? "#b3261e" : "#b7c0cc"
-                opacity: inactive ? 0.45 : 1
+                readonly property bool failed: feature.status === "error"
+                readonly property bool atMarker: chip.index === root.timeline.marker - 1
+                width: chipBody.width + (atMarker ? 10 : 0)
+                height: 32
+
+                Rectangle {
+                    id: chipBody
+                    width: chipRow.implicitWidth + 2 * Theme.space2
+                    height: 28
+                    anchors.verticalCenter: parent.verticalCenter
+                    radius: Theme.radiusSmall
+                    color: chip.failed ? Theme.dangerSoft
+                         : chipMouse.pressed ? Theme.pressed
+                         : chipMouse.containsMouse ? Theme.hover : "transparent"
+                    border.width: chip.failed ? 1 : 0
+                    border.color: Theme.danger
+                    opacity: chip.inactive ? 0.4 : 1
+
+                    Row {
+                        id: chipRow
+                        anchors.centerIn: parent
+                        spacing: 6
+                        AppIcon {
+                            anchors.verticalCenter: parent.verticalCenter
+                            name: chip.failed ? "warning" : Theme.featureIcon(chip.feature.type)
+                            size: Theme.iconSmall
+                            color: chip.failed ? Theme.danger : Theme.icon
+                        }
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: chip.feature.name
+                            color: chip.failed ? Theme.danger : Theme.text
+                            font.pixelSize: Theme.fontSmall
+                            font.strikeout: chip.feature.suppressed
+                        }
+                    }
+                }
 
                 // Timeline marker after the last active feature.
                 Rectangle {
-                    visible: chip.index === root.timeline.marker - 1
-                    anchors.left: parent.right
-                    anchors.leftMargin: 0
+                    visible: chip.atMarker
+                    x: chipBody.width + 4
+                    anchors.verticalCenter: parent.verticalCenter
                     width: 3
-                    height: parent.height + 4
-                    y: -2
-                    color: "#1f5fbf"
-                }
-
-                Label {
-                    id: chipLabel
-                    anchors.centerIn: parent
-                    text: (root.symbols[chip.feature.type] || "•") + " " + chip.feature.name
-                    font.strikeout: chip.feature.suppressed
+                    height: 26
+                    radius: 1.5
+                    color: Theme.accent
                 }
 
                 MouseArea {
                     id: chipMouse
-                    anchors.fill: parent
+                    anchors.fill: chipBody
                     hoverEnabled: true
                     acceptedButtons: Qt.LeftButton | Qt.RightButton
                     onClicked: mouse => {
@@ -99,6 +127,7 @@ ToolBar {
                     onDoubleClicked: root.editRequested(chip.feature)
                 }
                 ToolTip.visible: chipMouse.containsMouse
+                ToolTip.delay: 400
                 ToolTip.text: chip.feature.status === "error" ? chip.feature.error
                             : chip.feature.type + " · " + chip.feature.status
 
@@ -119,11 +148,12 @@ ToolBar {
                 }
             }
 
-            Label {
+            Text {
                 anchors.verticalCenter: parent.verticalCenter
                 visible: list.count === 0
-                opacity: 0.6
-                text: qsTr("Timeline: create a sketch (Create Sketch) or a primitive to start modelling")
+                color: Theme.textFaint
+                font.pixelSize: Theme.fontSmall
+                text: qsTr("Timeline: create a sketch or a primitive to start modelling")
             }
         }
     }

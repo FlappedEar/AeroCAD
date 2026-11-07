@@ -3,6 +3,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import AeroCAD
 
 Pane {
     id: root
@@ -10,12 +11,12 @@ Pane {
     /// The Viewport whose tool properties this toolbar edits.
     required property Item viewport
 
-    padding: 6
-    opacity: 0.95
+    padding: 3
 
     background: Rectangle {
-        color: root.palette.window
-        radius: 6
+        color: Theme.overlay
+        border.color: Theme.border
+        radius: Theme.radius
         // Keeps clicks on the toolbar background from reaching the 3D view.
         MouseArea {
             anchors.fill: parent
