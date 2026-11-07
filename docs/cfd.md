@@ -11,7 +11,7 @@ code (module `src/cfd`, commands in `src/commands/src/SimulationCommands.cpp`).
 
 ## In the app
 
-Toolbar **SIMULATE > CFD** (or menu Simulate > Wind Tunnel) opens the wind tunnel
+Toolbar **SIMULATE > Wind Tunnel** (or menu Simulate > Wind Tunnel) opens the wind tunnel
 panel in place of Properties:
 
 - **Run**: the engine status (green = ready), settings for a new run of the part

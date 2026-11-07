@@ -2,9 +2,9 @@
 
 AeroCAD's window follows the layout of common CAD applications, Autodesk Fusion in particular:
 
-- **Toolbar** (top): tabs (SOLID, and SKETCH while a sketch is edited), then command groups
-  with icons and captions (CREATE, MODIFY, INSERT, EXPORT). Undo/redo, the light/dark
-  switch and Preferences sit at the right end of the tab row.
+- **Toolbar** (top): one tab per kind of work, then command groups with icons and
+  captions. Undo/redo, the light/dark switch and Preferences sit at the right end of the
+  tab row. See [Toolbar tabs](#toolbar-tabs).
 - **Browser** (left): the parts of the document.
 - **Canvas** (centre): the 3D view with a ground grid, the **ViewCube** in the top-right
   corner and the **navigation bar** at the bottom centre.
@@ -22,6 +22,29 @@ Sources: [Autodesk Fusion keyboard shortcuts](https://www.autodesk.com/shortcuts
 [Fusion 360 Camera Controls](https://help.autodesk.com/cloudhelp/2019/ENU/MSHMXR/files/GUID-61EE8C7A-F896-4C26-86B9-450247945FD1.htm),
 [ViewCube reference](https://help.autodesk.com/cloudhelp/ENU/Fusion-GetStarted/files/GS-VIEWCUBE.htm),
 [Fusion navigation (touchpad)](https://help.autodesk.com/cloudhelp/ENU/Fusion-GetStarted/files/GUID-7B742BB2-65B3-4ADA-9B11-9D57E1E31292.htm).
+
+## Toolbar tabs
+
+Each tab holds the commands of one kind of work, so no tab is crowded. Commands past
+a group's first few are in the drop-down under its caption.
+
+| Tab | Groups | For |
+|---|---|---|
+| SOLID | CREATE, MODIFY, CONSTRUCT, INSERT, VARIANT, EXPORT | Parametric solids in the timeline: sketch, extrude, fillet, combine, export |
+| SURFACE | CREATE, SKETCH, MODIFY, PART, CHECK | Smooth surfaces fitted to a scan and parts made on them: fit, outline, cut out, thicken, part on surface, fin |
+| MESH | INSERT, SELECT, PREPARE, DESIGN ON SCAN, CONVERT, EXPORT | Scans: Scan Tools, area selection, repair, simplify, scale, sketch on the scan, fit or convert |
+| INSPECT | MEASURE, ANALYSIS | Measure, clearance, section, deviation and thickness maps |
+| SIMULATE | AERODYNAMICS | Wind tunnel (CFD) |
+| TOOLS | AI, UTILITIES | AI agent access, parameters, shortcuts, preferences |
+| SKETCH | CREATE, CONSTRAINTS, SOLID, FINISH | Shown only while a sketch is edited |
+
+The SURFACE and MESH commands are the guided actions of the selected part (the same as in
+the context bar and the right-click menu, see [Guided workflow](#guided-workflow)). They
+are enabled when they apply to the selection; otherwise the tooltip says what to select.
+Commands that need values (e.g. Thicken) open the same small form as the context bar.
+Clicking another tab while a sketch is edited finishes the sketch.
+
+![The toolbar tabs, a scan selected](images/ui/toolbar-tabs.png)
 
 ## Mouse and touchpad
 
@@ -129,7 +152,7 @@ see "Region selection" in [macos.md](macos.md).
 
 ## Scans
 
-Scan Tools (toolbar INSERT > Scan) holds repair, units / calibration and orientation for
+Scan Tools (toolbar MESH > INSERT > Scan Tools) holds repair, units / calibration and orientation for
 imported meshes; see [scans.md](scans.md).
 
 ## Modelling
@@ -181,7 +204,7 @@ Analysis, Deviation Map (scan vs part), Thickness Map and Clear Analyses. See
 
 ## Wind tunnel (CFD)
 
-Toolbar group SIMULATE, button **CFD**: opens the wind tunnel panel (no shortcut; Fusion
+Toolbar tab SIMULATE, button **Wind Tunnel**: opens the wind tunnel panel (no shortcut; Fusion
 has no CFD command to borrow one from). Details in [cfd.md](cfd.md#in-the-app).
 
 ## Guided workflow

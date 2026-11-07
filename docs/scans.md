@@ -54,7 +54,7 @@ modelling over them.
 - **Import** (toolbar, File > Import, drag & drop) parses files on a worker thread with a
   progress bar and a Cancel button; the part is then added through `document.import`.
   The unit for new imports is set in Scan Tools ("New imports in").
-- **Scan Tools** (toolbar INSERT > Scan, Modify > Scan Tools; no shortcut, Fusion has none)
+- **Scan Tools** (toolbar MESH > Scan Tools, Modify > Scan Tools; no shortcut, Fusion has none)
   acts on the selected imported part: mesh statistics, Repair / Flip Normals, unit
   conversion, Calibrate (Pick 2 Points, enter the true distance), Orient (Pick Points on a
   flat area, choose XY / XZ / YZ, Align; Place on Floor, Center). Picked points snap to the

@@ -94,6 +94,10 @@ ColumnLayout {
                 icon.color: Theme.icon
                 icon.width: Theme.iconSmall
                 icon.height: Theme.iconSmall
+                // Guided commands (Main.qml GuidedCommand) have no Action: the item
+                // follows the button and clicks it.
+                Component.onCompleted: if (!modelData.action) enabled = Qt.binding(() => modelData.enabled)
+                onTriggered: if (!modelData.action) modelData.clicked()
             }
             onObjectAdded: (index, object) => menu.insertItem(index, object)
             onObjectRemoved: (index, object) => menu.removeItem(object)

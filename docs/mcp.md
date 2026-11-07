@@ -16,7 +16,7 @@ AeroCAD                         runs the commands on the UI thread, logs every c
 
 ## 1. Turn on access in AeroCAD
 
-Click **AI > Agent** in the toolbar (or *Edit > AI Agent Access...*) and switch on
+Click **TOOLS > Agent** in the toolbar (or *Edit > AI Agent Access...*) and switch on
 **Allow AI agents to use this project**. The choice is remembered. `AeroCAD --mcp`
 turns it on from the command line.
 
