@@ -17,6 +17,7 @@
 #include <QStandardPaths>
 
 #include <algorithm>
+#include <cmath>
 
 namespace aerocad::app {
 
@@ -585,6 +586,96 @@ QVariantMap AppController::pickSurface(const QVector3D& origin, const QVector3D&
             {QStringLiteral("point"), QVector3D(static_cast<float>(best->point.x), static_cast<float>(best->point.y),
                                                 static_cast<float>(best->point.z))},
             {QStringLiteral("triangle"), QVariant::fromValue<quint32>(best->triangle)}};
+}
+
+QVariantMap AppController::pickNearSurface(const QVector3D& origin, const QVector3D& direction,
+                                           double maxAngleDeg) const
+{
+    const core::Vec3 o{origin.x(), origin.y(), origin.z()};
+    const core::Vec3 d{direction.x(), direction.y(), direction.z()};
+    const double len = d.length();
+    if (!(len > 0.0))
+        return {};
+    std::optional<core::RayHit> best;
+    double bestAngle = 0.0;
+    model::PartId bestPart = 0;
+    for (const auto& p : m_session.document().parts()) {
+        if (!p.visible || !p.mesh)
+            continue;
+        const auto hit = core::nearestToRay(*p.mesh, o, d, maxAngleDeg);
+        if (!hit)
+            continue;
+        const core::Vec3 w = hit->point - o;
+        const double along = w.dot(d) / len;
+        const double angle = std::atan2((w - d * (along / len)).length(), along);
+        if (!best || angle < bestAngle) {
+            best = hit;
+            bestAngle = angle;
+            bestPart = p.id;
+        }
+    }
+    if (!best)
+        return {};
+    return {{QStringLiteral("partId"), QVariant::fromValue<quint64>(bestPart)},
+            {QStringLiteral("point"), QVector3D(static_cast<float>(best->point.x), static_cast<float>(best->point.y),
+                                                static_cast<float>(best->point.z))},
+            {QStringLiteral("triangle"), QVariant::fromValue<quint32>(best->triangle)},
+            {QStringLiteral("snapped"), true}};
+}
+
+const core::MeshProjector& AppController::projectorFor(const std::shared_ptr<const core::TriangleMesh>& mesh,
+                                                       const core::Vec3& outward) const
+{
+    // Built on the first use for a mesh and direction; clicks and hover then cost microseconds.
+    if (!m_projector || m_projectorMesh != mesh || (m_projector->outward() - outward.normalized()).length() > 1e-9) {
+        m_projectorMesh = mesh;
+        m_projector = std::make_unique<core::MeshProjector>(*mesh, outward);
+    }
+    return *m_projector;
+}
+
+QVector3D AppController::dropOntoPart(quint64 id, const QVector3D& point, const QVector3D& normal) const
+{
+    const core::Vec3 p{point.x(), point.y(), point.z()};
+    const core::Vec3 n{normal.x(), normal.y(), normal.z()};
+    const model::Part* surface = part(id);
+    if (surface == nullptr || !(n.length() > 0.0))
+        return point;
+    std::vector<std::shared_ptr<const core::TriangleMesh>> meshes;
+    if (const model::Part* scan = part(model::fittedScanId(*surface)); scan != nullptr && scan->mesh && !scan->shape)
+        meshes.push_back(scan->mesh);
+    if (surface->mesh)
+        meshes.push_back(surface->mesh);
+    for (const auto& mesh : meshes) {
+        if (const auto hit = projectorFor(mesh, n).drop(p))
+            return {static_cast<float>(hit->x), static_cast<float>(hit->y), static_cast<float>(hit->z)};
+    }
+    return point;
+}
+
+QVariantMap AppController::pickPartSurface(quint64 id, const QVector3D& origin, const QVector3D& direction) const
+{
+    const core::Vec3 o{origin.x(), origin.y(), origin.z()};
+    const core::Vec3 d{direction.x(), direction.y(), direction.z()};
+    const model::Part* p = part(id);
+    if (p == nullptr)
+        return {};
+    auto cast = [&](const std::shared_ptr<const core::TriangleMesh>& mesh) {
+        // Any direction serves for ray casts; reuse the one dropOntoPart built.
+        return (m_projector && m_projectorMesh == mesh ? *m_projector : projectorFor(mesh, d)).raycast(o, d);
+    };
+    std::optional<core::RayHit> hit;
+    // A fitted surface covers only the fitted area; the scan it came from goes further.
+    // Hidden too: a sketch is laid on it either way (Fit hides it).
+    if (const model::Part* scan = part(model::fittedScanId(*p)); scan != nullptr && scan->mesh && !scan->shape)
+        hit = cast(scan->mesh);
+    if (!hit && p->mesh)
+        hit = cast(p->mesh);
+    if (!hit)
+        return {};
+    return {{QStringLiteral("partId"), QVariant::fromValue<quint64>(id)},
+            {QStringLiteral("point"), QVector3D(static_cast<float>(hit->point.x), static_cast<float>(hit->point.y),
+                                                static_cast<float>(hit->point.z))}};
 }
 
 const core::TriangleSet* AppController::displayedSelection(quint64 id) const

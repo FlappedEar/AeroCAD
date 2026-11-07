@@ -10,6 +10,8 @@ ToolButton {
     id: control
 
     property string iconName: Theme.commandIcon(text)
+    /// Explanation under the name in the tooltip; looked up from the label by default.
+    property string help: Theme.commandHelp(text)
     /// Accent-coloured command (e.g. Finish Sketch).
     property bool primary: false
 
@@ -52,6 +54,7 @@ ToolButton {
     ToolTip.text: {
         const t = action ? action.text.replace("&", "") : text
         const s = action && action.shortcut ? Preferences.shortcutText(action.shortcut) : ""
-        return s.length > 0 ? t + "  (" + s + ")" : t
+        const title = s.length > 0 ? t + "  (" + s + ")" : t
+        return help.length > 0 ? title + "\n" + help : title
     }
 }

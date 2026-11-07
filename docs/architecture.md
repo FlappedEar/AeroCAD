@@ -83,6 +83,40 @@ core -------+                 transforms, primitives).
   the single-face base surfaces); with the solid flag it adds side walls and caps. The
   solid is reversed when it comes out inside out. Offsets larger than the concave radius
   of curvature fail with an error.
+- **Designing on a curved surface** (an aileron or flap on a scanned wing): `sketch.create`
+  with `surface: {part}` puts the sketch on the area-weighted best-fit plane
+  (`core::fitPlaneToTriangles`) of the part's selection, of the area around the clicked
+  point (a scan) or of the whole fitted surface, normal the way the surface faces, X
+  along its long side, lifted to its highest point. The plane is only a drawing base:
+  `surface.trim_by_sketch` (`geometry::trimSurface`) sweeps the closed profiles both
+  ways along the sketch normal into prisms and keeps the common part (or the cut) of
+  the surface, so the result lies exactly on the original curved surface. A single-face
+  surface is trimmed on its whole underlying B-spline (`extend`), so the edges are the
+  outline's and not the ragged border of the brushed region it was fitted to.
+  `surface.part_from_sketch` does it in one step from the sketch (it remembers its part
+  in `onSurface`). On a scan, or a surface fitted to one (`model::fittedScanId`), it uses
+  `geometry::partOnScan`: heights over the sketch plane sampled at the first hit from
+  outside (`core::MeshProjector`), so layers behind the skin never count; the largest
+  sheet under the outline is kept and holes and steep pits are bridged; two B-spline
+  height fields are fitted by tensor-product least squares, the skin and its rolling-ball
+  offset (which cannot fold in sharp details); the sketch coordinates are their
+  parameters, so the outline is laid on them exactly, without booleans, and the walls run
+  along the sketch normal. The fit takes milliseconds on a 3M-triangle scan. Other
+  surfaces are trimmed and thickened. Such sketches are shown lying on the scan:
+  `Design::syncDocument` splits the curves and the profile fill finely and moves them onto
+  it along the sketch normal (`core::projectOntoMesh`); fill over holes or walls is left
+  out, lines run straight across them. Clicks and previews while sketching use a cached
+  `core::MeshProjector` (`AppController::pickPartSurface`, `dropOntoPart`): triangles binned
+  in a grid across the sketch normal; about a millisecond per pointer move at 3M triangles. `across: true`
+  sketches stand on the surface instead (X along its normal, through the clicked point;
+  turned by `angle` about the normal), for fins: `sketch.profiles` reports where the
+  plane cuts the surface (`surfaceLine`, `core::sliceMesh`), which the sketch overlay
+  draws on top. `surface.fin_from_sketch` (`geometry::finOnSurface`) extrudes the
+  outline half the thickness each way, splits it with the surface (`BRepAlgoAPI_Splitter`) and keeps the side with more of
+  the fin, so the root lies exactly on the surface. On a scan the surface under the root
+  is `geometry::skinOnScan`: the same first-skin-from-outside height-field fit as
+  `partOnScan` (`core::MeshProjector` along the surface normal), so an inner layer,
+  holes and flipped triangles do not pull the root into the scan.
 
 ## Not yet decided / next steps
 

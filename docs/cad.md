@@ -32,7 +32,7 @@ use the same operations, and every change is one undo step.
 
 | Command | Fusion | Notes |
 |---|---|---|
-| `sketch.create` | Create Sketch | `plane` XY / XZ / YZ / {origin, normal, xDir}, or `face` {body, index or point}; `offset`; `curves` |
+| `sketch.create` | Create Sketch | `plane` XY / XZ / YZ / {origin, normal, xDir}, or `face` {body, index or point}, or `surface` {part, point / useSelection} (best-fit plane over a curved surface or scan); `offset`; `curves` |
 | `sketch.add_curves` | (draw in sketch) | appends curves |
 | `sketch.profiles` | | closed regions with area and centroid |
 | `sketch.add_constraints` | Sketch > Constraints, Sketch Dimension (D) | see Constraints below |

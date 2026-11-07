@@ -3,7 +3,25 @@
 
 #include "aerocad/geometry/OcctShape.hpp"
 
+#include <BRepAlgoAPI_Common.hxx>
+#include <BRepAlgoAPI_Cut.hxx>
+#include <BRepAlgoAPI_Splitter.hxx>
+#include <GeomAPI_ProjectPointOnSurf.hxx>
+#include <BRepBndLib.hxx>
+#include <BRepBuilderAPI_Sewing.hxx>
+#include <BRepBuilderAPI_Transform.hxx>
 #include <BRepCheck_Analyzer.hxx>
+#include <BRepPrimAPI_MakePrism.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRep_Builder.hxx>
+#include <BRep_Tool.hxx>
+#include <Geom_Surface.hxx>
+#include <Precision.hxx>
+#include <Bnd_Box.hxx>
+#include <TopTools_ListOfShape.hxx>
+#include <TopoDS_Compound.hxx>
+#include <gp_Trsf.hxx>
+#include <gp_Vec.hxx>
 #include <BRepGProp.hxx>
 #include <BRepOffset_MakeSimpleOffset.hxx>
 #include <GProp_GProps.hxx>
@@ -58,6 +76,29 @@ TopoDS_Shape simpleOffset(const TopoDS_Shape& s, double distance, bool solid)
     return result;
 }
 
+/// A single face on its whole underlying surface (natural bounds), without the trim
+/// outline and holes: a surface fitted to a brushed selection has a ragged outline, but
+/// the B-spline itself covers the selection's bounding rectangle smoothly. Shells of
+/// several faces (sewn patches) are returned as they are.
+TopoDS_Shape untrimmed(const TopoDS_Shape& s)
+{
+    TopExp_Explorer e(s, TopAbs_FACE);
+    const TopoDS_Face face = TopoDS::Face(e.Current());
+    e.Next();
+    if (e.More())
+        return s;
+    const Handle(Geom_Surface) surf = BRep_Tool::Surface(face);
+    if (surf.IsNull())
+        return s;
+    BRepBuilderAPI_MakeFace maker(surf, Precision::Confusion());
+    if (!maker.IsDone())
+        return s;
+    TopoDS_Shape full = maker.Face();
+    // Keep the face's normal (the side the mesh faced).
+    full.Orientation(face.Orientation());
+    return full;
+}
+
 } // namespace
 
 Shape offsetSurface(const Shape& surface, double distance)
@@ -99,6 +140,179 @@ Shape thickenSurface(const Shape& surface, double thickness, ThickenSide side)
         return wrapShape(solid);
     } catch (const Standard_Failure& e) {
         throw OffsetError(std::string("Thicken failed: ") + e.GetMessageString());
+    }
+}
+
+Shape trimSurface(const Shape& surface, const std::vector<Shape>& outlines, const core::Vec3& direction,
+                  bool keepInside, bool extend)
+{
+    TopoDS_Shape s = occt(surface);
+    requireSurface(s);
+    if (extend)
+        s = untrimmed(s);
+    if (outlines.empty())
+        throw OffsetError("No closed outline to cut the surface with");
+    const double len = direction.length();
+    if (!(len > 0.0))
+        throw OffsetError("Projection direction is zero");
+    const gp_Vec dir(direction.x / len, direction.y / len, direction.z / len);
+    try {
+        // Prisms through the outlines, long enough to pass through the whole surface on
+        // both sides of the outline plane.
+        Bnd_Box box;
+        BRepBndLib::Add(s, box);
+        for (const auto& o : outlines) {
+            if (!o.isNull())
+                BRepBndLib::Add(o.impl()->shape, box);
+        }
+        const double reach = std::sqrt(box.SquareExtent()) + 1.0;
+        TopTools_ListOfShape tools;
+        for (const auto& o : outlines) {
+            if (o.isNull())
+                continue;
+            gp_Trsf back;
+            back.SetTranslation(dir * -reach);
+            const TopoDS_Shape start = BRepBuilderAPI_Transform(o.impl()->shape, back, true).Shape();
+            BRepPrimAPI_MakePrism prism(start, dir * (2.0 * reach));
+            if (!prism.IsDone())
+                throw OffsetError("Could not sweep the outline");
+            tools.Append(prism.Shape());
+        }
+        if (tools.IsEmpty())
+            throw OffsetError("No closed outline to cut the surface with");
+
+        TopTools_ListOfShape args;
+        args.Append(s);
+        TopoDS_Shape result;
+        auto run = [&](auto&& algo) {
+            algo.SetArguments(args);
+            algo.SetTools(tools);
+            algo.SetRunParallel(false);
+            algo.Build();
+            if (!algo.IsDone() || algo.HasErrors())
+                throw OffsetError("Cutting the surface with the outline failed");
+            result = algo.Shape();
+        };
+        if (keepInside)
+            run(BRepAlgoAPI_Common());
+        else
+            run(BRepAlgoAPI_Cut());
+
+        std::vector<TopoDS_Shape> faces;
+        for (TopExp_Explorer e(result, TopAbs_FACE); e.More(); e.Next())
+            faces.push_back(e.Current());
+        if (faces.empty()) {
+            throw OffsetError(keepInside ? "The outline does not overlap the surface (seen along the sketch normal)"
+                                         : "The outline covers the whole surface; nothing is left");
+        }
+        if (faces.size() == 1)
+            return wrapShape(faces.front());
+        // Several pieces of one surface: sew neighbours into shells so they thicken as one.
+        BRepBuilderAPI_Sewing sewing(1e-4);
+        for (const auto& f : faces)
+            sewing.Add(f);
+        sewing.Perform();
+        TopoDS_Shape sewn = sewing.SewedShape();
+        if (sewn.IsNull()) {
+            TopoDS_Compound c;
+            BRep_Builder b;
+            b.MakeCompound(c);
+            for (const auto& f : faces)
+                b.Add(c, f);
+            sewn = c;
+        }
+        return wrapShape(sewn);
+    } catch (const Standard_Failure& e) {
+        throw OffsetError(std::string("Trim failed: ") + e.GetMessageString());
+    }
+}
+
+Shape finOnSurface(const Shape& surface, const std::vector<Shape>& outlines, const core::Vec3& normal,
+                   double thickness, const core::Vec3& outward)
+{
+    TopoDS_Shape s = occt(surface);
+    requireSurface(s);
+    s = untrimmed(s);
+    if (outlines.empty())
+        throw OffsetError("No closed outline for the fin");
+    if (!std::isfinite(thickness) || thickness <= 0.0)
+        throw OffsetError("Thickness must be positive");
+    const double len = normal.length();
+    const double outLen = outward.length();
+    if (!(len > 0.0) || !(outLen > 0.0))
+        throw OffsetError("Fin direction is zero");
+    const gp_Vec dir(normal.x / len, normal.y / len, normal.z / len);
+    const gp_Vec out(outward.x / outLen, outward.y / outLen, outward.z / outLen);
+    try {
+        // The fin before the cut: the outlines extruded half the thickness each way.
+        TopTools_ListOfShape blanks;
+        for (const auto& o : outlines) {
+            if (o.isNull())
+                continue;
+            gp_Trsf back;
+            back.SetTranslation(dir * (-0.5 * thickness));
+            const TopoDS_Shape start = BRepBuilderAPI_Transform(o.impl()->shape, back, true).Shape();
+            BRepPrimAPI_MakePrism prism(start, dir * thickness);
+            if (!prism.IsDone())
+                throw OffsetError("Could not extrude the fin outline");
+            blanks.Append(prism.Shape());
+        }
+        if (blanks.IsEmpty())
+            throw OffsetError("No closed outline for the fin");
+
+        TopTools_ListOfShape tools;
+        tools.Append(s);
+        BRepAlgoAPI_Splitter splitter;
+        splitter.SetArguments(blanks);
+        splitter.SetTools(tools);
+        splitter.SetRunParallel(false);
+        splitter.Build();
+        if (!splitter.IsDone() || splitter.HasErrors())
+            throw OffsetError("Cutting the fin root with the surface failed");
+
+        // Sort the pieces by the side of the surface their centre lies on, and keep the
+        // side with more of the fin: the root dipping into the surface is cut off, whichever
+        // way the outline was drawn.
+        Handle(Geom_Surface) surf;
+        for (TopExp_Explorer e(s, TopAbs_FACE); e.More() && surf.IsNull(); e.Next())
+            surf = BRep_Tool::Surface(TopoDS::Face(e.Current()));
+        std::vector<TopoDS_Shape> sides[2];
+        double volume[2] = {0.0, 0.0};
+        for (TopExp_Explorer e(splitter.Shape(), TopAbs_SOLID); e.More(); e.Next()) {
+            GProp_GProps props;
+            BRepGProp::VolumeProperties(e.Current(), props);
+            const gp_Pnt c = props.CentreOfMass();
+            int side = 0;
+            if (!surf.IsNull()) {
+                GeomAPI_ProjectPointOnSurf projector(c, surf);
+                if (projector.NbPoints() > 0)
+                    side = gp_Vec(projector.NearestPoint(), c).Dot(out) > 0.0 ? 0 : 1;
+            }
+            sides[side].push_back(e.Current());
+            volume[side] += std::abs(props.Mass());
+        }
+        if (sides[0].empty() || sides[1].empty())
+            throw OffsetError("The fin outline does not reach through the surface; draw its root a little into the "
+                              "surface (past the surface line in the sketch)");
+        const std::vector<TopoDS_Shape>& kept = volume[0] >= volume[1] ? sides[0] : sides[1];
+        TopoDS_Shape result;
+        if (kept.size() == 1) {
+            result = kept.front();
+        } else {
+            TopoDS_Compound c;
+            BRep_Builder b;
+            b.MakeCompound(c);
+            for (const auto& k : kept)
+                b.Add(c, k);
+            result = c;
+        }
+        GProp_GProps props;
+        BRepGProp::VolumeProperties(result, props);
+        if (props.Mass() < 0.0)
+            result.Reverse();
+        return wrapShape(result);
+    } catch (const Standard_Failure& e) {
+        throw OffsetError(std::string("Fin failed: ") + e.GetMessageString());
     }
 }
 

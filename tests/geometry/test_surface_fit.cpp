@@ -1,16 +1,21 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "aerocad/core/MeshSelection.hpp"
+#include "aerocad/geometry/DrapeFit.hpp"
+#include "aerocad/geometry/Sketch.hpp"
 #include "aerocad/geometry/Offset.hpp"
 #include "aerocad/geometry/SurfaceFit.hpp"
 #include "aerocad/geometry/Tessellation.hpp"
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <numbers>
 #include <random>
 
 using namespace aerocad;
+using Catch::Approx;
 
 namespace {
 
@@ -380,4 +385,155 @@ TEST_CASE("Fit on extra data and trim to a subset of it", "[geometry][fit]")
             CHECK(fit.report.outsideTrimMax < 0.5); // the smoothed outline vs. the triangle staircase
         }
     }
+}
+
+namespace {
+
+/// A rough scan: a curved outer skin (z = f(x, y)) with noise, a hole through it, a layer
+/// 4 mm behind it and a deep pit in the middle of the outline (a grille opening).
+core::TriangleMesh roughScan()
+{
+    std::mt19937 rng(3);
+    std::normal_distribution<double> noise(0.0, 0.05);
+    std::vector<core::Vec3> v;
+    std::vector<core::TriangleMesh::Triangle> t;
+    const int n = 300; // 0.5 mm
+    auto skin = [](double x, double y) { return 12.0 * std::sin(x / 40.0) + 0.002 * y * y; };
+    auto addSheet = [&](double offset, bool outer) {
+        const auto base = static_cast<std::uint32_t>(v.size());
+        for (int j = 0; j <= n; ++j)
+            for (int i = 0; i <= n; ++i) {
+                const double x = i * 0.5, y = j * 0.5;
+                double z = skin(x, y) + offset + noise(rng);
+                if (outer && std::hypot(x - 90.0, y - 60.0) < 6.0)
+                    z -= 30.0; // the pit
+                v.push_back({x, y, z});
+            }
+        auto idx = [&](int i, int j) { return base + static_cast<std::uint32_t>(j * (n + 1) + i); };
+        for (int j = 0; j < n; ++j)
+            for (int i = 0; i < n; ++i) {
+                if (outer && std::hypot(i * 0.5 - 50.0, j * 0.5 - 90.0) < 5.0)
+                    continue; // the hole
+                t.push_back({idx(i, j), idx(i + 1, j), idx(i + 1, j + 1)});
+                t.push_back({idx(i, j), idx(i + 1, j + 1), idx(i, j + 1)});
+            }
+    };
+    addSheet(0.0, true);
+    addSheet(-4.0, false);
+    return core::TriangleMesh(std::move(v), std::move(t));
+}
+
+geometry::Shape rectangleOutline(const geometry::Plane& plane, double x, double y, double w, double h)
+{
+    using K = geometry::SketchCurve::Kind;
+    const std::vector<geometry::Vec2> c{{x, y}, {x + w, y}, {x + w, y + h}, {x, y + h}};
+    std::vector<geometry::SketchCurve> curves;
+    for (std::size_t i = 0; i < 4; ++i)
+        curves.push_back({K::Line, {c[i], c[(i + 1) % 4]}});
+    return geometry::buildSketch(plane, curves).profiles.at(0);
+}
+
+geometry::Shape circleOutline(const geometry::Plane& plane, double x, double y, double r)
+{
+    return geometry::buildSketch(plane, {{geometry::SketchCurve::Kind::Circle, {{x, y}}, r}}).profiles.at(0);
+}
+
+geometry::DrapeArea areaOver(double u0, double v0, double u1, double v1, double margin)
+{
+    geometry::DrapeArea a;
+    a.origin = {0, 0, 50};
+    a.x = {1, 0, 0};
+    a.y = {0, 1, 0};
+    a.normal = {0, 0, 1};
+    a.u0 = u0 - margin;
+    a.v0 = v0 - margin;
+    a.u1 = u1 + margin;
+    a.v1 = v1 + margin;
+    a.insideU0 = u0;
+    a.insideV0 = v0;
+    a.insideU1 = u1;
+    a.insideV1 = v1;
+    return a;
+}
+
+} // namespace
+
+TEST_CASE("A part on a scan follows the outer skin across holes, pits and inner layers", "[geometry][surface]")
+{
+    const auto scan = roughScan();
+    const core::MeshProjector projector(scan, {0, 0, 1});
+    const double side = 100.0;
+    const geometry::Plane plane{{0, 0, 50}, {0, 0, 1}, {1, 0, 0}};
+    const auto outline = rectangleOutline(plane, 30, 30, side, side);
+
+    const auto outside = geometry::partOnScan(projector, areaOver(30, 30, 130, 130, 10), {outline}, 2.0,
+                                              geometry::ThickenSide::Outside);
+    CHECK(outside.report.rmsDeviation < 0.2);
+    CHECK(outside.report.bridgedFraction > 0.0);
+    CHECK(outside.report.bridgedFraction < 0.05);
+    REQUIRE_FALSE(outside.solid.isNull());
+    // Slightly more than 100 x 100: the skin is curved. The thickness is along its normal.
+    CHECK(outside.skinArea > side * side);
+    CHECK(outside.skinArea < 1.2 * side * side);
+    CHECK(outside.solid.volume() == Approx(2.0 * outside.skinArea).epsilon(0.03));
+
+    const auto mesh = geometry::tessellate(outside.solid);
+    const auto box = mesh.bounds();
+    CHECK(box.size().x == Approx(side).margin(0.1));
+    CHECK(box.size().y == Approx(side).margin(0.1));
+    // Rides on the skin at every point, not on the layer behind, not down the pit.
+    double lowest = 1e9;
+    for (const auto& p : mesh.vertices())
+        lowest = std::min(lowest, p.z - (12.0 * std::sin(p.x / 40.0) + 0.002 * p.y * p.y));
+    CHECK(lowest > -1.0);
+
+    const auto inside = geometry::partOnScan(projector, areaOver(30, 30, 130, 130, 10), {outline}, 2.0,
+                                             geometry::ThickenSide::Inside);
+    CHECK(inside.solid.volume() == Approx(2.0 * inside.skinArea).epsilon(0.03));
+    CHECK(geometry::tessellate(inside.solid).bounds().max.z < box.max.z - 1.0);
+}
+
+TEST_CASE("A part on a scan: outline past the scan's edge, curved outline, no scan under it", "[geometry][surface]")
+{
+    const auto scan = roughScan();
+    const core::MeshProjector projector(scan, {0, 0, 1});
+    const geometry::Plane plane{{0, 0, 50}, {0, 0, 1}, {1, 0, 0}};
+
+    // Reaches 20 mm past the scan: still one clean part, and the report says so.
+    const auto past = geometry::partOnScan(projector, areaOver(100, 40, 170, 110, 10),
+                                           {rectangleOutline(plane, 100, 40, 70, 70)}, 2.0,
+                                           geometry::ThickenSide::Outside);
+    CHECK(past.report.bridgedFraction > 0.2);
+    CHECK(geometry::tessellate(past.solid).bounds().size().x == Approx(70.0).margin(0.1));
+
+    const auto round = geometry::partOnScan(projector, areaOver(40, 40, 100, 100, 10),
+                                            {circleOutline(plane, 70, 70, 30)}, 3.0,
+                                            geometry::ThickenSide::Both);
+    CHECK(round.solid.volume() == Approx(3.0 * round.skinArea).epsilon(0.05));
+    CHECK(round.skinArea == Approx(std::numbers::pi * 900.0).epsilon(0.1));
+
+    CHECK_THROWS_AS(geometry::partOnScan(projector, areaOver(1000, 1000, 1100, 1100, 10),
+                                         {rectangleOutline(plane, 1000, 1000, 100, 100)}, 2.0,
+                                         geometry::ThickenSide::Outside),
+                    geometry::SurfaceFitError);
+}
+
+TEST_CASE("A part on a scan is as thick as asked on a slope, also when thinner than the sampling", "[geometry][surface]")
+{
+    // A plane at 45 degrees; the 100 mm outline with its margin samples at about 0.83 mm.
+    const core::TriangleMesh slope({{-50, -50, -50}, {200, -50, 200}, {200, 200, 200}, {-50, 200, -50}},
+                                   {{0, 1, 2}, {0, 2, 3}});
+    const core::MeshProjector projector(slope, {0, 0, 1});
+    const geometry::Plane plane{{0, 0, 300}, {0, 0, 1}, {1, 0, 0}};
+    const auto outline = rectangleOutline(plane, 0, 0, 100, 100);
+    geometry::DrapeArea area = areaOver(0, 0, 100, 100, 10);
+    area.origin = plane.origin;
+
+    for (const double thickness : {0.5, 1.0, 2.0, 6.0}) {
+        const auto part = geometry::partOnScan(projector, area, {outline}, thickness, geometry::ThickenSide::Outside);
+        INFO("thickness " << thickness);
+        CHECK(part.solid.volume() == Approx(thickness * part.skinArea).epsilon(0.02));
+    }
+    const auto both = geometry::partOnScan(projector, area, {outline}, 1.0, geometry::ThickenSide::Both);
+    CHECK(both.solid.volume() == Approx(1.0 * both.skinArea).epsilon(0.02));
 }

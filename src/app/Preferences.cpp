@@ -17,6 +17,7 @@ const QString kUnitKey = QStringLiteral("display/lengthUnit");
 const QString kThemeKey = QStringLiteral("display/theme");
 const QString kMouseKey = QStringLiteral("navigation/mouseProfile");
 const QString kInvertZoomKey = QStringLiteral("navigation/invertZoom");
+const QString kInvertOrbitKey = QStringLiteral("navigation/invertOrbit");
 const QString kAutosaveKey = QStringLiteral("project/autosaveSeconds");
 
 const QString kDefaultUnit = QStringLiteral("mm");
@@ -51,6 +52,7 @@ Preferences::Preferences(QObject* parent) : QObject(parent)
     if (!contains(mouseProfiles(), m_mouseProfile))
         m_mouseProfile = kDefaultMouse;
     m_invertZoom = s.value(kInvertZoomKey, false).toBool();
+    m_invertOrbit = s.value(kInvertOrbitKey, false).toBool();
     m_autosaveSeconds = std::clamp(s.value(kAutosaveKey, kDefaultAutosave).toInt(), 0, kMaxAutosave);
 
 }
@@ -85,6 +87,15 @@ void Preferences::setMouseProfile(const QString& profile)
     m_mouseProfile = profile;
     QSettings().setValue(kMouseKey, profile);
     emit mouseProfileChanged();
+}
+
+void Preferences::setInvertOrbit(bool invert)
+{
+    if (invert == m_invertOrbit)
+        return;
+    m_invertOrbit = invert;
+    QSettings().setValue(kInvertOrbitKey, invert);
+    emit invertOrbitChanged();
 }
 
 void Preferences::setInvertZoom(bool invert)
@@ -177,6 +188,7 @@ void Preferences::resetToDefaults()
     setTheme(kDefaultTheme);
     setMouseProfile(kDefaultMouse);
     setInvertZoom(false);
+    setInvertOrbit(false);
     setAutosaveSeconds(kDefaultAutosave);
 }
 

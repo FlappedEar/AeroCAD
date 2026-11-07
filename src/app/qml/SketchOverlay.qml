@@ -44,6 +44,11 @@ Item {
 
     onToolChanged: reset()
     onSketchChanged: reset()
+    // Previews and the surface line are projected points: redraw them when the view moves.
+    Connections {
+        target: root.viewport
+        function onViewKeyChanged() { canvas.requestPaint() }
+    }
 
     function reset() {
         points = []
@@ -65,11 +70,23 @@ Item {
         return [d.dotProduct(v3(sketch.xDir)), d.dotProduct(v3(sketch.yDir))]
     }
 
+    /// Where a sketch point is drawn: on a sketch over a surface, on the surface (where the
+    /// finished curves are shown), so previews, hover markers and snapping match them.
     function toScreen(p) {
-        return viewport.viewPoint(toWorld(p))
+        const w = toWorld(p)
+        if (sketch.surfacePart && !sketch.across)
+            return viewport.viewPoint(viewport.controller.dropOntoPart(sketch.surfacePart, w, v3(sketch.normal)))
+        return viewport.viewPoint(w)
     }
 
     function screenToLocal(x, y) {
+        // Over a curved surface: the point of the surface under the cursor, seen along the
+        // sketch normal, so drawing lands where the cursor is on the surface from any view.
+        if (sketch.surfacePart && !sketch.across) {
+            const s = viewport.pickOnPart(x, y, sketch.surfacePart)
+            if (s !== null)
+                return toLocal(s)
+        }
         const w = viewport.planePoint(x, y, v3(sketch.origin), v3(sketch.normal))
         return w === null ? null : toLocal(w)
     }
@@ -282,6 +299,21 @@ Item {
             ctx.reset()
             if (root.sketch === null)
                 return
+            // Across a surface (a fin): where the sketch plane cuts the surface, drawn on
+            // top because the surface hides it.
+            const line = root.sketch.surfaceLine || []
+            if (line.length >= 2) {
+                ctx.lineWidth = 2
+                ctx.strokeStyle = Theme.warning
+                ctx.beginPath()
+                for (let i = 0; i + 1 < line.length; i += 2) {
+                    const a = root.viewport.viewPoint(root.toWorld(line[i]))
+                    const b = root.viewport.viewPoint(root.toWorld(line[i + 1]))
+                    ctx.moveTo(a.x, a.y)
+                    ctx.lineTo(b.x, b.y)
+                }
+                ctx.stroke()
+            }
             ctx.lineWidth = 1.5
             ctx.strokeStyle = Theme.sketchColor
             ctx.fillStyle = Theme.sketchColor

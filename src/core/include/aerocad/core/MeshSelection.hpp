@@ -62,6 +62,64 @@ struct RayHit {
 /// triangle sides. Brute force (Moller-Trumbore); fine for one query per pointer event.
 [[nodiscard]] std::optional<RayHit> raycast(const TriangleMesh& mesh, const Vec3& origin, const Vec3& direction);
 
+/// For a ray that misses the mesh (a click into a hole of a scan, such as a grille
+/// opening, or just past its edge): the mesh vertex seen closest to the ray from `origin`,
+/// within `maxAngleDeg` of it, as a hit on a triangle using that vertex. `distance` is along
+/// the ray, in units of |direction|. Empty when no vertex in front of `origin` is that close.
+[[nodiscard]] std::optional<RayHit> nearestToRay(const TriangleMesh& mesh, const Vec3& origin, const Vec3& direction,
+                                                 double maxAngleDeg);
+
+/// A mesh seen from outside along one direction: triangles binned in a grid across it, for
+/// fast queries on scans of millions of triangles (build: under a second; queries:
+/// microseconds). Keeps a reference to `mesh`, which must outlive it.
+class MeshProjector {
+public:
+    /// `outward` points from the surface towards the viewer of `drop`.
+    MeshProjector(const TriangleMesh& mesh, const Vec3& outward);
+
+    [[nodiscard]] const TriangleMesh& mesh() const { return *m_mesh; }
+    [[nodiscard]] const Vec3& outward() const { return m_d; }
+
+    /// The first point of the mesh met coming from outside, along the line through `p`
+    /// parallel to `outward`: the visible skin, never a layer behind it. Empty when the
+    /// line misses the mesh (a hole, or past its edge).
+    [[nodiscard]] std::optional<Vec3> drop(const Vec3& p) const;
+
+    /// Same as core::raycast: nearest hit of the ray, both triangle sides.
+    [[nodiscard]] std::optional<RayHit> raycast(const Vec3& origin, const Vec3& direction) const;
+
+private:
+    [[nodiscard]] int cellU(double u) const;
+    [[nodiscard]] int cellV(double v) const;
+
+    const TriangleMesh* m_mesh;
+    Vec3 m_d;
+    Vec3 m_e1;
+    Vec3 m_e2;
+    double m_u0 = 0.0;
+    double m_v0 = 0.0;
+    double m_su = 1.0;
+    double m_sv = 1.0;
+    int m_nu = 1;
+    int m_nv = 1;
+    std::vector<std::uint32_t> m_start;     ///< Per cell, into m_triangles; one extra at the end.
+    std::vector<std::uint32_t> m_triangles;
+};
+
+/// Moves each point along `direction` onto the first skin of the mesh seen from outside
+/// (from the far side of `direction`). Points whose line misses the mesh stay where they
+/// are; `missed` (optional, same size as `points`) marks them, and `hits` (optional) counts
+/// the others. Used to drape a sketch drawn on a plane over a curved surface.
+[[nodiscard]] std::vector<Vec3> projectOntoMesh(const TriangleMesh& mesh, const std::vector<Vec3>& points,
+                                                const Vec3& direction, std::size_t* hits = nullptr,
+                                                std::vector<char>* missed = nullptr);
+
+/// Where the plane through `origin` with `normal` cuts the mesh, as line segments (pairs
+/// of points), from triangles within `radius` of `origin`. Shows the surface's line in a
+/// sketch drawn across it (a fin's root).
+[[nodiscard]] std::vector<Vec3> sliceMesh(const TriangleMesh& mesh, const Vec3& origin, const Vec3& normal,
+                                          double radius);
+
 /// Distance from a point to a triangle.
 [[nodiscard]] double pointTriangleDistance(const Vec3& p, const Vec3& a, const Vec3& b, const Vec3& c);
 

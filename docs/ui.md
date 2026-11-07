@@ -10,7 +10,9 @@ AeroCAD's window follows the layout of common CAD applications, Autodesk Fusion 
   corner and the **navigation bar** at the bottom centre.
 - **Properties** (right), the **timeline** and the **status bar** (bottom).
 
-The look is defined in one place, see [Design system](#design-system).
+The look is defined in one place, see [Design system](#design-system). What can be done
+with the selected part is explained in the window itself, see
+[Guided workflow](#guided-workflow).
 
 ![AeroCAD in the light theme](images/ui/after-light.png)
 ![AeroCAD in the dark theme, sketch tab](images/ui/sketch-dark.png)
@@ -45,7 +47,8 @@ the choice:
 | Blender | Middle drag | Shift + middle drag | Wheel, Ctrl + middle drag |
 
 On macOS, Ctrl here is the Command key (Qt's mapping). "Reverse zoom direction" flips the
-wheel and drag zoom.
+wheel and drag zoom; "Reverse orbit direction" flips orbiting. By default the model follows
+the pointer or the fingers, the same way for the mouse and the touchpad.
 
 Not implemented yet: Fusion's "orbit around point" (Shift + click + middle drag).
 
@@ -127,8 +130,10 @@ see "Region selection" in [macos.md](macos.md).
 
 See [cad.md](cad.md) for the timeline and the commands behind the tools.
 
-- **Create Sketch**: click a planar face of a body, or pick XY / XZ / YZ. The view turns to
-  look at the sketch. Tools: Line (chains; right-click or Esc ends), Rectangle, Circle, Arc
+- **Create Sketch**: click a planar face of a body, a scan or a fitted surface, or pick
+  XY / XZ / YZ. A click into a hole of a scan (a grille opening) takes the surface next to
+  it, within 4 degrees of the click, and the status bar says so. The view turns to look at
+  the sketch. Tools: Line (chains; right-click or Esc ends), Rectangle, Circle, Arc
   (start, end, point on arc), Polygon, Slot. Points snap to existing points and to a grid
   that follows the zoom. While drawing, type a number (or `width, height` for rectangles)
   and press Enter to set the size; expressions such as `w / 2` keep the sketch parametric.
@@ -154,6 +159,43 @@ See [cad.md](cad.md) for the timeline and the commands behind the tools.
 - **Parameters**: Modify > Change Parameters, user parameters used in expressions.
 - Command scripts: `AeroCAD --run script.json` runs a JSON array of `{name, params}`
   commands at start-up, the same calls an AI agent makes through MCP.
+
+## Guided workflow
+
+The window tells the user what the selected part is and what to do with it next, so
+nobody needs to know the commands beforehand:
+
+- **Properties** shows a step-by-step guide for the selection: what the part is (scan,
+  surface, sketch, body, solid), numbered steps with one sentence each, the buttons for
+  each step, a check mark on finished steps and, under a disabled button, why it is
+  disabled ("Select an area of the scan first (step 1)"). Below it: name and size.
+- The **context bar** above the navigation bar repeats the recommended next step as a
+  highlighted button, a few other actions and a menu with all of them.
+- **Right-click** a part in the view or the Browser for the same actions.
+- With an empty document a **start card** offers Import, New sketch and Box.
+- Actions that need a value (tolerance, thickness, ...) ask for it in a small popup with
+  an explanation; Enter applies. The result of an action that makes a new part (fit,
+  cut out, thicken, part on surface) is selected, and the part it was made from is hidden
+  when they overlap, so the guide continues with the next step.
+- Toolbar tooltips explain each command under its name (`Theme.commandHelps`).
+
+![Guide for a scan with an area selected](images/ui/guide-scan.png)
+![Guide for a cut-out surface piece](images/ui/guide-surface.png)
+
+All of this comes from one registry, **`src/app/qml/ContextActions.qml`**:
+
+- `action(id, info)` returns `{id, text, icon, tip, enabled, reason, primary, params}`
+  for the part `info` (`controller.partInfo`). `tip` says what it does, `reason` why it
+  is disabled, `primary` marks the recommended next step, `params` lists the values the
+  popup asks for (`_num(...)`, `_choice(...)`).
+- `guide(info)` groups actions into sections and numbered steps per part role
+  (`role(info)`: `empty`, `mesh`, `surface`, `sketch`, `body`, `solid`).
+- `run(id, info, values)` executes it (a command through `controller.execute` or a
+  function of the main window).
+
+A new feature that should appear in the guide adds a `case` to `action()` and `run()` and
+puts the action into the right section of `guide()`. Texts are for people who do not know
+CAD terms: say what happens to the part, in one or two sentences.
 
 ## Design system
 
