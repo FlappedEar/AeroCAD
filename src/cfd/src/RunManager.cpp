@@ -616,7 +616,8 @@ fs::path RunManager::defaultRoot()
     return (h.empty() ? fs::temp_directory_path() : h) / ".aerocad" / "cfd";
 }
 
-RunManager::RunManager(fs::path root) : m_root(std::move(root)) { rescan(); }
+// At start-up the session takes over the remote runs that continue on their host.
+RunManager::RunManager(fs::path root) : m_root(std::move(root)) { scan(true); }
 
 RunManager::~RunManager() = default;
 
@@ -626,7 +627,9 @@ RunManager::Run* RunManager::find(const std::string& id)
     return it == m_runs.end() ? nullptr : it->second.get();
 }
 
-void RunManager::rescan()
+void RunManager::rescan() { scan(false); }
+
+void RunManager::scan(bool follow)
 {
     std::error_code ec;
     std::vector<std::string> seen;
@@ -636,7 +639,7 @@ void RunManager::rescan()
         const std::string id = e.path().filename().string();
         seen.push_back(id);
         if (!m_runs.count(id))
-            loadRun(e.path());
+            loadRun(e.path(), follow);
     }
     for (auto it = m_runs.begin(); it != m_runs.end();) {
         const bool owned = it->second->process.has_value();
@@ -647,7 +650,7 @@ void RunManager::rescan()
     }
 }
 
-void RunManager::loadRun(const fs::path& dir)
+void RunManager::loadRun(const fs::path& dir, bool follow)
 {
     std::ifstream in(dir / "run.json");
     Json j;
@@ -669,7 +672,7 @@ void RunManager::loadRun(const fs::path& dir)
     Run& r = *run;
     m_runs[r.id] = std::move(run);
     // A remote run continues on its host while the app is closed: follow it again.
-    if (!r.dockerHost.empty() && !r.docker.empty()) {
+    if (follow && !r.dockerHost.empty() && !r.docker.empty()) {
         std::error_code ec;
         const std::string status = readFirstLine(r.caseDir / "aerocad.status");
         if (status.empty() && !fs::exists(r.caseDir / "aerocad.cancelled", ec)) {
@@ -868,7 +871,12 @@ void RunManager::refresh(Run& run)
         const bool recent = newest && fs::file_time_type::clock::now() - *newest < std::chrono::minutes(3);
         s.state = recent ? RunState::Running : RunState::Interrupted;
         if (s.state == RunState::Interrupted)
-            s.message = "The run stopped without finishing (the app or the engine was closed).";
+            s.message = run.dockerHost.empty()
+                            ? "The run stopped without finishing (the app or the engine was closed)."
+                            // Found by a rescan: the session that started it follows it.
+                            : "Started on the remote engine " + run.dockerHost +
+                                  " and not followed by this session; it may still be running there. "
+                                  "Restart AeroCAD to follow it here.";
     }
 
     double p = stageProgress(s.stage);
