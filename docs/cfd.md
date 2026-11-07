@@ -95,7 +95,7 @@ tunnel:
 | Turbulence | RANS k-omega SST, wall functions |
 | Mesh | `blockMesh` background (cubic cells) + `snappyHexMesh` on the part |
 | Domain | 3 L upstream, 8 L downstream, 2.5 L to the sides, above and below (L = largest part dimension) |
-| Boundaries | fixed velocity inlet, fixed pressure outlet, slip far field; optional moving floor |
+| Boundaries | fixed velocity inlet, fixed pressure outlet, slip far field; optional floor, moving with the air (`groundMoving`, default) or fixed, just below the geometry or at `groundHeight` (mm, model Z) |
 | Fluid | air: nu = 1.5e-5 m^2/s, rho = 1.205 kg/m^3 |
 | Inflow turbulence | intensity 1 %, nu_t/nu = 10: k = 1.5 (U I)^2, omega = k / (nu * 10) |
 | Stop | residuals p < 1e-4, U, k, omega < 1e-5, or the iteration limit |
@@ -103,7 +103,8 @@ tunnel:
 Mesh levels (cells per L in the background mesh / surface refinement levels /
 wake box level / prism layers): coarse 2 / 3-4 / 2 / 0, medium 3 / 4-5 / 3 / 2,
 fine 4 / 5-6 / 4 / 3. Default iteration limits 300 / 500 / 800. Coarse is meant for
-quick A/B checks; it is not validated against experiments yet (CAD-52, Ahmed body).
+quick A/B checks. The preset is checked against the Ahmed body experiments in
+[cfd-validation.md](cfd-validation.md).
 
 **Units and axes.** The model is in millimetres, the case in metres (converted when the
 case is written). The flow direction is one of `+X`, `-X`, `+Y`, `-Y` in model axes

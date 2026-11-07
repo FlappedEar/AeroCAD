@@ -70,8 +70,10 @@ Json toJson(const Settings& s)
         {"mesh", meshLevelName(s.mesh)},
         {"iterations", s.effectiveIterations()},
         {"ground", s.ground},
+        {"groundMoving", s.groundMoving},
         {"processes", s.effectiveProcesses()},
     };
+    j["groundHeight"] = s.groundHeight ? Json(*s.groundHeight) : Json(nullptr);
     j["referenceArea"] = s.referenceArea ? Json(*s.referenceArea) : Json(nullptr);
     j["referenceLength"] = s.referenceLength ? Json(*s.referenceLength) : Json(nullptr);
     return j;
@@ -124,6 +126,14 @@ Settings settingsFromJson(const Json& j)
         s.iterations = std::clamp(j.at("iterations").get<int>(), 0, 100000);
     if (j.contains("ground"))
         s.ground = j.at("ground").get<bool>();
+    if (j.contains("groundMoving"))
+        s.groundMoving = j.at("groundMoving").get<bool>();
+    if (j.contains("groundHeight") && !j.at("groundHeight").is_null()) {
+        const double z = j.at("groundHeight").get<double>();
+        if (!std::isfinite(z))
+            throw std::invalid_argument("groundHeight must be a number (mm)");
+        s.groundHeight = z;
+    }
     if (j.contains("referenceArea") && !j.at("referenceArea").is_null())
         s.referenceArea = positive(j, "referenceArea", 1.0);
     if (j.contains("referenceLength") && !j.at("referenceLength").is_null())
@@ -152,7 +162,14 @@ Json settingsSchema()
          {{"type", "integer"},
           {"minimum", 0},
           {"description", "Maximum solver iterations (0 = preset default: 300/500/800)."}}},
-        {"ground", {{"type", "boolean"}, {"description", "Add a moving floor just below the geometry."}}},
+        {"ground", {{"type", "boolean"}, {"description", "Add a floor below the geometry."}}},
+        {"groundMoving",
+         {{"type", "boolean"},
+          {"description", "The floor moves with the air like a road (default true); false = fixed wind-tunnel "
+                          "floor."}}},
+        {"groundHeight",
+         num("Floor height in model Z, mm (default: just below the lowest point). Not above the part; context "
+             "parts such as supports may reach below it.")},
         {"referenceArea", num("Reference area for Cd/Cl in m^2 (default: frontal area of the part).")},
         {"referenceLength", num("Reference length in m (default: part length along the flow).")},
         {"kinematicViscosity", num("Kinematic viscosity in m^2/s (default 1.5e-5, air).")},
@@ -169,11 +186,15 @@ std::vector<std::string> differingConditions(const Json& a, const Json& b)
     // a converged result, so they are not compared.
     static constexpr std::array keys{"preset",  "speed",         "flowDirection", "kinematicViscosity",
                                      "density", "turbulenceIntensity", "viscosityRatio", "mesh",
-                                     "ground",  "referenceArea", "referenceLength"};
+                                     "ground",  "groundMoving", "groundHeight", "referenceArea",
+                                     "referenceLength"};
+    // Runs written before a setting existed used what is now its default.
+    static const Json defaults{{"groundMoving", true}, {"groundHeight", nullptr}};
     std::vector<std::string> diff;
     for (const char* key : keys) {
-        const Json va = a.value(key, Json());
-        const Json vb = b.value(key, Json());
+        const Json fallback = defaults.value(key, Json());
+        const Json va = a.value(key, fallback);
+        const Json vb = b.value(key, fallback);
         if (va.is_number() && vb.is_number()) {
             const double x = va.get<double>();
             const double y = vb.get<double>();

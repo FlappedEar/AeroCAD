@@ -232,6 +232,34 @@ TEST_CASE("writeCase with ground, context and one process", "[cfd]")
     CHECK_THROWS(cfd::writeCase(tmp.path(), cfd::CaseGeometry{}, s));
 }
 
+TEST_CASE("writeCase with a fixed floor at a given height", "[cfd]")
+{
+    TempDir tmp;
+    cfd::CaseGeometry g;
+    g.part = box({0, 0, 50}, {100, 50, 20});    // Body 50 mm above the floor,
+    g.context = box({40, 20, -5}, {10, 10, 60}); // on a support reaching through it.
+    cfd::Settings s;
+    s.flowDirection = "+X";
+    s.ground = true;
+    s.groundMoving = false;
+    s.groundHeight = 0.0;
+    const auto info = cfd::writeCase(tmp.path(), g, s);
+    CHECK(slurp(tmp.path() / "0.orig/U").find("ground { type noSlip; }") != std::string::npos);
+    // Case origin is the part's bounds; model z = 0 is 50 mm below the part.
+    CHECK(info.domain.min.z == Approx(info.partBounds.min.z - 0.05));
+    s.groundHeight = 60.0; // Above the part's lowest point.
+    CHECK_THROWS(cfd::writeCase(tmp.path(), g, s));
+
+    const auto j = cfd::toJson(s);
+    CHECK(cfd::settingsFromJson(j).groundMoving == false);
+    // Runs written before the floor settings existed had a moving floor at the default height.
+    auto old = cfd::toJson(cfd::Settings{});
+    old.erase("groundMoving");
+    old.erase("groundHeight");
+    CHECK(cfd::differingConditions(old, cfd::toJson(cfd::Settings{})).empty());
+    CHECK(cfd::differingConditions(old, j) == std::vector<std::string>{"flowDirection", "ground", "groundMoving", "groundHeight"});
+}
+
 TEST_CASE("readTable reads function object output and handles restarts", "[cfd]")
 {
     TempDir tmp;

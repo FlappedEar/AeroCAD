@@ -48,9 +48,14 @@ struct Settings {
     MeshLevel mesh = MeshLevel::Coarse;
     /// Maximum solver iterations (the solver stops earlier when the residuals converge).
     int iterations = 0; ///< 0 = preset default for the mesh level.
-    /// Adds a no-slip floor moving with the air just below the geometry (road / tunnel
-    /// floor). Off: the part is in free air.
+    /// Adds a no-slip floor below the geometry (road / tunnel floor). Off: the part is in
+    /// free air.
     bool ground = false;
+    /// The floor moves with the air (road); false = a fixed wind-tunnel floor.
+    bool groundMoving = true;
+    /// Height of the floor in model Z (mm); empty = just below the lowest point of the
+    /// geometry. Must not be above the part; context parts (e.g. supports) may reach below it.
+    std::optional<double> groundHeight;
     /// Reference area for Cd/Cl in m^2; empty = frontal area of the part (computed).
     std::optional<double> referenceArea;
     /// Reference length for moment coefficients in m; empty = part length along the flow.
