@@ -126,4 +126,8 @@ if(AEROCAD_BUILD_TESTS)
     add_test(NAME app_smoke_test
         COMMAND aerocad --smoke-test ${PROJECT_SOURCE_DIR}/tests/data/tetrahedron.stl)
     set_tests_properties(app_smoke_test PROPERTIES LABELS gui TIMEOUT 60)
+    # Every ComboBox popup row shows its text, for each kind of model the app uses.
+    add_test(NAME app_combobox_popup_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/combobox_popup.ui)
+    set_tests_properties(app_combobox_popup_test PROPERTIES LABELS gui TIMEOUT 60)
 endif()
