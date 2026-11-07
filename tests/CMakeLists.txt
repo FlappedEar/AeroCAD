@@ -33,8 +33,8 @@ aerocad_add_test(test_model
 aerocad_add_test(test_commands
     SOURCES commands/test_commands.cpp commands/test_canards.cpp commands/test_export_commands.cpp commands/test_design_commands.cpp
         commands/test_project_commands.cpp commands/test_scan_commands.cpp commands/test_inspect_commands.cpp
-        commands/test_simulation_commands.cpp
-    LIBS AeroCAD::commands AeroCAD::geometry_occt AeroCAD::project)
+        commands/test_simulation_commands.cpp commands/test_import_units.cpp
+    LIBS AeroCAD::commands AeroCAD::geometry_occt AeroCAD::project miniz::miniz)
 
 aerocad_add_test(test_mcp
     SOURCES mcp/test_mcp_server.cpp
