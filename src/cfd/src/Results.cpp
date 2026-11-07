@@ -7,6 +7,7 @@
 #include <cmath>
 #include <fstream>
 #include <limits>
+#include <locale>
 #include <sstream>
 #include <stdexcept>
 
@@ -18,11 +19,25 @@ namespace {
 
 std::optional<double> toNumber(std::string_view s)
 {
+    if (s.empty())
+        return std::nullopt;
     double v = 0.0;
+#if defined(__cpp_lib_to_chars) && __cpp_lib_to_chars >= 201611L
     const char* end = s.data() + s.size();
     auto [ptr, ec] = std::from_chars(s.data(), end, v);
     if (ec != std::errc() || ptr != end)
         return std::nullopt;
+#else
+    // Older libc++ (Apple) has no floating-point from_chars.
+    std::istringstream stream{std::string(s)};
+    stream.imbue(std::locale::classic());
+    stream >> v;
+    if (stream.fail())
+        return std::nullopt;
+    stream.peek();
+    if (!stream.eof())
+        return std::nullopt;
+#endif
     return v;
 }
 
