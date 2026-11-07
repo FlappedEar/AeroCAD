@@ -8,16 +8,22 @@
 
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
+#include <BRepBndLib.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepExtrema_DistShapeShape.hxx>
 #include <BRepGProp.hxx>
+#include <BRepTopAdaptor_FClass2d.hxx>
 #include <BRep_Tool.hxx>
+#include <Bnd_Box.hxx>
 #include <GProp_GProps.hxx>
+#include <Geom_Surface.hxx>
+#include <ShapeAnalysis_Surface.hxx>
 #include <ShapeFix_Face.hxx>
 #include <Standard_Failure.hxx>
 #include <TopExp.hxx>
+#include <TopExp_Explorer.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Face.hxx>
@@ -29,6 +35,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <string>
 #include <utility>
 
@@ -375,6 +382,69 @@ core::TriangleMesh triangulateRegion(const std::vector<core::Polyline>& loops, c
         }
     }
     return out;
+}
+
+std::size_t refineShapeDistances(const Shape& shape, const std::vector<core::Vec3>& points, std::vector<double>& values,
+                                 double threshold, std::size_t maxCount)
+{
+    if (shape.isNull() || maxCount == 0)
+        return 0;
+    std::vector<std::size_t> order;
+    for (std::size_t i = 0; i < values.size() && i < points.size(); ++i)
+        if (std::isfinite(values[i]) && std::abs(values[i]) > threshold)
+            order.push_back(i);
+    if (order.empty())
+        return 0;
+    std::sort(order.begin(), order.end(),
+              [&](std::size_t a, std::size_t b) { return std::abs(values[a]) > std::abs(values[b]); });
+    if (order.size() > maxCount)
+        order.resize(maxCount);
+
+    // Each face: its surface with a cached projection grid, its trim classifier and box.
+    struct FaceData {
+        Handle(ShapeAnalysis_Surface) surface;
+        std::unique_ptr<BRepTopAdaptor_FClass2d> classifier;
+        Bnd_Box box;
+    };
+    std::vector<FaceData> faces;
+    for (TopExp_Explorer ex(shape.impl()->shape, TopAbs_FACE); ex.More(); ex.Next()) {
+        const TopoDS_Face face = TopoDS::Face(ex.Current());
+        const Handle(Geom_Surface) surface = BRep_Tool::Surface(face);
+        if (surface.IsNull())
+            continue;
+        FaceData f;
+        f.surface = new ShapeAnalysis_Surface(surface);
+        f.classifier = std::make_unique<BRepTopAdaptor_FClass2d>(face, 1e-7);
+        BRepBndLib::Add(face, f.box);
+        faces.push_back(std::move(f));
+    }
+    std::size_t replaced = 0;
+    for (const auto i : order) {
+        const gp_Pnt p(points[i].x, points[i].y, points[i].z);
+        const double current = std::abs(values[i]);
+        // The exact distance replaces the mesh one either way: an inscribed triangulation
+        // can also be closer than the surface (inside a convex reference).
+        double best = std::numeric_limits<double>::infinity();
+        for (auto& f : faces) {
+            Bnd_Box near = f.box;
+            near.Enlarge(2.0 * current + 1e-3);
+            if (near.IsOut(p))
+                continue;
+            try {
+                const gp_Pnt2d uv = f.surface->ValueOfUV(p, 1e-6);
+                if (f.classifier->Perform(uv) == TopAbs_OUT)
+                    continue; // projects outside the trimmed face: the neighbour covers it
+                best = std::min(best, f.surface->Gap());
+            } catch (const Standard_Failure&) {
+                // keep the mesh distance
+            }
+        }
+        if (std::isfinite(best)) {
+            values[i] = values[i] < 0.0 ? -best : best;
+            ++replaced;
+        }
+    }
+    return replaced;
 }
 
 } // namespace aerocad::geometry

@@ -60,6 +60,16 @@ largest deviation. `tolerance` adds the share of points within +/- tolerance; `m
 ignores points farther away. The result includes min / max / mean / RMS / standard deviation,
 where the extremes are, and a 10-bin histogram over the colour range.
 
+When the reference is an exact part (a fitted surface, an imported solid, a body), distances
+are measured against a dense triangulation of it (deflection 1/20 of the tolerance or 0.02 % of
+its size), and every value above 2 % of the tolerance is then measured on the exact faces
+(projection onto each face's surface, inside its trim). The display mesh alone can be off by
+a tenth of a millimetre, more near sewn edges, which is more than a typical fit tolerance.
+
+Fitted surfaces and solids (made by Fit smooth surface or Whole scan to solid) have the action
+**Show deviation from the scan**: it colours the scan they were fitted to (range +/- twice the
+tolerance, points farther than 8 tolerances left grey) and hides the fit so the colours show.
+
 `inspect.thickness` casts a ray from the centre of every triangle straight inwards and takes the
 distance to the opposite wall; a vertex shows the thinnest value of its triangles. Red is thin,
 blue thick; `min` / `max` set the scale. Open meshes give no value where the ray leaves the part.

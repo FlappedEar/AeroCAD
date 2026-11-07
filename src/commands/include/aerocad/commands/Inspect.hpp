@@ -70,6 +70,11 @@ public:
     /// expensive part of repeated measurements on large scans).
     [[nodiscard]] std::shared_ptr<const core::MeshBvh> bvh(const std::shared_ptr<const core::TriangleMesh>& mesh);
 
+    /// A dense triangulation of an exact shape (linear deflection `deflection` mm), cached
+    /// for the last few shapes: distances to a B-rep part are measured on it rather than on
+    /// the display mesh, whose deflection is often larger than a fit tolerance.
+    [[nodiscard]] std::shared_ptr<const core::TriangleMesh> denseMesh(const geometry::Shape& shape, double deflection);
+
 private:
     void changed();
 
@@ -78,6 +83,12 @@ private:
     std::uint64_t m_revision = 0;
     Listener m_listener;
     std::vector<std::shared_ptr<const core::MeshBvh>> m_bvhCache;
+    struct Dense {
+        geometry::Shape shape;
+        double deflection = 0.0;
+        std::shared_ptr<const core::TriangleMesh> mesh;
+    };
+    std::vector<Dense> m_denseCache;
 };
 
 } // namespace aerocad::commands

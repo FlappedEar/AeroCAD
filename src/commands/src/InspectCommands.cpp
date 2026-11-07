@@ -7,6 +7,7 @@
 
 #include "aerocad/geometry/Inspect.hpp"
 #include "aerocad/geometry/Modeling.hpp"
+#include "aerocad/geometry/Tessellation.hpp"
 
 #include <algorithm>
 #include <array>
@@ -63,6 +64,24 @@ std::shared_ptr<const core::MeshBvh> InspectState::bvh(const std::shared_ptr<con
     if (m_bvhCache.size() > kCacheSize)
         m_bvhCache.resize(kCacheSize);
     return built;
+}
+
+std::shared_ptr<const core::TriangleMesh> InspectState::denseMesh(const geometry::Shape& shape, double deflection)
+{
+    for (const auto& d : m_denseCache)
+        if (d.shape.impl() == shape.impl() && d.deflection == deflection)
+            return d.mesh;
+    const auto box = shape.bounds();
+    const double diagonal = std::max((box.max - box.min).length(), 1e-9);
+    geometry::TessellationParams params;
+    params.relativeLinearDeflection = deflection / diagonal;
+    params.angularDeflection = 0.1;
+    auto mesh = std::make_shared<const core::TriangleMesh>(geometry::tessellate(shape, params));
+    m_denseCache.insert(m_denseCache.begin(), Dense{shape, deflection, mesh});
+    constexpr std::size_t kCacheSize = 2;
+    if (m_denseCache.size() > kCacheSize)
+        m_denseCache.resize(kCacheSize);
+    return mesh;
 }
 
 namespace {
@@ -669,8 +688,29 @@ void registerHeatMaps(CommandRegistry& r)
               const model::Part& measured = requireMeshPart(ctx.document, measuredId);
               const model::Part& reference = requireMeshPart(ctx.document, referenceId);
               const double maxDistance = params.value("maxDistance", std::numeric_limits<double>::infinity());
+              // An exact reference (a fitted surface, a body) is measured on a dense
+              // triangulation: a twentieth of the tolerance, or 0.02 % of its size, at
+              // least 1 micron and at most 2e-5 of its size (bounded triangle count).
+              std::shared_ptr<const core::TriangleMesh> referenceMesh = reference.mesh;
+              if (reference.shape && !reference.shape->isNull()) {
+                  const auto box = reference.shape->bounds();
+                  const double diagonal = (box.max - box.min).length();
+                  double deflection = 2e-4 * diagonal;
+                  if (params.contains("tolerance"))
+                      deflection = std::min(deflection, 0.05 * params["tolerance"].get<double>());
+                  deflection = std::max({deflection, 2e-5 * diagonal, 1e-3});
+                  referenceMesh = st.denseMesh(*reference.shape, deflection);
+              }
               auto values = std::make_shared<std::vector<double>>(
-                  core::signedVertexDistances(*measured.mesh, *st.bvh(reference.mesh), maxDistance));
+                  core::signedVertexDistances(*measured.mesh, *st.bvh(referenceMesh), maxDistance));
+              if (reference.shape && !reference.shape->isNull()) {
+                  // Near sewn edges the triangulation can be off the exact surface: the
+                  // largest values are measured on the shape itself.
+                  const double threshold =
+                      params.contains("tolerance") ? 0.02 * params["tolerance"].get<double>() : 0.0;
+                  (void)geometry::refineShapeDistances(*reference.shape, measured.mesh->vertices(), *values, threshold,
+                                                       20000);
+              }
 
               HeatMap h;
               h.enabled = true;

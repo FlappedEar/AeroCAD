@@ -367,6 +367,19 @@ TEST_CASE("Fit surfaces to a whole mesh gives a solid part", "[commands][fit]")
     CHECK(r.data.at("fit").at("withinTolerance") == true);
     CHECK(r.data.at("hasBrep") == true);
     CHECK(r.data.at("fit").at("smoothSeams") == 0); // a box has creases only
+    // The app's "Show deviation from the scan": the scan coloured by its distance to the fit.
+    CHECK(r.data.at("source") == "surface.fit_regions of part " + std::to_string(id));
+    auto dev = session.execute(
+        "inspect.deviation",
+        {{"measured", id}, {"reference", r.data.at("id")}, {"tolerance", 0.25}, {"range", 0.5}, {"maxDistance", 2.0}});
+    INFO(dev.toJson().dump());
+    REQUIRE(dev.ok);
+    CHECK(dev.data.at("withinTolerance").get<double>() > 99.0);
+    // Measured on the exact surfaces, not the display mesh: it agrees with the fit report.
+    const double largest = std::max(std::abs(dev.data.at("stats").at("min").get<double>()),
+                                    std::abs(dev.data.at("stats").at("max").get<double>()));
+    CHECK(largest < r.data.at("fit").at("meshToSurfaceMax").get<double>() + 0.01);
+    REQUIRE(session.execute("inspect.clear").ok);
     CHECK(session.document().partCount() == 2);
     // The solid can become a timeline body.
     CHECK(session.execute("feature.base_body", {{"part", r.data.at("id")}}).ok);
