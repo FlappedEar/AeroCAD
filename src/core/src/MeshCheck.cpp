@@ -113,6 +113,9 @@ void analyseShells(MeshCheck& check, const std::vector<Vec3>& verts, const std::
     std::vector<Shell> shells;
     std::unordered_map<std::uint32_t, std::size_t> shellOfRoot;
     for (std::size_t t = 0; t < tris.size(); ++t) {
+        const auto& tri = tris[t];
+        if (remap[tri[0]] == remap[tri[1]] || remap[tri[1]] == remap[tri[2]] || remap[tri[0]] == remap[tri[2]])
+            continue; // collapsed triangle, not part of any shell
         const std::uint32_t root = components.find(static_cast<std::uint32_t>(t));
         const auto [it, inserted] = shellOfRoot.try_emplace(root, shells.size());
         if (inserted)
@@ -191,16 +194,20 @@ MeshCheck checkMesh(const TriangleMesh& mesh)
         const Vec3& b = verts[tri[1]];
         const Vec3& c = verts[tri[2]];
 
-        if (tri[0] == tri[1] || tri[1] == tri[2] || tri[0] == tri[2] ||
-            (b - a).cross(c - a).length() <= minDoubleArea) {
+        if (tri[0] == tri[1] || tri[1] == tri[2] || tri[0] == tri[2]) {
+            // Collapsed to an edge or a point (tessellations produce these at singular
+            // points such as fillet corners). It has no edges of its own, so it is left
+            // out of the topology; counting its two half-edges would fake non-manifold
+            // edges.
             ++check.degenerateTriangles;
+            continue;
         }
+        if ((b - a).cross(c - a).length() <= minDoubleArea)
+            ++check.degenerateTriangles;
 
         for (int k = 0; k < 3; ++k) {
             const std::uint32_t from = tri[static_cast<std::size_t>(k)];
             const std::uint32_t to = tri[static_cast<std::size_t>((k + 1) % 3)];
-            if (from == to)
-                continue;
             const std::uint32_t lo = from < to ? from : to;
             const std::uint32_t hi = from < to ? to : from;
             const std::uint64_t key = (static_cast<std::uint64_t>(lo) << 32) | hi;

@@ -4,12 +4,15 @@
 #include "CommandHelpers.hpp"
 #include "ExportCommands.hpp"
 
+#include "aerocad/commands/ImportStage.hpp"
 #include "aerocad/core/Path.hpp"
+#include "aerocad/core/Units.hpp"
 #include "aerocad/geometry/Transform.hpp"
 #include "aerocad/io/Import.hpp"
 
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -41,18 +44,39 @@ void registerDocumentCommands(CommandRegistry& r)
 {
 
     r.add({"document.import", "Import 3D file",
-           "Imports a 3D file (STL, OBJ, 3MF, STEP, IGES, BREP) as a new part. Coordinates are in millimetres.",
+           "Imports a 3D file (STL, OBJ, 3MF, STEP, IGES, BREP) as a new part. The document works in "
+           "millimetres; pass `units` when the file was written in another unit (mesh formats such as STL and "
+           "OBJ carry none) and the geometry is scaled to millimetres.",
            objectSchema({{"path", {{"type", "string"}, {"minLength", 1}, {"description", "Absolute path of the file."}}},
-                         {"name", {{"type", "string"}, {"description", "Optional part name; defaults to the file name."}}}},
+                         {"name", {{"type", "string"}, {"description", "Optional part name; defaults to the file name."}}},
+                         {"units", {{"type", "string"},
+                                    {"enum", {"um", "mm", "cm", "m", "in", "ft"}},
+                                    {"description", "Unit the file coordinates are in (default mm)."}}}},
                         {"path"}),
            true},
           [](CommandContext& ctx, const Json& params) {
-              const std::filesystem::path path = core::pathFromUtf8(params.at("path").get<std::string>());
+              const std::string pathText = params.at("path").get<std::string>();
+              const std::filesystem::path path = core::pathFromUtf8(pathText);
               io::ImportResult imported;
-              try {
-                  imported = io::importFile(path);
-              } catch (const io::ImportError& e) {
-                  throw CommandError(e.what());
+              std::optional<io::ImportResult> staged;
+              if (ctx.importStage != nullptr)
+                  staged = ctx.importStage->take(pathText);
+              if (staged) {
+                  imported = std::move(*staged);
+              } else {
+                  try {
+                      imported = io::importFile(path);
+                  } catch (const io::ImportError& e) {
+                      throw CommandError(e.what());
+                  }
+              }
+              const core::LengthUnit unit =
+                  core::parseLengthUnit(params.value("units", std::string("mm"))).value_or(core::LengthUnit::Millimetre);
+              const double unitScale = core::toMillimetres(unit);
+              if (unitScale != 1.0) {
+                  imported.mesh.scale(unitScale, core::Vec3{});
+                  if (imported.shape)
+                      imported.shape = geometry::scaled(*imported.shape, unitScale, core::Vec3{});
               }
 
               model::Part part;
@@ -70,6 +94,7 @@ void registerDocumentCommands(CommandRegistry& r)
 
               Json result = partToJson(*doc.part(id));
               result["format"] = std::string(io::formatName(imported.format));
+              result["units"] = std::string(core::unitSymbol(unit));
               result["warnings"] = imported.warnings;
               return result;
           });
@@ -101,6 +126,28 @@ void registerPartCommands(CommandRegistry& r)
                                   [&doc, removed]() { doc.addPart(removed); },
                                   [&doc, id = removed.id]() { doc.removePart(id); }});
               return Json{{"removed", removed.id}};
+          });
+
+    r.add({"part.duplicate", "Duplicate part",
+           "Copies an imported part (mesh and exact geometry) as a new part, e.g. to keep the original next to "
+           "a modified copy. Bodies and sketches are duplicated with variant.create instead.",
+           objectSchema({{"id", idParam()}, {"name", {{"type", "string"}, {"minLength", 1}}}}, {"id"}), true},
+          [](CommandContext& ctx, const Json& params) {
+              model::Document& doc = ctx.document;
+              const model::Part& source = requirePart(doc, params);
+              requireImported(source, "duplicate");
+              // `source` dangles once addPart() reallocates the part list.
+              const std::string label = "Duplicate " + source.name;
+              model::Part copy = source;
+              copy.id = 0;
+              copy.revision = 0;
+              copy.name = params.contains("name") ? params["name"].get<std::string>() : source.name + " (copy)";
+              const model::PartId id = doc.addPart(copy);
+              copy.id = id;
+              ctx.undoStack.push({label,
+                                  [&doc, id]() { doc.removePart(id); },
+                                  [&doc, copy]() { doc.addPart(copy); }});
+              return partToJson(*doc.part(id));
           });
 
     r.add({"part.set_visible", "Show/hide part", "Shows or hides a part in the viewport.",
@@ -190,6 +237,7 @@ void registerBuiltinCommands(CommandRegistry& registry)
     registerEditCommands(registry);
     registerSelectionCommands(registry);
     registerExportCommands(registry);
+    registerSurfaceCommands(registry);
 }
 
 } // namespace aerocad::commands

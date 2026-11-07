@@ -10,8 +10,16 @@ Item {
     required property AppController controller
     property var selectedPartId: 0
     signal partPicked(var id)
+    /// Right-click on a part (id 0: on empty space), at x, y in this item.
+    signal partContextRequested(var id, real x, real y)
     /// Left click on a part: its id and the hit point in model coordinates (mm, Z up).
     signal pointPicked(var id, vector3d point)
+    /// A left click went into a hole (or just past an edge) and was moved to the nearest
+    /// surface; emitted before partPicked / pointPicked for that click.
+    signal snappedToNearestSurface()
+    /// Left clicks that miss the model (a hole in a scan) take the nearest surface instead,
+    /// within a few degrees of the click: for choosing where to sketch.
+    property bool snapToNearestSurface: false
 
     /// Active sketch ({id, origin, normal, xDir, yDir} in model space) or null; while set,
     /// left clicks draw with `sketchTool` instead of selecting.
@@ -55,6 +63,8 @@ Item {
     /// Camera projection (Fusion ViewCube menu: Orthographic / Perspective).
     property bool orthographic: false
     property bool viewCubeVisible: true
+    /// Ground grid on the XY plane, spaced to suit the scene size (View > Show Grid).
+    property bool gridVisible: true
     property bool navigationBarVisible: true
     /// Home view orientation; "Set current view as Home" changes it, "Reset Home" restores it.
     readonly property real defaultHomePitch: -30
@@ -63,6 +73,10 @@ Item {
     property real homeYaw: defaultHomeYaw
     readonly property alias pitch: cameraInput.pitch
     readonly property alias yaw: cameraInput.yaw
+    /// Changes whenever the camera or the view size does: overlays drawn from projected
+    /// points repaint on it.
+    readonly property var viewKey: [cameraInput.pitch, cameraInput.yaw, cameraInput.distance, pivot.position,
+                                    width, height, orthographic]
     property alias leftDragMode: cameraInput.leftDragMode
     // Region selection tools (see SelectionToolbar.qml). Keys: 1 smooth region (click),
     // 2 lasso, 3 brush, Esc navigate; [ and ] change the brush size.
@@ -94,6 +108,34 @@ Item {
             return null
         const eye = modelSpace.mapPositionFromScene(view.camera.scenePosition)
         return { partId: hit.partId, point: hit.point, distance: hit.point.minus(eye).length() }
+    }
+
+    /// Nearest surface to view position (x, y) for a click that misses, like pickPart, or null.
+    function pickNearPart(x, y) {
+        const near = modelSpace.mapPositionFromScene(view.mapTo3DScene(Qt.vector3d(x, y, 0)))
+        const far = modelSpace.mapPositionFromScene(view.mapTo3DScene(Qt.vector3d(x, y, 100)))
+        const eye = modelSpace.mapPositionFromScene(view.camera.scenePosition)
+        // The angle is measured from the eye: `near` is on the near clipping plane, which
+        // moves towards the model as the camera backs off. A parallel view has no eye; one
+        // is placed behind the view as far as a perspective camera would see its height.
+        let from = eye
+        if (root.orthographic) {
+            const dir = far.minus(near).normalized()
+            const h = view.height / orthoCamera.verticalMagnification
+            from = near.minus(dir.times(h / 2 / Math.tan(camera.fieldOfView * Math.PI / 360)))
+        }
+        const hit = controller.pickNearSurface(from, far.minus(from), 4)
+        if (!hit.partId)
+            return null
+        return { partId: hit.partId, point: hit.point, distance: hit.point.minus(eye).length(), snapped: true }
+    }
+
+    /// Point on part `id` under view position (x, y) (model mm), or null.
+    function pickOnPart(x, y, id) {
+        const near = modelSpace.mapPositionFromScene(view.mapTo3DScene(Qt.vector3d(x, y, 0)))
+        const far = modelSpace.mapPositionFromScene(view.mapTo3DScene(Qt.vector3d(x, y, 100)))
+        const hit = controller.pickPartSurface(id, near, far.minus(near))
+        return hit.partId ? hit.point : null
     }
 
     function modelPoint(hit) {
@@ -181,6 +223,36 @@ Item {
         updateClipping()
     }
 
+    /// Frames the area of `radius` (mm) around a model point (a place being worked on).
+    function frameAround(point, radius) {
+        // Model (x, y, z) is (x, z, -y) in the Y-up scene.
+        cameraInput.pivot.position = Qt.vector3d(point[0], point[2], -point[1])
+        const halfFov = camera.fieldOfView * Math.PI / 360
+        cameraInput.distance = Math.max(radius, 1) / Math.sin(halfFov) * 1.1
+        updateClipping()
+    }
+
+    /// Camera state stored in project files.
+    function cameraState() {
+        const p = cameraInput.pivot.position
+        return { pivot: [p.x, p.y, p.z], pitch: cameraInput.pitch, yaw: cameraInput.yaw,
+                 distance: cameraInput.distance, orthographic: orthographic }
+    }
+
+    /// Restores cameraState() output; frames everything when `state` has no camera.
+    function restoreCameraState(state) {
+        if (!state || typeof state.distance !== "number" || !state.pivot || state.pivot.length !== 3) {
+            fitAll()
+            return
+        }
+        cameraInput.pitch = state.pitch
+        cameraInput.yaw = state.yaw
+        cameraInput.distance = state.distance
+        cameraInput.pivot.position = Qt.vector3d(state.pivot[0], state.pivot[1], state.pivot[2])
+        orthographic = !!state.orthographic
+        updateClipping()
+    }
+
     onWidthChanged: if (fitPending) fitAll()
     onHeightChanged: if (fitPending) fitAll()
 
@@ -224,9 +296,9 @@ Item {
     Rectangle {
         anchors.fill: parent
         gradient: Gradient {
-            // Light top-to-bottom gradient, as in Fusion and most CAD applications.
-            GradientStop { position: 0.0; color: "#fbfcfd" }
-            GradientStop { position: 1.0; color: "#c3cbd4" }
+            // Top-to-bottom gradient, as in Fusion and most CAD applications (Theme.qml).
+            GradientStop { position: 0.0; color: Theme.viewportTop }
+            GradientStop { position: 1.0; color: Theme.viewportBottom }
         }
     }
 
@@ -279,6 +351,37 @@ Item {
             id: modelSpace
             eulerRotation.x: -90
 
+            // Ground grid: minor lines every `step`, major lines every 5th.
+            Node {
+                id: grid
+                visible: root.gridVisible
+                // A round step (1, 2 or 5 x 10^n mm), about a fifth of the scene radius.
+                readonly property real step: {
+                    const target = Math.max(root.controller.sceneRadius, 1e-3) / 5
+                    const power = Math.pow(10, Math.floor(Math.log10(target)))
+                    const f = target / power
+                    return (f < 1.5 ? 1 : f < 3.5 ? 2 : f < 7.5 ? 5 : 10) * power
+                }
+                Model {
+                    pickable: false
+                    geometry: GridGeometry { step: grid.step; extent: grid.step * 25; majorEvery: 5; major: false }
+                    materials: PrincipledMaterial {
+                        lighting: PrincipledMaterial.NoLighting
+                        baseColor: Theme.gridMinor
+                        alphaMode: PrincipledMaterial.Blend
+                    }
+                }
+                Model {
+                    pickable: false
+                    geometry: GridGeometry { step: grid.step; extent: grid.step * 25; majorEvery: 5; major: true }
+                    materials: PrincipledMaterial {
+                        lighting: PrincipledMaterial.NoLighting
+                        baseColor: Theme.gridMajor
+                        alphaMode: PrincipledMaterial.Blend
+                    }
+                }
+            }
+
             Repeater3D {
                 model: root.controller.parts
                 delegate: Model {
@@ -299,13 +402,14 @@ Item {
                     }
                     // Fusion-like colours: grey bodies, translucent orange sketch profiles and planes.
                     materials: PrincipledMaterial {
-                        baseColor: partModel.selected ? (partModel.kind === "plane" ? Qt.rgba(0.5, 0.7, 1.0, 0.3) : "#7fb2ff")
-                                 : partModel.kind === "sketch" ? Qt.rgba(1.0, 0.78, 0.45, 0.45)
-                                 : partModel.kind === "plane" ? Qt.rgba(0.95, 0.62, 0.25, 0.22)
-                                 : partModel.kind === "body" ? "#b8bec6" : "#c8ccd2"
+                        baseColor: partModel.selected ? (partModel.kind === "plane" ? Theme.planeSelected : Theme.selectedColor)
+                                 : partModel.kind === "sketch" ? Theme.sketchProfile
+                                 : partModel.kind === "plane" ? Theme.planeFill
+                                 : partModel.kind === "body" ? Theme.bodyColor : Theme.meshColor
                         alphaMode: partModel.kind === "sketch" || partModel.kind === "plane" ? PrincipledMaterial.Blend : PrincipledMaterial.Default
                         metalness: 0.0
-                        roughness: 0.55
+                        roughness: 0.45
+                        specularAmount: 0.35
                         cullMode: Material.NoCulling
                     }
 
@@ -319,7 +423,7 @@ Item {
                             partId: partModel.partId
                         }
                         materials: PrincipledMaterial {
-                            baseColor: "#ff9a3c"
+                            baseColor: Theme.regionColor
                             emissiveFactor: Qt.vector3d(0.35, 0.16, 0.0)
                             metalness: 0.0
                             roughness: 0.6
@@ -338,8 +442,8 @@ Item {
                         }
                         materials: PrincipledMaterial {
                             lighting: PrincipledMaterial.NoLighting
-                            baseColor: partModel.kind === "sketch" ? "#1f5fbf"
-                                     : partModel.kind === "plane" ? "#c77a2a" : "#262a30"
+                            baseColor: partModel.kind === "sketch" ? Theme.sketchColor
+                                     : partModel.kind === "plane" ? Theme.planeEdge : Theme.edgeColor
                         }
                     }
                 }
@@ -382,13 +486,34 @@ Item {
         onFitRequested: root.fitAll()
         onHomeRequested: root.goHome()
         onProjectionRequested: ortho => root.orthographic = ortho
+        gridVisible: root.gridVisible
+        onGridToggled: shown => root.gridVisible = shown
+    }
+
+    // Right-click: select the part under the cursor and open its context menu.
+    TapHandler {
+        acceptedButtons: Qt.RightButton
+        enabled: !root.sketch
+        gesturePolicy: TapHandler.ReleaseWithinBounds
+        onTapped: eventPoint => {
+            const hit = root.pickPart(eventPoint.position.x, eventPoint.position.y)
+            const id = hit ? hit.partId : 0
+            if (id)
+                root.partPicked(id)
+            root.partContextRequested(id, eventPoint.position.x, eventPoint.position.y)
+        }
     }
 
     TapHandler {
         acceptedButtons: Qt.LeftButton
         onTapped: eventPoint => {
             // Mesh ray cast: Qt Quick 3D picks custom geometry by its bounding volume only.
-            const hit = root.pickPart(eventPoint.position.x, eventPoint.position.y)
+            let hit = root.pickPart(eventPoint.position.x, eventPoint.position.y)
+            if (!hit && root.snapToNearestSurface) {
+                hit = root.pickNearPart(eventPoint.position.x, eventPoint.position.y)
+                if (hit)
+                    root.snappedToNearestSurface()
+            }
             const id = hit ? hit.partId : 0
             root.partPicked(id)
             if (!hit)

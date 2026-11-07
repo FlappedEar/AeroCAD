@@ -43,8 +43,13 @@ Pane {
     }
 
     visible: type !== ""
-    padding: 12
+    padding: Theme.space3
     width: 300
+    background: Rectangle {
+        color: Theme.overlay
+        border.color: Theme.border
+        radius: Theme.radius
+    }
 
     readonly property var operations: [
         { value: "new_body", label: qsTr("New Body") }, { value: "join", label: qsTr("Join") },
@@ -435,7 +440,7 @@ Pane {
             Layout.fillWidth: true
             visible: root.error !== ""
             text: root.error
-            color: "#b3261e"
+            color: Theme.danger
             wrapMode: Text.WordWrap
         }
 

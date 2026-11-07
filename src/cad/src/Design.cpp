@@ -3,6 +3,7 @@
 
 #include "aerocad/cad/Expression.hpp"
 #include "aerocad/cad/SketchSolver.hpp"
+#include "aerocad/core/MeshSelection.hpp"
 #include "aerocad/geometry/Modeling.hpp"
 #include "aerocad/geometry/Tessellation.hpp"
 #include "aerocad/geometry/Transform.hpp"
@@ -11,6 +12,7 @@
 #include <array>
 #include <cctype>
 #include <cmath>
+#include <map>
 #include <memory>
 #include <numbers>
 #include <set>
@@ -541,11 +543,14 @@ void Design::evaluateFeature(const Feature& f)
                 return Plane::xz();
             if (name == "yz")
                 return Plane::yz();
+            if (const ReferenceFrame* fr = frame(spec.get<std::string>()))
+                return Plane{fr->origin, fr->normal, fr->xDir};
             for (const auto& [_, cp] : m_planes) {
                 if (lower(cp.name) == name)
                     return cp.plane;
             }
-            throw DesignError("Unknown plane '" + spec.get<std::string>() + "' (XY, XZ, YZ or a construction plane)");
+            throw DesignError("Unknown plane '" + spec.get<std::string>() +
+                              "' (XY, XZ, YZ, a reference frame or a construction plane)");
         }
         if (!spec.is_object())
             throw DesignError("Invalid plane " + spec.dump());
@@ -1116,6 +1121,71 @@ void Design::evaluateFeature(const Feature& f)
     }
 }
 
+void Design::setFrame(ReferenceFrame fr)
+{
+    const std::string key = lower(fr.name);
+    if (fr.name.empty() || key == "xy" || key == "xz" || key == "yz")
+        throw DesignError("Invalid frame name '" + fr.name + "'");
+    const core::Vec3 n = fr.normal.normalized();
+    const core::Vec3 x = (fr.xDir - n * n.dot(fr.xDir)).normalized();
+    if (n.length() < 0.5 || x.length() < 0.5)
+        throw DesignError("Frame '" + fr.name + "': normal and xDir must be non-zero and not parallel");
+    fr.normal = n;
+    fr.xDir = x;
+    auto it = std::find_if(m_state.frames.begin(), m_state.frames.end(),
+                           [&](const ReferenceFrame& f) { return f.name == fr.name; });
+    if (it == m_state.frames.end())
+        m_state.frames.push_back(std::move(fr));
+    else
+        *it = std::move(fr);
+    regenerate();
+}
+
+void Design::removeFrame(const std::string& name)
+{
+    const auto n = std::erase_if(m_state.frames, [&](const ReferenceFrame& f) { return f.name == name; });
+    if (n == 0)
+        throw DesignError("No frame '" + name + "'");
+    regenerate();
+}
+
+const ReferenceFrame* Design::frame(std::string_view name) const
+{
+    auto it = std::find_if(m_state.frames.begin(), m_state.frames.end(),
+                           [&](const ReferenceFrame& f) { return f.name == name; });
+    return it == m_state.frames.end() ? nullptr : &*it;
+}
+
+void Design::clear()
+{
+    m_state = State{};
+    m_partIds.clear();
+    m_sketchConsumed.clear();
+    m_partMeta.clear();
+    m_convertedParts.clear();
+    regenerate();
+}
+
+void Design::setPartInfo(FeatureId feature, model::PartId part, std::string name, bool visible)
+{
+    m_partIds[feature] = part;
+    m_partMeta[feature] = {std::move(name), visible};
+}
+
+std::vector<Design::PartInfo> Design::partInfos() const
+{
+    std::vector<PartInfo> out;
+    for (const auto& [feature, part] : m_partIds) {
+        PartInfo info{feature, part, {}, true};
+        if (auto meta = m_partMeta.find(feature); meta != m_partMeta.end()) {
+            info.name = meta->second.name;
+            info.visible = meta->second.visible;
+        }
+        out.push_back(std::move(info));
+    }
+    return out;
+}
+
 void Design::regenerate()
 {
     m_bodies.clear();
@@ -1145,6 +1215,154 @@ void Design::regenerate()
 // ---------------------------------------------------------------------------------------
 // Document mirror
 
+namespace {
+
+/// Steepest rise over run a draped line or fill follows; steeper is a hole, a gap or the edge
+/// of the skin, not the surface under the sketch.
+constexpr double maxDrapeSlope = 3.0;
+
+/// A sketch drawn over a curved surface (params onSurface) is shown lying on it: its
+/// line segments are split finely and moved along the sketch normal onto the surface
+/// part's mesh. Where there is no skin to lie on (a hole, past the edge), a line runs
+/// straight between the nearest points that have one.
+std::vector<core::Vec3> drapeSegments(const std::vector<core::Vec3>& segments, const core::TriangleMesh& surface,
+                                      const core::Vec3& normal)
+{
+    core::BoundingBox box;
+    for (const auto& p : segments)
+        box.extend(p);
+    const double step = std::max(box.diagonal() / 300.0, 1e-3);
+    const core::Vec3 n = normal.normalized();
+    // A hair above the surface, so the lines are not hidden in it.
+    const double lift = std::max(box.diagonal() * 1.5e-3, 1e-3);
+
+    std::vector<core::Vec3> fine;
+    std::vector<std::size_t> starts; // of each input segment in `fine`
+    for (std::size_t i = 0; i + 1 < segments.size(); i += 2) {
+        const core::Vec3 a = segments[i];
+        const core::Vec3 b = segments[i + 1];
+        const int pieces = std::clamp(static_cast<int>(std::ceil((b - a).length() / step)), 1, 400);
+        starts.push_back(fine.size());
+        for (int k = 0; k <= pieces; ++k)
+            fine.push_back(a + (b - a) * (static_cast<double>(k) / pieces));
+    }
+    starts.push_back(fine.size());
+    std::vector<char> missed;
+    const auto draped = core::projectOntoMesh(surface, fine, n, nullptr, &missed);
+
+    std::vector<double> height(fine.size(), 0.0);
+    for (std::size_t k = 0; k < fine.size(); ++k)
+        height[k] = (draped[k] - fine[k]).dot(n);
+    std::vector<core::Vec3> out;
+    out.reserve(fine.size() * 2);
+    for (std::size_t s = 0; s + 1 < starts.size(); ++s) {
+        const std::size_t begin = starts[s], end = starts[s + 1];
+        // From the start of the segment on, a point counts when it continues the skin.
+        std::size_t anchor = end;
+        for (std::size_t k = begin; k < end; ++k) {
+            if (missed[k] != 0)
+                continue;
+            if (anchor != end) {
+                const double run = (fine[k] - fine[anchor]).length();
+                if (std::abs(height[k] - height[anchor]) > maxDrapeSlope * run + 1e-6) {
+                    missed[k] = 1;
+                    continue;
+                }
+            }
+            anchor = k;
+        }
+        // Straight across the gaps; a segment with no skin at all stays on the plane.
+        std::size_t last = end;
+        for (std::size_t k = begin; k < end; ++k) {
+            if (missed[k] == 0) {
+                if (last != end)
+                    for (std::size_t g = last + 1; g < k; ++g)
+                        height[g] = height[last] +
+                                    (height[k] - height[last]) * static_cast<double>(g - last) / static_cast<double>(k - last);
+                else
+                    for (std::size_t g = begin; g < k; ++g)
+                        height[g] = height[k];
+                last = k;
+            }
+        }
+        if (last != end) {
+            for (std::size_t g = last + 1; g < end; ++g)
+                height[g] = height[last];
+        } else {
+            for (std::size_t g = begin; g < end; ++g)
+                height[g] = 0.0;
+        }
+        for (std::size_t k = begin; k + 1 < end; ++k) {
+            out.push_back(fine[k] + n * (height[k] + lift));
+            out.push_back(fine[k + 1] + n * (height[k + 1] + lift));
+        }
+    }
+    return out;
+}
+
+/// The sketch's filled profiles, split into small triangles and laid onto the surface
+/// like the lines (a flat fill would hover above a curved surface).
+core::TriangleMesh drapeFill(const core::TriangleMesh& fill, const core::TriangleMesh& surface, const core::Vec3& normal)
+{
+    if (fill.triangleCount() == 0)
+        return fill;
+    const double step = std::max(fill.bounds().diagonal() / 60.0, 1e-3);
+    std::vector<core::Vec3> v = fill.vertices();
+    std::vector<core::TriangleMesh::Triangle> tris = fill.triangles();
+    // 1-to-4 splits while any edge is long (edge midpoints shared through a map).
+    for (int level = 0; level < 8 && tris.size() < 60000; ++level) {
+        bool longEdge = false;
+        for (const auto& t : tris)
+            for (int k = 0; k < 3 && !longEdge; ++k)
+                longEdge = (v[t[k]] - v[t[(k + 1) % 3]]).length() > step;
+        if (!longEdge)
+            break;
+        std::map<std::pair<std::uint32_t, std::uint32_t>, std::uint32_t> mid;
+        auto midpoint = [&](std::uint32_t a, std::uint32_t b) {
+            const auto key = std::minmax(a, b);
+            auto [it, added] = mid.try_emplace({key.first, key.second}, static_cast<std::uint32_t>(v.size()));
+            if (added)
+                v.push_back((v[a] + v[b]) * 0.5);
+            return it->second;
+        };
+        std::vector<core::TriangleMesh::Triangle> next;
+        next.reserve(tris.size() * 4);
+        for (const auto& t : tris) {
+            const auto ab = midpoint(t[0], t[1]);
+            const auto bc = midpoint(t[1], t[2]);
+            const auto ca = midpoint(t[2], t[0]);
+            next.push_back({t[0], ab, ca});
+            next.push_back({ab, t[1], bc});
+            next.push_back({ca, bc, t[2]});
+            next.push_back({ab, bc, ca});
+        }
+        tris = std::move(next);
+    }
+    const core::Vec3 n = normal.normalized();
+    std::vector<char> missed;
+    auto draped = core::projectOntoMesh(surface, v, n, nullptr, &missed);
+    // Only what lies on the skin: nothing over holes, past the edge, or down a wall to
+    // whatever is behind the skin.
+    std::vector<core::TriangleMesh::Triangle> kept;
+    kept.reserve(tris.size());
+    for (const auto& t : tris) {
+        bool ok = missed[t[0]] == 0 && missed[t[1]] == 0 && missed[t[2]] == 0;
+        for (int k = 0; k < 3 && ok; ++k) {
+            const auto a = t[k], b = t[(k + 1) % 3];
+            const double rise = std::abs((draped[a] - v[a]).dot(n) - (draped[b] - v[b]).dot(n));
+            ok = rise <= maxDrapeSlope * (v[a] - v[b]).length();
+        }
+        if (ok)
+            kept.push_back(t);
+    }
+    const core::Vec3 lift = n * std::max(fill.bounds().diagonal() * 1e-3, 5e-4);
+    for (auto& p : draped)
+        p = p + lift;
+    return core::TriangleMesh(std::move(draped), std::move(kept));
+}
+
+} // namespace
+
 void Design::syncDocument(model::Document& document)
 {
     struct Wanted {
@@ -1168,12 +1386,30 @@ void Design::syncDocument(model::Document& document)
     }
     for (const auto& [id, s] : m_sketches) {
         const geometry::Shape profiles = geometry::makeCompound(s.geometry.profiles);
+        auto segments = geometry::edgeSegments(s.geometry.curves);
+        auto fill = geometry::tessellate(profiles);
+        if (const Feature* f = feature(id); f != nullptr && f->params.contains("onSurface") && !segments.empty()) {
+            const Json& on = f->params.at("onSurface");
+            const model::Part* surface =
+                on.contains("part") ? document.part(on.at("part").get<model::PartId>()) : nullptr;
+            // Lay it on the scan the surface was fitted to when there is one: the outline
+            // may reach past the fitted area, and the scan is what is seen.
+            if (surface != nullptr) {
+                if (const model::Part* scan = document.part(model::fittedScanId(*surface));
+                    scan != nullptr && scan->mesh && !scan->shape)
+                    surface = scan;
+            }
+            if (!on.value("across", false) && surface != nullptr && surface->mesh) {
+                segments = drapeSegments(segments, *surface->mesh, s.plane.normal);
+                fill = drapeFill(fill, *surface->mesh, s.plane.normal);
+            }
+        }
         wanted[id] = {id,
                       model::PartKind::Sketch,
                       s.name,
                       std::nullopt,
-                      std::make_shared<const core::TriangleMesh>(geometry::tessellate(profiles)),
-                      geometry::edgeSegments(s.geometry.curves),
+                      std::make_shared<const core::TriangleMesh>(std::move(fill)),
+                      std::move(segments),
                       s.consumed};
     }
     for (const auto& [id, cp] : m_planes) {
@@ -1256,6 +1492,105 @@ void Design::syncDocument(model::Document& document)
         }
         m_sketchConsumed[fid] = w.consumed;
     }
+}
+
+// ---------------------------------------------------------------------------------------
+// Serialisation
+
+namespace {
+
+Json vec3ToJson(const core::Vec3& v)
+{
+    return Json::array({v.x, v.y, v.z});
+}
+
+core::Vec3 vec3FromJson(const Json& j, const char* what)
+{
+    if (!j.is_array() || j.size() != 3 || !j[0].is_number() || !j[1].is_number() || !j[2].is_number())
+        throw DesignError(std::string("Invalid vector '") + what + "'");
+    return {j[0].get<double>(), j[1].get<double>(), j[2].get<double>()};
+}
+
+template <typename T>
+T field(const Json& j, const char* key, const char* what)
+{
+    auto it = j.find(key);
+    if (it == j.end())
+        throw DesignError(std::string("Missing '") + key + "' in " + what);
+    try {
+        return it->get<T>();
+    } catch (const Json::exception&) {
+        throw DesignError(std::string("Invalid '") + key + "' in " + what);
+    }
+}
+
+} // namespace
+
+Json stateToJson(const Design::State& state)
+{
+    Json features = Json::array();
+    for (const auto& f : state.features) {
+        features.push_back(
+            {{"id", f.id}, {"type", f.type}, {"name", f.name}, {"params", f.params}, {"suppressed", f.suppressed}});
+    }
+    Json parameters = Json::array();
+    for (const auto& p : state.parameters)
+        parameters.push_back({{"name", p.name}, {"expression", p.expression}, {"comment", p.comment}});
+    Json frames = Json::array();
+    for (const auto& f : state.frames) {
+        frames.push_back({{"name", f.name},
+                          {"origin", vec3ToJson(f.origin)},
+                          {"normal", vec3ToJson(f.normal)},
+                          {"xDir", vec3ToJson(f.xDir)},
+                          {"comment", f.comment}});
+    }
+    return Json{{"features", features},
+                {"parameters", parameters},
+                {"frames", frames},
+                {"nextId", state.nextId},
+                {"marker", state.marker}};
+}
+
+Design::State stateFromJson(const Json& json)
+{
+    if (!json.is_object())
+        throw DesignError("Design state must be an object");
+    Design::State state;
+    const auto& types = Design::featureTypes();
+    std::set<FeatureId> ids;
+    FeatureId maxId = 0;
+    for (const auto& j : json.value("features", Json::array())) {
+        Feature f;
+        f.id = field<FeatureId>(j, "id", "feature");
+        f.type = field<std::string>(j, "type", "feature");
+        f.name = field<std::string>(j, "name", "feature");
+        f.params = j.value("params", Json::object());
+        f.suppressed = j.value("suppressed", false);
+        if (f.id == 0 || !ids.insert(f.id).second)
+            throw DesignError("Invalid or duplicate feature id " + std::to_string(f.id));
+        if (std::find(types.begin(), types.end(), f.type) == types.end())
+            throw DesignError("Unknown feature type '" + f.type + "'");
+        if (!f.params.is_object())
+            throw DesignError("Parameters of feature " + f.name + " must be an object");
+        maxId = std::max(maxId, f.id);
+        state.features.push_back(std::move(f));
+    }
+    for (const auto& j : json.value("parameters", Json::array())) {
+        state.parameters.push_back({field<std::string>(j, "name", "parameter"),
+                                    field<std::string>(j, "expression", "parameter"), j.value("comment", "")});
+    }
+    for (const auto& j : json.value("frames", Json::array())) {
+        ReferenceFrame f;
+        f.name = field<std::string>(j, "name", "frame");
+        f.origin = vec3FromJson(j.value("origin", Json::array({0, 0, 0})), "origin");
+        f.normal = vec3FromJson(j.value("normal", Json::array({0, 0, 1})), "normal");
+        f.xDir = vec3FromJson(j.value("xDir", Json::array({1, 0, 0})), "xDir");
+        f.comment = j.value("comment", "");
+        state.frames.push_back(std::move(f));
+    }
+    state.nextId = std::max<FeatureId>(json.value("nextId", FeatureId{1}), maxId + 1);
+    state.marker = std::min<std::size_t>(json.value("marker", state.features.size()), state.features.size());
+    return state;
 }
 
 } // namespace aerocad::cad

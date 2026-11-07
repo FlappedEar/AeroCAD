@@ -32,7 +32,7 @@ use the same operations, and every change is one undo step.
 
 | Command | Fusion | Notes |
 |---|---|---|
-| `sketch.create` | Create Sketch | `plane` XY / XZ / YZ / {plane: construction plane id} / {origin, normal, xDir}, or `face` {body, index or point}; `offset`; `curves` |
+| `sketch.create` | Create Sketch | `plane` XY / XZ / YZ / {plane: construction plane id} / {origin, normal, xDir}, or `face` {body, index or point}, or `surface` {part, point / useSelection} (best-fit plane over a curved surface or scan); `offset`; `curves` |
 | `sketch.add_curves` | (draw in sketch) | appends curves |
 | `sketch.profiles` | | closed regions with area and centroid |
 | `sketch.add_constraints` | Sketch > Constraints, Sketch Dimension (D) | see Constraints below |
@@ -96,7 +96,9 @@ start guess, so they rotate instead of collapsing.
 ```
 
 Sketch planes (Z up): XY is the ground plane (normal +Z), XZ the front plane (normal -Y,
-sketch v = world Z), YZ the right plane (normal +X, sketch v = world Z).
+sketch v = world Z), YZ the right plane (normal +X, sketch v = world Z). A reference frame
+created with `frame.set` can be used by name. Saving, variants and frames: see
+[project-format.md](project-format.md).
 
 ## Example (what an agent would send)
 

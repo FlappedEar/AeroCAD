@@ -19,6 +19,8 @@ namespace aerocad::commands {
 using Json = nlohmann::json;
 
 class CommandRegistry;
+struct ProjectState;
+class ImportStage;
 
 /// State a command operates on.
 struct CommandContext {
@@ -26,6 +28,8 @@ struct CommandContext {
     model::UndoStack& undoStack;
     const CommandRegistry* registry = nullptr; ///< For introspection (commands.list).
     cad::Design* design = nullptr;             ///< Parametric timeline (sketch.*, feature.*).
+    ProjectState* project = nullptr;           ///< File path, variants (project.*, variant.*).
+    ImportStage* importStage = nullptr;        ///< Pre-parsed files for document.import.
 };
 
 /// Static description of a command. `params` is a JSON Schema (subset, see

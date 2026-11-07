@@ -154,7 +154,9 @@ void registerExport(CommandRegistry& r)
                   if (format == io::FileFormat::Step || !p->mesh)
                       continue;
                   triangles += p->mesh->triangleCount();
-                  const core::MeshCheck check = core::checkMesh(*p->mesh);
+                  // Check what is written: the writers drop triangles collapsed to an edge or
+                  // a point (B-rep tessellations have them at singular points).
+                  const core::MeshCheck check = core::checkMesh(core::weldVertices(*p->mesh));
                   Json c = checkToJson(check);
                   c["id"] = p->id;
                   c["name"] = p->name;
