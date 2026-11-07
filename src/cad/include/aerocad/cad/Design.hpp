@@ -151,6 +151,9 @@ public:
 
     [[nodiscard]] const std::vector<Feature>& features() const { return m_state.features; }
     [[nodiscard]] const Feature* feature(FeatureId id) const;
+    /// The feature an id stands for: the id itself, or the feature that made the body when it
+    /// is the id of a second or later body (extraBodyId). Unknown ids come back unchanged.
+    [[nodiscard]] FeatureId owningFeature(FeatureId id) const;
     [[nodiscard]] std::size_t marker() const { return m_state.marker; }
 
     /// Inserts a feature at the marker, moves the marker after it and regenerates.

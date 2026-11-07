@@ -157,15 +157,27 @@ TEST_CASE("A stacked pair of canards in one go, each root on the skin, one undo"
     // One step in the timeline: editing it rebuilds both fins, deleting it removes both.
     const auto feature = pair.data.at("feature").get<cad::FeatureId>();
     const double before = fins[1].at("volume").get<double>();
-    auto edited = scene.session.execute("feature.edit", {{"id", feature}, {"params", {{"thickness", 4.5}, {"rootFillet", 0}}}});
+    // Through the second fin's body id, with expressions as the edit dialog sends them.
+    const auto secondFin = fins[1].at("featureId").get<cad::FeatureId>();
+    auto edited = scene.session.execute("feature.edit",
+                                        {{"id", secondFin}, {"params", {{"thickness", "3 * 1.5"}, {"rootFillet", "0"}}}});
     INFO(edited.toJson().dump());
     REQUIRE(edited.ok);
+    CHECK(edited.data.at("id").get<cad::FeatureId>() == feature);
+    CHECK(edited.data.at("report").at("thickness").get<double>() == Approx(4.5));
     for (const auto& f : fins) {
         const model::Part& fin = scene.part(f);
         REQUIRE(fin.shape);
         CHECK(fin.shape->volume() > 1.3 * before);
     }
-    REQUIRE(scene.session.execute("feature.delete", {{"id", fins[1].at("featureId")}}).ok); // a fin's body id works too
+    auto renamed = scene.session.execute("feature.rename", {{"id", secondFin}, {"name", "Canards"}});
+    REQUIRE(renamed.ok);
+    CHECK(renamed.data.at("name") == "Canards");
+    auto suppressed = scene.session.execute("feature.suppress", {{"id", secondFin}, {"suppressed", true}});
+    REQUIRE(suppressed.ok);
+    CHECK(suppressed.data.at("status") == "suppressed");
+    REQUIRE(scene.session.execute("feature.suppress", {{"id", secondFin}, {"suppressed", false}}).ok);
+    REQUIRE(scene.session.execute("feature.delete", {{"id", secondFin}}).ok); // a fin's body id works too
     CHECK(scene.session.document().parts().size() == parts - 2);
 }
 

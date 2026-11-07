@@ -202,14 +202,18 @@ const Feature* Design::feature(FeatureId id) const
     return it == m_state.features.end() ? nullptr : &*it;
 }
 
+FeatureId Design::owningFeature(FeatureId id) const
+{
+    return feature(id) == nullptr && feature(featureOfBody(id)) != nullptr ? featureOfBody(id) : id;
+}
+
 std::size_t Design::indexOf(FeatureId id) const
 {
     // A body id of a feature with several bodies stands for that feature.
-    for (const FeatureId want : {id, featureOfBody(id)}) {
-        for (std::size_t i = 0; i < m_state.features.size(); ++i) {
-            if (m_state.features[i].id == want)
-                return i;
-        }
+    const FeatureId want = owningFeature(id);
+    for (std::size_t i = 0; i < m_state.features.size(); ++i) {
+        if (m_state.features[i].id == want)
+            return i;
     }
     throw DesignError("No feature with id " + std::to_string(id));
 }

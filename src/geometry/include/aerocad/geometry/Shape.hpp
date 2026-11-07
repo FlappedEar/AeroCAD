@@ -34,8 +34,9 @@ private:
 };
 
 /// Serialises a shape in the Open CASCADE BREP text format (exact geometry, lossless).
-/// Returns an empty string for a null shape.
-[[nodiscard]] std::string toBrep(const Shape& shape);
+/// Returns an empty string for a null shape. Without triangles the text holds only the
+/// exact geometry, so it stays the same whether or not the shape was tessellated for display.
+[[nodiscard]] std::string toBrep(const Shape& shape, bool withTriangles = true);
 
 /// Reads a shape written by toBrep(). Returns a null shape when the data is not valid BREP.
 [[nodiscard]] Shape fromBrep(std::string_view data);

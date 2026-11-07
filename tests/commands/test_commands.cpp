@@ -1195,3 +1195,69 @@ TEST_CASE("Part on surface is a timeline step: edit, follow the sketch, delete, 
         std::filesystem::remove(file, ec);
     }
 }
+
+TEST_CASE("Part on surface on a timeline body is rebuilt from the body, also when the project opens", "[commands][fit][timeline]")
+{
+    commands::Session session;
+    std::vector<core::Vec3> v;
+    std::vector<core::TriangleMesh::Triangle> t;
+    const int nx = 20;
+    const int ny = 10;
+    for (int j = 0; j <= ny; ++j)
+        for (int i = 0; i <= nx; ++i)
+            v.push_back({2.0 * i, 2.0 * j, -0.01 * (2 * i - 20) * (2 * i - 20)});
+    auto idx = [](int i, int j) { return static_cast<std::uint32_t>(j * (nx + 1) + i); };
+    for (int j = 0; j < ny; ++j)
+        for (int i = 0; i < nx; ++i) {
+            t.push_back({idx(i, j), idx(i + 1, j), idx(i + 1, j + 1)});
+            t.push_back({idx(i, j), idx(i + 1, j + 1), idx(i, j + 1)});
+        }
+    model::Part sheet;
+    sheet.name = "Wing";
+    sheet.mesh = std::make_shared<const core::TriangleMesh>(core::TriangleMesh(std::move(v), std::move(t)));
+    const auto scanId = session.document().addPart(sheet);
+
+    // The wing as a timeline body (INSERT > To Body), then a part sketched on that body.
+    auto base = session.execute("feature.base_body", {{"part", scanId}});
+    INFO(base.toJson().dump());
+    REQUIRE(base.ok);
+    const auto baseFeature = base.data.at("id").get<cad::FeatureId>();
+    model::PartId bodyPart = 0;
+    for (const auto& p : session.document().parts())
+        if (p.kind == model::PartKind::Body && p.featureId == baseFeature)
+            bodyPart = p.id;
+    REQUIRE(bodyPart != 0);
+    auto sk = session.execute("sketch.create",
+                              {{"surface", {{"part", bodyPart}, {"point", {20, 10, 0}}}},
+                               {"curves", Json::array({{{"type", "center_rectangle"}, {"center", {0, 0}}, {"width", 16}, {"height", 8}}})}});
+    INFO(sk.toJson().dump());
+    REQUIRE(sk.ok);
+    auto made = session.execute("surface.part_from_sketch", {{"sketch", sk.data.at("id")}, {"thickness", 1.5}});
+    INFO(made.toJson().dump());
+    REQUIRE(made.ok);
+    const auto partId = made.data.at("id").get<model::PartId>();
+    const double volume = made.data.at("volume").get<double>();
+    CHECK(volume > 0.0);
+
+    const auto file = std::filesystem::temp_directory_path() / ("aerocad_onbody_" + std::to_string(std::random_device{}()) + ".aerocad");
+    REQUIRE(session.execute("project.save", {{"path", core::pathToUtf8(file)}}).ok);
+    commands::Session reopened;
+    auto opened = reopened.execute("project.open", {{"path", core::pathToUtf8(file)}});
+    INFO(opened.toJson().dump());
+    REQUIRE(opened.ok);
+    auto tl = reopened.execute("timeline.list");
+    REQUIRE(tl.ok);
+    for (const auto& f : tl.data.at("features")) {
+        INFO(f.dump());
+        CHECK(f.at("status") == "ok");
+    }
+    // The body was not in the document yet while the timeline was rebuilt; the stored
+    // result still matches, so nothing is refitted.
+    CHECK(reopened.design().evaluatorRuns() == 0);
+    const model::Part* p = reopened.document().part(partId);
+    REQUIRE(p != nullptr);
+    REQUIRE(p->shape);
+    CHECK(p->shape->volume() == Approx(volume).epsilon(0.01));
+    std::error_code ec;
+    std::filesystem::remove(file, ec);
+}

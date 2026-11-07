@@ -9,6 +9,7 @@
 #include <Bnd_Box.hxx>
 #include <GProp_GProps.hxx>
 #include <TopAbs_ShapeEnum.hxx>
+#include <TopTools_FormatVersion.hxx>
 #include <TopExp_Explorer.hxx>
 
 #include <sstream>
@@ -77,12 +78,13 @@ double Shape::volume() const
     return total;
 }
 
-std::string toBrep(const Shape& shape)
+std::string toBrep(const Shape& shape, bool withTriangles)
 {
     if (shape.isNull())
         return {};
     std::ostringstream out;
-    BRepTools::Write(shape.impl()->shape, out);
+    BRepTools::Write(shape.impl()->shape, out, withTriangles ? Standard_True : Standard_False, Standard_False,
+                     TopTools_FormatVersion_CURRENT);
     return out.str();
 }
 

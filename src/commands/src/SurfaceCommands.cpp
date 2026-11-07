@@ -10,6 +10,7 @@
 #include "aerocad/geometry/Modeling.hpp"
 #include "aerocad/geometry/Offset.hpp"
 #include "aerocad/geometry/RegionFit.hpp"
+#include "aerocad/geometry/Shape.hpp"
 #include "aerocad/geometry/SurfaceFit.hpp"
 #include "aerocad/geometry/Tessellation.hpp"
 #include "aerocad/geometry/Transform.hpp"
@@ -23,6 +24,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace aerocad::commands {
@@ -210,6 +212,36 @@ model::PartId surfacePartOf(const cad::Design& d, const Json& params)
     return 0;
 }
 
+/// Content fingerprint of a timeline body's exact geometry, so a cached result is reused
+/// while the body under it is unchanged. Digest of its B-rep text without triangles and
+/// without the per-shape flag lines (seven 0/1 digits: modified, checked, ...), which change
+/// when the shape is merely tessellated or checked.
+std::string shapeFingerprint(const geometry::Shape& shape)
+{
+    const std::string text = geometry::toBrep(shape, false);
+    std::uint64_t h = 1469598103934665603ull;
+    std::size_t used = 0;
+    std::size_t at = 0;
+    while (at < text.size()) {
+        std::size_t end = text.find('\n', at);
+        if (end == std::string::npos)
+            end = text.size();
+        const std::string_view line(text.data() + at, end - at);
+        const bool flags = line.size() == 7 && line.find_first_not_of("01") == std::string_view::npos;
+        if (!flags) {
+            for (const unsigned char c : line) {
+                h ^= c;
+                h *= 1099511628211ull;
+            }
+            h ^= '\n';
+            h *= 1099511628211ull;
+            used += line.size() + 1;
+        }
+        at = end + 1;
+    }
+    return std::to_string(used) + "/" + std::to_string(h);
+}
+
 /// Content fingerprint of a part's geometry (its mesh, which follows its exact shape), so a
 /// cached timeline result is reused while the scan or surface under it is unchanged.
 std::string meshFingerprint(const core::TriangleMesh& mesh)
@@ -230,6 +262,37 @@ std::string meshFingerprint(const core::TriangleMesh& mesh)
         mix(t.data(), sizeof(std::uint32_t) * 3);
     return std::to_string(mesh.vertexCount()) + "/" + std::to_string(mesh.triangleCount()) + "/" + std::to_string(h);
 }
+/// The timeline feature (body id) whose document part is `id`, or 0 for an imported part.
+cad::FeatureId timelineBodyOf(const cad::Design& d, model::PartId id)
+{
+    for (const auto& info : d.partInfos())
+        if (info.part == id)
+            return info.feature;
+    return 0;
+}
+
+/// The part a step stands on. A timeline body is taken from the design as evaluated up to
+/// this step, not from the document: while a project opens the document does not hold it
+/// yet, and while an earlier step is edited it still holds the previous geometry.
+const model::Part* standingPart(const model::Document& doc, const cad::Design& d, model::PartId id,
+                                model::Part& scratch)
+{
+    const cad::FeatureId body = timelineBodyOf(d, id);
+    if (body == 0)
+        return doc.part(id);
+    const auto it = d.bodies().find(body);
+    if (it == d.bodies().end())
+        throw CommandError("Part " + std::to_string(id) + " is not built before this step of the timeline");
+    scratch = model::Part{};
+    scratch.id = id;
+    scratch.name = it->second.name;
+    scratch.kind = model::PartKind::Body;
+    scratch.featureId = body;
+    scratch.shape = it->second.shape;
+    scratch.mesh = std::make_shared<const core::TriangleMesh>(geometry::tessellate(it->second.shape));
+    return &scratch;
+}
+
 /// part_on_surface: the solid of surface.part_from_sketch (see its description).
 cad::FeatureEvaluator::Output partOnSurface(const model::Document& doc, const cad::Design& d, const Json& params)
 {
@@ -245,7 +308,8 @@ cad::FeatureEvaluator::Output partOnSurface(const model::Document& doc, const ca
         partId = on.at("part").get<model::PartId>();
     else
         throw CommandError("Sketch " + sk.name + " was not made over a surface; give the surface part `id`");
-    const model::Part* source = doc.part(partId);
+    model::Part bodyPart;
+    const model::Part* source = standingPart(doc, d, partId, bodyPart);
     if (source == nullptr)
         throw CommandError("No part with id " + std::to_string(partId));
     if (source->kind == model::PartKind::Sketch)
@@ -355,13 +419,16 @@ cad::FeatureEvaluator::Output finOnSurface(const model::Document& doc, const cad
         partId = on.at("part").get<model::PartId>();
     else
         throw CommandError("Sketch " + sk.name + " was not made on a surface; give the surface part `id`");
-    const model::Part* source = doc.part(partId);
+    model::Part bodyPart;
+    const model::Part* source = standingPart(doc, d, partId, bodyPart);
     if (source == nullptr)
         throw CommandError("No part with id " + std::to_string(partId));
     if (source->kind == model::PartKind::Sketch)
         throw CommandError("Part " + std::to_string(partId) + " is a sketch");
-    const double thickness = params.at("thickness").get<double>();
-    const double rootFillet = params.value("rootFillet", 0.0);
+    const double thickness = positive(d, params, "thickness");
+    const double rootFillet = params.contains("rootFillet") ? d.evaluate(params.at("rootFillet")) : 0.0;
+    if (rootFillet < 0.0)
+        throw CommandError("rootFillet must not be negative");
     const double tolerance = params.value("tolerance", geometry::SurfaceFitOptions{}.tolerance);
     const int count = params.contains("count") ? static_cast<int>(std::lround(d.evaluate(params.at("count")))) : 1;
     const double spacing = params.contains("spacing") ? d.evaluate(params.at("spacing")) : 40.0;
@@ -712,6 +779,12 @@ void registerSurfaceFeatures(cad::Design& design, const model::Document& documen
     const cad::Design* dp = &design;
     auto inputs = [fingerprint, doc, dp](const cad::Feature& f) {
         const model::PartId partId = surfacePartOf(*dp, f.params);
+        // A timeline body: its geometry as evaluated before this step (see standingPart).
+        if (const cad::FeatureId body = timelineBodyOf(*dp, partId); body != 0) {
+            const auto it = dp->bodies().find(body);
+            return std::to_string(partId) + ":body:" +
+                   (it == dp->bodies().end() ? std::string("missing") : shapeFingerprint(it->second.shape));
+        }
         std::string key = std::to_string(partId) + ":" + fingerprint(partId);
         if (const model::Part* p = doc->part(partId); p != nullptr)
             if (const model::PartId scan = model::fittedScanId(*p); scan != 0)
