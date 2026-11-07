@@ -257,6 +257,14 @@ Item {
         onMoved: (dx, dy) => root.pan(dx, dy)
     }
 
+    // Zoom by dragging (not in the Fusion scheme, which zooms with the wheel only).
+    DeltaDragHandler {
+        enabled: root.mouseProfile !== "fusion"
+        acceptedButtons: Qt.MiddleButton
+        acceptedModifiers: root.zoomModifiers
+        onMoved: (dx, dy) => root.zoomBy(Math.pow(root.dragZoomStep, root.invertZoom ? -dy : dy))
+    }
+
     // Navigation bar tools (Orbit / Pan / Zoom) map the left button temporarily.
     DeltaDragHandler {
         enabled: root.leftDragMode !== ""
