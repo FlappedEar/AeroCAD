@@ -117,7 +117,13 @@ Dialog {
                 editable: true
                 value: Math.round(Preferences.minWallThickness * 10)
                 textFromValue: (v, locale) => v === 0 ? qsTr("off") : Number(v / 10).toLocaleString(locale, "f", 1)
-                valueFromText: (text, locale) => text === qsTr("off") ? 0 : Math.round(Number.fromLocaleString(locale, text) * 10)
+                // Typed values: "off", or millimetres with a dot or a comma ("0.6", "1,2").
+                validator: RegularExpressionValidator { regularExpression: new RegExp("^(" + qsTr("off") + "|\\d{0,2}([.,]\\d?)?)$") }
+                valueFromText: (text, locale) => {
+                    const t = text.trim()
+                    const mm = Number(t.replace(",", "."))
+                    return t === qsTr("off") || t === "" || isNaN(mm) ? 0 : Math.min(100, Math.round(mm * 10))
+                }
                 onValueModified: Preferences.minWallThickness = value / 10
             }
             Label { text: qsTr("mm, checked before export (3D printing)") }
