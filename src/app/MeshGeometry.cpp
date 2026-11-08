@@ -89,7 +89,40 @@ void MeshGeometry::rebuild()
         *out++ = static_cast<float>(n.z);
     };
 
-    if (part->shape) {
+    // A scan drawn simplified (display level of detail) is drawn smooth, see below.
+    const bool simplified = !part->shape && display != part->mesh;
+    if (simplified) {
+        // Its vertices are averages over the cells of a grid, so flat normals show bands
+        // where the surface crosses a grid plane (lines that are not on the scan).
+        // Averaged normals draw it as the full scan looks. Scans have flipped triangles:
+        // each one gets the averaged normal turned to its own side, as the flat normal is
+        // (both sides are lit), so it neither cancels its neighbours nor shows dark.
+        std::vector<core::Vec3> normals(vertices.size());
+        std::vector<core::Vec3> faces(mesh.triangleCount());
+        for (std::size_t t = 0; t < mesh.triangleCount(); ++t) {
+            const auto& tri = mesh.triangles()[t];
+            faces[t] = (vertices[tri[1]] - vertices[tri[0]]).cross(vertices[tri[2]] - vertices[tri[0]]);
+        }
+        // Majority side per vertex first, then the sum with every face turned to it.
+        for (std::size_t t = 0; t < faces.size(); ++t)
+            for (const std::uint32_t vi : mesh.triangles()[t])
+                normals[vi] = normals[vi] + faces[t];
+        std::vector<core::Vec3> aligned(vertices.size());
+        for (std::size_t t = 0; t < faces.size(); ++t)
+            for (const std::uint32_t vi : mesh.triangles()[t])
+                aligned[vi] = aligned[vi] + (normals[vi].dot(faces[t]) < 0.0 ? faces[t] * -1.0 : faces[t]);
+        const qsizetype vertexCount = static_cast<qsizetype>(mesh.triangleCount()) * 3;
+        QByteArray buffer(vertexCount * floatsPerVertex * static_cast<qsizetype>(sizeof(float)), Qt::Uninitialized);
+        auto* out = reinterpret_cast<float*>(buffer.data());
+        for (std::size_t t = 0; t < faces.size(); ++t)
+            for (const std::uint32_t vi : mesh.triangles()[t]) {
+                core::Vec3 n = aligned[vi].normalized();
+                if (n.dot(faces[t]) < 0.0)
+                    n = n * -1.0;
+                put(out, vertices[vi], n);
+            }
+        setVertexData(buffer);
+    } else if (part->shape) {
         // Tessellated B-rep: vertices are shared only within a face, so averaged vertex
         // normals give smooth curved faces and keep edges between faces sharp.
         std::vector<core::Vec3> normals(vertices.size());

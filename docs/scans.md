@@ -65,6 +65,8 @@ modelling over them.
 
 Meshes above the "Max. triangles drawn" budget (Scan Tools > Display, default 1 M,
 remembered between sessions) are drawn simplified by vertex clustering, computed in the
-background. The document keeps the full mesh, so picking snaps, selection, fitting and
+background. The simplified mesh is drawn with smooth (averaged) normals: its vertices are
+averages per grid cell, and flat shading showed bands where the surface crosses a grid
+plane (CAD-139). The document keeps the full mesh, so picking snaps, selection, fitting and
 modelling always use all the scan data. A 5 M-triangle PLY imports and renders in about
 5 s in the cloud CI container with software OpenGL.
