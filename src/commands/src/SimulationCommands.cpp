@@ -443,6 +443,35 @@ void registerSimulationCommands(CommandRegistry& r)
               return Json{{"deleted", id}};
           });
 
+    r.add({"simulation.rename", "Rename simulation run",
+           "Sets the label of a run (the name shown in the run list, Results and A/B), also while it runs. "
+           "An empty label clears it. Saved with the run.",
+           objectSchema(
+               {{"run", runIdParam()},
+                {"label", {{"type", "string"}, {"maxLength", 80}, {"description", "New label; \"\" clears it."}}}},
+               {"run", "label"})},
+          [](CommandContext& ctx, const Json& params) {
+              const std::string id = requireRun(ctx, params);
+              std::string label = params.at("label").get<std::string>();
+              const auto first = label.find_first_not_of(" \t\r\n");
+              label = first == std::string::npos ? std::string()
+                                                 : label.substr(first, label.find_last_not_of(" \t\r\n") - first + 1);
+              if (label.find_first_of("\r\n") != std::string::npos)
+                  throw CommandError("label must be one line");
+              // Characters, not UTF-8 bytes: count the bytes that start a character.
+              if (std::count_if(label.begin(), label.end(), [](char c) { return (c & 0xC0) != 0x80; }) > 80)
+                  throw CommandError("label is longer than 80 characters");
+              try {
+                  if (!runs(ctx).setLabel(id, label))
+                      throw CommandError("No simulation run '" + id + "'");
+              } catch (const CommandError&) {
+                  throw;
+              } catch (const std::exception& e) {
+                  throw CommandError(e.what());
+              }
+              return Json{{"run", id}, {"label", label}};
+          });
+
     r.add({"simulation.results", "Simulation results",
            "Results of a run: summary (Cd, Cl, Cs; drag, lift, side force in N, averaged over the last 20 % of the "
            "iterations), histories per iteration, residuals, quality checks (mesh, mass balance, residuals, force "

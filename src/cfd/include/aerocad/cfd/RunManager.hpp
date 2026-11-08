@@ -172,6 +172,10 @@ public:
     bool cancel(const std::string& id);
     /// Deletes a finished run and its files. Returns false when unknown or still running.
     bool remove(const std::string& id);
+    /// Renames a run (CAD-174): sets its label ("" clears it) and saves it in run.json, also
+    /// while the run is running. Returns false for an unknown run; throws std::runtime_error
+    /// when run.json cannot be written.
+    bool setLabel(const std::string& id, const std::string& label);
 
     [[nodiscard]] std::optional<CaseInfo> caseInfo(const std::string& id);
 

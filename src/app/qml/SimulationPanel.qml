@@ -407,6 +407,7 @@ Pane {
         // Copied run settings refer to the closed document's parts (CAD-162).
         copiedContext = null
         copiedContextForeign = 0
+        renamingRun = ""
         copiedSettings = ({})
         groundFixed = false
         autoSelect = false
@@ -536,6 +537,26 @@ Pane {
         if (kind === "streamlines" && streamlineStyle === "smoke")
             return Theme.dark ? "smoke-dark" : "smoke-light"
         return scalar === "Cp" || scalar === "pressure" ? pressurePalette : ""
+    }
+
+    /// The run whose label is being edited in the run list (CAD-174); "" = none.
+    property string renamingRun: ""
+    property string renameText: ""
+    property bool renameTyped: false
+    function startRename(run) {
+        renameText = run.source.label || ""
+        renameTyped = false
+        renamingRun = run.id
+    }
+    function renameRun(id, label) {
+        const r = controller.execute("simulation.rename", { run: id, label: label })
+        renamingRun = ""
+        if (!r.ok) {
+            controller.showStatus(qsTr("Rename failed: %1").arg(r.error))
+            return false
+        }
+        refreshRuns()
+        return true
     }
 
     /// Where the last results export went, or why it failed (CAD-167).
@@ -1203,11 +1224,46 @@ Pane {
                         RowLayout {
                             Label {
                                 Layout.fillWidth: true
+                                visible: root.renamingRun !== runRow.modelData.id
                                 elide: Text.ElideRight
                                 font.bold: true
                                 text: (runRow.isA ? "[A] " : runRow.isB ? "[B] " : "") +
                                       (runRow.modelData.source.label ? runRow.modelData.source.label + " · " : "") +
                                       (runRow.modelData.source.partName || runRow.modelData.id)
+                            }
+                            // Rename in place (CAD-174): Enter applies, Esc or leaving the field cancels.
+                            TextField {
+                                id: renameField
+                                objectName: "runRenameField_" + runRow.modelData.id
+                                Layout.fillWidth: true
+                                visible: root.renamingRun === runRow.modelData.id
+                                placeholderText: qsTr("Label, e.g. v2, long splitter (empty: none)")
+                                maximumLength: 80
+                                // The run list is rebuilt on every refresh, so the typed text
+                                // lives in root.renameText and a new row picks it up.
+                                function begin() {
+                                    if (!visible)
+                                        return
+                                    text = root.renameText
+                                    if (!root.renameTyped)
+                                        selectAll()
+                                    forceActiveFocus()
+                                }
+                                Component.onCompleted: begin()
+                                onVisibleChanged: begin()
+                                onTextEdited: { root.renameText = text; root.renameTyped = true }
+                                onAccepted: root.renameRun(runRow.modelData.id, text)
+                                // Esc belongs to the field, not to the window's Esc shortcut.
+                                Keys.onShortcutOverride: event => event.accepted = event.key === Qt.Key_Escape
+                                Keys.onEscapePressed: root.renamingRun = ""
+                            }
+                            ToolButton {
+                                objectName: "renameButton_" + runRow.modelData.id
+                                visible: root.renamingRun !== runRow.modelData.id
+                                text: "✎"
+                                ToolTip.visible: hovered
+                                ToolTip.text: qsTr("Rename run")
+                                onClicked: root.startRename(runRow.modelData)
                             }
                             ToolButton {
                                 objectName: "compareButton_" + runRow.modelData.id
