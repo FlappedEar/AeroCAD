@@ -118,6 +118,14 @@ The menu lists only what can be done with what is under the pointer:
   **New sketch**.
 - **In a sketch**: the sketch menu (see Sketch below).
 
+## Command search
+
+Press **S** (as in Fusion) for a small search box at the pointer. Type part of a command's
+name, or of its menu ("sketch", "export"): Up / Down pick a result, Enter runs it, Esc
+closes the box. Each result shows its menu and shortcut. Commands that cannot run right now
+(nothing selected, for example) are listed last and dimmed. The list is read from the menus
+when the box opens, so every menu command can be found. In a text field S is typed as text.
+
 ## Browser
 
 The Browser lists the parts of the document. Click a row to select the part, hover it to
@@ -219,6 +227,7 @@ Qt maps Ctrl to Command and Alt to Option on macOS, so "Ctrl+Alt+V" is Option+Co
 | Toggle visibility of the selected part | V | V | yes |
 | Delete the selected part | Del | Delete (Backspace) or Fn+Delete | yes (Del) |
 | Rename the selected part (in the Browser) | F2 | F2 | no (Fusion renames from the Browser) |
+| Search commands and run one (box at the pointer) | S | S | yes (Fusion's S key) |
 | Fit all | F6 | F6 | Fusion lists F6 "Zoom to Fit" for the Electronics workspace |
 | Zoom in / out (towards the view centre) | Ctrl++ / Ctrl+- | Cmd++ / Cmd+- | yes (Fusion lists them for Windows) |
 | Move / Rotate / Scale the selected part | M | M | yes (Move/Copy) |
@@ -257,11 +266,12 @@ Save As, Import and the variant commands (Modify > Duplicate as New Variant, Tog
 have no shortcut (Fusion's list has no Save As).
 
 Fusion keys kept free because AeroCAD has no such command yet, so that they keep their
-Fusion meaning when the command comes: Q (Press Pull), S (toolbox search), A (Appearance),
+Fusion meaning when the command comes: Q (Press Pull), A (Appearance),
 J / Shift+J (Joint), T (Trim), O (Offset), P (Project), X (construction line),
 Ctrl+X (cut), Ctrl+B (Compute All). Source: Autodesk's
 [Fusion keyboard shortcuts reference](https://help.autodesk.com/cloudhelp/ENU/Fusion-GetStarted/files/GUID-F0491540-0324-470A-B651-2238D0EFAC30.htm)
 (checked 2026-11-08).
+S (Fusion's toolbox search) is the command search, see "Command search".
 
 Not mapped yet: Press Pull (Q), Trim (T), Offset (O), Project (P),
 Construction (X). 1/2/3 select the region selection tools on meshes,

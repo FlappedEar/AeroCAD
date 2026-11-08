@@ -82,6 +82,7 @@ qt_add_qml_module(aerocad
         qml/HeatMapLegend.qml
         qml/PreferencesDialog.qml
         qml/ShortcutsDialog.qml
+        qml/CommandSearch.qml
         qml/ScanPanel.qml
         qml/SimulationPanel.qml
         qml/CfdResultsOverlay.qml
@@ -395,6 +396,10 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/isolate_history.ui
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(app_isolate_history_test PROPERTIES LABELS gui TIMEOUT 120)
+    add_test(NAME app_command_search_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/command_search.ui
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(app_command_search_test PROPERTIES LABELS gui TIMEOUT 60)
     add_test(NAME app_large_scale_preview_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/large_scale_preview.ui

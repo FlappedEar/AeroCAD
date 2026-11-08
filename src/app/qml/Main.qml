@@ -1965,6 +1965,7 @@ ApplicationWindow {
         Viewport {
             id: viewport
             objectName: "viewport"
+            HoverHandler { id: viewHover } // where the command search (S) opens
             SplitView.fillWidth: true
             controller: window.controller
             selectedPartId: window.selectedPartId
@@ -2540,6 +2541,7 @@ ApplicationWindow {
             const g = qsTr("Viewport")
             const rows = [
                 { group: g, name: qsTr("Cancel tool / clear selection"), keys: "Esc" },
+                { group: g, name: qsTr("Search commands"), keys: "S" },
                 { group: g, name: qsTr("Region select tool"), keys: "1" },
                 { group: g, name: qsTr("Lasso select tool"), keys: "2" },
                 { group: g, name: qsTr("Brush select tool"), keys: "3" },
@@ -2548,6 +2550,24 @@ ApplicationWindow {
             if (window.isMac)
                 rows.push({ group: g, name: qsTr("Delete"), keys: "⌫" })
             return rows
+        }
+    }
+
+    // S (Fusion): search the commands and run one, in a box at the pointer. Text fields keep
+    // the key (they accept it as a ShortcutOverride).
+    CommandSearch {
+        id: commandSearch
+        objectName: "commandSearch"
+        parent: Overlay.overlay
+        menuBar: window.menuBar
+    }
+    Shortcut {
+        sequence: "S"
+        enabled: !commandSearch.visible
+        onActivated: {
+            const p = viewHover.hovered ? viewport.mapToItem(Overlay.overlay, viewHover.point.position.x, viewHover.point.position.y)
+                                        : viewport.mapToItem(Overlay.overlay, viewport.width / 2 - commandSearch.width / 2, 60)
+            commandSearch.openAt(p.x, p.y)
         }
     }
 
