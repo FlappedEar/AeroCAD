@@ -137,6 +137,17 @@ struct ConstructionPlane {
 
 class Design {
 public:
+    /// The timeline was rolled back to just after a sketch so it can be edited (Fusion: Edit
+    /// Sketch). Tracked by feature id, so deleting or reordering other features meanwhile
+    /// does not lose it.
+    struct SketchEdit {
+        FeatureId sketch = 0;
+        /// The marker was at the end of the timeline before the edit.
+        bool atEnd = false;
+        /// Features after the sketch that were active (before the marker) before the edit.
+        std::vector<FeatureId> active;
+    };
+
     /// Everything that is undoable. Cheap to copy.
     struct State {
         std::vector<Feature> features;
@@ -146,6 +157,8 @@ public:
         /// back (not evaluated). New features are inserted at the marker.
         std::size_t marker = 0;
         std::vector<ReferenceFrame> frames;
+        /// Set while an earlier sketch is edited (beginSketchEdit); not stored in files.
+        std::optional<SketchEdit> sketchEdit;
     };
 
     [[nodiscard]] const State& state() const { return m_state; }
@@ -214,8 +227,17 @@ public:
     /// coordinates) while the solver moves the free degrees of freedom, and the sketch keeps
     /// the result. Throws DesignError (design unchanged) when the constraints do not allow it.
     void moveSketchPoint(FeatureId sketch, const Json& point, const geometry::Vec2& to);
-    /// Moves the timeline marker (0 = before the first feature, size() = at the end).
+    /// Moves the timeline marker (0 = before the first feature, size() = at the end). This
+    /// is an explicit choice: it ends a sketch edit without rolling forward.
     void setMarker(std::size_t marker);
+    /// Starts editing a sketch (Fusion: Edit Sketch): if features after it are active, the
+    /// marker is rolled back to just after the sketch and the edit is remembered so
+    /// endSketchEdit() can roll forward. Ends a previous sketch edit first. Returns true when
+    /// the marker moved.
+    bool beginSketchEdit(FeatureId sketch);
+    /// Ends the sketch edit: rolls the marker forward to where it was (see sketchEditTarget),
+    /// unless the user moved it meanwhile. Returns true when the marker moved.
+    bool endSketchEdit();
 
     /// Creates or updates a user parameter. Throws DesignError for invalid names, invalid
     /// expressions or cycles; the design is unchanged then.
@@ -356,8 +378,18 @@ private:
 
 [[nodiscard]] std::string_view toString(FeatureStatus::State state);
 
+/// Where the marker goes back to when the sketch edit of `state` ends: the end if it was
+/// there, else just after the last surviving feature that was active, so features that were
+/// rolled back before the edit stay rolled back. std::nullopt without a sketch edit, or when
+/// the marker no longer sits just after the edited sketch (the user moved it, or added a
+/// feature there).
+[[nodiscard]] std::optional<std::size_t> sketchEditTarget(const Design::State& state);
+/// `state` with its sketch edit ended: the marker as endSketchEdit() would leave it. Saves and
+/// variants store this, never the temporary roll-back.
+[[nodiscard]] Design::State committedState(Design::State state);
+
 /// JSON form of the undoable design state (features, parameters, frames, marker), as
-/// stored in project files.
+/// stored in project files. A sketch edit is stored as ended (committedState).
 [[nodiscard]] Json stateToJson(const Design::State& state);
 /// Reads stateToJson() output. Throws DesignError for malformed data.
 [[nodiscard]] Design::State stateFromJson(const Json& json);

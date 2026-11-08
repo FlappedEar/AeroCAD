@@ -191,17 +191,15 @@ void registerFileCommands(CommandRegistry& r)
            "Saves the project to a .aerocad file, atomically (an interrupted save never damages the existing "
            "file). Stores imported meshes losslessly, their exact B-rep, the design timeline, user parameters, "
            "reference frames, all variants and the view. Without path, saves to the current file. "
-           "copy: true writes a copy (e.g. autosave) and keeps the current path and unsaved state. marker: the "
-           "timeline marker to store instead of the current one (the UI passes the marker from before a "
-           "temporary roll-back, e.g. while an earlier sketch is edited).",
+           "copy: true writes a copy (e.g. autosave) and keeps the current path and unsaved state. While an "
+           "earlier sketch is edited (sketch.begin_edit), the marker from before that roll-back is stored.",
            objectSchema(
                {{"path",
                  {{"type", "string"},
                   {"minLength", 1},
                   {"description", "Target file (absolute); .aerocad is appended when there is no extension."}}},
                 {"copy", {{"type", "boolean"}, {"description", "Save a copy without changing the current path."}}},
-                {"view", {{"type", "object"}, {"description", "View state (camera) to store; set by the UI."}}},
-                {"marker", {{"type", "integer"}, {"minimum", 0}, {"description", "Timeline marker to store."}}}}),
+                {"view", {{"type", "object"}, {"description", "View state (camera) to store; set by the UI."}}}}),
            false},
           [](CommandContext& ctx, const Json& params) {
               ProjectState& p = projectState(ctx);
@@ -216,8 +214,6 @@ void registerFileCommands(CommandRegistry& r)
                   data.view = params.at("view");
                   storeDimensions(ctx, data.view);
               }
-              if (params.contains("marker"))
-                  data.design.marker = std::min(params.at("marker").get<std::size_t>(), data.design.features.size());
               if (copy)
                   data.originalPath = p.path;
               std::string bytes;

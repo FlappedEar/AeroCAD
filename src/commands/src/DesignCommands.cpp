@@ -296,8 +296,14 @@ Json timelineToJson(const cad::Design& d, const model::Document& doc)
         }
         params.push_back(pj);
     }
+    Json sketchEdit = nullptr;
+    if (const auto& e = d.state().sketchEdit) {
+        const auto target = cad::sketchEditTarget(d.state());
+        sketchEdit = {{"sketch", e->sketch}, {"restoreTo", target ? Json(*target) : Json(nullptr)}};
+    }
     return Json{{"features", features},
                 {"marker", d.marker()},
+                {"sketchEdit", sketchEdit},
                 {"parameters", params},
                 {"bodies", bodiesToJson(d, doc)}};
 }
@@ -1475,6 +1481,54 @@ void registerTimelineCommands(CommandRegistry& r)
            "fit missed the requested tolerance has approximate: true and says so in report.warnings.",
            objectSchema(Json::object())},
           [](CommandContext& ctx, const Json&) { return timelineToJson(design(ctx), ctx.document); });
+
+    r.add({"sketch.begin_edit", "Edit Sketch",
+           "Starts editing an existing sketch (Fusion: Edit Sketch): when features after it are active, the "
+           "timeline is rolled back to just after the sketch, so the sketch is edited without the solids built "
+           "from it. sketch.end_edit rolls forward again, to the end or to just after the last feature that was "
+           "active (deleted features are skipped, rolled-back ones stay rolled back), unless the marker was moved "
+           "meanwhile. Deleting the edited sketch also rolls forward. Saves and variants store the rolled-forward "
+           "marker. Starting another edit ends the previous one.",
+           objectSchema({{"id", {{"type", "integer"}, {"description", "The sketch feature."}}}}, {"id"}), true},
+          [](CommandContext& ctx, const Json& params) {
+              const auto id = params.at("id").get<cad::FeatureId>();
+              const cad::Design& cur = design(ctx);
+              const auto& fs = cur.features();
+              const auto it = std::find_if(fs.begin(), fs.end(), [&](const cad::Feature& f) { return f.id == id; });
+              if (it == fs.end())
+                  throw CommandError("No feature with id " + std::to_string(id));
+              const bool rollsBack = static_cast<std::size_t>(it - fs.begin()) + 1 < cur.marker();
+              if (rollsBack || cur.state().sketchEdit) {
+                  designChange(ctx, "Edit Sketch", [&](cad::Design& d) {
+                      d.beginSketchEdit(id);
+                      return Json{};
+                  });
+              } else if (it->type != "sketch") {
+                  throw CommandError(it->name + " is not a sketch");
+              }
+              return timelineToJson(design(ctx), ctx.document);
+          });
+
+    r.add({"sketch.end_edit", "Finish Sketch",
+           "Ends the sketch edit started by sketch.begin_edit: rolls the timeline forward to where it was, unless "
+           "the marker was moved meanwhile. Does nothing without a sketch edit.",
+           objectSchema(Json::object()), true},
+          [](CommandContext& ctx, const Json&) {
+              cad::Design& d = design(ctx);
+              if (d.state().sketchEdit && cad::sketchEditTarget(d.state()).value_or(d.marker()) != d.marker()) {
+                  designChange(ctx, "Finish Sketch", [&](cad::Design& dd) {
+                      dd.endSketchEdit();
+                      return Json{};
+                  });
+              } else if (d.state().sketchEdit) {
+                  // Nothing to roll forward: drop the edit without an undo step.
+                  cad::Design::State st = d.state();
+                  st.sketchEdit.reset();
+                  d.restore(std::move(st));
+                  d.syncDocument(ctx.document);
+              }
+              return timelineToJson(design(ctx), ctx.document);
+          });
 
     r.add({"timeline.set_marker", "Move Timeline Marker",
            "Moves the timeline marker (Fusion: roll back). Features after it are not evaluated and new features "

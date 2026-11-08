@@ -555,77 +555,17 @@ ApplicationWindow {
     }
 
     /// Editing an earlier sketch rolls the timeline back to just after it (Fusion): what came
-    /// later is hidden and cannot be snapped to or projected. Kept by feature ids, not
-    /// positions, so deleting features meanwhile does not lose it: {sketch, atEnd, active}
-    /// (the sketch, whether the marker was at the end, else the features active after it);
-    /// null when nothing was rolled back.
-    property var sketchRollback: null
-
-    function rollBackToSketch(id) {
-        const tl = controller.execute("timeline.list")
-        if (!tl.ok)
-            return
-        const t = tl.result
-        const index = t.features.findIndex(f => f.id === id)
-        if (index < 0 || index + 1 >= t.marker)
-            return
-        const rb = { sketch: id, atEnd: t.marker === t.features.length,
-                     active: t.features.slice(index + 1, t.marker).map(f => f.id) }
-        if (controller.execute("timeline.set_marker", { position: index + 1 }).ok) {
-            sketchRollback = rb
-            updateSavedMarker()
-        }
-    }
-
-    /// Where the marker goes back to for `rb` in timeline `t`: the end if it was there, else
-    /// just after the last surviving feature that was active, so features that were rolled
-    /// back before the edit stay rolled back even when some active ones were deleted. Null
-    /// when the user moved the marker off the sketch meanwhile.
-    function rollbackTarget(rb, t) {
-        const sketchAt = t.features.findIndex(f => f.id === rb.sketch)
-        if (sketchAt < 0 || t.marker !== sketchAt + 1)
-            return null
-        if (rb.atEnd)
-            return t.features.length
-        let target = sketchAt + 1
-        t.features.forEach((f, i) => { if (rb.active.indexOf(f.id) >= 0) target = Math.max(target, i + 1) })
-        return target
-    }
-
-    /// Saves (and autosaves) store the marker from before the sketch edit, not the roll-back.
-    function updateSavedMarker() {
-        let marker = -1
-        if (sketchRollback) {
-            const tl = controller.execute("timeline.list")
-            const target = tl.ok ? rollbackTarget(sketchRollback, tl.result) : null
-            if (target !== null)
-                marker = target
-        }
-        controller.savedMarker = marker
-    }
-
-    /// Rolls forward to where the timeline was before the sketch edit, unless the user moved
-    /// the marker meanwhile or the design was replaced (new project, open, variant switch).
-    function rollForwardFromSketch() {
-        const rb = sketchRollback
-        sketchRollback = null
-        controller.savedMarker = -1
-        if (!rb)
-            return
-        const tl = controller.execute("timeline.list")
-        if (!tl.ok)
-            return
-        const target = rollbackTarget(rb, tl.result)
-        if (target !== null && target > tl.result.marker)
-            controller.execute("timeline.set_marker", { position: target })
-    }
-
+    /// later is hidden and cannot be snapped to or projected. Finishing rolls forward again;
+    /// the command layer keeps track of it (sketch.begin_edit / sketch.end_edit).
+    /// Only called when it changes something, so opening a sketch at the end does not mark
+    /// the project modified.
     function enterSketch(id) {
-        rollForwardFromSketch()
-        rollBackToSketch(id)
+        const tl = controller.execute("timeline.list")
+        if (tl.ok && (tl.result.sketchEdit || tl.result.features.findIndex(f => f.id === id) + 1 < tl.result.marker))
+            controller.execute("sketch.begin_edit", { id: id })
         const r = controller.execute("sketch.profiles", { sketch: id, surfaceLine: true })
         if (!r.ok) {
-            rollForwardFromSketch()
+            endSketchEdit()
             return
         }
         const pl = r.result.plane
@@ -664,8 +604,14 @@ ApplicationWindow {
 
     /// Ends sketch editing. With `offerPart` (the user finished it), a closed outline drawn
     /// over a surface or scan offers to make the part on that surface right away.
+    function endSketchEdit() {
+        const tl = controller.execute("timeline.list")
+        if (tl.ok && tl.result.sketchEdit)
+            controller.execute("sketch.end_edit")
+    }
+
     function finishSketch(offerPart) {
-        rollForwardFromSketch()
+        endSketchEdit()
         // Any other way out (new project, variant switch, a feature dialog) drops the offer.
         partOnSurfaceSketch = null
         if (offerPart && activeSketch) {
@@ -1382,9 +1328,6 @@ ApplicationWindow {
     /// sections, measurements, heat maps, scan picks, simulation results, dialogs holding
     /// ids). The command layer clears the document, undo history and analyses itself.
     function resetWorkspace() {
-        // A sketch edit's rollback belongs to the previous design: never roll the new one.
-        sketchRollback = null
-        controller.savedMarker = -1
         viewport.finishTransform(false) // the preview belongs to the previous document
         featureDialog.close() // may hold a feature id of the previous project
         parametersDialog.close()
@@ -2804,9 +2747,6 @@ ApplicationWindow {
         // Undo/redo and edits elsewhere (timeline, parameters) change the sketch too.
         function onHistoryChanged() {
             window.refreshSketchSnaps()
-            // Deleting or moving features during a sketch edit changes where Save rolls to.
-            if (window.sketchRollback)
-                window.updateSavedMarker()
         }
         function onPartImported(id) {
             window.selectPart(id)

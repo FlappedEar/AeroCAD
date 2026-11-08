@@ -513,8 +513,6 @@ bool AppController::saveTo(const QString& path, const QVariantMap& view)
     QVariantMap params{{QStringLiteral("view"), view}};
     if (!path.isEmpty())
         params.insert(QStringLiteral("path"), path);
-    if (m_savedMarker >= 0)
-        params.insert(QStringLiteral("marker"), m_savedMarker);
     const QVariantMap r = execute(QStringLiteral("project.save"), params);
     if (!r.value(QStringLiteral("ok")).toBool())
         return false;
@@ -562,10 +560,8 @@ bool AppController::autosaveNow()
             return false;
         }
     }
-    commands::Json params{{"path", target.toStdString()}, {"copy", true}};
-    if (m_savedMarker >= 0)
-        params["marker"] = m_savedMarker;
-    const commands::CommandResult r = m_session.execute("project.save", params);
+    const commands::CommandResult r = m_session.execute(
+        "project.save", {{"path", target.toStdString()}, {"copy", true}});
     if (!r.ok) {
         setStatusMessage(tr("Autosave failed: %1").arg(QString::fromStdString(r.error)));
         return false;
