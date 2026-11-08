@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CAD-117: the A/B table names the runs (label and start time), explains "check quality", and
+# shows no percentage for a force at noise level. The comparison is the one of two real coarse
+# OpenFOAM v2506 runs of the same box (labels "A" and "B"; the newer one became A).
+ui.wait(1000)
+(() => { const p = controller.execute("document.parts").result.parts[0]; window.selectPart(p.id) })()
+ui.clickText("SIMULATE")
+ui.wait(300)
+ui.clickText("Wind Tunnel")
+ui.wait(1000)
+(() => { simulationPanel.runs = [{ id: "r2", created: "2026-11-08T14:32:17Z", state: "finished", source: { label: "B", partName: "box" } }, { id: "r1", created: "2026-11-08T14:31:31Z", state: "finished", source: { label: "", partName: "box" } }]; simulationPanel.comparison = { a: "r2", b: "r1", verdict: "check quality", states: { a: "finished", b: "running" }, forces: { dragN: { a: 3.083, b: 3.082, difference: -0.001, percent: -0.03 }, liftN: { a: -0.153, b: -0.154, difference: -0.001, percent: -0.4 }, sideN: { a: 0.002, b: 0.008, difference: 0.006, percent: 316.3 } }, differingConditions: [], unknownConditions: [], reasons: [], notes: [], meshSensitivity: { status: "not assessed", levels: [] }, quality: {} }; simulationPanel.tab = 2 })()
+ui.wait(600)
+(() => { const t = simulationPanel.runTitle("r2", "finished"); const u = simulationPanel.runTitle("r1", "running"); ui.log("TITLES " + t + " | " + u); if (!/^B \(\d\d:\d\d\)$/.test(t)) ui.fail("run A title: " + t); if (!/^box \(\d\d:\d\d\), running$/.test(u)) ui.fail("run B title: " + u) })()
+(() => { ui.log("NOISE side " + simulationPanel.noiseLevel(0.002) + " lift " + simulationPanel.noiseLevel(-0.153)); if (!simulationPanel.noiseLevel(0.002) || simulationPanel.noiseLevel(-0.153)) ui.fail("noise level") })()
+ui.clickText("A or B has quality warnings (see Results), so the difference may not be reliable.")
+ui.clickText("0.0")
+ui.shot("cfd-ab-table.png")
+ui.log("cfd ab table done")
