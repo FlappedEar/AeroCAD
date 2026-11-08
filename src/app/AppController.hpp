@@ -34,6 +34,9 @@ class AppController : public QObject {
     QML_UNCREATABLE("Created by main()")
     Q_PROPERTY(aerocad::app::PartListModel* parts READ parts CONSTANT)
     Q_PROPERTY(aerocad::app::McpAccess* mcp READ mcp CONSTANT)
+    /// Timeline marker that saves and autosaves store instead of the current one, or -1. The
+    /// UI sets it while an earlier sketch is edited (the timeline is temporarily rolled back).
+    Q_PROPERTY(int savedMarker MEMBER m_savedMarker)
     Q_PROPERTY(QVector3D sceneCenter READ sceneCenter NOTIFY boundsChanged)
     Q_PROPERTY(double sceneRadius READ sceneRadius NOTIFY boundsChanged)
     Q_PROPERTY(bool canUndo READ canUndo NOTIFY historyChanged)
@@ -285,6 +288,7 @@ private:
     /// Held while this process owns an autosave file, so other instances do not offer it
     /// for recovery.
     std::unique_ptr<QLockFile> m_autosaveLock;
+    int m_savedMarker = -1;
 };
 
 } // namespace aerocad::app

@@ -566,9 +566,13 @@ ApplicationWindow {
         const index = tl.result.features.findIndex(f => f.id === id)
         if (index < 0 || index + 1 >= tl.result.marker)
             return
-        if (controller.execute("timeline.set_marker", { position: index + 1 }).ok)
+        if (controller.execute("timeline.set_marker", { position: index + 1 }).ok) {
             sketchRollback = { sketch: id, marker: tl.result.marker, rolledTo: index + 1,
                                atEnd: tl.result.marker === tl.result.features.length }
+            // Saving meanwhile stores the marker from before the edit, not the roll-back (at
+            // the end: whatever the end is then; project.save clamps it).
+            controller.savedMarker = sketchRollback.atEnd ? 2147483647 : tl.result.marker
+        }
     }
 
     /// Rolls forward to where the timeline was before the sketch edit, unless the user moved
@@ -576,6 +580,7 @@ ApplicationWindow {
     function rollForwardFromSketch() {
         const rb = sketchRollback
         sketchRollback = null
+        controller.savedMarker = -1
         if (!rb)
             return
         const tl = controller.execute("timeline.list")
@@ -1356,6 +1361,7 @@ ApplicationWindow {
     function resetWorkspace() {
         // A sketch edit's rollback belongs to the previous design: never roll the new one.
         sketchRollback = null
+        controller.savedMarker = -1
         viewport.finishTransform(false) // the preview belongs to the previous document
         featureDialog.close() // may hold a feature id of the previous project
         parametersDialog.close()

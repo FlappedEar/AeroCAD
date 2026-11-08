@@ -32,6 +32,14 @@ ui.wait(500)
 (() => { finishSketch(false) })()
 ui.wait(300)
 (() => { const tl = controller.execute("timeline.list").result; ui.log("after delete + finish: marker " + tl.marker + " of " + tl.features.length); if (tl.marker !== tl.features.length) ui.fail("Finish did not roll forward after a later feature was deleted: " + tl.marker) })()
+# Codex on PR #134: saving while an earlier sketch is edited stores the marker from before the
+# edit, not the temporary roll-back.
+(() => { editFeature(controller.execute("timeline.list").result.features[0]) })()
+ui.wait(500)
+(() => { const tl = controller.execute("timeline.list").result; if (tl.marker !== 1) ui.fail("not rolled back before saving: " + tl.marker); if (!controller.saveProjectAs(Qt.resolvedUrl("file:///tmp/aerocad-rollback-saved.aerocad"))) ui.fail("save failed"); if (controller.execute("timeline.list").result.marker !== 1) ui.fail("saving changed the rolled-back marker") })()
+(() => { finishSketch(false); if (!controller.openPath("/tmp/aerocad-rollback-saved.aerocad")) ui.fail("open failed") })()
+ui.wait(800)
+(() => { const tl = controller.execute("timeline.list").result; ui.log("reopened saved-while-editing: marker " + tl.marker + " of " + tl.features.length); if (tl.marker !== tl.features.length) ui.fail("the roll-back was saved: marker " + tl.marker) })()
 # A new sketch at the end does not roll anything back.
 (() => { const s = controller.execute("sketch.create", { plane: "XY", curves: [{ type: "circle", center: [200, 0], radius: 5 }] }); enterSketch(s.result.id) })()
 ui.wait(500)

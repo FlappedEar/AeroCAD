@@ -533,3 +533,19 @@ TEST_CASE("Damaged kept dimensions in a file are skipped", "[commands][project][
     CHECK(dims[2].show == "angle");
     CHECK(dims[2].b.is_null());
 }
+
+TEST_CASE("project.save marker stores another timeline marker than the current one", "[commands][project]")
+{
+    // The UI saves the marker from before a temporary roll-back (editing an earlier sketch).
+    TempDir dir;
+    commands::Session s;
+    run(s, "feature.box", {{"corner", {0, 0, 0}}, {"size", {10, 10, 10}}});
+    run(s, "feature.box", {{"corner", {20, 0, 0}}, {"size", {10, 10, 10}}});
+    run(s, "timeline.set_marker", {{"position", 1}});
+    const std::string path = dir.file("marker.aerocad");
+    run(s, "project.save", {{"path", path}, {"marker", 99}}); // clamped to the end
+    CHECK(s.design().marker() == 1); // the open design is untouched
+    run(s, "project.open", {{"path", path}});
+    CHECK(s.design().marker() == 2);
+    CHECK(s.design().bodies().size() == 2);
+}
