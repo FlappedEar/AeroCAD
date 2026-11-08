@@ -93,20 +93,31 @@ The menu lists only what can be done with what is under the pointer:
 
 - **On a part**: its type and name, the recommended next step (★, the same as in the
   guide), the other steps that can be done now (at most five, the rest under **More**),
-  then **Move / Rotate…** (M), **Zoom to this**, **Hide** / **Show** (V) and **Delete** (Del).
+  then **Move / Rotate / Scale** (M), **Zoom to this**, **Hide** / **Show** (V) and **Delete** (Del).
   Disabled actions are left out; the guide in Properties says why something is not possible
   yet.
 - **On empty space**: **Fit All** (F6), **Home View**, **Orthographic** / **Perspective**,
   **Show All Parts** when something is hidden, **Undo** / **Redo**, **Import** and
   **New sketch**.
 
-## Move / Rotate
+## Move / Rotate / Scale
 
-**Move/Rotate** (SOLID › MODIFY, MESH › PREPARE, right-click menu, key M as in Fusion's
-Move/Copy) turns the selected part about the X, Y or Z axis through its centre and moves it
-by a distance. On a body it is a timeline step (`feature.move`) that can be edited later; on
-a scan, surface or imported solid it changes the part directly (`part.transform`). Undo
-reverts either.
+**Move / Rotate / Scale** (SOLID › MODIFY, MESH › PREPARE, MESH › Scale, right-click menu,
+key M as in Fusion's Move/Copy) works directly in the view, with no dialog to confirm each
+change:
+
+- **Arrows** (red X, green Y, blue Z) move the part along that axis; **rings** turn it about
+  that axis through its centre; the **white square** in the middle scales it evenly. Hold
+  **Shift** while dragging to snap (1 mm, 15°, 5 %). The value shows next to the pointer.
+- The part follows live. A small panel (top left of the view) shows the exact Move (mm),
+  Rotate (° about X, then Y, then Z) and Scale (%); typing a value previews it at once.
+- **Enter** or **Done** applies everything as one undo step; **Esc** or **Cancel** puts the
+  part back; **Reset** clears the values. Clicking another part or empty space, or starting
+  another command, applies it too. Ctrl+Z / Cmd+Z during the tool drops the preview.
+
+On a body the result is a timeline step (`feature.move`, editable later); on a scan,
+surface or imported solid it changes the part directly (`part.transform`). Sketches and
+planes move with the body they belong to.
 
 ## Preferences
 
@@ -130,7 +141,9 @@ the menus when it opens, plus the viewport keys and the mouse scheme. It has a s
 - Click a **face** for that orthographic standard view (Front, Back, Left, Right, Top, Bottom).
 - Click an **edge** or a **corner** for the view between the adjacent faces (corners give
   isometric views).
-- **Drag** the cube to orbit.
+- **Drag** the cube to orbit. Orbiting has no stop at Top or Bottom: it goes over the pole.
+- The **arrows** around the cube (shown on hover) turn the view by 90° up, down, left or
+  right, and keep going past Top and Bottom.
 - The **house** icon goes to the Home view (default: isometric from front-right-top), framed to fit.
 - **Right-click**: Go Home, Orthographic / Perspective, Set current view as Home, Reset Home.
 
@@ -179,7 +192,7 @@ has focus):
 Save As, Import and the variant commands (Modify > Duplicate as New Variant, Toggle A/B)
 have no shortcut (Fusion's list has no Save As).
 
-Not mapped yet: Press Pull (Q), Move (M), Trim (T), Offset (O), Project (P),
+Not mapped yet: Press Pull (Q), Trim (T), Offset (O), Project (P),
 Construction (X). 1/2/3 select the region selection tools on meshes,
 see "Region selection" in [macos.md](macos.md).
 

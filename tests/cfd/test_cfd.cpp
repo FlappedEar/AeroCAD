@@ -9,10 +9,12 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <random>
 #include <sstream>
 #include <thread>
@@ -115,6 +117,7 @@ void fakeFinishedRun(const fs::path& dir, double cd, double dragN, double liftN 
           "p 1 3 float\n200 -100 0\nU 3 3 float\n0 0 0 0 0 0 0 0 0\n");
     write(dir / "aerocad.stage", "done\n");
     write(dir / "aerocad.status", "finished\n");
+    write(dir / "aerocad.engine", "v2506\n");
 }
 
 } // namespace
@@ -213,6 +216,7 @@ TEST_CASE("writeCase writes a complete OpenFOAM case in SI units", "[cfd]")
     CHECK(control.find("magUInf $aerocadUInf") != std::string::npos);
     CHECK(control.find("patches (part)") != std::string::npos);
     CHECK(slurp(tmp.path() / "Allrun").find("runParallel simpleFoam") != std::string::npos);
+    CHECK(slurp(tmp.path() / "Allrun").find("\"${WM_PROJECT_VERSION:-}\" > aerocad.engine") != std::string::npos); // CAD-84
     CHECK(slurp(tmp.path() / "system/blockMeshDict").find("ground") == std::string::npos);
 
     const auto rt = cfd::CaseInfo::fromJson(nlohmann::json::parse(slurp(tmp.path() / "case.json")));
@@ -246,6 +250,51 @@ TEST_CASE("writeCase with ground, context and one process", "[cfd]")
     CHECK(info.domain.min.z == Approx(-0.06 - 0.02 * 0.1));
     CHECK_THROWS(cfd::writeCase(tmp.path(), cfd::CaseGeometry{}, s));
 }
+
+#ifndef _WIN32
+TEST_CASE("Allrun keeps the engine of reused solver results (CAD-84)", "[cfd]")
+{
+    // OpenFOAM's RunFunctions skips an application whose log exists. A stand-in with the same
+    // rule shows which engine a rerun records.
+    TempDir foam;
+    fs::create_directories(foam.path() / "bin/tools");
+    write(foam.path() / "bin/tools/RunFunctions",
+          "runApplication() { [ -f \"log.$1\" ] && return 0; echo ran > \"log.$1\"; }\n"
+          "runParallel() { runApplication \"$@\"; }\n"
+          "restore0Dir() { :; }\n");
+    for (const int processes : {1, 2}) {
+        TempDir tmp;
+        cfd::CaseGeometry g;
+        g.part = box({0, 0, 0}, {100, 50, 20});
+        cfd::Settings s;
+        s.processes = processes;
+        cfd::writeCase(tmp.path(), g, s);
+        const std::string allrun = "\"" + (tmp.path() / "Allrun").string() + "\"";
+        const auto run = [&](const char* version) {
+            const std::string cmd = "WM_PROJECT_DIR=\"" + foam.path().string() + "\" WM_PROJECT_VERSION=" + version +
+                                    " sh " + allrun + " >/dev/null 2>&1";
+            return std::system(cmd.c_str());
+        };
+        REQUIRE(run("v2406") == 0);
+        CHECK(slurp(tmp.path() / "aerocad.engine") == "v2406\n");
+        CHECK(slurp(tmp.path() / "aerocad.status") == "finished\n");
+
+        // Rerun in another environment: the solver is skipped, so its results keep v2406.
+        REQUIRE(run("v2506") == 0);
+        CHECK(slurp(tmp.path() / "aerocad.engine") == "v2406\n");
+
+        // An older run that recorded no engine stays unknown rather than taking the new one.
+        fs::remove(tmp.path() / "aerocad.engine");
+        REQUIRE(run("v2506") == 0);
+        CHECK_FALSE(fs::exists(tmp.path() / "aerocad.engine"));
+
+        // A clean solve records the engine that ran it.
+        fs::remove(tmp.path() / "log.simpleFoam");
+        REQUIRE(run("v2506") == 0);
+        CHECK(slurp(tmp.path() / "aerocad.engine") == "v2506\n");
+    }
+}
+#endif
 
 TEST_CASE("writeCase with a fixed floor at a given height", "[cfd]")
 {
@@ -854,7 +903,8 @@ TEST_CASE("RunManager: mesh sensitivity of an A/B difference", "[cfd]")
     auto cmp = runs.compare(a, b);
     CHECK(cmp.at("meshSensitivity").at("status") == "not assessed");
     CHECK(cmp.at("meshSensitivity").at("suggestedMesh") == "medium");
-    CHECK(cmp.at("verdict") == "comparable");
+    // B is 10 mm taller, so it has its own flow domain (CAD-84): compared, but qualified.
+    CHECK(cmp.at("verdict") == "different domains");
 
     // Same A and B on the medium mesh: difference 0.10 N -> 0.12 N, it holds.
     const std::string am = run(ga, cfd::MeshLevel::Medium, 1.0);
@@ -868,7 +918,7 @@ TEST_CASE("RunManager: mesh sensitivity of an A/B difference", "[cfd]")
     CHECK(ms.at("levels").size() == 2);
     CHECK(ms.at("dragN").at("difference").get<double>() == Approx(0.12).epsilon(0.02));
     CHECK(ms.at("dragN").at("change").get<double>() == Approx(0.02).epsilon(0.1));
-    CHECK(cmp.at("verdict") == "comparable");
+    CHECK(cmp.at("verdict") == "different domains");
     CHECK(runs.compare(am, bm).at("meshSensitivity").at("status") == "holds"); // Same pair, seen from medium.
 
     // On the fine mesh the difference shrinks to 0.03 N: changed by more than half of itself.
@@ -1021,6 +1071,9 @@ TEST_CASE("RunManager: invalid metadata is contained to its run", "[cfd][run-met
             CHECK(nlohmann::json::parse(slurp(tmp.path() / valid / "run.json")) == original);
             // Recovery guidance is actionable; only this explicit repair changes the file.
             write(dir / "run.json", original.dump());
+            reopened->rescan();
+            REQUIRE(reopened->status(broken->id));
+            CHECK(reopened->status(broken->id)->state == cfd::RunState::Finished);
             cfd::RunManager repaired(tmp.path());
             CHECK(repaired.status(broken->id)->state == cfd::RunState::Finished);
         }
@@ -1045,6 +1098,53 @@ TEST_CASE("RunManager: malformed remote metadata never launches a process", "[cf
     CHECK_FALSE(fs::exists(dir / "invoked"));
     CHECK_FALSE(fs::exists(dir / "log.aerocad"));
     CHECK(slurp(dir / "run.json") == metadata);
+    // A repaired remote record is reloaded during the same session without
+    // starting a process. Only a new session may follow a remote run.
+    write(dir / "run.json", nlohmann::json{{"backend", "docker"}, {"docker", docker.string()},
+                                           {"dockerHost", "ssh://test.invalid"}}.dump());
+    runs.rescan();
+    REQUIRE(runs.status("broken-remote"));
+    CHECK(runs.status("broken-remote")->state == cfd::RunState::Interrupted);
+    CHECK_FALSE(fs::exists(dir / "invoked"));
+    CHECK_FALSE(fs::exists(dir / "log.aerocad"));
+}
+#endif
+
+#ifndef _WIN32
+TEST_CASE("Listing runs only reads; a remote run is followed again at start-up (CAD-81)", "[cfd]")
+{
+    // A remote run started by another session and not finished yet. Its "docker" is a stand-in
+    // that records each call, so following the run (which starts the remote fetch) is visible.
+    TempDir root;
+    TempDir bin;
+    const fs::path calls = bin.path() / "calls";
+    const fs::path docker = bin.path() / "docker";
+    write(docker, "#!/bin/sh\necho \"$@\" >> \"" + calls.string() + "\"\nexit 1\n");
+    fs::permissions(docker, fs::perms::owner_all, fs::perm_options::add);
+
+    cfd::RunManager runs(root.path());
+    CHECK(runs.list().empty());
+    const fs::path dir = root.path() / "20261107-120000-wing";
+    const nlohmann::json j{{"id", dir.filename().string()}, {"created", "2026-11-07T12:00:00Z"}, {"backend", "docker"},
+                           {"docker", docker.string()}, {"dockerHost", "ssh://arek@build-box"}};
+    write(dir / "run.json", j.dump());
+
+    // Found by a later listing (simulation.list): reported, but nothing is started or written.
+    runs.rescan();
+    const auto listed = runs.list();
+    REQUIRE(listed.size() == 1);
+    CHECK(listed[0].state == cfd::RunState::Interrupted);
+    CHECK(listed[0].message.find("ssh://arek@build-box") != std::string::npos);
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    CHECK_FALSE(fs::exists(calls));
+    CHECK_FALSE(fs::exists(dir / "log.aerocad"));
+
+    // A new session takes it over at start-up.
+    cfd::RunManager next(root.path());
+    for (int i = 0; i < 50 && !fs::exists(calls); ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    CHECK(fs::exists(calls));
+    CHECK(fs::exists(dir / "log.aerocad"));
 }
 #endif
 
@@ -1063,4 +1163,202 @@ TEST_CASE("Remote engine host: validation and docker command line", "[cfd]")
     CHECK(cfd::dockerCommand("/usr/bin/docker", "") == std::vector<std::string>{"/usr/bin/docker"});
     CHECK(cfd::dockerCommand("/usr/bin/docker", "ssh://a@b") ==
           std::vector<std::string>{"/usr/bin/docker", "-H", "ssh://a@b"});
+}
+TEST_CASE("Different surroundings or domains are not identical conditions (CAD-84)", "[cfd]")
+{
+    TempDir tmp;
+    cfd::RunManager runs(tmp.path());
+    cfd::Settings s;
+    s.flowDirection = "+X";
+    // The audit's case: the same target part alone and next to a context part.
+    cfd::CaseGeometry alone, withContext, otherContext;
+    alone.part = box({0, 0, 0}, {200, 80, 60});
+    withContext.part = alone.part;
+    withContext.context = box({-120, 20, 0}, {240, 240, 45});
+    otherContext.part = alone.part;
+    otherContext.context = box({-120, 20, 0}, {240, 240, 30});
+    const std::string a = runs.prepare(alone, s, {});
+    const std::string b = runs.prepare(withContext, s, {});
+    const std::string c = runs.prepare(withContext, s, {});
+    const std::string d = runs.prepare(otherContext, s, {});
+    for (const auto& id : {a, b, c, d})
+        fakeFinishedRun(tmp.path() / id, 0.8, 1.0);
+
+    auto cmp = runs.compare(a, b);
+    INFO(cmp.dump());
+    CHECK(cmp.at("sameConditions") == false);
+    const auto diff = cmp.at("differingConditions").get<std::vector<std::string>>();
+    CHECK(std::find(diff.begin(), diff.end(), "context") != diff.end());
+    CHECK(std::find(diff.begin(), diff.end(), "domain") != diff.end());
+    CHECK(cmp.at("sameDomain") == false);
+    CHECK(cmp.at("verdict") == "not comparable");
+
+    // Same part, same surroundings: comparable.
+    cmp = runs.compare(b, c);
+    CHECK(cmp.at("sameConditions") == true);
+    CHECK(cmp.at("sameDomain") == true);
+    CHECK(cmp.at("verdict") == "comparable");
+
+    // Surroundings of another shape, even within the same domain, are a different case.
+    cmp = runs.compare(b, d);
+    CHECK(cmp.at("sameConditions") == false);
+    const auto diff2 = cmp.at("differingConditions").get<std::vector<std::string>>();
+    CHECK(std::find(diff2.begin(), diff2.end(), "context") != diff2.end());
+
+    // The resolved setup is part of the results.
+    const auto cond = runs.results(b).at("conditions");
+    CHECK(cond.contains("domain"));
+    CHECK_FALSE(cond.at("contextHash").is_null());
+}
+
+namespace {
+
+void editCaseJson(const fs::path& runDir, const std::function<void(nlohmann::json&)>& edit)
+{
+    const fs::path caseJson = runDir / "case.json";
+    nlohmann::json j;
+    {
+        std::ifstream in(caseJson);
+        in >> j;
+    }
+    edit(j);
+    std::ofstream(caseJson) << j.dump(2);
+}
+
+bool contains(const nlohmann::json& list, const std::string& value)
+{
+    return std::find(list.begin(), list.end(), value) != list.end();
+}
+
+} // namespace
+
+TEST_CASE("Setup evidence an older run did not record is unknown, not equal (CAD-84)", "[cfd]")
+{
+    TempDir tmp;
+    cfd::RunManager runs(tmp.path());
+    cfd::Settings s;
+    s.flowDirection = "+X";
+    cfd::CaseGeometry alone, withContext;
+    alone.part = box({0, 0, 0}, {200, 80, 60});
+    withContext.part = alone.part;
+    withContext.context = box({-120, 20, 0}, {240, 240, 45});
+    const std::string a = runs.prepare(alone, s, {});
+    const std::string b = runs.prepare(withContext, s, {});
+    const std::string c = runs.prepare(alone, s, {});
+    for (const auto& id : {a, b, c})
+        fakeFinishedRun(tmp.path() / id, 0.8, 1.0);
+
+    // Matched records: identical conditions.
+    auto cmp = runs.compare(a, c);
+    INFO(cmp.dump());
+    CHECK(cmp.at("sameConditions") == true);
+    CHECK(cmp.at("unknownConditions").empty());
+    CHECK(cmp.at("verdict") == "comparable");
+
+    // The audit's pair with the surroundings of the context run not recorded.
+    editCaseJson(tmp.path() / b, [](nlohmann::json& j) { j.erase("contextHash"); });
+    cmp = runs.compare(a, b);
+    INFO(cmp.dump());
+    CHECK(cmp.at("sameConditions") == false);
+    CHECK(contains(cmp.at("unknownConditions"), "context"));
+    CHECK(contains(cmp.at("differingConditions"), "domain"));
+    CHECK(cmp.at("verdict") == "not comparable");
+
+    // The engine that actually ran: different versions are different conditions, even though
+    // both cases were written for the same target version.
+    write(tmp.path() / a / "aerocad.engine", "v2406\n");
+    write(tmp.path() / c / "aerocad.engine", "v2512\n");
+    cmp = runs.compare(a, c);
+    INFO(cmp.dump());
+    CHECK(contains(cmp.at("differingConditions"), "engine"));
+    CHECK(cmp.at("verdict") == "not comparable");
+    CHECK(runs.results(a).at("conditions").at("engine") == "v2406");
+    CHECK(runs.results(a).at("conditions").at("engineTarget") == runs.results(c).at("conditions").at("engineTarget"));
+
+    // Otherwise matched runs that did not record the engine: unknown, with a note.
+    for (const auto& id : {a, c})
+        fs::remove(tmp.path() / id / "aerocad.engine");
+    cmp = runs.compare(a, c);
+    INFO(cmp.dump());
+    CHECK(cmp.at("sameConditions") == false);
+    CHECK(contains(cmp.at("unknownConditions"), "engine"));
+    CHECK(cmp.at("verdict") == "not comparable");
+    bool noted = false;
+    for (const auto& n : cmp.at("notes"))
+        noted = noted || n.get<std::string>().find("engine of both runs was not recorded") != std::string::npos;
+    CHECK(noted);
+}
+
+TEST_CASE("A finished run whose recorded domain is missing is compared as unknown, not an error (CAD-84)", "[cfd]")
+{
+    TempDir tmp;
+    cfd::RunManager runs(tmp.path());
+    cfd::CaseGeometry g;
+    g.part = box({0, 0, 0}, {200, 80, 60});
+    cfd::Settings s;
+    s.flowDirection = "+X";
+    const std::string a = runs.prepare(g, s, {});
+    const std::string b = runs.prepare(g, s, {});
+    for (const auto& id : {a, b})
+        fakeFinishedRun(tmp.path() / id, 0.8, 1.0); // with surface field output
+    editCaseJson(tmp.path() / b, [](nlohmann::json& j) { j.erase("domain"); });
+    nlohmann::json cmp;
+    REQUIRE_NOTHROW(cmp = runs.compare(a, b));
+    INFO(cmp.dump());
+    CHECK(contains(cmp.at("unknownConditions"), "domain"));
+    CHECK(cmp.at("sameConditions") == false);
+    CHECK(cmp.at("verdict") == "not comparable");
+}
+
+TEST_CASE("A target-part variant of another size is compared on a different domain (CAD-84)", "[cfd]")
+{
+    TempDir tmp;
+    cfd::RunManager runs(tmp.path());
+    cfd::Settings s;
+    s.flowDirection = "+X";
+    cfd::CaseGeometry base, longer;
+    base.part = box({0, 0, 0}, {200, 80, 60});
+    base.context = box({-120, 120, 0}, {240, 240, 45});
+    longer.part = box({0, 0, 0}, {215, 80, 60}); // e.g. the same part with a lip
+    longer.context = base.context;
+    const std::string a = runs.prepare(base, s, {});
+    const std::string b = runs.prepare(longer, s, {});
+    for (const auto& id : {a, b})
+        fakeFinishedRun(tmp.path() / id, 0.8, 1.0);
+    const auto cmp = runs.compare(a, b);
+    INFO(cmp.dump());
+    CHECK(cmp.at("sameConditions") == false);
+    CHECK(cmp.at("sameDomain") == false);
+    CHECK(cmp.at("differingConditions") == nlohmann::json::array({"domain"}));
+    CHECK(cmp.at("verdict") == "different domains");
+    CHECK_FALSE(cmp.at("forces").empty()); // the variant is still compared
+    bool noted = false;
+    for (const auto& n : cmp.at("notes"))
+        noted = noted || n.get<std::string>().find("flow domains differ") != std::string::npos;
+    CHECK(noted);
+}
+
+TEST_CASE("The same surroundings given in another part order are the same context (CAD-84)", "[cfd]")
+{
+    TempDir tmp;
+    cfd::RunManager runs(tmp.path());
+    cfd::Settings s;
+    s.flowDirection = "+X";
+    const auto first = box({-120, 120, 0}, {240, 240, 45});
+    const auto second = box({300, -200, 0}, {360, -140, 30});
+    cfd::CaseGeometry ab, ba;
+    ab.part = box({0, 0, 0}, {200, 80, 60});
+    ba.part = ab.part;
+    ab.context.append(first);
+    ab.context.append(second);
+    ba.context.append(second);
+    ba.context.append(first);
+    const std::string a = runs.prepare(ab, s, {});
+    const std::string b = runs.prepare(ba, s, {});
+    for (const auto& id : {a, b})
+        fakeFinishedRun(tmp.path() / id, 0.8, 1.0);
+    const auto cmp = runs.compare(a, b);
+    INFO(cmp.dump());
+    CHECK(cmp.at("sameConditions") == true);
+    CHECK(cmp.at("verdict") == "comparable");
 }

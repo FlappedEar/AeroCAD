@@ -21,6 +21,7 @@
 #include <QGuiApplication>
 #include <QImage>
 #include <QJSValue>
+#include <QKeySequence>
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPointer>
@@ -30,6 +31,7 @@
 #include <QQmlExpression>
 #include <QQuickItem>
 #include <QQuickWindow>
+#include <QTest>
 #include <QTimer>
 #include <QUrl>
 #include <QWheelEvent>
@@ -74,13 +76,11 @@ public:
 
     Q_INVOKABLE void press(qreal x, qreal y, const QString& button = "left", const QString& mods = "")
     {
-        m_buttons |= toButton(button);
         send(QEvent::MouseButtonPress, x, y, toButton(button), mods);
     }
     Q_INVOKABLE void move(qreal x, qreal y, const QString& mods = "") { send(QEvent::MouseMove, x, y, Qt::NoButton, mods); }
     Q_INVOKABLE void release(qreal x, qreal y, const QString& button = "left", const QString& mods = "")
     {
-        m_buttons &= ~Qt::MouseButtons(toButton(button));
         send(QEvent::MouseButtonRelease, x, y, toButton(button), mods);
     }
     Q_INVOKABLE void click(qreal x, qreal y, const QString& button = "left", const QString& mods = "")
@@ -131,6 +131,24 @@ public:
         QWheelEvent event(local, m_window->mapToGlobal(local), QPoint(0, notches * pixels), QPoint(0, notches * 120),
                           Qt::NoButton, modifiers(mods), Qt::NoScrollPhase, false);
         QCoreApplication::sendEvent(m_window, &event);
+    }
+
+    /// A key press and release ("Escape", "Return", "M", ...) as the window system delivers
+    /// it, so shortcuts see it as they see a real key.
+    Q_INVOKABLE void key(const QString& name, const QString& mods = "")
+    {
+        const QKeySequence seq = QKeySequence::fromString(name);
+        if (seq.isEmpty()) {
+            fail("unknown key: " + name);
+            return;
+        }
+        // Window shortcuts only fire in the active window.
+        if (QGuiApplication::focusWindow() != m_window) {
+            m_window->requestActivate();
+            if (!QTest::qWaitForWindowActive(m_window.data(), 1000))
+                std::fprintf(stderr, "ui-script: window did not become active for a key press\n");
+        }
+        QTest::keyClick(m_window.data(), seq[0].key(), modifiers(mods));
     }
 
     /// Drops files at (x, y) as a file manager does: drag enter, move and drop events with
@@ -226,16 +244,16 @@ private:
         send(m_window, type, x, y, button, mods);
     }
 
-    /// Mouse event at scene position (x, y) of `window`. Presses and releases from clickText
-    /// on another window do not change m_buttons, which tracks the main window's buttons.
+    /// Mouse event at scene position (x, y) of `window`, through the window system as a
+    /// real mouse (QTest): Qt Quick then sees the same grabs and releases as in use. (Events
+    /// sent straight to the window left items holding the mouse grab after their release.)
     void send(QQuickWindow* window, QEvent::Type type, qreal x, qreal y, Qt::MouseButton button, const QString& mods)
     {
-        const QPointF local(x, y);
-        Qt::MouseButtons buttons = m_buttons;
-        if (window != m_window)
-            buttons = type == QEvent::MouseButtonPress ? Qt::MouseButtons(button) : Qt::NoButton;
-        QMouseEvent event(type, local, local, window->mapToGlobal(local), button, buttons, modifiers(mods));
-        QCoreApplication::sendEvent(window, &event);
+        const QPoint at = QPointF(x, y).toPoint();
+        const QTest::MouseAction action = type == QEvent::MouseButtonPress     ? QTest::MousePress
+                                          : type == QEvent::MouseButtonRelease ? QTest::MouseRelease
+                                                                               : QTest::MouseMove;
+        QTest::mouseEvent(action, window, button, modifiers(mods), at);
     }
 
     static QQuickItem* find(QQuickItem* item, const QString& text)
@@ -252,7 +270,6 @@ private:
     }
 
     QPointer<QQuickWindow> m_window;
-    Qt::MouseButtons m_buttons;
     int m_delay = 0;
     QElapsedTimer m_clock;
 };

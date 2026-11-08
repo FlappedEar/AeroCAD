@@ -52,6 +52,11 @@ public:
     /// clients such as an AI agent detect that the document changed since they read it.
     [[nodiscard]] std::uint64_t revision() const { return m_revision; }
 
+    /// Imported source geometry revision. Changes only when a source is added, removed,
+    /// or its immutable mesh / shape is replaced; metadata and timeline mirrors do not
+    /// invalidate features. Never restored by undo, so clients can detect source changes.
+    [[nodiscard]] std::uint64_t importedGeometryRevision() const { return m_importedGeometryRevision; }
+
     ObserverId addObserver(Observer observer);
     void removeObserver(ObserverId id);
 
@@ -66,6 +71,7 @@ private:
     std::vector<std::pair<ObserverId, Observer>> m_observers;
     ObserverId m_nextObserverId = 1;
     std::uint64_t m_revision = 0;
+    std::uint64_t m_importedGeometryRevision = 0;
 };
 
 } // namespace aerocad::model
