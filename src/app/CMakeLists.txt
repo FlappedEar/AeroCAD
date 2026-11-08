@@ -199,6 +199,11 @@ if(AEROCAD_BUILD_TESTS)
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/surface_outline_drag.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_surface_outline_drag_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-122: in a sketch Esc ends the tool, a click selects a curve and Delete removes it.
+    add_test(NAME app_sketch_select_delete_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_select_delete.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_sketch_select_delete_test PROPERTIES LABELS gui TIMEOUT 60)
     # CAD-131, CAD-132: the guide leads from an outline drawn on a scan to the part and to printing.
     add_test(NAME app_scan_to_part_next_steps_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl

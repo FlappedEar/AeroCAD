@@ -488,3 +488,184 @@ TEST_CASE("Design commands: loft of rings stays hollow", "[commands][cad][patter
                            {"curves", Json::array({{{"type", "circle"}, {"center", {0, 0}}, {"radius", 8}}})}});
     CHECK_FALSE(s.execute("feature.loft", {{"sections", Json::array({b, disk.at("id")})}}).ok);
 }
+
+TEST_CASE("Design commands: deleting sketch curves (CAD-122)", "[commands][cad][solver]")
+{
+    commands::Session s;
+    // A rectangle, a circle and a line; the circle and the line carry dimensions.
+    const Json sk = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "rectangle"}, {"corner", {0, 0}}, {"width", 40}, {"height", 20}},
+                                                 {{"type", "circle"}, {"center", {20, 10}}, {"radius", 4}},
+                                                 {{"type", "line"}, {"start", {50, 0}}, {"end", {60, 0}}}})},
+                         {"constraints", Json::array({{{"type", "radius"}, {"curve", 4}, {"value", 5}},
+                                                      {{"type", "length"}, {"curve", 5}, {"value", 12}},
+                                                      {{"type", "length"}, {"curve", 1}, {"value", 20}}})}});
+    const auto id = sk.at("id").get<std::uint64_t>();
+    CHECK(sk.at("profiles") == 2);
+
+    SECTION("a whole item and its constraint go")
+    {
+        run(s, "sketch.delete_curves", {{"sketch", id}, {"curves", {4}}});
+        const Json c = run(s, "sketch.curves", {{"sketch", id}});
+        REQUIRE(c.at("curves").size() == 5);
+        CHECK(c.at("curves")[4].at("kind") == "line");
+        REQUIRE(c.at("constraints").size() == 2);
+        // The line's length now refers to curve 4.
+        CHECK(c.at("constraints")[0].at("curve") == 4);
+        CHECK(c.at("constraints")[0].at("resolved").get<double>() == Approx(12));
+        CHECK(run(s, "sketch.profiles", {{"sketch", id}}).at("profiles").size() == 1);
+        // One undo step brings it back.
+        run(s, "edit.undo");
+        CHECK(run(s, "sketch.curves", {{"sketch", id}}).at("curves").size() == 6);
+        CHECK(run(s, "sketch.curves", {{"sketch", id}}).at("constraints").size() == 3);
+    }
+
+    SECTION("one side of a rectangle: the other sides stay lines that keep their direction")
+    {
+        run(s, "sketch.delete_curves", {{"sketch", id}, {"curves", {2}}});
+        const Json c = run(s, "sketch.curves", {{"sketch", id}});
+        REQUIRE(c.at("curves").size() == 5);
+        for (int i = 0; i < 3; ++i)
+            CHECK(c.at("curves")[i].at("kind") == "line");
+        CHECK(run(s, "sketch.profiles", {{"sketch", id}}).at("profiles").size() == 1); // only the circle
+        // The right side (still curve 1) keeps its length and stays vertical when dimensioned again.
+        run(s, "sketch.add_constraints",
+            {{"sketch", id}, {"constraints", Json::array({{{"type", "length"}, {"curve", 0}, {"value", 30}}})}});
+        const Json after = run(s, "sketch.curves", {{"sketch", id}});
+        const auto& right = after.at("curves")[1].at("points");
+        CHECK(right[0][0].get<double>() == Approx(right[1][0].get<double>()).margin(1e-6));
+        CHECK(std::abs(right[1][1].get<double>() - right[0][1].get<double>()) == Approx(20).margin(1e-6));
+        const auto& bottom = after.at("curves")[0].at("points");
+        CHECK(bottom[0][1].get<double>() == Approx(bottom[1][1].get<double>()).margin(1e-6));
+    }
+
+    SECTION("bad indices are refused and change nothing")
+    {
+        const auto bad = s.execute("sketch.delete_curves", {{"sketch", id}, {"curves", {9}}});
+        CHECK_FALSE(bad.ok);
+        CHECK(run(s, "sketch.curves", {{"sketch", id}}).at("curves").size() == 6);
+    }
+}
+
+TEST_CASE("Design commands: deleting sketch curves re-indexes a revolve axis", "[commands][cad]")
+{
+    commands::Session s;
+    // A circle first, then a closed triangle with its axis line on the left.
+    const Json sk = run(s, "sketch.create",
+                        {{"plane", "XZ"},
+                         {"curves", Json::array({{{"type", "circle"}, {"center", {50, 50}}, {"radius", 2}},
+                                                 {{"type", "line"}, {"start", {10, 0}}, {"end", {10, 20}}},
+                                                 {{"type", "line"}, {"start", {10, 20}}, {"end", {20, 0}}},
+                                                 {{"type", "line"}, {"start", {20, 0}}, {"end", {10, 0}}}})}});
+    const auto id = sk.at("id").get<std::uint64_t>();
+    const Json profiles = run(s, "sketch.profiles", {{"sketch", id}});
+    Json triangle;
+    for (const auto& p : profiles.at("profiles"))
+        if (p.at("area").get<double>() > 50)
+            triangle = p.at("centroid");
+    REQUIRE(triangle.is_array());
+    run(s, "feature.revolve",
+        {{"sketch", id}, {"points", Json::array({triangle})}, {"axis", {{"line", 1}}}, {"angle", 360}});
+    const double volume = run(s, "timeline.list").at("bodies")[0].at("volume").get<double>();
+    // Removing the circle moves the axis line to index 0; the cone stays the same.
+    run(s, "sketch.delete_curves", {{"sketch", id}, {"curves", {0}}});
+    const Json tl = run(s, "timeline.list");
+    CHECK(tl.at("features")[1].at("params").at("axis").at("line") == 0);
+    CHECK(tl.at("features")[1].at("status") == "ok");
+    CHECK(tl.at("bodies")[0].at("volume").get<double>() == Approx(volume));
+}
+
+TEST_CASE("Design commands: deleting a side of a later shape keeps its own constraints (CAD-122 review)",
+          "[commands][cad][solver]")
+{
+    commands::Session s;
+    // A circle first: the rectangle's sides are curves 1..4.
+    const Json sk = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "circle"}, {"center", {-30, 0}}, {"radius", 4}},
+                                                 {{"type", "rectangle"}, {"corner", {0, 0}}, {"width", 40}, {"height", 20}}})}});
+    const auto id = sk.at("id").get<std::uint64_t>();
+    run(s, "sketch.delete_curves", {{"sketch", id}, {"curves", {3}}}); // the rectangle's top
+    const Json c = run(s, "sketch.curves", {{"sketch", id}});
+    REQUIRE(c.at("curves").size() == 4);
+    CHECK(c.at("curves")[0].at("kind") == "circle");
+    std::vector<std::pair<std::string, int>> kept;
+    for (const auto& k : c.at("constraints"))
+        kept.emplace_back(k.at("type").get<std::string>(), k.at("curve").get<int>());
+    // bottom (1) horizontal, right (2) and left (3) vertical; nothing on the circle.
+    CHECK(kept == std::vector<std::pair<std::string, int>>{{"horizontal", 1}, {"vertical", 2}, {"vertical", 3}});
+}
+
+TEST_CASE("Design commands: splitting a dimensioned shape keeps its solved size (CAD-122 review)",
+          "[commands][cad][solver]")
+{
+    commands::Session s;
+    const Json sk = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "rectangle"}, {"corner", {0, 0}}, {"width", 40}, {"height", 20}}})},
+                         {"constraints", Json::array({{{"type", "length"}, {"curve", 0}, {"value", 60}}})}});
+    const auto id = sk.at("id").get<std::uint64_t>();
+    run(s, "sketch.delete_curves", {{"sketch", id}, {"curves", {0}}}); // the dimensioned bottom
+    const Json c = run(s, "sketch.curves", {{"sketch", id}});
+    REQUIRE(c.at("curves").size() == 3);
+    const auto& top = c.at("curves")[1].at("points");
+    CHECK(std::abs(top[1][0].get<double>() - top[0][0].get<double>()) == Approx(60).margin(1e-6));
+}
+
+TEST_CASE("Design commands: a deleted revolve axis line stays missing when lines are added (CAD-122 review)",
+          "[commands][cad]")
+{
+    commands::Session s;
+    const Json sk = run(s, "sketch.create",
+                        {{"plane", "XZ"},
+                         {"curves", Json::array({{{"type", "line"}, {"start", {0, -5}}, {"end", {0, 25}}, {"construction", true}},
+                                                 {{"type", "rectangle"}, {"corner", {5, 0}}, {"width", 5}, {"height", 20}}})}});
+    const auto id = sk.at("id").get<std::uint64_t>();
+    run(s, "feature.revolve", {{"sketch", id}, {"axis", {{"line", 0}}}});
+    run(s, "sketch.delete_curves", {{"sketch", id}, {"curves", {0}}});
+    Json tl = run(s, "timeline.list");
+    CHECK(tl.at("features")[1].at("status") == "error");
+    // A new line takes the next index; the revolve must not turn about it.
+    run(s, "sketch.add_curves",
+        {{"sketch", id}, {"curves", Json::array({{{"type", "line"}, {"start", {30, 0}}, {"end", {30, 20}}}})}});
+    tl = run(s, "timeline.list");
+    CHECK(tl.at("features")[1].at("status") == "error");
+    CHECK(tl.at("features")[1].at("error").get<std::string>().find("deleted") != std::string::npos);
+}
+
+TEST_CASE("Design commands: a deleted axis or path can be picked again (CAD-122 review)", "[commands][cad]")
+{
+    commands::Session s;
+    const Json sk = run(s, "sketch.create",
+                        {{"plane", "XZ"},
+                         {"curves", Json::array({{{"type", "line"}, {"start", {0, -5}}, {"end", {0, 25}}, {"construction", true}},
+                                                 {{"type", "rectangle"}, {"corner", {5, 0}}, {"width", 5}, {"height", 20}}})}});
+    const auto id = sk.at("id").get<std::uint64_t>();
+    const auto rev = run(s, "feature.revolve", {{"sketch", id}, {"axis", {{"line", 0}}}}).at("id").get<std::uint64_t>();
+    run(s, "sketch.delete_curves", {{"sketch", id}, {"curves", {0}}});
+    run(s, "sketch.add_curves",
+        {{"sketch", id}, {"curves", Json::array({{{"type", "line"}, {"start", {0, -5}}, {"end", {0, 25}}, {"construction", true}}})}});
+    // The dialog sends the new axis as a merge patch.
+    run(s, "feature.edit", {{"id", rev}, {"params", {{"axis", {{"line", 4}}}}}});
+    Json tl = run(s, "timeline.list");
+    CHECK(tl.at("features")[1].at("status") == "ok");
+    CHECK_FALSE(tl.at("features")[1].at("params").at("axis").contains("deletedLine"));
+
+    // Sweep: a deleted path curve, then the path sketch picked again (all its curves).
+    const Json path = run(s, "sketch.create",
+                          {{"plane", "XY"},
+                           {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {0, 40}}},
+                                                   {{"type", "line"}, {"start", {50, 0}}, {"end", {50, 40}}}})}});
+    const auto pid = path.at("id").get<std::uint64_t>();
+    const Json prof = run(s, "sketch.create",
+                          {{"plane", "XZ"}, {"curves", Json::array({{{"type", "circle"}, {"center", {0, 0}}, {"radius", 2}}})}});
+    const auto sw = run(s, "feature.sweep",
+                        {{"sketch", prof.at("id")}, {"path", {{"sketch", pid}, {"curves", {0}}}}}).at("id").get<std::uint64_t>();
+    run(s, "sketch.delete_curves", {{"sketch", pid}, {"curves", {0}}});
+    tl = run(s, "timeline.list");
+    CHECK(tl.at("features").back().at("status") == "error");
+    run(s, "feature.edit", {{"id", sw}, {"params", {{"path", {{"sketch", pid}}}}}});
+    tl = run(s, "timeline.list");
+    CHECK(tl.at("features").back().at("status") == "ok");
+}

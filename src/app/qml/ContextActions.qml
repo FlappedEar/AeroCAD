@@ -503,7 +503,7 @@ QtObject {
                                         text: qsTr("Line: click the points, click the first point again to close it. Rectangle: drag or click two corners. Closed outlines are filled orange."),
                                         actions: [] },
                                       { title: qsTr("Finish"), done: false,
-                                        text: qsTr("Click Finish Sketch (or Esc). Then select the sketch to make a part from it."),
+                                        text: qsTr("Click Finish Sketch (or press Esc twice). Then select the sketch to make a part from it."),
                                         actions: [a("finishSketch")] }] }] }
         }
         if (r === "") {
