@@ -1036,6 +1036,44 @@ TEST_CASE("RunManager: mesh check names a smaller force that does not hold", "[c
     CHECK(cmp.at("verdict") == "check quality");
 }
 
+TEST_CASE("RunManager: mesh check shows its running runs, and does not apply to a repeat run", "[cfd]")
+{
+    TempDir tmp;
+    cfd::RunManager runs(tmp.path());
+    cfd::CaseGeometry ga, gb;
+    ga.part = box({0, 0, 0}, {200, 80, 60});
+    gb.part = box({0, 0, 0}, {200, 80, 70});
+    auto prepare = [&](const cfd::CaseGeometry& g, cfd::MeshLevel mesh) {
+        cfd::Settings s;
+        s.flowDirection = "+X";
+        s.mesh = mesh;
+        return runs.prepare(g, s, {});
+    };
+    const std::string a = prepare(ga, cfd::MeshLevel::Coarse);
+    fakeFinishedRun(tmp.path() / a, 1.0, 1.0);
+    const std::string b = prepare(gb, cfd::MeshLevel::Coarse);
+    fakeFinishedRun(tmp.path() / b, 1.1, 1.1);
+
+    // A's medium run still solving: the check waits for it and names it, for its progress (CAD-120).
+    const std::string am = prepare(ga, cfd::MeshLevel::Medium);
+    write(tmp.path() / am / "aerocad.stage", "solve\n");
+    write(tmp.path() / am / "aerocad.status", "");
+    write(tmp.path() / am / "log.simpleFoam", "Time = 10\n");
+    auto ms = runs.compare(a, b).at("meshSensitivity");
+    CHECK(ms.at("status") == "pending");
+    CHECK(ms.at("runningRuns") == nlohmann::json{am});
+
+    // A repeat run (same case as A): its difference is run-to-run variation, so the mesh
+    // check does not apply and offers no runs on another mesh. Otherwise A and B would share
+    // the runs on the other level and the check would pair them arbitrarily (CAD-120).
+    const std::string a2 = prepare(ga, cfd::MeshLevel::Coarse);
+    fakeFinishedRun(tmp.path() / a2, 1.0, 1.01);
+    ms = runs.compare(a, a2).at("meshSensitivity");
+    CHECK(ms.at("status") == "same case");
+    CHECK_FALSE(ms.contains("suggestedMesh"));
+    CHECK(ms.at("message").get<std::string>().rfind("A and B are the same case", 0) == 0);
+}
+
 TEST_CASE("RunManager: runs from an earlier session", "[cfd]")
 {
     TempDir tmp;

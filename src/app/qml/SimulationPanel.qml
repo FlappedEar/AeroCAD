@@ -1034,6 +1034,31 @@ Pane {
                              : meshCheck.ms.status === "inconclusive" ? Theme.warning : Theme.textMuted
                         text: meshCheck.ms ? meshCheck.ms.message || "" : ""
                     }
+                    // Progress of the mesh-check runs still solving (CAD-120).
+                    Repeater {
+                        model: meshCheck.ms && meshCheck.ms.runningRuns ? meshCheck.ms.runningRuns : []
+                        delegate: RowLayout {
+                            id: pendingRow
+                            required property string modelData
+                            readonly property var run: root.runs.find(x => x.id === modelData)
+                            Layout.fillWidth: true
+                            spacing: 6
+                            Label {
+                                font.pixelSize: 11
+                                color: Theme.textMuted
+                                text: pendingRow.run ? root.runTitle(pendingRow.run.id, "") : pendingRow.modelData
+                            }
+                            ProgressBar {
+                                Layout.fillWidth: true
+                                value: pendingRow.run ? pendingRow.run.progress || 0 : 0
+                            }
+                            Label {
+                                font.pixelSize: 11
+                                color: Theme.textMuted
+                                text: Math.round(100 * (pendingRow.run ? pendingRow.run.progress || 0 : 0)) + " %"
+                            }
+                        }
+                    }
                     Button {
                         visible: !!meshCheck.ms && meshCheck.ms.status === "not assessed" && !!meshCheck.ms.suggestedMesh
                         text: qsTr("Run A and B on the %1 mesh").arg(meshCheck.ms ? meshCheck.ms.suggestedMesh : "")
