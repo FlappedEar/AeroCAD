@@ -1,0 +1,43 @@
+# CAD-98: no Move / Rotate / Scale instruction stays in the status bar once the tool is gone:
+#  - M on a box shows the tool's instruction; project.new (as a script or MCP sends it)
+#    closes the tool and the instruction goes too;
+#  - Esc, Enter and a click on empty space end the tool the same way;
+#  - a message shown by something else while the tool runs is left alone.
+# Run: AeroCAD --ui-script <this file>
+Qt.createQmlObject('import QtQuick; Item { objectName: "tsTest"; visible: false; function box() { const r = controller.execute("feature.box", { size: [20, 20, 20] }); if (!r.ok) ui.fail("box: " + r.error); viewport.fitAll(); window.selectPart(controller.execute("document.parts").result.parts.find(p => p.kind === "body").id) } function check(label, toolOn) { const s = controller.statusMessage; ui.log(label + ": tool " + viewport.transformActive + ", status \'" + s + "\'"); if (viewport.transformActive !== toolOn) ui.fail(label + ": tool active " + viewport.transformActive); if (!toolOn && /Drag an arrow|Enter applies|Click a face of/.test(s)) ui.fail(label + ": the closed tool\'s instruction stayed: " + s); if (toolOn && !/Drag an arrow/.test(s)) ui.fail(label + ": no instruction while the tool runs") } }', window.contentItem)
+ui.wait(800)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "tsTest").box() })()
+ui.wait(300)
+(() => { const p = viewport.mapToItem(null, viewport.width / 2, viewport.height / 2); ui.click(p.x, p.y) })()
+ui.wait(200)
+ui.key("M")
+ui.wait(300)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "tsTest").check("M", true) })()
+(() => { const r = controller.execute("project.new"); if (!r.ok) ui.fail("project.new: " + r.error) })()
+ui.wait(400)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "tsTest").check("project.new", false) })()
+# Esc, Enter and a click on empty space.
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "tsTest").box() })()
+ui.wait(300)
+(() => { window.startTransform(0) })()
+ui.wait(300)
+ui.key("Escape")
+ui.wait(300)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "tsTest").check("Esc", false) })()
+(() => { window.startTransform(0) })()
+ui.wait(300)
+ui.key("Return")
+ui.wait(300)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "tsTest").check("Enter", false) })()
+(() => { window.startTransform(0) })()
+ui.wait(300)
+(() => { const p = viewport.mapToItem(null, 30, viewport.height - 30); ui.click(p.x, p.y) })()
+ui.wait(300)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "tsTest").check("click on empty space", false) })()
+# Someone else's message is not cleared.
+(() => { window.startTransform(0) })()
+ui.wait(300)
+(() => { controller.showStatus("Saved"); viewport.finishTransform(false) })()
+ui.wait(200)
+(() => { ui.log("other message: '" + controller.statusMessage + "'"); if (controller.statusMessage !== "Saved") ui.fail("ending the tool cleared another message: '" + controller.statusMessage + "'") })()
+ui.log("transform status OK")
