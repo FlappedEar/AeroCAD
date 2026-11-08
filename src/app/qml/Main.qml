@@ -689,8 +689,10 @@ ApplicationWindow {
     }
     Action {
         id: undoAction
-        text: window.controller.canUndo ? qsTr("&Undo %1").arg(window.controller.undoText) : qsTr("&Undo")
-        enabled: window.controller.canUndo
+        text: viewport.transformActive ? qsTr("&Undo Move / Rotate / Scale")
+              : window.controller.canUndo ? qsTr("&Undo %1").arg(window.controller.undoText) : qsTr("&Undo")
+        // A running preview can always be undone, also with an empty history (just opened).
+        enabled: viewport.transformActive || window.controller.canUndo
         shortcut: StandardKey.Undo // Fusion: Ctrl+Z / Cmd+Z
         onTriggered: {
             // Undo inside Move / Rotate / Scale drops the preview first (as Fusion's Esc).
