@@ -94,7 +94,8 @@ Pane {
             ? [run.source.partId] : []
     }
     /// Run whose fields are drawn: B while "Show B in 3D" is on, otherwise A.
-    readonly property string displayedRun: showB && finalComparisonAvailable ? compareRun : activeRun
+    // The difference B - A lies on A's part, so A is the displayed run while it is shown.
+    readonly property string displayedRun: showB && finalComparisonAvailable && !differenceShown ? compareRun : activeRun
     /// The part the displayed run was made from is in the open document, unchanged (runs that
     /// record no part, e.g. imported from elsewhere, are always drawn).
     readonly property bool displayedSourcePresent: {
@@ -117,6 +118,9 @@ Pane {
     property bool autoSelect: true
     property string compareRun: ""
     property bool showB: false
+    // "Show B in 3D" and "Difference B - A" exclude each other: ticking one unticks the other.
+    onShowBChanged: if (showB) showDifference = false
+    onShowDifferenceChanged: if (showDifference) showB = false
     property var results: null
     property var comparison: null
     readonly property bool finalComparisonAvailable: !!comparison && comparison.reasons.length === 0

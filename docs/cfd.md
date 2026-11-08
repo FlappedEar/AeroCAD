@@ -346,7 +346,8 @@ part length, found on a uniform grid) and returns A's surface with scalars `dCp`
 with Docker; skipped when no engine is found). On macOS its case goes under `~/.aerocad/test-runs/`,
 because the engine's VM shares only the home directory, not `$TMPDIR`. It is not part of the CI gate. `app_cfd_difference_3d_test` (labels gui, openfoam) runs the
 box twice at once and checks the difference map, its colour bar and the card in the real
-GUI; two parallel runs of the same shape differ by less than 0.01 in Cp on 96 % of the part. The unit
+GUI; two parallel runs of the same shape differ by about 0.004 to 0.011 in Cp on 96 % of the part
+(the test allows 0.03). The unit
 tests (`test_cfd`, `test_commands`) cover case generation, parsing, quality checks, the
 run manager and the commands without an engine.
 
