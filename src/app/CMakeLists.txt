@@ -293,6 +293,11 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/shell_closed.ui
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(app_shell_closed_test PROPERTIES LABELS gui TIMEOUT 60)
+    add_test(NAME app_cfd_setup_preview_test
+        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl
+                --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/cfd_setup_preview.ui
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(app_cfd_setup_preview_test PROPERTIES LABELS gui TIMEOUT 60)
     add_test(NAME app_orient_scan_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/orient_scan.ui
