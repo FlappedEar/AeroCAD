@@ -59,10 +59,21 @@ public:
                         if (command == "test.revoke") {
                             m_entered.release();
                             m_resume.acquire();
-                            m_server->revokeAll(QStringLiteral("project replaced"));
+                            m_server->close(QStringLiteral("project replaced"));
                             return commands::CommandResult::success(Json::object()).toJson();
                         }
-                        return m_session.execute(command, params).toJson();
+                        if (command == "test.drop") {
+                            for (auto* socket : m_server->findChildren<QLocalSocket*>())
+                                socket->abort();
+                            return commands::CommandResult::success(Json::object()).toJson();
+                        }
+                        const auto generation = m_session.project().generation;
+                        const auto result = m_session.execute(command, params);
+                        // Match McpAccess: replacing a project ends consent immediately,
+                        // including when the replacement itself came from this client.
+                        if (m_session.project().generation != generation)
+                            m_server->close(QStringLiteral("project replaced"));
+                        return result.toJson();
                     });
                 m_listening = m_server->listen(endpoint);
                 m_error = m_server->errorString();
@@ -82,16 +93,21 @@ public:
     void revoke()
     {
         QMetaObject::invokeMethod(
-            &m_context, [this] { m_server->revokeAll(QStringLiteral("test")); }, Qt::BlockingQueuedConnection);
+            &m_context, [this] { m_server->close(QStringLiteral("test")); }, Qt::BlockingQueuedConnection);
     }
 
-    // Simulates a lost revoke notification, e.g. the application crashed. The same client
-    // process must still refuse a subsequent application's different access session.
-    void restart(const QString& endpoint)
+    // Simulates losing the revoke notification. Access must remain off until a new grant.
+    void revokeWithoutEvent()
     {
-        QMetaObject::invokeMethod(&m_context, [this, endpoint] {
+        QMetaObject::invokeMethod(&m_context, [this] {
             for (auto* socket : m_server->findChildren<QLocalSocket*>())
                 socket->abort();
+            m_server->close(QStringLiteral("test"));
+        }, Qt::BlockingQueuedConnection);
+    }
+    void grant(const QString& endpoint)
+    {
+        QMetaObject::invokeMethod(&m_context, [this, endpoint] {
             m_listening = m_server->listen(endpoint);
             m_error = m_server->errorString();
         }, Qt::BlockingQueuedConnection);
@@ -204,18 +220,56 @@ TEST_CASE("Commands round-trip over the local socket", "[mcp][ipc]")
     r = client.execute("document.parts", Json::object());
     CHECK_FALSE(r.ok);
     CHECK(client.isRevoked());
-    CHECK(r.error.find("disconnected") != std::string::npos);
+    CHECK(r.error.find("not granted") != std::string::npos);
+    CHECK(r.error.find("Allow AI agents to use this project") != std::string::npos);
     r = secondClient.execute("document.parts", Json::object());
     CHECK_FALSE(r.ok);
     CHECK(secondClient.isRevoked());
     CHECK(server.calls() == 3);
 
-    mcp::IpcClient freshClient(endpoint, QStringLiteral("New agent"));
-    CHECK(freshClient.execute("document.parts", Json::object()).ok);
-    CHECK(server.calls() == 4);
+    // Only explicit re-enablement allows either already-running process to reconnect.
+    server.grant(endpoint);
+    REQUIRE(server.listening());
+    CHECK(client.execute("document.parts", Json::object()).ok);
+    CHECK(secondClient.execute("document.parts", Json::object()).ok);
+    CHECK_FALSE(client.isRevoked());
+    CHECK_FALSE(secondClient.isRevoked());
+    CHECK(server.calls() == 5);
 }
 
-TEST_CASE("A client cannot reconnect to a new grant after losing the revoke event", "[mcp][ipc]")
+TEST_CASE("One MCP client rebinds after New and explicit fresh consent", "[mcp][ipc]")
+{
+    app();
+    const QString endpoint = uniqueEndpoint();
+    ServerThread server(endpoint);
+    INFO(server.error().toStdString());
+    REQUIRE(server.listening());
+    mcp::IpcClient client(endpoint, QStringLiteral("Persistent agent"));
+    REQUIRE(client.execute("feature.box", {{"size", {30, 20, 10}}}).ok);
+
+    // New executes under the old grant, then closes that grant before another call can run.
+    CHECK_FALSE(client.execute("project.new", Json::object()).ok);
+    CHECK(client.isRevoked());
+    CHECK(server.calls() == 2);
+    const auto denied = client.execute("feature.box", {{"size", {1, 2, 3}}});
+    CHECK_FALSE(denied.ok);
+    CHECK(denied.error.find("Allow AI agents to use this project") != std::string::npos);
+    CHECK(server.calls() == 2);
+
+    server.grant(endpoint);
+    REQUIRE(server.listening());
+    const auto emptyProject = client.execute("document.parts", Json::object());
+    REQUIRE(emptyProject.ok);
+    CHECK(emptyProject.data.at("parts").empty());
+    CHECK_FALSE(client.isRevoked());
+    REQUIRE(client.execute("feature.box", {{"size", {4, 5, 6}}}).ok);
+    const auto newProject = client.execute("document.parts", Json::object());
+    REQUIRE(newProject.ok);
+    CHECK(newProject.data.at("parts").size() == 1);
+    CHECK(server.calls() == 5);
+}
+
+TEST_CASE("A lost revoke event cannot bypass consent but does not require a new MCP process", "[mcp][ipc]")
 {
     app();
     const QString endpoint = uniqueEndpoint();
@@ -224,17 +278,29 @@ TEST_CASE("A client cannot reconnect to a new grant after losing the revoke even
     REQUIRE(server.listening());
     mcp::IpcClient client(endpoint, QStringLiteral("Old agent"));
     REQUIRE(client.execute("document.parts", Json::object()).ok);
-    server.restart(endpoint);
+    server.revokeWithoutEvent();
+    CHECK_FALSE(client.execute("document.parts", Json::object()).ok);
+    // A later call still cannot run while access is off, even without a revoke notification.
+    CHECK_FALSE(client.execute("document.parts", Json::object()).ok);
+    CHECK(server.calls() == 1);
+
+    server.grant(endpoint);
+    REQUIRE(server.listening());
+    CHECK(client.execute("document.parts", Json::object()).ok);
+    CHECK(server.calls() == 2);
+}
+
+TEST_CASE("A reconnect never replays an interrupted command", "[mcp][ipc]")
+{
+    app();
+    const QString endpoint = uniqueEndpoint();
+    ServerThread server(endpoint);
     INFO(server.error().toStdString());
     REQUIRE(server.listening());
-    CHECK_FALSE(client.execute("document.parts", Json::object()).ok);
-    // The first read may detect the socket closure before Qt updates its state. Retrying
-    // must still never send a command under the new grant.
-    CHECK_FALSE(client.execute("document.parts", Json::object()).ok);
-    CHECK(client.isRevoked());
+    mcp::IpcClient client(endpoint, QStringLiteral("Persistent agent"));
+    CHECK_FALSE(client.execute("test.drop", Json::object()).ok);
     CHECK(server.calls() == 1);
-    mcp::IpcClient freshClient(endpoint, QStringLiteral("New agent"));
-    CHECK(freshClient.execute("document.parts", Json::object()).ok);
+    CHECK(client.execute("document.parts", Json::object()).ok);
     CHECK(server.calls() == 2);
 }
 
@@ -264,6 +330,17 @@ TEST_CASE("Revocation drops pipelined commands and another client's queued reque
     CHECK(receive(first).value("event", "") == "revoked");
     CHECK(receive(second).value("event", "") == "revoked");
     CHECK(server.clientCount() == 0);
+    CHECK(server.calls() == 1);
+
+    server.grant(endpoint);
+    REQUIRE(server.listening());
+    QLocalSocket stale;
+    stale.connectToServer(endpoint);
+    REQUIRE(stale.waitForConnected(5000));
+    send(stale, {{"id", 1}, {"hello", {{"protocol", mcp::kIpcProtocolVersion}, {"session", session}}}});
+    CHECK(receive(stale).value("event", "") == "revoked");
+    send(stale, queued);
+    CHECK_FALSE(receive(stale).value("ok", true));
     CHECK(server.calls() == 1);
 
     QLocalSocket fresh;

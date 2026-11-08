@@ -56,7 +56,7 @@ public:
     [[nodiscard]] QString claudeDesktopConfig() const;
     [[nodiscard]] QString claudeCodeCommand() const;
 
-    /// Disconnects all agents; their MCP server refuses further calls until restarted.
+    /// Disconnects all agents and ends consent until the user enables access again.
     Q_INVOKABLE void disconnectClients();
     Q_INVOKABLE void clearLog();
     Q_INVOKABLE void copyToClipboard(const QString& text) const;

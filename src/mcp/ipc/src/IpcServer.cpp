@@ -185,7 +185,8 @@ void IpcServer::handleMessage(QLocalSocket* socket, const QByteArray& line)
                           {"error", "Incompatible AeroCAD MCP protocol; restart the bundled MCP server"}});
             return;
         }
-        // A restarted application or a new grant must not inherit an old MCP process.
+        // An old session cannot be reused for another grant. A fresh hello with no session
+        // binds a new connection to the grant explicitly enabled by the user.
         if (hello.contains("session") && hello["session"] != "" &&
             hello["session"] != m_accessSession.toStdString()) {
             send(socket, {{"event", "revoked"}, {"reason", "The project access session changed"}});

@@ -14,8 +14,9 @@ namespace aerocad::mcp {
 
 /// MCP server side of the IPC: forwards commands to the running application. Blocking
 /// (the MCP stdio loop handles one request at a time). Connects lazily, so the MCP server
-/// can start before the application. After its first connection it is bound to that access
-/// session; a new grant or application restart requires restarting the MCP server.
+/// can start before the application. Each connection binds to the application's current
+/// explicit grant. A later call can reconnect after fresh consent, without replaying a call
+/// interrupted by revocation or restarting the MCP server.
 class IpcClient : public Backend {
 public:
     IpcClient(QString endpoint, QString clientName);
@@ -27,7 +28,7 @@ public:
     /// initialize). Takes effect on the next connection.
     void setClientName(const QString& name) { m_clientName = name; }
 
-    /// True after the user disconnected this agent in the application.
+    /// True after observed revocation, until a fresh connection receives a new grant.
     [[nodiscard]] bool isRevoked() const { return m_revoked; }
 
     /// Milliseconds to wait for a command result (imports of large files can take a while).
@@ -43,7 +44,7 @@ private:
 
     QString m_endpoint;
     QString m_clientName;
-    QString m_accessSession; ///< Retained across reconnects; never silently adopts a new grant.
+    QString m_accessSession; ///< Bound by hello for this connection; sent on every command.
     std::unique_ptr<QLocalSocket> m_socket;
     QByteArray m_buffer;
     qint64 m_nextId = 1;

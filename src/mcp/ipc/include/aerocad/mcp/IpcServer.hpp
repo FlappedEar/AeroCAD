@@ -38,8 +38,8 @@ public:
     /// Stops listening and disconnects all clients with the given reason.
     void close(const QString& reason = {});
     /// Immediately drops all queued commands, rotates the access session, sends
-    /// {"event": "revoked"} to all clients and disconnects them. The MCP server then
-    /// refuses further tool calls until it is restarted by the MCP client.
+    /// {"event": "revoked"} to all clients and disconnects them. Does not stop listening;
+    /// use close() to end consent until the user explicitly grants access again.
     void revokeAll(const QString& reason);
 
     [[nodiscard]] bool isListening() const;

@@ -34,6 +34,7 @@ void IpcClient::disconnect()
         m_socket.reset();
     }
     m_buffer.clear();
+    m_accessSession.clear();
 }
 
 bool IpcClient::handleEvent(const Json& message)
@@ -114,7 +115,7 @@ bool IpcClient::ensureConnected(QString& error)
                       {{"client", m_clientName.toStdString()},
                        {"pid", QCoreApplication::applicationPid()},
                        {"protocol", kIpcProtocolVersion},
-                       {"session", m_accessSession.toStdString()}}}};
+                       {"session", ""}}}};
     m_socket->write(QByteArray::fromStdString(hello.dump() + "\n"));
     m_socket->waitForBytesWritten(2000);
     for (;;) {
@@ -141,13 +142,11 @@ bool IpcClient::ensureConnected(QString& error)
             disconnect();
             return false;
         }
-        const QString session = QString::fromStdString(result["session"].get<std::string>());
-        if (!m_accessSession.isEmpty() && m_accessSession != session) {
-            m_revoked = true;
-            m_revokeReason = QStringLiteral("The project access session changed");
-            break;
-        }
-        m_accessSession = session;
+        // Only an explicitly granted application listens here. A new connection receives
+        // that grant through a fresh hello; old requests are never replayed on it.
+        m_accessSession = QString::fromStdString(result["session"].get<std::string>());
+        m_revoked = false;
+        m_revokeReason.clear();
         return true;
     }
     disconnect();
@@ -158,15 +157,14 @@ commands::CommandResult IpcClient::execute(const std::string& command, const Jso
 {
     auto revoked = [this] {
         return commands::CommandResult::failure(
-            "The user disconnected this AI agent in AeroCAD" +
+            "AI agent access is not granted for this project in AeroCAD" +
             (m_revokeReason.isEmpty() ? std::string() : " (" + m_revokeReason.toStdString() + ")") +
-            ". Do not retry; ask the user to reconnect the MCP server if they want to continue.");
+            ". Ask the user to turn on 'Allow AI agents to use this project' in TOOLS > Agent. "
+            "Then call the tool again; the MCP server does not need to be restarted.");
     };
     drainPending();
-    if (m_revoked) {
+    if (m_revoked)
         disconnect();
-        return revoked();
-    }
 
     QString error;
     if (!ensureConnected(error))

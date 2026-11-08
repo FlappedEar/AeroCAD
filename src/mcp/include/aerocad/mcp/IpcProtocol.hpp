@@ -10,6 +10,9 @@
 //   client -> app  {"id": 2, "session": "grant-id", "command": "part.scale", "params": {"id": 1, "factor": 2}}
 //   app -> client  {"id": 2, "ok": true, "result": {...}}   or   {"id": 2, "ok": false, "error": "..."}
 //   app -> client  {"event": "revoked", "reason": "..."}    (the user disconnected the agent)
+// Each new connection performs a fresh hello. Commands keep that connection's grant ID;
+// an interrupted or queued command is never replayed after revocation. The app stops
+// listening when consent ends and listens again only after the user explicitly re-enables it.
 #pragma once
 
 #include <string>
