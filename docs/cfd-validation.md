@@ -66,29 +66,40 @@ mesh level and fails when a criterion is not met.
 
 ## Results
 
-Run on 2026-11-07, OpenFOAM v2506 in Docker (`opencfd/openfoam-default:2506`, linux/amd64),
-2 processes on a 4-core cloud machine; 40 m/s, flow +X, fixed floor 50 mm below the body,
-Aref 0.112 m².
+Run on 2026-11-08 after CAD-153 (the far wake one level coarser than a near box around
+the part, the fine surface one level finer), OpenFOAM v2506 in Docker
+(`opencfd/openfoam-default:2506`, linux/amd64), 2 processes on a 4-core cloud machine;
+40 m/s, flow +X, fixed floor 50 mm below the body, Aref 0.112 m².
 
 | Mesh | Cells | Iterations | Time | Cd | vs 0.295 | Cl | Drag | Quality |
 |---|---|---|---|---|---|---|---|---|
-| coarse | 12,285 | 214 (converged) | 10 s | 0.461 | +56 % | 0.294 | 49.73 N | ok |
-| medium | 146,368 | 286 (converged) | 1.3 min | 0.315 | +6.7 % | 0.256 | 33.98 N | ok |
-| fine | 1,995,746 | 563 (converged) | 48 min | 0.268 | −9.3 % | 0.303 | 28.89 N | ok |
+| coarse | 10,297 | 211 (converged) | 10 s | 0.462 | +57 % | 0.294 | 49.90 N | ok |
+| medium | 65,861 | 277 (converged) | 50 s | 0.321 | +8.9 % | 0.262 | 34.69 N | ok |
+| fine | 1,143,982 | 554 (converged) | 37 min | 0.264 | −10.6 % | 0.303 | 28.47 N | ok |
+
+Before CAD-153 (2026-11-07) the same levels had 12,285 / 146,368 / 1,995,746 cells and
+gave Cd 0.461 / 0.315 / 0.268 and Cl 0.294 / 0.256 / 0.303 (48 min on the fine mesh):
+the coarser far wake saves 55 % of the medium cells and 43 % of the fine cells for a
+change in Cd of 2 % or less.
 
 Medium mesh against the criteria:
 
-1. Cd 0.315 is within 0.251 to 0.339: **pass**.
-2. Quality status `ok` (continuity error 2.9e-7, Cd band 0.013 % over the last 20 % of
+1. Cd 0.321 is within 0.251 to 0.339: **pass**.
+2. Quality status `ok` (continuity error 5.4e-7, Cd band 0.016 % over the last 20 % of
    the iterations, all final residuals below 1e-5): **pass**.
-3. Cl 0.256 > 0: **pass**.
+3. Cl 0.262 > 0: **pass**.
 
-The fine mesh is also within the band (Cd 0.268) and its lift is closer to the measured
-0.280 than the medium one's. Cd does not settle with refinement: coarse to medium −32 %,
-medium to fine −15 %, and the measured value lies between medium and fine. Absolute
+The fine mesh is also within the band (Cd 0.264) and its lift is closer to the measured
+0.280 than the medium one's. Cd does not settle with refinement: coarse to medium −30 %,
+medium to fine −18 %, and the measured value lies between medium and fine. Absolute
 drag from this preset should therefore be read as about ±10 % here, and the coarse mesh
 only as a relative tool. Comparing variants on two mesh levels (CAD-54) shows whether a
 difference between them holds.
+
+A layer setting that extrudes over sharper edges (`featureAngle 120`, relaxed quality
+for the last iterations) covered 94 % instead of 77 % of the medium body with layers, but
+the run then no longer converged and Cl fell to 0.185, so the preset keeps
+`featureAngle 60`.
 
 The case directories are not kept by default; set `AEROCAD_KEEP_VALIDATION=1` to keep
 them, and `AEROCAD_VALIDATION_MESH=coarse,medium,fine` to choose the levels (default

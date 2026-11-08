@@ -238,8 +238,11 @@ tunnel:
 | Stop | residuals p < 1e-4, U, k, omega < 1e-5, or the iteration limit |
 
 Mesh levels (cells per L in the background mesh / surface refinement levels /
-wake box level / prism layers): coarse 2 / 3-4 / 2 / 0, medium 3 / 4-5 / 3 / 2,
-fine 4 / 5-6 / 4 / 3. Default iteration limits 300 / 500 / 800. Coarse is meant for
+near box level / wake box level / prism layers): coarse 2 / 3-4 / 2 / 1 / 0,
+medium 3 / 4-5 / 3 / 2 / 2, fine 4 / 6-7 / 4 / 3 / 3. The near box holds the part with
+0.1 L around it, 0.15 L ahead and 0.75 L of wake; the wake box reaches 0.5 L around it
+and 3 L behind. Each level halves the cell size: on the fine mesh of a 1.1 m car the
+surface cells are 2.2 to 4.4 mm (CAD-153). Default iteration limits 300 / 500 / 800. Coarse is meant for
 quick A/B checks. The preset is checked against the Ahmed body experiments in
 [cfd-validation.md](cfd-validation.md).
 
