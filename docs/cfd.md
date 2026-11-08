@@ -366,6 +366,11 @@ difference in mm and the verdict is `different domains` instead of `comparable`.
 older run did not record (surroundings, domain or engine) is listed in `unknownConditions`
 and makes the verdict `not comparable`.
 
+`conditionChanges` lists the same differences in words with the value of each run, which
+the A/B tab shows (CAD-159), for example "Floor height: A -40 mm, B -150 mm" or "Air speed:
+A 30 m/s, B 40 m/s" ([A/B](images/audit/cad-159-ab-conditions.png)). The note on differing
+domains names what sized them differently: the part, the surroundings or the floor.
+
 Both runs must have final results. Otherwise the verdict is `not comparable`, force
 and coefficient differences and shared colour scales are empty, and `states` / `reasons`
 explain which run is unfinished or has incomplete output. Partial histories remain in

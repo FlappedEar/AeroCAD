@@ -20,4 +20,8 @@ ui.shot("cfd-ab-table.png")
 (() => { const r = simulationPanel.runs.slice(); r.push({ id: "r3", created: "2026-11-08T14:54:51Z", state: "running", progress: 0.42, source: { label: "B", partName: "box" } }); simulationPanel.runs = r; const c = Object.assign({}, simulationPanel.comparison); c.meshSensitivity = { status: "pending", levels: [], message: "Waiting for the runs on the other mesh level.", runningRuns: ["r3"] }; simulationPanel.comparison = c })()
 ui.wait(400)
 ui.clickText("42 %")
+# Differing conditions are listed in words with both values, not as internal names (CAD-159).
+(() => { const c = Object.assign({}, simulationPanel.comparison); c.verdict = "not comparable"; c.differingConditions = ["groundHeight"]; c.conditionChanges = ["Floor height: A -40 mm, B -150 mm"]; simulationPanel.comparison = c })()
+ui.wait(400)
+ui.clickText("⚠ Different: Floor height: A -40 mm, B -150 mm")
 ui.log("cfd ab table done")

@@ -405,6 +405,35 @@ TEST_CASE("writeCase with a fixed floor at a given height", "[cfd]")
     CHECK(cfd::differingConditions(old, j) == std::vector<std::string>{"flowDirection", "ground", "groundMoving", "groundHeight"});
 }
 
+TEST_CASE("Differing conditions are described in words with both values (CAD-159)", "[cfd]")
+{
+    auto a = cfd::toJson(cfd::Settings{});
+    auto b = a;
+    a["ground"] = true;
+    b["ground"] = true;
+    a["groundHeight"] = -40.0;
+    b["groundHeight"] = -150.0;
+    CHECK(cfd::describeCondition("groundHeight", a, b) == "Floor height: A -40 mm, B -150 mm");
+    b["groundHeight"] = nullptr;
+    CHECK(cfd::describeCondition("groundHeight", a, b) == "Floor height: A -40 mm, B just under the part");
+    b["ground"] = false;
+    CHECK(cfd::describeCondition("ground", a, b) == "Floor: A on, B off");
+    b["groundMoving"] = false;
+    CHECK(cfd::describeCondition("groundMoving", a, b) == "Floor motion: A moving, B fixed");
+    a["speed"] = 30.0;
+    b["speed"] = 40.0;
+    CHECK(cfd::describeCondition("speed", a, b) == "Air speed: A 30 m/s, B 40 m/s");
+    b["flowDirection"] = "-Y";
+    a["flowDirection"] = "+X";
+    CHECK(cfd::describeCondition("flowDirection", a, b) == "Flow direction: A +X, B -Y");
+    a["turbulenceIntensity"] = 0.01;
+    b["turbulenceIntensity"] = 0.05;
+    CHECK(cfd::describeCondition("turbulenceIntensity", a, b) == "Turbulence intensity: A 1 %, B 5 %");
+    b["referenceArea"] = 0.0048;
+    CHECK(cfd::describeCondition("referenceArea", a, b) == "Reference area: A from the part, B 48 cm²");
+    CHECK(cfd::describeCondition("somethingNew", a, b) == "somethingNew");
+}
+
 TEST_CASE("readTable reads function object output and handles restarts", "[cfd]")
 {
     TempDir tmp;
@@ -1501,6 +1530,15 @@ TEST_CASE("Different surroundings or domains are not identical conditions (CAD-8
     const auto diff = cmp.at("differingConditions").get<std::vector<std::string>>();
     CHECK(std::find(diff.begin(), diff.end(), "context") != diff.end());
     CHECK(std::find(diff.begin(), diff.end(), "domain") != diff.end());
+    // The domain grew because of the surroundings, not the unchanged part (CAD-159).
+    bool surroundingsNamed = false, partBlamed = false;
+    for (const auto& n : cmp.at("notes")) {
+        const auto text = n.get<std::string>();
+        surroundingsNamed = surroundingsNamed || text.find("because the surroundings differ;") != std::string::npos;
+        partBlamed = partBlamed || text.find("part differs") != std::string::npos;
+    }
+    CHECK(surroundingsNamed);
+    CHECK_FALSE(partBlamed);
     CHECK(cmp.at("sameDomain") == false);
     CHECK(cmp.at("verdict") == "not comparable");
 
@@ -1641,12 +1679,70 @@ TEST_CASE("A target-part variant of another size is compared on a different doma
     CHECK(cmp.at("sameConditions") == false);
     CHECK(cmp.at("sameDomain") == false);
     CHECK(cmp.at("differingConditions") == nlohmann::json::array({"domain"}));
+    CHECK(cmp.at("conditionChanges") == nlohmann::json::array({"Flow domain: different size or position (see below)"}));
     CHECK(cmp.at("verdict") == "different domains");
     CHECK_FALSE(cmp.at("forces").empty()); // the variant is still compared
     bool noted = false;
     for (const auto& n : cmp.at("notes"))
-        noted = noted || n.get<std::string>().find("flow domains differ") != std::string::npos;
+        noted = noted || n.get<std::string>().find("because the part differs in size or position") != std::string::npos;
     CHECK(noted);
+}
+
+TEST_CASE("A/B blames a domain change from another flow direction on the flow, not the part (CAD-159)", "[cfd]")
+{
+    TempDir tmp;
+    cfd::RunManager runs(tmp.path());
+    cfd::Settings s;
+    cfd::CaseGeometry g;
+    g.part = box({0, 0, 0}, {200, 80, 60});
+    s.flowDirection = "+X";
+    const std::string a = runs.prepare(g, s, {});
+    s.flowDirection = "+Y";
+    const std::string b = runs.prepare(g, s, {});
+    for (const auto& id : {a, b})
+        fakeFinishedRun(tmp.path() / id, 0.8, 1.0);
+    const auto cmp = runs.compare(a, b);
+    INFO(cmp.dump());
+    REQUIRE(contains(cmp.at("differingConditions"), "domain"));
+    CHECK(contains(cmp.at("conditionChanges"), "Flow direction: A +X, B +Y"));
+    bool flowNamed = false, partBlamed = false;
+    for (const auto& n : cmp.at("notes")) {
+        const auto text = n.get<std::string>();
+        flowNamed = flowNamed || text.find("because the flow direction differs;") != std::string::npos;
+        partBlamed = partBlamed || text.find("part differs") != std::string::npos;
+    }
+    CHECK(flowNamed);
+    CHECK_FALSE(partBlamed);
+}
+
+TEST_CASE("A/B names a floor-height difference with both heights and as the domain's cause (CAD-159)", "[cfd]")
+{
+    TempDir tmp;
+    cfd::RunManager runs(tmp.path());
+    cfd::Settings s;
+    s.flowDirection = "+X";
+    s.ground = true;
+    cfd::CaseGeometry g;
+    g.part = box({0, 0, 0}, {200, 80, 60});
+    s.groundHeight = -40.0;
+    const std::string a = runs.prepare(g, s, {});
+    s.groundHeight = -150.0;
+    const std::string b = runs.prepare(g, s, {});
+    for (const auto& id : {a, b})
+        fakeFinishedRun(tmp.path() / id, 0.8, 1.0);
+    const auto cmp = runs.compare(a, b);
+    INFO(cmp.dump());
+    CHECK(contains(cmp.at("differingConditions"), "groundHeight"));
+    CHECK(contains(cmp.at("conditionChanges"), "Floor height: A -40 mm, B -150 mm"));
+    CHECK(cmp.at("verdict") == "not comparable");
+    bool cause = false, wrongCause = false;
+    for (const auto& n : cmp.at("notes")) {
+        const auto text = n.get<std::string>();
+        cause = cause || text.find("because the floor differs") != std::string::npos;
+        wrongCause = wrongCause || text.find("part differs") != std::string::npos;
+    }
+    CHECK(cause);
+    CHECK_FALSE(wrongCause);
 }
 
 TEST_CASE("The same surroundings given in another part order are the same context (CAD-84)", "[cfd]")

@@ -106,4 +106,9 @@ struct Settings {
 /// compared on their effective values, which the caller passes in.
 [[nodiscard]] std::vector<std::string> differingConditions(const Json& a, const Json& b);
 
+/// One differing condition in words, with the value of each run (CAD-159), e.g.
+/// "Floor height: A -40 mm, B -150 mm". `key` is a name from differingConditions(); `a`/`b`
+/// are the two settings objects.
+[[nodiscard]] std::string describeCondition(const std::string& key, const Json& a, const Json& b);
+
 } // namespace aerocad::cfd

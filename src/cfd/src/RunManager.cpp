@@ -1699,10 +1699,41 @@ Json RunManager::compare(const std::string& a, const std::string& b)
         if (!sameDomain) {
             diff.emplace_back("domain");
             const double cell = std::max(ca.value("baseCellSize", 0.0), cb.value("baseCellSize", 0.0));
+            // Name what sized the domains differently (CAD-159): the part, the surroundings or the floor.
+            std::vector<std::string> causes;
+            // geometryHash also covers the surroundings, so the part's own size and placement
+            // decide whether the part is a cause.
+            const auto infoA = caseInfo(a), infoB = caseInfo(b);
+            auto near = [](const core::Vec3& p, const core::Vec3& q, double tol) {
+                return std::abs(p.x - q.x) <= tol && std::abs(p.y - q.y) <= tol && std::abs(p.z - q.z) <= tol;
+            };
+            // In model coordinates (mm): the case frame turns with the flow direction.
+            auto modelBox = [](const CaseInfo& info) {
+                const core::Vec3 p = info.frame.toModel(info.partBounds.min);
+                const core::Vec3 q = info.frame.toModel(info.partBounds.max);
+                return std::pair{core::Vec3{std::min(p.x, q.x), std::min(p.y, q.y), std::min(p.z, q.z)},
+                                 core::Vec3{std::max(p.x, q.x), std::max(p.y, q.y), std::max(p.z, q.z)}};
+            };
+            bool partDiffers = !infoA || !infoB;
+            if (!partDiffers) {
+                const auto boxA = modelBox(*infoA), boxB = modelBox(*infoB);
+                partDiffers = !near(boxA.first, boxB.first, 1e-3) || !near(boxA.second, boxB.second, 1e-3);
+            }
+            if (partDiffers)
+                causes.emplace_back("the part differs in size or position");
+            if (std::find(diff.begin(), diff.end(), "flowDirection") != diff.end())
+                causes.emplace_back("the flow direction differs");
+            if (ctxA != ctxB)
+                causes.emplace_back("the surroundings differ");
+            if (std::any_of(diff.begin(), diff.end(),
+                            [](const std::string& c) { return c == "ground" || c == "groundHeight"; }))
+                causes.emplace_back("the floor differs");
+            std::string because = causes.empty() ? "the geometry differs in size or position" : causes[0];
+            for (std::size_t k = 1; k < causes.size(); ++k)
+                because += (k + 1 == causes.size() ? " and " : ", ") + causes[k];
             notes.emplace_back("The flow domains differ by up to " + std::to_string(std::lround(worst * 1000.0)) +
-                               " mm (" + (worst <= cell ? "within" : "more than") +
-                               " one background cell), because the geometry differs in size or position; forces "
-                               "are compared on different domains.");
+                               " mm (" + (worst <= cell ? "within" : "more than") + " one background cell), because " +
+                               because + "; forces are compared on different domains.");
         }
     }
     j["sameDomain"] = sameDomain;
@@ -1721,6 +1752,22 @@ Json RunManager::compare(const std::string& a, const std::string& b)
                            " was not recorded (older case), so it could not be compared.");
     j["sameConditions"] = diff.empty() && unknown.empty();
     j["differingConditions"] = diff;
+    // The same, in words and with each run's value, for the panel (CAD-159).
+    Json changes = Json::array();
+    for (const auto& c : diff) {
+        if (c == "context")
+            changes.push_back("Surroundings: different context geometry in the flow");
+        else if (c == "engine")
+            changes.push_back("OpenFOAM version: A " +
+                              (engineA.is_string() ? engineA.get<std::string>() : engineA.dump()) + ", B " +
+                              (engineB.is_string() ? engineB.get<std::string>() : engineB.dump()));
+        else if (c == "domain")
+            changes.push_back("Flow domain: different size or position (see below)");
+        else
+            changes.push_back(
+                describeCondition(c, ca.value("settings", Json::object()), cb.value("settings", Json::object())));
+    }
+    j["conditionChanges"] = std::move(changes);
     j["unknownConditions"] = unknown;
     // Only a domain difference still allows comparing the forces (a target-part variant).
     const bool blocking = !unknown.empty() || std::any_of(diff.begin(), diff.end(), [](const std::string& c) {
