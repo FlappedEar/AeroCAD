@@ -1302,9 +1302,51 @@ Json RunManager::results(const std::string& id, int maxPoints)
         std::error_code ec;
         fields[kind] = !dirs.empty() && fs::is_regular_file(dirs.back() / file, ec);
     }
+    // Section stacks (CAD-148): the positions written by this run, for the result view's
+    // sliders. Runs made before them have none.
+    Json stacks = Json::array();
+    if (info && !info->partBounds.isEmpty()) {
+        const auto dirs = timeDirectories(run.caseDir / "postProcessing" / "surfaces");
+        const core::Vec3 size = info->partBounds.size();
+        for (const SectionStack& stack : sectionStacks()) {
+            Json positions = Json::array();
+            const int a = stack.axis - 'x';
+            const double extentMm = (a == 0 ? size.x : a == 1 ? size.y : size.z) * 1000.0;
+            for (std::size_t i = 0; i < stack.fractions.size(); ++i) {
+                const std::string name = sectionName(stack.axis, static_cast<int>(i));
+                std::error_code ec;
+                if (dirs.empty() || !fs::is_regular_file(dirs.back() / (name + ".vtk"), ec))
+                    continue;
+                const double f = stack.fractions[i];
+                // x: behind the part's front; y: beside its centre line; z: above its bottom.
+                const double mm = a == 1 ? (f - 0.5) * extentMm : f * extentMm;
+                positions.push_back({{"kind", name}, {"index", i}, {"fraction", f}, {"mm", mm}});
+            }
+            if (!positions.empty())
+                stacks.push_back({{"axis", std::string(1, stack.axis)},
+                                  {"defaultIndex", stack.defaultIndex},
+                                  {"lengthMm", extentMm},
+                                  {"positions", std::move(positions)}});
+        }
+    }
+    fields["sections"] = std::move(stacks);
     j["fields"] = std::move(fields);
     return j;
 }
+
+namespace {
+
+/// "sectionX_3" and the like: a plane of a section stack (CAD-148).
+bool isStackSection(std::string_view kind)
+{
+    for (const SectionStack& stack : sectionStacks())
+        for (std::size_t i = 0; i < stack.fractions.size(); ++i)
+            if (kind == sectionName(stack.axis, static_cast<int>(i)))
+                return true;
+    return false;
+}
+
+} // namespace
 
 PolyData RunManager::field(const std::string& id, std::string_view kind)
 {
@@ -1316,13 +1358,7 @@ PolyData RunManager::field(const std::string& id, std::string_view kind)
         throw std::runtime_error("Run '" + id + "' has no case.json");
     // Region kept around the part, in the case frame (CAD-129, CAD-135): sections and
     // streamlines that span the whole wind tunnel would fill the view.
-    core::BoundingBox region;
-    if (const core::BoundingBox& pb = info->partBounds; !pb.isEmpty()) {
-        const double m = std::max(info->characteristicLength, 1e-9);
-        const double wake = kind == "streamlines" ? 3.0 : 1.5;
-        region.extend({pb.min.x - 0.4 * m, pb.min.y - 0.4 * m, info->settings.ground ? info->domain.min.z : pb.min.z - 0.4 * m});
-        region.extend({pb.max.x + wake * m, pb.max.y + 0.4 * m, pb.max.z + 0.4 * m});
-    }
+    const core::BoundingBox region = resultRegion(*info, kind == "streamlines" ? 3.0 : 1.5);
     PolyData d;
     std::error_code ec;
     if (kind == "streamlines") {
@@ -1334,7 +1370,8 @@ PolyData RunManager::field(const std::string& id, std::string_view kind)
             PolyData lines = readVtk(dirs.back() / "track0.vtk");
             appendPolyData(d, region.isEmpty() ? lines : cropLines(lines, region));
         }
-    } else if (kind == "surface" || kind == "sectionHorizontal" || kind == "sectionVertical") {
+    } else if (kind == "surface" || kind == "sectionHorizontal" || kind == "sectionVertical" ||
+               isStackSection(kind)) {
         const auto dirs = timeDirectories(run->caseDir / "postProcessing" / "surfaces");
         const std::string file = kind == "surface" ? "part.vtk" : std::string(kind) + ".vtk";
         if (dirs.empty() || !fs::is_regular_file(dirs.back() / file, ec))
@@ -1344,7 +1381,8 @@ PolyData RunManager::field(const std::string& id, std::string_view kind)
             d = cropPolygons(d, region);
     } else {
         throw std::runtime_error("Unknown field '" + std::string(kind) +
-                                 "' (surface, sectionHorizontal, sectionVertical, streamlines)");
+                                 "' (surface, sectionHorizontal, sectionVertical, sectionX_<i>, sectionY_<i>, "
+                                 "sectionZ_<i>, streamlines)");
     }
     if (d.empty())
         return {};
