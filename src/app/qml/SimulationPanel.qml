@@ -1542,6 +1542,7 @@ Pane {
                 }
 
                 LineChart {
+                    objectName: "cfdChartCoefficients"
                     Layout.fillWidth: true
                     title: root.results && root.results.provisional ? qsTr("Coefficients (provisional)") : qsTr("Coefficients")
                     series: root.results ? [
@@ -1551,6 +1552,7 @@ Pane {
                     ] : []
                 }
                 LineChart {
+                    objectName: "cfdChartForces"
                     Layout.fillWidth: true
                     title: root.results && root.results.provisional ? qsTr("Forces (N, provisional)") : qsTr("Forces (N)")
                     series: root.results ? [
@@ -1560,6 +1562,7 @@ Pane {
                     ] : []
                 }
                 LineChart {
+                    objectName: "cfdChartResiduals"
                     Layout.fillWidth: true
                     title: root.results && root.results.provisional ? qsTr("Residuals (provisional)") : qsTr("Residuals")
                     logY: true

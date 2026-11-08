@@ -224,6 +224,13 @@ if(AEROCAD_BUILD_TESTS)
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_cfd_export_csv_test PROPERTIES LABELS gui TIMEOUT 60
         ENVIRONMENT "AEROCAD_CFD_DIR=${CMAKE_CURRENT_BINARY_DIR}/cfd-export-csv-runs;AEROCAD_DOCKER=${PROJECT_SOURCE_DIR}/tests/gui/fake-docker.sh;FAKE_DOCKER_HISTORY=1;QML_XHR_ALLOW_FILE_READ=1")
+    # CAD-177: hovering a Results chart shows the values at the nearest iteration (stand-in docker).
+    add_test(NAME app_cfd_chart_readout_test
+        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl
+                --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/cfd_chart_readout.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_cfd_chart_readout_test PROPERTIES LABELS gui TIMEOUT 60
+        ENVIRONMENT "AEROCAD_CFD_DIR=${CMAKE_CURRENT_BINARY_DIR}/cfd-chart-readout-runs;AEROCAD_DOCKER=${PROJECT_SOURCE_DIR}/tests/gui/fake-docker.sh;FAKE_DOCKER_HISTORY=1")
     # CAD-162: the New run form takes the settings of the selected run (prepared cases, no engine).
     add_test(NAME app_cfd_use_settings_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl

@@ -51,7 +51,9 @@ panel in place of Properties:
   model mm; `checkEngine: false` skips the slow engine check.)
 - **Results**: progress while it runs, then drag/lift/side force in N, Cd/Cl/Cs,
   pressure vs friction drag, the conditions, the quality status and warnings, and charts
-  of the coefficients, forces and residuals per iteration (updated live). **Show in 3D**:
+  of the coefficients, forces and residuals per iteration (updated live). Hovering a chart
+  shows the values of every series at the nearest iteration
+  ([readout](images/audit/cad-177-chart-readout.png)). **Show in 3D**:
   pressure on the part (Cp), horizontal and vertical velocity sections and streamlines
   (speed). Pressure is drawn in a high-contrast rainbow map (blue = suction, green = Cp 0,
   red = stagnation) or, under *Pressure colours*, blue-white-red; Cp 0 sits in the middle
