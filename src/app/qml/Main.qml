@@ -207,13 +207,14 @@ ApplicationWindow {
     }
 
     /// Isolate (Fusion): only part `id` is shown, and Unisolate brings back what it hid.
-    /// `isolationRecord` is the last Isolate: { id, name, hidden: [ids], step, exitStep },
-    /// where step / exitStep are the history tokens of the Isolate and of the Unisolate that
-    /// ended it. `isolation` ({ id, name, hidden } or null) is on while that Isolate is applied
-    /// and its Unisolate is not, so Undo / Redo of either bring the Exit controls back with
-    /// the hidden parts. Hiding or deleting the isolated part keeps it on, so the parts it hid
-    /// can still be brought back.
-    property var isolationRecord: null
+    /// `isolationRecords` lists the Isolates still in the history, oldest first, each
+    /// { id, name, hidden: [ids], step, exitStep }: step / exitStep are the history tokens of
+    /// the Isolate and of the Unisolate that ended it. `isolation` ({ id, name, hidden, step }
+    /// or null) is the newest record whose Isolate is applied and whose Unisolate is not, so
+    /// Undo / Redo bring the Exit controls back with the hidden parts, also across several
+    /// Isolates. Hiding or deleting the isolated part keeps it on, so the parts it hid can
+    /// still be brought back.
+    property var isolationRecords: []
     property var isolation: null
     function isolatePart(id) {
         if (!id)
@@ -223,34 +224,46 @@ ApplicationWindow {
         const r = controller.execute("part.isolate", { id: id })
         if (!r.ok)
             return
-        isolationRecord = { id: id, name: controller.partInfo(id).name, hidden: r.result.hidden,
-                            step: controller.historyTopId(), exitStep: 0 }
+        // Undone Isolates past the last step can never be redone again: forget them. Keep the
+        // list short; an Isolate that old is out of reach of Undo in practice.
+        const kept = isolationRecords.filter(rec => controller.historyApplied(rec.step)).slice(-19)
+        kept.push({ id: id, name: controller.partInfo(id).name, hidden: r.result.hidden,
+                    step: controller.historyTopId(), exitStep: 0 })
+        isolationRecords = kept
         checkIsolation()
         selectPart(id)
     }
     function unisolate() {
-        const rec = isolationRecord
-        if (!isolation || !rec)
+        const iso = isolation
+        if (!iso)
             return
-        const r = controller.execute("part.unisolate", { ids: rec.hidden })
-        if (r.ok)
-            isolationRecord = Object.assign({}, rec, { exitStep: controller.historyTopId() })
+        const r = controller.execute("part.unisolate", { ids: iso.hidden })
+        if (r.ok) {
+            const exit = controller.historyTopId()
+            isolationRecords = isolationRecords.map(rec => rec.step === iso.step
+                                                    ? Object.assign({}, rec, { exitStep: exit }) : rec)
+        }
         checkIsolation()
     }
-    /// Isolation ends when its Isolate is undone, its Unisolate is applied, or every part it
-    /// hid has been shown again (or deleted) by hand.
+    /// An isolation is on while its Isolate is applied, its Unisolate is not, and a part it
+    /// hid is still hidden (it ends when they have all been shown again or deleted by hand).
     function checkIsolation() {
-        const rec = isolationRecord
-        let on = !!rec && controller.historyApplied(rec.step) && !controller.historyApplied(rec.exitStep)
-        if (on && rec.hidden.length > 0)
-            on = rec.hidden.some(h => { const i = controller.partInfo(h); return i.id && !i.visible })
-        if (!on) {
+        let found = null
+        for (let i = isolationRecords.length - 1; i >= 0 && !found; --i) {
+            const rec = isolationRecords[i]
+            if (!controller.historyApplied(rec.step) || controller.historyApplied(rec.exitStep))
+                continue
+            if (rec.hidden.length === 0
+                    || rec.hidden.some(h => { const info = controller.partInfo(h); return info.id && !info.visible }))
+                found = rec
+        }
+        if (!found) {
             if (isolation)
                 isolation = null
             return
         }
-        if (!isolation || isolation.id !== rec.id)
-            isolation = { id: rec.id, name: rec.name, hidden: rec.hidden }
+        if (!isolation || isolation.step !== found.step)
+            isolation = { id: found.id, name: found.name, hidden: found.hidden, step: found.step }
     }
     Connections {
         target: controller
@@ -1165,7 +1178,7 @@ ApplicationWindow {
         window.finishSketch()
         window.selectPart(0)
         window.copiedPartId = 0 // part ids restart in the next project: never paste another part
-        window.isolationRecord = null // the hidden parts belong to the previous project
+        window.isolationRecords = [] // the hidden parts belong to the previous project
         window.isolation = null
         closeToolPanels()
         scanPanel.reset()
