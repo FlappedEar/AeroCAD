@@ -1,0 +1,44 @@
+# The right mouse button in a sketch works as in the rest of the view (Fusion):
+#  - right drag orbits, also while a line is being drawn (the line goes on);
+#  - a right click opens the sketch menu: End Curve (while drawing), the drawing tools,
+#    Look At, Fit All, Undo and Finish Sketch;
+#  - outside the sketch the right click still opens the part / view menu.
+# Run: AeroCAD --ui-script <this file>
+Qt.createQmlObject('import QtQuick; Item { objectName: "srTest"; visible: false; property var s: ({}); function win(p) { const q = viewport.mapToItem(null, p.x, p.y); return Qt.point(q.x, q.y) } function at(u, v) { return win(viewport.viewPoint(Qt.vector3d(u, v, 0))) } function item(name) { for (let i = 0; i < sketchMenu.count; ++i) { const it = sketchMenu.itemAt(i); if (it && it.objectName === name) return it } return null } function itemText(text) { for (let i = 0; i < sketchMenu.count; ++i) { const it = sketchMenu.itemAt(i); if (it && it.text && it.text.replace("&", "") === text) return it } return null } function clickItem(it) { const p = it.mapToItem(null, it.width / 2, it.height / 2); ui.click(p.x, p.y) } function curves() { return controller.execute("sketch.curves", { sketch: window.activeSketch.id }).result.curves.length } }', window.contentItem)
+ui.wait(800)
+(() => { window.createSketch({ plane: "XY" }); if (!window.activeSketch) ui.fail("no sketch") })()
+ui.wait(800)
+# 1. Line tool: two clicks start a line chain.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "srTest"); window.sketchTool_("line"); viewport.restoreCameraState({ pivot: [0, 0, 0], pitch: -90, yaw: 0, distance: 300, orthographic: false }); const a = t.at(-40, -20), b = t.at(40, -20); ui.click(a.x, a.y); ui.click(b.x, b.y); ui.move(b.x + 30, b.y - 40) })()
+ui.wait(200)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "srTest"); t.s.curves = t.curves(); ui.log("after two clicks: curves " + t.s.curves + ", drawing " + viewport.sketchDrawing); if (t.s.curves !== 1 || !viewport.sketchDrawing) ui.fail("the line chain did not start") })()
+# 2. Right drag orbits; the line chain goes on and no menu opens.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "srTest"); t.s.cam = viewport.cameraState(); const c = t.win(Qt.point(viewport.width * 0.7, viewport.height * 0.5)); ui.drag(c.x, c.y, c.x + 120, c.y + 60, "right", "", 12) })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "srTest"); const st = viewport.cameraState(); ui.log("right drag in the sketch: pitch " + t.s.cam.pitch.toFixed(1) + " -> " + st.pitch.toFixed(1) + ", yaw " + t.s.cam.yaw.toFixed(1) + " -> " + st.yaw.toFixed(1)); if (Math.abs(st.pitch - t.s.cam.pitch) < 5 && Math.abs(st.yaw - t.s.cam.yaw) < 5) ui.fail("right drag did not orbit in the sketch"); if (sketchMenu.visible) ui.fail("right drag opened the menu"); if (!viewport.sketchDrawing) ui.fail("right drag ended the line chain"); if (!window.activeSketch) ui.fail("right drag left the sketch") })()
+# 3. Right click: the sketch menu, End Curve first; it ends the chain.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "srTest"); const c = t.win(Qt.point(viewport.width * 0.7, viewport.height * 0.4)); ui.click(c.x, c.y, "right") })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "srTest"); if (!sketchMenu.visible) { ui.fail("right click did not open the sketch menu"); return } if (partMenu.visible) ui.fail("the part menu opened in the sketch"); const e = t.item("endCurve"); if (!e || !e.visible || e.height <= 0) { ui.fail("End Curve missing while drawing"); return } ui.shot("build/sketch-menu-drawing.png"); t.clickItem(e) })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "srTest"); ui.log("End Curve: drawing " + viewport.sketchDrawing + ", curves " + t.curves() + ", menu " + sketchMenu.visible); if (viewport.sketchDrawing) ui.fail("End Curve did not end the chain"); if (t.curves() !== t.s.curves) ui.fail("End Curve changed the sketch"); if (sketchMenu.visible) ui.fail("menu still open"); if (!window.activeSketch || window.sketchTool !== "line") ui.fail("End Curve left the sketch or the tool") })()
+# 4. Right click with nothing drawn: no End Curve; Rectangle switches the tool.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "srTest"); const c = t.win(Qt.point(viewport.width * 0.6, viewport.height * 0.5)); ui.click(c.x, c.y, "right") })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "srTest"); if (!sketchMenu.visible) { ui.fail("right click did not open the sketch menu"); return } const e = t.item("endCurve"); if (e && e.visible) ui.fail("End Curve shown with nothing being drawn"); ui.shot("build/sketch-menu.png"); const r = t.itemText("Rectangle"); if (!r) { ui.fail("no Rectangle in the sketch menu"); return } t.clickItem(r) })()
+ui.wait(300)
+(() => { if (window.sketchTool !== "rectangle") ui.fail("Rectangle from the menu did not switch the tool: " + window.sketchTool) })()
+# 5. Look At turns the view back to face the sketch plane.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "srTest"); viewport.restoreCameraState({ pivot: [0, 0, 0], pitch: -20, yaw: 60, distance: 300, orthographic: false }); const c = t.win(Qt.point(viewport.width * 0.6, viewport.height * 0.5)); ui.click(c.x, c.y, "right") })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "srTest"); const l = t.item("lookAt"); if (!l) { ui.fail("no Look At"); return } t.clickItem(l) })()
+ui.wait(1200)
+(() => { const st = viewport.cameraState(); ui.log("Look At: pitch " + st.pitch.toFixed(1)); if (Math.abs(Math.abs(st.pitch) - 90) > 0.5) ui.fail("Look At did not face the XY sketch") })()
+# 6. Finish Sketch from the menu; then a right click opens the view menu again.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "srTest"); const c = t.win(Qt.point(viewport.width * 0.6, viewport.height * 0.5)); ui.click(c.x, c.y, "right") })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "srTest"); const f = t.item("finishSketch"); if (!f) { ui.fail("no Finish Sketch"); return } t.clickItem(f) })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "srTest"); if (window.activeSketch) ui.fail("Finish Sketch from the menu did not finish"); const c = t.win(Qt.point(viewport.width * 0.05, viewport.height * 0.1)); ui.click(c.x, c.y, "right") })()
+ui.wait(300)
+(() => { ui.log("outside the sketch: part menu " + partMenu.visible + ", sketch menu " + sketchMenu.visible); if (!partMenu.visible || sketchMenu.visible) ui.fail("outside the sketch the right click did not open the view menu"); partMenu.close() })()

@@ -141,6 +141,57 @@ ApplicationWindow {
         registry: contextActions
     }
 
+    // Right click in a sketch (Fusion's sketch marking menu): end the curve, the drawing
+    // tools, Look At, Undo, Finish Sketch. Right drag still orbits.
+    Menu {
+        id: sketchMenu
+        objectName: "sketchMenu"
+        property bool drawing: false
+        component SketchMenuItem: MenuItem {
+            height: visible ? implicitHeight : 0
+        }
+        SketchMenuItem {
+            objectName: "endCurve"
+            text: qsTr("End Curve (Esc)")
+            visible: sketchMenu.drawing
+            font.bold: true
+            onTriggered: viewport.endSketchCurve()
+        }
+        MenuSeparator { visible: sketchMenu.drawing; height: visible ? implicitHeight : 0 }
+        SketchMenuItem { action: lineAction; icon.source: Theme.iconUrl("line") }
+        SketchMenuItem { action: rectangleAction; icon.source: Theme.iconUrl("rectangle") }
+        SketchMenuItem { action: circleAction; icon.source: Theme.iconUrl("circle") }
+        SketchMenuItem { action: arcAction; icon.source: Theme.iconUrl("arc") }
+        SketchMenuItem { action: polygonAction; icon.source: Theme.iconUrl("polygon") }
+        SketchMenuItem { action: slotAction; icon.source: Theme.iconUrl("slot") }
+        SketchMenuItem { action: dimensionAction; icon.source: Theme.iconUrl("dimension") }
+        MenuSeparator {}
+        SketchMenuItem {
+            objectName: "lookAt"
+            text: qsTr("Look At")
+            icon.source: Theme.iconUrl("plane")
+            onTriggered: window.lookAtSketch(null)
+        }
+        SketchMenuItem {
+            text: qsTr("Fit All (F6)")
+            icon.source: Theme.iconUrl("fit")
+            onTriggered: viewport.fitAll()
+        }
+        SketchMenuItem {
+            text: controller.canUndo ? qsTr("Undo %1").arg(controller.undoText) : qsTr("Undo")
+            icon.source: Theme.iconUrl("undo")
+            enabled: controller.canUndo
+            onTriggered: controller.execute("edit.undo")
+        }
+        MenuSeparator {}
+        SketchMenuItem {
+            objectName: "finishSketch"
+            action: finishSketchAction
+            icon.source: Theme.iconUrl("finish-sketch")
+            font.bold: !sketchMenu.drawing
+        }
+    }
+
     PartContextMenu {
         id: partMenu
         registry: contextActions
@@ -283,7 +334,7 @@ ApplicationWindow {
         const on = r.result.onSurface
         activeSketch = { id: id, origin: pl.origin, normal: pl.normal, xDir: pl.xDir, yDir: pl.yDir,
                          surfacePart: on ? on.part : 0, across: !!(on && on.across),
-                         surfaceLine: r.result.surfaceLine || [] }
+                         surfaceLine: r.result.surfaceLine || [], onPoint: on && on.point ? on.point : null }
         sketchTool = "line"
         refreshSketchSnaps()
         // Show the sketch while editing it (Fusion hides sketches once they are used).
@@ -296,10 +347,19 @@ ApplicationWindow {
         // Show the sketch while editing it, and look at it.
         for (let row = 0; row < controller.parts.count; ++row) {
             }
-        viewport.setViewDirection(Qt.vector3d(pl.normal[0], pl.normal[1], pl.normal[2]))
-        // On a scan, look at the clicked place: the whole model would leave it tiny.
-        if (on && on.point && controller.sceneRadius > 0)
-            viewport.frameAround(on.point, controller.sceneRadius * 0.35)
+        lookAtSketch(on && on.point ? on.point : null)
+    }
+
+    /// Look At (Fusion): the view turns to face the sketch plane. On a scan it frames the
+    /// place the sketch was started (`point`, or the sketch's own), else everything.
+    function lookAtSketch(point) {
+        if (!activeSketch)
+            return
+        const n = activeSketch.normal
+        viewport.setViewDirection(Qt.vector3d(n[0], n[1], n[2]))
+        const at = point || activeSketch.onPoint
+        if (at && controller.sceneRadius > 0)
+            viewport.frameAround(at, controller.sceneRadius * 0.35)
         else
             viewport.fitAll()
     }
@@ -1658,6 +1718,10 @@ ApplicationWindow {
                     window.controller.showStatus(qsTr("Nothing there to sketch on: click on or next to the surface"))
             }
             onZoomToPartRequested: id => window.zoomToSelection(id)
+            onSketchContextRequested: (x, y) => {
+                sketchMenu.drawing = viewport.sketchDrawing
+                sketchMenu.popup(viewport, x, y)
+            }
             onPartContextRequested: (id, x, y) => {
                 partMenu.info = id ? window.controller.partInfo(id) : ({})
                 partMenu.popup(viewport, x, y)
