@@ -1226,6 +1226,19 @@ PolyData RunManager::field(const std::string& id, std::string_view kind)
     if (dirs.empty() || !fs::is_regular_file(dirs.back() / file, ec))
         return {};
     PolyData d = readVtk(dirs.back() / file);
+    if (kind == "sectionHorizontal" || kind == "sectionVertical") {
+        // The cutting plane spans the whole wind tunnel and would fill the view (CAD-129):
+        // keep the region around the part, 0.4 lengths ahead, beside, above and below (down
+        // to the floor when there is one), and 1.5 lengths of wake.
+        const core::BoundingBox& pb = info->partBounds;
+        if (!pb.isEmpty()) {
+            const double m = std::max(info->characteristicLength, 1e-9);
+            core::BoundingBox box;
+            box.extend({pb.min.x - 0.4 * m, pb.min.y - 0.4 * m, info->settings.ground ? info->domain.min.z : pb.min.z - 0.4 * m});
+            box.extend({pb.max.x + 1.5 * m, pb.max.y + 0.4 * m, pb.max.z + 0.4 * m});
+            d = cropPolygons(d, box);
+        }
+    }
     for (auto& p : d.points)
         p = info->frame.toModel(p);
     const double q = 0.5 * info->settings.speed * info->settings.speed;

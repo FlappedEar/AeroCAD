@@ -25,8 +25,15 @@ panel in place of Properties:
 - **Results**: progress while it runs, then drag/lift/side force in N, Cd/Cl/Cs,
   pressure vs friction drag, the conditions, the quality status and warnings, and charts
   of the coefficients, forces and residuals per iteration (updated live). **Show in 3D**:
-  pressure on the part (Cp, blue = suction, red = stagnation), horizontal and vertical
-  velocity sections and streamlines (speed), each with its colour legend. The part
+  pressure on the part (Cp, blue = suction, white = free-stream pressure Cp 0, red =
+  stagnation; each side of zero is scaled on its own), horizontal and vertical velocity
+  sections and streamlines (speed). The pressure map is shaded and the streamlines are
+  drawn as shaded tubes, so the shapes read in 3D; the sections stay flat and unlit so
+  their colours match the legend exactly, and are cropped to the region around the part
+  (0.4 part lengths ahead, beside and above, 1.5 lengths of wake). The viewport shows a
+  colour bar for each quantity (sections and streamlines share one speed scale) and a card
+  with drag, lift and side force in N, Cd/Cl/Cs and the run conditions; the guide bar
+  steps aside while results are shown. The part
   itself is hidden while its pressure map is shown. The 3D results are drawn only while
   the open design holds the run's part unchanged: deleting or changing the part hides
   them (undo brings them back). File > New and Open start with no run selected.

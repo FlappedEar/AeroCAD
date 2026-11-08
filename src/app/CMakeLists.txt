@@ -84,6 +84,7 @@ qt_add_qml_module(aerocad
         qml/ShortcutsDialog.qml
         qml/ScanPanel.qml
         qml/SimulationPanel.qml
+        qml/CfdResultsOverlay.qml
         qml/LineChart.qml
     RESOURCES
         ${AEROCAD_ICONS}
@@ -218,6 +219,20 @@ if(AEROCAD_BUILD_TESTS)
     # An empty run folder: no earlier runs, so Results and A/B start disabled.
     set_tests_properties(app_cfd_quality_lines_test PROPERTIES LABELS gui TIMEOUT 60
         ENVIRONMENT "AEROCAD_CFD_DIR=${CMAKE_CURRENT_BINARY_DIR}/cfd-quality-lines-runs")
+    # CAD-127, CAD-128: colour bars and forces of the wind tunnel results in the viewport.
+    add_test(NAME app_cfd_results_overlay_test
+        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl
+                --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/cfd_results_overlay.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_cfd_results_overlay_test PROPERTIES LABELS gui TIMEOUT 60
+        ENVIRONMENT "AEROCAD_CFD_DIR=${CMAKE_CURRENT_BINARY_DIR}/cfd-results-overlay-runs")
+    # CAD-127..129 on a real coarse OpenFOAM run (not in CI: label openfoam).
+    add_test(NAME app_cfd_results_3d_test
+        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl
+                --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/cfd_results_3d.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_cfd_results_3d_test PROPERTIES LABELS "gui;openfoam" TIMEOUT 300
+        ENVIRONMENT "AEROCAD_CFD_DIR=${CMAKE_CURRENT_BINARY_DIR}/cfd-results-3d-runs")
     # CAD-117: the A/B table (run names, quality note, no percentage at noise level).
     add_test(NAME app_cfd_ab_table_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl

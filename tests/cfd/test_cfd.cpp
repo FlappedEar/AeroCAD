@@ -502,6 +502,26 @@ TEST_CASE("readVtk reads OpenFOAM legacy polydata", "[cfd]")
     CHECK_THROWS(cfd::readVtk(f)); // Index out of range.
 }
 
+TEST_CASE("cropPolygons keeps the polygons around a region", "[cfd]")
+{
+    // Two triangles: one at the origin, one far away. Point 1 is shared.
+    cfd::PolyData d;
+    d.points = {{0, 0, 0}, {1, 0, 0}, {0, 1, 0}, {10, 0, 0}, {10, 1, 0}};
+    d.polygons = {{0, 1, 2}, {1, 3, 4}};
+    d.scalars["p"] = {0, 1, 2, 3, 4};
+    d.vectors["U"] = {{0, 0, 0}, {1, 0, 0}, {2, 0, 0}, {3, 0, 0}, {4, 0, 0}};
+    core::BoundingBox box;
+    box.extend({-1, -1, -1});
+    box.extend({2, 2, 1});
+    const auto c = cfd::cropPolygons(d, box);
+    REQUIRE(c.polygons.size() == 1);
+    CHECK(c.points.size() == 3);
+    CHECK(c.polygons[0] == std::vector<std::uint32_t>{0, 1, 2});
+    CHECK(c.scalars.at("p") == std::vector<double>{0, 1, 2});
+    CHECK(c.vectors.at("U")[2].x == 2.0);
+    CHECK(cfd::cropPolygons(d, core::BoundingBox{}).empty());
+}
+
 TEST_CASE("Quality report from logs and histories", "[cfd]")
 {
     TempDir tmp;
