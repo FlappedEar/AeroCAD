@@ -1316,6 +1316,89 @@ Item {
         return isFinite(w) && w > 0 ? w * 8 : 0.5
     }
 
+    /// Wind tunnel being set up (SimulationPanel.proposal: domainModel, partModel, flowModel
+    /// in model mm), drawn as the tunnel's outline and arrows of the air flowing onto the
+    /// part, so the flow direction and the tunnel are clear before a run. null: nothing.
+    property var cfdPreview: null
+    Canvas {
+        id: tunnelCanvas
+        objectName: "tunnelCanvas"
+        anchors.fill: parent
+        visible: !!root.cfdPreview
+        /// Arrows drawn on the last paint (for tests): [{tail, head}] in view pixels.
+        property var arrows: []
+        readonly property var key: [root.viewKey, root.cfdPreview]
+        onKeyChanged: requestPaint()
+        function pt(x, y, z) { return root.viewPoint(Qt.vector3d(x, y, z)) }
+        onPaint: {
+            const ctx = getContext("2d")
+            ctx.reset()
+            const p = root.cfdPreview
+            if (!p) {
+                arrows = []
+                return
+            }
+            const d = p.domainModel, b = p.partModel, f = p.flowModel
+            // Tunnel outline: the 12 edges of the domain box, dashed.
+            const c = []
+            for (let i = 0; i < 8; ++i)
+                c.push(pt(i & 1 ? d.max[0] : d.min[0], i & 2 ? d.max[1] : d.min[1], i & 4 ? d.max[2] : d.min[2]))
+            ctx.strokeStyle = Theme.accent
+            ctx.globalAlpha = 0.55
+            ctx.lineWidth = 1.2
+            ctx.setLineDash([5, 5])
+            ctx.beginPath()
+            for (let i = 0; i < 8; ++i)
+                for (const bit of [1, 2, 4])
+                    if (!(i & bit) && c[i].z > 0 && c[i | bit].z > 0) {
+                        ctx.moveTo(c[i].x, c[i].y)
+                        ctx.lineTo(c[i | bit].x, c[i | bit].y)
+                    }
+            ctx.stroke()
+            // Air arrows: a 3 x 3 grid over the part's front, ending a little before it.
+            const size = [0, 1, 2].map(i => b.max[i] - b.min[i])
+            const mid = [0, 1, 2].map(i => (b.min[i] + b.max[i]) / 2)
+            const along = Math.abs(f[0]) * size[0] + Math.abs(f[1]) * size[1] + Math.abs(f[2]) * size[2]
+            const reach = Math.max(...size)
+            // Front of the part: its centre moved back against the flow by half its length.
+            const front = [0, 1, 2].map(i => mid[i] - f[i] * (along / 2 + reach * 0.08))
+            const across = Math.abs(f[0]) > 0.5 ? 1 : 0 // the other horizontal axis
+            const out = []
+            ctx.globalAlpha = 0.9
+            ctx.setLineDash([])
+            ctx.lineWidth = 2.5
+            ctx.fillStyle = ctx.strokeStyle = Theme.accent
+            for (const u of [-0.35, 0, 0.35]) {
+                for (const v of [0.2, 0.5, 0.8]) {
+                    const head = front.slice()
+                    head[across] += u * size[across]
+                    head[2] = b.min[2] + v * size[2]
+                    const tail = [0, 1, 2].map(i => head[i] - f[i] * reach * 0.3)
+                    const h = pt(head[0], head[1], head[2]), t = pt(tail[0], tail[1], tail[2])
+                    if (h.z <= 0 || t.z <= 0)
+                        continue
+                    const len = Math.hypot(h.x - t.x, h.y - t.y)
+                    if (len < 4)
+                        continue
+                    const ux = (h.x - t.x) / len, uy = (h.y - t.y) / len
+                    const tip = Math.min(12, len * 0.4)
+                    ctx.beginPath()
+                    ctx.moveTo(t.x, t.y)
+                    ctx.lineTo(h.x - ux * tip * 0.6, h.y - uy * tip * 0.6)
+                    ctx.stroke()
+                    ctx.beginPath()
+                    ctx.moveTo(h.x, h.y)
+                    ctx.lineTo(h.x - ux * tip - uy * tip * 0.5, h.y - uy * tip + ux * tip * 0.5)
+                    ctx.lineTo(h.x - ux * tip + uy * tip * 0.5, h.y - uy * tip - ux * tip * 0.5)
+                    ctx.closePath()
+                    ctx.fill()
+                    out.push({ tail: Qt.point(t.x, t.y), head: Qt.point(h.x, h.y) })
+                }
+            }
+            arrows = out
+        }
+    }
+
     Canvas {
         id: overlayCanvas
         anchors.fill: parent

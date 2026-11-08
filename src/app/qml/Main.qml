@@ -1853,6 +1853,7 @@ ApplicationWindow {
                     window.controller.showStatus(qsTr("Nothing there to sketch on: click on or next to the surface"))
             }
             onZoomToPartRequested: id => window.zoomToSelection(id)
+            cfdPreview: simulationPanel.visible ? simulationPanel.proposal : null
             onSketchContextRequested: (x, y) => {
                 sketchMenu.drawing = viewport.sketchDrawing
                 sketchMenu.popup(viewport, x, y)

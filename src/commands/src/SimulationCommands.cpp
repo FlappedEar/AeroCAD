@@ -84,6 +84,26 @@ struct RunInput {
     cfd::Settings settings;
 };
 
+/// A box of the case frame (m) as an axis-aligned box in model coordinates (mm): the case
+/// frame only turns about Z in quarter turns, so the corners map onto a box again.
+Json modelBox(const cfd::CaseFrame& frame, const core::BoundingBox& caseBox)
+{
+    core::BoundingBox out;
+    for (int i = 0; i < 8; ++i) {
+        const core::Vec3 c{i & 1 ? caseBox.max.x : caseBox.min.x, i & 2 ? caseBox.max.y : caseBox.min.y,
+                           i & 4 ? caseBox.max.z : caseBox.min.z};
+        out.extend(frame.toModel(c));
+    }
+    return {{"min", {out.min.x, out.min.y, out.min.z}}, {"max", {out.max.x, out.max.y, out.max.z}}};
+}
+
+/// Direction the air flows in model coordinates (unit vector): +X in the case frame.
+Json flowVector(const cfd::CaseFrame& frame)
+{
+    const core::Vec3 v = frame.unrotate({1.0, 0.0, 0.0});
+    return {v.x, v.y, v.z};
+}
+
 RunInput collectInput(CommandContext& ctx, const Json& params)
 {
     RunInput in;
@@ -129,6 +149,16 @@ Json runParams()
                         {"description", "Other parts in the flow, e.g. the body section the part is mounted on. "
                                         "They shape the flow but are not included in the forces."}};
     props["label"] = {{"type", "string"}, {"description", "Optional label shown with the run, e.g. \"A\" or \"v2\"."}};
+    return props;
+}
+
+/// simulation.propose_run: the run parameters, and whether to check the engine (slow: it
+/// asks Docker, over SSH for a remote engine). The wind tunnel panel previews without it.
+Json proposeParams()
+{
+    Json props = runParams();
+    props["checkEngine"] = {{"type", "boolean"},
+                            {"description", "Also check the simulation engine (default true; slow when remote)."}};
     return props;
 }
 
@@ -242,8 +272,11 @@ void registerSimulationCommands(CommandRegistry& r)
     r.add({"simulation.propose_run", "Propose simulation",
            "Prepares the settings of a wind tunnel run for a part without starting it: resolved settings, "
            "reference area, domain and engine check, so they can be reviewed before simulation.run.",
-           objectSchema(runParams(), {"id"})},
-          [](CommandContext& ctx, const Json& params) {
+           objectSchema(proposeParams(), {"id"})},
+          [](CommandContext& ctx, const Json& given) {
+              Json params = given;
+              const bool checkEngine = params.value("checkEngine", true);
+              params.erase("checkEngine");
               const RunInput in = collectInput(ctx, params);
               cfd::CaseInfo plan;
               try {
@@ -259,7 +292,10 @@ void registerSimulationCommands(CommandRegistry& r)
                      {"characteristicLength", plan.characteristicLength},
                      {"baseCellSize", plan.baseCellSize},
                      {"domainSize", {plan.domain.size().x, plan.domain.size().y, plan.domain.size().z}},
-                     {"environment", cfd::detectEnvironment().toJson()},
+                     {"domainModel", modelBox(plan.frame, plan.domain)},
+                     {"partModel", modelBox(plan.frame, plan.partBounds)},
+                     {"flowModel", flowVector(plan.frame)},
+                     {"environment", checkEngine ? cfd::detectEnvironment().toJson() : Json()},
                      {"warnings", sizeWarnings(plan.characteristicLength)},
                      {"next", "Call simulation.run with the same parameters to start it."}};
               return j;

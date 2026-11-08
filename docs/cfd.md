@@ -22,6 +22,11 @@ panel in place of Properties:
   and `simulation.run` return the same text in `warnings`. Below, all runs with state, progress,
   Cd and drag; Cancel / delete; click a run to make it **A**, press **B** on another to
   compare.
+  While a new run is set up, the view shows the planned **wind tunnel** (dashed outline of
+  the domain) and **arrows of the air** flowing onto the part, so a wrong flow direction is
+  seen before the run; they follow the *Air flows* choice and the part.
+  (`simulation.propose_run` returns them as `partModel`, `domainModel` and `flowModel` in
+  model mm; `checkEngine: false` skips the slow engine check.)
 - **Results**: progress while it runs, then drag/lift/side force in N, Cd/Cl/Cs,
   pressure vs friction drag, the conditions, the quality status and warnings, and charts
   of the coefficients, forces and residuals per iteration (updated live). **Show in 3D**:

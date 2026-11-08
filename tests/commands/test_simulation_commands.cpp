@@ -131,6 +131,27 @@ TEST_CASE("simulation.propose_run and a prepared run", "[commands][simulation]")
     // 200 x 80 x 60 mm box, flow along X: frontal area 80 x 60 mm.
     CHECK(std::abs(r.data.at("referenceArea").get<double>() - 0.0048) < 0.0048 * 0.01);
     CHECK(std::abs(r.data.at("characteristicLength").get<double>() - 0.2) < 1e-9);
+    // The tunnel and the flow in model coordinates (mm), for drawing them in the view; the
+    // part box is the imported box.
+    const Json& part = r.data.at("partModel");
+    CHECK(std::abs(part.at("max")[0].get<double>() - part.at("min")[0].get<double>() - 200.0) < 1e-6);
+    CHECK(std::abs(part.at("max")[2].get<double>() - part.at("min")[2].get<double>() - 60.0) < 1e-6);
+    const Json& tunnel = r.data.at("domainModel");
+    for (int i = 0; i < 3; ++i) {
+        CHECK(tunnel.at("min")[i].get<double>() <= part.at("min")[i].get<double>() + 1e-6);
+        CHECK(tunnel.at("max")[i].get<double>() >= part.at("max")[i].get<double>() - 1e-6);
+    }
+    CHECK(r.data.at("flowModel")[0] == 1.0);
+    CHECK(r.data.at("warnings").empty());
+    // Without the (slow) engine check, as the wind tunnel panel previews it.
+    auto quick = session.execute("simulation.propose_run",
+                                 {{"id", id}, {"speed", 30.0}, {"flowDirection", "+X"}, {"checkEngine", false}});
+    REQUIRE(quick.ok);
+    CHECK(quick.data.at("environment").is_null());
+    CHECK(quick.data.at("domainModel") == r.data.at("domainModel"));
+    auto turned = session.execute("simulation.propose_run", {{"id", id}, {"flowDirection", "-Y"}});
+    REQUIRE(turned.ok);
+    CHECK(std::abs(turned.data.at("flowModel")[1].get<double>() + 1.0) < 1e-12);
 
     CHECK_FALSE(session.execute("simulation.propose_run", {{"id", 999}}).ok);
     CHECK_FALSE(session.execute("simulation.propose_run", {{"id", id}, {"speed", -5.0}}).ok);

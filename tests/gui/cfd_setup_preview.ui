@@ -1,0 +1,20 @@
+# CFD setup in the view: with the wind tunnel open and a part selected, the view shows the
+# tunnel's outline and arrows of the air flowing onto the part (CAD-113):
+#  - flow +Y (default): 9 arrows pointing along +Y on screen; changing "Air flows" to -X in
+#    the panel turns them;
+#  - closing the wind tunnel hides the preview.
+# Run: AeroCAD tests/data/box_200x80x60.stl --ui-script <this file>
+Qt.createQmlObject('import QtQuick; Item { objectName: "cfTest"; visible: false; property var s: ({}); function find(i, name) { if (!i) return null; if (i.objectName === name) return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = find(ch[k], name); if (r) return r } return null } function canvas() { return find(viewport, "tunnelCanvas") } function checkArrows(dir, label) { const a = canvas().arrows; const c = Qt.vector3d(100, 40, 30); const p0 = viewport.viewPoint(c), p1 = viewport.viewPoint(c.plus(dir.times(50))); const ex = p1.x - p0.x, ey = p1.y - p0.y, el = Math.hypot(ex, ey); let worst = 1; for (const r of a) { const dx = r.head.x - r.tail.x, dy = r.head.y - r.tail.y; worst = Math.min(worst, (dx * ex + dy * ey) / (Math.hypot(dx, dy) * el)) } ui.log(label + ": " + a.length + " arrows, worst alignment with the flow on screen " + worst.toFixed(3)); if (a.length !== 9) ui.fail(label + ": expected 9 arrows, got " + a.length); if (worst < 0.9) ui.fail(label + ": an arrow does not point along the flow") } }', window.contentItem)
+ui.wait(800)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); t.s.id = controller.execute("document.parts").result.parts[0].id; viewport.restoreCameraState({ pivot: [0, 0, 0], pitch: -25, yaw: 30, distance: 1, orthographic: false }); viewport.fitAll(); window.selectPart(t.s.id); cfdAction.trigger() })()
+ui.wait(600)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const p = simulationPanel.proposal; if (!p) { ui.fail("no tunnel preview with the wind tunnel open"); return } ui.log("canvas visible " + t.canvas().visible); if (!t.canvas().visible) ui.fail("the tunnel is not drawn"); t.checkArrows(Qt.vector3d(0, 1, 0), "flow +Y") })()
+ui.shot("build/cfd-setup-1-plusY.png")
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const box = t.find(simulationPanel, "cfdFlowBox"); box.currentIndex = 3; box.activated(3) })()
+ui.wait(400)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); t.checkArrows(Qt.vector3d(-1, 0, 0), "flow -X") })()
+ui.shot("build/cfd-setup-2-minusX.png")
+ui.wait(400)
+(() => { cfdAction.trigger() })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); ui.log("wind tunnel closed: canvas visible " + t.canvas().visible); if (t.canvas().visible) ui.fail("the tunnel stays drawn after closing the wind tunnel") })()
