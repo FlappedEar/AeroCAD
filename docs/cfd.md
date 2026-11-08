@@ -302,7 +302,13 @@ simulated part either.
 {"name": "simulation.run", "params": {"id": 1, "speed": 30, "label": "A"}}
 {"name": "simulation.status", "params": {"run": "20261106-140102-rear-wing"}}
 {"name": "simulation.results", "params": {"run": "20261106-140102-rear-wing"}}
+{"name": "simulation.rename", "params": {"run": "20261106-140102-rear-wing", "label": "long splitter"}}
 ```
+
+A run's label can be changed at any time, also while it runs (CAD-174). In the app, click ✎
+on the run in the run list, type the name and press Enter (or click elsewhere); Esc keeps the old one, and an empty
+name removes the label ([run list](images/audit/cad-174-rename-run.png)). The label is saved
+in the run's `run.json`; `simulation.rename` does the same (at most 80 characters, one line).
 
 `simulation.run` returns at once with a run id; the run continues in the background,
 also when the app is closed (it is picked up again on the next start). Progress is

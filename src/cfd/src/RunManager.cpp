@@ -1130,6 +1130,44 @@ bool RunManager::remove(const std::string& id)
     return !ec;
 }
 
+bool RunManager::setLabel(const std::string& id, const std::string& label)
+{
+    Run* run = find(id);
+    if (run == nullptr)
+        return false;
+    const fs::path file = run->dir / "run.json";
+    Json j = Json::object();
+    if (std::ifstream in(file); in) {
+        try {
+            in >> j;
+        } catch (const std::exception&) {
+            j = Json::object();
+        }
+    }
+    RunSource source = run->source;
+    source.label = label;
+    j["source"] = sourceJson(source);
+    // Written next to it and renamed over it, so a crash never leaves half a run.json.
+    const fs::path tmp = run->dir / "run.json.tmp";
+    {
+        std::ofstream out(tmp, std::ios::trunc);
+        out << j.dump(2) << "\n";
+        out.close(); // Flush now: a full disk shows here, not after the rename.
+        if (!out) {
+            std::error_code ignored;
+            fs::remove(tmp, ignored);
+            throw std::runtime_error("Cannot write '" + tmp.string() + "'");
+        }
+    }
+    std::error_code ec;
+    fs::rename(tmp, file, ec);
+    if (ec)
+        throw std::runtime_error("Cannot write '" + file.string() + "': " + ec.message());
+    run->source = source;
+    run->status.source = source;
+    return true;
+}
+
 std::optional<CaseInfo> RunManager::caseInfo(const std::string& id)
 {
     Run* run = find(id);

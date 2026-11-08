@@ -385,6 +385,7 @@ Pane {
         const signature = list => list.map(x => x.id + ":" + x.state).join(",")
         const beforeAll = signature(runs)
         runs = r.result.runs
+        renamedRun = null
         // On first show, the newest run of this design (never one of another design) (CAD-136).
         const own = runs.filter(x => x.sourceInDocument)
         if (!activeRun && autoSelect && own.length > 0) {
@@ -407,6 +408,7 @@ Pane {
         // Copied run settings refer to the closed document's parts (CAD-162).
         copiedContext = null
         copiedContextForeign = 0
+        renamingRun = ""
         copiedSettings = ({})
         groundFixed = false
         autoSelect = false
@@ -536,6 +538,53 @@ Pane {
         if (kind === "streamlines" && streamlineStyle === "smoke")
             return Theme.dark ? "smoke-dark" : "smoke-light"
         return scalar === "Cp" || scalar === "pressure" ? pressurePalette : ""
+    }
+
+    /// The run whose label is being edited in the run list (CAD-174); "" = none.
+    property string renamingRun: ""
+    property string renameText: ""
+    /// Cursor and selection in the name field; null = select all (as it opens).
+    property var renameCursor: null
+    /// The name field lost focus. A refresh rebuilding the row hands it to the new field; a
+    /// click elsewhere (another field, the view) applies the name, as in the Browser (CAD-108).
+    function renameFocusLeft() {
+        // Only the run whose field lost the focus: a click on another run's ✎ has already
+        // applied it and opened the other one (startRename).
+        const id = renamingRun
+        Qt.callLater(() => {
+            const f = root.Window.activeFocusItem
+            if (!id || renamingRun !== id || !f || (f.objectName || "").indexOf("runRenameField_") === 0)
+                return
+            renameRun(id, renameText)
+        })
+    }
+    function startRename(run) {
+        // Switching to another run applies the pending edit, like any other click elsewhere.
+        if (renamingRun && renamingRun !== run.id)
+            renameRun(renamingRun, renameText)
+        renameText = run.source.label || ""
+        renameCursor = null
+        renamingRun = run.id
+    }
+    function renameRun(id, label) {
+        const r = controller.execute("simulation.rename", { run: id, label: label })
+        renamingRun = ""
+        if (!r.ok) {
+            controller.showStatus(qsTr("Rename failed: %1").arg(r.error))
+            return false
+        }
+        // The list is rebuilt a moment later, not now: the rename is often applied on the press
+        // of another row button (focus leaves the field), and rebuilding the rows here would
+        // destroy that button before its click. The row shows the new name meanwhile.
+        renamedRun = { id: id, label: label.trim() }
+        renameRefresh.restart()
+        return true
+    }
+    property var renamedRun: null
+    Timer {
+        id: renameRefresh
+        interval: 400
+        onTriggered: root.refreshRuns()
     }
 
     /// Where the last results export went, or why it failed (CAD-167).
@@ -1183,6 +1232,8 @@ Pane {
                     visible: root.tab === 0
                     readonly property bool isA: modelData.id === root.activeRun
                     readonly property bool isB: modelData.id === root.compareRun
+                    readonly property string label: root.renamedRun && root.renamedRun.id === modelData.id ?
+                                                       root.renamedRun.label : (modelData.source.label || "")
                     Layout.fillWidth: true
                     implicitHeight: rowContent.implicitHeight + 10
                     radius: 4
@@ -1203,11 +1254,69 @@ Pane {
                         RowLayout {
                             Label {
                                 Layout.fillWidth: true
+                                visible: root.renamingRun !== runRow.modelData.id
                                 elide: Text.ElideRight
                                 font.bold: true
                                 text: (runRow.isA ? "[A] " : runRow.isB ? "[B] " : "") +
-                                      (runRow.modelData.source.label ? runRow.modelData.source.label + " · " : "") +
+                                      (runRow.label ? runRow.label + " · " : "") +
                                       (runRow.modelData.source.partName || runRow.modelData.id)
+                            }
+                            // Rename in place (CAD-174): Enter or leaving the field applies, Esc cancels.
+                            TextField {
+                                id: renameField
+                                objectName: "runRenameField_" + runRow.modelData.id
+                                Layout.fillWidth: true
+                                visible: root.renamingRun === runRow.modelData.id
+                                placeholderText: qsTr("Label, e.g. v2, long splitter (empty: none)")
+                                maximumLength: 80
+                                // The run list is rebuilt on every refresh, so the typed text
+                                // lives in root.renameText and a new row picks it up.
+                                // The cursor and selection are kept there too, so a correction in
+                                // the middle of the name goes on where it was.
+                                property bool restoring: false
+                                function begin() {
+                                    if (!visible)
+                                        return
+                                    restoring = true
+                                    text = root.renameText
+                                    const c = root.renameCursor
+                                    if (!c)
+                                        selectAll()
+                                    else if (c.start !== c.end)
+                                        c.cursor === c.start ? select(c.end, c.start) : select(c.start, c.end)
+                                    else
+                                        cursorPosition = c.cursor
+                                    restoring = false
+                                    forceActiveFocus()
+                                }
+                                function keep() {
+                                    if (!restoring && visible)
+                                        root.renameCursor = { start: selectionStart, end: selectionEnd, cursor: cursorPosition }
+                                }
+                                Component.onCompleted: begin()
+                                onVisibleChanged: begin()
+                                onTextEdited: { root.renameText = text; keep() }
+                                onActiveFocusChanged: if (!activeFocus) root.renameFocusLeft()
+                                onCursorPositionChanged: keep()
+                                onSelectionStartChanged: keep()
+                                onSelectionEndChanged: keep()
+                                onAccepted: root.renameRun(runRow.modelData.id, text)
+                                // Esc belongs to the field, not to the window's Esc shortcut.
+                                Keys.onShortcutOverride: event => event.accepted = event.key === Qt.Key_Escape
+                                Keys.onEscapePressed: root.renamingRun = ""
+                            }
+                            ToolButton {
+                                objectName: "renameButton_" + runRow.modelData.id
+                                visible: root.renamingRun !== runRow.modelData.id
+                                text: "✎"
+                                // Keeps the focus in an open name field while pressed (as on
+                                // macOS), so the click reaches startRename, which applies that
+                                // name first, instead of the field applying it on press and
+                                // rebuilding the list under the button.
+                                focusPolicy: Qt.NoFocus
+                                ToolTip.visible: hovered
+                                ToolTip.text: qsTr("Rename run")
+                                onClicked: root.startRename(runRow.modelData)
                             }
                             ToolButton {
                                 objectName: "compareButton_" + runRow.modelData.id

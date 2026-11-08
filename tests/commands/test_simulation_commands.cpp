@@ -376,6 +376,38 @@ TEST_CASE("simulation.export_results writes conditions, final values and the ful
             .ok);
 }
 
+TEST_CASE("simulation.rename sets, trims and clears a run's label and keeps it on reload", "[commands][simulation]")
+{
+    RunsDir dir;
+    std::string id;
+    {
+        commands::Session session;
+        const auto part = importBox(session);
+        id = prepareRun(session, part);
+        auto r = session.execute("simulation.rename", {{"run", id}, {"label", "  long splitter "}});
+        REQUIRE(r.ok);
+        CHECK(r.data.at("label") == "long splitter");
+        r = session.execute("simulation.status", {{"run", id}});
+        REQUIRE(r.ok);
+        CHECK(r.data.at("source").at("label") == "long splitter");
+        CHECK_FALSE(session.execute("simulation.rename", {{"run", "nope"}, {"label", "x"}}).ok);
+        CHECK_FALSE(session.execute("simulation.rename", {{"run", id}, {"label", "a\nb"}}).ok);
+        CHECK_FALSE(session.execute("simulation.rename", {{"run", id}, {"label", std::string(81, 'x')}}).ok);
+    }
+    {
+        // A new session reads the runs folder again: the label was saved with the run.
+        commands::Session session;
+        auto r = session.execute("simulation.status", {{"run", id}});
+        REQUIRE(r.ok);
+        CHECK(r.data.at("source").at("label") == "long splitter");
+        CHECK(r.data.at("source").at("partName").get<std::string>().size() > 0);
+        REQUIRE(session.execute("simulation.rename", {{"run", id}, {"label", ""}}).ok);
+        r = session.execute("simulation.list");
+        REQUIRE(r.ok);
+        CHECK(r.data.at("runs")[0].at("source").at("label") == "");
+    }
+}
+
 TEST_CASE("prepared simulation coefficients cannot produce final comparison values", "[commands][simulation]")
 {
     RunsDir dir;
