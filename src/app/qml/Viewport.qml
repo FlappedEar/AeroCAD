@@ -593,6 +593,7 @@ Item {
                     required property string kind
                     required property var featureId
                     required property bool hasBrep
+                    required property string partColor // Appearance, "" = default
                     property var pickPartId: partId
                     readonly property bool selected: partId === root.selectedPartId
                     readonly property bool hovered: partId === root.hoveredPartId && !selected
@@ -640,7 +641,8 @@ Item {
                         baseColor: partModel.selected ? (partModel.kind === "plane" ? Theme.planeSelected : Theme.selectedColor)
                                  : partModel.kind === "sketch" ? (partModel.hovered ? Theme.planeHover : Theme.sketchProfile)
                                  : partModel.kind === "plane" ? (partModel.hovered ? Theme.planeHover : Theme.planeFill)
-                                 : Qt.tint(partModel.kind === "body" ? Theme.bodyColor : Theme.meshColor,
+                                 : Qt.tint(partModel.partColor !== "" ? partModel.partColor
+                                           : partModel.kind === "body" ? Theme.bodyColor : Theme.meshColor,
                                            partModel.hovered ? Theme.hoverTint : "transparent")
                         alphaMode: partModel.kind === "sketch" || partModel.kind === "plane" ? PrincipledMaterial.Blend : PrincipledMaterial.Default
                         metalness: 0.0

@@ -79,12 +79,13 @@ project::ProjectData snapshot(CommandContext& ctx)
     // the live document parts, which are newer.
     std::map<cad::FeatureId, project::TimelinePart> timeline;
     for (const auto& info : ctx.design->partInfos())
-        timeline[info.feature] = {info.feature, std::nullopt, info.part, info.name, info.visible, nullptr};
+        timeline[info.feature] = {info.feature, std::nullopt, info.part, info.name, info.visible, nullptr, info.color};
     for (const auto& part : ctx.document.parts()) {
         if (part.kind == model::PartKind::Imported)
             data.parts.push_back(part);
         else
-            timeline[part.featureId] = {part.featureId, part.kind, part.id, part.name, part.visible, part.selection};
+            timeline[part.featureId] = {part.featureId, part.kind, part.id, part.name, part.visible, part.selection,
+                                             part.color};
     }
     for (auto& [_, t] : timeline)
         data.timelineParts.push_back(std::move(t));
@@ -111,7 +112,7 @@ void applyProject(CommandContext& ctx, project::ProjectData data)
         ctx.document.reserveIds(t.id); // also ids of parts that are not regenerated now
         if (t.selection)
             selections.emplace_back(t.id, t.selection);
-        d.setPartInfo(t.feature, t.id, std::move(t.name), t.visible);
+        d.setPartInfo(t.feature, t.id, std::move(t.name), t.visible, std::move(t.color));
     }
     for (auto& r : data.timelineResults) {
         // Fit reports saved before CAD-85 lack the requested tolerance and the

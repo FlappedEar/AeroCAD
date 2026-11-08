@@ -10,6 +10,7 @@
 #include "aerocad/geometry/Transform.hpp"
 #include "aerocad/io/Import.hpp"
 
+#include <cctype>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -180,6 +181,25 @@ void registerPartCommands(CommandRegistry& r)
               ctx.document.modifyPart(before.id, [&](model::Part& p) { p.visible = after.visible; });
               pushPartStateUndo(ctx, after.visible ? "Show " + before.name : "Hide " + before.name, before.id, before,
                                 *ctx.document.part(before.id));
+              return partToJson(*ctx.document.part(before.id));
+          });
+
+    r.add({"part.set_color", "Appearance",
+           "Sets the colour a part is shown in (Fusion's Appearance): \"#rrggbb\", or \"\" for the default "
+           "colour of its kind. Saved with the project; timeline bodies keep it through edits.",
+           objectSchema({{"id", idParam()},
+                         {"color", {{"type", "string"}, {"description", "\"#rrggbb\" or \"\" (default)"}}}},
+                        {"id", "color"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              const model::Part before = requirePart(ctx.document, params);
+              std::string color = params.at("color").get<std::string>();
+              if (!color.empty() && !model::isPartColor(color))
+                  throw CommandError("Colour must be \"#rrggbb\" or empty, got \"" + color + "\"");
+              for (auto& ch : color)
+                  ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+              ctx.document.modifyPart(before.id, [&](model::Part& p) { p.color = color; });
+              pushPartStateUndo(ctx, "Appearance of " + before.name, before.id, before, *ctx.document.part(before.id));
               return partToJson(*ctx.document.part(before.id));
           });
 

@@ -389,6 +389,51 @@ TEST_CASE("A renamed timeline body keeps its name through edits, undo and saving
     CHECK(named == 1);
 }
 
+TEST_CASE("Appearance colours are undoable, kept through timeline edits and saved", "[commands][project]")
+{
+    TempDir dir;
+    commands::Session s;
+    run(s, "feature.box", {{"size", {40, 30, 6}}});
+    const model::Part* body = nullptr;
+    for (const auto& p : s.document().parts())
+        if (p.kind == model::PartKind::Body)
+            body = &p;
+    REQUIRE(body);
+    const model::PartId id = body->id;
+    const auto featureId = body->featureId;
+    const std::string stl = std::string(AEROCAD_TEST_DATA_DIR) + "/tetrahedron.stl";
+    const auto scan = run(s, "document.import", {{"path", stl}}).at("id").get<model::PartId>();
+
+    CHECK(s.document().part(id)->color.empty());
+    CHECK(run(s, "part.set_color", {{"id", id}, {"color", "#3F7FD9"}}).at("color") == "#3f7fd9");
+    run(s, "part.set_color", {{"id", scan}, {"color", "#c94f45"}});
+    CHECK_FALSE(s.execute("part.set_color", {{"id", id}, {"color", "blue"}}).ok);
+    CHECK_FALSE(s.execute("part.set_color", {{"id", id}, {"color", "#12345"}}).ok);
+    run(s, "edit.undo"); // the scan's colour
+    CHECK(s.document().part(scan)->color.empty());
+    run(s, "edit.redo");
+    CHECK(s.document().part(scan)->color == "#c94f45");
+
+    // A timeline edit regenerates the body: the colour stays, also through suppress.
+    run(s, "feature.edit", {{"id", featureId}, {"params", {{"size", {50, 30, 6}}}}});
+    CHECK(s.document().part(id)->color == "#3f7fd9");
+    run(s, "feature.suppress", {{"id", featureId}, {"suppressed", true}});
+    run(s, "feature.suppress", {{"id", featureId}, {"suppressed", false}});
+    REQUIRE(s.document().part(id));
+    CHECK(s.document().part(id)->color == "#3f7fd9");
+
+    run(s, "project.save", {{"path", dir.file("colours.aerocad")}});
+    commands::Session t;
+    run(t, "project.open", {{"path", dir.file("colours.aerocad")}});
+    REQUIRE(t.document().part(id));
+    REQUIRE(t.document().part(scan));
+    CHECK(t.document().part(id)->color == "#3f7fd9");
+    CHECK(t.document().part(scan)->color == "#c94f45");
+    // "" goes back to the default colour.
+    run(t, "part.set_color", {{"id", id}, {"color", ""}});
+    CHECK(t.document().part(id)->color.empty());
+}
+
 TEST_CASE("Undoing a delete puts the part back where it was in the Browser", "[commands][project]")
 {
     commands::Session s;

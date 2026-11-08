@@ -110,6 +110,7 @@ Pane {
                 required property var triangles
                 required property string kind
                 required property string shapeKind
+                required property string partColor
 
                 readonly property bool selected: row.partId === root.selectedPartId
 
@@ -142,7 +143,9 @@ Pane {
                     AppIcon {
                         name: row.shapeKind === "surface" ? "surface" : Theme.featureIcon(row.kind)
                         size: Theme.iconSmall
-                        color: row.selected ? Theme.accent : Theme.icon
+                        objectName: "partIcon"
+                        // The part's Appearance colour, so it is found in the Browser.
+                        color: row.selected ? Theme.accent : row.partColor !== "" ? row.partColor : Theme.icon
                         opacity: row.partVisible ? 1 : 0.45
                     }
                     ColumnLayout {

@@ -53,6 +53,8 @@ struct TimelinePart {
     bool visible = true;
     /// Region selection on the regenerated part; restored only if the indices still fit.
     std::shared_ptr<const core::TriangleSet> selection;
+    /// Appearance colour ("#rrggbb"), empty = default.
+    std::string color;
 };
 
 /// Everything a project file holds.

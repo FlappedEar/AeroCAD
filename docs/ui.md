@@ -141,6 +141,10 @@ or the timeline rolled forward) returns to its own row, not to the end of the li
 others, as in Fusion; the Browser shows "Isolated: …" with an **Exit** button. Exit, View ›
 Unisolate or Unisolate in the isolated part's menu shows again exactly the parts it hid (a
 part hidden before stays hidden). Undo of Isolate also ends it.
+**Appearance** (key **A** as in Fusion, Edit › Appearance or the part's right-click menu)
+gives a body or scan its own colour from a row of swatches, so parts are told apart in a
+crowded scene; the Browser icon takes the colour too. *Default* goes back to grey. It is one
+undo step, timeline bodies keep it through edits, and it is saved with the project.
 
 ## Copy and paste
 
@@ -228,6 +232,7 @@ Qt maps Ctrl to Command and Alt to Option on macOS, so "Ctrl+Alt+V" is Option+Co
 | Delete the selected part | Del | Delete (Backspace) or Fn+Delete | yes (Del) |
 | Rename the selected part (in the Browser) | F2 | F2 | no (Fusion renames from the Browser) |
 | Search commands and run one (box at the pointer) | S | S | yes (Fusion's S key) |
+| Appearance (colour) of the selected part | A | A | yes |
 | Fit all | F6 | F6 | Fusion lists F6 "Zoom to Fit" for the Electronics workspace |
 | Zoom in / out (towards the view centre) | Ctrl++ / Ctrl+- | Cmd++ / Cmd+- | yes (Fusion lists them for Windows) |
 | Move / Rotate / Scale the selected part | M | M | yes (Move/Copy) |
@@ -266,11 +271,11 @@ Save As, Import and the variant commands (Modify > Duplicate as New Variant, Tog
 have no shortcut (Fusion's list has no Save As).
 
 Fusion keys kept free because AeroCAD has no such command yet, so that they keep their
-Fusion meaning when the command comes: Q (Press Pull), A (Appearance),
+Fusion meaning when the command comes: Q (Press Pull),
 J / Shift+J (Joint), Ctrl+X (cut), Ctrl+B (Compute All). Source: Autodesk's
 [Fusion keyboard shortcuts reference](https://help.autodesk.com/cloudhelp/ENU/Fusion-GetStarted/files/GUID-F0491540-0324-470A-B651-2238D0EFAC30.htm)
 (checked 2026-11-08).
-S (Fusion's toolbox search) is the command search, see "Command search".
+S (Fusion's toolbox search) is the command search, see "Command search"; A is Appearance.
 
 In a sketch, T (Trim), O (Offset), P (Project) and X (Construction) work as in Fusion.
 Not mapped yet: Press Pull (Q). 1/2/3 select the region selection tools on meshes,

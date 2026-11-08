@@ -648,6 +648,7 @@ QVariantMap AppController::partInfo(quint64 id) const
         {QStringLiteral("name"), QString::fromStdString(p->name)},
         {QStringLiteral("source"), QString::fromStdString(p->source)},
         {QStringLiteral("visible"), p->visible},
+        {QStringLiteral("color"), QString::fromStdString(p->color)},
         {QStringLiteral("vertices"), QVariant::fromValue<qulonglong>(p->mesh ? p->mesh->vertexCount() : 0)},
         {QStringLiteral("triangles"), QVariant::fromValue<qulonglong>(p->mesh ? p->mesh->triangleCount() : 0)},
         {QStringLiteral("hasBrep"), p->shape.has_value()},
