@@ -912,7 +912,14 @@ Item {
         if (!moved && !angle && !scaled)
             return null
         const params = { center: [t.center.x, t.center.y, t.center.z] }
-        if (angle) {
+        if (t.kind === "body") {
+            // Always stored, so editing the step later shows this rotation (0 when it only
+            // moves or scales) instead of the Move dialog's defaults; X / Y / Z by name.
+            const named = ["X", "Y", "Z"].find((n, i) => Math.abs(Math.abs(axis[i]) - 1) < 1e-9)
+            const i = named ? ["X", "Y", "Z"].indexOf(named) : -1
+            params.axis = !angle ? "Z" : named ? named : axis
+            params.angle = named && axis[i] < 0 ? -angle : angle
+        } else if (angle) {
             params.axis = axis
             params.angle = angle
         }

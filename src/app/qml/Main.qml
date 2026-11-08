@@ -398,6 +398,7 @@ ApplicationWindow {
     /// Variant commands replace the design: leave sketch / feature editing first, their
     /// cached planes and ids belong to the previous variant.
     function switchVariant(command, params) {
+        viewport.finishTransform(true) // applies to the variant it was started in
         featureDialog.close()
         finishSketch()
         pickingSketchPlane = false
