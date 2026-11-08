@@ -522,6 +522,35 @@ TEST_CASE("cropPolygons keeps the polygons around a region", "[cfd]")
     CHECK(cfd::cropPolygons(d, core::BoundingBox{}).empty());
 }
 
+TEST_CASE("cropLines splits lines at the region and appendPolyData merges sets", "[cfd]")
+{
+    cfd::PolyData d;
+    d.points = {{0, 0, 0}, {1, 0, 0}, {5, 0, 0}, {1.5, 0, 0}, {1.8, 0, 0}};
+    d.lines = {{0, 1, 2, 3, 4}};
+    d.scalars["p"] = {0, 1, 2, 3, 4};
+    core::BoundingBox box;
+    box.extend({-1, -1, -1});
+    box.extend({2, 1, 1});
+    const auto c = cfd::cropLines(d, box);
+    REQUIRE(c.lines.size() == 2); // Leaves the box at x = 5 and comes back.
+    CHECK(c.points.size() == 4);
+    CHECK(c.scalars.at("p") == std::vector<double>{0, 1, 3, 4});
+
+    cfd::PolyData merged = c;
+    cfd::PolyData other;
+    other.points = {{0, 0, 1}, {0, 0, 2}};
+    other.lines = {{0, 1}};
+    other.scalars["p"] = {7, 8};
+    other.scalars["k"] = {1, 1}; // Only in one set: dropped.
+    cfd::appendPolyData(merged, other);
+    CHECK(merged.points.size() == 6);
+    REQUIRE(merged.lines.size() == 3);
+    CHECK(merged.lines[2] == std::vector<std::uint32_t>{4, 5});
+    CHECK(merged.scalars.at("p").size() == 6);
+    CHECK(merged.scalars.at("p")[5] == 8.0);
+    CHECK(merged.scalars.count("k") == 0);
+}
+
 TEST_CASE("Quality report from logs and histories", "[cfd]")
 {
     TempDir tmp;

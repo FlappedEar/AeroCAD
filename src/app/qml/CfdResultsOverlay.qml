@@ -11,24 +11,25 @@ Item {
     id: root
 
     required property AppController controller
-    /// SimulationPanel.viewportFields: [{run, kind, scalar, min, max}].
+    /// SimulationPanel.viewportFields: [{run, kind, scalar, min, max, palette}].
     property var fields: []
     /// SimulationPanel.results of the displayed run (summary, conditions), or null.
     property var results: null
     /// Run name shown on the card ("A: ..." / "B: ...").
     property string runTitle: ""
 
-    /// One legend per distinct scale: [{scalar, min, max, kinds}].
+    /// One legend per distinct scale: [{scalar, min, max, palette, kinds}].
     readonly property var legends: {
         const out = []
         for (const f of fields) {
             if (!(f.max > f.min))
                 continue
-            const same = out.find(l => l.scalar === f.scalar && l.min === f.min && l.max === f.max)
+            const palette = f.palette || ""
+            const same = out.find(l => l.scalar === f.scalar && l.min === f.min && l.max === f.max && l.palette === palette)
             if (same)
                 same.kinds.push(f.kind)
             else
-                out.push({ scalar: f.scalar, min: f.min, max: f.max, kinds: [f.kind] })
+                out.push({ scalar: f.scalar, min: f.min, max: f.max, palette: palette, kinds: [f.kind] })
         }
         return out
     }
@@ -81,7 +82,7 @@ Item {
                 id: legend
                 required property var modelData
                 readonly property var tickValues: root.ticks(modelData)
-                readonly property var colors: root.controller.colormap(modelData.scalar)
+                readonly property var colors: root.controller.colormap(modelData.scalar, modelData.palette)
                 objectName: "cfdLegend_" + modelData.scalar
                 padding: 8
                 opacity: 0.94

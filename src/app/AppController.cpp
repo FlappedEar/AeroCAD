@@ -932,11 +932,11 @@ void AppController::setStatusMessage(const QString& message)
     emit statusMessageChanged();
 }
 
-QVariantList AppController::colormap(const QString& scalar) const
+QVariantList AppController::colormap(const QString& scalar, const QString& palette) const
 {
     QVariantList out;
-    for (int i = 0; i <= 8; ++i)
-        out.append(FieldGeometry::mapColor(scalar, i / 8.0));
+    for (int i = 0; i <= 16; ++i)
+        out.append(FieldGeometry::mapColor(scalar, i / 16.0, palette));
     return out;
 }
 

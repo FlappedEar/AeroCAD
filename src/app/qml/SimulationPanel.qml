@@ -25,14 +25,16 @@ Pane {
             if (!f.on || !fieldStats[run + "/" + f.kind])
                 continue
             const r = scaleFor(f.kind, f.scalar)
-            out.push({ run: run, kind: f.kind, scalar: f.scalar, min: r[0], max: r[1], tubeRadius: tubeRadius })
+            out.push({ run: run, kind: f.kind, scalar: f.scalar, min: r[0], max: r[1], tubeRadius: tubeRadius,
+                       palette: paletteFor(f.scalar) })
         }
         return out
     }
-    /// Streamline tube radius in mm: 0.4 % of the part's largest dimension (0 = automatic).
+    /// Streamline tube radius in mm: 0.08 % of the part's largest dimension, thin enough
+    /// for the dense rakes of CAD-135 (0 = automatic).
     readonly property real tubeRadius: {
         const c = results ? results.conditions : null
-        return c && c.characteristicLength > 0 ? c.characteristicLength * 1000 * 0.004 : 0
+        return c && c.characteristicLength > 0 ? c.characteristicLength * 1000 * 0.0008 : 0
     }
     /// Name of the run drawn in 3D, for the viewport card.
     readonly property string displayedRunTitle: {
@@ -255,6 +257,9 @@ Pane {
         results = null
         comparison = null
         fieldStats = ({})
+        rangeOverrides = ({})
+        cpMin.text = ""
+        cpMax.text = ""
         error = ""
     }
 
@@ -303,20 +308,27 @@ Pane {
             showB = false
     }
 
-    /// Colour scale for a field: shared between A and B in compare mode. Pressure maps are
-    /// symmetric around zero, clipped to Cp in [-2, 1] where the data allows.
+    /// Colour scale for a field: shared between A and B in compare mode, and between all
+    /// fields of a quantity. Pressure uses the 2nd to 98th percentile (CAD-135), so a few
+    /// extreme points at the stagnation point or a sharp edge do not wash out the map; a
+    /// range typed in the panel (rangeOverrides) wins.
     function scaleFor(kind, scalar) {
+        const o = rangeOverrides[scalar]
+        if (o && o[1] > o[0])
+            return [o[0], o[1]]
+        return autoScale(scalar)
+    }
+    function autoScale(scalar) {
         let lo = Infinity, hi = -Infinity
-        // One scale per quantity: the sections and the streamlines share the speed scale,
-        // so one legend reads them all (CAD-128).
+        const robust = scalar === "Cp" || scalar === "pressure"
         for (const id of finalComparisonAvailable ? [activeRun, compareRun] : [displayedRun]) {
             for (const f of fieldChoices) {
                 if (f.scalar !== scalar)
                     continue
                 const s = fieldStats[id + "/" + f.kind]
                 if (s && s[scalar]) {
-                    lo = Math.min(lo, s[scalar].min)
-                    hi = Math.max(hi, s[scalar].max)
+                    lo = Math.min(lo, robust && s[scalar].p02 !== undefined ? s[scalar].p02 : s[scalar].min)
+                    hi = Math.max(hi, robust && s[scalar].p98 !== undefined ? s[scalar].p98 : s[scalar].max)
                 }
             }
         }
@@ -325,6 +337,21 @@ Pane {
         if (scalar === "Cp")
             return [Math.max(lo, -2), Math.min(hi, 1)]
         return [0, hi]
+    }
+    /// Colour scales typed in the panel: {scalar: [min, max]}; absent = automatic.
+    property var rangeOverrides: ({})
+    function setRangeOverride(scalar, min, max) {
+        const copy = Object.assign({}, rangeOverrides)
+        if (isFinite(min) && isFinite(max) && max > min)
+            copy[scalar] = [min, max]
+        else
+            delete copy[scalar]
+        rangeOverrides = copy
+    }
+    /// Colour map of the pressure fields: "rainbow" (default, high contrast) or "coolwarm".
+    property string pressurePalette: "rainbow"
+    function paletteFor(scalar) {
+        return scalar === "Cp" || scalar === "pressure" ? pressurePalette : ""
     }
 
     /// Settings of a new run as they stand in the panel (simulation.run / propose_run).
@@ -988,7 +1015,7 @@ Pane {
                                 gradient: Gradient {
                                     orientation: Gradient.Horizontal
                                     stops: {
-                                        const map = root.controller.colormap(fieldRow.modelData.scalar)
+                                        const map = root.controller.colormap(fieldRow.modelData.scalar, root.paletteFor(fieldRow.modelData.scalar))
                                         return map.map((c, i) => stopComponent.createObject(fieldRow, { position: i / (map.length - 1), color: c }))
                                     }
                                 }
@@ -998,6 +1025,48 @@ Pane {
                                 font.pixelSize: 10
                             }
                         }
+                    }
+                }
+                // Colours of the pressure map and the Cp range (CAD-135).
+                GridLayout {
+                    Layout.fillWidth: true
+                    columns: 4
+                    columnSpacing: 6
+                    rowSpacing: 4
+                    visible: !!(root.results && root.results.fields.surface)
+                    Label { text: qsTr("Pressure colours") }
+                    ComboBox {
+                        id: paletteBox
+                        objectName: "pressurePaletteBox"
+                        Layout.columnSpan: 3
+                        Layout.fillWidth: true
+                        textRole: "text"
+                        valueRole: "value"
+                        model: [{ text: qsTr("Rainbow"), value: "rainbow" }, { text: qsTr("Blue–white–red"), value: "coolwarm" }]
+                        Component.onCompleted: currentIndex = indexOfValue(root.pressurePalette)
+                        onActivated: root.pressurePalette = currentValue
+                    }
+                    Label { text: qsTr("Cp range") }
+                    TextField {
+                        id: cpMin
+                        objectName: "cpMinField"
+                        Layout.preferredWidth: 64
+                        placeholderText: root.num(root.autoScale("Cp")[0], 2)
+                        validator: DoubleValidator {}
+                        onEditingFinished: root.setRangeOverride("Cp", parseFloat(cpMin.text), parseFloat(cpMax.text))
+                    }
+                    TextField {
+                        id: cpMax
+                        objectName: "cpMaxField"
+                        Layout.preferredWidth: 64
+                        placeholderText: root.num(root.autoScale("Cp")[1], 2)
+                        validator: DoubleValidator {}
+                        onEditingFinished: root.setRangeOverride("Cp", parseFloat(cpMin.text), parseFloat(cpMax.text))
+                    }
+                    Button {
+                        text: qsTr("Auto")
+                        enabled: !!root.rangeOverrides.Cp
+                        onClicked: { cpMin.text = ""; cpMax.text = ""; root.setRangeOverride("Cp", NaN, NaN) }
                     }
                 }
             }

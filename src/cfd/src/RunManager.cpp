@@ -1209,36 +1209,40 @@ PolyData RunManager::field(const std::string& id, std::string_view kind)
     const auto info = caseInfo(id);
     if (!info)
         throw std::runtime_error("Run '" + id + "' has no case.json");
-    fs::path base;
-    std::string file;
+    // Region kept around the part, in the case frame (CAD-129, CAD-135): sections and
+    // streamlines that span the whole wind tunnel would fill the view.
+    core::BoundingBox region;
+    if (const core::BoundingBox& pb = info->partBounds; !pb.isEmpty()) {
+        const double m = std::max(info->characteristicLength, 1e-9);
+        const double wake = kind == "streamlines" ? 3.0 : 1.5;
+        region.extend({pb.min.x - 0.4 * m, pb.min.y - 0.4 * m, info->settings.ground ? info->domain.min.z : pb.min.z - 0.4 * m});
+        region.extend({pb.max.x + wake * m, pb.max.y + 0.4 * m, pb.max.z + 0.4 * m});
+    }
+    PolyData d;
+    std::error_code ec;
     if (kind == "streamlines") {
-        base = run->caseDir / "postProcessing" / "sets" / "streamLines";
-        file = "track0.vtk";
+        // The rake ahead of the part and, for runs since CAD-135, the wake rake behind it.
+        for (const char* set : {"streamLines", "wakeLines"}) {
+            const auto dirs = timeDirectories(run->caseDir / "postProcessing" / "sets" / set);
+            if (dirs.empty() || !fs::is_regular_file(dirs.back() / "track0.vtk", ec))
+                continue;
+            PolyData lines = readVtk(dirs.back() / "track0.vtk");
+            appendPolyData(d, region.isEmpty() ? lines : cropLines(lines, region));
+        }
     } else if (kind == "surface" || kind == "sectionHorizontal" || kind == "sectionVertical") {
-        base = run->caseDir / "postProcessing" / "surfaces";
-        file = kind == "surface" ? "part.vtk" : std::string(kind) + ".vtk";
+        const auto dirs = timeDirectories(run->caseDir / "postProcessing" / "surfaces");
+        const std::string file = kind == "surface" ? "part.vtk" : std::string(kind) + ".vtk";
+        if (dirs.empty() || !fs::is_regular_file(dirs.back() / file, ec))
+            return {};
+        d = readVtk(dirs.back() / file);
+        if (kind != "surface" && !region.isEmpty())
+            d = cropPolygons(d, region);
     } else {
         throw std::runtime_error("Unknown field '" + std::string(kind) +
                                  "' (surface, sectionHorizontal, sectionVertical, streamlines)");
     }
-    const auto dirs = timeDirectories(base);
-    std::error_code ec;
-    if (dirs.empty() || !fs::is_regular_file(dirs.back() / file, ec))
+    if (d.empty())
         return {};
-    PolyData d = readVtk(dirs.back() / file);
-    if (kind == "sectionHorizontal" || kind == "sectionVertical") {
-        // The cutting plane spans the whole wind tunnel and would fill the view (CAD-129):
-        // keep the region around the part, 0.4 lengths ahead, beside, above and below (down
-        // to the floor when there is one), and 1.5 lengths of wake.
-        const core::BoundingBox& pb = info->partBounds;
-        if (!pb.isEmpty()) {
-            const double m = std::max(info->characteristicLength, 1e-9);
-            core::BoundingBox box;
-            box.extend({pb.min.x - 0.4 * m, pb.min.y - 0.4 * m, info->settings.ground ? info->domain.min.z : pb.min.z - 0.4 * m});
-            box.extend({pb.max.x + 1.5 * m, pb.max.y + 0.4 * m, pb.max.z + 0.4 * m});
-            d = cropPolygons(d, box);
-        }
-    }
     for (auto& p : d.points)
         p = info->frame.toModel(p);
     const double q = 0.5 * info->settings.speed * info->settings.speed;

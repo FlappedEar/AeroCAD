@@ -30,12 +30,21 @@ panel in place of Properties:
 - **Results**: progress while it runs, then drag/lift/side force in N, Cd/Cl/Cs,
   pressure vs friction drag, the conditions, the quality status and warnings, and charts
   of the coefficients, forces and residuals per iteration (updated live). **Show in 3D**:
-  pressure on the part (Cp, blue = suction, white = free-stream pressure Cp 0, red =
-  stagnation; each side of zero is scaled on its own), horizontal and vertical velocity
-  sections and streamlines (speed). The pressure map is shaded and the streamlines are
-  drawn as shaded tubes, so the shapes read in 3D; the sections stay flat and unlit so
-  their colours match the legend exactly, and are cropped to the region around the part
-  (0.4 part lengths ahead, beside and above, 1.5 lengths of wake). The viewport shows a
+  pressure on the part (Cp), horizontal and vertical velocity sections and streamlines
+  (speed). Pressure is drawn in a high-contrast rainbow map (blue = suction, green = Cp 0,
+  red = stagnation) or, under *Pressure colours*, blue-white-red; Cp 0 sits in the middle
+  of the scale and each side of zero is scaled on its own. The Cp range is the 2nd to 98th
+  percentile of the values (a few extreme points at the stagnation point or a sharp edge
+  do not wash out the map); *Cp range* takes a typed min/max, *Auto* goes back. The
+  pressure map is shaded and the streamlines are drawn as thin, see-through shaded tubes,
+  so the shapes read in 3D; the sections stay flat and unlit so their colours match the
+  legend exactly. Sections are cropped to the region around the part (0.4 part lengths
+  ahead, beside and above, 1.5 lengths of wake), streamlines to 3 lengths of wake.
+  Streamlines start from a 16 x 10 rake just ahead of the part, a little wider and taller
+  than it, and from an 8 x 5 rake just behind it traced both ways, which shows the
+  recirculation in the wake (runs made before this change have 35 lines from far
+  upstream). Hovering over the pressure map shows Cp and the pressure in Pa at the
+  pointer; over a section, the speed and Cp. The viewport shows a
   colour bar for each quantity (sections and streamlines share one speed scale) and a card
   with drag, lift and side force in N, Cd/Cl/Cs and the run conditions; the guide bar
   steps aside while results are shown. The part
@@ -264,7 +273,9 @@ synthetic case's `unknown` verdict and the reasons displayed in the real Results
 
 `simulation.field` summarises the field outputs: `surface` (pressure on the part as
 p, Cp and Pa), `sectionHorizontal` / `sectionVertical` (planes through the part centre,
-speed in m/s and Cp) and `streamlines` (35 lines seeded on a grid upstream).
+speed in m/s and Cp) and `streamlines` (a rake ahead of the part and one in the wake).
+Each scalar has `min`, `max`, `mean` and the 2nd/98th percentiles `p02`/`p98`, which the
+app uses for the pressure colour range.
 
 ## A/B comparison
 

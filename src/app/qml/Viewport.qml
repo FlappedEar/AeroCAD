@@ -687,6 +687,7 @@ Item {
             // tubes are lit so their shape reads; sections are flat and unlit so their colours
             // match the legend exactly (CAD-129).
             Repeater3D {
+                id: fieldRepeater
                 model: root.simulationFields
                 delegate: Model {
                     id: fieldModel
@@ -702,12 +703,15 @@ Item {
                         rangeMin: modelData.min
                         rangeMax: modelData.max
                         tubeRadius: modelData.tubeRadius ?? 0
+                        palette: modelData.palette ?? ""
                     }
                     materials: DefaultMaterial {
                         vertexColorsEnabled: true
                         lighting: fieldModel.flat ? DefaultMaterial.NoLighting : DefaultMaterial.FragmentLighting
                         specularAmount: 0.15
                         cullMode: Material.NoCulling
+                        // Dense streamlines are see-through, so the part shows behind them.
+                        opacity: fieldModel.modelData.kind === "streamlines" ? 0.55 : 1.0
                     }
                 }
             }
@@ -919,6 +923,51 @@ Item {
         const hit = pickPart(x, y)
         const node = hit ? previewNode(hit.partId) : null
         hoveredPartId = node && node.visible && node.pickable ? hit.partId : 0
+        updateFieldProbe(x, y, hit)
+    }
+
+    /// Wind tunnel result under the pointer (CAD-134): {x, y, kind, values} or null.
+    property var fieldProbe: null
+    onSimulationFieldsChanged: { fieldProbe = null; refreshHover() }
+    function updateFieldProbe(x, y, partHit) {
+        if (simulationFields.length === 0) {
+            fieldProbe = null
+            return
+        }
+        const near = modelSpace.mapPositionFromScene(view.mapTo3DScene(Qt.vector3d(x, y, 0)))
+        const far = modelSpace.mapPositionFromScene(view.mapTo3DScene(Qt.vector3d(x, y, 100)))
+        const dir = far.minus(near)
+        let best = null
+        for (let i = 0; i < fieldRepeater.count; ++i) {
+            const m = fieldRepeater.objectAt(i)
+            if (!m || !m.geometry)
+                continue
+            const r = m.geometry.pick(near, dir)
+            if (r.point && (!best || r.distance < best.distance))
+                best = r
+        }
+        // A part drawn in front of the result hides it (not the part under its own pressure
+        // map, which is hidden and lies on the same surface).
+        if (best && partHit && hiddenPartIds.indexOf(partHit.partId) < 0) {
+            const partT = partHit.point.minus(near).length() / dir.length()
+            if (partT < best.distance * (1 - 1e-4))
+                best = null
+        }
+        fieldProbe = best ? { x: x, y: y, kind: best.kind, values: best.values } : null
+    }
+    function probeText(p) {
+        if (!p)
+            return ""
+        const v = p.values
+        const f = (x, d) => Number(x).toFixed(d)
+        if (p.kind === "surface")
+            return v.Cp !== undefined ? qsTr("Cp %1 · %2 Pa").arg(f(v.Cp, 2)).arg(f(v.pressure, 0)) : ""
+        const parts = []
+        if (v.speed !== undefined)
+            parts.push(qsTr("%1 m/s").arg(f(v.speed, 1)))
+        if (v.Cp !== undefined)
+            parts.push(qsTr("Cp %1").arg(f(v.Cp, 2)))
+        return parts.join(" · ")
     }
     HoverHandler {
         id: partHover
@@ -932,12 +981,13 @@ Item {
             if (cameraInput.buttonHeld) {
                 hoverTimer.stop()
                 root.hoveredPartId = 0
+                root.fieldProbe = null
                 return
             }
             if (!hoverTimer.running)
                 hoverTimer.start()
         }
-        onHoveredChanged: if (!hovered) { hoverTimer.stop(); root.hoveredPartId = 0 }
+        onHoveredChanged: if (!hovered) { hoverTimer.stop(); root.hoveredPartId = 0; root.fieldProbe = null }
     }
     // The view or the parts change under a still pointer (touchpad pan, F6, a command):
     // pick again, so the highlight keeps showing what a click would pick.
@@ -1402,6 +1452,28 @@ Item {
                 }
             }
             arrows = out
+        }
+    }
+
+    // Value of the wind tunnel result under the pointer, next to it (CAD-134).
+    Rectangle {
+        id: probeLabel
+        objectName: "fieldProbeLabel"
+        readonly property string text: root.probeText(root.fieldProbe)
+        visible: text.length > 0
+        x: root.fieldProbe ? Math.min(root.fieldProbe.x + 14, root.width - width - 4) : 0
+        y: root.fieldProbe ? Math.max(4, root.fieldProbe.y - height - 10) : 0
+        z: 10
+        width: probeLabelText.implicitWidth + 12
+        height: probeLabelText.implicitHeight + 6
+        radius: 4
+        color: Theme.tooltip
+        Text {
+            id: probeLabelText
+            anchors.centerIn: parent
+            text: probeLabel.text
+            color: Theme.tooltipText
+            font.pixelSize: 12
         }
     }
 

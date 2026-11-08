@@ -7,6 +7,8 @@
 #include <QPointer>
 #include <QQuick3DGeometry>
 #include <QVariantList>
+#include <QVariantMap>
+#include <QVector3D>
 #include <QtQml/qqmlregistration.h>
 
 namespace aerocad::app {
@@ -27,6 +29,9 @@ class FieldGeometry : public QQuick3DGeometry {
     Q_PROPERTY(QString kind READ kind WRITE setKind NOTIFY changed)
     /// Scalar to colour by: Cp, pressure, p, speed.
     Q_PROPERTY(QString scalar READ scalar WRITE setScalar NOTIFY changed)
+    /// Colour map: "rainbow" (turbo-like, high contrast), "coolwarm" (blue-white-red) or
+    /// "viridis"; empty = the default for the scalar (rainbow for pressure, viridis for speed).
+    Q_PROPERTY(QString palette READ palette WRITE setPalette NOTIFY changed)
     /// Colour scale. When rangeMin >= rangeMax the data range is used.
     Q_PROPERTY(double rangeMin READ rangeMin WRITE setRangeMin NOTIFY changed)
     Q_PROPERTY(double rangeMax READ rangeMax WRITE setRangeMax NOTIFY changed)
@@ -51,6 +56,8 @@ public:
     void setKind(const QString& kind);
     [[nodiscard]] QString scalar() const { return m_scalar; }
     void setScalar(const QString& scalar);
+    [[nodiscard]] QString palette() const { return m_palette; }
+    void setPalette(const QString& palette);
     [[nodiscard]] double rangeMin() const { return m_rangeMin; }
     void setRangeMin(double v);
     [[nodiscard]] double rangeMax() const { return m_rangeMax; }
@@ -64,13 +71,18 @@ public:
     [[nodiscard]] bool isEmpty() const { return m_data.empty(); }
     [[nodiscard]] QVariantList colormap() const;
 
-    /// Colour of t in [0, 1] on the map used for `scalar` (diverging for pressure,
-    /// sequential for speed).
-    [[nodiscard]] static QColor mapColor(const QString& scalar, double t);
+    /// Colour of t in [0, 1] on `palette` (empty: the default one for `scalar`).
+    [[nodiscard]] static QColor mapColor(const QString& scalar, double t, const QString& palette = {});
+    /// The palette used for `scalar` when `palette` is empty or unknown.
+    [[nodiscard]] static QString resolvedPalette(const QString& scalar, const QString& palette);
     /// Position of `value` on the colour scale [lo, hi] as t in [0, 1]. Pressure scalars
     /// (Cp, pressure, p) whose range spans zero keep zero, the free-stream pressure, at the
     /// neutral middle of the diverging map; each side is scaled on its own (CAD-127).
     [[nodiscard]] static double scalePosition(const QString& scalar, double value, double lo, double hi);
+    /// The field under a ray (model coordinates, mm): {point, distance (along `direction`
+    /// in its units), values: {Cp, pressure, speed, ...}} interpolated at the hit, or {}
+    /// when the ray misses. Surfaces and sections only; streamlines are not picked.
+    Q_INVOKABLE QVariantMap pick(const QVector3D& origin, const QVector3D& direction) const;
     /// Number of floats per vertex: position, normal, RGBA.
     static constexpr int kFloatsPerVertex = 10;
 
@@ -87,6 +99,7 @@ private:
     QString m_run;
     QString m_kind = QStringLiteral("surface");
     QString m_scalar = QStringLiteral("Cp");
+    QString m_palette;
     double m_rangeMin = 0.0;
     double m_rangeMax = 0.0;
     double m_tubeRadius = 0.0;
