@@ -252,6 +252,22 @@ ApplicationWindow {
             zoomToPart(pid)
     }
 
+    /// Grow / shrink / invert the area selected on the selected scan.
+    function changeSelection(command, params) {
+        const info = selectedInfo()
+        if (info.kind !== "imported" || !(info.triangles > 0)) {
+            controller.showStatus(qsTr("Select a scan first."))
+            return
+        }
+        if (command === "selection.grow" && !(info.selectedTriangles > 0)) {
+            controller.showStatus(qsTr("Select an area of the scan first (1, 2 or 3)."))
+            return
+        }
+        const r = controller.execute(command, Object.assign({ id: info.id }, params))
+        if (!r.ok)
+            controller.showStatus(r.error)
+    }
+
     /// Fills the view with part `id`.
     function zoomToPart(id) {
         const info = controller.partInfo(id)
@@ -833,6 +849,46 @@ ApplicationWindow {
         onTriggered: window.zoomToSelection(0)
     }
     Action {
+        id: zoomInAction
+        text: qsTr("Zoom &In")
+        shortcut: StandardKey.ZoomIn // Fusion (Windows): Ctrl++
+        onTriggered: viewport.zoomView(1 / 1.25)
+    }
+    Action {
+        id: zoomOutAction
+        text: qsTr("Zoom &Out")
+        shortcut: StandardKey.ZoomOut // Fusion (Windows): Ctrl+-
+        onTriggered: viewport.zoomView(1.25)
+    }
+    // On most layouts + shares a key with =: Ctrl+= (no Shift) zooms in too.
+    Shortcut {
+        sequence: "Ctrl+="
+        onActivated: zoomInAction.trigger()
+    }
+    // Area selection on a scan (Fusion Direct Mesh: Shift+Up / Shift+Down grow / shrink,
+    // Alt+N invert).
+    Action {
+        id: growSelectionAction
+        text: qsTr("&Grow Selection")
+        shortcut: "Shift+Up"
+        enabled: !!window.selectedPartId && !window.activeSketch
+        onTriggered: window.changeSelection("selection.grow", { steps: 1 })
+    }
+    Action {
+        id: shrinkSelectionAction
+        text: qsTr("S&hrink Selection")
+        shortcut: "Shift+Down"
+        enabled: !!window.selectedPartId && !window.activeSketch
+        onTriggered: window.changeSelection("selection.grow", { steps: -1 })
+    }
+    Action {
+        id: invertSelectionAction
+        text: qsTr("&Invert Selection")
+        shortcut: "Alt+N"
+        enabled: !!window.selectedPartId && !window.activeSketch
+        onTriggered: window.changeSelection("selection.invert", {})
+    }
+    Action {
         id: homeAction
         text: qsTr("&Home")
         onTriggered: viewport.goHome()
@@ -1147,6 +1203,10 @@ ApplicationWindow {
             MenuItem { action: visibilityAction }
             MenuItem { action: deleteAction }
             MenuSeparator {}
+            MenuItem { action: growSelectionAction }
+            MenuItem { action: shrinkSelectionAction }
+            MenuItem { action: invertSelectionAction }
+            MenuSeparator {}
             MenuItem { action: agentAccessAction }
             MenuItem { action: preferencesAction }
         }
@@ -1235,6 +1295,8 @@ ApplicationWindow {
             title: qsTr("&View")
             MenuItem { action: fitAction }
             MenuItem { action: zoomSelectionAction }
+            MenuItem { action: zoomInAction }
+            MenuItem { action: zoomOutAction }
             MenuItem { action: homeAction }
             MenuSeparator {}
             Action { text: qsTr("Front"); onTriggered: viewport.setView(0, 0) }

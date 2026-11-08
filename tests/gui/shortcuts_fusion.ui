@@ -1,0 +1,30 @@
+# Keyboard shortcuts added in the Fusion audit, pressed as real keys:
+#  - Shift+Up / Shift+Down grow and shrink the area selected on a scan, Alt+N inverts it
+#    (Fusion Direct Mesh);
+#  - Ctrl++ / Ctrl+- zoom in and out (Fusion, Windows);
+#  - they all show in Help > Keyboard Shortcuts, and no key is bound to two commands.
+# Run: AeroCAD tests/data/box_200x80x60.stl --ui-script <this file>
+Qt.createQmlObject('import QtQuick; Item { objectName: "kbTest"; visible: false; property var s: ({}); function part() { return controller.execute("document.parts").result.parts[0] } function sel() { return controller.execute("selection.get", { id: part().id }).result.selectedTriangles } }', window.contentItem)
+ui.wait(800)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "kbTest"); window.selectPart(t.part().id); const r = controller.execute("selection.pick_region", { id: t.part().id, point: [100, 40, 60] }); if (!r.ok) ui.fail("pick region: " + r.error); t.s.n0 = t.sel(); viewport.forceActiveFocus() })()
+ui.key("Up", "shift")
+ui.wait(200)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "kbTest"); t.s.n1 = t.sel(); ui.log("Shift+Up: selected " + t.s.n0 + " -> " + t.s.n1); if (!(t.s.n1 > t.s.n0)) ui.fail("Shift+Up did not grow the selection") })()
+ui.key("Down", "shift")
+ui.wait(200)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "kbTest"); const n = t.sel(); ui.log("Shift+Down: selected " + n); if (!(n < t.s.n1)) ui.fail("Shift+Down did not shrink the selection") ; t.s.n2 = n })()
+ui.key("N", "alt")
+ui.wait(200)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "kbTest"); const n = t.sel(); ui.log("Alt+N: selected " + n + " of 12"); if (n !== 12 - t.s.n2) ui.fail("Alt+N did not invert the selection"); t.s.d0 = viewport.cameraState().distance })()
+ui.key("+", "ctrl")
+ui.wait(200)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "kbTest"); t.s.d1 = viewport.cameraState().distance; ui.log("zoom in: distance " + t.s.d0.toFixed(1) + " -> " + t.s.d1.toFixed(1)); if (!(t.s.d1 < t.s.d0)) ui.fail("Ctrl++ did not zoom in") })()
+ui.key("-", "ctrl")
+ui.wait(200)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "kbTest"); const d = viewport.cameraState().distance; ui.log("zoom out: distance " + d.toFixed(1)); if (Math.abs(d - t.s.d0) > 1e-6) ui.fail("Ctrl+- did not zoom back out") })()
+# Ctrl+= (the + key without Shift) zooms in as well, then back out.
+ui.key("=", "ctrl")
+ui.wait(200)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "kbTest"); const d = viewport.cameraState().distance; ui.log("Ctrl+=: distance " + d.toFixed(1)); if (!(d < t.s.d0)) ui.fail("Ctrl+= did not zoom in"); viewport.zoomView(1.25) })()
+# The shortcut list shows them, and every key is bound to one command only.
+(() => { shortcutsDialog.open(); shortcutsDialog.refresh(); const rows = shortcutsDialog.rows; const want = ["Grow Selection", "Shrink Selection", "Invert Selection", "Zoom In", "Zoom Out", "Zoom to Selection"]; for (const w of want) if (w !== "Zoom to Selection" && !rows.some(r => r.name === w)) ui.fail("not in the shortcut list: " + w); const seen = {}; const dup = []; for (const r of rows) { if (r.group.startsWith("Mouse")) continue; const k = r.keys; if (seen[k] && seen[k] !== r.name) dup.push(k + ": " + seen[k] + " / " + r.name); seen[k] = r.name } ui.log("shortcut rows " + rows.length + ", keys bound twice: " + dup.length + (dup.length ? " (" + dup.join("; ") + ")" : "")); if (dup.length) ui.fail("keys bound to two commands: " + dup.join("; ")); shortcutsDialog.close() })()

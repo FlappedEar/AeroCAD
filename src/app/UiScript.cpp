@@ -242,6 +242,8 @@ private:
             m |= Qt::ShiftModifier;
         if (mods.contains("ctrl"))
             m |= Qt::ControlModifier;
+        if (mods.contains("alt"))
+            m |= Qt::AltModifier;
         return m;
     }
 
