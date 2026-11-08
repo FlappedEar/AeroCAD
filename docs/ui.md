@@ -150,6 +150,9 @@ change:
   **Shift** while dragging to snap (1 mm, 15°, 5 %). The value shows next to the pointer.
 - The part follows live. A small panel (top left of the view) shows the exact Move (mm),
   Rotate (° about X, then Y, then Z) and Scale (%); typing a value previews it at once.
+  When a typed Move or Scale takes the part out of view (scaled up around the camera,
+  shrunk to a dot or moved off screen), the view frames the preview; Fit (F6) during the
+  tool frames the preview too.
 - **Enter** or **Done** applies everything as one undo step; **Esc** or **Cancel** puts the
   part back; **Reset** clears the values. Clicking another part or empty space, or starting
   another command, applies it too. Ctrl+Z / Cmd+Z during the tool drops the preview.
