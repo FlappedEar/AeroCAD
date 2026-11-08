@@ -137,9 +137,17 @@ public:
     [[nodiscard]] const std::filesystem::path& root() const { return m_root; }
 
     /// Generates the case and starts the engine. Returns the new run id. Throws
-    /// std::runtime_error (no engine, bad geometry, I/O).
+    /// std::runtime_error (no engine, bad geometry, I/O). A run on this computer waits
+    /// (state running, stage "queued") while starting it would use more solver processes than
+    /// the processor limit next to the runs already solving here; it starts by itself when
+    /// they finish (list() / status() start it). Oversubscribed MPI runs are many times slower
+    /// than the same runs one after the other.
     std::string start(const CaseGeometry& geometry, const Settings& settings, const RunSource& source,
                       std::optional<Backend> backend = std::nullopt);
+
+    /// Solver processes that may run at once on this computer (default: the logical cores).
+    void setProcessorLimit(int processes) { m_processorLimit = processes; }
+    [[nodiscard]] int processorLimit() const { return m_processorLimit; }
 
     /// Only writes the case (no engine), e.g. to run it elsewhere. Returns the run id.
     std::string prepare(const CaseGeometry& geometry, const Settings& settings, const RunSource& source);
@@ -207,6 +215,10 @@ private:
     void loadRun(const std::filesystem::path& dir, bool follow = false);
     void scan(bool follow);
     void refresh(Run& run);
+    /// Solver processes of the local runs this manager is running now.
+    int localProcessesInUse();
+    /// Starts queued local runs, oldest first, while they fit under the processor limit.
+    void startQueued();
     std::string newRunId(const std::string& partName);
     std::string create(const CaseGeometry& geometry, const Settings& settings, const RunSource& source,
                        std::optional<Backend> backend);
@@ -214,6 +226,7 @@ private:
     std::filesystem::path m_root;
     std::map<std::string, std::unique_ptr<Run>> m_runs;
     std::optional<Process> m_imagePull;
+    int m_processorLimit = 0; ///< Set in the constructor.
 };
 
 } // namespace aerocad::cfd

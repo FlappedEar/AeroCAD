@@ -12,6 +12,7 @@
 #include <set>
 #include <sstream>
 #include <stdexcept>
+#include <thread>
 
 #ifndef _WIN32
 #include <unistd.h>
@@ -373,6 +374,8 @@ struct RunManager::Run {
     std::optional<Process> stopper; ///< `docker kill` started by cancel().
     fs::path docker;
     std::string dockerHost; ///< Remote engine the run was started on, empty = this machine.
+    int processes = 0;      ///< Solver processes of a run started (or queued) by this manager.
+    std::vector<std::string> queuedArgv; ///< Engine command of a run waiting for processors.
     RunStatus status;
 };
 
@@ -678,7 +681,11 @@ fs::path RunManager::defaultRoot()
 }
 
 // At start-up the session takes over the remote runs that continue on their host.
-RunManager::RunManager(fs::path root) : m_root(std::move(root)) { scan(true); }
+RunManager::RunManager(fs::path root)
+    : m_root(std::move(root)), m_processorLimit(static_cast<int>(std::max(1U, std::thread::hardware_concurrency())))
+{
+    scan(true);
+}
 
 RunManager::~RunManager() = default;
 
@@ -845,9 +852,45 @@ std::string RunManager::start(const CaseGeometry& geometry, const Settings& sett
         j["dockerHost"] = run.dockerHost;
     j["command"] = remote ? Json::array({"remote", run.dockerHost, containerName(id)}) : Json(argv);
     std::ofstream(run.dir / "run.json") << j.dump(2) << "\n";
+    run.processes = effective.effectiveProcesses();
+    if (!remote) {
+        // Wait behind earlier queued runs, or while the processors are taken (CAD-144).
+        const bool queueAhead = std::any_of(m_runs.begin(), m_runs.end(), [&](const auto& r) {
+            return r.first != id && !r.second->queuedArgv.empty();
+        });
+        const int inUse = localProcessesInUse();
+        if (queueAhead || (inUse > 0 && inUse + run.processes > m_processorLimit)) {
+            run.queuedArgv = argv;
+            std::ofstream(run.caseDir / "aerocad.stage") << "queued\n";
+            return id;
+        }
+    }
     std::ofstream(run.caseDir / "aerocad.stage") << "starting\n";
     run.process = Process::start(argv, run.caseDir, run.dir / "log.aerocad");
     return id;
+}
+
+int RunManager::localProcessesInUse()
+{
+    int n = 0;
+    for (auto& [id, run] : m_runs)
+        if (run->dockerHost.empty() && run->process && run->process->running())
+            n += std::max(1, run->processes);
+    return n;
+}
+
+void RunManager::startQueued()
+{
+    for (auto& [id, run] : m_runs) { // Ids start with the creation time: oldest first.
+        if (run->queuedArgv.empty())
+            continue;
+        const int inUse = localProcessesInUse();
+        if (inUse > 0 && inUse + run->processes > m_processorLimit)
+            return; // First in, first out.
+        std::ofstream(run->caseDir / "aerocad.stage") << "starting\n";
+        run->process = Process::start(run->queuedArgv, run->caseDir, run->dir / "log.aerocad");
+        run->queuedArgv.clear();
+    }
 }
 
 std::string RunManager::importCase(const fs::path& caseDir, const std::string& label)
@@ -894,6 +937,16 @@ void RunManager::refresh(Run& run)
 
     if (const auto info = caseInfo(run.id))
         s.maxIterations = info->settings.effectiveIterations();
+    if (!run.queuedArgv.empty()) { // Waiting for processors (CAD-144).
+        s.state = RunState::Running;
+        s.stage = "queued";
+        s.progress = 0.0;
+        s.iteration = 0;
+        s.cd = s.cl = s.cs = s.dragN = s.liftN = s.sideN = std::nullopt;
+        s.message = "Waiting for the other runs on this computer to finish: one after the other they finish "
+                    "sooner than all at once.";
+        return;
+    }
 
     const Table coeffs = readTable(run.caseDir / "postProcessing" / "forceCoeffs" / "0" / "coefficient.dat");
     const Table forces = readTable(run.caseDir / "postProcessing" / "forces" / "0" / "force.dat");
@@ -956,6 +1009,7 @@ void RunManager::refresh(Run& run)
 
 std::vector<RunStatus> RunManager::list()
 {
+    startQueued();
     std::vector<RunStatus> out;
     for (auto& [id, run] : m_runs) {
         refresh(*run);
@@ -970,6 +1024,7 @@ std::optional<RunStatus> RunManager::status(const std::string& id)
     Run* run = find(id);
     if (run == nullptr)
         return std::nullopt;
+    startQueued();
     refresh(*run);
     return run->status;
 }
@@ -982,6 +1037,11 @@ bool RunManager::cancel(const std::string& id)
     refresh(*run);
     if (run->status.state != RunState::Running)
         return false;
+    if (!run->queuedArgv.empty()) { // Never started: just leave the queue.
+        run->queuedArgv.clear();
+        std::ofstream(run->caseDir / "aerocad.cancelled") << nowIso() << "\n";
+        return true;
+    }
     // A local engine started by an earlier session of the app cannot be identified
     // safely (process ids are reused), so it is not ours to stop. Docker containers are
     // found by name.
