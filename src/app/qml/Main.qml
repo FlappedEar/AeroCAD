@@ -289,6 +289,15 @@ ApplicationWindow {
             controller.showStatus(r.error)
     }
 
+    /// Renames part `id` in place in the Browser (Fusion: Rename in the Browser).
+    function renamePart(id) {
+        if (!id)
+            return
+        window.browserVisible = true
+        selectPart(id)
+        browser.startRename(id)
+    }
+
     /// Fills the view with part `id`.
     function zoomToPart(id) {
         const info = controller.partInfo(id)
@@ -850,6 +859,13 @@ ApplicationWindow {
         onTriggered: window.toggleSelectedVisibility()
     }
     Action {
+        id: renameAction
+        text: qsTr("Re&name")
+        enabled: !!window.selectedPartId
+        shortcut: "F2" // the system rename key; Fusion renames from the Browser
+        onTriggered: window.renamePart(window.selectedPartId)
+    }
+    Action {
         id: moveAction
         text: qsTr("&Move / Rotate / Scale")
         enabled: !!window.selectedPartId && !window.activeSketch
@@ -1155,6 +1171,8 @@ ApplicationWindow {
 
     Shortcut {
         sequence: "Esc"
+        // A name being edited in the Browser takes its own Esc (keep the old name).
+        enabled: !browser.renamingId
         onActivated: {
             if (viewport.transformPickMode) {
                 viewport.transformPickMode = ""
@@ -1246,6 +1264,7 @@ ApplicationWindow {
             MenuItem { action: pasteAction }
             MenuSeparator {}
             MenuItem { action: visibilityAction }
+            MenuItem { action: renameAction }
             MenuItem { action: deleteAction }
             MenuSeparator {}
             MenuItem { action: growSelectionAction }

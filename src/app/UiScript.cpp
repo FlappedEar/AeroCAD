@@ -157,6 +157,22 @@ public:
         QTest::keyClick(m_window.data(), seq[0].key(), modifiers(mods));
     }
 
+    /// Types `text` into the focused item, one key press per character as a keyboard does.
+    Q_INVOKABLE void type(const QString& text)
+    {
+        if (QGuiApplication::focusWindow() != m_window) {
+            m_window->requestActivate();
+            if (!QTest::qWaitForWindowActive(m_window.data(), 1000))
+                std::fprintf(stderr, "ui-script: window did not become active for typing\n");
+        }
+        for (const QChar c : text) {
+            const auto key = static_cast<Qt::Key>(c.toUpper().unicode());
+            const Qt::KeyboardModifiers mods = c.isUpper() ? Qt::ShiftModifier : Qt::NoModifier;
+            QTest::sendKeyEvent(QTest::Press, m_window.data(), key, QString(c), mods);
+            QTest::sendKeyEvent(QTest::Release, m_window.data(), key, QString(c), mods);
+        }
+    }
+
     /// Drops files at (x, y) as a file manager does: drag enter, move and drop events with
     /// file URLs. Relative paths are resolved against the working directory.
     Q_INVOKABLE void drop(qreal x, qreal y, const QStringList& paths)

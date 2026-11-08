@@ -722,6 +722,9 @@ Item {
         acceptedButtons: Qt.LeftButton
         /// The first click of a double click picked a face (Lay on Face / Face Front).
         property bool firstTapPicked: false
+        // A click in the view takes the keyboard focus, as in Fusion: a name or value being
+        // typed elsewhere (Browser rename, Move fields) is applied first.
+        onPressedChanged: if (pressed) root.forceActiveFocus()
         onTapped: eventPoint => {
             if (tapCount === 1)
                 firstTapPicked = !!root.transformPickMode

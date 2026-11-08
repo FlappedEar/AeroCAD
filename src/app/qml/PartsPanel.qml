@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Browser (Fusion's name for the document tree): the parts of the document with their
-// visibility.
+// visibility. A double click on a row (or F2, or Rename in the right-click menu) edits the
+// name in place: Enter or clicking elsewhere renames, Esc keeps the old name.
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -14,6 +15,28 @@ Pane {
     signal partSelected(var id)
     /// Right-click on a row: open the part's context menu at x, y in `item`.
     signal partContextRequested(var id, Item item, real x, real y)
+
+    /// Part whose name is being edited in place (0 = none).
+    property var renamingId: 0
+    function startRename(id) {
+        for (let i = 0; i < list.count; ++i) {
+            const r = list.itemAtIndex(i)
+            if (r && r.partId === id) {
+                list.positionViewAtIndex(i, ListView.Contain)
+                break
+            }
+        }
+        renamingId = id
+    }
+    /// The row of part `id` (null when it is not created), e.g. for tests.
+    function rowItem(id) {
+        for (let i = 0; i < list.count; ++i) {
+            const r = list.itemAtIndex(i)
+            if (r && r.partId === id)
+                return r
+        }
+        return null
+    }
 
     padding: 0
     background: Rectangle { color: Theme.surface }
@@ -57,7 +80,13 @@ Pane {
                 height: 36
                 leftPadding: Theme.space3
                 rightPadding: Theme.space1
+                readonly property bool renaming: root.renamingId === row.partId
+                readonly property alias nameField: nameField
                 onClicked: root.partSelected(row.partId)
+                onDoubleClicked: {
+                    root.partSelected(row.partId)
+                    root.startRename(row.partId)
+                }
                 TapHandler {
                     acceptedButtons: Qt.RightButton
                     onTapped: eventPoint => root.partContextRequested(row.partId, row, eventPoint.position.x, eventPoint.position.y)
@@ -84,11 +113,45 @@ Pane {
                         spacing: 0
                         Text {
                             Layout.fillWidth: true
+                            visible: !row.renaming
                             text: row.name
                             color: row.partVisible ? Theme.text : Theme.textFaint
                             font.pixelSize: Theme.fontBody
                             font.weight: row.selected ? Font.DemiBold : Font.Normal
                             elide: Text.ElideRight
+                        }
+                        TextField {
+                            id: nameField
+                            objectName: "renameField"
+                            Layout.fillWidth: true
+                            visible: row.renaming
+                            padding: 2
+                            font.pixelSize: Theme.fontBody
+                            selectByMouse: true
+                            property bool done: false
+                            onVisibleChanged: {
+                                if (!visible)
+                                    return
+                                done = false
+                                text = row.name
+                                selectAll()
+                                forceActiveFocus()
+                            }
+                            function finish(apply) {
+                                if (done || !row.renaming)
+                                    return
+                                done = true
+                                const name = text.trim()
+                                root.renamingId = 0
+                                if (apply && name.length > 0 && name !== row.name)
+                                    root.controller.execute("part.rename", { id: row.partId, name: name })
+                            }
+                            onAccepted: finish(true)
+                            onActiveFocusChanged: if (!activeFocus) finish(true)
+                            Keys.onEscapePressed: event => {
+                                event.accepted = true
+                                finish(false)
+                            }
                         }
                         Text {
                             Layout.fillWidth: true

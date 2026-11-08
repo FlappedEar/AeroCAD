@@ -354,6 +354,41 @@ TEST_CASE("A body is duplicated as a fixed solid that survives timeline edits an
         CHECK_FALSE(s.execute("part.duplicate", {{"id", sketchPart}}).ok);
 }
 
+TEST_CASE("A renamed timeline body keeps its name through edits, undo and saving", "[commands][project]")
+{
+    TempDir dir;
+    commands::Session s;
+    run(s, "feature.box", {{"size", {40, 30, 6}}});
+    const model::Part* body = nullptr;
+    for (const auto& p : s.document().parts())
+        if (p.kind == model::PartKind::Body)
+            body = &p;
+    REQUIRE(body);
+    const model::PartId id = body->id;
+    const auto featureId = body->featureId;
+    run(s, "part.rename", {{"id", id}, {"name", "Fin left"}});
+    run(s, "feature.edit", {{"id", featureId}, {"params", {{"size", {50, 30, 6}}}}});
+    REQUIRE(s.document().part(id));
+    CHECK(s.document().part(id)->name == "Fin left");
+    CHECK(s.document().part(id)->mesh->bounds().size().x == Approx(50));
+    run(s, "edit.undo"); // the edit: the name stays
+    CHECK(s.document().part(id)->name == "Fin left");
+    run(s, "project.save", {{"path", dir.file("renamed.aerocad")}});
+    commands::Session t;
+    run(t, "project.open", {{"path", dir.file("renamed.aerocad")}});
+    int named = 0;
+    for (const auto& p : t.document().parts())
+        if (p.kind == model::PartKind::Body && p.name == "Fin left")
+            ++named;
+    CHECK(named == 1);
+    run(t, "feature.edit", {{"id", featureId}, {"params", {{"size", {60, 30, 6}}}}});
+    named = 0;
+    for (const auto& p : t.document().parts())
+        if (p.kind == model::PartKind::Body && p.name == "Fin left")
+            ++named;
+    CHECK(named == 1);
+}
+
 TEST_CASE("Kept dimensions follow edits and are saved with the project", "[commands][project][inspect]")
 {
     TempDir dir;
