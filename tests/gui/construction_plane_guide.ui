@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CAD-133: a selected construction plane is not called a scan: its guide and context bar
+# offer Sketch on this plane (which starts a sketch on it) and Edit plane, no scan actions.
+ui.wait(1200)
+(() => { const r = controller.execute("feature.plane", { base: "XZ", offset: 200 }); if (!r.ok) ui.fail(r.error); const pl = controller.execute("document.parts").result.parts.find(p => p.kind === "plane"); window.selectPart(pl.id) })()
+ui.wait(500)
+(() => { const info = window.selectionInfo; const g = contextActions.guide(info); ui.log("GUIDE " + g.title + " / " + JSON.stringify(window.selectionActions.map(a => a.id))); if (g.title !== "Construction plane") ui.fail("the plane is called " + g.title); if (window.selectionActions.some(a => /Scan|fit|Fin|repair|simplify|toBody/i.test(a.id))) ui.fail("scan actions offered on a plane"); const n = contextActions.nextAction(info); if (!n || n.id !== "sketchOnPlane") ui.fail("next step is not Sketch on this plane"); const e = window.selectionActions.find(a => a.id === "editPlane"); if (!e || !e.enabled) ui.fail("Edit plane not offered") })()
+ui.shot("construction-plane-guide.png")
+ui.clickText("Sketch on this plane")
+ui.wait(800)
+(() => { const s = window.activeSketch; ui.log("SKETCH " + JSON.stringify(s)); if (!s) { ui.fail("no sketch started"); return } if (Math.abs(s.origin[1] + 200) > 1e-6 || Math.abs(s.normal[1] + 1) > 1e-6) ui.fail("the sketch is not on the plane") })()
+ui.log("construction plane guide done")

@@ -23,6 +23,9 @@ QtObject {
     /// openExport, editFeature, setSelectionTool.
     required property var host
 
+    /// The largest selection surface.fit_selection fits (SurfaceCommands.cpp, maxTriangles).
+    readonly property int maxFitTriangles: 200000
+
     /// Changes whenever the document changes, so bindings that call guide() / actions()
     /// re-evaluate.
     property int revision: 0
@@ -35,11 +38,11 @@ QtObject {
     // --- Classification ----------------------------------------------------------------
 
     /// "mesh" (scan), "surface" (fitted NURBS surface), "solid" (imported exact solid),
-    /// "body" (timeline body), "sketch", or "" (nothing selected).
+    /// "body" (timeline body), "sketch", "plane" (construction plane), or "" (nothing selected).
     function role(info) {
         if (!info || !info.id)
             return ""
-        if (info.kind === "sketch" || info.kind === "body")
+        if (info.kind === "sketch" || info.kind === "body" || info.kind === "plane")
             return info.kind
         if (info.hasBrep && (info.solids ?? 0) > 0)
             return "solid"
@@ -56,11 +59,11 @@ QtObject {
 
     function roleName(r) {
         return ({ mesh: qsTr("Scan (mesh)"), surface: qsTr("Surface"), solid: qsTr("Solid"),
-                  body: qsTr("Body"), sketch: qsTr("Sketch") })[r] || ""
+                  body: qsTr("Body"), sketch: qsTr("Sketch"), plane: qsTr("Construction plane") })[r] || ""
     }
 
     function roleIcon(r) {
-        return ({ mesh: "mesh", surface: "surface", solid: "body", body: "body", sketch: "sketch" })[r] || "tool"
+        return ({ mesh: "mesh", surface: "surface", solid: "body", body: "body", sketch: "sketch", plane: "plane" })[r] || "tool"
     }
 
     /// Sketches of the document, newest first: [{ name, featureId, partId }].
@@ -149,6 +152,13 @@ QtObject {
         return r.ok ? (r.result.features.find(f => f.id === id) ?? null) : null
     }
 
+    /// The timeline feature with id `featureId` ({ id, type, params }), or null.
+    function timelineFeature(featureId) {
+        void revision
+        const r = controller.execute("timeline.list")
+        return r.ok ? (r.result.features.find(f => f.id === featureId) ?? null) : null
+    }
+
     /// True for a surface piece made by "Cut out by sketch" (its next step is Thicken).
     function isCutOut(info) {
         return String(info.source ?? "").startsWith("surface.trim_by_sketch")
@@ -207,12 +217,19 @@ QtObject {
         case "clearSelection":
             return { id: id, text: qsTr("Clear"), icon: "close", enabled: selected,
                      reason: qsTr("Nothing is selected."), tip: qsTr("Deselects the area.") }
-        case "fitSurface":
-            return { id: id, text: qsTr("Fit smooth surface"), icon: "surface", enabled: selected, primary: true,
-                     reason: qsTr("Select an area of the scan first (step 1)."),
+        case "fitSurface": {
+            // surface.fit_selection refuses more (CAD-138): say so before the popup.
+            const tooLarge = (info.selectedTriangles ?? 0) > maxFitTriangles
+            return { id: id, text: qsTr("Fit smooth surface"), icon: "surface", enabled: selected && !tooLarge, primary: true,
+                     reason: tooLarge
+                             ? qsTr("The selected area is too large for one surface (%1 triangles, at most %2). Select a smaller area with Draw around or Paint (or set Max total for Click an area), or draw the part straight on the scan with Sketch on the scan.")
+                                   .arg(Number(info.selectedTriangles).toLocaleString(Qt.locale(), "f", 0))
+                                   .arg(Number(maxFitTriangles).toLocaleString(Qt.locale(), "f", 0))
+                             : qsTr("Select an area of the scan first (step 1)."),
                      tip: qsTr("Turns the selected area into one smooth, exact (NURBS) surface you can design on. Holes in the area are cut out. The result is a new part; the scan is kept."),
                      params: [_num("tolerance", qsTr("Tolerance"), 0.25, "mm",
                                    qsTr("How far the surface may deviate from the scan. Smaller follows the scan more closely but may be bumpier."))] }
+        }
         case "fitWhole":
             return { id: id, text: selected ? qsTr("Fit patches to selection") : qsTr("Whole scan to solid"),
                      icon: "body", enabled: true,
@@ -258,7 +275,8 @@ QtObject {
         case "trim": {
             const sk = outlineSketches(info)
             return { id: id, text: qsTr("Cut out by sketch"), icon: "section", enabled: sk.length > 0,
-                     primary: sk.length > 0 && !isCutOut(info),
+                     // Part on surface does both steps at once when the outline is on this surface (CAD-137).
+                     primary: sk.length > 0 && !isCutOut(info) && scanSketches(info, false).length === 0,
                      reason: qsTr("Draw a closed outline in a sketch first (step 1)."),
                      tip: qsTr("Projects the sketch outline onto this curved surface and keeps the piece inside it, as a new surface that follows the curvature exactly."),
                      params: [{ key: "sketch", label: qsTr("Sketch"), type: "sketch", value: sk.length ? sk[0].featureId : 0,
@@ -309,6 +327,16 @@ QtObject {
                      reason: qsTr("This body has no step of its own in the timeline."),
                      tip: qsTr("Changes the settings of the timeline step that made this body; the model is rebuilt.") }
         }
+        // Construction plane (CAD-133)
+        case "sketchOnPlane":
+            return { id: id, text: qsTr("Sketch on this plane"), icon: "sketch", enabled: true, primary: true,
+                     tip: qsTr("Starts a sketch on this plane. Draw an outline, then extrude or revolve it, or cut a part with it.") }
+        case "editPlane": {
+            const f = timelineFeature(info.featureId)
+            return { id: id, text: qsTr("Edit plane"), icon: "plane", enabled: !!f,
+                     reason: qsTr("This plane has no step in the timeline."),
+                     tip: qsTr("Changes the plane's base, offset or angle; sketches on it follow.") }
+        }
         case "editSketch":
             return { id: id, text: qsTr("Edit sketch"), icon: "sketch", enabled: true,
                      tip: qsTr("Opens the sketch again to change curves and dimensions.") }
@@ -320,7 +348,7 @@ QtObject {
             const newest = onScan ? sketchesOn(info)[0] : null
             return { id: id, text: qsTr("Part on surface"), icon: "thickness", enabled: ok,
                      primary: onScan ? ok && !newest.across : true,
-                     reason: onScan ? qsTr("Draw the outline on the scan first (step 1).") : qsTr("The sketch needs a closed outline."),
+                     reason: onScan ? qsTr("Draw the outline first (step 1).") : qsTr("The sketch needs a closed outline."),
                      tip: qsTr("In one step: cuts the outline out of the surface it was drawn on and thickens it into a solid that follows the curvature."),
                      params: [...(onScan ? [_sketchParam(sk)] : []),
                               _num("thickness", qsTr("Thickness"), 2, "mm"),
@@ -490,6 +518,23 @@ QtObject {
             const cut = isCutOut(info)
             // Done only for a sketch with a closed outline: an empty one is nothing to cut out (CAD-114).
             const hasSketch = cut || outlineSketches(info).length > 0
+            // An outline drawn on this surface: one step, as the pane after Finish Sketch (CAD-137).
+            const own = !cut && scanSketches(info, false).length > 0
+            if (own)
+                return { title: roleName(r),
+                         intro: qsTr("A smooth, exact surface fitted to the scan. Cut the part you need out of it and give it a thickness."),
+                         sections: [
+                             { title: qsTr("Make a part from this surface"), steps: [
+                                   { title: qsTr("Draw the outline"), done: true,
+                                     text: qsTr("A sketch exists. Draw another one if you need a different outline."),
+                                     actions: [a("sketchOnSurface")] },
+                                   { title: qsTr("Create the part"), done: false,
+                                     text: qsTr("Cuts the outline out of this surface and thickens it into a solid, in one step."),
+                                     actions: [a("partOnSurface")] },
+                                   { title: qsTr("Or step by step"), done: false,
+                                     text: qsTr("Cut out first (also keeps the outside of the outline), then thicken the piece."),
+                                     actions: [a("trim"), a("thicken")] }] },
+                             { title: qsTr("More"), steps: [], actions: [...fitted, a("sketchFin"), a("offset"), a("cutWithThis"), a("scale"), a("export"), a("hide"), a("rename"), a("delete")] }] }
             return { title: roleName(r),
                      intro: qsTr("A smooth, exact surface fitted to the scan. Cut the part you need out of it and give it a thickness."),
                      sections: [
@@ -506,6 +551,15 @@ QtObject {
                                  text: qsTr("Turns the piece into a solid with the thickness you type."),
                                  actions: [a("thicken")] }] },
                          { title: qsTr("More"), steps: [], actions: [...fitted, a("sketchFin"), a("offset"), a("cutWithThis"), a("scale"), a("export"), a("hide"), a("rename"), a("delete")] }] }
+        }
+        if (r === "plane") {
+            return { title: roleName(r),
+                     intro: qsTr("A flat reference plane for sketches. It is not part of the model and is not exported."),
+                     sections: [{ title: qsTr("Next step"), steps: [
+                                      { title: qsTr("Sketch on this plane"), done: false,
+                                        text: qsTr("Draw a closed outline on the plane and click Finish Sketch."),
+                                        actions: [a("sketchOnPlane")] }] },
+                                { title: qsTr("More"), steps: [], actions: [a("editPlane"), a("hide"), a("rename"), a("delete")] }] }
         }
         if (r === "sketch") {
             const onSurface = sketchSurface(info.featureId) > 0
@@ -726,6 +780,11 @@ QtObject {
         }
         case "finishSketch": return host.finishSketch(true)
         case "editSketch": return host.editFeature({ type: "sketch", id: info.featureId })
+        case "sketchOnPlane": return host.createSketch({ plane: { plane: info.featureId } })
+        case "editPlane": {
+            const f = timelineFeature(info.featureId)
+            return f ? host.editFeature(f) : null
+        }
         case "editStep": {
             const f = ownFeature(info)
             return f ? host.editFeature(f) : null
