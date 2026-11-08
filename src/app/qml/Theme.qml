@@ -169,7 +169,7 @@ QtObject {
         "hole": qsTr("Drill a round hole into a body at a point on a face."),
         "box": qsTr("Add a block whose size you type in."),
         "cylinder": qsTr("Add a cylinder whose size you type in."),
-        "press pull": qsTr("Move flat faces of a body in or out by a distance (Fusion: Press Pull, Q)."),
+        "press pull": qsTr("Move faces of a body in or out by a distance; a curved face is offset (Fusion: Press Pull, Q)."),
         "fillet": qsTr("Round the selected edges of a body."),
         "chamfer": qsTr("Bevel (cut off at an angle) the selected edges of a body."),
         "shell": qsTr("Hollow out a body, leaving walls of the thickness you type."),

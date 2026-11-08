@@ -3,9 +3,11 @@
 #include "aerocad/geometry/Primitives.hpp"
 #include "aerocad/geometry/Sketch.hpp"
 #include "aerocad/geometry/Tessellation.hpp"
+#include "aerocad/geometry/Transform.hpp"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
 #include <numbers>
@@ -274,7 +276,62 @@ TEST_CASE("Press Pull moves flat faces in and out", "[geometry][modeling]")
     for (const auto& f : faces(cyl))
         if (f.type != "plane")
             round = f.index;
-    CHECK_THROWS_AS(pressPull(cyl, {round}, 1.0), ModelingError);
+    // A curved face is offset (Fusion's Offset Face): the cylinder grows or shrinks.
+    const auto grown = pressPull(cyl, {round}, 1.0);
+    CHECK(isValid(grown));
+    CHECK(grown.volume() == Approx(std::numbers::pi * 36 * 10).epsilon(1e-4));
+    const auto shrunk = pressPull(cyl, {round}, -2.0);
+    CHECK(isValid(shrunk));
+    CHECK(shrunk.volume() == Approx(std::numbers::pi * 9 * 10).epsilon(1e-4));
+    // A curved face picked with a flat one: both move.
+    std::size_t lid = 0;
+    for (const auto& f : faces(cyl))
+        if (f.type == "plane" && f.normal.z > 0.9)
+            lid = f.index;
+    const auto both2 = pressPull(cyl, {round, lid}, 1.0);
+    CHECK(isValid(both2));
+    CHECK(both2.volume() == Approx(std::numbers::pi * 36 * 11).epsilon(1e-4));
+    CHECK_THROWS_AS(pressPull(cyl, {round}, -6.0), ModelingError); // would turn it inside out
+    // A fillet face blends into faces that stay: moving it alone would break the blend.
+    const auto rounded = fillet(makeBox(20, 20, 20), {0}, 4.0);
+    std::size_t blend = 0;
+    for (const auto& f : faces(rounded))
+        if (f.type != "plane")
+            blend = f.index;
+    CHECK_THROWS_WITH(pressPull(rounded, {blend}, 1.0), Catch::Matchers::ContainsSubstring("fillet"));
+}
+
+TEST_CASE("Press Pull on a curved face next to a shallow sharp edge", "[geometry][modeling]")
+{
+    // A cylinder under a cone with a 2 degree draft: the edge between them is sharp (not a
+    // fillet), so the cylinder's side can still move; the cone is trimmed to meet it.
+    const double top = 10 - 20 * std::tan(2 * std::numbers::pi / 180);
+    const auto g = buildSketch(Plane::xz(), {line({0, 0}, {10, 0}), line({10, 0}, {10, 10}), line({10, 10}, {top, 30}),
+                                             line({top, 30}, {0, 30}), line({0, 30}, {0, 0})});
+    REQUIRE(g.profiles.size() == 1);
+    const auto body = revolve(g.profiles[0], {0, 0, 0}, {0, 0, 1}, 360);
+    std::size_t side = 0;
+    for (const auto& f : faces(body))
+        if (f.type == "cylinder")
+            side = f.index;
+    const auto pushed = pressPull(body, {side}, -0.5);
+    CHECK(isValid(pushed));
+    CHECK(pushed.volume() < body.volume());
+}
+
+TEST_CASE("Press Pull on a curved face with windows cut through it", "[geometry][modeling]")
+{
+    // The middle of the face's parameter range (the -X side) lies in a window: the curvature check must
+    // sample a point on the face itself.
+    const auto tube = boolean(makeCylinder(10, 40), translated(makeBox(20, 4, 30), {-20, -2, 5}), BooleanOp::Cut);
+    std::size_t round = 0;
+    for (const auto& f : faces(tube))
+        if (f.type != "plane")
+            round = f.index;
+    const auto grown = pressPull(tube, {round}, 1.0);
+    CHECK(isValid(grown));
+    CHECK(grown.volume() > tube.volume());
+    CHECK(grown.bounds().size().y == Approx(22).epsilon(1e-4));
 }
 
 TEST_CASE("Shell with no open face hollows the solid", "[geometry][modeling]")
