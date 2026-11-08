@@ -101,8 +101,8 @@ TEST_CASE("simulation.* commands are registered with schemas", "[commands][simul
     commands::Session session;
     for (const char* name : {"simulation.environment", "simulation.propose_run", "simulation.run", "simulation.status",
                              "simulation.list", "simulation.cancel", "simulation.delete", "simulation.results",
-                             "simulation.field", "simulation.compare", "simulation.import",
-                             "simulation.install_engine", "simulation.refine", "simulation.set_engine"}) {
+                             "simulation.field", "simulation.compare", "simulation.import", "simulation.install_engine",
+                             "simulation.refine", "simulation.set_engine", "simulation.export_results"}) {
         INFO(name);
         const auto* info = session.registry().info(name);
         REQUIRE(info != nullptr);
@@ -321,6 +321,59 @@ TEST_CASE("simulation results require successful completion independently of out
         CHECK(comparison.data.at("reasons").empty() == finished);
         CHECK(comparison.data.at("states").at(pair.first == a ? "a" : "b") == expected);
     }
+}
+
+TEST_CASE("simulation.export_results writes conditions, final values and the full history as CSV",
+          "[commands][simulation]")
+{
+    RunsDir dir;
+    commands::Session session;
+    const auto part = importBox(session);
+    const auto a = prepareRun(session, part);
+    writeResultFixture(dir.path() / a, false, 1, 450); // More rows than results() samples.
+    writeOutput(dir.path() / a / "aerocad.engine", "v2506\n");
+    const auto read = [](const fs::path& p) {
+        std::ifstream in(p, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(in), {});
+    };
+    const fs::path file = dir.path() / "a results.csv";
+
+    // Not finished: says provisional, no final values, history still written.
+    writeOutput(dir.path() / a / "aerocad.status", "failed: solve\n");
+    auto r = session.execute("simulation.export_results", {{"run", a}, {"path", file.string()}});
+    REQUIRE(r.ok);
+    CHECK(r.data.at("rows") == 450);
+    std::string csv = read(file);
+    CHECK(csv.rfind("Quantity,Value\r\n", 0) == 0);
+    CHECK(csv.find("Results,provisional (The run has not finished successfully (failed).)") != std::string::npos);
+    CHECK(csv.find("\r\nCd,") == std::string::npos);
+
+    writeOutput(dir.path() / a / "aerocad.status", "finished\n");
+    r = session.execute("simulation.export_results", {{"run", a}, {"path", file.string()}});
+    REQUIRE(r.ok);
+    csv = read(file);
+    CHECK(csv.find("\r\nState,finished\r\n") != std::string::npos);
+    CHECK(csv.find("\r\nAir speed (m/s),") != std::string::npos);
+    CHECK(csv.find("\r\nResults,\"final, mean of the last 20 % of the iterations\"\r\n") != std::string::npos);
+    CHECK(csv.find("\r\nCd,0.8\r\n") != std::string::npos);
+    CHECK(csv.find("\r\nDrag (N),1\r\n") != std::string::npos);
+    CHECK(csv.find("\r\nPressure drag (N),0.9\r\n") != std::string::npos);
+    CHECK(csv.find("\r\nOpenFOAM (ran),v2506\r\n") != std::string::npos);
+    CHECK(csv.find("\r\n\r\nIteration,Cd,Cl,Cs,Drag (N),Lift (N),Side force (N),Pressure drag (N),Viscous drag (N)\r\n"
+                   "1,0.8,0.1,0.01,1,0.2,0.01,0.9,0.1\r\n") != std::string::npos);
+    CHECK(csv.find("\r\n450,0.8,0.1,0.01,1,0.2,0.01,0.9,0.1\r\n") != std::string::npos);
+
+    // A run that never recorded its engine does not claim one.
+    fs::remove(dir.path() / a / "aerocad.engine");
+    REQUIRE(session.execute("simulation.export_results", {{"run", a}, {"path", file.string()}}).ok);
+    CHECK(read(file).find("\r\nOpenFOAM (ran),not recorded\r\n") != std::string::npos);
+
+    CHECK_FALSE(session.execute("simulation.export_results", {{"run", "nope"}, {"path", file.string()}}).ok);
+    CHECK_FALSE(session.execute("simulation.export_results", {{"run", a}, {"path", ""}}).ok);
+    CHECK_FALSE(
+        session
+            .execute("simulation.export_results", {{"run", a}, {"path", (dir.path() / "no/such/dir/x.csv").string()}})
+            .ok);
 }
 
 TEST_CASE("prepared simulation coefficients cannot produce final comparison values", "[commands][simulation]")

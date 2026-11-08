@@ -386,6 +386,18 @@ see-through and coloured by speed. Runs made before it say so and need a new run
 Each scalar has `min`, `max`, `mean` and the 2nd/98th percentiles `p02`/`p98`, which the
 app uses for the pressure colour range.
 
+### Export to CSV
+
+**Results > Export CSV…** writes the selected run to a CSV file for a spreadsheet or a report
+(CAD-167, [panel](images/audit/cad-167-export-csv.png)). The default file name is the run's
+label and id. The file has a `Quantity,Value` block with the run, part, state, conditions
+(speed, flow, mesh, floor, air, reference area and length, the OpenFOAM version the run recorded, or "not recorded") and the final values
+(Cd, Cl, Cs; drag, lift, side, pressure and viscous drag in N). A run that has not finished
+says so in the `Results` row and gives the current means marked "(provisional)". After a blank
+line comes the full, unsampled history: iteration, Cd, Cl, Cs and the forces in N.
+Numbers use a `.` decimal point, and lines end with CRLF. MCP: `simulation.export_results
+{"run": "<id>", "path": "/path/results.csv"}` returns the path and the number of history rows.
+
 ## A/B comparison
 
 `simulation.compare {a, b}` returns the force differences in N and %, the coefficients

@@ -41,6 +41,11 @@ QString toLocalPath(const QUrl& url)
 
 } // namespace
 
+QString AppController::localPath(const QUrl& url) const
+{
+    return toLocalPath(url);
+}
+
 AppController::AppController(QObject* parent) : QObject(parent), m_parts(m_session.document())
 {
     m_session.project().generator = std::string("AeroCAD ") + aerocad::buildStamp();

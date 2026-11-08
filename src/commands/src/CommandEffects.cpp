@@ -71,6 +71,7 @@ void declareCommandEffects(CommandRegistry& r)
         {"simulation.install_engine", installEngine},
         {"simulation.delete", deleteRun},
         {"simulation.import", importRun},
+        {"simulation.export_results", writeFiles},
     };
     for (const auto& [name, effects] : table)
         r.setEffects(name, effects);

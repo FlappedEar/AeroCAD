@@ -9,6 +9,8 @@
 #include <ctime>
 #include <fstream>
 #include <limits>
+#include <locale>
+#include <map>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -1203,6 +1205,145 @@ std::pair<double, double> range(const std::vector<double>& v)
 }
 
 } // namespace
+
+namespace {
+
+/// One CSV cell: quoted when it holds a comma, a quote or a line break.
+std::string csvCell(const std::string& text)
+{
+    if (text.find_first_of(",\"\r\n") == std::string::npos)
+        return text;
+    std::string out = "\"";
+    for (const char c : text)
+        out += c == '"' ? std::string("\"\"") : std::string(1, c);
+    return out + "\"";
+}
+
+/// A number with 7 significant digits and a '.' decimal point; empty for NaN / null.
+std::string csvNumber(double v)
+{
+    if (!std::isfinite(v))
+        return {};
+    std::ostringstream os;
+    os.imbue(std::locale::classic());
+    os.precision(7);
+    os << v;
+    return os.str();
+}
+
+std::string csvJson(const Json& v)
+{
+    if (v.is_number())
+        return csvNumber(v.get<double>());
+    if (v.is_boolean())
+        return v.get<bool>() ? "yes" : "no";
+    if (v.is_string())
+        return v.get<std::string>();
+    return {};
+}
+
+} // namespace
+
+std::size_t RunManager::exportResultsCsv(const std::string& id, const fs::path& path)
+{
+    const Json r = results(id, 2);
+    const Run& run = *find(id);
+    const Table coeffs = readTable(run.caseDir / "postProcessing" / "forceCoeffs" / "0" / "coefficient.dat");
+    const Table forces = readTable(run.caseDir / "postProcessing" / "forces" / "0" / "force.dat");
+
+    std::ostringstream out;
+    auto row = [&](const std::string& key, const std::string& value) {
+        out << csvCell(key) << ',' << csvCell(value) << "\r\n";
+    };
+    const Json& st = r.at("run");
+    const Json& source = st.at("source");
+    out << "Quantity,Value\r\n";
+    row("Run",
+        source.value("label", std::string()).empty() ? id : source.at("label").get<std::string>() + " (" + id + ")");
+    row("Part", source.value("partName", std::string()));
+    row("State", st.value("state", std::string()));
+    row("Created (UTC)", st.value("created", std::string()));
+    if (r.contains("conditions")) {
+        const Json& c = r.at("conditions");
+        const Json& s = c.at("settings");
+        row("Air speed (m/s)", csvJson(s.value("speed", Json())));
+        row("Flow direction", csvJson(s.value("flowDirection", Json())));
+        row("Mesh", csvJson(s.value("mesh", Json())));
+        const bool ground = s.value("ground", false);
+        row("Floor", !ground ? "off" : !s.value("groundMoving", true) ? "fixed" : "moving");
+        if (ground) {
+            const Json h = s.value("groundHeight", Json());
+            row("Floor height (mm)", h.is_number() ? csvJson(h) : "just under the part");
+            row("Rotating wheels", s.value("rotatingWheels", false) ? "yes" : "no");
+        }
+        row("Air density (kg/m3)", csvJson(s.value("density", Json())));
+        row("Kinematic viscosity (m2/s)", csvJson(s.value("kinematicViscosity", Json())));
+        const Json ti = s.value("turbulenceIntensity", Json());
+        row("Turbulence intensity (%)", ti.is_number() ? csvNumber(100.0 * ti.get<double>()) : std::string());
+        row("Reference area (m2)", csvJson(c.value("referenceArea", Json())));
+        row("Reference length (m)", csvJson(c.value("referenceLength", Json())));
+        // Only the engine recorded by the run itself; the case target is listed apart.
+        const std::string engine = csvJson(c.value("engine", Json()));
+        row("OpenFOAM (ran)", engine.empty() ? "not recorded" : engine);
+        const std::string target = csvJson(c.value("engineTarget", Json()));
+        if (!target.empty())
+            row("OpenFOAM (case written for)", target);
+        row("Axes", csvJson(c.value("axes", Json())));
+    }
+    const bool isFinal = r.at("finalResults").at("available").get<bool>();
+    const Json& values = isFinal ? r.at("summary") : r.at("current");
+    std::string reasons;
+    for (const auto& reason : r.at("finalResults").at("reasons"))
+        reasons += (reasons.empty() ? "" : " ") + reason.get<std::string>();
+    row("Results", isFinal ? "final, mean of the last 20 % of the iterations"
+                           : "provisional (" + reasons + ")" +
+                                 (values.is_object() ? "; values: mean of the last 20 % so far" : std::string()));
+    if (values.is_object()) {
+        const char* suffix = isFinal ? "" : " (provisional)";
+        struct Key {
+            const char* key;
+            const char* name;
+        };
+        for (const Key k : {Key{"cd", "Cd"}, Key{"cl", "Cl"}, Key{"cs", "Cs"}, Key{"dragN", "Drag (N)"},
+                            Key{"liftN", "Lift (N)"}, Key{"sideN", "Side force (N)"},
+                            Key{"pressureDragN", "Pressure drag (N)"}, Key{"viscousDragN", "Viscous drag (N)"}})
+            row(std::string(k.name) + suffix, csvJson(values.value(k.key, Json())));
+    }
+    row("Iterations recorded", std::to_string(coeffs.time.size()));
+
+    // History: coefficient rows, with the force row of the same iteration.
+    out << "\r\nIteration,Cd,Cl,Cs,Drag (N),Lift (N),Side force (N),Pressure drag (N),Viscous drag (N)\r\n";
+    std::map<double, std::size_t> forceRow;
+    for (std::size_t i = 0; i < forces.time.size(); ++i)
+        forceRow[forces.time[i]] = i;
+    const auto at = [](const std::vector<double>* col, std::size_t i) {
+        return col && i < col->size() ? (*col)[i] : std::numeric_limits<double>::quiet_NaN();
+    };
+    const auto* cd = coeffs.column("Cd");
+    const auto* cl = coeffs.column("Cl");
+    const auto* cs = coeffs.column("Cs");
+    const auto* fx = forces.column("total_x");
+    const auto* fz = forces.column("total_z");
+    const auto* fy = forces.column("total_y");
+    const auto* px = forces.column("pressure_x");
+    const auto* vx = forces.column("viscous_x");
+    for (std::size_t i = 0; i < coeffs.time.size(); ++i) {
+        const auto f = forceRow.find(coeffs.time[i]);
+        const std::size_t fi = f == forceRow.end() ? forces.time.size() : f->second;
+        out << csvNumber(coeffs.time[i]) << ',' << csvNumber(at(cd, i)) << ',' << csvNumber(at(cl, i)) << ','
+            << csvNumber(at(cs, i)) << ',' << csvNumber(at(fx, fi)) << ',' << csvNumber(at(fz, fi)) << ','
+            << csvNumber(at(fy, fi)) << ',' << csvNumber(at(px, fi)) << ',' << csvNumber(at(vx, fi)) << "\r\n";
+    }
+
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    if (!file)
+        throw std::runtime_error("Cannot write '" + path.string() + "'");
+    file << out.str();
+    file.close();
+    if (!file)
+        throw std::runtime_error("Cannot write '" + path.string() + "'");
+    return coeffs.time.size();
+}
 
 Json RunManager::results(const std::string& id, int maxPoints)
 {

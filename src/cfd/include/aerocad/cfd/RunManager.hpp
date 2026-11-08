@@ -181,6 +181,13 @@ public:
     /// final results are unavailable. Throws std::runtime_error for unknown ids.
     [[nodiscard]] Json results(const std::string& id, int maxPoints = 400);
 
+    /// Writes a run's results as CSV (CAD-167): a "Quantity,Value" block with the run, its
+    /// conditions and its final values (or the provisional means while it is not finished),
+    /// a blank line, then the full, unsampled history per iteration (Cd, Cl, Cs and the
+    /// forces in N). Returns the number of history rows. Throws std::runtime_error for
+    /// unknown ids or when the file cannot be written.
+    std::size_t exportResultsCsv(const std::string& id, const std::filesystem::path& path);
+
     /// Field data for the result view, converted to model coordinates (mm):
     /// kind "surface" (pressure on the part), "sectionHorizontal", "sectionVertical",
     /// a plane of a section stack ("sectionX_3", see sectionStacks()), "wake" (the
