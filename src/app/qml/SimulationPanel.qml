@@ -381,6 +381,10 @@ Pane {
 
     /// New or opened project: nothing selected, nothing drawn, until a run is picked.
     function clearSelection() {
+        // Copied run settings refer to the closed document's parts (CAD-162).
+        copiedContext = null
+        copiedSettings = ({})
+        groundFixed = false
         autoSelect = false
         activeRun = ""
         compareRun = ""
@@ -516,6 +520,7 @@ Pane {
     property var copiedContext: null
     /// Parts of the copied surroundings that are no longer in the document.
     readonly property int copiedContextMissing: {
+        void partRevision // re-checked when parts are removed, undone or redone
         if (!copiedContext || !contextBox.checked)
             return 0
         const parts = controller.execute("document.parts")

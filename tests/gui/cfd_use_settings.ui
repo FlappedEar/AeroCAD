@@ -20,11 +20,17 @@ ui.shot("cfd-use-settings.png")
 # A's support removed from the design: said, not silently replaced by the visible parts.
 (() => { const r = simulationPanel.runs.find(x => x.source.label === "A run"); controller.execute("part.remove", { id: r.source.contextPartIds[0] }) })()
 ui.wait(300)
-(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const n = t.find(simulationPanel, "cfdCopiedNote"); simulationPanel.copiedContext = simulationPanel.copiedContext.slice(); ui.log("NOTE " + n.text); const p = simulationPanel.runParams(); if (p.context.length !== 0) ui.fail("removed support still sent: " + JSON.stringify(p.context)) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const n = t.find(simulationPanel, "cfdCopiedNote"); ui.log("NOTE " + n.text); const p = simulationPanel.runParams(); if (p.context.length !== 0) ui.fail("removed support still sent: " + JSON.stringify(p.context)) })()
 ui.wait(200)
 ui.clickText("1 part(s) of A's surroundings are no longer in the design, so B's flow differs from A's.")
 # Changing the floor box drops the copied fixed floor again.
 (() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const g = t.find(simulationPanel, "cfdGroundBox"); const p = g.mapToItem(null, 12, g.height / 2); ui.click(p.x, p.y) })()
 ui.wait(300)
 (() => { const p = simulationPanel.runParams(); if (p.ground !== false || p.groundMoving !== undefined) ui.fail("floor box change kept the fixed floor: " + JSON.stringify(p)) })()
+# Undo brings the support back: the warning goes away.
+ui.key("Z", "ctrl")
+ui.wait(300)
+(() => { if (simulationPanel.copiedContextMissing !== 0) ui.fail("warning stays after undo"); const p = simulationPanel.runParams(); if (p.context.length !== 1) ui.fail("restored support not sent: " + JSON.stringify(p.context)) })()
+# A new document drops what was copied from the old one.
+(() => { simulationPanel.clearSelection(); if (simulationPanel.copiedContext !== null || Object.keys(simulationPanel.copiedSettings).length !== 0 || simulationPanel.groundFixed) ui.fail("copied settings survive a workspace reset") })()
 ui.log("cfd use settings done")
