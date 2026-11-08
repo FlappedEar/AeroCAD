@@ -47,6 +47,13 @@ use the same operations, and every change is one undo step.
   In the UI: Combine, click the target, then click the tools (bodies, solids, a surface or
   the scan); with a scan or surface selected, "Cut a part to this shape" presets it as the tool.
 - **Marker**: `timeline.set_marker` rolls the model back; new features are inserted at it.
+- **Edit sketch**: `sketch.begin_edit` (`id`) rolls the timeline back to just after the sketch
+  (Fusion: Edit Sketch); `sketch.end_edit` rolls forward again: to the end if the marker was
+  there, else to just after the last feature that was active (deleted ones are skipped,
+  rolled-back ones stay rolled back). Moving the marker meanwhile (`timeline.set_marker`) is
+  the user's choice and ends the edit without rolling forward; deleting the edited sketch
+  rolls forward. Saves and variants always store the rolled-forward marker. `timeline.list`
+  reports `sketchEdit` ({sketch, restoreTo}) while one is open.
 - **Reorder**: `timeline.move_feature` (`id`, `position`) moves a feature in the timeline and
   regenerates; it is refused, with nothing changed, when a feature that worked would fail in
   the new order. A feature moved across the marker becomes rolled back or active.

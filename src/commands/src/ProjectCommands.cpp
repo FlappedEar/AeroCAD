@@ -191,7 +191,8 @@ void registerFileCommands(CommandRegistry& r)
            "Saves the project to a .aerocad file, atomically (an interrupted save never damages the existing "
            "file). Stores imported meshes losslessly, their exact B-rep, the design timeline, user parameters, "
            "reference frames, all variants and the view. Without path, saves to the current file. "
-           "copy: true writes a copy (e.g. autosave) and keeps the current path and unsaved state.",
+           "copy: true writes a copy (e.g. autosave) and keeps the current path and unsaved state. While an "
+           "earlier sketch is edited (sketch.begin_edit), the marker from before that roll-back is stored.",
            objectSchema(
                {{"path",
                  {{"type", "string"},

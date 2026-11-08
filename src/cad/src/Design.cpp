@@ -342,9 +342,26 @@ void Design::moveFeature(FeatureId id, std::size_t position)
 void Design::removeFeature(FeatureId id)
 {
     const std::size_t i = indexOf(id);
+    // Deleting the edited sketch ends its edit: features after it that were active come back.
+    const bool editedSketch = m_state.sketchEdit && m_state.sketchEdit->sketch == id && sketchEditTarget(m_state);
     m_state.features.erase(m_state.features.begin() + static_cast<std::ptrdiff_t>(i));
     if (i < m_state.marker)
         --m_state.marker;
+    if (editedSketch) {
+        const SketchEdit& e = *m_state.sketchEdit;
+        std::size_t target = m_state.marker;
+        if (e.atEnd) {
+            target = m_state.features.size();
+        } else {
+            for (std::size_t k = 0; k < m_state.features.size(); ++k) {
+                if (std::find(e.active.begin(), e.active.end(), m_state.features[k].id) != e.active.end())
+                    target = std::max(target, k + 1);
+            }
+        }
+        m_state.marker = target;
+    }
+    if (m_state.sketchEdit && m_state.sketchEdit->sketch == id)
+        m_state.sketchEdit.reset();
     regenerate();
 }
 
@@ -354,7 +371,73 @@ void Design::setMarker(std::size_t marker)
         throw DesignError("Marker position " + std::to_string(marker) + " is past the end of the timeline (" +
                           std::to_string(m_state.features.size()) + " features)");
     m_state.marker = marker;
+    m_state.sketchEdit.reset();
     regenerate();
+}
+
+bool Design::beginSketchEdit(FeatureId sketch)
+{
+    const std::size_t index = indexOf(sketch);
+    if (m_state.features[index].type != "sketch")
+        throw DesignError(m_state.features[index].name + " is not a sketch");
+    if (m_state.sketchEdit && m_state.sketchEdit->sketch == sketch && sketchEditTarget(m_state))
+        return false;
+    const std::size_t before = m_state.marker;
+    m_state = committedState(std::move(m_state));
+    const std::size_t i = indexOf(sketch);
+    if (i + 1 < m_state.marker) {
+        SketchEdit e;
+        e.sketch = sketch;
+        e.atEnd = m_state.marker == m_state.features.size();
+        for (std::size_t k = i + 1; k < m_state.marker; ++k)
+            e.active.push_back(m_state.features[k].id);
+        m_state.sketchEdit = std::move(e);
+        m_state.marker = i + 1;
+    }
+    if (m_state.marker == before)
+        return false;
+    regenerate();
+    return true;
+}
+
+bool Design::endSketchEdit()
+{
+    const std::size_t before = m_state.marker;
+    m_state = committedState(std::move(m_state));
+    if (m_state.marker == before)
+        return false;
+    regenerate();
+    return true;
+}
+
+std::optional<std::size_t> sketchEditTarget(const Design::State& state)
+{
+    if (!state.sketchEdit)
+        return std::nullopt;
+    const Design::SketchEdit& e = *state.sketchEdit;
+    const auto& fs = state.features;
+    const auto it = std::find_if(fs.begin(), fs.end(), [&](const Feature& f) { return f.id == e.sketch; });
+    if (it == fs.end())
+        return std::nullopt;
+    const auto sketchAt = static_cast<std::size_t>(it - fs.begin());
+    if (state.marker != sketchAt + 1)
+        return std::nullopt;
+    if (e.atEnd)
+        return fs.size();
+    std::size_t target = sketchAt + 1;
+    for (std::size_t k = 0; k < fs.size(); ++k) {
+        if (std::find(e.active.begin(), e.active.end(), fs[k].id) != e.active.end())
+            target = std::max(target, k + 1);
+    }
+    return target;
+}
+
+Design::State committedState(Design::State state)
+{
+    if (const auto target = sketchEditTarget(state); target && *target > state.marker)
+        state.marker = *target;
+    state.sketchEdit.reset();
+    return state;
 }
 
 FeatureStatus Design::status(FeatureId id) const
@@ -2923,8 +3006,9 @@ T field(const Json& j, const char* key, const char* what)
 
 } // namespace
 
-Json stateToJson(const Design::State& state)
+Json stateToJson(const Design::State& live)
 {
+    const Design::State state = committedState(live);
     Json features = Json::array();
     for (const auto& f : state.features) {
         features.push_back(

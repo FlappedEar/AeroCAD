@@ -533,3 +533,65 @@ TEST_CASE("Damaged kept dimensions in a file are skipped", "[commands][project][
     CHECK(dims[2].show == "angle");
     CHECK(dims[2].b.is_null());
 }
+
+TEST_CASE("sketch.begin_edit rolls back and sketch.end_edit rolls forward", "[commands][project]")
+{
+    commands::Session s;
+    const Json sk = run(s, "sketch.create", {{"plane", "XY"}, {"curves", Json::array({Json{{"type", "circle"}, {"center", {0, 0}}, {"radius", 5}}})}});
+    const auto sketch = sk.at("id").get<cad::FeatureId>();
+    run(s, "feature.box", {{"corner", {20, 0, 0}}, {"size", {5, 5, 5}}});
+    const auto b = run(s, "feature.box", {{"corner", {40, 0, 0}}, {"size", {5, 5, 5}}}).at("id").get<cad::FeatureId>();
+    run(s, "feature.box", {{"corner", {60, 0, 0}}, {"size", {5, 5, 5}}});
+
+    SECTION("at the end: back to the end")
+    {
+        const Json tl = run(s, "sketch.begin_edit", {{"id", sketch}});
+        CHECK(tl.at("marker") == 1);
+        CHECK(tl.at("sketchEdit").at("restoreTo") == 4);
+        CHECK(run(s, "sketch.end_edit", Json::object()).at("marker") == 4);
+        CHECK(s.design().state().sketchEdit == std::nullopt);
+    }
+    SECTION("an explicit marker move ends the edit without rolling forward")
+    {
+        run(s, "sketch.begin_edit", {{"id", sketch}});
+        run(s, "timeline.set_marker", {{"position", 2}});
+        CHECK(run(s, "sketch.end_edit", Json::object()).at("marker") == 2);
+    }
+    SECTION("rolled-back features stay rolled back when the last active one is deleted")
+    {
+        run(s, "timeline.set_marker", {{"position", 3}}); // Sketch, A, B active; C rolled back
+        run(s, "sketch.begin_edit", {{"id", sketch}});
+        run(s, "feature.delete", {{"id", b}});
+        CHECK(run(s, "sketch.end_edit", Json::object()).at("marker") == 2); // after A, C still rolled back
+    }
+    SECTION("deleting the edited sketch rolls forward")
+    {
+        run(s, "timeline.set_marker", {{"position", 3}});
+        run(s, "sketch.begin_edit", {{"id", sketch}});
+        run(s, "feature.delete", {{"id", sketch}});
+        CHECK(s.design().marker() == 2); // A and B active again, C rolled back
+        CHECK(s.design().state().sketchEdit == std::nullopt);
+    }
+    SECTION("undo of the roll-back restores the marker")
+    {
+        run(s, "sketch.begin_edit", {{"id", sketch}});
+        run(s, "edit.undo", Json::object());
+        CHECK(s.design().marker() == 4);
+    }
+}
+
+TEST_CASE("Saving during a sketch edit stores the rolled-forward marker", "[commands][project]")
+{
+    TempDir dir;
+    commands::Session s;
+    const Json sk = run(s, "sketch.create", {{"plane", "XY"}, {"curves", Json::array({Json{{"type", "circle"}, {"center", {0, 0}}, {"radius", 5}}})}});
+    run(s, "feature.box", {{"corner", {20, 0, 0}}, {"size", {5, 5, 5}}});
+    run(s, "sketch.begin_edit", {{"id", sk.at("id")}});
+    REQUIRE(s.design().marker() == 1);
+    const std::string path = dir.file("edit.aerocad");
+    run(s, "project.save", {{"path", path}});
+    CHECK(s.design().marker() == 1); // the open design stays rolled back
+    run(s, "project.open", {{"path", path}});
+    CHECK(s.design().marker() == 2);
+    CHECK(s.design().state().sketchEdit == std::nullopt);
+}

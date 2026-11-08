@@ -554,10 +554,20 @@ ApplicationWindow {
         viewport.sketchDegreesOfFreedom = r.result.degreesOfFreedom
     }
 
+    /// Editing an earlier sketch rolls the timeline back to just after it (Fusion): what came
+    /// later is hidden and cannot be snapped to or projected. Finishing rolls forward again;
+    /// the command layer keeps track of it (sketch.begin_edit / sketch.end_edit).
+    /// Only called when it changes something, so opening a sketch at the end does not mark
+    /// the project modified.
     function enterSketch(id) {
+        const tl = controller.execute("timeline.list")
+        if (tl.ok && (tl.result.sketchEdit || tl.result.features.findIndex(f => f.id === id) + 1 < tl.result.marker))
+            controller.execute("sketch.begin_edit", { id: id })
         const r = controller.execute("sketch.profiles", { sketch: id, surfaceLine: true })
-        if (!r.ok)
+        if (!r.ok) {
+            endSketchEdit()
             return
+        }
         const pl = r.result.plane
         const on = r.result.onSurface
         activeSketch = { id: id, origin: pl.origin, normal: pl.normal, xDir: pl.xDir, yDir: pl.yDir,
@@ -594,7 +604,14 @@ ApplicationWindow {
 
     /// Ends sketch editing. With `offerPart` (the user finished it), a closed outline drawn
     /// over a surface or scan offers to make the part on that surface right away.
+    function endSketchEdit() {
+        const tl = controller.execute("timeline.list")
+        if (tl.ok && tl.result.sketchEdit)
+            controller.execute("sketch.end_edit")
+    }
+
     function finishSketch(offerPart) {
+        endSketchEdit()
         // Any other way out (new project, variant switch, a feature dialog) drops the offer.
         partOnSurfaceSketch = null
         if (offerPart && activeSketch) {
@@ -2728,7 +2745,9 @@ ApplicationWindow {
             viewport.restoreCameraState(view)
         }
         // Undo/redo and edits elsewhere (timeline, parameters) change the sketch too.
-        function onHistoryChanged() { window.refreshSketchSnaps() }
+        function onHistoryChanged() {
+            window.refreshSketchSnaps()
+        }
         function onPartImported(id) {
             window.selectPart(id)
             viewport.fitAll()
