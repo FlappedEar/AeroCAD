@@ -29,25 +29,39 @@ Rectangle {
     /// Drag in progress: "feature" (a chip, `dragFrom` its index) or "marker"; `dragSlot`
     /// is the gap it would drop into (0 = before the first feature, count = after the last).
     property string dragKind: ""
+    /// Horizontal scroll of the chips (for UI scripts).
+    readonly property real scrollX: list.contentX - list.originX
     property int dragFrom: -1
     property int dragSlot: -1
 
-    /// The gap nearest x (in list.contentItem coordinates).
+    /// The gap nearest x (in list.contentItem coordinates). Only chips the list has created
+    /// (around the visible part) count: past the last of them is the gap right after it, not
+    /// the end of a long timeline; dragging near an edge scrolls further (dragUpdate).
     function slotAt(cx) {
+        let last = -1
         for (let i = 0; i < list.count; ++i) {
             const it = list.itemAtIndex(i)
-            if (it && cx < it.x + it.chipWidth / 2)
+            if (!it)
+                continue
+            if (cx < it.x + it.chipWidth / 2)
                 return i
+            last = i
         }
-        return list.count
+        return last + 1
     }
     /// x of gap `slot` in list.contentItem coordinates.
     function slotX(slot) {
-        if (slot <= 0)
-            return list.headerItem ? list.headerItem.x + 2 : 0
-        const it = list.itemAtIndex(slot - 1)
-        return it ? it.x + it.chipWidth + 4 : 0
+        if (slot <= 0 && list.headerItem && list.headerItem.width > 0)
+            return list.headerItem.x + 2
+        const before = slot > 0 ? list.itemAtIndex(slot - 1) : null
+        if (before)
+            return before.x + before.chipWidth + 4
+        const after = slot < list.count ? list.itemAtIndex(slot) : null
+        if (after)
+            return after.x - 2
+        return list.headerItem ? list.headerItem.x + 2 : 0
     }
+
     /// The sketch a feature takes its profile from (Extrude, Revolve, Sweep, Loft: the first
     /// section), or null.
     function profileSketch(feature) {
@@ -70,6 +84,13 @@ Rectangle {
         return list.contentItem.mapToItem(null, slotX(slot) + 1, list.height / 2)
     }
     function dragUpdate(item, x) {
+        // Near an edge of a long timeline, scroll to bring more gaps into reach.
+        const lx = item.mapToItem(list, x, 0).x
+        const step = 24
+        if (lx < step)
+            list.contentX = Math.max(list.originX, list.contentX - step)
+        else if (lx > list.width - step)
+            list.contentX = Math.min(list.originX + Math.max(0, list.contentWidth - list.width), list.contentX + step)
         dragSlot = slotAt(item.mapToItem(list.contentItem, x, 0).x)
     }
     function dragFinish() {

@@ -33,3 +33,16 @@ ui.wait(800)
 (() => { const tl = controller.execute("timeline.list").result; if (tl.marker !== 3 || tl.features.some(f => f.status !== "ok")) ui.fail("marker drag to the end: " + tl.marker) })()
 # Undo takes back the marker drags and the move, one step each.
 (() => { for (let i = 0; i < 3; ++i) controller.execute("edit.undo"); const tl = controller.execute("timeline.list").result; if (tl.marker !== 3 || tl.features[0].params.corner[0] !== 100) ui.fail("undo of the marker drags"); controller.execute("edit.undo"); const t2 = controller.execute("timeline.list").result; if (t2.features[0].params.corner[0] !== 0) ui.fail("undo of the move") })()
+# Codex on PR #129: a long timeline only creates the chips around the view. Dragging a chip
+# to the right edge scrolls on, and the drop lands in a gap that exists there, not at the
+# very end of the timeline.
+(() => { for (let i = 0; i < 30; ++i) controller.execute("feature.box", { corner: [200 + 20 * i, 0, 0], size: [5, 5, 5] }) })()
+ui.wait(800)
+(() => { if (timelineBar.scrollX !== 0) ui.log("start scroll " + timelineBar.scrollX) })()
+(() => { const tl = controller.execute("timeline.list").result; timelineBar.objectName = String(tl.features[2].id); const a = timelineBar.chipPoint(2); const bar = timelineBar.mapToItem(null, timelineBar.width - 30, 0); ui.move(a.x, a.y); ui.press(a.x, a.y); for (let i = 1; i <= 10; ++i) ui.move(a.x + (bar.x - a.x) * i / 10, a.y); for (let i = 0; i < 8; ++i) ui.move(bar.x + (i % 2), a.y) })()
+ui.wait(300)
+(() => { ui.log("scroll " + timelineBar.scrollX + " slot " + timelineBar.dragSlot); if (timelineBar.scrollX <= 0) ui.fail("dragging at the right edge did not scroll the timeline") })()
+ui.shot("timeline-reorder-long.png")
+(() => { const p = timelineBar.mapToItem(null, timelineBar.width - 30, timelineBar.height / 2); ui.release(p.x + 1, p.y) })()
+ui.wait(800)
+(() => { const tl = controller.execute("timeline.list").result; const n = tl.features.length; const at = tl.features.findIndex(f => String(f.id) === timelineBar.objectName); ui.log("moved box at " + at + " of " + n); if (at <= 0) ui.fail("the chip was not moved"); if (at >= n - 1) ui.fail("the chip went to the very end of the long timeline") })()
