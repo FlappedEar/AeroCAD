@@ -970,4 +970,17 @@ double selectionArea(const TriangleMesh& mesh, const TriangleSet& selection)
     return area;
 }
 
+BoundingBox selectionBounds(const TriangleMesh& mesh, const TriangleSet& selection)
+{
+    const auto& v = mesh.vertices();
+    BoundingBox box;
+    for (const auto t : selection) {
+        if (t >= mesh.triangleCount())
+            continue;
+        for (const auto i : mesh.triangles()[t])
+            box.extend(v[i]);
+    }
+    return box;
+}
+
 } // namespace aerocad::core

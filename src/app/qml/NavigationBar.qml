@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Navigation bar at the bottom of the canvas, as in Autodesk Fusion: orbit / pan / zoom tools
-// that map the left mouse button, fit, home and the camera projection.
+// that map the left mouse button, fit, zoom to selection, home and the camera projection.
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -13,9 +13,11 @@ Pane {
     property string mode: ""
     property bool orthographic: false
     property bool gridVisible: true
+    property bool canFitSelection: false
 
     signal modeSelected(string mode)
     signal fitRequested()
+    signal fitSelectionRequested()
     signal homeRequested()
     signal projectionRequested(bool orthographic)
     signal gridToggled(bool shown)
@@ -65,6 +67,13 @@ Pane {
             iconName: "fit"
             tip: qsTr("Fit all (F6)")
             onClicked: root.fitRequested()
+        }
+        NavButton {
+            objectName: "fitSelection"
+            iconName: "fit-selection"
+            tip: qsTr("Zoom to selection (double-click a part)")
+            enabled: root.canFitSelection
+            onClicked: root.fitSelectionRequested()
         }
         NavButton {
             iconName: "home"

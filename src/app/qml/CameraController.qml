@@ -56,6 +56,8 @@ Item {
 
     /// A right click that did not move (a right drag orbits): open the context menu.
     signal contextClicked(real x, real y)
+    /// Middle button double click (Fusion: zoom to fit).
+    signal fitAllRequested()
     property bool contextMenuEnabled: true
 
     /// Point the current drag orbits around (scene space), when `orbitAroundPoint`.
@@ -251,6 +253,15 @@ Item {
         onStarted: (x, y) => root.beginOrbitAt(x, y)
         onFinished: root.endOrbit()
         onMoved: (dx, dy) => root.orbit(dx, dy)
+    }
+
+    // Middle button double click fits everything, as in Fusion. A tap takes no grab, so the
+    // middle drag handlers above still pan / orbit.
+    TapHandler {
+        acceptedButtons: Qt.MiddleButton
+        gesturePolicy: TapHandler.DragThreshold
+        grabPermissions: PointerHandler.ApprovesTakeOverByAnything
+        onDoubleTapped: root.fitAllRequested()
     }
 
     // Right button: drag = orbit (Shift: pan), click = context menu. PointHandlers only

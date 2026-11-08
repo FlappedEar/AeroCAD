@@ -89,6 +89,12 @@ public:
         press(x, y, button, mods);
         release(x, y, button, mods);
     }
+    /// Two clicks within the double-click interval, as a real double click arrives.
+    Q_INVOKABLE void doubleClick(qreal x, qreal y, const QString& button = "left", const QString& mods = "")
+    {
+        move(x, y, mods);
+        QTest::mouseDClick(m_window, toButton(button), modifiers(mods), QPointF(x, y).toPoint());
+    }
     Q_INVOKABLE void drag(qreal x0, qreal y0, qreal x1, qreal y1, const QString& button = "left",
                           const QString& mods = "", int steps = 10)
     {

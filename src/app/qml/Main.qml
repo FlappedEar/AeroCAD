@@ -185,11 +185,39 @@ ApplicationWindow {
                 controller.execute("part.set_visible", { id: p.id, visible: true })
     }
 
+    /// Zoom to Selection: fills the view with the selected area of part `id` (default: the
+    /// selected part) when it has one, else with the whole part; nothing selected fits all.
+    function zoomToSelection(id) {
+        const pid = id || selectedPartId
+        if (!pid) {
+            viewport.fitAll()
+            return
+        }
+        const sel = controller.execute("selection.get", { id: pid })
+        const b = sel.ok ? sel.result.bounds : null
+        if (b)
+            frameOnPart(pid, b.center, b.diagonal / 2)
+        else
+            zoomToPart(pid)
+    }
+
     /// Fills the view with part `id`.
     function zoomToPart(id) {
         const info = controller.partInfo(id)
         if (info.center && info.center.length === 3)
-            viewport.frameAround(info.center, Math.max((info.diagonal ?? 0) / 2, 1))
+            frameOnPart(id, info.center, (info.diagonal ?? 0) / 2)
+    }
+
+    /// Frames a sphere of part `id` (model mm) where it is shown: a part being moved is
+    /// framed at its preview.
+    function frameOnPart(id, center, radius) {
+        let c = Qt.vector3d(center[0], center[1], center[2])
+        let r = radius
+        if (viewport.transformActive && viewport.transformTarget.partId === id) {
+            c = viewport.previewPoint(id, c)
+            r *= viewport.transformScale
+        }
+        viewport.frameAround([c.x, c.y, c.z], Math.max(r, 1))
     }
 
     function selectedInfo() {
@@ -739,6 +767,12 @@ ApplicationWindow {
         onTriggered: viewport.fitAll()
     }
     Action {
+        id: zoomSelectionAction
+        text: qsTr("&Zoom to Selection")
+        enabled: !!window.selectedPartId
+        onTriggered: window.zoomToSelection(0)
+    }
+    Action {
         id: homeAction
         text: qsTr("&Home")
         onTriggered: viewport.goHome()
@@ -1140,6 +1174,7 @@ ApplicationWindow {
         Menu {
             title: qsTr("&View")
             MenuItem { action: fitAction }
+            MenuItem { action: zoomSelectionAction }
             MenuItem { action: homeAction }
             MenuSeparator {}
             Action { text: qsTr("Front"); onTriggered: viewport.setView(0, 0) }
@@ -1622,6 +1657,7 @@ ApplicationWindow {
                 if (!id && window.pickingSketchPlane)
                     window.controller.showStatus(qsTr("Nothing there to sketch on: click on or next to the surface"))
             }
+            onZoomToPartRequested: id => window.zoomToSelection(id)
             onPartContextRequested: (id, x, y) => {
                 partMenu.info = id ? window.controller.partInfo(id) : ({})
                 partMenu.popup(viewport, x, y)

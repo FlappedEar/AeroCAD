@@ -13,6 +13,7 @@
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <cmath>
 
 #include <filesystem>
 #include <fstream>
@@ -294,6 +295,11 @@ TEST_CASE("Selection commands are undoable", "[commands][selection]")
     REQUIRE(r.ok);
     CHECK(r.data.at("selectedTriangles") == 2);
     CHECK(r.data.at("areaMm2").get<double>() == Approx(100.0));
+    // Bounds of the selected top face (for Zoom to Selection).
+    CHECK(r.data.at("bounds").at("min")[2].get<double>() == Approx(10.0));
+    CHECK(r.data.at("bounds").at("max")[2].get<double>() == Approx(10.0));
+    CHECK(r.data.at("bounds").at("center")[0].get<double>() == Approx(5.0));
+    CHECK(r.data.at("bounds").at("diagonal").get<double>() == Approx(std::sqrt(200.0)));
 
     r = session.execute("selection.pick_region", {{"id", id}, {"point", {5, 5, 0}}, {"mode", "add"}});
     REQUIRE(r.ok);

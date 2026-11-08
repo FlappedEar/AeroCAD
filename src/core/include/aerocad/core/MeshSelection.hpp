@@ -196,4 +196,7 @@ void normalizeSelection(TriangleSet& selection);
 /// Total area of the selected triangles (mm^2).
 [[nodiscard]] double selectionArea(const TriangleMesh& mesh, const TriangleSet& selection);
 
+/// Bounding box of the selected triangles (empty when nothing valid is selected).
+[[nodiscard]] BoundingBox selectionBounds(const TriangleMesh& mesh, const TriangleSet& selection);
+
 } // namespace aerocad::core

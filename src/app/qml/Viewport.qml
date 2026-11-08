@@ -10,6 +10,8 @@ Item {
     required property AppController controller
     property var selectedPartId: 0
     signal partPicked(var id)
+    /// Fill the view with part `id` (or its selected area); 0 = the selected part.
+    signal zoomToPartRequested(var id)
     /// Right-click on a part (id 0: on empty space), at x, y in this item.
     signal partContextRequested(var id, real x, real y)
     /// Left click on a part: its id and the hit point in model coordinates (mm, Z up).
@@ -276,19 +278,25 @@ Item {
         // An empty scene (e.g. a new sketch) gets a 100 mm view.
         const r = controller.sceneRadius > 1e-6 ? Math.max(controller.sceneRadius, 1) : 50
         cameraInput.pivot.position = controller.sceneCenter
-        const halfFov = camera.fieldOfView * Math.PI / 360
-        const aspect = Math.max(0.1, width / Math.max(1, height))
-        const fitFov = aspect < 1 ? Math.atan(Math.tan(halfFov) * aspect) : halfFov
-        cameraInput.distance = r / Math.sin(fitFov) * 1.1
+        cameraInput.distance = frameDistance(r)
         updateClipping()
     }
 
-    /// Frames the area of `radius` (mm) around a model point (a place being worked on).
+    /// Camera distance at which a sphere of `radius` (mm) fills the view with a margin, also
+    /// in a window narrower than it is high.
+    function frameDistance(radius) {
+        const halfFov = camera.fieldOfView * Math.PI / 360
+        const aspect = Math.max(0.1, width / Math.max(1, height))
+        const fitFov = aspect < 1 ? Math.atan(Math.tan(halfFov) * aspect) : halfFov
+        return radius / Math.sin(fitFov) * 1.1
+    }
+
+    /// Frames the area of `radius` (mm) around a model point (a place being worked on), as
+    /// fitAll() does: the whole sphere fits also in a narrow window.
     function frameAround(point, radius) {
         // Model (x, y, z) is (x, z, -y) in the Y-up scene.
         cameraInput.pivot.position = Qt.vector3d(point[0], point[2], -point[1])
-        const halfFov = camera.fieldOfView * Math.PI / 360
-        cameraInput.distance = Math.max(radius, 1) / Math.sin(halfFov) * 1.1
+        cameraInput.distance = frameDistance(Math.max(radius, 1))
         updateClipping()
     }
 
@@ -348,10 +356,27 @@ Item {
     }
 
     function updateClipping() {
-        const r = Math.max(controller.sceneRadius, 1)
+        let r = Math.max(controller.sceneRadius, 1)
+        if (transformActive) {
+            // A part being moved or scaled can reach past the document's bounds: keep all of
+            // its preview between the clipping planes.
+            const c = previewPoint(transformTarget.partId, transformTarget.center)
+            const reach = Qt.vector3d(c.x, c.z, -c.y).minus(cameraInput.pivot.position).length()
+                          + (transformTarget.radius ?? 0) * transformScale
+            r = Math.max(r, reach)
+        }
         camera.clipFar = cameraInput.distance + r * 4
         camera.clipNear = Math.max(cameraInput.distance - r * 2, cameraInput.distance * 0.001, 0.001)
     }
+
+    /// Near and far clipping distances (for tests).
+    function clipRange() {
+        return { near: camera.clipNear, far: camera.clipFar }
+    }
+
+    onTransformScaleChanged: updateClipping()
+    onTransformMoveChanged: updateClipping()
+    onTransformTargetChanged: updateClipping()
 
     Rectangle {
         anchors.fill: parent
@@ -627,6 +652,7 @@ Item {
         pointUnder: (x, y, onModelOnly) => root.scenePointUnder(x, y, onModelOnly)
         // Right-click: select the part under the cursor and open its context menu.
         contextMenuEnabled: !root.sketch
+        onFitAllRequested: root.fitAll()
         onContextClicked: (x, y) => {
             const hit = root.pickPart(x, y)
             const id = hit ? hit.partId : 0
@@ -671,6 +697,8 @@ Item {
         orthographic: root.orthographic
         onModeSelected: mode => cameraInput.leftDragMode = mode
         onFitRequested: root.fitAll()
+        canFitSelection: !!root.selectedPartId
+        onFitSelectionRequested: root.zoomToPartRequested(0)
         onHomeRequested: root.goHome()
         onProjectionRequested: ortho => root.orthographic = ortho
         gridVisible: root.gridVisible
@@ -679,7 +707,11 @@ Item {
 
     TapHandler {
         acceptedButtons: Qt.LeftButton
+        /// The first click of a double click picked a face (Lay on Face / Face Front).
+        property bool firstTapPicked: false
         onTapped: eventPoint => {
+            if (tapCount === 1)
+                firstTapPicked = !!root.transformPickMode
             // Mesh ray cast: Qt Quick 3D picks custom geometry by its bounding volume only.
             let hit = root.pickPart(eventPoint.position.x, eventPoint.position.y)
             if (root.transformPickMode) {
@@ -718,7 +750,16 @@ Item {
                 root.pointPicked(id, root.modelPoint(hit))
             }
         }
-        onDoubleTapped: if (root.tool === "navigate") root.fitAll()
+        // Double click: on a part fills the view with it, on empty space fits everything.
+        onDoubleTapped: eventPoint => {
+            if (root.tool !== "navigate" || root.transformPickMode || firstTapPicked)
+                return
+            const hit = root.pickPart(eventPoint.position.x, eventPoint.position.y)
+            if (hit)
+                root.zoomToPartRequested(hit.partId)
+            else
+                root.fitAll()
+        }
     }
 
     // Brush strokes and lasso drawing (left drag while a selection tool is active).
@@ -917,7 +958,7 @@ Item {
         transformPickMode = ""
         transformTarget = { partId: info.id, kind: info.kind, featureId: info.featureId,
                       center: Qt.vector3d(info.center[0], info.center[1], info.center[2]),
-                      name: info.name || "", canScale: true }
+                      name: info.name || "", canScale: true, radius: (info.diagonal ?? 0) / 2 }
         return true
     }
 
