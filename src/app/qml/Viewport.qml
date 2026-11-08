@@ -935,6 +935,18 @@ Item {
         return { command: "part.transform", params: params }
     }
 
+    // Any other change to the document (a command from the UI or the AI agent) applies the
+    // preview first, so it never lands on geometry it was not made for; undo, redo and a
+    // new or opened project drop it instead.
+    Connections {
+        target: root.controller
+        enabled: root.transformActive
+        function onDocumentAboutToChange(command) {
+            const drop = ["edit.undo", "edit.redo", "project.new", "project.open", "project.recover"].includes(command)
+            root.finishTransform(!drop)
+        }
+    }
+
     /// Ends the tool: commit applies the preview as one command, otherwise the part goes back.
     function finishTransform(commit) {
         if (!transformTarget)

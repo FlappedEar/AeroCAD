@@ -82,6 +82,13 @@ ApplicationWindow {
         selectedPartId = id
     }
 
+    /// A tool that picks in the view or edits the design: opening one applies a running
+    /// Move / Rotate / Scale first (Measure and selection tools would see the old geometry).
+    readonly property bool otherToolActive: measurePanel.active || heatMapPanel.active || scanPanel.visible
+                                            || featureDialog.visible || !!activeSketch || pickingSketchPlane
+                                            || viewport.tool !== "navigate"
+    onOtherToolActiveChanged: if (otherToolActive) viewport.finishTransform(true)
+
     /// Move / Rotate / Scale (Fusion: Move/Copy, M): handles in the view and a small panel,
     /// live preview, one undo step when done.
     function startTransform(id) {
@@ -91,6 +98,7 @@ ApplicationWindow {
         closeToolPanels()
         featureDialog.close()
         pickingSketchPlane = false
+        viewport.leaveSelectionTool()
         if (selectedPartId !== info.id)
             selectPart(info.id)
         if (!viewport.startTransform(info)) {
