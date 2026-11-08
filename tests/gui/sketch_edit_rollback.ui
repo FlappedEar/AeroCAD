@@ -1,0 +1,30 @@
+# CAD-164: editing an earlier sketch rolls the timeline back to just after it (Fusion); Finish
+# Sketch rolls forward and the extrude follows the edited sketch. A new sketch at the end
+# changes nothing.
+# Run: AeroCAD --ui-script <this file>
+ui.wait(800)
+(() => { const s = controller.execute("sketch.create", { plane: "XY", curves: [{ type: "rectangle", corner: [0, 0], width: 40, height: 20 }] }); if (!s.ok) ui.fail("sketch: " + s.error); const e = controller.execute("feature.extrude", { sketch: s.result.id, distance: 10 }); if (!e.ok) ui.fail("extrude: " + e.error); controller.execute("feature.box", { corner: [100, 0, 0], size: [10, 10, 10] }) })()
+ui.wait(500)
+# Double-click the sketch chip in the timeline.
+(() => { const p = timelineBar.chipPoint(0); ui.doubleClick(p.x, p.y) })()
+ui.wait(800)
+(() => { const tl = controller.execute("timeline.list").result; ui.log("while editing: marker " + tl.marker + ", bodies " + tl.bodies.length); if (!activeSketch || activeSketch.id !== tl.features[0].id) ui.fail("the sketch did not open"); if (tl.marker !== 1) ui.fail("the timeline was not rolled back to the sketch: " + tl.marker); if (tl.bodies.length !== 0) ui.fail("later bodies are still shown") })()
+ui.shot("sketch-edit-rolled-back.png")
+(() => { const c = controller.execute("sketch.add_constraints", { sketch: activeSketch.id, constraints: [{ type: "length", curve: 0, value: 60 }] }); if (!c.ok) ui.fail("dimension: " + c.error) })()
+ui.wait(300)
+(() => { if (!ui.clickText("Finish Sketch")) ui.fail("no Finish Sketch") })()
+ui.wait(800)
+(() => { const tl = controller.execute("timeline.list").result; const ex = tl.bodies.find(b => Math.abs(b.volume - 60 * 20 * 10) < 1); ui.log("after finish: marker " + tl.marker + ", bodies " + JSON.stringify(tl.bodies.map(b => b.volume))); if (activeSketch) ui.fail("the sketch is still open"); if (tl.marker !== 3) ui.fail("Finish Sketch did not roll forward: " + tl.marker); if (!ex) ui.fail("the extrude did not follow the edited sketch") })()
+ui.shot("sketch-edit-rolled-forward.png")
+# If the user moves the marker while editing, Finish leaves it there.
+(() => { editFeature(controller.execute("timeline.list").result.features[0]) })()
+ui.wait(500)
+(() => { controller.execute("timeline.set_marker", { position: 2 }) })()
+(() => { finishSketch(false) })()
+ui.wait(300)
+(() => { const tl = controller.execute("timeline.list").result; if (tl.marker !== 2) ui.fail("Finish moved a marker the user had set: " + tl.marker) })()
+(() => { controller.execute("timeline.set_marker", {}) })()
+# A new sketch at the end does not roll anything back.
+(() => { const s = controller.execute("sketch.create", { plane: "XY", curves: [{ type: "circle", center: [200, 0], radius: 5 }] }); enterSketch(s.result.id) })()
+ui.wait(500)
+(() => { const tl = controller.execute("timeline.list").result; if (tl.marker !== tl.features.length) ui.fail("a new sketch rolled the timeline back"); finishSketch(false); const t2 = controller.execute("timeline.list").result; if (t2.marker !== t2.features.length) ui.fail("finishing a new sketch moved the marker") })()

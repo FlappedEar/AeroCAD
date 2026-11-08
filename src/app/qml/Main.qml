@@ -554,10 +554,46 @@ ApplicationWindow {
         viewport.sketchDegreesOfFreedom = r.result.degreesOfFreedom
     }
 
-    function enterSketch(id) {
-        const r = controller.execute("sketch.profiles", { sketch: id, surfaceLine: true })
-        if (!r.ok)
+    /// Editing an earlier sketch rolls the timeline back to just after it (Fusion): what came
+    /// later is hidden and cannot be snapped to or projected. {sketch, marker, rolledTo} to
+    /// roll forward again when the sketch ends; null when nothing was rolled back.
+    property var sketchRollback: null
+
+    function rollBackToSketch(id) {
+        const tl = controller.execute("timeline.list")
+        if (!tl.ok)
             return
+        const index = tl.result.features.findIndex(f => f.id === id)
+        if (index < 0 || index + 1 >= tl.result.marker)
+            return
+        if (controller.execute("timeline.set_marker", { position: index + 1 }).ok)
+            sketchRollback = { sketch: id, marker: tl.result.marker, rolledTo: index + 1 }
+    }
+
+    /// Rolls forward to where the timeline was before the sketch edit, unless the user moved
+    /// the marker meanwhile or the design was replaced (new project, open, variant switch).
+    function rollForwardFromSketch() {
+        const rb = sketchRollback
+        sketchRollback = null
+        if (!rb)
+            return
+        const tl = controller.execute("timeline.list")
+        if (!tl.ok)
+            return
+        const t = tl.result
+        const sketchAt = t.features.findIndex(f => f.id === rb.sketch)
+        if (t.marker === rb.rolledTo && sketchAt === rb.rolledTo - 1 && rb.marker <= t.features.length)
+            controller.execute("timeline.set_marker", { position: rb.marker })
+    }
+
+    function enterSketch(id) {
+        rollForwardFromSketch()
+        rollBackToSketch(id)
+        const r = controller.execute("sketch.profiles", { sketch: id, surfaceLine: true })
+        if (!r.ok) {
+            rollForwardFromSketch()
+            return
+        }
         const pl = r.result.plane
         const on = r.result.onSurface
         activeSketch = { id: id, origin: pl.origin, normal: pl.normal, xDir: pl.xDir, yDir: pl.yDir,
@@ -595,6 +631,7 @@ ApplicationWindow {
     /// Ends sketch editing. With `offerPart` (the user finished it), a closed outline drawn
     /// over a surface or scan offers to make the part on that surface right away.
     function finishSketch(offerPart) {
+        rollForwardFromSketch()
         // Any other way out (new project, variant switch, a feature dialog) drops the offer.
         partOnSurfaceSketch = null
         if (offerPart && activeSketch) {

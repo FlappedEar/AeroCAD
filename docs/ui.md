@@ -361,7 +361,8 @@ See [cad.md](cad.md) for the timeline and the commands behind the tools.
   an origin plane, another construction plane or a clicked planar face. Planes are drawn as
   translucent orange squares; Create Sketch accepts a click on a plane.
 - **Timeline** (bottom): features in order; double-click to edit (sketches reopen in the
-  sketch environment), right-click for Edit Profile Sketch (Extrude, Revolve, Sweep, Loft:
+  sketch environment with the timeline rolled back to just after the sketch, as in Fusion:
+  later features are hidden until Finish Sketch rolls forward again), right-click for Edit Profile Sketch (Extrude, Revolve, Sweep, Loft:
   opens the sketch the profile comes from), Rename, Suppress, Roll Back To Here and Delete; the
   playback buttons move the marker, or drag the marker itself. Drag a feature to another place
   to reorder (a line shows where it drops; near an edge the timeline scrolls); a move that
