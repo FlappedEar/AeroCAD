@@ -715,6 +715,20 @@ TEST_CASE("Design commands: dragging sketch points (CAD-123)", "[commands][cad][
 
 TEST_CASE("Design commands: dragging keeps expressions and regular polygons (CAD-123)", "[commands][cad][solver]")
 {
+    {
+        // A centre rectangle's corner dragged past the opposite corner stays where it is put.
+        commands::Session t;
+        const auto rid = run(t, "sketch.create",
+                             {{"plane", "XY"},
+                              {"curves", Json::array({{{"type", "center_rectangle"}, {"center", {0, 0}}, {"width", 40}, {"height", 20}}})}})
+                             .at("id")
+                             .get<std::uint64_t>();
+        run(t, "sketch.move_point", {{"sketch", rid}, {"point", {{"curve", 0}, {"point", "start"}}}, {"to", {30, 20}}});
+        const Json rc = run(t, "sketch.curves", {{"sketch", rid}});
+        const auto& p = rc.at("curves")[0].at("points")[0];
+        CHECK(p[0].get<double>() == Approx(30).margin(1e-4));
+        CHECK(p[1].get<double>() == Approx(20).margin(1e-4));
+    }
     commands::Session s;
     run(s, "parameter.set", {{"name", "r"}, {"expression", "6 mm"}});
     const auto id = run(s, "sketch.create",

@@ -664,8 +664,9 @@ Json itemFromSolved(const Json& item, const SketchCurve* c, std::size_t n)
     } else if (type == "center_rectangle") {
         const Vec2 a = c[0].points[0], b = c[2].points[0];
         out["center"] = pt({(a.x + b.x) / 2, (a.y + b.y) / 2});
-        out["width"] = std::abs(b.x - a.x);
-        out["height"] = std::abs(b.y - a.y);
+        // Signed, so the corners keep their places (a corner dragged past the opposite one).
+        out["width"] = b.x - a.x;
+        out["height"] = b.y - a.y;
     } else if (type == "circle") {
         out.erase("diameter");
         out["center"] = pt(c[0].points[0]);
