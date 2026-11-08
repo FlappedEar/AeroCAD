@@ -201,6 +201,8 @@ public:
     /// Warning shown in the Wind tunnel panel when the part's size is implausible for a run
     /// (most likely the wrong unit, CAD-109); empty when it is fine.
     Q_INVOKABLE QString partSizeWarning(quint64 id) const;
+    /// Wind tunnel warning when the part's mesh is not closed (CAD-145), else empty.
+    Q_INVOKABLE QString partOpenWarning(quint64 id) const;
     /// True when the heat map is shown on this part (and still matches its mesh).
     Q_INVOKABLE bool showsHeatMap(quint64 id) const;
     /// Heat map colour for t in [0, 1], for the legend.
@@ -238,6 +240,8 @@ private:
                                                           const core::Vec3& outward) const;
     mutable std::shared_ptr<const core::TriangleMesh> m_projectorMesh;
     mutable std::unique_ptr<core::MeshProjector> m_projector;
+    mutable std::weak_ptr<const core::TriangleMesh> m_openEdgesMesh; ///< Mesh m_openEdges was counted on.
+    mutable std::size_t m_openEdges = 0;
 
     void setStatusMessage(const QString& message);
     /// Runs the heat map again after its parts changed (or clears it when they are gone).

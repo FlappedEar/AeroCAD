@@ -47,6 +47,17 @@ std::string partSizeWarning(double length)
            "(MESH > Scan Tools > \"This part is in\" > Convert); the simulation runs at the size shown.";
 }
 
+std::string openPartWarning(std::size_t openEdges)
+{
+    if (openEdges == 0)
+        return {};
+    return "The part is not closed (" + std::to_string(openEdges) +
+           " open edges: holes, or a scan shell or surface with no inside). The wind tunnel needs a closed "
+           "body: around an open shell the mesh makes a layer about one cell thick, so the forces depend on the "
+           "mesh, not on the part. Close it first (MESH > Scan Tools > Repair, with \"Fill holes up to\" at least " +
+           std::to_string(openEdges) + " edges), or give a surface thickness.";
+}
+
 std::string_view meshLevelName(MeshLevel level)
 {
     switch (level) {

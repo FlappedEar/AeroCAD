@@ -599,3 +599,60 @@ TEST_CASE("A run warns about a part at an implausible size (CAD-109)", "[command
     REQUIRE(r.data.at("warnings").size() == 1);
     CHECK(r.data.at("warnings")[0] == warning);
 }
+
+TEST_CASE("A run warns about a part that is not closed (CAD-145)", "[commands][simulation]")
+{
+    RunsDir dir;
+    commands::Session session;
+    const auto warningsOf = [&](std::uint64_t id) {
+        const auto r = session.execute("simulation.propose_run", {{"id", id}});
+        INFO(r.error);
+        REQUIRE(r.ok);
+        return r.data.at("warnings");
+    };
+
+    // A closed mesh: no warning.
+    CHECK(warningsOf(importBox(session)).empty());
+
+    // Solids from the timeline, curved faces and a fillet included: their tessellation is closed.
+    auto r = session.execute(
+        "sketch.create",
+        {{"plane", "XY"},
+         {"curves", Json::array({{{"type", "center_rectangle"}, {"center", {0, 0}}, {"width", 60}, {"height", 40}},
+                                 {{"type", "circle"}, {"center", {100, 0}}, {"radius", 20}}})}});
+    REQUIRE(r.ok);
+    r = session.execute("feature.extrude", {{"sketch", r.data.at("id")}, {"distance", 30}});
+    REQUIRE(r.ok);
+    REQUIRE_FALSE(r.data.at("bodies").empty());
+    const auto bodyId = r.data.at("id").get<std::uint64_t>();
+    REQUIRE(session
+                .execute("feature.fillet",
+                         {{"body", bodyId}, {"edges", Json::array({{{"point", {30, 20, 15}}}})}, {"radius", 5}})
+                .ok);
+    const auto parts = session.execute("document.parts"); // Keeps the result alive while iterating.
+    int bodies = 0;
+    for (const auto& p : parts.data.at("parts"))
+        if (p.at("kind") == "body") {
+            ++bodies;
+            CHECK(warningsOf(p.at("id").get<std::uint64_t>()).empty());
+        }
+    CHECK(bodies > 0);
+
+    // A raw scan shell, open underneath: warned, with the number of open edges and the fix.
+    r = session.execute("document.import", {{"path", AEROCAD_TEST_DATA_DIR "/models/dome_scan.stl"}});
+    REQUIRE(r.ok);
+    const auto scan = r.data.at("id").get<std::uint64_t>();
+    const Json w = warningsOf(scan);
+    REQUIRE(w.size() == 1);
+    const std::string warning = w[0];
+    CHECK(warning.find("not closed (329 open edges") != std::string::npos);
+    CHECK(warning.find("Repair") != std::string::npos);
+    r = session.execute("simulation.run", {{"id", scan}, {"prepareOnly", true}});
+    REQUIRE(r.ok);
+    REQUIRE(r.data.at("warnings").size() == 1);
+    CHECK(r.data.at("warnings")[0] == warning);
+
+    // Filling the holes as the warning says removes it.
+    REQUIRE(session.execute("mesh.repair", {{"id", scan}, {"maxHoleEdges", 329}}).ok);
+    CHECK(warningsOf(scan).empty());
+}

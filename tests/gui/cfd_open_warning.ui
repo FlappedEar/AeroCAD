@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CAD-145: a raw scan shell (open underneath) has no inside to put in the flow. The Wind tunnel
+# panel warns before a run, with the number of open edges and the fix; filling the holes as it
+# says clears the warning.
+ui.wait(1000)
+(() => { const p = controller.execute("document.parts").result.parts[0]; window.selectPart(p.id) })()
+ui.clickText("SIMULATE")
+ui.wait(300)
+ui.clickText("Wind Tunnel")
+ui.wait(600)
+(() => { const w = controller.partOpenWarning(simulationPanel.partInfo.id); ui.log("scan warning: " + w); if (!/not closed \(329 open edges/.test(w)) ui.fail("no open-mesh warning for the scan shell") })()
+ui.clickText(controller.partOpenWarning(simulationPanel.partInfo.id))
+ui.shot("cfd-open-warning.png")
+(() => { const r = controller.execute("mesh.repair", { id: simulationPanel.partInfo.id, maxHoleEdges: 329 }); if (!r.ok) ui.fail(r.error) })()
+ui.wait(500)
+(() => { const w = controller.partOpenWarning(simulationPanel.partInfo.id); if (w) ui.fail("warning stays after the holes are filled: " + w) })()
+ui.key("Z", "ctrl")
+ui.wait(500)
+ui.clickText(controller.partOpenWarning(simulationPanel.partInfo.id))
+ui.log("cfd open warning done")

@@ -3,6 +3,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cstddef>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -34,6 +35,11 @@ inline constexpr double kMaxPlausiblePartLength = 50.0;
 /// A warning when a part whose largest dimension is `length` metres is implausibly small or
 /// large for a wind tunnel run, else empty.
 [[nodiscard]] std::string partSizeWarning(double length);
+
+/// A warning when the part's mesh is not closed (`openEdges` edges used by one triangle only,
+/// such as a raw scan shell or a surface), else empty. The mesher then wraps the shell in a
+/// layer of cells about one cell thick, so the forces depend on the mesh, not on the part.
+[[nodiscard]] std::string openPartWarning(std::size_t openEdges);
 
 /// Identifier of the only preset so far: steady incompressible external flow around the
 /// selected part (simpleFoam, k-omega SST, snappyHexMesh). Bump the suffix when the

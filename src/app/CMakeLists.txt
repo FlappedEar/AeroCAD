@@ -181,6 +181,12 @@ if(AEROCAD_BUILD_TESTS)
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/cfd_size_warning.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_cfd_size_warning_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-145: the Wind tunnel panel warns about a part that is not closed (raw scan shell).
+    add_test(NAME app_cfd_open_warning_test
+        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl
+                --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/cfd_open_warning.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_cfd_open_warning_test PROPERTIES LABELS gui TIMEOUT 60)
     # CAD-105: Simplify a scan, then Ctrl+Z restores the full mesh (also with a reduced display).
     add_test(NAME app_simplify_undo_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl
