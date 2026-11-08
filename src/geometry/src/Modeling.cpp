@@ -413,16 +413,12 @@ TopoDS_Shape taperedPiece(const TopoDS_Face& face, const core::Vec3& dir, double
         piece = cut.Shape();
     }
     // A profile that closes up before the end gives a shorter solid.
-    Bnd_Box box;
-    BRepBndLib::Add(piece, box);
-    double x0 = 0, y0 = 0, z0 = 0, x1 = 0, y1 = 0, z1 = 0;
-    box.Get(x0, y0, z0, x1, y1, z1);
+    // Measured along the extrusion axis on the vertices (the end face is parallel to the
+    // sketch plane, so its vertices reach the full height), not on a world-aligned box,
+    // which overestimates the reach on tilted sketch planes.
     double reach = 0.0;
-    for (const double x : {x0, x1})
-        for (const double y : {y0, y1})
-            for (const double z : {z0, z1})
-                reach = std::max(reach, gp_Vec(plane.Location(), gp_Pnt(x, y, z)).Dot(gp_Vec(n)));
-    // The box is loose (tolerance-enlarged); a closed-up profile stops well short.
+    for (TopExp_Explorer v(piece, TopAbs_VERTEX); v.More(); v.Next())
+        reach = std::max(reach, gp_Vec(plane.Location(), BRep_Tool::Pnt(TopoDS::Vertex(v.Current()))).Dot(gp_Vec(n)));
     if (reach < h * (1.0 - 1e-3) - 1e-4 || BRepCheck_Analyzer(piece).IsValid() == Standard_False)
         throw ModelingError("Extrude: the taper closes the profile before the end; use a smaller taper angle "
                             "or distance");

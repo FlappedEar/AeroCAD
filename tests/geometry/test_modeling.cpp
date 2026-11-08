@@ -184,6 +184,15 @@ TEST_CASE("Extrude with a taper angle", "[geometry][modeling]")
         // 10 x 20 closes up after 5 / tan(30) = 8.7 mm.
         CHECK_THROWS_AS(extrude(g.profiles[0], {0, 0, 1}, 20, 0, 30), ModelingError);
     }
+    SECTION("closing up is detected on a tilted sketch plane (Codex on PR #142)")
+    {
+        // 100 x 10 on a plane with normal (1, 0, 1): its world box reaches far along the normal.
+        const Plane tilted{{0, 0, 0}, core::Vec3{1, 0, 1}.normalized(), core::Vec3{1, 0, -1}.normalized()};
+        const auto t = buildSketch(tilted, rectangle({-50, -5}, {50, 5}));
+        CHECK_THROWS_AS(extrude(t.profiles[0], tilted.normal, 20, 0, 30), ModelingError);
+        const auto ok = extrude(t.profiles[0], tilted.normal, 5, 0, 30);
+        CHECK(isValid(ok));
+    }
 }
 
 TEST_CASE("Revolve a rectangle into a tube", "[geometry][modeling]")
