@@ -544,6 +544,16 @@ Pane {
     property string renameText: ""
     /// Cursor and selection in the name field; null = select all (as it opens).
     property var renameCursor: null
+    /// The name field lost focus. A refresh rebuilding the row hands it to the new field; a
+    /// click elsewhere (another field, the view) applies the name, as in the Browser (CAD-108).
+    function renameFocusLeft() {
+        Qt.callLater(() => {
+            const f = root.Window.activeFocusItem
+            if (!renamingRun || !f || (f.objectName || "").indexOf("runRenameField_") === 0)
+                return
+            renameRun(renamingRun, renameText)
+        })
+    }
     function startRename(run) {
         renameText = run.source.label || ""
         renameCursor = null
@@ -1267,6 +1277,7 @@ Pane {
                                 Component.onCompleted: begin()
                                 onVisibleChanged: begin()
                                 onTextEdited: { root.renameText = text; keep() }
+                                onActiveFocusChanged: if (!activeFocus) root.renameFocusLeft()
                                 onCursorPositionChanged: keep()
                                 onSelectionStartChanged: keep()
                                 onSelectionEndChanged: keep()

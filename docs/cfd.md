@@ -306,7 +306,7 @@ simulated part either.
 ```
 
 A run's label can be changed at any time, also while it runs (CAD-174). In the app, click ✎
-on the run in the run list, type the name and press Enter; Esc keeps the old one, and an empty
+on the run in the run list, type the name and press Enter (or click elsewhere); Esc keeps the old one, and an empty
 name removes the label ([run list](images/audit/cad-174-rename-run.png)). The label is saved
 in the run's `run.json`; `simulation.rename` does the same (at most 80 characters, one line).
 
