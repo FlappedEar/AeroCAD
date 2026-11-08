@@ -223,7 +223,8 @@ Item {
                 objectName: "chartReadoutTitle"
                 font.pixelSize: 11
                 font.bold: true
-                text: chart.readout ? chart.xLabel + " " + chart.fmt(chart.readout.x) : ""
+                // The exact recorded x, not rounded like the axis ticks (iteration 12345, not 12350).
+                text: chart.readout ? chart.xLabel + " " + (Number.isInteger(chart.readout.x) ? chart.readout.x : Number(chart.readout.x.toPrecision(8))) : ""
             }
             Repeater {
                 model: chart.readout ? chart.readout.values : []
