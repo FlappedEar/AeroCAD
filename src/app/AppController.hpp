@@ -120,6 +120,8 @@ public:
     /// all visible parts. Returns {ok, error?, warnings: [string]}; the status bar shows
     /// the outcome.
     Q_INVOKABLE QVariantMap exportFile(const QUrl& url, const QVariantList& ids = {});
+    /// Local file path of a file-dialog URL, for commands that take a path.
+    Q_INVOKABLE QString localPath(const QUrl& url) const;
     /// Runs a JSON command script: an array of {"name": ..., "params": {...}} objects (the
     /// same calls an MCP client makes). Stops at the first failing command. Returns false
     /// and sets the status message on errors.

@@ -4,6 +4,7 @@
 // goes through the simulation.* commands, the same ones an AI agent uses over MCP.
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Dialogs
 import QtQuick.Layouts
 import AeroCAD
 
@@ -516,6 +517,35 @@ Pane {
     property string pressurePalette: "rainbow"
     function paletteFor(scalar) {
         return scalar === "Cp" || scalar === "pressure" ? pressurePalette : ""
+    }
+
+    /// Where the last results export went, or why it failed (CAD-167).
+    property string exportNote: ""
+    readonly property alias resultsDialog: resultsExportDialog
+    onActiveRunChanged: exportNote = ""
+    function openResultsExport() {
+        const m = activeStatus
+        // The run id already holds the part name and the time (CAD-167).
+        const base = m ? (m.source.label ? m.source.label + " " : "") + m.id : "results"
+        const safe = base.replace(/[\\/:*?"<>|]+/g, "_").replace(/\s+/g, " ").trim()
+        const folder = resultsExportDialog.currentFolder.toString().replace(/\/$/, "")
+        resultsExportDialog.selectedFile = folder + "/" + encodeURIComponent(safe) + ".csv"
+        resultsExportDialog.open()
+    }
+    function exportResults(path) {
+        const r = controller.execute("simulation.export_results", { run: activeRun, path: path })
+        exportNote = r.ok ? qsTr("%n iteration(s) written to %1", "", r.result.rows).arg(path)
+                          : qsTr("Export failed: %1").arg(r.error)
+        return r.ok
+    }
+    FileDialog {
+        id: resultsExportDialog
+        title: qsTr("Export results")
+        fileMode: FileDialog.SaveFile
+        acceptLabel: qsTr("Export")
+        defaultSuffix: "csv"
+        nameFilters: [qsTr("CSV files (*.csv)")]
+        onAccepted: root.exportResults(root.controller.localPath(selectedFile))
     }
 
     /// Settings of a new run as they stand in the panel (simulation.run / propose_run).
@@ -1348,6 +1378,23 @@ Pane {
                         return conditions + (root.results.provisional
                             ? qsTr(" · %1 recorded iterations; provisional data")
                             : qsTr(" · mean of the last 20 % of %1 iterations")).arg(root.results.summary.iterations)
+                    }
+                }
+                // Forces and coefficients to a spreadsheet or report (CAD-167).
+                RowLayout {
+                    Layout.fillWidth: true
+                    Button {
+                        objectName: "cfdExportCsv"
+                        text: qsTr("Export CSV…")
+                        onClicked: root.openResultsExport()
+                    }
+                    Label {
+                        objectName: "cfdExportNote"
+                        Layout.fillWidth: true
+                        elide: Text.ElideMiddle
+                        font.pixelSize: 11
+                        opacity: 0.7
+                        text: root.exportNote
                     }
                 }
                 Repeater {

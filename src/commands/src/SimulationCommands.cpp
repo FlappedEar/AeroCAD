@@ -466,6 +466,27 @@ void registerSimulationCommands(CommandRegistry& r)
               }
           });
 
+    r.add({"simulation.export_results", "Export simulation results (CSV)",
+           "Write a run's results to a CSV file: a Quantity,Value block with the run, its conditions and its "
+           "final values (Cd, Cl, Cs; drag, lift, side, pressure and viscous drag in N; or the provisional means "
+           "while it is not finished), a blank line, then the full history per iteration. Returns the path and "
+           "the number of history rows.",
+           objectSchema({{"run", runIdParam()},
+                         {"path", {{"type", "string"}, {"description", "File to write (.csv), overwritten."}}}},
+                        {"run", "path"})},
+          [](CommandContext& ctx, const Json& params) {
+              const std::string id = requireRun(ctx, params);
+              const std::string path = params.at("path").get<std::string>();
+              if (path.empty())
+                  throw CommandError("path is empty");
+              try {
+                  const std::size_t rows = runs(ctx).exportResultsCsv(id, core::pathFromUtf8(path));
+                  return Json{{"path", path}, {"rows", rows}};
+              } catch (const std::exception& e) {
+                  throw CommandError(e.what());
+              }
+          });
+
     r.add({"simulation.field", "Simulation field summary",
            "Statistics of a result field in model coordinates (mm): surface (pressure on the part: p, Cp, "
            "pressure in Pa), sectionHorizontal / sectionVertical (velocity sections through the part centre: speed "
