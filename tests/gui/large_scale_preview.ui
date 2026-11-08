@@ -3,7 +3,8 @@
 #    no longer ends up inside the part, which showed only fragments);
 #  - Fit (F6) during the preview frames the preview too; Done applies the full 41x part;
 #  - Cancel after a typed scale puts the part back; a command that ends the tool while a
-#    large scale is shown raises no QML error (the ctest fails on any "TypeError").
+#    large scale is shown raises no QML error (the ctest fails on any "TypeError");
+#  - in the orthographic view a typed 3000 % and 2 % are framed too.
 # Run: AeroCAD tests/data/box_200x80x60.stl --ui-script <this file>
 Qt.createQmlObject('import QtQuick; Item { objectName: "lsTest"; visible: false; property var s: ({}); function find(i, name) { if (!i) return null; if (i.objectName === name) return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = find(ch[k], name); if (r) return r } return null } function part() { return controller.execute("document.parts").result.parts.find(p => p.id === s.id) } function onScreen(b, f, label) { const c = [0, 1, 2].map(i => (b.min[i] + b.max[i]) / 2); let ok = true; for (let i = 0; i < 8; ++i) { const p = [i & 1 ? b.max[0] : b.min[0], i & 2 ? b.max[1] : b.min[1], i & 4 ? b.max[2] : b.min[2]].map((v, k) => c[k] + (v - c[k]) * f); const q = viewport.modelToScreen(Qt.vector3d(p[0], p[1], p[2])); if (!(q.x >= 0 && q.y >= 0 && q.x <= viewport.width && q.y <= viewport.height)) ok = false } ui.log(label + ": whole part on screen " + ok + ", camera distance " + viewport.cameraState().distance.toFixed(1)); if (!ok) ui.fail(label + ": the part is not all in view") } function typeScale(v) { const f = find(window.contentItem, "scale"); const p = f.mapToItem(null, f.width / 2, f.height / 2); ui.click(p.x, p.y); f.selectAll(); ui.type(v); ui.key("Return") } }', window.contentItem)
 ui.wait(800)
@@ -33,3 +34,14 @@ ui.wait(300)
 (() => { Array.from(window.contentItem.children).find(c => c.objectName === "lsTest").typeScale("500") })()
 ui.wait(300)
 (() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "lsTest"); controller.execute("part.rename", { id: t.s.id, name: "big" }); const c = viewport.clipRange(); ui.log("command during scale: moving " + viewport.transformActive + ", size x " + t.part().bounds.size[0].toFixed(3) + ", clip " + c.near.toFixed(2) + " .. " + c.far.toFixed(2)); if (viewport.transformActive) ui.fail("the command did not end the tool"); if (Math.abs(t.part().bounds.size[0] / t.s.b.size[0] - 5) > 1e-6) ui.fail("the scale was not applied before the command") })()
+# Orthographic view: the zoom is the magnification, so a typed 3000 % (bigger than the view)
+# and 2 % (a dot) are framed too.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "lsTest"); t.s.b = t.part().bounds; viewport.fitAll(); const st = viewport.cameraState(); st.orthographic = true; viewport.restoreCameraState(st); window.startTransform(t.s.id) })()
+ui.wait(300)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "lsTest").typeScale("3000") })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "lsTest"); if (!viewport.orthographic) ui.fail("not orthographic"); t.onScreen(t.s.b, 30, "orthographic 3000 %") })()
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "lsTest").typeScale("2") })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "lsTest"); t.onScreen(t.s.b, 0.02, "orthographic 2 %"); const b = t.s.b, c = [0, 1, 2].map(i => (b.min[i] + b.max[i]) / 2), d = Math.hypot(b.size[0], b.size[1], b.size[2]) * 0.02 / 2; const q0 = viewport.modelToScreen(Qt.vector3d(c[0] - d, c[1], c[2])), q1 = viewport.modelToScreen(Qt.vector3d(c[0] + d, c[1], c[2])); const px = Math.hypot(q1.x - q0.x, q1.y - q0.y); ui.log("orthographic 2 %: preview " + px.toFixed(0) + " px across"); if (px < Math.min(viewport.width, viewport.height) / 40) ui.fail("the 2 % preview is a dot"); viewport.cancelTransform() })()
+ui.shot("build/large-scale-2-ortho.png")

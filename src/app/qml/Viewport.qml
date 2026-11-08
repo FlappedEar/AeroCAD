@@ -317,11 +317,21 @@ Item {
         if (!p)
             return
         const r = Math.max(p.radius, 1e-6)
-        const dist = p.center.minus(view.camera.scenePosition).length()
-        const needed = frameDistance(r)
         const s = view.mapFrom3DScene(p.center)
         const onScreen = s.z > 0 && s.x >= 0 && s.y >= 0 && s.x <= width && s.y <= height
-        if (orthographic ? !onScreen : (dist < needed * 0.8 || dist > needed * 20 || !onScreen)) {
+        let fits
+        if (orthographic) {
+            // The zoom is the magnification: compare the preview's size on screen with the
+            // view (bigger than the view, or a dot under 1/20 of it).
+            const half = Math.min(width, height) / 2
+            const px = r * orthoCamera.verticalMagnification
+            fits = px <= half && px >= half / 20
+        } else {
+            const dist = p.center.minus(view.camera.scenePosition).length()
+            const needed = frameDistance(r)
+            fits = dist >= needed * 0.8 && dist <= needed * 20
+        }
+        if (!fits || !onScreen) {
             const m = previewPoint(transformTarget.partId, transformTarget.center)
             frameAround([m.x, m.y, m.z], r)
         }
