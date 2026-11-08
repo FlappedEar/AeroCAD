@@ -12,6 +12,7 @@ Pane {
 
     required property AppController controller
     property var selectedPartId: 0
+    property var selectedPartIds: []
     signal partSelected(var id)
     /// Right-click on a row: open the part's context menu at x, y in `item`.
     signal partContextRequested(var id, Item item, real x, real y)
@@ -112,7 +113,7 @@ Pane {
                 required property string shapeKind
                 required property string partColor
 
-                readonly property bool selected: row.partId === root.selectedPartId
+                readonly property bool selected: root.selectedPartIds.indexOf(row.partId) >= 0
 
                 width: ListView.view.width
                 height: 36
@@ -125,9 +126,13 @@ Pane {
                     root.partSelected(row.partId)
                     root.startRename(row.partId)
                 }
-                TapHandler {
+                // Right-click: the part's menu. A MouseArea takes the right button for itself,
+                // so the row's own click (which selects only this part) never sees it and a
+                // multi-selection the part is in is kept for the menu.
+                MouseArea {
+                    anchors.fill: parent
                     acceptedButtons: Qt.RightButton
-                    onTapped: eventPoint => root.partContextRequested(row.partId, row, eventPoint.position.x, eventPoint.position.y)
+                    onClicked: mouse => root.partContextRequested(row.partId, row, mouse.x, mouse.y)
                 }
 
                 background: Rectangle {

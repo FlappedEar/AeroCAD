@@ -9,7 +9,12 @@ Item {
 
     required property AppController controller
     property var selectedPartId: 0
-    signal partPicked(var id)
+    /// Every selected part (Ctrl / Shift + click); selectedPartId is the last picked one.
+    property var selectedPartIds: []
+    /// A click picked part `id` (0: empty space). `additive`: Ctrl / Shift was held, so the
+    /// part joins or leaves the selection. `forMenu`: a right-click, which keeps a selection
+    /// the part is in.
+    signal partPicked(var id, bool additive, bool forMenu)
     /// A click while a revolve axis is being picked (view coordinates).
     signal axisClicked(real x, real y)
     /// Fill the view with part `id` (or its selected area); 0 = the selected part.
@@ -298,7 +303,7 @@ Item {
             visibleOnly: !lassoThrough,
             mode: selectMode
         })
-        partPicked(id)
+        partPicked(id, false, false)
     }
 
     /// Frames all visible parts. Deferred until the view has a size.
@@ -595,7 +600,7 @@ Item {
                     required property bool hasBrep
                     required property string partColor // Appearance, "" = default
                     property var pickPartId: partId
-                    readonly property bool selected: partId === root.selectedPartId
+                    readonly property bool selected: root.selectedPartIds.indexOf(partId) >= 0
                     readonly property bool hovered: partId === root.hoveredPartId && !selected
                     // Inspect: section view (cut + cap) and heat map replace the plain mesh.
                     readonly property bool sectioned: root.controller.inspectRevision >= 0
@@ -795,7 +800,7 @@ Item {
             const hit = root.pickPart(x, y)
             const id = hit ? hit.partId : 0
             if (id)
-                root.partPicked(id)
+                root.partPicked(id, false, true)
             root.partContextRequested(id, x, y)
         }
         onDistanceChanged: root.updateClipping()
@@ -892,7 +897,11 @@ Item {
                     root.snappedToNearestSurface()
             }
             const id = hit ? hit.partId : 0
-            root.partPicked(id)
+            // Ctrl / Shift + click adds a part to the selection or takes it out (Fusion);
+            // the scan selection tools use their own add / subtract modes.
+            const additive = root.tool === "navigate" && !root.pickKind && !root.pickSketchLines
+                             && !!(point.modifiers & (Qt.ControlModifier | Qt.ShiftModifier))
+            root.partPicked(id, additive, false)
             if (!hit)
                 return
             if (root.tool === "region") {
@@ -962,7 +971,7 @@ Item {
                 strokePartId = hit ? hit.partId : 0
                 if (!strokePartId)
                     return
-                root.partPicked(strokePartId)
+                root.partPicked(strokePartId, false, false)
                 root.ensureBrushRadius(strokePartId)
                 if (root.controller.brushBegin(strokePartId, root.brushRadius, root.brushConnected, root.brushStrokeMode()))
                     brushAt(centroid.pressPosition.x, centroid.pressPosition.y)

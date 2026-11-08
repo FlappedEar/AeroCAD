@@ -19,6 +19,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QLocale>
 #include <QSettings>
 #include <QStandardPaths>
@@ -264,6 +265,11 @@ bool AppController::undoIfTop(double id)
     if (id <= 0 || m_session.undoStack().topId() != static_cast<std::uint64_t>(id))
         return false;
     return execute(QStringLiteral("edit.undo")).value(QStringLiteral("ok")).toBool();
+}
+
+bool AppController::addToSelectionHeld() const
+{
+    return (QGuiApplication::keyboardModifiers() & (Qt::ControlModifier | Qt::ShiftModifier)) != 0;
 }
 
 bool AppController::mergeHistoryIds(const QVariantList& ids, const QString& label)

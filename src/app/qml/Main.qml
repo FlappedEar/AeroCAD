@@ -16,6 +16,10 @@ ApplicationWindow {
     required property AppController controller
     required property ScanController scan
     property var selectedPartId: 0
+    /// Every selected part (Fusion: Ctrl / Shift + click adds or takes out one, Ctrl+A takes
+    /// all). `selectedPartId` is the last one picked: tools for one part work on it, Delete,
+    /// Hide (V) and Export on all of them.
+    property var selectedPartIds: []
     readonly property bool isMac: Qt.platform.os === "osx" || Qt.platform.os === "macos"
 
     property bool browserVisible: true
@@ -75,11 +79,71 @@ ApplicationWindow {
     /// or Discard.
     property var afterUnsavedCheck: null
 
-    function selectPart(id) {
+    function selectPart(id, additive) {
         // Picking another part (or empty space) applies a running Move / Rotate / Scale.
         if (viewport.transformActive && id !== viewport.transformTarget.partId)
             viewport.finishTransform(true)
+        if (additive && !id)
+            return // Ctrl / Shift + click on empty space keeps the selection.
+        if (additive && selectedPartIds.indexOf(id) >= 0) {
+            const rest = selectedPartIds.filter(p => p !== id)
+            selectedPartIds = rest
+            selectedPartId = rest.length ? rest[rest.length - 1] : 0
+            return
+        }
+        selectedPartIds = !id ? [] : additive ? selectedPartIds.concat([id]) : [id]
         selectedPartId = id
+        if (additive)
+            controller.showStatus(qsTr("%1 parts selected: Delete, Hide (V) and Export act on all").arg(selectedPartIds.length))
+    }
+
+    /// A right-click on a part keeps a selection it is part of (the menu then acts on all).
+    function selectPartForMenu(id) {
+        if (!id || selectedPartIds.indexOf(id) < 0)
+            selectPart(id)
+        else if (selectedPartId !== id)
+            selectedPartId = id
+    }
+
+    /// Ctrl+A (Fusion: Select All): every visible part.
+    function selectAllParts() {
+        const r = controller.execute("document.parts")
+        const ids = r.ok ? r.result.parts.filter(p => p.visible).map(p => p.id) : []
+        if (viewport.transformActive)
+            viewport.finishTransform(true)
+        selectedPartIds = ids
+        selectedPartId = ids.length ? ids[ids.length - 1] : 0
+        if (ids.length > 1)
+            controller.showStatus(qsTr("%1 parts selected").arg(ids.length))
+    }
+
+    /// Selected parts that still exist, the last picked one last.
+    function selectedExisting() {
+        return selectedPartIds.filter(id => controller.partInfo(id).id)
+    }
+
+    /// Runs `step(id)` for every selected part and joins what they did into one undo step.
+    /// The steps are joined every 50 parts on the way, so a large selection never pushes
+    /// its first steps out of the 200-step history before they are joined.
+    function forEachSelected(label, step, items) {
+        let tokens = []
+        let done = 0
+        const join = () => {
+            if (tokens.length > 1 && controller.mergeHistoryIds(tokens, label.arg(done)))
+                tokens = [controller.historyTopId()]
+        }
+        for (const id of (items ?? selectedExisting())) {
+            const before = controller.historyTopId()
+            step(id)
+            const after = controller.historyTopId()
+            if (after && after !== before) {
+                tokens.push(after)
+                ++done
+            }
+            if (tokens.length >= 50)
+                join()
+        }
+        join()
     }
 
     /// A tool that picks in the view or edits the design: opening one applies a running
@@ -218,11 +282,15 @@ ApplicationWindow {
     }
 
     function toggleSelectedVisibility() {
-        if (!selectedPartId)
+        const ids = selectedExisting()
+        if (!ids.length)
             return
-        const info = controller.partInfo(selectedPartId)
-        if (info.id)
-            controller.execute("part.set_visible", { id: selectedPartId, visible: !info.visible })
+        // Several parts: hide them all if any is shown, otherwise show them all.
+        const show = !ids.some(id => controller.partInfo(id).visible)
+        forEachSelected(show ? qsTr("Show %1 parts") : qsTr("Hide %1 parts"), id => {
+            if (controller.partInfo(id).visible !== show)
+                controller.execute("part.set_visible", { id: id, visible: show })
+        })
     }
 
     /// Isolate (Fusion): only part `id` is shown, and Unisolate brings back what it hid.
@@ -305,14 +373,30 @@ ApplicationWindow {
             viewport.sketchOverlay.deleteSelection()
             return
         }
-        if (!selectedPartId)
-            return
-        const info = controller.partInfo(selectedPartId)
-        // Bodies, sketches and planes come from the timeline: delete the feature that made them.
-        if (info.kind === "body" || info.kind === "sketch" || info.kind === "plane")
-            controller.execute("feature.delete", { id: info.featureId })
-        else
-            controller.execute("part.remove", { id: selectedPartId })
+        // What to delete is read before anything goes: deleting a sketch makes the body
+        // extruded from it fail and vanish from the parts, yet its feature stays in the
+        // timeline. Bodies, sketches and planes come from the timeline, so their features
+        // are deleted, the last in the timeline first (a feature never needs a later one).
+        const tl = controller.execute("timeline.list")
+        const order = tl.ok ? tl.result.features.map(f => f.id) : []
+        const features = [], parts = []
+        for (const id of selectedExisting()) {
+            const info = controller.partInfo(id)
+            if (info.kind === "body" || info.kind === "sketch" || info.kind === "plane") {
+                if (features.indexOf(info.featureId) < 0)
+                    features.push(info.featureId)
+            } else {
+                parts.push(id)
+            }
+        }
+        features.sort((a, b) => order.indexOf(b) - order.indexOf(a))
+        const items = features.map(f => ({ feature: f })).concat(parts.map(p => ({ part: p })))
+        forEachSelected(qsTr("Delete %1 parts"), item => {
+            if (item.feature !== undefined)
+                controller.execute("feature.delete", { id: item.feature })
+            else if (controller.partInfo(item.part).id)
+                controller.execute("part.remove", { id: item.part })
+        }, items)
     }
 
     // --- View (right-click menu on empty space) ----------------------------------------
@@ -900,7 +984,7 @@ ApplicationWindow {
         text: qsTr("&Export Selected...")
         enabled: !!window.selectedPartId
         shortcut: "Ctrl+E" // Fusion has no default export shortcut
-        onTriggered: window.openExport([window.selectedPartId])
+        onTriggered: window.openExport(window.selectedExisting())
     }
     Action {
         id: exportAllAction
@@ -958,6 +1042,14 @@ ApplicationWindow {
         enabled: window.activeSketch ? viewport.sketchOverlay.selectedCurves.length > 0 : !!window.selectedPartId
         shortcut: "Delete" // Fusion: Del
         onTriggered: window.deleteSelected()
+    }
+    Action {
+        id: selectAllAction
+        text: qsTr("Select &All")
+        // In a sketch the keys stay with the sketch; text fields keep their own Ctrl+A.
+        enabled: !window.activeSketch
+        shortcut: StandardKey.SelectAll // Fusion: Ctrl+A / Cmd+A
+        onTriggered: window.selectAllParts()
     }
     Action {
         id: visibilityAction
@@ -1972,11 +2064,12 @@ ApplicationWindow {
             SplitView.minimumWidth: 180
             controller: window.controller
             selectedPartId: window.selectedPartId
+            selectedPartIds: window.selectedPartIds
             isolation: window.isolation
             onUnisolateRequested: window.unisolate()
-            onPartSelected: id => window.selectPart(id)
+            onPartSelected: id => window.selectPart(id, window.controller.addToSelectionHeld())
             onPartContextRequested: (id, item, x, y) => {
-                window.selectPart(id)
+                window.selectPartForMenu(id)
                 partMenu.info = window.controller.partInfo(id)
                 partMenu.popup(item, x, y)
             }
@@ -1989,6 +2082,7 @@ ApplicationWindow {
             SplitView.fillWidth: true
             controller: window.controller
             selectedPartId: window.selectedPartId
+            selectedPartIds: window.selectedPartIds
             sketch: window.activeSketch
             sketchTool: window.sketchTool
             selectionToolsEnabled: !featureDialog.visible && !window.pickingSketchPlane && !measurePanel.active
@@ -2009,8 +2103,11 @@ ApplicationWindow {
             overlayLines: measurePanel.keptLines.concat(measurePanel.overlayLines)
             pickSketchLines: measurePanel.active
             onSectionDragged: delta => sectionPanel.moveBy(delta)
-            onPartPicked: id => {
-                window.selectPart(id)
+            onPartPicked: (id, additive, forMenu) => {
+                if (forMenu)
+                    window.selectPartForMenu(id)
+                else
+                    window.selectPart(id, additive)
                 // A click through a hole of a scan, or next to the model, while choosing where to sketch.
                 if (!id && window.pickingSketchPlane)
                     window.controller.showStatus(qsTr("Nothing there to sketch on: click on or next to the surface"))
@@ -2633,8 +2730,13 @@ ApplicationWindow {
             viewport.fitAll()
         }
         function onPartChanged(id) {
-            if (window.selectedPartId === id && window.controller.parts.rowOf(id) < 0)
-                window.selectPart(0)
+            if (window.controller.parts.rowOf(id) >= 0)
+                return
+            if (window.selectedPartIds.indexOf(id) >= 0)
+                window.selectedPartIds = window.selectedPartIds.filter(p => p !== id)
+            if (window.selectedPartId === id)
+                window.selectedPartId = window.selectedPartIds.length
+                        ? window.selectedPartIds[window.selectedPartIds.length - 1] : 0
         }
     }
 }
