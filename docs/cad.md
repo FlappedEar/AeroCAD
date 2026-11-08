@@ -53,6 +53,13 @@ use the same operations, and every change is one undo step.
   bodies (a stacked or mirrored set of fins): the first has the feature's id, the others
   `id | k << 40`; any of them stands for the feature in `feature.*` commands. On opening a
   project their stored results are used while the scan, sketch and params are unchanged.
+  A fit that misses its tolerance is kept and marked as an approximation (CAD-85), except
+  when what is left is the scan's own noise (CAD-141): the noise is estimated from the scan
+  under the outline (`fit.scanNoise`, one standard deviation, mm), and when 99% of the scan
+  is within 3 of it, the rms not above 1.2 of it and the deviations of nearby samples do not
+  correlate (no missed ripple or ridge; `fit.withinScanNoise`), the surface runs
+  through the middle of the noise. Finer control points would only make it follow the noise,
+  so the fit stops there, and it is not called an approximation.
 - Failing features: a new or edited feature that fails is rejected (nothing changes).
   Features that break because of an earlier change stay in the timeline with
   `status: "error"` and a message, like Fusion's red timeline icons.

@@ -537,3 +537,113 @@ TEST_CASE("A part on a scan is as thick as asked on a slope, also when thinner t
     const auto both = geometry::partOnScan(projector, area, {outline}, 1.0, geometry::ThickenSide::Both);
     CHECK(both.solid.volume() == Approx(1.0 * both.skinArea).epsilon(0.02));
 }
+
+namespace {
+
+/// A gently curved sheet sampled every 1 mm (z = f(x, y)), with normal noise of `sigma` mm.
+core::TriangleMesh noisySheet(double sigma, double (*shape)(double, double))
+{
+    std::mt19937 rng(11);
+    std::normal_distribution<double> noise(0.0, sigma);
+    std::vector<core::Vec3> v;
+    std::vector<core::TriangleMesh::Triangle> t;
+    const int n = 160;
+    for (int j = 0; j <= n; ++j)
+        for (int i = 0; i <= n; ++i)
+            v.push_back({double(i), double(j), shape(i, j) + (sigma > 0.0 ? noise(rng) : 0.0)});
+    auto idx = [&](int i, int j) { return static_cast<std::uint32_t>(j * (n + 1) + i); };
+    for (int j = 0; j < n; ++j)
+        for (int i = 0; i < n; ++i) {
+            t.push_back({idx(i, j), idx(i + 1, j), idx(i + 1, j + 1)});
+            t.push_back({idx(i, j), idx(i + 1, j + 1), idx(i, j + 1)});
+        }
+    return core::TriangleMesh(std::move(v), std::move(t));
+}
+
+double gentle(double x, double y) { return 10.0 * std::sin(x / 50.0) + 0.001 * y * y; }
+
+} // namespace
+
+TEST_CASE("A part on a noisy scan runs through the noise and is not called an approximation (CAD-141)",
+          "[geometry][surface]")
+{
+    const geometry::Plane plane{{0, 0, 50}, {0, 0, 1}, {1, 0, 0}};
+    const auto outline = rectangleOutline(plane, 20, 20, 120, 120);
+
+    // Noise of 0.2 mm: 99% of the scan is within about 0.5 mm of its true shape, more than
+    // the 0.25 mm tolerance, so no surface can follow the scan within it.
+    const auto noisy = noisySheet(0.2, gentle);
+    const core::MeshProjector projector(noisy, {0, 0, 1});
+    const auto part = geometry::partOnScan(projector, areaOver(20, 20, 140, 140, 10), {outline}, 2.0,
+                                           geometry::ThickenSide::Outside);
+    INFO("noise " << part.report.scanNoise << ", p99 " << part.report.p99Deviation << ", rms "
+                  << part.report.rmsDeviation << ", poles " << part.report.uPoles << " x " << part.report.vPoles);
+    CHECK(part.report.p99Deviation > 0.25);
+    // Samples between the scan's points average a few of them: less noise than at a point.
+    CHECK(part.report.scanNoise > 0.1);
+    CHECK(part.report.scanNoise < 0.2);
+    CHECK(part.report.withinScanNoise);
+    // It does not chase the noise with fine control points (64 x 64 at the finest), so the
+    // skin is much closer to the true shape than the scan is.
+    CHECK(part.report.uPoles < 40);
+    double squares = 0.0;
+    std::size_t count = 0;
+    const auto skin = geometry::tessellate(part.solid);
+    for (const auto& p : skin.vertices()) {
+        const double d = p.z - gentle(p.x, p.y);
+        if (std::abs(d) < 1.0 && p.x > 25 && p.x < 135 && p.y > 25 && p.y < 135) {
+            squares += d * d;
+            ++count;
+        }
+    }
+    REQUIRE(count > 20);
+    CHECK(std::sqrt(squares / double(count)) < 0.05);
+
+    // Without noise nothing is mistaken for it.
+    const auto clean = noisySheet(0.0, gentle);
+    const core::MeshProjector cleanProjector(clean, {0, 0, 1});
+    geometry::DrapeFitOptions tight;
+    tight.tolerance = 0.001;
+    const auto exact = geometry::partOnScan(cleanProjector, areaOver(20, 20, 140, 140, 10), {outline}, 2.0,
+                                            geometry::ThickenSide::Outside, tight);
+    CHECK(exact.report.scanNoise < 0.01);
+    CHECK_FALSE(exact.report.withinScanNoise);
+}
+
+namespace {
+
+double corrugated(double x, double y)
+{
+    return 0.5 * std::sin(2.0 * std::numbers::pi * x / 5.0) + 0.5 * std::sin(2.0 * std::numbers::pi * y / 5.0);
+}
+
+double plain(double, double) { return 0.0; }
+
+} // namespace
+
+TEST_CASE("Fine clean shape is not taken for scan noise; a thin noisy outline is (CAD-142, Codex)",
+          "[geometry][surface]")
+{
+    const geometry::Plane plane{{0, 0, 50}, {0, 0, 1}, {1, 0, 0}};
+
+    // A clean 5 mm corrugation, finer than the control points: the noise estimate is
+    // large, but the deviation left has a pattern, so it stays an approximation.
+    const auto rippled = noisySheet(0.0, corrugated);
+    const core::MeshProjector projector(rippled, {0, 0, 1});
+    const auto part = geometry::partOnScan(projector, areaOver(10, 10, 150, 150, 0),
+                                           {rectangleOutline(plane, 10, 10, 140, 140)}, 2.0,
+                                           geometry::ThickenSide::Outside);
+    INFO("noise " << part.report.scanNoise << ", p99 " << part.report.p99Deviation);
+    CHECK(part.report.p99Deviation > 0.25);
+    CHECK_FALSE(part.report.withinScanNoise);
+
+    // A 120 x 12 mm strip (a fin's root) on a noisy flat scan: the noise is still told
+    // from the samples along it.
+    const auto noisy = noisySheet(0.2, plain);
+    const core::MeshProjector noisyProjector(noisy, {0, 0, 1});
+    geometry::DrapeArea strip = areaOver(20, 70, 140, 82, 0);
+    geometry::DrapeFitReport report;
+    (void)geometry::skinOnScan(noisyProjector, strip, &report);
+    INFO("strip noise " << report.scanNoise << ", p99 " << report.p99Deviation);
+    CHECK(report.scanNoise > 0.1);
+}
