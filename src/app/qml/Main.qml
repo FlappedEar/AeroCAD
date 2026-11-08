@@ -175,7 +175,7 @@ ApplicationWindow {
             controller.showStatus(qsTr("Sketches and planes move with the body they belong to."))
             return null
         }
-        controller.showStatus(qsTr("Drag an arrow to move, a ring to rotate, the square to scale (Shift snaps). Enter applies, Esc cancels."))
+        viewport.transformStatus(qsTr("Drag an arrow to move, a ring to rotate, the square to scale (Shift snaps). Enter applies, Esc cancels."))
         return null
     }
 

@@ -867,7 +867,7 @@ Item {
                 if (hit && hit.partId === root.transformTarget.partId)
                     root.orientToFace(hit)
                 else
-                    root.controller.showStatus(qsTr("Click a face of %1.").arg(root.transformTarget.name))
+                    root.transformStatus(qsTr("Click a face of %1.").arg(root.transformTarget.name))
                 return
             }
             // Extrude To Object: only bodies (not the preview), surfaces, solids and scans
@@ -1314,6 +1314,14 @@ Item {
             controller.execute("edit.undo")
     }
 
+    /// The last hint or error the Move / Rotate / Scale tool put in the status bar: cleared
+    /// when the tool ends, so no instruction of a closed tool stays there (CAD-98).
+    property string transformStatusText: ""
+    function transformStatus(message) {
+        transformStatusText = message
+        controller.showStatus(message)
+    }
+
     function finishTransform(commit) {
         if (!transformTarget)
             return null
@@ -1322,6 +1330,10 @@ Item {
         transformPickMode = ""
         transformTarget = null
         resetTransform()
+        // Before the command: a failure it reports stays in the status bar.
+        if (transformStatusText && controller.statusMessage === transformStatusText)
+            controller.showStatus("")
+        transformStatusText = ""
         const r = c ? controller.execute(c.command, c.params) : null
         transformFinished(!!commit)
         return r
@@ -1347,14 +1359,14 @@ Item {
         const r = controller.execute("part.face_orientation", params)
         transformPickMode = ""
         if (!r.ok) {
-            controller.showStatus(r.error)
+            transformStatus(r.error)
             return false
         }
         const o = r.result
         transformRotation = axisAngleQuaternion(Qt.vector3d(o.axis[0], o.axis[1], o.axis[2]), o.angle)
         transformMove = Qt.vector3d(o.translate[0], o.translate[1], o.translate[2])
-        controller.showStatus(mode === "lay" ? qsTr("Laid on the picked face, on the ground. Enter applies.")
-                                             : qsTr("The picked face looks to the front (where the wind tunnel air comes from). Enter applies."))
+        transformStatus(mode === "lay" ? qsTr("Laid on the picked face, on the ground. Enter applies.")
+                        : qsTr("The picked face looks to the front (where the wind tunnel air comes from). Enter applies."))
         return true
     }
 
