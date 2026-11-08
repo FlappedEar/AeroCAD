@@ -1348,6 +1348,8 @@ ApplicationWindow {
     /// sections, measurements, heat maps, scan picks, simulation results, dialogs holding
     /// ids). The command layer clears the document, undo history and analyses itself.
     function resetWorkspace() {
+        // A sketch edit's rollback belongs to the previous design: never roll the new one.
+        sketchRollback = null
         viewport.finishTransform(false) // the preview belongs to the previous document
         featureDialog.close() // may hold a feature id of the previous project
         parametersDialog.close()

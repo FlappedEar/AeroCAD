@@ -28,3 +28,12 @@ ui.wait(300)
 (() => { const s = controller.execute("sketch.create", { plane: "XY", curves: [{ type: "circle", center: [200, 0], radius: 5 }] }); enterSketch(s.result.id) })()
 ui.wait(500)
 (() => { const tl = controller.execute("timeline.list").result; if (tl.marker !== tl.features.length) ui.fail("a new sketch rolled the timeline back"); finishSketch(false); const t2 = controller.execute("timeline.list").result; if (t2.marker !== t2.features.length) ui.fail("finishing a new sketch moved the marker") })()
+# Codex on PR #134: opening another project while an earlier sketch is edited must not roll
+# the opened design forward. That project has the same sketch id and index, saved at marker 1.
+(() => { controller.execute("timeline.set_marker", { position: 1 }); if (!controller.saveProjectAs(Qt.resolvedUrl("file://" + "/tmp/aerocad-rollback-other.aerocad"))) ui.fail("save failed"); controller.execute("timeline.set_marker", {}) })()
+(() => { editFeature(controller.execute("timeline.list").result.features[0]) })()
+ui.wait(500)
+(() => { const tl = controller.execute("timeline.list").result; if (tl.marker !== 1) ui.fail("not rolled back before opening: " + tl.marker) })()
+(() => { if (!controller.openPath("/tmp/aerocad-rollback-other.aerocad")) ui.fail("open failed") })()
+ui.wait(800)
+(() => { const tl = controller.execute("timeline.list").result; ui.log("opened project marker " + tl.marker + " of " + tl.features.length); if (activeSketch) ui.fail("the sketch is still open after opening a project"); if (tl.marker !== 1) ui.fail("the opened project was rolled forward to " + tl.marker) })()
