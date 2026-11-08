@@ -67,7 +67,8 @@ QColor interpolate(const std::array<std::array<int, 3>, 9>& map, double t)
 
 QString FieldGeometry::resolvedPalette(const QString& scalar, const QString& palette)
 {
-    if (palette == QLatin1String("rainbow") || palette == QLatin1String("coolwarm") || palette == QLatin1String("viridis"))
+    if (palette == QLatin1String("rainbow") || palette == QLatin1String("coolwarm") || palette == QLatin1String("viridis") ||
+        palette == QLatin1String("smoke-dark") || palette == QLatin1String("smoke-light"))
         return palette;
     if (scalar == QLatin1String("speed"))
         return QStringLiteral("viridis");
@@ -83,6 +84,15 @@ QColor FieldGeometry::mapColor(const QString& scalar, double t, const QString& p
     const QString p = resolvedPalette(scalar, palette);
     if (p == QLatin1String("rainbow"))
         return turbo(t);
+    // Smoke (CAD-170): grey streamlines; the slowest air contrasts most with the background
+    // (near white on the dark theme, near black on the light one), so the wake stands out.
+    if (p == QLatin1String("smoke-dark") || p == QLatin1String("smoke-light")) {
+        const bool dark = p == QLatin1String("smoke-dark");
+        const QColor slow = dark ? QColor(240, 242, 246) : QColor(36, 42, 54);
+        const QColor fast = dark ? QColor(104, 114, 130) : QColor(178, 186, 198);
+        auto mix = [t](int a, int b) { return static_cast<int>(std::lround(a + (b - a) * t)); };
+        return QColor(mix(slow.red(), fast.red()), mix(slow.green(), fast.green()), mix(slow.blue(), fast.blue()));
+    }
     return interpolate(p == QLatin1String("viridis") ? kSequential : kDiverging, t);
 }
 

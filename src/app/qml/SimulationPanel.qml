@@ -33,8 +33,9 @@ Pane {
                 continue
             }
             const r = scaleFor(f.kind, f.scalar)
-            out.push({ run: run, kind: kind, scalar: f.scalar, min: r[0], max: r[1], tubeRadius: tubeRadius,
-                       palette: paletteFor(f.scalar) })
+            const smoke = f.kind === "streamlines" && streamlineStyle === "smoke"
+            out.push({ run: run, kind: kind, scalar: f.scalar, min: r[0], max: r[1],
+                       tubeRadius: smoke ? tubeRadius / 2 : tubeRadius, palette: paletteFor(f.scalar, f.kind) })
         }
         return out
     }
@@ -514,7 +515,12 @@ Pane {
     }
     /// Colour map of the pressure fields: "rainbow" (default, high contrast) or "coolwarm".
     property string pressurePalette: "rainbow"
-    function paletteFor(scalar) {
+    /// Streamline colours (CAD-170): "speed" (viridis) or "smoke" (thin grey lines, the
+    /// slowest air in the strongest contrast to the background, as in pro F1 renders).
+    property string streamlineStyle: "speed"
+    function paletteFor(scalar, kind) {
+        if (kind === "streamlines" && streamlineStyle === "smoke")
+            return Theme.dark ? "smoke-dark" : "smoke-light"
         return scalar === "Cp" || scalar === "pressure" ? pressurePalette : ""
     }
 
@@ -1462,7 +1468,7 @@ Pane {
                                 gradient: Gradient {
                                     orientation: Gradient.Horizontal
                                     stops: {
-                                        const map = root.controller.colormap(fieldRow.modelData.scalar, root.paletteFor(fieldRow.modelData.scalar))
+                                        const map = root.controller.colormap(fieldRow.modelData.scalar, root.paletteFor(fieldRow.modelData.scalar, fieldRow.modelData.kind))
                                         return map.map((c, i) => stopComponent.createObject(fieldRow, { position: i / (map.length - 1), color: c }))
                                     }
                                 }
@@ -1509,6 +1515,18 @@ Pane {
                         model: [{ text: qsTr("Rainbow"), value: "rainbow" }, { text: qsTr("Blue–white–red"), value: "coolwarm" }]
                         Component.onCompleted: currentIndex = indexOfValue(root.pressurePalette)
                         onActivated: root.pressurePalette = currentValue
+                    }
+                    Label { text: qsTr("Streamline colours"); visible: !!(root.results && root.results.fields.streamlines) }
+                    ComboBox {
+                        objectName: "streamlineStyleBox"
+                        visible: !!(root.results && root.results.fields.streamlines)
+                        Layout.columnSpan: 3
+                        Layout.fillWidth: true
+                        textRole: "text"
+                        valueRole: "value"
+                        model: [{ text: qsTr("Speed"), value: "speed" }, { text: qsTr("Smoke (grey)"), value: "smoke" }]
+                        Component.onCompleted: currentIndex = indexOfValue(root.streamlineStyle)
+                        onActivated: root.streamlineStyle = currentValue
                     }
                     Label { text: qsTr("Cp range") }
                     TextField {

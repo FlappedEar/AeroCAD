@@ -92,4 +92,11 @@ ui.wait(1200)
 (() => { const find = (i, n) => { if (!i) return null; if (i.objectName === n) return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = find(ch[k], n); if (r) return r } return null }; const m = viewport.simulationFieldModel("wake"); ui.log("WAKE MODEL " + (m ? m.materials[0].opacity : "missing")); if (!m || !(m.materials[0].opacity < 1)) ui.fail("the wake surface is not see-through in the viewport"); const note = find(simulationPanel, "wakeMissing"); if (!note || note.visible) ui.fail("the run-again note shows for a run that has the wake") })()
 (() => { const l = cfdOverlay.legends.find(x => x.scalar === "speed"); const names = l ? l.kinds.map(k => cfdOverlay.kindName(k)) : []; ui.log("SPEED LEGEND " + names.join(", ")); if (names.indexOf("wake (Cp0 = 0)") < 0) ui.fail("the speed legend does not name the wake") })()
 ui.shot("cfd-wake-3d.png")
+# CAD-170: smoke streamlines are grey, half as thick, with their own legend; the sections
+# keep their speed colours.
+(() => { const w = simulationPanel.fieldChoices.findIndex(f => f.kind === "wake"); simulationPanel.setField(w, false); simulationPanel.setField(1, true); simulationPanel.streamlineStyle = "smoke" })()
+ui.wait(1200)
+(() => { const st = simulationPanel.viewportFields.find(x => x.kind === "streamlines"); const sec = simulationPanel.viewportFields.find(x => x.kind.indexOf("section") === 0); ui.log("SMOKE " + JSON.stringify(st) + " SECTION " + JSON.stringify(sec)); if (!st || st.palette.indexOf("smoke") !== 0 || !(Math.abs(st.tubeRadius - simulationPanel.tubeRadius / 2) < 1e-9)) ui.fail("streamlines are not drawn as smoke"); if (!sec || sec.palette !== "") ui.fail("the section lost its speed colours"); const l = cfdOverlay.legends.filter(x => x.scalar === "speed"); if (l.length !== 2) ui.fail("expected a smoke legend and a section speed legend, got " + JSON.stringify(l)); const m = viewport.simulationFieldModel("streamlines"); if (!m || !(m.materials[0].opacity > 0.55)) ui.fail("smoke streamlines are not drawn stronger") })()
+ui.shot("cfd-smoke-3d.png")
+(() => { simulationPanel.streamlineStyle = "speed"; simulationPanel.setField(1, false) })()
 ui.log("cfd results 3d done")
