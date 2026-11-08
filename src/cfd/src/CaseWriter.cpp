@@ -355,6 +355,7 @@ std::string surfaceFeatureExtractDict(bool hasContext)
 
 std::string controlDict(const Settings& s, const CaseInfo& info)
 {
+    const core::BoundingBox region = resultRegion(info);
     const int iterations = s.effectiveIterations();
     const BoundingBox& pb = info.partBounds;
     const Vec3 c = pb.center();
@@ -388,7 +389,25 @@ std::string controlDict(const Settings& s, const CaseInfo& info)
       << "            sectionHorizontal { type cuttingPlane; point " << c
       << "; normal (0 0 1); interpolate true; }\n"
       << "            sectionVertical { type cuttingPlane; point " << c
-      << "; normal (0 1 0); interpolate true; }\n        }\n    }\n";
+      << "; normal (0 1 0); interpolate true; }\n";
+    // Stacks of sections the result view can step through (CAD-148), cropped to the
+    // region around the part so even a fine mesh writes only a few MB.
+    for (const SectionStack& stack : sectionStacks()) {
+        const int a = stack.axis - 'x';
+        for (std::size_t i = 0; i < stack.fractions.size(); ++i) {
+            Vec3 point = c;
+            Vec3 normal{0, 0, 0};
+            const double lo = a == 0 ? pb.min.x : a == 1 ? pb.min.y : pb.min.z;
+            const double hi = a == 0 ? pb.max.x : a == 1 ? pb.max.y : pb.max.z;
+            const double at = lo + stack.fractions[i] * (hi - lo);
+            (a == 0 ? point.x : a == 1 ? point.y : point.z) = at;
+            (a == 0 ? normal.x : a == 1 ? normal.y : normal.z) = 1.0;
+            t << "            " << sectionName(stack.axis, static_cast<int>(i)) << " { type cuttingPlane; point "
+              << point << "; normal " << normal << "; interpolate true; bounds " << region.min << ' '
+              << region.max << "; }\n";
+        }
+    }
+    t << "        }\n    }\n";
     // Streamlines (CAD-135): a dense 16 x 10 rake just ahead of the part, a little wider
     // and taller than it, so the lines wrap the body closely; and an 8 x 5 rake just behind
     // it traced both ways, which shows the recirculation of the wake that lines from
@@ -558,6 +577,34 @@ std::string allrun(int processes)
 }
 
 } // namespace
+
+core::BoundingBox resultRegion(const CaseInfo& info, double wake)
+{
+    core::BoundingBox region;
+    const core::BoundingBox& pb = info.partBounds;
+    if (pb.isEmpty())
+        return region;
+    const double m = std::max(info.characteristicLength, 1e-9);
+    region.extend({pb.min.x - 0.4 * m, pb.min.y - 0.4 * m,
+                   info.settings.ground ? info.domain.min.z : pb.min.z - 0.4 * m});
+    region.extend({pb.max.x + wake * m, pb.max.y + 0.4 * m, pb.max.z + 0.4 * m});
+    return region;
+}
+
+const std::vector<SectionStack>& sectionStacks()
+{
+    static const std::vector<SectionStack> stacks{
+        {'x', {-0.1, 0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5}, 12},
+        {'y', {0.1, 0.25, 0.5, 0.75, 0.9}, 2},
+        {'z', {0.05, 0.15, 0.3, 0.5, 0.7, 0.9}, 3},
+    };
+    return stacks;
+}
+
+std::string sectionName(char axis, int index)
+{
+    return std::string("section") + static_cast<char>(axis - 'a' + 'A') + "_" + std::to_string(index);
+}
 
 CaseInfo planCase(const CaseGeometry& geometry, const Settings& s)
 {

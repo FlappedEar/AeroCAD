@@ -468,14 +468,16 @@ void registerSimulationCommands(CommandRegistry& r)
     r.add({"simulation.field", "Simulation field summary",
            "Statistics of a result field in model coordinates (mm): surface (pressure on the part: p, Cp, "
            "pressure in Pa), sectionHorizontal / sectionVertical (velocity sections through the part centre: speed "
-           "in m/s, Cp) or streamlines. available = false until the run has written it. Scalars have min, max, "
+           "in m/s, Cp), a plane of a section stack (sectionX_<i> across the flow, sectionY_<i> vertical along "
+           "it, sectionZ_<i> horizontal; positions in simulation.results fields.sections) or streamlines. "
+           "available = false until the run has written it. Scalars have min, max, "
            "mean and the 2nd/98th percentiles p02/p98. With compare (run B) and kind surface: the pressure "
            "difference B - A on run's part surface (dCp, dpressure in Pa), NaN where B's part has no surface "
            "within 1 % of the part size.",
            objectSchema({{"run", runIdParam()},
                          {"kind",
                           {{"type", "string"},
-                           {"enum", {"surface", "sectionHorizontal", "sectionVertical", "streamlines"}}}},
+                           {"pattern", "^(surface|sectionHorizontal|sectionVertical|streamlines|section[XYZ]_[0-9]+)$"}}},
                          {"compare", runIdParam("Run B: return the surface difference B - A.")}},
                         {"run", "kind"})},
           [](CommandContext& ctx, const Json& params) {

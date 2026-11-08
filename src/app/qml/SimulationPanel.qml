@@ -22,7 +22,8 @@ Pane {
         if (!run || !displayedSourcePresent)
             return out
         for (const f of fieldChoices) {
-            if (!f.on || !fieldStats[run + "/" + f.kind])
+            const kind = fieldKind(f, run)
+            if (!f.on || !kind || !fieldStats[run + "/" + kind])
                 continue
             if (f.kind === "surface" && differenceShown) {
                 // The pressure difference B - A on A's part replaces the pressure map (CAD-141).
@@ -32,7 +33,7 @@ Pane {
                 continue
             }
             const r = scaleFor(f.kind, f.scalar)
-            out.push({ run: run, kind: f.kind, scalar: f.scalar, min: r[0], max: r[1], tubeRadius: tubeRadius,
+            out.push({ run: run, kind: kind, scalar: f.scalar, min: r[0], max: r[1], tubeRadius: tubeRadius,
                        palette: paletteFor(f.scalar) })
         }
         return out
@@ -136,9 +137,10 @@ Pane {
     property alias tab: tabBar.currentIndex
     property var fieldChoices: [
         { kind: "surface", scalar: "Cp", label: qsTr("Surface pressure (Cp)"), on: true },
-        { kind: "sectionHorizontal", scalar: "speed", label: qsTr("Horizontal section (speed)"), on: false },
-        { kind: "sectionVertical", scalar: "speed", label: qsTr("Vertical section (speed)"), on: false },
-        { kind: "streamlines", scalar: "speed", label: qsTr("Streamlines (speed)"), on: true }
+        { kind: "sectionHorizontal", axis: "z", scalar: "speed", label: qsTr("Horizontal section (speed)"), on: false },
+        { kind: "sectionVertical", axis: "y", scalar: "speed", label: qsTr("Vertical section (speed)"), on: false },
+        { kind: "streamlines", scalar: "speed", label: qsTr("Streamlines (speed)"), on: true },
+        { kind: "sectionCross", axis: "x", scalar: "speed", label: qsTr("Section across the flow (speed)"), on: false }
     ]
 
     readonly property bool anyRunning: runs.some(r => r.state === "running")
@@ -386,6 +388,8 @@ Pane {
         results = null
         comparison = null
         fieldStats = ({})
+        runSections = ({})
+        sectionIndices = ({})
         rangeOverrides = ({})
         showDifference = false
         differenceStats = null
@@ -413,6 +417,19 @@ Pane {
 
     function loadFieldStats() {
         const stats = {}
+        // Section stacks of each run (CAD-148): B may be a run made before them.
+        const sections = {}
+        for (const id of [activeRun, compareRun]) {
+            if (!id)
+                continue
+            if (id === activeRun) {
+                sections[id] = results && results.fields ? results.fields.sections ?? [] : []
+            } else {
+                const r = controller.execute("simulation.results", { run: id, maxPoints: 2 })
+                sections[id] = r.ok && r.result.fields ? r.result.fields.sections ?? [] : []
+            }
+        }
+        runSections = sections
         for (const id of [activeRun, compareRun]) {
             if (!id)
                 continue
@@ -420,9 +437,12 @@ Pane {
             if (!status || status.state !== "finished")
                 continue // Fields are written at the end of a run.
             for (const f of fieldChoices) {
-                const r = controller.execute("simulation.field", { run: id, kind: f.kind })
+                const kind = fieldKind(f, id)
+                if (!kind || stats[id + "/" + kind])
+                    continue
+                const r = controller.execute("simulation.field", { run: id, kind: kind })
                 if (r.ok && r.result.available)
-                    stats[id + "/" + f.kind] = r.result.scalars
+                    stats[id + "/" + kind] = r.result.scalars
             }
         }
         fieldStats = stats
@@ -456,7 +476,7 @@ Pane {
             for (const f of fieldChoices) {
                 if (f.scalar !== scalar)
                     continue
-                const s = fieldStats[id + "/" + f.kind]
+                const s = fieldStats[id + "/" + fieldKind(f, id)]
                 if (s && s[scalar]) {
                     lo = Math.min(lo, robust && s[scalar].p02 !== undefined ? s[scalar].p02 : s[scalar].min)
                     hi = Math.max(hi, robust && s[scalar].p98 !== undefined ? s[scalar].p98 : s[scalar].max)
@@ -578,6 +598,61 @@ Pane {
         const copy = fieldChoices.slice()
         copy[index] = Object.assign({}, copy[index], { on: on })
         fieldChoices = copy
+    }
+
+    // --- Section positions (CAD-148) -------------------------------------------------------
+    /// Section stacks of the loaded runs: {runId: fields.sections of simulation.results}.
+    property var runSections: ({})
+    /// Plane picked on each section slider: {axis: index in the stack}. Kept apart from
+    /// fieldChoices, the model of the field rows, so moving a slider does not recreate the
+    /// rows and drop the slider being dragged.
+    property var sectionIndices: ({})
+    /// A run's stack of sections normal to `axis` ("x" across the flow, "y" vertical,
+    /// "z" horizontal), by default of the run drawn in 3D: {axis, defaultIndex, lengthMm,
+    /// positions: [{kind, index, fraction, mm}]}, or null for runs made before the stacks.
+    function sectionStack(axis, run) {
+        const id = run ?? displayedRun
+        const stacks = id ? runSections[id] : null
+        return axis && stacks ? stacks.find(st => st.axis === axis) ?? null : null
+    }
+    /// Position of a choice in its stack: the slider value, or the stack's default.
+    function sectionPosition(f, run) {
+        const st = sectionStack(f.axis, run)
+        if (!st)
+            return null
+        const want = f.pos ?? sectionIndices[f.axis] ?? st.defaultIndex
+        let best = st.positions[0]
+        for (const p of st.positions)
+            if (Math.abs(p.index - want) < Math.abs(best.index - want))
+                best = p
+        return best
+    }
+    /// Field kind drawn for a choice: a plane of the run's section stack when it has one,
+    /// else the fixed section through the part centre ("sectionCross" has none: null).
+    function fieldKind(f, run) {
+        const p = f.axis ? sectionPosition(f, run) : null
+        if (p)
+            return p.kind
+        return f.kind === "sectionCross" ? null : f.kind
+    }
+    function setSectionIndex(axis, pos) {
+        if (sectionIndices[axis] === pos)
+            return
+        const copy = Object.assign({}, sectionIndices)
+        copy[axis] = pos
+        sectionIndices = copy
+        loadFieldStats()
+    }
+    /// "450 mm behind the front", "120 mm left of the centre", "80 mm above the bottom".
+    function sectionPositionText(axis, p) {
+        if (!p)
+            return ""
+        const mm = Math.round(p.mm)
+        if (axis === "x")
+            return mm < 0 ? qsTr("%1 mm ahead of the part").arg(-mm) : qsTr("%1 mm behind the part's front").arg(mm)
+        if (axis === "y")
+            return mm === 0 ? qsTr("through the centre") : qsTr("%1 mm from the centre").arg(Math.abs(mm))
+        return qsTr("%1 mm above the part's bottom").arg(mm)
     }
 
     function series(name, color, x, y) {
@@ -1200,13 +1275,38 @@ Pane {
                         required property var modelData
                         required property int index
                         readonly property var range: root.scaleFor(modelData.kind, modelData.scalar)
+                        readonly property var stack: root.sectionStack(modelData.axis)
+                        readonly property var position: root.sectionPosition(modelData)
                         Layout.fillWidth: true
                         spacing: 2
                         CheckBox {
                             text: fieldRow.modelData.label
                             checked: fieldRow.modelData.on
-                            enabled: !!(root.results && root.results.fields[fieldRow.modelData.kind])
+                            enabled: !!(root.results && (root.results.fields[fieldRow.modelData.kind] || fieldRow.stack))
+                            visible: fieldRow.modelData.kind !== "sectionCross" || !!fieldRow.stack
                             onToggled: root.setField(fieldRow.index, checked)
+                        }
+                        // Where the section lies (CAD-148): steps through the planes the run wrote.
+                        RowLayout {
+                            visible: fieldRow.modelData.on && !!fieldRow.stack && fieldRow.stack.positions.length > 1
+                            Layout.leftMargin: 28
+                            Layout.fillWidth: true
+                            Slider {
+                                objectName: "sectionSlider_" + fieldRow.modelData.axis
+                                Layout.fillWidth: true
+                                from: 0
+                                to: fieldRow.stack ? fieldRow.stack.positions.length - 1 : 0
+                                stepSize: 1
+                                snapMode: Slider.SnapAlways
+                                value: fieldRow.stack && fieldRow.position ? fieldRow.stack.positions.indexOf(fieldRow.position) : 0
+                                onMoved: root.setSectionIndex(fieldRow.modelData.axis, fieldRow.stack.positions[Math.round(value)].index)
+                            }
+                            Label {
+                                objectName: "sectionPosition_" + fieldRow.modelData.axis
+                                text: root.sectionPositionText(fieldRow.modelData.axis, fieldRow.position)
+                                font.pixelSize: 11
+                                color: Theme.textMuted
+                            }
                         }
                         RowLayout {
                             visible: fieldRow.modelData.on && fieldRow.enabled && fieldRow.range[1] > fieldRow.range[0]

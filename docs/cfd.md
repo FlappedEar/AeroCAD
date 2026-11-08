@@ -55,6 +55,13 @@ panel in place of Properties:
   so the shapes read in 3D; the sections stay flat and unlit so their colours match the
   legend exactly. Sections are cropped to the region around the part (0.4 part lengths
   ahead, beside and above, 1.5 lengths of wake), streamlines to 3 lengths of wake.
+  Each run also writes stacks of sections (CAD-148): 15 planes across the flow (from 0.1
+  part lengths ahead of the part to 1.5 lengths behind its front), 5 vertical planes along
+  the flow and 6 horizontal ones, cropped to the same region (about 40 MB on a 2.3 M cell
+  mesh). A slider under each ticked section steps through its planes, with the position
+  in mm next to it; *Section across the flow* shows the wake behind the part and the
+  wakes of wheels and wings. Runs made before the stacks have only the two sections
+  through the part centre.
   Streamlines start from a 16 x 10 rake just ahead of the part, a little wider and taller
   than it, and from an 8 x 5 rake just behind it traced both ways, which shows the
   recirculation in the wake (runs made before this change have 35 lines from far
@@ -74,6 +81,10 @@ panel in place of Properties:
   Points of A with no surface of B within 1 % of the part length (where the shapes differ)
   are grey. The forces card then adds the change of drag and lift in N and % and of Cd/Cl
   on A's reference area.
+
+![Horizontal section 13 mm above the floor under an F1 model (fine mesh): the wheel wakes](images/cfd/sections-f1-low.png)
+
+![Section across the flow at 80 % of the car's length](images/cfd/sections-f1-cross.png)
 
 ![Pressure change of a 35° against a 25° rear slant on A's part (real coarse runs)](images/cfd/results-3d-difference.png)
 
@@ -318,7 +329,10 @@ synthetic case's `unknown` verdict and the reasons displayed in the real Results
 
 `simulation.field` summarises the field outputs: `surface` (pressure on the part as
 p, Cp and Pa), `sectionHorizontal` / `sectionVertical` (planes through the part centre,
-speed in m/s and Cp) and `streamlines` (a rake ahead of the part and one in the wake).
+speed in m/s and Cp), a plane of a section stack (`sectionX_<i>` across the flow,
+`sectionY_<i>` vertical along it, `sectionZ_<i>` horizontal; `simulation.results` lists
+the run's planes in `fields.sections` with their fraction of the part and position in mm)
+and `streamlines` (a rake ahead of the part and one in the wake).
 Each scalar has `min`, `max`, `mean` and the 2nd/98th percentiles `p02`/`p98`, which the
 app uses for the pressure colour range.
 
