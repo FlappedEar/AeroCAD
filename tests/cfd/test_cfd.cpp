@@ -1368,6 +1368,20 @@ TEST_CASE("A failed run says why: fatal mesh defects or a diverged solve (CAD-10
         CHECK(st->message.find("----") == std::string::npos);
     }
 
+    // OpenFOAM's start-up banner when trapping is on is not a crash: a later segmentation
+    // fault keeps its own reason.
+    write(dir / "log.simpleFoam",
+          "sigFpe : Enabling floating point exception trapping (FOAM_SIGFPE).\nTime = 12\n\n"
+          "[2] #0  Foam::error::printStack(Foam::Ostream&) at ??:?\n[2] #1  Foam::sigSegv::sigHandler(int) at ??:?\n" +
+              separator +
+              "prterun noticed that process rank 2 with PID 0 on node x exited on signal 11 (Segmentation "
+              "fault).\n" +
+              separator);
+    st = runs.status(id);
+    INFO(st->message);
+    CHECK(st->message.find("diverged") == std::string::npos);
+    CHECK(st->message.find("Segmentation fault") != std::string::npos);
+
     // A fatal error keeps its first line; a mesh check without fatal reports keeps the old summary.
     write(dir / "log.simpleFoam", "--> FOAM FATAL ERROR: (openfoam-2506)\n\n    Unknown patch type wall2\n\n"
                                   "    From Foam::fvPatch::New\n");

@@ -590,7 +590,8 @@ std::string errorSummary(const fs::path& log)
         }
         if (line.find("FOAM FATAL") != std::string::npos)
             next = true;
-        if (line.find("sigFpe") != std::string::npos || line.find("Floating point exception") != std::string::npos)
+        if (line.find("sigFpe::sigHandler") != std::string::npos ||
+            line.find("Floating point exception") != std::string::npos)
             fpe = true;
         if (line.rfind("Time = ", 0) == 0)
             time = trimmed(line.substr(7));
