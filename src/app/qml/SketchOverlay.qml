@@ -125,14 +125,19 @@ Item {
         return best
     }
 
-    /// Where a dragged point lands: another point within the snap distance (not the one
-    /// being dragged), else the grid.
-    function dragTarget(x, y, from) {
+    /// Where a dragged point lands: another point within the snap distance, else the grid.
+    /// The dragged point itself (`ref`, where it was pressed and where the live preview has
+    /// it now, with the ends joined to it there) is not a snap target.
+    function dragTarget(x, y, from, ref) {
         const p = screenToLocal(x, y)
         if (p === null)
             return null
+        const self = [from]
+        const now = constraintLayer.pointCandidates().find(c => c.point.curve === ref.curve && c.point.point === ref.point)
+        if (now)
+            self.push(now.pos)
         for (const c of snapPoints.concat([[0, 0]])) {
-            if (dist(c, from) < 1e-6)
+            if (self.some(q => dist(c, q) < 1e-6))
                 continue
             const s = toScreen(c)
             if (Math.hypot(s.x - x, s.y - y) <= snapPixels)
@@ -422,7 +427,7 @@ Item {
                     if (!pointDragging && Math.hypot(mouse.x - pressAt.x, mouse.y - pressAt.y) > 4)
                         pointDragging = true
                     if (pointDragging) {
-                        const to = root.dragTarget(mouse.x, mouse.y, dragPoint.pos)
+                        const to = root.dragTarget(mouse.x, mouse.y, dragPoint.pos, dragPoint.point)
                         if (to !== null)
                             root.pointDragged(dragPoint.point, to, false)
                     }
@@ -453,7 +458,7 @@ Item {
         onReleased: mouse => {
             if (root.selecting) {
                 if (pointDragging) {
-                    const to = root.dragTarget(mouse.x, mouse.y, dragPoint.pos)
+                    const to = root.dragTarget(mouse.x, mouse.y, dragPoint.pos, dragPoint.point)
                     root.pointDragged(dragPoint.point, to !== null ? to : dragPoint.pos, true)
                 }
                 pointDragging = false

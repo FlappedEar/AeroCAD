@@ -715,10 +715,31 @@ void Design::moveSketchPoint(FeatureId sketchId, const Json& point, const geomet
         throw DesignError("Give the point to drag as {curve, point}");
     const Json items = f.params.value("curves", Json::array());
     const Json constraints = f.params.value("constraints", Json::array());
+    const Eval ev{*this};
+    // Where the curves are before the drag, to leave the items that do not move as they
+    // are (with their parameter expressions).
+    std::vector<SketchCurve> original;
+    if (auto o = m_sketches.find(sketchId); o != m_sketches.end())
+        original = o->second.curves;
 
-    // 1. Solve with the point held at the cursor.
+    // 1. Solve with the point held at the cursor. A polygon keeps its corner angles too, so
+    // a dragged vertex leaves it regular (its sides alone are only kept equal).
     Json held = constraints;
     held.push_back({{"type", "fix"}, {"points", Json::array({point})}, {"at", Json::array({Json::array({to.x, to.y})})}});
+    {
+        std::size_t at = 0;
+        for (const auto& item : items) {
+            std::vector<SketchCurve> made;
+            std::vector<SketchConstraint> implicit;
+            appendCurves(ev, item, made, implicit);
+            if (lower(item.at("type").get<std::string>()) == "polygon") {
+                const double turn = 360.0 / static_cast<double>(made.size());
+                for (std::size_t i = 0; i + 1 < made.size(); ++i)
+                    held.push_back({{"type", "angle"}, {"curves", Json::array({at + i, at + i + 1})}, {"value", turn}});
+            }
+            at += made.size();
+        }
+    }
     f.params["constraints"] = held;
     regenerate();
     const FeatureStatus st = status(sketchId);
@@ -730,8 +751,42 @@ void Design::moveSketchPoint(FeatureId sketchId, const Json& point, const geomet
     }
     const std::vector<SketchCurve> solved = it->second.curves;
 
-    // 2. Keep the result: each item rewritten where its curves are now, without the hold.
-    const Eval ev{*this};
+    // 2. Keep the result: each item that moved rewritten where its curves are now, without
+    // the hold; values that did not change keep their expressions.
+    auto same = [](const SketchCurve& a, const SketchCurve& b) {
+        if (a.points.size() != b.points.size() || std::abs(a.radius - b.radius) > 1e-7)
+            return false;
+        for (std::size_t i = 0; i < a.points.size(); ++i) {
+            if (std::hypot(a.points[i].x - b.points[i].x, a.points[i].y - b.points[i].y) > 1e-7)
+                return false;
+        }
+        return true;
+    };
+    auto keepExpressions = [&](const Json& item, Json out) {
+        auto equal = [](double a, double b) { return std::abs(a - b) <= 1e-7 * std::max(1.0, std::abs(a)); };
+        for (const auto& [key, value] : item.items()) {
+            if (!value.is_string() || !out.contains(key) || !out.at(key).is_number())
+                continue;
+            if (equal(ev.num(value), out.at(key).get<double>()))
+                out[key] = value;
+        }
+        if (has(item, "diameter") && out.contains("radius") && equal(ev.num(item.at("diameter")), 2 * out.at("radius").get<double>())) {
+            out.erase("radius");
+            out["diameter"] = item.at("diameter");
+        }
+        // A rectangle drawn with width / height keeps them when its size did not change.
+        if (has(item, "width") && has(item, "height") && out.contains("opposite") && out.contains("corner")) {
+            const auto& a = out.at("corner");
+            const auto& b = out.at("opposite");
+            if (equal(ev.num(item.at("width")), b[0].get<double>() - a[0].get<double>()) &&
+                equal(ev.num(item.at("height")), b[1].get<double>() - a[1].get<double>())) {
+                out.erase("opposite");
+                out["width"] = item.at("width");
+                out["height"] = item.at("height");
+            }
+        }
+        return out;
+    };
     Json newItems = Json::array();
     std::size_t first = 0;
     for (const auto& item : items) {
@@ -740,7 +795,10 @@ void Design::moveSketchPoint(FeatureId sketchId, const Json& point, const geomet
         appendCurves(ev, item, made, implicit);
         if (first + made.size() > solved.size())
             throw DesignError("Sketch changed while dragging");
-        newItems.push_back(itemFromSolved(item, solved.data() + first, made.size()));
+        bool moved = original.size() != solved.size();
+        for (std::size_t i = 0; i < made.size() && !moved; ++i)
+            moved = !same(original[first + i], solved[first + i]);
+        newItems.push_back(moved ? keepExpressions(item, itemFromSolved(item, solved.data() + first, made.size())) : item);
         first += made.size();
     }
     Feature& g = m_state.features[indexOf(sketchId)];
