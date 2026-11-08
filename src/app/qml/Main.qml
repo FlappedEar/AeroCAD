@@ -1076,6 +1076,7 @@ ApplicationWindow {
         window.partOnSurfaceSketch = null
         window.finishSketch()
         window.selectPart(0)
+        window.copiedPartId = 0 // part ids restart in the next project: never paste another part
         closeToolPanels()
         scanPanel.reset()
         heatMapPanel.result = null

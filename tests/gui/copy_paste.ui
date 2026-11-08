@@ -3,7 +3,8 @@
 #    Enter places it; the original stays;
 #  - Esc right after Ctrl+V removes the pasted copy again (nothing pasted);
 #  - a timeline body is copied as a fixed solid; Ctrl+C while a dialog's search field has the
-#    focus does not copy the part.
+#    focus does not copy the part;
+#  - File > New forgets the copied part (ids restart: Ctrl+V must not paste another part).
 # Run: AeroCAD --ui-script <this file>
 Qt.createQmlObject('import QtQuick; Item { objectName: "cpTest"; visible: false; property var s: ({}); function parts() { return controller.execute("document.parts").result.parts.filter(p => p.kind === "body" || p.kind === "imported") } function find(i, name) { if (!i) return null; if (i.objectName === name) return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = find(ch[k], name); if (r) return r } return null } }', window.contentItem)
 ui.wait(800)
@@ -30,3 +31,15 @@ ui.wait(300)
 (() => { ui.key("C", "ctrl") })()
 ui.wait(200)
 (() => { ui.log("Ctrl+C with the shortcut search field focused: copied part " + window.copiedPartId); if (window.copiedPartId) ui.fail("Ctrl+C in a text field copied the part"); shortcutsDialog.close() })()
+# File > New: nothing left to paste.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cpTest"); window.selectPart(t.s.body.id); viewport.forceActiveFocus() })()
+ui.wait(200)
+ui.key("C", "ctrl")
+ui.wait(200)
+(() => { if (!window.copiedPartId) ui.fail("Ctrl+C did not copy before File > New"); controller.newProject() })()
+ui.wait(400)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cpTest"); controller.execute("feature.box", { size: [10, 10, 10] }); viewport.forceActiveFocus() })()
+ui.wait(200)
+ui.key("V", "ctrl")
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cpTest"); const n = t.parts().length; ui.log("after File > New and Ctrl+V: copied part " + window.copiedPartId + ", parts " + n + ", moving " + viewport.transformActive); if (window.copiedPartId) ui.fail("File > New kept the copied part"); if (n !== 1 || viewport.transformActive) ui.fail("Ctrl+V after File > New pasted a part of the new project") })()
