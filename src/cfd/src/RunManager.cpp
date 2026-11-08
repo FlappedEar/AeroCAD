@@ -1152,8 +1152,12 @@ bool RunManager::setLabel(const std::string& id, const std::string& label)
     {
         std::ofstream out(tmp, std::ios::trunc);
         out << j.dump(2) << "\n";
-        if (!out)
+        out.close(); // Flush now: a full disk shows here, not after the rename.
+        if (!out) {
+            std::error_code ignored;
+            fs::remove(tmp, ignored);
             throw std::runtime_error("Cannot write '" + tmp.string() + "'");
+        }
     }
     std::error_code ec;
     fs::rename(tmp, file, ec);

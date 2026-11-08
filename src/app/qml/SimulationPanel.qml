@@ -542,10 +542,11 @@ Pane {
     /// The run whose label is being edited in the run list (CAD-174); "" = none.
     property string renamingRun: ""
     property string renameText: ""
-    property bool renameTyped: false
+    /// Cursor and selection in the name field; null = select all (as it opens).
+    property var renameCursor: null
     function startRename(run) {
         renameText = run.source.label || ""
-        renameTyped = false
+        renameCursor = null
         renamingRun = run.id
     }
     function renameRun(id, label) {
@@ -1241,17 +1242,34 @@ Pane {
                                 maximumLength: 80
                                 // The run list is rebuilt on every refresh, so the typed text
                                 // lives in root.renameText and a new row picks it up.
+                                // The cursor and selection are kept there too, so a correction in
+                                // the middle of the name goes on where it was.
+                                property bool restoring: false
                                 function begin() {
                                     if (!visible)
                                         return
+                                    restoring = true
                                     text = root.renameText
-                                    if (!root.renameTyped)
+                                    const c = root.renameCursor
+                                    if (!c)
                                         selectAll()
+                                    else if (c.start !== c.end)
+                                        c.cursor === c.start ? select(c.end, c.start) : select(c.start, c.end)
+                                    else
+                                        cursorPosition = c.cursor
+                                    restoring = false
                                     forceActiveFocus()
+                                }
+                                function keep() {
+                                    if (!restoring && visible)
+                                        root.renameCursor = { start: selectionStart, end: selectionEnd, cursor: cursorPosition }
                                 }
                                 Component.onCompleted: begin()
                                 onVisibleChanged: begin()
-                                onTextEdited: { root.renameText = text; root.renameTyped = true }
+                                onTextEdited: { root.renameText = text; keep() }
+                                onCursorPositionChanged: keep()
+                                onSelectionStartChanged: keep()
+                                onSelectionEndChanged: keep()
                                 onAccepted: root.renameRun(runRow.modelData.id, text)
                                 // Esc belongs to the field, not to the window's Esc shortcut.
                                 Keys.onShortcutOverride: event => event.accepted = event.key === Qt.Key_Escape
