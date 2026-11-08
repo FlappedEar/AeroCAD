@@ -176,18 +176,23 @@ namespace {
 struct MeshPlan {
     double cellsPerLength;   ///< Background cells per characteristic length.
     int surfaceMin, surfaceMax; ///< snappyHexMesh surface refinement levels.
-    int wakeLevel;           ///< Refinement level of the box around the part and its wake.
+    int nearLevel;           ///< Refinement level of the box close around the part and its near wake.
+    int wakeLevel;           ///< Refinement level of the larger box around the part and its far wake.
     int layers;              ///< Prism layers on the part (0 = none).
 };
 
+/// The cells go where the pressure on the part is decided (CAD-153): the far wake, which
+/// held three quarters of a fine mesh, is one level coarser than the region just around
+/// the part, and the fine surface gets one more level (2.2 mm instead of 4.4 mm on a
+/// 1.1 m car, 3.6 times the faces) for about the same cell count.
 MeshPlan meshPlan(MeshLevel level)
 {
     switch (level) {
-    case MeshLevel::Coarse: return {2.0, 3, 4, 2, 0};
-    case MeshLevel::Medium: return {3.0, 4, 5, 3, 2};
-    case MeshLevel::Fine: return {4.0, 5, 6, 4, 3};
+    case MeshLevel::Coarse: return {2.0, 3, 4, 2, 1, 0};
+    case MeshLevel::Medium: return {3.0, 4, 5, 3, 2, 2};
+    case MeshLevel::Fine: return {4.0, 6, 7, 4, 3, 3};
     }
-    return {2.0, 3, 4, 2, 0};
+    return {2.0, 3, 4, 2, 1, 0};
 }
 
 /// Number formatting independent of the global locale.
@@ -298,8 +303,8 @@ std::string blockMeshDict(const BoundingBox& d, const int cells[3], bool ground)
     return t.str();
 }
 
-std::string snappyHexMeshDict(const MeshPlan& plan, bool hasContext, const BoundingBox& wakeBox,
-                              const Vec3& locationInMesh)
+std::string snappyHexMeshDict(const MeshPlan& plan, bool hasContext, const BoundingBox& nearBox,
+                              const BoundingBox& wakeBox, const Vec3& locationInMesh)
 {
     Text t;
     t << header("dictionary", "snappyHexMeshDict") << "castellatedMesh true;\nsnap            true;\naddLayers       "
@@ -307,9 +312,10 @@ std::string snappyHexMeshDict(const MeshPlan& plan, bool hasContext, const Bound
       << "    part.stl { type triSurfaceMesh; name part; }\n";
     if (hasContext)
         t << "    context.stl { type triSurfaceMesh; name context; }\n";
-    t << "    wake { type box; min " << wakeBox.min << "; max " << wakeBox.max << "; }\n}\n\n"
+    t << "    near { type box; min " << nearBox.min << "; max " << nearBox.max << "; }\n"
+      << "    wake { type box; min " << wakeBox.min << "; max " << wakeBox.max << "; }\n}\n\n"
       << "castellatedMeshControls\n{\n"
-      << "    maxLocalCells 1000000;\n    maxGlobalCells 8000000;\n    minRefinementCells 10;\n"
+      << "    maxLocalCells 3000000;\n    maxGlobalCells 12000000;\n    minRefinementCells 10;\n"
       << "    maxLoadUnbalance 0.10;\n    nCellsBetweenLevels 3;\n\n    features\n    (\n"
       << "        { file \"part.eMesh\"; level " << plan.surfaceMax << "; }\n";
     if (hasContext)
@@ -321,6 +327,7 @@ std::string snappyHexMeshDict(const MeshPlan& plan, bool hasContext, const Bound
         t << "        context { level (" << plan.surfaceMin << ' ' << plan.surfaceMin
           << "); patchInfo { type wall; inGroups (walls); } }\n";
     t << "    }\n\n    resolveFeatureAngle 30;\n\n    refinementRegions\n    {\n"
+      << "        near { mode inside; levels ((1e15 " << plan.nearLevel << ")); }\n"
       << "        wake { mode inside; levels ((1e15 " << plan.wakeLevel << ")); }\n    }\n\n"
       << "    locationInMesh " << locationInMesh << ";\n    allowFreeStandingZoneFaces true;\n}\n\n"
       << "snapControls\n{\n    nSmoothPatch 3;\n    tolerance 2.0;\n    nSolveIter 30;\n    nRelaxIter 5;\n"
@@ -731,6 +738,12 @@ CaseInfo writeCase(const fs::path& dir, const CaseGeometry& geometry, const Sett
     const int cells[3] = {static_cast<int>(std::lround(ds.x / h)), static_cast<int>(std::lround(ds.y / h)),
                           static_cast<int>(std::lround(ds.z / h))};
 
+    // Close around the part and its near wake, where the surface pressure is decided.
+    BoundingBox nearBox;
+    nearBox.min = {info.partBounds.min.x - 0.15 * L, info.partBounds.min.y - 0.1 * L,
+                   s.ground ? d.min.z : info.partBounds.min.z - 0.1 * L};
+    nearBox.max = {info.partBounds.max.x + 0.75 * L, info.partBounds.max.y + 0.1 * L,
+                   info.partBounds.max.z + 0.1 * L};
     BoundingBox wake;
     wake.min = {info.partBounds.min.x - 0.5 * L, info.partBounds.min.y - 0.5 * L,
                 s.ground ? d.min.z : info.partBounds.min.z - 0.5 * L};
@@ -761,7 +774,7 @@ CaseInfo writeCase(const fs::path& dir, const CaseGeometry& geometry, const Sett
               header("dictionary", "turbulenceProperties") +
                   "simulationType RAS;\n\nRAS\n{\n    RASModel kOmegaSST;\n    turbulence on;\n    printCoeffs on;\n}\n");
     writeFile(dir / "system" / "blockMeshDict", blockMeshDict(d, cells, s.ground));
-    writeFile(dir / "system" / "snappyHexMeshDict", snappyHexMeshDict(plan, hasContext, wake, location));
+    writeFile(dir / "system" / "snappyHexMeshDict", snappyHexMeshDict(plan, hasContext, nearBox, wake, location));
     writeFile(dir / "system" / "surfaceFeatureExtractDict", surfaceFeatureExtractDict(hasContext));
     writeFile(dir / "system" / "controlDict", controlDict(s, info));
     writeFile(dir / "system" / "fvSchemes", fvSchemes());
