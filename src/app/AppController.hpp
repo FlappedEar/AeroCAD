@@ -103,6 +103,8 @@ public:
     Q_INVOKABLE double historyTopId() const;
     /// Whether the step with token `id` is still applied.
     Q_INVOKABLE bool historyApplied(double id) const;
+    /// Whether the step with token `id` left the history while applied (UndoStack::isExpired).
+    Q_INVOKABLE bool historyExpired(double id) const;
     /// Undoes the last step only if its token is `id`. Returns true if it did.
     Q_INVOKABLE bool undoIfTop(double id);
     /// Joins the steps `ids` (oldest first) into one called `label`, only if they are exactly

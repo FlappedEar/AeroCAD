@@ -254,6 +254,11 @@ bool AppController::historyApplied(double id) const
     return id > 0 && m_session.undoStack().isApplied(static_cast<std::uint64_t>(id));
 }
 
+bool AppController::historyExpired(double id) const
+{
+    return id > 0 && m_session.undoStack().isExpired(static_cast<std::uint64_t>(id));
+}
+
 bool AppController::undoIfTop(double id)
 {
     if (id <= 0 || m_session.undoStack().topId() != static_cast<std::uint64_t>(id))

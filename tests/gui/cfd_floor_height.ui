@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CAD-147: with the moving floor on, "Floor at Z (mm)" sets where the road is (a part on a car
+# sits well above it). The planned tunnel follows the typed height; a floor above the part
+# says why before Run CFD; empty puts the floor just below the parts again.
+# Run: AeroCAD tests/data/box_200x80x60.stl --ui-script <this file>
+Qt.createQmlObject('import QtQuick; Item { objectName: "cfTest"; visible: false; function find(i, name) { if (!i) return null; if (i.objectName === name) return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = find(ch[k], name); if (r) return r } return null } function clickItem(name) { const f = find(simulationPanel, name); const c = f.mapToItem(null, f.width / 2, f.height / 2); ui.click(c.x, c.y) } function floorZ() { return simulationPanel.proposal ? simulationPanel.proposal.domainModel.min[2] : NaN } }', window.contentItem)
+ui.wait(800)
+(() => { const p = controller.execute("document.parts").result.parts[0]; ui.log("box bottom Z " + p.bounds.min[2]); window.selectPart(p.id); cfdAction.trigger() })()
+ui.wait(600)
+ui.clickText("Moving floor under the geometry")
+ui.wait(400)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const z = t.floorZ(); ui.log("floor just below: Z " + z); if (!(z < 0 && z > -10)) ui.fail("default floor is not just below the box: " + z); if (!t.find(simulationPanel, "cfdFloorField").visible) ui.fail("no floor height field with the floor on") })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); t.clickItem("cfdFloorField") })()
+ui.type("-150")
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const z = t.floorZ(); ui.log("floor typed -150: Z " + z); if (Math.abs(z + 150) > 1e-6) ui.fail("the tunnel does not follow the typed floor: " + z); const p = simulationPanel.runParams(); if (p.groundHeight !== -150) ui.fail("Run CFD would not pass the floor height: " + JSON.stringify(p)) })()
+ui.shot("cfd-floor-height.png")
+ui.key("A", "ctrl")
+ui.type("30")
+ui.wait(500)
+(() => { ui.log("floor typed 30: " + simulationPanel.proposalError); if (!/floor at Z = 30\.0 mm is above the lowest point of the part \(Z = 0\.0 mm\)/.test(simulationPanel.proposalError)) ui.fail("no reason shown for a floor above the part") })()
+ui.clickText(simulationPanel.proposalError)
+ui.shot("cfd-floor-above.png")
+ui.key("A", "ctrl")
+ui.key("Backspace")
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const z = t.floorZ(); ui.log("floor cleared: Z " + z + ", error '" + simulationPanel.proposalError + "'"); if (!(z < 0 && z > -10) || simulationPanel.proposalError) ui.fail("clearing the field does not go back to just below the parts"); if ("groundHeight" in simulationPanel.runParams()) ui.fail("an empty field still passes a floor height") })()
+ui.log("cfd floor height done")

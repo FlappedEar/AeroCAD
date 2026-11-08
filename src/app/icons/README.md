@@ -31,7 +31,7 @@ From [Tabler Icons](https://github.com/tabler/tabler-icons) 3.19.0, MIT licence 
 | perspective, ortho | perspective, square-rotated |
 | grid | grid-4x4 |
 | menu, save, open, keyboard, close, check | menu-2, device-floppy, folder-open, keyboard, x, check |
-| variants, duplicate, warning, rename | stack-2, copy-plus, alert-triangle, pencil |
+| variants, duplicate, warning, rename, isolate | stack-2, copy-plus, alert-triangle, pencil, focus-2 |
 
 ## Drawn for AeroCAD (GPL-3.0-or-later)
 

@@ -187,6 +187,13 @@ if(AEROCAD_BUILD_TESTS)
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/cfd_open_warning.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_cfd_open_warning_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-147: the road height under a moving floor, typed in the Wind tunnel panel.
+    add_test(NAME app_cfd_floor_height_test
+        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl
+                --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/cfd_floor_height.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_cfd_floor_height_test PROPERTIES LABELS gui TIMEOUT 60
+        ENVIRONMENT "AEROCAD_CFD_DIR=${CMAKE_CURRENT_BINARY_DIR}/cfd-floor-height-runs")
     # CAD-105: Simplify a scan, then Ctrl+Z restores the full mesh (also with a reduced display).
     add_test(NAME app_simplify_undo_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl
@@ -345,6 +352,19 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/undo_order.ui
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(app_undo_order_test PROPERTIES LABELS gui TIMEOUT 60)
+    add_test(NAME app_isolate_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/isolate.ui
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(app_isolate_test PROPERTIES LABELS gui TIMEOUT 60)
+    add_test(NAME app_isolate_scan_test
+        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl
+                --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/isolate_scan.ui
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(app_isolate_scan_test PROPERTIES LABELS gui TIMEOUT 60)
+    add_test(NAME app_isolate_history_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/isolate_history.ui
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(app_isolate_history_test PROPERTIES LABELS gui TIMEOUT 120)
     add_test(NAME app_large_scale_preview_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/large_scale_preview.ui

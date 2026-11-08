@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <fstream>
 #include <locale>
 #include <sstream>
@@ -637,8 +638,15 @@ CaseInfo planCase(const CaseGeometry& geometry, const Settings& s)
     double floor = all.min.z - 0.02 * L;
     if (s.ground && s.groundHeight) {
         floor = info.frame.toCase({0.0, 0.0, *s.groundHeight}).z; // Rotation is about Z only.
-        if (floor > info.partBounds.min.z + 1e-9)
-            throw std::runtime_error("groundHeight is above the lowest point of the part");
+        if (floor > info.partBounds.min.z + 1e-9) {
+            const double bottom = info.frame.toModel({0.0, 0.0, info.partBounds.min.z}).z;
+            char text[200];
+            std::snprintf(text, sizeof text,
+                          "The floor at Z = %.1f mm is above the lowest point of the part (Z = %.1f mm): put it at "
+                          "or below the part's bottom",
+                          *s.groundHeight, bottom);
+            throw std::runtime_error(text);
+        }
     }
     d.min = {all.min.x - 3.0 * L, all.min.y - 2.5 * L, s.ground ? floor : all.min.z - 2.5 * L};
     d.max = {all.max.x + 8.0 * L, all.max.y + 2.5 * L, all.max.z + 2.5 * L};

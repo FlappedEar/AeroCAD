@@ -16,7 +16,13 @@ panel in place of Properties:
 
 - **Run**: the engine status (green = ready), settings for a new run of the part
   selected in the browser (speed, flow direction, mesh, moving floor, other visible
-  parts as surroundings, label) and **Run CFD**. The part's size is shown above the
+  parts as surroundings, label) and **Run CFD**. With the moving floor on, *Floor at Z
+  (mm)* says where the road is (`groundHeight`); empty puts it just below the parts. For a
+  part mounted on a car give the road's height, as the gap changes the forces (200 mm box,
+  flow +X, 30 m/s, coarse: floor 4 mm below Cd 0.855 / Cl +0.095, 40 mm below Cd 0.839 /
+  Cl −0.070, 150 mm below Cd 0.824 / Cl 0.003, no floor Cd 0.817;
+  [panel](images/audit/cad-147-floor-height.png)). A floor above the part is refused with
+  both heights, shown under **Run CFD** before the run. The part's size is shown above the
   settings; a part under 20 mm or over 50 m gets a warning to check its units first (a
   model in metres read as millimetres is 1000 times too small). `simulation.propose_run`
   and `simulation.run` return the same text in `warnings`. A part whose mesh is not closed (a raw scan

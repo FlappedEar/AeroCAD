@@ -7,6 +7,7 @@
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -389,8 +390,10 @@ TEST_CASE("writeCase with a fixed floor at a given height", "[cfd]")
     CHECK(slurp(tmp.path() / "0.orig/U").find("ground { type noSlip; }") != std::string::npos);
     // Case origin is the part's bounds; model z = 0 is 50 mm below the part.
     CHECK(info.domain.min.z == Approx(info.partBounds.min.z - 0.05));
-    s.groundHeight = 60.0; // Above the part's lowest point.
-    CHECK_THROWS(cfd::writeCase(tmp.path(), g, s));
+    s.groundHeight = 60.0; // Above the part's lowest point: the message names both heights (CAD-147).
+    CHECK_THROWS_WITH(cfd::writeCase(tmp.path(), g, s),
+                      Catch::Matchers::ContainsSubstring("floor at Z = 60.0 mm is above the lowest point of the part "
+                                                         "(Z = 50.0 mm)"));
 
     const auto j = cfd::toJson(s);
     CHECK(cfd::settingsFromJson(j).groundMoving == false);
