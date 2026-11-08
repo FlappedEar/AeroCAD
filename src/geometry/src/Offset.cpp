@@ -404,6 +404,7 @@ TopoDS_Shape filletedFin(const TopTools_ListOfShape& blanks, const TopoDS_Shape&
         builder.MakeCompound(inputs);
         builder.Add(inputs, fillet.Shape());
         builder.Add(inputs, pad);
+        builder.Add(inputs, topFace);
         capture("cut-inputs", inputs);
     }
 
