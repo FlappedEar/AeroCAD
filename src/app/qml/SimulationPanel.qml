@@ -315,6 +315,7 @@ Pane {
         comparison = null
         fieldStats = ({})
         runSections = ({})
+        sectionIndices = ({})
         rangeOverrides = ({})
         showDifference = false
         differenceStats = null
@@ -528,6 +529,10 @@ Pane {
     // --- Section positions (CAD-148) -------------------------------------------------------
     /// Section stacks of the loaded runs: {runId: fields.sections of simulation.results}.
     property var runSections: ({})
+    /// Plane picked on each section slider: {axis: index in the stack}. Kept apart from
+    /// fieldChoices, the model of the field rows, so moving a slider does not recreate the
+    /// rows and drop the slider being dragged.
+    property var sectionIndices: ({})
     /// A run's stack of sections normal to `axis` ("x" across the flow, "y" vertical,
     /// "z" horizontal), by default of the run drawn in 3D: {axis, defaultIndex, lengthMm,
     /// positions: [{kind, index, fraction, mm}]}, or null for runs made before the stacks.
@@ -541,7 +546,7 @@ Pane {
         const st = sectionStack(f.axis, run)
         if (!st)
             return null
-        const want = f.pos ?? st.defaultIndex
+        const want = f.pos ?? sectionIndices[f.axis] ?? st.defaultIndex
         let best = st.positions[0]
         for (const p of st.positions)
             if (Math.abs(p.index - want) < Math.abs(best.index - want))
@@ -556,10 +561,12 @@ Pane {
             return p.kind
         return f.kind === "sectionCross" ? null : f.kind
     }
-    function setSectionIndex(index, pos) {
-        const copy = fieldChoices.slice()
-        copy[index] = Object.assign({}, copy[index], { pos: pos })
-        fieldChoices = copy
+    function setSectionIndex(axis, pos) {
+        if (sectionIndices[axis] === pos)
+            return
+        const copy = Object.assign({}, sectionIndices)
+        copy[axis] = pos
+        sectionIndices = copy
         loadFieldStats()
     }
     /// "450 mm behind the front", "120 mm left of the centre", "80 mm above the bottom".
@@ -1218,7 +1225,7 @@ Pane {
                                 stepSize: 1
                                 snapMode: Slider.SnapAlways
                                 value: fieldRow.stack && fieldRow.position ? fieldRow.stack.positions.indexOf(fieldRow.position) : 0
-                                onMoved: root.setSectionIndex(fieldRow.index, fieldRow.stack.positions[Math.round(value)].index)
+                                onMoved: root.setSectionIndex(fieldRow.modelData.axis, fieldRow.stack.positions[Math.round(value)].index)
                             }
                             Label {
                                 objectName: "sectionPosition_" + fieldRow.modelData.axis
