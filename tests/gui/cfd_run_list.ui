@@ -18,4 +18,6 @@ ui.clickText("▸ Runs from other designs (1)")
 ui.wait(400)
 ui.clickText("other design · " + simulationPanel.otherRuns[0].source.partName)
 ui.shot("cfd-run-list.png")
+# CAD-149: a running run says how long it has run and at most how long is left.
+(() => { const t = simulationPanel.timeText({ state: "running", elapsedSeconds: 380, remainingSeconds: 6861 }); ui.log("time: " + t); if (t !== "6 min so far, at most 1 h 54 min left") ui.fail("time text: " + t); if (simulationPanel.timeText({ state: "running", elapsedSeconds: 45, remainingSeconds: null }) !== "45 s so far") ui.fail("elapsed only"); if (simulationPanel.timeText({ state: "finished", elapsedSeconds: 45 }) !== "") ui.fail("a finished run has no running time") })()
 ui.log("cfd run list done")
