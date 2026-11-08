@@ -875,6 +875,17 @@ Item {
         }
         onHoveredChanged: if (!hovered) { hoverTimer.stop(); root.hoveredPartId = 0 }
     }
+    // The view or the parts change under a still pointer (touchpad pan, F6, a command):
+    // pick again, so the highlight keeps showing what a click would pick.
+    function refreshHover() {
+        if (partHover.hovered && hoverHighlightEnabled && !cameraInput.buttonHeld && !hoverTimer.running)
+            hoverTimer.start()
+    }
+    onViewKeyChanged: refreshHover()
+    Connections {
+        target: root.controller
+        function onBoundsChanged() { root.refreshHover() }
+    }
     Connections {
         target: cameraInput
         function onButtonHeldChanged() { if (cameraInput.buttonHeld) { hoverTimer.stop(); root.hoveredPartId = 0 } }

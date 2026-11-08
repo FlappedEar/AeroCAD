@@ -19,6 +19,16 @@ ui.shot("build/hover-highlight-1-on.png")
 ui.wait(250)
 (() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "hvTest"); ui.log("off the box: hovered part " + viewport.hoveredPartId); if (viewport.hoveredPartId !== 0 || t.node().hovered) ui.fail("the highlight stayed after the pointer left the part") })()
 ui.shot("build/hover-highlight-2-off.png")
+# 2b. The view changes under a still pointer (F6 after zooming in, a pan by keys): the
+#     highlight follows what is under the pointer now.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "hvTest"); ui.move(t.s.on.x, t.s.on.y) })()
+ui.wait(250)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "hvTest"); if (viewport.hoveredPartId !== t.s.id) ui.fail("not highlighted before the view change"); const st = viewport.cameraState(); viewport.restoreCameraState({ pivot: [st.pivot[0] + 2000, st.pivot[1], st.pivot[2]], pitch: st.pitch, yaw: st.yaw, distance: st.distance, orthographic: false }) })()
+ui.wait(250)
+(() => { ui.log("view moved away under a still pointer: hovered part " + viewport.hoveredPartId); if (viewport.hoveredPartId !== 0) ui.fail("the highlight stayed on a part no longer under the pointer") })()
+ui.key("F6")
+ui.wait(250)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "hvTest"); ui.log("F6 under a still pointer: hovered part " + viewport.hoveredPartId); if (viewport.hoveredPartId !== t.s.id) ui.fail("the highlight did not come back after F6 put the part under the pointer") })()
 # 3. Selected: the selection colour wins.
 (() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "hvTest"); window.selectPart(t.s.id); ui.move(t.s.on.x, t.s.on.y) })()
 ui.wait(250)
