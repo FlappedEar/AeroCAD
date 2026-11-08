@@ -181,6 +181,11 @@ if(AEROCAD_BUILD_TESTS)
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/orient_for_cfd.ui
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(app_orient_for_cfd_test PROPERTIES LABELS gui TIMEOUT 60)
+    add_test(NAME app_zoom_selection_test
+        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl
+                --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/zoom_selection.ui
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(app_zoom_selection_test PROPERTIES LABELS gui TIMEOUT 60)
     add_test(NAME app_orient_scan_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/orient_scan.ui

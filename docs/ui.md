@@ -55,6 +55,8 @@ Clicking another tab while a sketch is edited finishes the sketch.
 | Zoom | Wheel | Two-finger swipe up/down, or pinch |
 | Select | Left click | Click |
 | Context menu | Right click (without dragging) | Two-finger click |
+| Zoom to a part | Double click on it | Double click on it |
+| Fit all | Double click on empty space, or middle double click | Double click on empty space |
 
 Zoom moves towards the point under the pointer and keeps it there, so the wheel brings in
 whatever you point at. Dragging to orbit turns the view around the point of the model under
@@ -72,6 +74,14 @@ swipe pan instead (pinch and Ctrl + swipe then zoom).
 The left button is reserved for selection. The navigation bar's **Orbit**, **Pan** and **Zoom**
 tools temporarily map left drag to that navigation (useful without a middle button); click the
 tool again to turn it off.
+
+**Zoom to selection** fills the view with what is selected: the selected area of a scan
+(Region, Lasso, Brush) when there is one, else the selected part. It is in the navigation bar
+(next to Fit all), in **View › Zoom to Selection**, and a double click on a part does it for
+that part. A part being moved with Move / Rotate / Scale is framed where it is shown. A double
+click on empty space, or with the middle button anywhere (as in Fusion), fits everything.
+Single letters are Fusion's modelling keys (F is Fillet), so zooming to the selection has no
+key of its own.
 
 The table is the default (Fusion) scheme. **Edit › Preferences › Mouse** switches the
 middle button to other common schemes; the status bar and Help › Keyboard Shortcuts follow
