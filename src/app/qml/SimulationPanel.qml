@@ -121,6 +121,43 @@ Pane {
         return lines
     }
 
+    /// Why the verdict is "check quality": the selected runs themselves, or a run of the mesh check (CAD-117).
+    function checkQualityText(c) {
+        if (!c || c.verdict !== "check quality")
+            return ""
+        const q = c.quality || {}
+        const okA = q.a && q.a.status === "ok", okB = q.b && q.b.status === "ok"
+        if (!okA && !okB)
+            return qsTr("A and B have quality warnings (see Results), so the difference may not be reliable.")
+        if (!okA || !okB)
+            return qsTr("%1 has quality warnings (see Results), so the difference may not be reliable.").arg(okA ? "B" : "A")
+        const m = c.meshSensitivity && c.meshSensitivity.message
+        return m ? qsTr("Mesh check: %1").arg(m)
+                 : qsTr("A run of the mesh check has quality warnings, so the difference may not be reliable.")
+    }
+
+    /// A run's name for the A/B table: its label (or part name) and start time, plus its state
+    /// when it is not finished (CAD-117).
+    function runTitle(id, state) {
+        const r = runs.find(x => x.id === id)
+        if (!r)
+            return id
+        const t = r.created ? new Date(r.created) : null
+        const time = t && !isNaN(t) ? t.toLocaleTimeString(Qt.locale(), "HH:mm") : ""
+        const name = r.source && r.source.label ? r.source.label : (r.source && r.source.partName) || id
+        return name + (time ? " (" + time + ")" : "") + (state && state !== "finished" ? ", " + state : "")
+    }
+
+    /// A force too small next to the run's largest force for a percentage to mean anything
+    /// (e.g. a side force of 0.002 N on a 3 N drag: +316 % is noise) (CAD-117).
+    function noiseLevel(a) {
+        const f = comparison ? comparison.forces : null
+        if (!f)
+            return false
+        const largest = Math.max(...["dragN", "liftN", "sideN"].map(k => f[k] ? Math.abs(f[k].a) : 0))
+        return Math.abs(a) < 0.02 * largest
+    }
+
     function num(v, digits) {
         return v === null || v === undefined || !isFinite(v) ? "–" : Number(v).toFixed(digits)
     }
@@ -555,7 +592,7 @@ Pane {
                         ]
                     }
                     Label { text: qsTr("Label"); opacity: 0.7 }
-                    TextField { id: labelField; Layout.fillWidth: true; placeholderText: qsTr("e.g. A, v2") }
+                    TextField { id: labelField; Layout.fillWidth: true; placeholderText: qsTr("e.g. v2, long splitter") }
                     CheckBox { id: groundBox; Layout.columnSpan: 2; text: qsTr("Moving floor under the geometry") }
                     CheckBox {
                         id: contextBox
@@ -910,7 +947,17 @@ Pane {
                 Label {
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
-                    text: root.comparison ? qsTr("A: %1 · B: %2").arg(root.comparison.states.a).arg(root.comparison.states.b) : ""
+                    font.pixelSize: 11
+                    color: Theme.textMuted
+                    visible: text.length > 0
+                    text: root.checkQualityText(root.comparison)
+                }
+                Label {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    // Which run is A and which is B, by label and start time (CAD-117).
+                    text: root.comparison ? qsTr("A: %1 · B: %2").arg(root.runTitle(root.comparison.a, root.comparison.states.a))
+                                                                 .arg(root.runTitle(root.comparison.b, root.comparison.states.b)) : ""
                 }
                 GridLayout {
                     columns: 5
@@ -936,7 +983,8 @@ Pane {
                                     : index === 1 ? root.num(rowRep.d.a, 3)
                                     : index === 2 ? root.num(rowRep.d.b, 3)
                                     : index === 3 ? (rowRep.d.difference >= 0 ? "+" : "") + root.num(rowRep.d.difference, 3)
-                                    : rowRep.d.percent === null || rowRep.d.percent === undefined ? "–"
+                                    : rowRep.d.percent === null || rowRep.d.percent === undefined || root.noiseLevel(rowRep.d.a) ? "–"
+                                    : Math.abs(rowRep.d.percent) < 0.05 ? "0.0" // not "-0.0"
                                     : (rowRep.d.percent >= 0 ? "+" : "") + root.num(rowRep.d.percent, 1)
                             }
                         }
