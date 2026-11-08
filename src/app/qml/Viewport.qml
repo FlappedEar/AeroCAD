@@ -284,6 +284,11 @@ Item {
         updateClipping()
     }
 
+    /// Zoom In / Zoom Out (keyboard): towards the view centre by `factor` (< 1 = closer).
+    function zoomView(factor) {
+        cameraInput.zoomBy(factor)
+    }
+
     /// Camera distance at which a sphere of `radius` (mm) fills the view with a margin, also
     /// in a window narrower than it is high.
     function frameDistance(radius) {

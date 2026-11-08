@@ -185,6 +185,13 @@ Qt maps Ctrl to Command and Alt to Option on macOS, so "Ctrl+Alt+V" is Option+Co
 | Toggle visibility of the selected part | V | V | yes |
 | Delete the selected part | Del | Delete (Backspace) or Fn+Delete | yes (Del) |
 | Fit all | F6 | F6 | Fusion lists F6 "Zoom to Fit" for the Electronics workspace |
+| Zoom in / out (towards the view centre) | Ctrl++ / Ctrl+- | Cmd++ / Cmd+- | yes (Fusion lists them for Windows) |
+| Move / Rotate / Scale the selected part | M | M | yes (Move/Copy) |
+| Grow / shrink the area selected on a scan | Shift+Up / Shift+Down | Shift+Up / Shift+Down | yes (Direct Mesh) |
+| Invert the area selected on a scan | Alt+N | Option+N | yes (Direct Mesh) |
+| Export selected / export all visible | Ctrl+E / Ctrl+Shift+E | Cmd+E / Cmd+Shift+E | no (Fusion has no export key) |
+| Keyboard shortcuts (this list, searchable) | Ctrl+/ | Cmd+/ | no |
+| Preferences | (none) | Cmd+, | macOS standard |
 | Show/hide ViewCube | Ctrl+Alt+V | Option+Cmd+V | yes |
 | Show/hide Browser | Ctrl+Alt+B | Option+Cmd+B | yes |
 | Show/hide navigation bar | Ctrl+Alt+N | Option+Cmd+N | yes |
@@ -212,6 +219,13 @@ has focus):
 
 Save As, Import and the variant commands (Modify > Duplicate as New Variant, Toggle A/B)
 have no shortcut (Fusion's list has no Save As).
+
+Fusion keys kept free because AeroCAD has no such command yet, so that they keep their
+Fusion meaning when the command comes: Q (Press Pull), S (toolbox search), A (Appearance),
+J / Shift+J (Joint), T (Trim), O (Offset), P (Project), X (construction line),
+Ctrl+C / Ctrl+V / Ctrl+X (copy, paste, cut), Ctrl+B (Compute All). Source: Autodesk's
+[Fusion keyboard shortcuts reference](https://help.autodesk.com/cloudhelp/ENU/Fusion-GetStarted/files/GUID-F0491540-0324-470A-B651-2238D0EFAC30.htm)
+(checked 2026-11-08).
 
 Not mapped yet: Press Pull (Q), Trim (T), Offset (O), Project (P),
 Construction (X). 1/2/3 select the region selection tools on meshes,
