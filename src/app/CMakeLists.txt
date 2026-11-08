@@ -340,7 +340,7 @@ if(AEROCAD_BUILD_TESTS)
     set_tests_properties(app_touchpad_gestures_test PROPERTIES LABELS gui TIMEOUT 60)
     # CAD-85: a fit that misses its tolerance is marked as an approximation in the UI.
     add_test(NAME app_fit_tolerance_warning_test
-        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl
+        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome.stl
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/fit_tolerance_warning.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_fit_tolerance_warning_test PROPERTIES LABELS gui TIMEOUT 120)

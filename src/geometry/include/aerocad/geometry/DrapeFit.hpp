@@ -30,8 +30,9 @@ struct DrapeArea {
 };
 
 struct DrapeFitOptions {
-    /// Deviation aimed for, mm. The surface is refined until it stays within this, or the
-    /// control points reach minSpacing.
+    /// Deviation aimed for, mm. The surface is refined until it stays within this, or what
+    /// is left is the scan's own noise (DrapeFitReport::withinScanNoise), or the control
+    /// points reach minSpacing.
     double tolerance = 0.25;
     /// Smallest control point spacing, mm: details finer than this are smoothed. Also
     /// never finer than 1/64 of the longer side of the area, to keep the surfaces light.
@@ -46,6 +47,13 @@ struct DrapeFitReport {
     double rmsDeviation = 0.0;    ///< mm.
     double p99Deviation = 0.0;    ///< mm.
     double bridgedFraction = 0.0; ///< Share of the outline's rectangle with no skin to follow (holes, off the scan).
+    /// The scan's own noise under the outline, one standard deviation, mm (0 when it cannot
+    /// be told). A scan with noise s is never followed closer than about 2.6 s.
+    double scanNoise = 0.0;
+    /// More than the tolerance is left, but it is the scan's noise, not missed shape: 99%
+    /// within 3 scanNoise and the rms not above 1.2 scanNoise. The surface then runs through the middle of the
+    /// noise, and refining further would only make it follow the noise.
+    bool withinScanNoise = false;
     int uPoles = 0;
     int vPoles = 0;
     double milliseconds = 0.0;

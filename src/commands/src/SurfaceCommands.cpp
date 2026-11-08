@@ -50,6 +50,14 @@ std::string toleranceWarning(double p99, double max, double tolerance)
     return buffer;
 }
 
+/// A draped fit is good when it stays within the tolerance, or when what is left is the
+/// scan's own noise: a noisy scan cannot be followed closer, and the surface runs through
+/// the middle of the noise (geometry::DrapeFitReport::withinScanNoise).
+bool drapeWithin(const geometry::DrapeFitReport& rep, double tolerance)
+{
+    return rep.p99Deviation <= tolerance || rep.withinScanNoise;
+}
+
 const model::Part& requireSurfacePart(model::Document& doc, const Json& params)
 {
     const model::Part& source = requirePart(doc, params);
@@ -389,9 +397,11 @@ cad::FeatureEvaluator::Output partOnSurface(const model::Document& doc, const ca
                          {"bridged", rep.bridgedFraction},
                          {"poles", {rep.uPoles, rep.vPoles}},
                          {"tolerance", tolerance},
-                         {"withinTolerance", rep.p99Deviation <= tolerance},
+                         {"scanNoise", rep.scanNoise},
+                         {"withinScanNoise", rep.withinScanNoise},
+                         {"withinTolerance", drapeWithin(rep, tolerance)},
                          {"milliseconds", rep.milliseconds}};
-            if (rep.p99Deviation > tolerance)
+            if (!drapeWithin(rep, tolerance))
                 warnings.push_back(toleranceWarning(rep.p99Deviation, rep.maxDeviation, tolerance));
             if (rep.bridgedFraction > 0.05)
                 warnings.push_back("About " + std::to_string(static_cast<int>(rep.bridgedFraction * 100.0)) +
@@ -604,7 +614,9 @@ cad::FeatureEvaluator::Output finOnSurface(const model::Document& doc, const cad
                            {"rmsDeviation", rep.rmsDeviation},
                            {"bridged", rep.bridgedFraction},
                            {"tolerance", tolerance},
-                           {"withinTolerance", rep.p99Deviation <= tolerance},
+                           {"scanNoise", rep.scanNoise},
+                           {"withinScanNoise", rep.withinScanNoise},
+                           {"withinTolerance", drapeWithin(rep, tolerance)},
                            {"milliseconds", rep.milliseconds}};
                 return face;
             } catch (const geometry::SurfaceFitError& e) {
@@ -1089,7 +1101,8 @@ void registerSurfaceCommands(CommandRegistry& r)
                            {"items", {{"type", "integer"}, {"minimum", 0}}},
                            {"description", "Profile indices (sketch.profiles); default all."}}},
                          {"tolerance",
-                          {{"type", "number"}, {"exclusiveMinimum", 0}, {"description", "Fit tolerance (scan), mm. Default 0.25."}}},
+                          {{"type", "number"}, {"exclusiveMinimum", 0}, {"description", "Fit tolerance (scan), mm. Default 0.25. On a noisy scan the fit also counts as within it "
+                                           "when what is left is the scan's own noise (fit.scanNoise, fit.withinScanNoise)."}}},
                          {"name", {{"type", "string"}, {"description", "Name of the new part."}}}},
                         {"sketch", "thickness"}),
            true},
@@ -1113,7 +1126,8 @@ void registerSurfaceCommands(CommandRegistry& r)
                            {"items", {{"type", "integer"}, {"minimum", 0}}},
                            {"description", "Profile indices (sketch.profiles); default all."}}},
                          {"tolerance",
-                          {{"type", "number"}, {"exclusiveMinimum", 0}, {"description", "Fit tolerance (scan), mm. Default 0.25."}}},
+                          {{"type", "number"}, {"exclusiveMinimum", 0}, {"description", "Fit tolerance (scan), mm. Default 0.25. On a noisy scan the fit also counts as within it "
+                                           "when what is left is the scan's own noise (fit.scanNoise, fit.withinScanNoise)."}}},
                          {"rootFillet",
                           {{"type", "number"},
                            {"minimum", 0},

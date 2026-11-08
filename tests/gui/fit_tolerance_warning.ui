@@ -1,7 +1,9 @@
 # CAD-85: a part whose surface fit misses the requested tolerance is kept, but marked as an
 # approximation everywhere the user looks: the timeline chip, its tooltip, the status bar
 # after editing it, and the export check.
-#   AeroCAD tests/data/models/dome_scan.stl --ui-script <this file>
+# 0.01 mm cannot be met over the flat triangles of a tessellated dome (a clean mesh: missed
+# shape, not scan noise, which is not an approximation since CAD-141).
+#   AeroCAD tests/data/models/dome.stl --ui-script <this file>
 ui.wait(1500)
 (() => { const sq = [{type: "line", start: [-15, -15], end: [15, -15]}, {type: "line", start: [15, -15], end: [15, 15]}, {type: "line", start: [15, 15], end: [-15, 15]}, {type: "line", start: [-15, 15], end: [-15, -15]}]; const sk = controller.execute("sketch.create", {surface: {part: 1, point: [0, 0, 45.7]}, curves: sq}); if (!sk.ok) ui.fail("sketch: " + sk.error); const r = controller.execute("surface.part_from_sketch", {sketch: sk.result.id, thickness: 2, tolerance: 0.01}); if (!r.ok) ui.fail("part: " + r.error); ui.log("part warnings: " + JSON.stringify(r.result.warnings)); if (!r.result.warnings.length || r.result.warnings[0].indexOf("Approximation") !== 0) ui.fail("no approximation warning in the result") })()
 ui.wait(1500)

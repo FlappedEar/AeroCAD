@@ -87,6 +87,51 @@ Raster sampleSkin(const core::MeshProjector& scan, const DrapeArea& a, double st
     return r;
 }
 
+/// The scan's own noise on the followed skin, one standard deviation in mm: a robust
+/// (median) estimate from fourth differences of samples `lag` apart inside the outline,
+/// along both directions. For independent noise of deviation s the difference
+/// a - 4b + 6c - 4d + e has deviation s * sqrt(70), while a curved shape adds nothing up to
+/// its cubic terms; creases and steps are too rare to move the median. Samples closer
+/// together than the scan's triangles share noise, so a lag shorter than them makes the
+/// estimate smaller, never larger.
+double estimateNoise(const Raster& r, const DrapeArea& a, int lag)
+{
+    std::vector<float> d;
+    const auto inside = [&](int i, int j) {
+        const double u = a.u0 + i * r.du, v = a.v0 + j * r.dv;
+        return u >= a.insideU0 && u <= a.insideU1 && v >= a.insideV0 && v <= a.insideV1;
+    };
+    const auto fourth = [&](int i, int j, int di, int dj) {
+        constexpr std::array<double, 5> c{1.0, -4.0, 6.0, -4.0, 1.0};
+        double sum = 0.0;
+        for (int k = -2; k <= 2; ++k) {
+            const std::size_t s = r.at(i + k * di, j + k * dj);
+            if (!r.known[s])
+                return false;
+            sum += c[static_cast<std::size_t>(k + 2)] * r.z[s];
+        }
+        d.push_back(static_cast<float>(std::abs(sum)));
+        return true;
+    };
+    // At most about 40,000 differences: every step-th sample in both directions.
+    const std::size_t samples = static_cast<std::size_t>(r.nu) * static_cast<std::size_t>(r.nv);
+    const int step = std::max(1, static_cast<int>(std::sqrt(static_cast<double>(samples) / 20000.0)));
+    const int reach = 2 * lag;
+    for (int j = reach; j + reach < r.nv; j += step)
+        for (int i = reach; i + reach < r.nu; i += step) {
+            if (!inside(i, j) || !r.known[r.at(i, j)])
+                continue;
+            fourth(i, j, lag, 0);
+            fourth(i, j, 0, lag);
+        }
+    if (d.size() < 32)
+        return 0.0;
+    auto mid = d.begin() + static_cast<std::ptrdiff_t>(d.size() / 2);
+    std::nth_element(d.begin(), mid, d.end());
+    // Median of |N(0, s^2)| is 0.6745 s.
+    return static_cast<double>(*mid) / 0.6745 / std::sqrt(70.0);
+}
+
 /// Keeps the largest sheet under the outline: samples joined by steps no steeper than
 /// `maxSlope`. Whatever is seen through a hole or past an edge is forgotten.
 void keepMainSheet(Raster& r, const DrapeArea& a, double maxSlope)
@@ -556,12 +601,16 @@ SkinFit fitSkin(const core::MeshProjector& scan, const DrapeArea& area, const Dr
         }
     if (insideKnown < 16)
         throw SurfaceFitError("The scan is not under the outline (seen along the sketch normal)");
+    // Before the gaps are filled: only scanned samples tell the noise. Samples about half
+    // the finest pole spacing apart, so the five span two of them.
+    const double noise = estimateNoise(raster, area, std::max(1, static_cast<int>(std::lround(0.5 * finest / raster.du))));
     std::vector<double> skin = fillGaps(raster);
 
     SkinFit result;
     result.raster = std::move(raster);
     result.skin = std::move(skin);
     result.report.bridgedFraction = 1.0 - static_cast<double>(insideKnown) / static_cast<double>(insideSamples);
+    result.report.scanNoise = noise;
 
     // Refine the control net until the skin is followed within the tolerance.
     int pu = 0, pv = 0;
@@ -603,8 +652,14 @@ SkinFit fitSkin(const core::MeshProjector& scan, const DrapeArea& area, const Dr
         result.report.maxDeviation = worst;
         result.report.p99Deviation = *nth;
         result.report.rmsDeviation = std::sqrt(squares / static_cast<double>(deviations.size()));
+        // What is left is the scan's own noise when it is spread like noise: 99% within
+        // 3 deviations (2.58 for normal noise) and the rms not above it. Finer control points
+        // would only follow the noise, making the surface bumpy, not closer to the shape.
+        result.report.withinScanNoise = result.report.p99Deviation > options.tolerance &&
+                                        result.report.p99Deviation <= 3.0 * noise &&
+                                        result.report.rmsDeviation <= 1.2 * noise;
         // Single spikes (a loose triangle, a wall) do not drive the refinement.
-        if (result.report.p99Deviation <= options.tolerance || spacing <= finest)
+        if (result.report.p99Deviation <= options.tolerance || result.report.withinScanNoise || spacing <= finest)
             break;
     }
     result.pu = pu;

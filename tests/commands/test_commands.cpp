@@ -1435,7 +1435,7 @@ TEST_CASE("A part whose fit misses the tolerance is kept as a marked approximati
 {
     commands::Session session;
     auto scan = session.execute("document.import",
-                                {{"path", std::string(AEROCAD_TEST_DATA_DIR) + "/models/dome_scan.stl"}});
+                                {{"path", std::string(AEROCAD_TEST_DATA_DIR) + "/models/dome.stl"}});
     REQUIRE(scan.ok);
     const auto scanId = scan.data.at("id").get<model::PartId>();
     const Json square = Json::array({{{"type", "line"}, {"start", {-15, -15}}, {"end", {15, -15}}},
@@ -1446,7 +1446,8 @@ TEST_CASE("A part whose fit misses the tolerance is kept as a marked approximati
                               {{"surface", {{"part", scanId}, {"point", {0, 0, 45.7}}}}, {"curves", square}});
     REQUIRE(sk.ok);
 
-    // The audit's case: 0.01 mm cannot be met on the noisy scan.
+    // 0.01 mm cannot be met over the flat triangles of a tessellated dome (CAD-141: a clean
+    // mesh, so this is missed shape, not the scan's noise).
     auto part = session.execute("surface.part_from_sketch",
                                 {{"sketch", sk.data.at("id")}, {"thickness", 2.0}, {"tolerance", 0.01}});
     INFO(part.toJson().dump());
@@ -1482,6 +1483,34 @@ TEST_CASE("A part whose fit misses the tolerance is kept as a marked approximati
     timeline = session.execute("timeline.list");
     for (const auto& f : timeline.data.at("features"))
         if (f.at("id") == loose.data.at("feature"))
+            CHECK_FALSE(f.value("approximate", false));
+}
+
+TEST_CASE("A part on a noisy scan is not an approximation when what is left is the scan's noise (CAD-141)",
+          "[commands][surface]")
+{
+    commands::Session session;
+    auto scan = session.execute("document.import",
+                                {{"path", std::string(AEROCAD_TEST_DATA_DIR) + "/models/dome_scan.stl"}});
+    REQUIRE(scan.ok);
+    const Json square = Json::array({{{"type", "rectangle"}, {"corner", {-15, -15}}, {"opposite", {15, 15}}}});
+    auto sk = session.execute("sketch.create",
+                              {{"surface", {{"part", scan.data.at("id")}, {"point", {0, 0, 45.7}}}}, {"curves", square}});
+    REQUIRE(sk.ok);
+    // The scan has 0.05 mm noise: no surface is within 0.01 mm of it.
+    auto part = session.execute("surface.part_from_sketch",
+                                {{"sketch", sk.data.at("id")}, {"thickness", 2.0}, {"tolerance", 0.01}});
+    INFO(part.toJson().dump());
+    REQUIRE(part.ok);
+    const Json& fit = part.data.at("fit");
+    CHECK(fit.at("p99Deviation").get<double>() > 0.01);
+    CHECK(fit.at("scanNoise").get<double>() > 0.005);
+    CHECK(fit.at("withinScanNoise").get<bool>());
+    CHECK(fit.at("withinTolerance").get<bool>());
+    CHECK(part.data.at("warnings").empty());
+    auto timeline = session.execute("timeline.list");
+    for (const auto& f : timeline.data.at("features"))
+        if (f.at("id") == part.data.at("feature"))
             CHECK_FALSE(f.value("approximate", false));
 }
 
@@ -1527,7 +1556,7 @@ TEST_CASE("CAD-85: fit reports saved before the tolerance was recorded are fitte
     {
         commands::Session session;
         auto scan = session.execute("document.import",
-                                    {{"path", std::string(AEROCAD_TEST_DATA_DIR) + "/models/dome_scan.stl"}});
+                                    {{"path", std::string(AEROCAD_TEST_DATA_DIR) + "/models/dome.stl"}});
         REQUIRE(scan.ok);
         const Json square = Json::array({{{"type", "rectangle"}, {"corner", {-15, -15}}, {"opposite", {15, 15}}}});
         auto sk = session.execute("sketch.create",
