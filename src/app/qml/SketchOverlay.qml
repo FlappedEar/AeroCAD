@@ -40,6 +40,9 @@ Item {
     /// Radius the next sketch fillet starts with (the last one used); its dimension can be
     /// edited afterwards like any other.
     property real filletRadius: 5
+    /// Project tool: the edge of body `body` (feature id) nearest `point` (model mm) is to
+    /// be projected onto the sketch.
+    signal projectRequested(int body, var point)
     /// Offset tool: `curves` (one chain) are to be offset by `distance`.
     signal offsetRequested(var curves, real distance)
     /// Curves the Offset tool offsets (the selection when it started).
@@ -601,6 +604,19 @@ Item {
                 root.forceActiveFocus()
                 return
             }
+            if (root.tool === "project") {
+                // Only bodies take the click (the sketch's own plane and other sketches are
+                // clicked through).
+                const parts = root.viewport.controller.execute("document.parts")
+                const bodies = parts.ok ? parts.result.parts.filter(p => p.kind === "body") : []
+                const hit = root.viewport.pickPartAmong(mouse.x, mouse.y, bodies.map(p => p.id))
+                if (hit) {
+                    const b = bodies.find(p => p.id === hit.partId)
+                    root.projectRequested(b.featureId, [hit.point.x, hit.point.y, hit.point.z])
+                }
+                root.forceActiveFocus()
+                return
+            }
             if (root.tool === "fillet") {
                 root.filletAt(mouse.x, mouse.y)
                 root.forceActiveFocus()
@@ -798,6 +814,7 @@ Item {
                     : root.tool === "" ? (root.selectedCurves.length > 0
                         ? qsTr("%n curve(s) selected: Delete removes, X construction, Esc clears", "", root.selectedCurves.length)
                         : qsTr("Click curves to select (Shift adds), drag points to move them; or pick a tool (L line, R rectangle, C circle, D dimension)"))
+                    : root.tool === "project" ? qsTr("Project: click edges of bodies to bring them into the sketch (fixed)")
                     : root.tool === "offset" ? qsTr("Offset: type the distance and press Enter (negative goes inwards)")
                     : root.tool === "fillet" ? qsTr("Fillet: click a corner of two lines; then edit its radius under Constraints")
                     : root.tool === "mirror" ? qsTr("Mirror: click the line to mirror the %n selected curve(s) about", "", root.mirrorCurves.length)
@@ -841,7 +858,7 @@ Item {
                 }
             }
             RowLayout {
-                visible: root.active && !root.constraintTool && root.tool !== "trim" && root.tool !== "mirror" && root.tool !== "fillet"
+                visible: root.active && !root.constraintTool && root.tool !== "trim" && root.tool !== "mirror" && root.tool !== "fillet" && root.tool !== "project"
                 Label { text: root.tool === "rectangle" ? qsTr("Width, height") : root.tool === "line" ? qsTr("Length")
                             : root.tool === "offset" ? qsTr("Distance") : qsTr("Size") }
                 TextField {

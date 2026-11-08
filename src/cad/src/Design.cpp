@@ -1085,6 +1085,69 @@ void Design::mirrorSketchCurves(FeatureId sketchId, const std::vector<std::size_
     regenerateChecked(sketchId, before);
 }
 
+void Design::projectToSketch(FeatureId sketchId, FeatureId bodyId, const Json& edgeRefs)
+{
+    const State before = m_state;
+    Feature& f = m_state.features[indexOf(sketchId)];
+    if (f.type != "sketch")
+        throw DesignError("Feature " + std::to_string(sketchId) + " is not a sketch");
+    auto sk = m_sketches.find(sketchId);
+    auto body = m_bodies.find(bodyId);
+    if (sk == m_sketches.end())
+        throw DesignError(f.name + " is not evaluated");
+    if (body == m_bodies.end())
+        throw DesignError("No body " + std::to_string(bodyId));
+    const Eval ev{*this};
+    std::vector<std::size_t> idx;
+    if (!edgeRefs.is_array() || edgeRefs.empty())
+        throw DesignError("Select at least one edge");
+    for (const auto& item : edgeRefs) {
+        if (item.is_number_integer()) {
+            idx.push_back(item.get<std::size_t>());
+        } else {
+            const auto i = matchTopology(body->second.shape, item, true, ev);
+            if (!i)
+                throw DesignError("No edge near " + item.dump());
+            idx.push_back(*i);
+        }
+    }
+    std::vector<SketchCurve> made;
+    try {
+        made = geometry::projectEdges(body->second.shape, idx, sk->second.plane);
+    } catch (const geometry::ModelingError& e) {
+        throw DesignError(e.what());
+    }
+    if (made.empty())
+        throw DesignError("The edges are seen end-on from this sketch: nothing to project");
+    auto pt = [](const Vec2& v) { return Json::array({v.x, v.y}); };
+    Json items = f.params.value("curves", Json::array());
+    Json constraints = f.params.value("constraints", Json::array());
+    std::size_t next = sk->second.curves.size();
+    for (const auto& c : made) {
+        if (c.kind == SketchCurve::Kind::Circle) {
+            items.push_back({{"type", "circle"}, {"center", pt(c.points[0])}, {"radius", c.radius}});
+        } else if (c.kind == SketchCurve::Kind::Spline) {
+            Json p = Json::array();
+            for (const auto& q : c.points)
+                p.push_back(pt(q));
+            items.push_back({{"type", "spline"}, {"points", p}, {"closed", c.closed}});
+        } else {
+            items.push_back(curveItem(c));
+        }
+        // Fusion keeps projected geometry fixed.
+        constraints.push_back({{"type", "fix"}, {"curve", next}});
+        if (c.kind == SketchCurve::Kind::Circle || c.kind == SketchCurve::Kind::Arc)
+            constraints.push_back({{"type", "radius"}, {"curve", next}, {"value",
+                c.kind == SketchCurve::Kind::Circle ? c.radius
+                    : std::hypot(c.points[0].x - circleThrough(c.points[0], c.points[1], c.points[2]).x,
+                                 c.points[0].y - circleThrough(c.points[0], c.points[1], c.points[2]).y)}});
+        ++next;
+    }
+    f.params["curves"] = items;
+    f.params["constraints"] = constraints;
+    regenerateChecked(sketchId, before);
+}
+
 void Design::offsetSketchCurves(FeatureId sketchId, const std::vector<std::size_t>& picked, double distance)
 {
     const State before = m_state;

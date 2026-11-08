@@ -246,6 +246,11 @@ if(AEROCAD_BUILD_TESTS)
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/scan_units_check.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_scan_units_check_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-126: Project body edges into a sketch.
+    add_test(NAME app_sketch_project_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_project.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_sketch_project_test PROPERTIES LABELS gui TIMEOUT 60)
     # CAD-126: Sketch Offset of a selected chain.
     add_test(NAME app_sketch_offset_test
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_offset.ui

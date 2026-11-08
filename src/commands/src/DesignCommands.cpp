@@ -808,6 +808,26 @@ void registerSketchCommands(CommandRegistry& r)
               return addedFeature(design(ctx), ctx.document, id);
           });
 
+    r.add({"sketch.project", "Project",
+           "Projects edges of a body onto a sketch's plane (Fusion: Sketch > Project): lines, circles and arcs "
+           "parallel to the plane stay so, other edges become splines. The curves are added at the end of "
+           "sketch.curves, fixed where they are; they do not follow later changes of the body.",
+           objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
+                         {"body", bodyRefSchema("Body whose edges are projected.")},
+                         {"edges", {{"type", "array"}, {"minItems", 1},
+                                    {"description", "Edge indices (body.edges) or {point: [x,y,z]} near each edge."}}}},
+                        {"sketch", "body", "edges"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              const auto id = params.at("sketch").get<cad::FeatureId>();
+              designChange(ctx, "Project", [&](cad::Design& d) {
+                  (void)sketchFeature(d, id);
+                  d.projectToSketch(id, requireBody(d, params.at("body")).id, params.at("edges"));
+                  return Json{};
+              });
+              return addedFeature(design(ctx), ctx.document, id);
+          });
+
     r.add({"sketch.offset", "Sketch Offset",
            "Offsets a connected chain of sketch curves (Fusion: Sketch > Offset): `distance` > 0 outwards for a "
            "closed chain (to the left of an open one), < 0 the other way. Corners are rounded. The offset curves "

@@ -1,0 +1,17 @@
+# CAD-126: Project (P) brings body edges into the sketch (Fusion), fixed where they are.
+# Run: AeroCAD --ui-script <this file>
+ui.wait(800)
+(() => { let r = controller.execute("feature.cylinder", { center: [0, 0, 0], radius: 10, height: 15 }); if (!r.ok) ui.fail("cylinder: " + r.error); r = controller.execute("sketch.create", { plane: "XY", offset: 30 }); if (!r.ok) ui.fail("sketch: " + r.error) })()
+ui.wait(300)
+(() => { enterSketch(controller.execute("timeline.list").result.features.find(f => f.type === "sketch").id) })()
+ui.wait(800)
+(() => { viewport.restoreCameraState({ pivot: [0, 0, 10], pitch: -35, yaw: 30, distance: 120, orthographic: false }) })()
+ui.wait(500)
+ui.key("P")
+ui.wait(300)
+(() => { if (sketchTool !== "project") ui.fail("P did not start Project: " + sketchTool) })()
+# Click the cylinder's top rim (the near side).
+(() => { const s = viewport.modelToScreen(Qt.vector3d(0, -9.9, 15)); const w = viewport.mapToItem(null, s.x, s.y); ui.click(w.x, w.y) })()
+ui.wait(600)
+(() => { const r = controller.execute("sketch.curves", { sketch: activeSketch.id }).result; ui.log("curves " + JSON.stringify(r.curves.map(c => [c.kind, c.radius]))); if (r.curves.length !== 1 || r.curves[0].kind !== "circle" || Math.abs(r.curves[0].radius - 10) > 1e-6) ui.fail("the top circle was not projected") })()
+ui.shot("sketch-project.png")

@@ -9,6 +9,7 @@
 #include <BRepGProp_Face.hxx>
 #include <BRepOffsetAPI_MakeOffset.hxx>
 #include <TopoDS_Wire.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
 #include <BRepAlgoAPI_Splitter.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
@@ -405,6 +406,59 @@ std::vector<SketchCurve> offsetCurves(const std::vector<SketchCurve>& curves, do
     } catch (const Standard_Failure& e) {
         throw ModelingError(std::string("Offset failed: ") + e.GetMessageString());
     }
+}
+
+std::vector<SketchCurve> projectEdges(const Shape& shape, const std::vector<std::size_t>& edgeIndices,
+                                      const Plane& planeIn)
+{
+    const Plane plane = planeIn.normalized();
+    if (shape.isNull())
+        throw ModelingError("Nothing to project");
+    TopTools_IndexedMapOfShape map;
+    TopExp::MapShapes(shape.impl()->shape, TopAbs_EDGE, map);
+    std::vector<SketchCurve> out;
+    auto uv = [&](const gp_Pnt& p) { return plane.toLocal({p.X(), p.Y(), p.Z()}); };
+    try {
+        for (const std::size_t i : edgeIndices) {
+            if (i >= static_cast<std::size_t>(map.Extent()))
+                throw ModelingError("No edge " + std::to_string(i));
+            BRepAdaptor_Curve ac(TopoDS::Edge(map(static_cast<int>(i) + 1)));
+            const double t0 = ac.FirstParameter(), t1 = ac.LastParameter();
+            SketchCurve c;
+            if (ac.GetType() == GeomAbs_Line) {
+                c.kind = SketchCurve::Kind::Line;
+                c.points = {uv(ac.Value(t0)), uv(ac.Value(t1))};
+                if (distance2d(c.points[0], c.points[1]) < kTol)
+                    continue; // seen end-on
+            } else if (ac.GetType() == GeomAbs_Circle &&
+                       std::abs(std::abs(ac.Circle().Axis().Direction().Dot(toDir(plane.normal))) - 1.0) < 1e-9) {
+                if (std::abs(t1 - t0 - 2 * M_PI) < 1e-9) {
+                    c.kind = SketchCurve::Kind::Circle;
+                    c.points = {uv(ac.Circle().Location())};
+                    c.radius = ac.Circle().Radius();
+                } else {
+                    c.kind = SketchCurve::Kind::Arc;
+                    c.points = {uv(ac.Value(t0)), uv(ac.Value((t0 + t1) / 2)), uv(ac.Value(t1))};
+                }
+            } else {
+                c.kind = SketchCurve::Kind::Spline;
+                for (int k = 0; k <= 24; ++k) {
+                    const Vec2 p = uv(ac.Value(t0 + (t1 - t0) * k / 24.0));
+                    if (c.points.empty() || distance2d(c.points.back(), p) > kTol)
+                        c.points.push_back(p);
+                }
+                if (c.points.size() < 2)
+                    continue;
+                c.closed = ac.IsClosed() && distance2d(c.points.front(), c.points.back()) < kTol;
+                if (c.closed)
+                    c.points.pop_back();
+            }
+            out.push_back(c);
+        }
+    } catch (const Standard_Failure& e) {
+        throw ModelingError(std::string("Project failed: ") + e.GetMessageString());
+    }
+    return out;
 }
 
 double area(const Shape& shape)

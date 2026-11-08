@@ -1056,3 +1056,28 @@ TEST_CASE("Design commands: sketch offset (CAD-126)", "[commands][cad]")
     // Too far inwards collapses: refused.
     CHECK_FALSE(s.execute("sketch.offset", {{"sketch", id}, {"curves", {4}}, {"distance", -6}}).ok);
 }
+
+TEST_CASE("Design commands: project body edges into a sketch (CAD-126)", "[commands][cad]")
+{
+    commands::Session s;
+    // A cylinder r 10 standing on XY at (30, 0), and a box; a sketch on a plane above.
+    run(s, "feature.cylinder", {{"center", {30, 0, 0}}, {"radius", 10}, {"height", 15}});
+    const auto box = run(s, "feature.box", {{"corner", {-20, -5, 0}}, {"size", {10, 10, 10}}}).at("id").get<std::uint64_t>();
+    const auto id = run(s, "sketch.create", {{"plane", "XY"}, {"offset", 40}}).at("id").get<std::uint64_t>();
+    // The box's top edge along x at y = -5, z = 10 and a vertical edge (seen end-on: left out).
+    run(s, "sketch.project", {{"sketch", id}, {"body", box}, {"edges", Json::array({{{"point", {-15, -5, 10}}}, {{"point", {-20, -5, 5}}}})}});
+    Json c = run(s, "sketch.curves", {{"sketch", id}});
+    REQUIRE(c.at("curves").size() == 1);
+    CHECK(c.at("curves")[0].at("kind") == "line");
+    CHECK(c.at("curves")[0].at("points")[0][1].get<double>() == Approx(-5).margin(1e-6));
+    // The cylinder's top circle stays a circle.
+    run(s, "sketch.project", {{"sketch", id}, {"body", "Body1"}, {"edges", Json::array({{{"point", {30, 10, 15}}}})}});
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    REQUIRE(c.at("curves").size() == 2);
+    CHECK(c.at("curves")[1].at("kind") == "circle");
+    CHECK(c.at("curves")[1].at("radius").get<double>() == Approx(10).margin(1e-6));
+    CHECK(c.at("curves")[1].at("points")[0][0].get<double>() == Approx(30).margin(1e-6));
+    CHECK(c.at("degreesOfFreedom") == 0); // fixed
+    // The projected circle bounds a profile to extrude.
+    CHECK(run(s, "sketch.profiles", {{"sketch", id}}).at("profiles").size() == 1);
+}
