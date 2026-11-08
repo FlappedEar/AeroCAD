@@ -170,6 +170,35 @@ TEST_CASE("UndoStack respects its limit", "[model]")
     CHECK(stack.undoLabel() == "4");
 }
 
+TEST_CASE("UndoStack tells an expired entry from an undone one", "[model]")
+{
+    model::UndoStack stack(3);
+    stack.push({"a", [] {}, [] {}});
+    const auto a = stack.topId();
+    stack.push({"b", [] {}, [] {}});
+    const auto b = stack.topId();
+    CHECK_FALSE(stack.isExpired(a));
+    REQUIRE(stack.undo()); // b undone: neither applied nor expired
+    CHECK_FALSE(stack.isApplied(b));
+    CHECK_FALSE(stack.isExpired(b));
+    stack.push({"c", [] {}, [] {}}); // b discarded
+    CHECK_FALSE(stack.isExpired(b));
+    stack.push({"d", [] {}, [] {}});
+    stack.push({"e", [] {}, [] {}}); // a dropped past the limit, still done
+    CHECK_FALSE(stack.isApplied(a));
+    CHECK(stack.isExpired(a));
+    for (int i = 0; i < 5; ++i)
+        stack.push({"f", [] {}, [] {}}); // everything older than b is gone by now
+    CHECK_FALSE(stack.isExpired(b)); // undone, so not done for good, however old
+    const auto e = stack.topId();
+    REQUIRE(stack.undo());
+    const auto before = stack.topId();
+    stack.clear(); // the applied entries expire, the undone one does not
+    CHECK(stack.isExpired(before));
+    CHECK_FALSE(stack.isExpired(e));
+    CHECK_FALSE(stack.isExpired(0));
+}
+
 TEST_CASE("Document revision increases on every change", "[model]")
 {
     Document doc;

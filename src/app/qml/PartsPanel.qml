@@ -16,6 +16,11 @@ Pane {
     /// Right-click on a row: open the part's context menu at x, y in `item`.
     signal partContextRequested(var id, Item item, real x, real y)
 
+    /// Isolate is on ({ id, name, hidden } from the window, or null): a bar says so and
+    /// its Exit button asks to bring the hidden parts back.
+    property var isolation: null
+    signal unisolateRequested()
+
     /// Part whose name is being edited in place (0 = none).
     property var renamingId: 0
     function startRename(id) {
@@ -52,6 +57,39 @@ Pane {
                 color: Theme.textFaint
                 font.pixelSize: Theme.fontSmall
                 rightPadding: Theme.space2
+            }
+        }
+
+        Rectangle {
+            objectName: "isolationBar"
+            visible: !!root.isolation
+            Layout.fillWidth: true
+            Layout.leftMargin: Theme.space2
+            Layout.rightMargin: Theme.space2
+            Layout.topMargin: Theme.space1
+            implicitHeight: isolationRow.implicitHeight + 2 * Theme.space1
+            radius: 4
+            color: Theme.accentSoft
+            RowLayout {
+                id: isolationRow
+                anchors.fill: parent
+                anchors.leftMargin: Theme.space2
+                anchors.rightMargin: Theme.space1
+                AppIcon { name: "isolate"; size: 14; color: Theme.accent }
+                Label {
+                    Layout.fillWidth: true
+                    elide: Text.ElideRight
+                    text: root.isolation ? qsTr("Isolated: %1").arg(root.isolation.name) : ""
+                    font.pixelSize: Theme.fontSmall
+                }
+                Button {
+                    objectName: "exitIsolation"
+                    text: qsTr("Exit")
+                    flat: true
+                    onClicked: root.unisolateRequested()
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Unisolate: show the parts that Isolate hid")
+                }
             }
         }
 

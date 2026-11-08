@@ -218,6 +218,75 @@ ApplicationWindow {
             controller.execute("part.set_visible", { id: selectedPartId, visible: !info.visible })
     }
 
+    /// Isolate (Fusion): only part `id` is shown, and Unisolate brings back what it hid.
+    /// `isolationRecords` lists the Isolates still in the history, oldest first, each
+    /// { id, name, hidden: [ids], step, exitStep }: step / exitStep are the history tokens of
+    /// the Isolate and of the Unisolate that ended it. `isolation` ({ id, name, hidden, step }
+    /// or null) is the newest record whose Isolate is done (applied, or aged out of the
+    /// history) and whose Unisolate is not, so
+    /// Undo / Redo bring the Exit controls back with the hidden parts, also across several
+    /// Isolates. Hiding or deleting the isolated part keeps it on, so the parts it hid can
+    /// still be brought back.
+    property var isolationRecords: []
+    property var isolation: null
+    function isolatePart(id) {
+        if (!id)
+            return
+        if (isolation)
+            unisolate() // isolating another part starts from the scene as it was
+        const r = controller.execute("part.isolate", { id: id })
+        if (!r.ok)
+            return
+        // Undone Isolates past the last step can never be redone again: forget them, and keep
+        // the list short.
+        const kept = isolationRecords.filter(rec => controller.historyApplied(rec.step)
+                                                    || controller.historyExpired(rec.step)).slice(-19)
+        kept.push({ id: id, name: controller.partInfo(id).name, hidden: r.result.hidden,
+                    step: controller.historyTopId(), exitStep: 0 })
+        isolationRecords = kept
+        checkIsolation()
+        selectPart(id)
+    }
+    function unisolate() {
+        const iso = isolation
+        if (!iso)
+            return
+        const r = controller.execute("part.unisolate", { ids: iso.hidden })
+        if (r.ok) {
+            const exit = controller.historyTopId()
+            isolationRecords = isolationRecords.map(rec => rec.step === iso.step
+                                                    ? Object.assign({}, rec, { exitStep: exit }) : rec)
+        }
+        checkIsolation()
+    }
+    /// An isolation is on while its Isolate is applied, its Unisolate is not, and a part it
+    /// hid is still hidden (it ends when they have all been shown again or deleted by hand).
+    function checkIsolation() {
+        // A step is done while applied, and also once it has aged out of the history (its
+        // change is kept for good: an Isolate 200 edits ago still hides the other parts).
+        const done = step => controller.historyApplied(step) || controller.historyExpired(step)
+        let found = null
+        for (let i = isolationRecords.length - 1; i >= 0 && !found; --i) {
+            const rec = isolationRecords[i]
+            if (!done(rec.step) || done(rec.exitStep))
+                continue
+            if (rec.hidden.length === 0
+                    || rec.hidden.some(h => { const info = controller.partInfo(h); return info.id && !info.visible }))
+                found = rec
+        }
+        if (!found) {
+            if (isolation)
+                isolation = null
+            return
+        }
+        if (!isolation || isolation.step !== found.step)
+            isolation = { id: found.id, name: found.name, hidden: found.hidden, step: found.step }
+    }
+    Connections {
+        target: controller
+        function onHistoryChanged() { window.checkIsolation() }
+    }
+
     function deleteSelected() {
         if (activeSketch) {
             viewport.sketchOverlay.deleteSelection()
@@ -885,6 +954,18 @@ ApplicationWindow {
         onTriggered: window.toggleSelectedVisibility()
     }
     Action {
+        id: isolateAction
+        text: qsTr("&Isolate")
+        enabled: !!window.selectedPartId
+        onTriggered: window.isolatePart(window.selectedPartId)
+    }
+    Action {
+        id: unisolateAction
+        text: qsTr("&Unisolate")
+        enabled: !!window.isolation
+        onTriggered: window.unisolate()
+    }
+    Action {
         id: renameAction
         text: qsTr("Re&name")
         enabled: !!window.selectedPartId
@@ -1119,6 +1200,8 @@ ApplicationWindow {
         window.finishSketch()
         window.selectPart(0)
         window.copiedPartId = 0 // part ids restart in the next project: never paste another part
+        window.isolationRecords = [] // the hidden parts belong to the previous project
+        window.isolation = null
         closeToolPanels()
         scanPanel.reset()
         heatMapPanel.result = null
@@ -1396,6 +1479,9 @@ ApplicationWindow {
             MenuItem { action: zoomInAction }
             MenuItem { action: zoomOutAction }
             MenuItem { action: homeAction }
+            MenuSeparator {}
+            MenuItem { action: isolateAction }
+            MenuItem { action: unisolateAction }
             MenuSeparator {}
             Action { text: qsTr("Front"); onTriggered: viewport.setView(0, 0) }
             Action { text: qsTr("Back"); onTriggered: viewport.setView(0, 180) }
@@ -1840,6 +1926,8 @@ ApplicationWindow {
             SplitView.minimumWidth: 180
             controller: window.controller
             selectedPartId: window.selectedPartId
+            isolation: window.isolation
+            onUnisolateRequested: window.unisolate()
             onPartSelected: id => window.selectPart(id)
             onPartContextRequested: (id, item, x, y) => {
                 window.selectPart(id)
