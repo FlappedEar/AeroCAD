@@ -769,7 +769,12 @@ QVariantMap AppController::pickNearSurface(const QVector3D& origin, const QVecto
     for (const auto& p : m_session.document().parts()) {
         if (!p.visible || !p.mesh)
             continue;
-        const auto hit = core::nearestToRay(*p.mesh, o, d, maxAngleDeg);
+        // Section view: only the kept half is drawn, so only it can be snapped to (CAD-96).
+        const commands::SectionAnalysis& section = m_session.inspect().section();
+        std::function<bool(const core::Vec3&)> kept;
+        if (p.kind != model::PartKind::Sketch && section.cuts(p.id))
+            kept = [&section](const core::Vec3& v) { return section.plane.distance(v) <= 1e-9; };
+        const auto hit = core::nearestToRay(*p.mesh, o, d, maxAngleDeg, kept);
         if (!hit)
             continue;
         const core::Vec3 w = hit->point - o;

@@ -440,4 +440,12 @@ TEST_CASE("nearestToRay: a click into a hole takes the surface at its edge", "[c
     CHECK_FALSE(nearestToRay(m, origin, down, 1.0));
     CHECK_FALSE(nearestToRay(m, {10.2, 10.6, -100}, down, 4.0));
     CHECK_FALSE(nearestToRay(m, origin, {0, 0, 0}, 4.0));
+
+    // Only accepted vertices are candidates (a section view's kept half, CAD-96): with y >= 13
+    // cut away, the nearest kept rim vertex is (13, 11), 2.83 off the ray.
+    const auto kept = nearestToRay(m, origin, down, 4.0, [](const Vec3& v) { return v.y <= 12.5; });
+    REQUIRE(kept);
+    CHECK(kept->point.x == Approx(13.0));
+    CHECK(kept->point.y == Approx(11.0));
+    CHECK_FALSE(nearestToRay(m, origin, down, 4.0, [](const Vec3&) { return false; }));
 }

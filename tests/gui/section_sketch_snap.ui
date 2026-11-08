@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CAD-96: with Section Analysis on, Create Sketch cannot snap to geometry the section removed.
+# A click in the removed upper half stays a miss; a click just past the kept half still snaps.
+ui.wait(800)
+(() => { const r = controller.execute("feature.box", {size: [20, 20, 20], corner: [0, 0, 0]}); if (!r.ok) ui.fail("box: " + r.error) })()
+(() => { const r = controller.execute("inspect.section", {plane: "xy", offset: 5}); if (!r.ok) ui.fail("section: " + r.error) })()
+ui.wait(300)
+viewport.setViewDirection(Qt.vector3d(0, -1, 0))
+ui.wait(800)
+viewport.fitAll()
+ui.wait(800)
+window.startCreateSketch(false)
+ui.wait(300)
+ui.shot("section-sketch-before.png")
+(() => { const v = viewport.viewPoint(Qt.vector3d(20, 0, 20)); const p = viewport.mapToItem(null, v.x, v.y); ui.log("REMOVED CORNER at " + p.x + ", " + p.y); ui.click(p.x, p.y) })()
+ui.wait(500)
+(() => { const sketches = controller.execute("document.parts").result.parts.filter(p => p.kind === "sketch"); ui.log("SKETCHES after removed click " + sketches.length); if (sketches.length) ui.fail("sketch created on removed geometry"); if (!window.pickingSketchPlane) ui.fail("a miss must keep Create Sketch waiting for a pick") })()
+ui.shot("section-sketch-removed-click.png")
+# Just right of the kept bottom corner (20, 0, 0): no exact hit, the kept surface is snapped to.
+(() => { const v = viewport.viewPoint(Qt.vector3d(20.3, 0, 0.5)); const p = viewport.mapToItem(null, v.x, v.y); ui.click(p.x, p.y) })()
+ui.wait(500)
+(() => { const sketches = controller.execute("document.parts").result.parts.filter(p => p.kind === "sketch"); ui.log("SKETCHES after kept click " + sketches.length); if (sketches.length !== 1) { ui.fail("kept surface no longer snaps"); return } const s = controller.partInfo(sketches[0].id); ui.log("SKETCH " + JSON.stringify(s.plane || s).slice(0, 300)) })()
+ui.log("section sketch snap done")
