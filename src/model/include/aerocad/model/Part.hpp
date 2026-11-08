@@ -43,9 +43,25 @@ struct Part {
     /// (segment start, end), mm.
     std::vector<core::Vec3> edgeSegments;
     bool visible = true;
+    /// Display colour set by the user (Appearance, "#rrggbb"); empty = the default for
+    /// the part's kind.
+    std::string color;
     /// Incremented on every change, so views can cheaply detect stale caches.
     std::uint64_t revision = 0;
 };
+
+/// True for an Appearance colour as stored in Part::color: "#rrggbb" (hex digits).
+[[nodiscard]] inline bool isPartColor(const std::string& c)
+{
+    if (c.size() != 7 || c[0] != '#')
+        return false;
+    for (std::size_t i = 1; i < 7; ++i) {
+        const char h = c[i];
+        if (!((h >= '0' && h <= '9') || (h >= 'a' && h <= 'f') || (h >= 'A' && h <= 'F')))
+            return false;
+    }
+    return true;
+}
 
 /// The part a derived part was made from, read from its `source` ("surface.fit_selection
 /// of part 3" -> 3): e.g. the scan a surface was fitted to. 0 when there is none.

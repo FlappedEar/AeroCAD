@@ -82,6 +82,7 @@ replaced by `_` (`document.import` -> `document_import`). New commands (CAD tool
 | `geometry_measure` | `distance` between points, `part` (bounds, area, volume, closed?), `point_to_part`, `clearance` between two parts. Returns the method and data-quality warnings. |
 | `document_import`, `document_parts`, `document_bounds` | Import STL/OBJ/3MF/STEP/IGES/BREP, list parts, bounds. |
 | `part_scale`, `part_rename`, `part_set_visible`, `part_remove` | Part edits (undoable). |
+| `part_set_color` | Appearance: `"#rrggbb"`, or `""` for the default colour (undoable, saved). |
 | `part_isolate`, `part_unisolate` | Show only one part (returns the ids it hid) and show those again; one undo step each. |
 | `edit_undo`, `edit_redo`, `edit_history` | Undo history. |
 

@@ -92,11 +92,12 @@ TEST_CASE("Project data round-trips through the file format", "[project]")
     part.name = "Scan";
     part.source = "/tmp/scan.stl";
     part.visible = false;
+    part.color = "#2ea89a";
     part.mesh = std::make_shared<const core::TriangleMesh>(tetra());
     part.shape = geometry::makeBox(10, 20, 30);
     part.selection = std::make_shared<const core::TriangleSet>(core::TriangleSet{1, 3});
     data.parts.push_back(part);
-    data.timelineParts.push_back({3, model::PartKind::Body, 9, "Wing", true, nullptr});
+    data.timelineParts.push_back({3, model::PartKind::Body, 9, "Wing", true, nullptr, "#c94f45"});
     data.design.features.push_back({3, "box", "Box1", {{"corner", {0, 0, 0}}, {"size", {"w", 1, 1}}}, false});
     data.design.parameters.push_back({"w", "12 mm", "span"});
     data.design.frames.push_back({"Scan frame", {1, 2, 3}, {0, 0, 1}, {1, 0, 0}, "from scan"});
@@ -116,6 +117,7 @@ TEST_CASE("Project data round-trips through the file format", "[project]")
     CHECK(back.parts[0].name == "Scan");
     CHECK(back.parts[0].source == "/tmp/scan.stl");
     CHECK_FALSE(back.parts[0].visible);
+    CHECK(back.parts[0].color == "#2ea89a");
     CHECK(back.parts[0].mesh->vertices() == part.mesh->vertices());
     REQUIRE(back.parts[0].selection);
     CHECK(*back.parts[0].selection == core::TriangleSet{1, 3});
@@ -124,6 +126,7 @@ TEST_CASE("Project data round-trips through the file format", "[project]")
     REQUIRE(back.timelineParts.size() == 1);
     CHECK(back.timelineParts[0].id == 9);
     CHECK(back.timelineParts[0].name == "Wing");
+    CHECK(back.timelineParts[0].color == "#c94f45");
     REQUIRE(back.design.features.size() == 1);
     CHECK(back.design.features[0].params == data.design.features[0].params);
     CHECK(back.design.parameters[0].expression == "12 mm");

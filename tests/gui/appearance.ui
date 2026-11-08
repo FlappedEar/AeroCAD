@@ -1,0 +1,42 @@
+# CAD-121: Appearance (Fusion's A key), with real keys and clicks:
+#  - A with a body selected opens the swatches; a click colours the body (one undo step):
+#    the view draws it in that colour once it is not selected, the Browser icon too;
+#  - Appearance in the scan's right-click menu (under More) colours the scan; Ctrl+Z takes it back;
+#  - "Default" goes back to the grey of the part's kind.
+# Run: AeroCAD tests/data/box_200x80x60.stl --ui-script <this file>
+Qt.createQmlObject('import QtQuick; Item { objectName: "apTest"; visible: false; property var s: ({}); function find(i, name) { if (!i) return null; if (i.objectName === name) return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = find(ch[k], name); if (r) return r } return null } function clickItem(i) { const p = i.mapToItem(null, i.width / 2, i.height / 2); ui.click(p.x, p.y) } function iconColor(id) { const r = browser.rowItem(id); return r ? String(find(r, "partIcon").color) : "" } }', window.contentItem)
+ui.wait(800)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "apTest"); t.s.scan = controller.execute("document.parts").result.parts[0].id; const r = controller.execute("feature.box", { size: [60, 60, 60], corner: [300, 0, 0] }); if (!r.ok) ui.fail("box: " + r.error); t.s.body = controller.execute("document.parts").result.parts.find(p => p.kind === "body").id; viewport.fitAll(); window.selectPart(t.s.body) })()
+ui.wait(300)
+ui.key("A")
+ui.wait(300)
+(() => { ui.log("A: swatches open " + appearancePopup.visible); if (!appearancePopup.visible) ui.fail("A did not open Appearance") })()
+ui.shot("build/appearance-popup.png")
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "apTest"); t.clickItem(t.find(appearancePopup.contentItem, "swatch#5aa65a")) })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "apTest"); const i = controller.partInfo(t.s.body); ui.log("swatch: body colour " + i.color + ", popup open " + appearancePopup.visible + ", undo '" + controller.undoText + "'"); if (i.color !== "#5aa65a") ui.fail("the swatch did not colour the body"); if (appearancePopup.visible) ui.fail("the popup stayed open"); window.selectPart(0) })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "apTest"); const ic = t.iconColor(t.s.body); ui.log("Browser icon colour " + ic); if (ic !== "#5aa65a") ui.fail("the Browser icon does not show the colour") })()
+ui.shot("build/appearance-green.png")
+# Right-click menu of the scan.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "apTest"); const r = browser.rowItem(t.s.scan); const p = r.mapToItem(null, r.width / 3, r.height / 2); ui.click(p.x, p.y, "right") })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "apTest"); const sec = partMenu.partSections(controller.partInfo(t.s.scan)); ui.log("menu: steps " + sec.steps.map(a => a.id).join(",") + " | more " + sec.more.map(a => a.id).join(",")) })()
+(() => { if (!ui.clickText("More")) ui.fail("no More in the scan's right-click menu") })()
+ui.wait(500)
+ui.shot("build/appearance-more.png")
+(() => { if (!ui.clickText("Appearance")) ui.fail("no Appearance in the right-click menu") })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "apTest"); t.clickItem(t.find(appearancePopup.contentItem, "swatch#e8853d")) })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "apTest"); ui.log("menu: scan colour " + controller.partInfo(t.s.scan).color); if (controller.partInfo(t.s.scan).color !== "#e8853d") ui.fail("the menu did not colour the scan") })()
+ui.key("Z", "ctrl")
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "apTest"); ui.log("Ctrl+Z: scan colour '" + controller.partInfo(t.s.scan).color + "', body " + controller.partInfo(t.s.body).color); if (controller.partInfo(t.s.scan).color !== "" || controller.partInfo(t.s.body).color !== "#5aa65a") ui.fail("undo did not take back only the scan colour") })()
+# Default.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "apTest"); window.selectPart(t.s.body) })()
+ui.key("A")
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "apTest"); t.clickItem(t.find(appearancePopup.contentItem, "swatchDefault")) })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "apTest"); ui.log("Default: body colour '" + controller.partInfo(t.s.body).color + "'"); if (controller.partInfo(t.s.body).color !== "") ui.fail("Default did not reset the colour") })()

@@ -466,6 +466,9 @@ QtObject {
         case "finishSketch":
             return { id: id, text: qsTr("Finish Sketch"), icon: "finish-sketch", enabled: true, primary: true,
                      tip: qsTr("Closes the sketch. Select it afterwards (Browser) to turn the outline into a part.") }
+        case "appearance":
+            return { id: id, text: qsTr("Appearance"), icon: "appearance", enabled: true,
+                     tip: qsTr("The colour the part is shown in, to tell parts apart. Saved with the project. Shortcut A.") }
         case "isolate": {
             const on = !!host.isolation && host.isolation.id === info.id
             return { id: id, text: on ? qsTr("Unisolate") : qsTr("Isolate"), icon: on ? "visible" : "isolate", enabled: true,
@@ -566,7 +569,7 @@ QtObject {
                                  actions: [a("fitSurface")] }] },
                          { title: qsTr("More"), steps: [],
                            actions: [a("fitWhole"), a("cutWithThis"), a("toBody"), a("repair"), a("simplify"), a("scale"), a("export"),
-                                     a("isolate")] }] }
+                                     a("isolate"), a("appearance"), a("rename")] }] }
         }
         if (r === "surface") {
             const cut = isCutOut(info)
@@ -604,7 +607,7 @@ QtObject {
                                { title: qsTr("Thicken"), done: false,
                                  text: qsTr("Turns the piece into a solid with the thickness you type."),
                                  actions: [a("thicken")] }] },
-                         { title: qsTr("More"), steps: [], actions: [...fitted, a("sketchFin"), a("offset"), a("cutWithThis"), a("scale"), a("export"), a("hide"), a("isolate"), a("rename"), a("delete")] }] }
+                         { title: qsTr("More"), steps: [], actions: [...fitted, a("sketchFin"), a("offset"), a("cutWithThis"), a("scale"), a("export"), a("hide"), a("isolate"), a("appearance"), a("rename"), a("delete")] }] }
         }
         if (r === "plane") {
             return { title: roleName(r),
@@ -651,7 +654,7 @@ QtObject {
                                  : qsTr("An exact solid from a file or a fit. Make it editable to add fillets, holes and cuts, or export it as it is."),
                  sections: editable
                      ? [...(onSurface ? [print, change] : [change, print]),
-                        { title: qsTr("More"), steps: [], actions: [a("export"), a("hide"), a("isolate"), a("rename"), a("delete")] }]
+                        { title: qsTr("More"), steps: [], actions: [a("export"), a("hide"), a("isolate"), a("appearance"), a("rename"), a("delete")] }]
                      : [{ title: qsTr("Use it"), steps: [
                               { title: qsTr("Export for printing or CAD"), done: false,
                                 text: qsTr("STL or 3MF for a 3D printer, STEP for other CAD programs. For printing, every visible solid gets its own files."),
@@ -659,7 +662,7 @@ QtObject {
                               { title: qsTr("Or keep designing"), done: false,
                                 text: qsTr("Round or bevel its edges right away, or make it editable for holes and cuts; the changes appear in the timeline."),
                                 actions: [a("fillet"), a("chamfer"), a("combine"), a("solidToBody")] }] },
-                        { title: qsTr("More"), steps: [], actions: [...fitted, a("scale"), a("hide"), a("isolate"), a("rename"), a("delete")] }] }
+                        { title: qsTr("More"), steps: [], actions: [...fitted, a("scale"), a("hide"), a("isolate"), a("appearance"), a("rename"), a("delete")] }] }
     }
 
     /// Every action for the selection, flat (context bar and right-click menu).
@@ -869,6 +872,7 @@ QtObject {
         case "moveRotate": return host.startTransform(pid)
         case "zoomTo": return host.zoomToPart(pid)
         case "hide": return controller.execute("part.set_visible", { id: pid, visible: !info.visible })
+        case "appearance": return host.openAppearance(pid)
         case "isolate": return host.isolation && host.isolation.id === pid ? host.unisolate() : host.isolatePart(pid)
         case "rename": return host.renamePart(pid)
         case "delete": return host.deleteSelected()

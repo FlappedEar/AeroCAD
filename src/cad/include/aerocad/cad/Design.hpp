@@ -242,8 +242,9 @@ public:
     void clear();
 
     /// Seeds the document part of a timeline feature before the first syncDocument() of a
-    /// loaded project, so parts keep their saved ids, names and visibility.
-    void setPartInfo(FeatureId feature, model::PartId part, std::string name, bool visible);
+    /// loaded project, so parts keep their saved ids, names, visibility and colour.
+    void setPartInfo(FeatureId feature, model::PartId part, std::string name, bool visible,
+                     std::string color = {});
 
     /// Part bookkeeping retained by syncDocument(): every timeline feature that had a
     /// document part in this session, including features that are now suppressed, rolled
@@ -253,6 +254,7 @@ public:
         model::PartId part = 0;
         std::string name;
         bool visible = true;
+        std::string color;
     };
     [[nodiscard]] std::vector<PartInfo> partInfos() const;
 
@@ -304,6 +306,7 @@ private:
     struct PartMeta {
         std::string name;
         bool visible = true;
+        std::string color;
     };
     std::map<FeatureId, PartMeta> m_partMeta;
     PartLookup m_partLookup;

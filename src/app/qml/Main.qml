@@ -254,6 +254,12 @@ ApplicationWindow {
         checkIsolation()
         selectPart(id)
     }
+    /// Appearance (A): swatches for part `id`, at the pointer when it is over the view.
+    function openAppearance(id) {
+        const p = viewHover.hovered ? viewport.mapToItem(Overlay.overlay, viewHover.point.position.x, viewHover.point.position.y)
+                                    : viewport.mapToItem(Overlay.overlay, 24, 60)
+        return appearancePopup.openFor(id, p.x, p.y)
+    }
     function unisolate() {
         const iso = isolation
         if (!iso)
@@ -961,6 +967,13 @@ ApplicationWindow {
         onTriggered: window.toggleSelectedVisibility()
     }
     Action {
+        id: appearanceAction
+        text: qsTr("&Appearance...")
+        enabled: !!window.selectedPartId && !window.activeSketch
+        shortcut: "A" // Fusion: A
+        onTriggered: window.openAppearance(window.selectedPartId)
+    }
+    Action {
         id: isolateAction
         text: qsTr("&Isolate")
         enabled: !!window.selectedPartId
@@ -1394,6 +1407,7 @@ ApplicationWindow {
             MenuSeparator {}
             MenuItem { action: visibilityAction }
             MenuItem { action: renameAction }
+            MenuItem { action: appearanceAction }
             MenuItem { action: deleteAction }
             MenuSeparator {}
             MenuItem { action: growSelectionAction }
@@ -2555,6 +2569,12 @@ ApplicationWindow {
 
     // S (Fusion): search the commands and run one, in a box at the pointer. Text fields keep
     // the key (they accept it as a ShortcutOverride).
+    AppearancePopup {
+        id: appearancePopup
+        objectName: "appearancePopup"
+        parent: Overlay.overlay
+        controller: window.controller
+    }
     CommandSearch {
         id: commandSearch
         objectName: "commandSearch"
