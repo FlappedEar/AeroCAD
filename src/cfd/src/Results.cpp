@@ -2,6 +2,7 @@
 #include "aerocad/cfd/Results.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <charconv>
 #include <cmath>
@@ -361,6 +362,56 @@ void appendPolyData(PolyData& data, const PolyData& other)
         it->second.resize(data.points.size());
         ++it;
     }
+}
+
+PolyData surfaceDifference(const PolyData& a, const PolyData& b, double maxDistance)
+{
+    PolyData out;
+    out.points = a.points;
+    out.polygons = a.polygons;
+    if (a.empty() || b.empty() || !(maxDistance > 0))
+        return out;
+    // Uniform grid over b with cells of maxDistance: the nearest point within maxDistance
+    // is in the 27 cells around the query.
+    auto key = [maxDistance](const core::Vec3& p) {
+        return std::array<std::int64_t, 3>{static_cast<std::int64_t>(std::floor(p.x / maxDistance)),
+                                           static_cast<std::int64_t>(std::floor(p.y / maxDistance)),
+                                           static_cast<std::int64_t>(std::floor(p.z / maxDistance))};
+    };
+    std::map<std::array<std::int64_t, 3>, std::vector<std::uint32_t>> grid;
+    for (std::uint32_t i = 0; i < b.points.size(); ++i)
+        grid[key(b.points[i])].push_back(i);
+    std::vector<std::int64_t> nearest(a.points.size(), -1);
+    for (std::size_t i = 0; i < a.points.size(); ++i) {
+        const auto k = key(a.points[i]);
+        double best = maxDistance * maxDistance;
+        for (std::int64_t dx = -1; dx <= 1; ++dx)
+            for (std::int64_t dy = -1; dy <= 1; ++dy)
+                for (std::int64_t dz = -1; dz <= 1; ++dz) {
+                    const auto it = grid.find({k[0] + dx, k[1] + dy, k[2] + dz});
+                    if (it == grid.end())
+                        continue;
+                    for (const auto j : it->second) {
+                        const core::Vec3 d = b.points[j] - a.points[i];
+                        const double d2 = d.dot(d);
+                        if (d2 <= best) {
+                            best = d2;
+                            nearest[i] = j;
+                        }
+                    }
+                }
+    }
+    for (const auto& [name, av] : a.scalars) {
+        const auto bit = b.scalars.find(name);
+        if (bit == b.scalars.end())
+            continue;
+        auto& dv = out.scalars["d" + name];
+        dv.resize(a.points.size(), std::nan(""));
+        for (std::size_t i = 0; i < a.points.size(); ++i)
+            if (nearest[i] >= 0 && i < av.size() && static_cast<std::size_t>(nearest[i]) < bit->second.size())
+                dv[i] = bit->second[static_cast<std::size_t>(nearest[i])] - av[i];
+    }
+    return out;
 }
 
 std::vector<fs::path> timeDirectories(const fs::path& dir)

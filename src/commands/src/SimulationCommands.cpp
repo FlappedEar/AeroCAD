@@ -465,16 +465,25 @@ void registerSimulationCommands(CommandRegistry& r)
     r.add({"simulation.field", "Simulation field summary",
            "Statistics of a result field in model coordinates (mm): surface (pressure on the part: p, Cp, "
            "pressure in Pa), sectionHorizontal / sectionVertical (velocity sections through the part centre: speed "
-           "in m/s, Cp) or streamlines. available = false until the run has written it.",
+           "in m/s, Cp) or streamlines. available = false until the run has written it. Scalars have min, max, "
+           "mean and the 2nd/98th percentiles p02/p98. With compare (run B) and kind surface: the pressure "
+           "difference B - A on run's part surface (dCp, dpressure in Pa), NaN where B's part has no surface "
+           "within 1 % of the part size.",
            objectSchema({{"run", runIdParam()},
                          {"kind",
                           {{"type", "string"},
-                           {"enum", {"surface", "sectionHorizontal", "sectionVertical", "streamlines"}}}}},
+                           {"enum", {"surface", "sectionHorizontal", "sectionVertical", "streamlines"}}}},
+                         {"compare", runIdParam("Run B: return the surface difference B - A.")}},
                         {"run", "kind"})},
           [](CommandContext& ctx, const Json& params) {
               const std::string id = requireRun(ctx, params);
               try {
-                  const auto data = runs(ctx).field(id, params.at("kind").get<std::string>());
+                  const std::string kind = params.at("kind").get<std::string>();
+                  if (params.contains("compare") && kind != "surface")
+                      throw CommandError("compare works with kind surface only");
+                  const auto data = params.contains("compare")
+                                        ? runs(ctx).surfaceDifference(id, requireRun(ctx, params, "compare"))
+                                        : runs(ctx).field(id, kind);
                   if (data.empty())
                       return Json{{"available", false}}; // Written at the end of a run.
                   Json j = polyDataSummary(data);

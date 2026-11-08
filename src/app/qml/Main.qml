@@ -2019,6 +2019,7 @@ ApplicationWindow {
                 fields: viewport.simulationFields
                 results: simulationPanel.displayedRun === simulationPanel.activeRun ? simulationPanel.results : null
                 runTitle: simulationPanel.displayedRunTitle
+                comparison: simulationPanel.differenceShown ? simulationPanel.comparison : null
             }
 
             ScanPanel {

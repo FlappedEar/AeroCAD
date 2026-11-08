@@ -17,6 +17,9 @@ Item {
     property var results: null
     /// Run name shown on the card ("A: ..." / "B: ...").
     property string runTitle: ""
+    /// simulation.compare result while the difference map B - A is shown (CAD-141), or null:
+    /// the card then adds the change of the forces and coefficients.
+    property var comparison: null
 
     /// One legend per distinct scale: [{scalar, min, max, palette, kinds}].
     readonly property var legends: {
@@ -36,6 +39,7 @@ Item {
 
     function title(scalar) {
         return scalar === "Cp" ? qsTr("Pressure coefficient Cp")
+             : scalar === "dCp" ? qsTr("Cp change, B − A")
              : scalar === "pressure" ? qsTr("Pressure (Pa)")
              : scalar === "speed" ? qsTr("Air speed (m/s)") : scalar
     }
@@ -47,7 +51,7 @@ Item {
     }
     /// Tick values from bottom to top: five evenly spaced, with zero on pressure scales.
     function ticks(l) {
-        const pressure = l.scalar === "Cp" || l.scalar === "pressure"
+        const pressure = l.scalar === "Cp" || l.scalar === "pressure" || l.scalar === "dCp"
         if (pressure && l.min < 0 && l.max > 0)
             return [l.min, l.min / 2, 0, l.max / 2, l.max]
         const out = []
@@ -59,6 +63,20 @@ Item {
         const digits = span >= 50 ? 0 : span >= 5 ? 1 : 2
         const s = Number(v).toFixed(digits)
         return Number(s) === 0 ? Number(0).toFixed(digits) : s // No "-0.00".
+    }
+    function signed(v, digits) {
+        if (v === null || v === undefined || !isFinite(v))
+            return "–"
+        const s = Number(v).toFixed(digits)
+        return (Number(s) > 0 ? "+" : "") + s
+    }
+    /// Force change "+3.00 N (+5.4 %)" from a simulation.compare entry {difference, percent}.
+    function signedN(d) {
+        if (!d)
+            return "–"
+        const pct = d.percent !== null && d.percent !== undefined && isFinite(d.percent)
+                  ? " (" + signed(d.percent, 1) + " %)" : ""
+        return signed(d.difference, 2) + " N" + pct
     }
     function num(v, digits) {
         return v === null || v === undefined || !isFinite(v) ? "–" : Number(v).toFixed(digits)
@@ -91,7 +109,8 @@ Item {
                     spacing: 4
                     Label { text: root.title(legend.modelData.scalar); font.bold: true }
                     Label {
-                        text: legend.modelData.kinds.map(k => root.kindName(k)).join(", ")
+                        text: legend.modelData.scalar === "dCp" ? qsTr("on part A · grey: shapes differ")
+                                                                : legend.modelData.kinds.map(k => root.kindName(k)).join(", ")
                         font.pixelSize: 11
                         color: Theme.textMuted
                     }
@@ -180,6 +199,30 @@ Item {
                 Label { text: root.num(card.s?.sideN, 2) + " N"; font.bold: true }
                 Label { text: "Cs"; color: Theme.textMuted }
                 Label { text: root.num(card.s?.cs, 3); font.bold: true }
+            }
+            GridLayout {
+                id: deltaGrid
+                objectName: "cfdSummaryDelta"
+                readonly property var f: root.comparison ? root.comparison.forces : null
+                readonly property var k: root.comparison ? root.comparison.coefficientsOnReferenceAreaOfA : null
+                visible: !!f && !!k
+                columns: 4
+                columnSpacing: 10
+                rowSpacing: 2
+                Label {
+                    Layout.columnSpan: 4
+                    text: qsTr("Change B − A")
+                    font.bold: true
+                    topPadding: 4
+                }
+                Label { text: qsTr("Drag"); color: Theme.textMuted }
+                Label { objectName: "cfdSummaryDeltaDrag"; text: root.signedN(deltaGrid.f?.dragN); font.bold: true }
+                Label { text: "Cd"; color: Theme.textMuted }
+                Label { text: root.signed(deltaGrid.k?.cd?.difference, 3); font.bold: true }
+                Label { text: qsTr("Lift"); color: Theme.textMuted }
+                Label { text: root.signedN(deltaGrid.f?.liftN); font.bold: true }
+                Label { text: "Cl"; color: Theme.textMuted }
+                Label { text: root.signed(deltaGrid.k?.cl?.difference, 3); font.bold: true }
             }
             Label {
                 visible: !!card.c

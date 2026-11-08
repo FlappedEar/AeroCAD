@@ -699,6 +699,7 @@ Item {
                     geometry: FieldGeometry {
                         controller: root.controller
                         run: modelData.run
+                        compareRun: modelData.compareRun ?? ""
                         kind: modelData.kind
                         scalar: modelData.scalar
                         rangeMin: modelData.min

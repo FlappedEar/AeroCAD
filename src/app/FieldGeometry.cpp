@@ -69,7 +69,10 @@ QString FieldGeometry::resolvedPalette(const QString& scalar, const QString& pal
 {
     if (palette == QLatin1String("rainbow") || palette == QLatin1String("coolwarm") || palette == QLatin1String("viridis"))
         return palette;
-    return scalar == QLatin1String("speed") ? QStringLiteral("viridis") : QStringLiteral("rainbow");
+    if (scalar == QLatin1String("speed"))
+        return QStringLiteral("viridis");
+    // A/B differences (dCp, dpressure): blue = lower in B, white = no change, red = higher.
+    return scalar.startsWith(QLatin1Char('d')) ? QStringLiteral("coolwarm") : QStringLiteral("rainbow");
 }
 
 QColor FieldGeometry::mapColor(const QString& scalar, double t, const QString& palette)
@@ -88,7 +91,8 @@ double FieldGeometry::scalePosition(const QString& scalar, double value, double 
     if (!std::isfinite(value))
         return std::nan("");
     const bool pressure = scalar == QLatin1String("Cp") || scalar == QLatin1String("pressure") ||
-                          scalar == QLatin1String("p");
+                          scalar == QLatin1String("p") || scalar == QLatin1String("dCp") ||
+                          scalar == QLatin1String("dpressure");
     if (pressure && lo < 0.0 && hi > 0.0)
         return value < 0.0 ? 0.5 * (value - lo) / -lo : 0.5 + 0.5 * value / hi;
     return hi > lo ? (value - lo) / (hi - lo) : 0.5;
@@ -118,6 +122,15 @@ void FieldGeometry::setRun(const QString& run)
     if (m_run == run)
         return;
     m_run = run;
+    schedule(true);
+    emit changed();
+}
+
+void FieldGeometry::setCompareRun(const QString& run)
+{
+    if (m_compareRun == run)
+        return;
+    m_compareRun = run;
     schedule(true);
     emit changed();
 }
@@ -190,7 +203,10 @@ void FieldGeometry::reload()
     m_data = {};
     if (m_controller && !m_run.isEmpty()) {
         try {
-            m_data = m_controller->session().simulations().field(m_run.toStdString(), m_kind.toStdString());
+            auto& sims = m_controller->session().simulations();
+            m_data = !m_compareRun.isEmpty() && m_kind == QLatin1String("surface")
+                         ? sims.surfaceDifference(m_run.toStdString(), m_compareRun.toStdString())
+                         : sims.field(m_run.toStdString(), m_kind.toStdString());
         } catch (const std::exception&) {
             m_data = {};
         }
@@ -247,6 +263,8 @@ void FieldGeometry::rebuild()
     const double b = m_rangeMin < m_rangeMax ? m_rangeMax : hi;
     auto colorOf = [&](std::uint32_t idx) {
         const double v = values != nullptr && idx < values->size() ? (*values)[idx] : std::nan("");
+        if (!std::isfinite(v))
+            return QColor(140, 140, 140); // No value here (e.g. an A/B difference where the shapes differ).
         return mapColor(m_scalar, scalePosition(m_scalar, v, a, b), m_palette);
     };
 

@@ -60,6 +60,11 @@ struct PolyData {
 /// Appends `other` to `data` (points, polygons, lines; per-point fields present in both).
 void appendPolyData(PolyData& data, const PolyData& other);
 
+/// A/B difference on a surface (CAD-141): `a` with, for each of its points, the scalars of
+/// the nearest point of `b` minus its own, as "d<name>" (dCp, dpressure, ...). Points with
+/// no point of `b` within `maxDistance` (the variant's shape differs there) get NaN.
+[[nodiscard]] PolyData surfaceDifference(const PolyData& a, const PolyData& b, double maxDistance);
+
 /// Directories that OpenFOAM writes a function object's output into, sorted by time.
 [[nodiscard]] std::vector<std::filesystem::path> timeDirectories(const std::filesystem::path& functionObjectDir);
 

@@ -55,6 +55,14 @@ panel in place of Properties:
   them (undo brings them back). File > New and Open start with no run selected.
 - **A/B**: verdict, drag/lift/side of A and B with the difference in N and %, differing
   conditions and notes; *Show B in 3D* shows B's fields on the same colour scales as A.
+  *Difference B − A on the part (ΔCp)* (Results tab, Show in 3D) replaces A's pressure map
+  with the change of pressure: red where B has higher pressure, blue where lower, on a
+  blue–white–red scale symmetric about zero over the 2nd–98th percentile of the change.
+  Points of A with no surface of B within 1 % of the part length (where the shapes differ)
+  are grey. The forces card then adds the change of drag and lift in N and % and of Cd/Cl
+  on A's reference area.
+
+![Pressure change of a 35° against a 25° rear slant on A's part (real coarse runs)](images/cfd/results-3d-difference.png)
 
 Runs continue when the panel or the app is closed.
 
@@ -334,11 +342,21 @@ repeat run), their difference is run-to-run variation and the status is **same c
 there is nothing to check on another mesh. While runs of the check are still solving the
 status is **pending** and `runningRuns` lists them; the A/B tab shows their progress.
 
+### Pressure difference on the part
+
+`simulation.field {run: A, kind: "surface", compare: B}` interpolates B's surface values
+onto A's surface points (`cfd::surfaceDifference`: nearest point of B within 1 % of the
+part length, found on a uniform grid) and returns A's surface with scalars `dCp`, `dp` and
+`dpressure` (B − A; NaN where B has no point near enough). The viewport draws NaN grey.
+
 ## Tests
 
 `ctest -L openfoam` runs a box through the whole pipeline in OpenFOAM (about a minute
 with Docker; skipped when no engine is found). On macOS its case goes under `~/.aerocad/test-runs/`,
-because the engine's VM shares only the home directory, not `$TMPDIR`. It is not part of the CI gate. The unit
+because the engine's VM shares only the home directory, not `$TMPDIR`. It is not part of the CI gate. `app_cfd_difference_3d_test` (labels gui, openfoam) runs the
+box twice at once and checks the difference map, its colour bar and the card in the real
+GUI; two parallel runs of the same shape differ by about 0.004 to 0.011 in Cp on 96 % of the part
+(the test allows 0.03). The unit
 tests (`test_cfd`, `test_commands`) cover case generation, parsing, quality checks, the
 run manager and the commands without an engine.
 

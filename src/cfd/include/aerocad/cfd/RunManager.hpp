@@ -182,6 +182,10 @@ public:
     /// kind "surface" (pressure on the part), "sectionHorizontal", "sectionVertical",
     /// "streamlines". Empty PolyData when the run has not written it (yet).
     [[nodiscard]] PolyData field(const std::string& id, std::string_view kind);
+    /// Pressure difference B - A on A's part surface (CAD-141): dCp, dpressure, dp at A's
+    /// points from the nearest point of B's surface within 1 % of A's part size; NaN where
+    /// B's part has no surface that close (its shape differs there).
+    [[nodiscard]] PolyData surfaceDifference(const std::string& a, const std::string& b);
 
     /// Downloads the OpenFOAM image in the background (`docker pull`, log in
     /// <root>/image-pull.log). Returns false when a download is already running.
