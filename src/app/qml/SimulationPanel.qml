@@ -121,6 +121,21 @@ Pane {
         return lines
     }
 
+    /// Why the verdict is "check quality": the selected runs themselves, or a run of the mesh check (CAD-117).
+    function checkQualityText(c) {
+        if (!c || c.verdict !== "check quality")
+            return ""
+        const q = c.quality || {}
+        const okA = q.a && q.a.status === "ok", okB = q.b && q.b.status === "ok"
+        if (!okA && !okB)
+            return qsTr("A and B have quality warnings (see Results), so the difference may not be reliable.")
+        if (!okA || !okB)
+            return qsTr("%1 has quality warnings (see Results), so the difference may not be reliable.").arg(okA ? "B" : "A")
+        const m = c.meshSensitivity && c.meshSensitivity.message
+        return m ? qsTr("Mesh check: %1").arg(m)
+                 : qsTr("A run of the mesh check has quality warnings, so the difference may not be reliable.")
+    }
+
     /// A run's name for the A/B table: its label (or part name) and start time, plus its state
     /// when it is not finished (CAD-117).
     function runTitle(id, state) {
@@ -935,8 +950,7 @@ Pane {
                     font.pixelSize: 11
                     color: Theme.textMuted
                     visible: text.length > 0
-                    text: root.comparison && root.comparison.verdict === "check quality"
-                          ? qsTr("A or B has quality warnings (see Results), so the difference may not be reliable.") : ""
+                    text: root.checkQualityText(root.comparison)
                 }
                 Label {
                     Layout.fillWidth: true
