@@ -44,6 +44,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <set>
 
 namespace aerocad::geometry {
@@ -352,34 +353,103 @@ std::vector<SketchCurve> offsetCurves(const std::vector<SketchCurve>& curves, do
             throw ModelingError("The selected curves are not one connected chain");
         const TopoDS_Wire w = wire.Wire();
         const bool closed = BRep_Tool::IsClosed(w);
-        BRepOffsetAPI_MakeOffset offset;
-        offset.Init(GeomAbs_Arc, !closed);
-        offset.AddWire(w);
-        // OCCT offsets a closed wire outwards for a positive value when it runs
-        // counter-clockwise; make "positive = outwards" independent of the drawing order.
-        double d = distance;
-        if (closed) {
-            const TopoDS_Face face = BRepBuilderAPI_MakeFace(w, true).Face();
-            GProp_GProps props;
-            BRepGProp::SurfaceProperties(face, props);
-            BRepGProp_Face f(face);
-            double u1, u2, v1, v2;
-            f.Bounds(u1, u2, v1, v2);
-            gp_Pnt p;
-            gp_Vec n;
-            f.Normal((u1 + u2) / 2, (v1 + v2) / 2, p, n);
-            if (n.Z() < 0)
-                d = -d;
+        // Straight lines in one line: OCCT cannot find their plane (it needs three points
+        // off one line), so make the parallel segment here, to the left.
+        {
+            bool straight = true;
+            Vec2 a{}, b{};
+            for (const auto& c : curves)
+                straight = straight && c.kind == SketchCurve::Kind::Line;
+            if (straight && !closed) {
+                a = curves[0].points[0];
+                b = curves[0].points[1];
+                const double len = distance2d(a, b);
+                const Vec2 dir{(b.x - a.x) / len, (b.y - a.y) / len};
+                double lo = 0, hi = len, off = 0;
+                for (const auto& c : curves)
+                    for (const Vec2& p : c.points) {
+                        const double along = (p.x - a.x) * dir.x + (p.y - a.y) * dir.y;
+                        off = std::max(off, std::abs((p.x - a.x) * dir.y - (p.y - a.y) * dir.x));
+                        lo = std::min(lo, along);
+                        hi = std::max(hi, along);
+                    }
+                if (off < kTol) {
+                    const Vec2 left{-dir.y * distance, dir.x * distance};
+                    SketchCurve c;
+                    c.kind = SketchCurve::Kind::Line;
+                    c.points = {{a.x + dir.x * lo + left.x, a.y + dir.y * lo + left.y},
+                                {a.x + dir.x * hi + left.x, a.y + dir.y * hi + left.y}};
+                    return {c};
+                }
+            }
         }
-        offset.Perform(d);
-        if (!offset.IsDone())
+        auto perform = [&](double d) -> TopoDS_Shape {
+            BRepOffsetAPI_MakeOffset offset;
+            offset.Init(GeomAbs_Arc, !closed);
+            offset.AddWire(w);
+            offset.Perform(d);
+            if (!offset.IsDone())
+                return {};
+            return offset.Shape();
+        };
+        // Which side OCCT takes depends on the drawing direction and on the plane it finds
+        // for the wire: check the result and take the other side when it is wrong.
+        // Positive: outwards for a closed chain (the enclosed area grows), to the left of the
+        // chain's first curve for an open one.
+        auto enclosed = [](const TopoDS_Shape& shape) {
+            double a = 0;
+            for (TopExp_Explorer we(shape, TopAbs_WIRE); we.More(); we.Next()) {
+                BRepBuilderAPI_MakeFace face(TopoDS::Wire(we.Current()), true);
+                if (!face.IsDone())
+                    continue;
+                GProp_GProps props;
+                BRepGProp::SurfaceProperties(face.Face(), props);
+                a = std::max(a, std::abs(props.Mass()));
+            }
+            return a;
+        };
+        auto leftSide = [&](const TopoDS_Shape& shape) {
+            // The first curve as given: its middle and the normal to its left.
+            BRepAdaptor_Curve first(edges[0]);
+            gp_Pnt m;
+            gp_Vec t;
+            first.D1((first.FirstParameter() + first.LastParameter()) / 2, m, t);
+            const gp_Vec left(-t.Y(), t.X(), 0);
+            double best = std::numeric_limits<double>::max(), side = 0;
+            for (TopExp_Explorer e(shape, TopAbs_EDGE); e.More(); e.Next()) {
+                BRepAdaptor_Curve ac(TopoDS::Edge(e.Current()));
+                for (int k = 0; k <= 16; ++k) {
+                    const gp_Pnt p = ac.Value(ac.FirstParameter() + (ac.LastParameter() - ac.FirstParameter()) * k / 16.0);
+                    if (p.Distance(m) < best) {
+                        best = p.Distance(m);
+                        side = gp_Vec(m, p).Dot(left);
+                    }
+                }
+            }
+            return side > 0;
+        };
+        const double before = closed ? enclosed(w) : 0.0;
+        auto rightSide = [&](const TopoDS_Shape& shape) {
+            if (shape.IsNull())
+                return false;
+            if (closed)
+                return (enclosed(shape) > before) == (distance > 0);
+            return leftSide(shape) == (distance > 0);
+        };
+        TopoDS_Shape result = perform(distance);
+        if (!rightSide(result)) {
+            result = perform(-distance);
+            if (!rightSide(result))
+                result = TopoDS_Shape();
+        }
+        if (result.IsNull())
             throw ModelingError("The offset could not be made (too large for these curves?)");
         std::vector<SketchCurve> out;
         auto uv = [](const gp_Pnt& p) { return Vec2{p.X(), p.Y()}; };
         // OCCT gives the offset of a spline as several free-form pieces. Consecutive pieces
         // that continue each other smoothly become one spline (separately interpolated
         // pieces would kink where they meet); a closed run of them becomes one closed spline.
-        for (TopExp_Explorer we(offset.Shape(), TopAbs_WIRE); we.More(); we.Next()) {
+        for (TopExp_Explorer we(result, TopAbs_WIRE); we.More(); we.Next()) {
             struct Piece {
                 TopoDS_Edge edge;
                 bool freeForm;
