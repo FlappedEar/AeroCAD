@@ -1368,6 +1368,9 @@ Pane {
                 }
                 Label {
                     Layout.fillWidth: true
+                    // The layout keeps the height of the first wrap otherwise, so a text
+                    // that wraps to fewer or more lines later overlaps its neighbours.
+                    Layout.maximumWidth: parent ? parent.width : Infinity
                     wrapMode: Text.WordWrap
                     font.pixelSize: 11
                     opacity: 0.7
@@ -1408,6 +1411,7 @@ Pane {
                     delegate: Label {
                         required property var modelData
                         Layout.fillWidth: true
+                        Layout.maximumWidth: parent ? parent.width : Infinity // See the conditions above.
                         wrapMode: Text.WordWrap
                         font.pixelSize: 11
                         color: modelData.ok ? Theme.success : Theme.warning
