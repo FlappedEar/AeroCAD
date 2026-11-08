@@ -556,8 +556,8 @@ ApplicationWindow {
 
     /// Editing an earlier sketch rolls the timeline back to just after it (Fusion): what came
     /// later is hidden and cannot be snapped to or projected. Kept by feature ids, not
-    /// positions, so deleting features meanwhile does not lose it: {sketch, atEnd, lastActive}
-    /// (the sketch, whether the marker was at the end, else the last feature before it);
+    /// positions, so deleting features meanwhile does not lose it: {sketch, atEnd, active}
+    /// (the sketch, whether the marker was at the end, else the features active after it);
     /// null when nothing was rolled back.
     property var sketchRollback: null
 
@@ -569,7 +569,8 @@ ApplicationWindow {
         const index = t.features.findIndex(f => f.id === id)
         if (index < 0 || index + 1 >= t.marker)
             return
-        const rb = { sketch: id, atEnd: t.marker === t.features.length, lastActive: t.features[t.marker - 1].id }
+        const rb = { sketch: id, atEnd: t.marker === t.features.length,
+                     active: t.features.slice(index + 1, t.marker).map(f => f.id) }
         if (controller.execute("timeline.set_marker", { position: index + 1 }).ok) {
             sketchRollback = rb
             updateSavedMarker()
@@ -577,16 +578,18 @@ ApplicationWindow {
     }
 
     /// Where the marker goes back to for `rb` in timeline `t`: the end if it was there, else
-    /// just after the feature that was last before it (if that was deleted, no further than
-    /// the end). Null when the user moved the marker off the sketch meanwhile.
+    /// just after the last surviving feature that was active, so features that were rolled
+    /// back before the edit stay rolled back even when some active ones were deleted. Null
+    /// when the user moved the marker off the sketch meanwhile.
     function rollbackTarget(rb, t) {
         const sketchAt = t.features.findIndex(f => f.id === rb.sketch)
         if (sketchAt < 0 || t.marker !== sketchAt + 1)
             return null
         if (rb.atEnd)
             return t.features.length
-        const last = t.features.findIndex(f => f.id === rb.lastActive)
-        return last >= 0 ? last + 1 : t.features.length
+        let target = sketchAt + 1
+        t.features.forEach((f, i) => { if (rb.active.indexOf(f.id) >= 0) target = Math.max(target, i + 1) })
+        return target
     }
 
     /// Saves (and autosaves) store the marker from before the sketch edit, not the roll-back.
