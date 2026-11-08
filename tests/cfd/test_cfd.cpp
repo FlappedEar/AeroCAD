@@ -76,8 +76,9 @@ core::TriangleMesh box(core::Vec3 origin, core::Vec3 size)
     return m;
 }
 
-/// Open tyre (tread only, outward normals) with its axle along Y.
-core::TriangleMesh tyre(core::Vec3 centre, double radius, double width, int segments = 64)
+/// Tyre with its axle along Y and outward normals: the tread, plus side disks when closed.
+/// Each tread triangle spans the whole width, as in a coarse CAD export.
+core::TriangleMesh tyre(core::Vec3 centre, double radius, double width, bool closed = false, int segments = 64)
 {
     core::TriangleMesh m;
     const double pi = 3.14159265358979323846;
@@ -92,17 +93,26 @@ core::TriangleMesh tyre(core::Vec3 centre, double radius, double width, int segm
         m.addTriangle(a0, b0, b1);
         m.addTriangle(a0, b1, a1);
     }
+    if (closed) {
+        const auto lo = m.addVertex({centre.x, centre.y - 0.5 * width, centre.z});
+        const auto hi = m.addVertex({centre.x, centre.y + 0.5 * width, centre.z});
+        for (int i = 0; i < segments; ++i) {
+            const auto a0 = static_cast<std::uint32_t>(2 * i), a1 = static_cast<std::uint32_t>(2 * ((i + 1) % segments));
+            m.addTriangle(lo, a0, a1);
+            m.addTriangle(hi, a1 + 1, a0 + 1);
+        }
+    }
     return m;
 }
 
 /// A 1000 mm car body on four tyres standing on Z = 0: front r 150 at X 200, rear r 160 at
-/// X 800, tyres 60 wide at Y = +-180 (mm, or metres with scale 0.001).
-core::TriangleMesh car(double scale = 1.0)
+/// X 800, tyres 60 wide at Y = +-190, 10 off the body (mm, or metres with scale 0.001).
+core::TriangleMesh car(double scale = 1.0, bool closedTyres = false)
 {
     core::TriangleMesh m = box({0, -150, 100}, {1000, 300, 200});
-    for (const double y : {-180.0, 180.0}) {
-        m.append(tyre({200, y, 150}, 150, 60));
-        m.append(tyre({800, y, 160}, 160, 60));
+    for (const double y : {-190.0, 190.0}) {
+        m.append(tyre({200, y, 150}, 150, 60, closedTyres));
+        m.append(tyre({800, y, 160}, 160, 60, closedTyres));
     }
     m.scale(scale, {0, 0, 0});
     return m;
@@ -248,8 +258,8 @@ TEST_CASE("detectWheels finds the tyres a car stands on", "[cfd][wheels]")
         CHECK(wheels[i].radius == Approx(r).margin(0.003));
         CHECK(wheels[i].centre.x == Approx(i < 2 ? 0.2 : 0.8).margin(0.002));
         CHECK(wheels[i].centre.z == Approx(r).margin(0.003));
-        CHECK(wheels[i].centre.y == Approx(i % 2 == 0 ? -0.18 : 0.18).margin(0.002));
-        CHECK(wheels[i].yMax - wheels[i].yMin > 0.015);
+        CHECK(wheels[i].centre.y == Approx(i % 2 == 0 ? -0.19 : 0.19).margin(0.002));
+        CHECK(wheels[i].yMax - wheels[i].yMin == Approx(0.06).margin(0.004));
     }
     // A box has no wheels.
     CHECK(cfd::detectWheels(box({0, 0, 0}, {1, 0.4, 0.3}), 1.0).empty());
@@ -259,6 +269,17 @@ TEST_CASE("detectWheels finds the tyres a car stands on", "[cfd][wheels]")
     CHECK(split.body.triangleCount() == 12);
     CHECK(split.axles[0].triangleCount() == 2 * 128);
     CHECK(split.axles[1].triangleCount() == 2 * 128);
+
+    // Closed tyres: the side disks turn with the tread.
+    const auto closed = cfd::detectWheels(car(0.001, true), 1.0);
+    REQUIRE(closed.size() == 4);
+    for (const auto& w : closed)
+        CHECK(w.yMax - w.yMin == Approx(0.06).margin(0.004));
+    const auto closedSplit = cfd::splitWheels(car(0.001, true), closed);
+    REQUIRE(closedSplit.axles.size() == 2);
+    CHECK(closedSplit.body.triangleCount() == 12);
+    CHECK(closedSplit.axles[0].triangleCount() == 2 * 256);
+    CHECK(closedSplit.axles[1].triangleCount() == 2 * 256);
 }
 
 TEST_CASE("writeCase turns the wheels with the moving floor", "[cfd][wheels]")

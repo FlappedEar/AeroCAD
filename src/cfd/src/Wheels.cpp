@@ -37,23 +37,24 @@ namespace {
 struct Facet {
     Vec3 c; ///< Centroid.
     Vec3 n; ///< Unit normal.
+    double y0, y1; ///< Extent along Y: a tread triangle can span the tyre's whole width.
 };
 
-/// Contact patches: centroids of downward-facing triangles in the lowest band, grouped by
-/// touching cells of an XY grid.
-std::vector<std::vector<Vec3>> contactPatches(const std::vector<Facet>& facets, double zMin, double band,
+/// Contact patches: downward-facing triangles in the lowest band, grouped by touching cells
+/// of an XY grid.
+std::vector<std::vector<const Facet*>> contactPatches(const std::vector<Facet>& facets, double zMin, double band,
                                               double cell)
 {
-    std::map<std::pair<long, long>, std::vector<Vec3>> grid;
+    std::map<std::pair<long, long>, std::vector<const Facet*>> grid;
     for (const Facet& f : facets)
         if (f.c.z < zMin + band && f.n.z < -0.5)
-            grid[{std::lround(f.c.x / cell), std::lround(f.c.y / cell)}].push_back(f.c);
-    std::vector<std::vector<Vec3>> patches;
+            grid[{std::lround(f.c.x / cell), std::lround(f.c.y / cell)}].push_back(&f);
+    std::vector<std::vector<const Facet*>> patches;
     std::map<std::pair<long, long>, bool> seen;
     for (const auto& [key, points] : grid) {
         if (seen[key])
             continue;
-        std::vector<Vec3> patch;
+        std::vector<const Facet*> patch;
         std::vector<std::pair<long, long>> stack{key};
         seen[key] = true;
         while (!stack.empty()) {
@@ -87,7 +88,8 @@ std::vector<Wheel> detectWheels(const TriangleMesh& mesh, double length)
     facets.reserve(mesh.triangleCount());
     for (std::size_t i = 0; i < mesh.triangleCount(); ++i) {
         const auto& t = mesh.triangles()[i];
-        facets.push_back({(v[t[0]] + v[t[1]] + v[t[2]]) * (1.0 / 3.0), mesh.faceNormal(i)});
+        facets.push_back({(v[t[0]] + v[t[1]] + v[t[2]]) * (1.0 / 3.0), mesh.faceNormal(i),
+                          std::min({v[t[0]].y, v[t[1]].y, v[t[2]].y}), std::max({v[t[0]].y, v[t[1]].y, v[t[2]].y})});
     }
     const double zMin = mesh.bounds().min.z;
     const double tol = 0.002 * length; // How far tread points may lie off the circle.
@@ -95,10 +97,10 @@ std::vector<Wheel> detectWheels(const TriangleMesh& mesh, double length)
     for (const auto& patch : contactPatches(facets, zMin, 0.003 * length, 0.02 * length)) {
         if (patch.size() < 3)
             continue;
-        double x0 = patch[0].x, x1 = x0, y0 = patch[0].y, y1 = y0;
-        for (const Vec3& p : patch) {
-            x0 = std::min(x0, p.x), x1 = std::max(x1, p.x);
-            y0 = std::min(y0, p.y), y1 = std::max(y1, p.y);
+        double x0 = patch[0]->c.x, x1 = x0, y0 = patch[0]->y0, y1 = patch[0]->y1;
+        for (const Facet* p : patch) {
+            x0 = std::min(x0, p->c.x), x1 = std::max(x1, p->c.x);
+            y0 = std::min(y0, p->y0), y1 = std::max(y1, p->y1);
         }
         const double xc = 0.5 * (x0 + x1);
         // Surface facing sideways in X/Z (tread, not the tyre's flanks) over the patch's width.
@@ -142,14 +144,18 @@ std::vector<Wheel> detectWheels(const TriangleMesh& mesh, double length)
         const auto slices = static_cast<std::size_t>((y1 - y0 + 2 * bestR) / slice) + 1;
         std::vector<std::array<bool, 36>> slicesRound(slices, std::array<bool, 36>{});
         for (const Facet& f : facets) {
-            if (f.c.y < reach || f.c.y > y1 + bestR || std::abs(f.n.y) >= 0.3)
+            if (f.y1 < reach || f.y0 > y1 + bestR || std::abs(f.n.y) >= 0.3)
                 continue;
             const double dx = f.c.x - xc, dz = f.c.z - w.centre.z;
             if (std::abs(std::hypot(dx, dz) - bestR) >= tol)
                 continue;
             const double a = std::atan2(dz, dx) + std::numbers::pi;
-            const auto k = std::min(slices - 1, static_cast<std::size_t>((f.c.y - reach) / slice));
-            slicesRound[k][std::min<std::size_t>(35, static_cast<std::size_t>(a / (2 * std::numbers::pi) * 36))] = true;
+            const auto at = std::min<std::size_t>(35, static_cast<std::size_t>(a / (2 * std::numbers::pi) * 36));
+            // Every slice the triangle covers, not only the one holding its centroid.
+            const auto k0 = static_cast<std::size_t>(std::max(0.0, f.y0 - reach) / slice);
+            const auto k1 = std::min(slices - 1, static_cast<std::size_t>(std::max(0.0, f.y1 - reach) / slice));
+            for (std::size_t k = k0; k <= k1; ++k)
+                slicesRound[k][at] = true;
         }
         auto round = [&](std::size_t k) { return std::count(slicesRound[k].begin(), slicesRound[k].end(), true) >= 18; };
         const auto first = static_cast<std::size_t>((y0 - reach) / slice);
