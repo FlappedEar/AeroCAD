@@ -25,9 +25,20 @@ Pane {
             if (!f.on || !fieldStats[run + "/" + f.kind])
                 continue
             const r = scaleFor(f.kind, f.scalar)
-            out.push({ run: run, kind: f.kind, scalar: f.scalar, min: r[0], max: r[1] })
+            out.push({ run: run, kind: f.kind, scalar: f.scalar, min: r[0], max: r[1], tubeRadius: tubeRadius })
         }
         return out
+    }
+    /// Streamline tube radius in mm: 0.4 % of the part's largest dimension (0 = automatic).
+    readonly property real tubeRadius: {
+        const c = results ? results.conditions : null
+        return c && c.characteristicLength > 0 ? c.characteristicLength * 1000 * 0.004 : 0
+    }
+    /// Name of the run drawn in 3D, for the viewport card.
+    readonly property string displayedRunTitle: {
+        if (!displayedRun)
+            return ""
+        return (showB && finalComparisonAvailable ? "B: " : "") + runTitle(displayedRun, "")
     }
     /// Parts hidden while their pressure map is shown (they would overlap).
     readonly property var hiddenPartIds: {
@@ -296,11 +307,17 @@ Pane {
     /// symmetric around zero, clipped to Cp in [-2, 1] where the data allows.
     function scaleFor(kind, scalar) {
         let lo = Infinity, hi = -Infinity
+        // One scale per quantity: the sections and the streamlines share the speed scale,
+        // so one legend reads them all (CAD-128).
         for (const id of finalComparisonAvailable ? [activeRun, compareRun] : [displayedRun]) {
-            const s = fieldStats[id + "/" + kind]
-            if (s && s[scalar]) {
-                lo = Math.min(lo, s[scalar].min)
-                hi = Math.max(hi, s[scalar].max)
+            for (const f of fieldChoices) {
+                if (f.scalar !== scalar)
+                    continue
+                const s = fieldStats[id + "/" + f.kind]
+                if (s && s[scalar]) {
+                    lo = Math.min(lo, s[scalar].min)
+                    hi = Math.max(hi, s[scalar].max)
+                }
             }
         }
         if (!isFinite(lo))
@@ -329,7 +346,7 @@ Pane {
             const parts = controller.execute("document.parts")
             if (parts.ok)
                 params.context = parts.result.parts
-                    .filter(p => p.id !== partInfo.id && p.visible && p.kind !== "sketch").map(p => p.id)
+                    .filter(p => p.id !== partInfo.id && p.visible && p.kind !== "sketch" && p.kind !== "plane").map(p => p.id)
         }
         const r = controller.execute("simulation.run", params)
         if (!r.ok) {
@@ -604,7 +621,7 @@ Pane {
                         Layout.fillWidth: true
                         text: qsTr("Run CFD")
                         highlighted: true
-                        enabled: !!root.partInfo.id && root.partInfo.kind !== "sketch"
+                        enabled: !!root.partInfo.id && root.partInfo.kind !== "sketch" && root.partInfo.kind !== "plane"
                         onClicked: root.startRun()
                     }
                     Label {

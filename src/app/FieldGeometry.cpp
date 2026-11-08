@@ -12,6 +12,7 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <numbers>
 
 namespace aerocad::app {
 
@@ -60,6 +61,17 @@ QColor FieldGeometry::mapColor(const QString& scalar, double t)
     return QColor(mix(0), mix(1), mix(2));
 }
 
+double FieldGeometry::scalePosition(const QString& scalar, double value, double lo, double hi)
+{
+    if (!std::isfinite(value))
+        return std::nan("");
+    const bool pressure = scalar == QLatin1String("Cp") || scalar == QLatin1String("pressure") ||
+                          scalar == QLatin1String("p");
+    if (pressure && lo < 0.0 && hi > 0.0)
+        return value < 0.0 ? 0.5 * (value - lo) / -lo : 0.5 + 0.5 * value / hi;
+    return hi > lo ? (value - lo) / (hi - lo) : 0.5;
+}
+
 FieldGeometry::FieldGeometry(QQuick3DObject* parent) : QQuick3DGeometry(parent) {}
 
 QVariantList FieldGeometry::colormap() const
@@ -75,7 +87,7 @@ void FieldGeometry::setController(AppController* controller)
     if (m_controller == controller)
         return;
     m_controller = controller;
-    reload();
+    schedule(true);
     emit changed();
 }
 
@@ -84,7 +96,7 @@ void FieldGeometry::setRun(const QString& run)
     if (m_run == run)
         return;
     m_run = run;
-    reload();
+    schedule(true);
     emit changed();
 }
 
@@ -93,7 +105,7 @@ void FieldGeometry::setKind(const QString& kind)
     if (m_kind == kind)
         return;
     m_kind = kind;
-    reload();
+    schedule(true);
     emit changed();
 }
 
@@ -102,7 +114,7 @@ void FieldGeometry::setScalar(const QString& scalar)
     if (m_scalar == scalar)
         return;
     m_scalar = scalar;
-    rebuild();
+    schedule(false);
     emit changed();
 }
 
@@ -111,7 +123,7 @@ void FieldGeometry::setRangeMin(double v)
     if (m_rangeMin == v)
         return;
     m_rangeMin = v;
-    rebuild();
+    schedule(false);
     emit changed();
 }
 
@@ -120,7 +132,16 @@ void FieldGeometry::setRangeMax(double v)
     if (m_rangeMax == v)
         return;
     m_rangeMax = v;
-    rebuild();
+    schedule(false);
+    emit changed();
+}
+
+void FieldGeometry::setTubeRadius(double r)
+{
+    if (m_tubeRadius == r)
+        return;
+    m_tubeRadius = r;
+    schedule(false);
     emit changed();
 }
 
@@ -129,7 +150,7 @@ void FieldGeometry::setRevision(int revision)
     if (m_revision == revision)
         return;
     m_revision = revision;
-    reload();
+    schedule(true);
     emit changed();
 }
 
@@ -146,16 +167,36 @@ void FieldGeometry::reload()
     rebuild();
 }
 
+void FieldGeometry::schedule(bool reloadFiles)
+{
+    // Setting several properties in a row (as QML does on creation) reads and builds once.
+    m_reloadPending = m_reloadPending || reloadFiles;
+    if (m_updatePending)
+        return;
+    m_updatePending = true;
+    QMetaObject::invokeMethod(this, [this] {
+        m_updatePending = false;
+        const bool files = m_reloadPending;
+        m_reloadPending = false;
+        if (files)
+            reload();
+        else
+            rebuild();
+    }, Qt::QueuedConnection);
+}
+
 void FieldGeometry::rebuild()
 {
     clear();
-    constexpr int floatsPerVertex = 7; // position + RGBA
-    setStride(floatsPerVertex * static_cast<int>(sizeof(float)));
+    constexpr int stride = kFloatsPerVertex * static_cast<int>(sizeof(float));
+    setStride(stride);
     addAttribute(QQuick3DGeometry::Attribute::PositionSemantic, 0, QQuick3DGeometry::Attribute::F32Type);
-    addAttribute(QQuick3DGeometry::Attribute::ColorSemantic, 3 * static_cast<int>(sizeof(float)),
+    addAttribute(QQuick3DGeometry::Attribute::NormalSemantic, 3 * static_cast<int>(sizeof(float)),
                  QQuick3DGeometry::Attribute::F32Type);
-    const bool lines = m_kind == QLatin1String("streamlines");
-    setPrimitiveType(lines ? QQuick3DGeometry::PrimitiveType::Lines : QQuick3DGeometry::PrimitiveType::Triangles);
+    addAttribute(QQuick3DGeometry::Attribute::ColorSemantic, 6 * static_cast<int>(sizeof(float)),
+                 QQuick3DGeometry::Attribute::F32Type);
+    addAttribute(QQuick3DGeometry::Attribute::IndexSemantic, 0, QQuick3DGeometry::Attribute::U32Type);
+    setPrimitiveType(QQuick3DGeometry::PrimitiveType::Triangles);
 
     const std::vector<double>* values = nullptr;
     if (auto it = m_data.scalars.find(m_scalar.toStdString()); it != m_data.scalars.end())
@@ -173,42 +214,123 @@ void FieldGeometry::rebuild()
     m_dataMax = hi;
     const double a = m_rangeMin < m_rangeMax ? m_rangeMin : lo;
     const double b = m_rangeMin < m_rangeMax ? m_rangeMax : hi;
-    const double span = b > a ? b - a : 1.0;
-
-    std::vector<std::uint32_t> order; // Vertex indices to emit.
-    if (lines) {
-        for (const auto& l : m_data.lines)
-            for (std::size_t i = 1; i < l.size(); ++i) {
-                order.push_back(l[i - 1]);
-                order.push_back(l[i]);
-            }
-    } else {
-        for (const auto& poly : m_data.polygons)
-            for (std::size_t i = 2; i < poly.size(); ++i) { // Fan triangulation (convex faces).
-                order.push_back(poly[0]);
-                order.push_back(poly[i - 1]);
-                order.push_back(poly[i]);
-            }
-    }
-
-    QByteArray buffer(static_cast<qsizetype>(order.size()) * floatsPerVertex * static_cast<qsizetype>(sizeof(float)),
-                      Qt::Uninitialized);
-    auto* out = reinterpret_cast<float*>(buffer.data());
-    core::BoundingBox box;
-    for (const std::uint32_t idx : order) {
-        const core::Vec3& p = m_data.points[idx];
-        box.extend(p);
+    auto colorOf = [&](std::uint32_t idx) {
         const double v = values != nullptr && idx < values->size() ? (*values)[idx] : std::nan("");
-        const QColor c = mapColor(m_scalar, (v - a) / span);
-        *out++ = static_cast<float>(p.x);
-        *out++ = static_cast<float>(p.y);
-        *out++ = static_cast<float>(p.z);
-        *out++ = static_cast<float>(c.redF());
-        *out++ = static_cast<float>(c.greenF());
-        *out++ = static_cast<float>(c.blueF());
-        *out++ = 1.0F;
+        return mapColor(m_scalar, scalePosition(m_scalar, v, a, b));
+    };
+
+    std::vector<float> vertices;
+    std::vector<std::uint32_t> indices;
+    core::BoundingBox box;
+    auto pushVertex = [&](const core::Vec3& p, const core::Vec3& n, const QColor& c) {
+        box.extend(p);
+        vertices.insert(vertices.end(), {static_cast<float>(p.x), static_cast<float>(p.y), static_cast<float>(p.z),
+                                         static_cast<float>(n.x), static_cast<float>(n.y), static_cast<float>(n.z),
+                                         static_cast<float>(c.redF()), static_cast<float>(c.greenF()),
+                                         static_cast<float>(c.blueF()), 1.0F});
+    };
+
+    if (m_kind == QLatin1String("streamlines")) {
+        // Tubes: a ring of kSides vertices per kept point, framed by parallel transport so
+        // the tube does not twist; points closer than a radius to the last kept one are skipped.
+        core::BoundingBox extent;
+        for (const auto& p : m_data.points)
+            extent.extend(p);
+        const double radius = m_tubeRadius > 0 ? m_tubeRadius : std::max(1e-3, 0.004 * extent.diagonal());
+        constexpr int kSides = 8;
+        for (const auto& line : m_data.lines) {
+            std::vector<std::uint32_t> kept;
+            for (const auto idx : line) {
+                if (idx >= m_data.points.size())
+                    continue;
+                if (kept.empty() || (m_data.points[idx] - m_data.points[kept.back()]).length() >= radius * 1.5)
+                    kept.push_back(idx);
+            }
+            if (kept.size() < 2)
+                continue;
+            core::Vec3 normal;
+            for (std::size_t i = 0; i < kept.size(); ++i) {
+                const core::Vec3& p = m_data.points[kept[i]];
+                const core::Vec3& prev = m_data.points[kept[i == 0 ? 0 : i - 1]];
+                const core::Vec3& next = m_data.points[kept[std::min(i + 1, kept.size() - 1)]];
+                core::Vec3 t = next - prev;
+                if (t.length() <= 0)
+                    continue;
+                t = t * (1.0 / t.length());
+                if (i == 0) {
+                    const core::Vec3 up = std::abs(t.z) < 0.9 ? core::Vec3{0, 0, 1} : core::Vec3{1, 0, 0};
+                    normal = t.cross(up);
+                } else {
+                    normal = normal - t * normal.dot(t); // Parallel transport.
+                }
+                if (normal.length() < 1e-12)
+                    normal = t.cross(std::abs(t.z) < 0.9 ? core::Vec3{0, 0, 1} : core::Vec3{1, 0, 0});
+                normal = normal * (1.0 / normal.length());
+                const core::Vec3 binormal = t.cross(normal);
+                const QColor c = colorOf(kept[i]);
+                const auto base = static_cast<std::uint32_t>(vertices.size() / kFloatsPerVertex);
+                for (int k = 0; k < kSides; ++k) {
+                    const double ang = 2.0 * std::numbers::pi * k / kSides;
+                    const core::Vec3 n = normal * std::cos(ang) + binormal * std::sin(ang);
+                    pushVertex(p + n * radius, n, c);
+                }
+                if (i > 0) {
+                    const std::uint32_t prevBase = base - kSides;
+                    for (std::uint32_t k = 0; k < kSides; ++k) {
+                        const std::uint32_t k1 = (k + 1) % kSides;
+                        indices.insert(indices.end(), {prevBase + k, prevBase + k1, base + k1, prevBase + k, base + k1, base + k});
+                    }
+                }
+            }
+        }
+    } else {
+        // Indexed surface: one vertex per point with an area-weighted normal.
+        const std::size_t n = m_data.points.size();
+        std::vector<core::Vec3> normals(n);
+        for (const auto& poly : m_data.polygons) {
+            if (poly.size() < 3 || std::any_of(poly.begin(), poly.end(), [n](std::uint32_t i) { return i >= n; }))
+                continue;
+            core::Vec3 area; // Newell's method.
+            for (std::size_t i = 0; i < poly.size(); ++i) {
+                const core::Vec3& p = m_data.points[poly[i]];
+                const core::Vec3& q = m_data.points[poly[(i + 1) % poly.size()]];
+                area = area + p.cross(q);
+            }
+            for (const auto i : poly)
+                normals[i] = normals[i] + area;
+            for (std::size_t i = 2; i < poly.size(); ++i) // Fan triangulation (convex faces).
+                indices.insert(indices.end(), {poly[0], poly[i - 1], poly[i]});
+        }
+        // The part's surface is closed around its centre: orient the normals outwards
+        // (OpenFOAM's patch faces may point either way depending on the writer).
+        bool flip = false;
+        if (m_kind == QLatin1String("surface") && n > 0) {
+            core::Vec3 centre;
+            for (const auto& p : m_data.points)
+                centre = centre + p;
+            centre = centre * (1.0 / static_cast<double>(n));
+            double outward = 0.0;
+            for (std::size_t i = 0; i < n; ++i)
+                outward += normals[i].dot(m_data.points[i] - centre);
+            flip = outward < 0.0;
+        }
+        // Qt Quick 3D lights the back of a two-sided face with the reversed normal, so the
+        // triangles must wind counter-clockwise around the outward normal too.
+        if (flip)
+            for (std::size_t i = 0; i + 2 < indices.size(); i += 3)
+                std::swap(indices[i + 1], indices[i + 2]);
+        for (std::size_t i = 0; i < n; ++i) {
+            core::Vec3 nn = normals[i];
+            const double len = nn.length();
+            nn = len > 0 ? nn * ((flip ? -1.0 : 1.0) / len) : core::Vec3{0, 0, 1};
+            pushVertex(m_data.points[i], nn, colorOf(static_cast<std::uint32_t>(i)));
+        }
     }
-    setVertexData(buffer);
+
+    setVertexData(QByteArray(reinterpret_cast<const char*>(vertices.data()),
+                             static_cast<qsizetype>(vertices.size() * sizeof(float))));
+    setIndexData(QByteArray(reinterpret_cast<const char*>(indices.data()),
+                            static_cast<qsizetype>(indices.size() * sizeof(std::uint32_t))));
     if (!box.isEmpty())
         setBounds(QVector3D(static_cast<float>(box.min.x), static_cast<float>(box.min.y), static_cast<float>(box.min.z)),
                   QVector3D(static_cast<float>(box.max.x), static_cast<float>(box.max.y), static_cast<float>(box.max.z)));

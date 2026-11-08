@@ -684,11 +684,16 @@ Item {
                 }
             }
 
-            // Simulation results, coloured per vertex and unlit so colours match the legend.
+            // Simulation results, coloured per vertex. The pressure map and the streamline
+            // tubes are lit so their shape reads; sections are flat and unlit so their colours
+            // match the legend exactly (CAD-129).
             Repeater3D {
                 model: root.simulationFields
                 delegate: Model {
+                    id: fieldModel
                     required property var modelData
+                    readonly property bool flat: modelData.kind.indexOf("section") === 0
+                    objectName: "simulationField_" + modelData.kind
                     pickable: false
                     geometry: FieldGeometry {
                         controller: root.controller
@@ -697,12 +702,13 @@ Item {
                         scalar: modelData.scalar
                         rangeMin: modelData.min
                         rangeMax: modelData.max
+                        tubeRadius: modelData.tubeRadius ?? 0
                     }
                     materials: DefaultMaterial {
                         vertexColorsEnabled: true
-                        lighting: DefaultMaterial.NoLighting
+                        lighting: fieldModel.flat ? DefaultMaterial.NoLighting : DefaultMaterial.FragmentLighting
+                        specularAmount: 0.15
                         cullMode: Material.NoCulling
-                        lineWidth: 2
                     }
                 }
             }

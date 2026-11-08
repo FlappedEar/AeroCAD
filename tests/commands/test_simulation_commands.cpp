@@ -214,6 +214,36 @@ TEST_CASE("simulation.propose_run and a prepared run", "[commands][simulation]")
     CHECK_FALSE(session.execute("simulation.import", {{"path", dir.path().string()}}).ok);
 }
 
+TEST_CASE("construction planes are not walls in the flow (CAD-130)", "[commands][simulation]")
+{
+    RunsDir dir;
+    commands::Session session;
+    const auto id = importBox(session);
+    auto r = session.execute("simulation.run", {{"id", id}, {"prepareOnly", true}});
+    REQUIRE(r.ok);
+    const std::string alone = r.data.at("id");
+
+    auto plane = session.execute("feature.plane", {{"base", "XZ"}, {"offset", 200}});
+    REQUIRE(plane.ok);
+    std::uint64_t planeId = 0;
+    for (const auto& p : session.document().parts())
+        if (p.kind == model::PartKind::Plane)
+            planeId = p.id;
+    REQUIRE(planeId != 0);
+
+    // As other geometry in the flow it is left out: the same case as the part alone.
+    r = session.execute("simulation.run", {{"id", id}, {"context", {planeId}}, {"prepareOnly", true}});
+    REQUIRE(r.ok);
+    const std::string withPlane = r.data.at("id");
+    CHECK(session.simulations().caseInfo(withPlane)->geometryHash ==
+          session.simulations().caseInfo(alone)->geometryHash);
+
+    // As the part to simulate it is refused.
+    r = session.execute("simulation.run", {{"id", planeId}, {"prepareOnly", true}});
+    CHECK_FALSE(r.ok);
+    CHECK(r.error.find("construction plane") != std::string::npos);
+}
+
 TEST_CASE("simulation results require successful completion independently of output files", "[commands][simulation]")
 {
     const std::string state = GENERATE("prepared", "running", "interrupted", "cancelled", "failed", "finished");
