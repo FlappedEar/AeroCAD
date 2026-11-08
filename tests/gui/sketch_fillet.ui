@@ -1,0 +1,16 @@
+# CAD-126: Sketch Fillet (Fusion): click a corner of two lines; it is rounded with a tangent
+# arc whose radius is a dimension.
+# Run: AeroCAD --ui-script <this file>
+ui.wait(800)
+(() => { const r = controller.execute("sketch.create", { plane: "XY", curves: [{ type: "rectangle", corner: [0, 0], width: 40, height: 20 }] }); if (!r.ok) ui.fail("sketch: " + r.error) })()
+ui.wait(300)
+(() => { enterSketch(controller.execute("timeline.list").result.features[0].id) })()
+ui.wait(800)
+(() => { if (!ui.clickText("Fillet")) ui.fail("no Fillet button") })()
+ui.wait(300)
+(() => { if (sketchTool !== "fillet") ui.fail("Fillet did not start: " + sketchTool) })()
+# The corner at (40, 20).
+(() => { const o = viewport.sketchOverlay; const p = o.toScreen([40, 20]); const w = o.mapToItem(null, p.x, p.y); ui.click(w.x, w.y) })()
+ui.wait(500)
+(() => { const r = controller.execute("sketch.curves", { sketch: activeSketch.id }).result; const arc = r.curves.find(c => c.kind === "arc"); ui.log("curves " + r.curves.map(c => c.kind).join(",") + "; constraints " + r.constraints.map(c => c.type).join(",")); if (!arc) ui.fail("no fillet arc"); const rad = arc ? Math.hypot(arc.points[0][0] - arc.center[0], arc.points[0][1] - arc.center[1]) : 0; if (Math.abs(rad - 5) > 1e-6) ui.fail("radius " + rad); if (!r.constraints.some(c => c.type === "radius")) ui.fail("no radius dimension"); if (controller.execute("sketch.profiles", { sketch: activeSketch.id }).result.profiles.length !== 1) ui.fail("the outline is no longer closed") })()
+ui.shot("sketch-fillet.png")

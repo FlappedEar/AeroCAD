@@ -1,0 +1,29 @@
+# Camera feel as in Fusion, with real mouse input (box_200x80x60.stl):
+#  - wheel zoom keeps the point under the pointer where it is;
+#  - a middle-button pan (and Shift + right drag) keeps the grabbed point of the model under
+#    the pointer, also when it is nearer than the pivot and in the parallel view; the
+#    movement before the drag threshold counts too;
+#  - Shift + middle orbit turns about the point under the pointer;
+#  - zoomed deep into a 4 m part, the clipping planes hug the part (near / far under 1:100000,
+#    so near surfaces do not flicker through each other), and the part is still drawn.
+# Run: AeroCAD tests/data/box_200x80x60.stl --ui-script <this file>
+Qt.createQmlObject('import QtQuick; Item { objectName: "cf"; visible: false; property var s: ({}); function toModel(p) { return Qt.vector3d(p.x, -p.z, p.y) } function win(x, y) { return viewport.mapToItem(null, x, y) } function drift(label, scene, vx, vy, tol) { const v = viewport.viewPoint(toModel(scene)); const d = Math.hypot(v.x - vx, v.y - vy); ui.log(label + ": drift " + d.toFixed(2) + " px"); if (!(d <= tol)) ui.fail(label + ": the point moved " + d.toFixed(1) + " px away from the pointer") } function grab(fx, fy) { const x = viewport.width * fx, y = viewport.height * fy; const p = viewport.scenePointUnder(x, y, true); if (!p) ui.fail("no model under " + fx + "," + fy); return { x: x, y: y, p: p } } }', window.contentItem)
+ui.wait(800)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cf"); viewport.fitAll(); t.s.a = t.grab(0.62, 0.45); const w = t.win(t.s.a.x, t.s.a.y); for (let i = 0; i < 10; ++i) ui.mouseWheel(w.x, w.y, 1) })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cf"); t.drift("wheel zoom", t.s.a.p, t.s.a.x, t.s.a.y, 0.5); t.s.b = t.grab(0.3, 0.6); const w = t.win(t.s.b.x, t.s.b.y); ui.drag(w.x, w.y, w.x + 120, w.y - 60, "middle", "", 20) })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cf"); t.drift("middle pan", t.s.b.p, t.s.b.x + 120, t.s.b.y - 60, 0.5); t.s.c = t.grab(0.5, 0.5); const w = t.win(t.s.c.x, t.s.c.y); ui.drag(w.x, w.y, w.x - 90, w.y + 70, "right", "shift", 20) })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cf"); t.drift("Shift + right pan", t.s.c.p, t.s.c.x - 90, t.s.c.y + 70, 0.5); t.s.d = t.grab(0.4, 0.5); const w = t.win(t.s.d.x, t.s.d.y); ui.drag(w.x, w.y, w.x + 100, w.y + 40, "middle", "shift", 20) })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cf"); t.drift("orbit", t.s.d.p, t.s.d.x, t.s.d.y, 0.5); viewport.orthographic = true })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cf"); t.s.e = t.grab(0.5, 0.5); const w = t.win(t.s.e.x, t.s.e.y); ui.drag(w.x, w.y, w.x + 100, w.y + 50, "middle", "", 20) })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cf"); t.drift("parallel view pan", t.s.e.p, t.s.e.x + 100, t.s.e.y + 50, 0.5); viewport.orthographic = false; const id = controller.execute("document.parts").result.parts[0].id; const r = controller.execute("part.transform", { id: id, scale: 20 }); if (!r.ok) ui.fail("scale: " + r.error); viewport.fitAll() })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cf"); t.s.f = t.grab(0.5, 0.5); const w = t.win(t.s.f.x, t.s.f.y); for (let i = 0; i < 40; ++i) ui.mouseWheel(w.x, w.y, 1) })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cf"); const c = viewport.clipRange(); const st = viewport.cameraState(); ui.log("deep zoom into a 4 m part: distance " + st.distance.toFixed(2) + ", near " + c.near.toFixed(3) + ", far " + c.far.toFixed(0) + ", ratio " + (c.far / c.near).toFixed(0)); if (c.far / c.near > 1e5) ui.fail("near / far clipping ratio " + (c.far / c.near).toFixed(0) + ": no depth precision left"); if (c.near >= st.distance * 0.9) ui.fail("the near plane cuts what is looked at"); t.drift("deep zoom", t.s.f.p, t.s.f.x, t.s.f.y, 0.5); if (!viewport.scenePointUnder(t.s.f.x, t.s.f.y, true)) ui.fail("the part under the pointer is gone") })()
+ui.shot("build/camera-deep-zoom.png")

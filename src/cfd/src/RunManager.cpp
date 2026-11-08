@@ -378,6 +378,8 @@ struct RunManager::Run {
     std::vector<std::string> queuedArgv; ///< Engine command of a run waiting for processors.
     std::uint64_t queueOrder = 0;        ///< Submission order of a queued run (first in, first out).
     std::string launchError;             ///< Why a queued run could not start.
+    /// When this manager started the engine on this computer (for the elapsed time).
+    std::optional<std::chrono::steady_clock::time_point> started;
     RunStatus status;
 };
 
@@ -660,6 +662,8 @@ Json RunStatus::toJson() const
                 {"maxIterations", maxIterations},
                 {"message", message},
                 {"created", created},
+                {"elapsedSeconds", elapsedSeconds ? Json(*elapsedSeconds) : Json(nullptr)},
+                {"remainingSeconds", remainingSeconds ? Json(*remainingSeconds) : Json(nullptr)},
                 {"backend", backendName(backend)},
                 {"caseDir", caseDir.string()},
                 {"source", sourceJson(source)},
@@ -870,6 +874,7 @@ std::string RunManager::start(const CaseGeometry& geometry, const Settings& sett
     }
     std::ofstream(run.caseDir / "aerocad.stage") << "starting\n";
     run.process = Process::start(argv, run.caseDir, run.dir / "log.aerocad");
+    run.started = std::chrono::steady_clock::now();
     return id;
 }
 
@@ -899,6 +904,7 @@ void RunManager::startQueued()
         try {
             std::ofstream(run->caseDir / "aerocad.stage") << "starting\n";
             run->process = Process::start(argv, run->caseDir, run->dir / "log.aerocad");
+            run->started = std::chrono::steady_clock::now();
         } catch (const std::exception& e) {
             // One run that cannot start must not block listing, cancelling or deleting the others.
             run->launchError = e.what();
@@ -938,6 +944,7 @@ void RunManager::refresh(Run& run)
     s.backend = run.backend;
     s.caseDir = run.caseDir;
     s.message.clear();
+    s.elapsedSeconds = s.remainingSeconds = std::nullopt;
 
     if (run.stopper)
         run.stopper->running();
@@ -1023,6 +1030,26 @@ void RunManager::refresh(Run& run)
     if (s.stage == "starting" && s.state == RunState::Running)
         s.message = "Starting OpenFOAM (the first run downloads the image, this can take a few minutes)...";
     s.progress = p;
+
+    // Time so far and, while solving, an upper bound of the time left (CAD-149): the solver
+    // stops at the iteration limit at the latest, often sooner when it converges. Its speed is
+    // measured from the end of the initialisation (potentialFoam's log) to now.
+    if (s.state == RunState::Running) {
+        if (run.started && processRunning) {
+            const auto elapsed = std::chrono::steady_clock::now() - *run.started;
+            s.elapsedSeconds = static_cast<int>(std::chrono::duration_cast<std::chrono::seconds>(elapsed).count());
+        }
+        // Also for a run followed from an earlier session: only the case's files are needed.
+        if (s.stage == "solve" && s.iteration >= 10 && s.maxIterations > s.iteration) {
+            const auto init = fs::last_write_time(run.caseDir / "log.potentialFoam", ec);
+            if (!ec) {
+                const double solving = std::chrono::duration<double>(fs::file_time_type::clock::now() - init).count();
+                if (solving >= 5.0)
+                    s.remainingSeconds =
+                        static_cast<int>(std::ceil(solving / s.iteration * (s.maxIterations - s.iteration)));
+            }
+        }
+    }
 }
 
 std::vector<RunStatus> RunManager::list()

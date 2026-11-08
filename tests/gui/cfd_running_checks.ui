@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CAD-150: while a run is still running, Results does not judge it: the badge says the checks
+# come after the run, in neutral grey, and no per-check warnings are listed (every check is
+# still missing then), nor reasons why final results are missing. Uses tests/gui/fake-docker.sh as the engine: the run only sleeps.
+Qt.createQmlObject('import QtQuick; Item { objectName: "cfTest"; visible: false; function find(i, name) { if (!i) return null; if (i.objectName === name) return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = find(ch[k], name); if (r) return r } return null } function findText(i, prefix) { if (!i) return null; if (i.visible && typeof i.text === "string" && i.text.indexOf(prefix) === 0) return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = findText(ch[k], prefix); if (r) return r } return null } }', window.contentItem)
+ui.wait(800)
+(() => { for (const r of controller.execute("simulation.list").result.runs) controller.execute("simulation.delete", { run: r.id }) })()
+(() => { const p = controller.execute("document.parts").result.parts[0]; window.selectPart(p.id) })()
+ui.clickText("SIMULATE")
+ui.wait(300)
+ui.clickText("Wind Tunnel")
+ui.wait(800)
+ui.clickText("Run CFD")
+ui.wait(1500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); ui.log("state " + simulationPanel.activeStatus.state + ", tab " + simulationPanel.tab); if (simulationPanel.activeStatus.state !== "running") ui.fail("the run is not running"); const warn = t.findText(simulationPanel, "⚠ "); if (warn) ui.fail("a quality warning is listed while running: " + warn.text) })()
+ui.clickText("checks: after the run")
+ui.clickText("Final results when the run has finished")
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const r = t.findText(simulationPanel, "The run has not finished"); if (r) ui.fail("a final-results reason is listed while running: " + r.text) })()
+ui.shot("cfd-running-checks.png")
+(() => { controller.execute("simulation.cancel", { run: simulationPanel.activeRun }) })()
+ui.wait(1500)
+(() => { simulationPanel.refreshRuns(); ui.log("after cancel: " + simulationPanel.activeStatus.state) })()
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); if (t.findText(simulationPanel, "checks: after the run")) ui.fail("the badge still waits after the run ended") })()
+ui.log("cfd running checks done")

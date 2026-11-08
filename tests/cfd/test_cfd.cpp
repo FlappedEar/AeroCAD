@@ -1390,6 +1390,73 @@ TEST_CASE("Queued runs start in submission order, and one that cannot start does
     restore("AEROCAD_ENGINE_HOST", oldHost);
     restore("AEROCAD_CFD_DIR", oldDir);
 }
+
+TEST_CASE("A running run reports the time so far and at most how long is left (CAD-149)", "[cfd]")
+{
+    TempDir root;
+    TempDir bin;
+    const fs::path docker = bin.path() / "docker";
+    write(docker, "#!/bin/sh\ncase \"$1\" in\n  info) echo 4 ;;\n  image) echo sha256:0 ;;\n"
+                  "  run) exec sleep 30 ;;\nesac\nexit 0\n");
+    fs::permissions(docker, fs::perms::owner_all, fs::perm_options::add);
+    const auto keep = [](const char* name) {
+        const char* v = std::getenv(name);
+        return v != nullptr ? std::optional<std::string>(v) : std::nullopt;
+    };
+    const auto oldDocker = keep("AEROCAD_DOCKER"), oldHost = keep("AEROCAD_ENGINE_HOST"),
+               oldDir = keep("AEROCAD_CFD_DIR");
+    ::setenv("AEROCAD_DOCKER", docker.c_str(), 1);
+    ::setenv("AEROCAD_CFD_DIR", root.path().c_str(), 1);
+    ::unsetenv("AEROCAD_ENGINE_HOST");
+
+    cfd::RunManager runs(root.path());
+    cfd::CaseGeometry g;
+    g.part = box({0, 0, 0}, {200, 80, 60});
+    const std::string id = runs.start(g, cfd::Settings{}, {}, cfd::Backend::Docker);
+    auto st = runs.status(id);
+    REQUIRE(st->state == cfd::RunState::Running);
+    REQUIRE(st->elapsedSeconds.has_value());
+    CHECK(*st->elapsedSeconds >= 0);
+    CHECK_FALSE(st->remainingSeconds.has_value()); // Not solving yet: unknown.
+    CHECK(st->toJson().at("remainingSeconds").is_null());
+
+    // Solving: 100 of the iterations done in the 50 s since the initialisation ended.
+    const fs::path dir = st->caseDir;
+    write(dir / "aerocad.stage", "solve\n");
+    std::ostringstream coeffs;
+    coeffs << "# Force and moment coefficients\n# Time Cd Cl Cs\n";
+    for (int i = 1; i <= 100; ++i)
+        coeffs << i << " 0.8 0.1 0.01\n";
+    write(dir / "postProcessing" / "forceCoeffs" / "0" / "coefficient.dat", coeffs.str());
+    write(dir / "log.potentialFoam", "End\n");
+    fs::last_write_time(dir / "log.potentialFoam", fs::file_time_type::clock::now() - std::chrono::seconds(50));
+    st = runs.status(id);
+    REQUIRE(st->iteration == 100);
+    REQUIRE(st->maxIterations > 100);
+    REQUIRE(st->remainingSeconds.has_value());
+    const double expected = 50.0 / 100.0 * (st->maxIterations - 100);
+    CHECK(*st->remainingSeconds >= expected - 1);
+    CHECK(*st->remainingSeconds <= expected + 3);
+    CHECK(st->toJson().at("remainingSeconds") == *st->remainingSeconds);
+
+    // Finished or stopped runs have no running time.
+    REQUIRE(runs.cancel(id));
+    for (int i = 0; i < 50 && runs.status(id)->state == cfd::RunState::Running; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    st = runs.status(id);
+    CHECK_FALSE(st->elapsedSeconds.has_value());
+    CHECK_FALSE(st->remainingSeconds.has_value());
+
+    const auto restore = [](const char* name, const std::optional<std::string>& v) {
+        if (v)
+            ::setenv(name, v->c_str(), 1);
+        else
+            ::unsetenv(name);
+    };
+    restore("AEROCAD_DOCKER", oldDocker);
+    restore("AEROCAD_ENGINE_HOST", oldHost);
+    restore("AEROCAD_CFD_DIR", oldDir);
+}
 #endif
 
 TEST_CASE("Remote engine host: validation and docker command line", "[cfd]")

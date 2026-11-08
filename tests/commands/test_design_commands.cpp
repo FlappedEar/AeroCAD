@@ -6,6 +6,7 @@
 
 #include <cmath>
 #include <numbers>
+#include <set>
 
 using namespace aerocad;
 using commands::Json;
@@ -770,4 +771,260 @@ TEST_CASE("Design commands: dragging keeps expressions and regular polygons (CAD
         const auto& p = c.at("curves")[i].at("points")[0];
         CHECK(std::hypot(p[0].get<double>() - cx, p[1].get<double>() - cy) == Approx(r0).epsilon(1e-6));
     }
+}
+
+TEST_CASE("Design commands: extrude to object (CAD-125)", "[commands][cad]")
+{
+    commands::Session s;
+    // A round bar along X at z = 30 (radius 10) and a 10 x 10 square under it.
+    const auto barSketch = run(s, "sketch.create",
+                               {{"plane", "YZ"},
+                                {"curves", Json::array({{{"type", "circle"}, {"center", {0, 30}}, {"radius", 10}}})}})
+                               .at("id")
+                               .get<std::uint64_t>();
+    const auto bar = run(s, "feature.extrude", {{"sketch", barSketch}, {"distance", 20}, {"extent", "symmetric"}})
+                         .at("id")
+                         .get<std::uint64_t>();
+    const auto sq = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "center_rectangle"}, {"center", {0, 0}}, {"width", 10}, {"height", 10}}})}})
+                        .at("id")
+                        .get<std::uint64_t>();
+
+    // Up to the bar: the top follows its round underside.
+    // V = 10 * (10 * 30 - integral of sqrt(100 - y^2) over [-5, 5]).
+    const double expected = 10.0 * (300.0 - (5.0 * std::sqrt(75.0) + 100.0 * std::asin(0.5)));
+    Json ex = run(s, "feature.extrude", {{"sketch", sq}, {"extent", "to_object"}, {"to", {{"body", bar}}}});
+    REQUIRE(ex.at("bodies").size() == 2); // the bar and the new body
+    CHECK(ex.at("bodies").back().at("volume").get<double>() == Approx(expected).epsilon(1e-4));
+    const auto ext = ex.at("id").get<std::uint64_t>();
+
+    // The other way (flip) nothing is there: an error, nothing built.
+    const auto bad = s.execute("feature.edit", {{"id", ext}, {"params", {{"flip", true}}}});
+    CHECK_FALSE(bad.ok);
+
+    // Up to a picked flat face: the bar's end cap is not in the way, a box top is.
+    run(s, "edit.undo"); // the extrude
+    const auto box = run(s, "feature.box", {{"corner", {-20, -20, 12}}, {"size", {40, 40, 3}}}).at("id").get<std::uint64_t>();
+    (void)box;
+    ex = run(s, "feature.extrude",
+             {{"sketch", sq}, {"extent", "to_object"}, {"to", {{"body", box}, {"faces", Json::array({{{"point", {0, 0, 15}}}})}}}});
+    // Through the box (its top face at z = 15 picked): 10 x 10 x 15.
+    CHECK(ex.at("bodies").back().at("volume").get<double>() == Approx(1500).epsilon(1e-6));
+    // The picked top face is followed when the box gets taller (z 12..20): the old pick point
+    // (z = 15) is now nearer the bottom, but the hints keep the top.
+    run(s, "feature.edit", {{"id", box}, {"params", {{"size", {40, 40, 8}}}}});
+    Json bodiesNow = run(s, "timeline.list").at("bodies");
+    CHECK(bodiesNow.back().at("volume").get<double>() == Approx(2000).epsilon(1e-6));
+    run(s, "feature.edit", {{"id", box}, {"params", {{"size", {40, 40, 3}}}}});
+
+    // A target narrower than the profile does not stop all of it: refused, not a column
+    // running past the object.
+    const auto wide = run(s, "sketch.create",
+                          {{"plane", "XY"},
+                           {"curves", Json::array({{{"type", "center_rectangle"}, {"center", {100, 0}}, {"width", 20}, {"height", 20}}})}})
+                          .at("id")
+                          .get<std::uint64_t>();
+    const auto small = run(s, "feature.box", {{"corner", {95, -5, 20}}, {"size", {10, 10, 10}}}).at("id").get<std::uint64_t>();
+    CHECK_FALSE(s.execute("feature.extrude", {{"sketch", wide}, {"extent", "to_object"}, {"to", {{"body", small}}}}).ok);
+}
+
+TEST_CASE("Design commands: construction curves (CAD-126)", "[commands][cad]")
+{
+    commands::Session s;
+    const Json sk = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "rectangle"}, {"corner", {0, 0}}, {"width", 40}, {"height", 20}},
+                                                 {{"type", "line"}, {"start", {0, 0}}, {"end", {40, 20}}}})}});
+    const auto id = sk.at("id").get<std::uint64_t>();
+    CHECK(sk.at("profiles") == 2); // the diagonal splits the rectangle
+
+    // The diagonal as construction: one profile again; indices do not change.
+    Json r = run(s, "sketch.set_construction", {{"sketch", id}, {"curves", {4}}});
+    CHECK(r.at("profiles") == 1);
+    Json c = run(s, "sketch.curves", {{"sketch", id}});
+    CHECK(c.at("curves")[4].at("construction") == true);
+    CHECK(c.at("curves")[0].at("construction") == false);
+
+    // One side of the rectangle: the shape keeps its constraints (still a rectangle when a
+    // side is dimensioned), and the outline is open: no profile.
+    r = run(s, "sketch.set_construction", {{"sketch", id}, {"curves", {2}}});
+    CHECK(r.at("profiles") == 0);
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    CHECK(c.at("curves").size() == 5);
+    CHECK(c.at("curves")[2].at("construction") == true);
+    run(s, "sketch.add_constraints", {{"sketch", id}, {"constraints", Json::array({{{"type", "length"}, {"curve", 1}, {"value", 30}}})}});
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    const auto& left = c.at("curves")[3].at("points");
+    CHECK(std::abs(left[0][1].get<double>() - left[1][1].get<double>()) == Approx(30).margin(1e-4)); // parallel sides follow
+
+    // Back to normal: the outline closes again; one undo step each.
+    run(s, "sketch.set_construction", {{"sketch", id}, {"curves", {2}}, {"construction", false}});
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    CHECK(c.at("curves")[2].at("construction") == false);
+    run(s, "edit.undo");
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    CHECK(c.at("curves")[2].at("construction") == true);
+}
+
+TEST_CASE("Design commands: trim sketch curves (CAD-126)", "[commands][cad]")
+{
+    commands::Session s;
+    // A plus sign: two lines crossing at (0, 0), and a circle of radius 10 through both.
+    const auto id = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "line"}, {"start", {-20, 0}}, {"end", {20, 0}}},
+                                                 {{"type", "line"}, {"start", {0, -20}}, {"end", {0, 20}}},
+                                                 {{"type", "circle"}, {"center", {0, 0}}, {"radius", 10}}})}})
+                        .at("id")
+                        .get<std::uint64_t>();
+    auto lineLength = [](const Json& c) {
+        const auto& p = c.at("points");
+        return std::hypot(p[1][0].get<double>() - p[0][0].get<double>(), p[1][1].get<double>() - p[0][1].get<double>());
+    };
+
+    // The horizontal line's end outside the circle (x 10..20) goes.
+    run(s, "sketch.trim", {{"sketch", id}, {"curve", 0}, {"at", {15, 0.3}}});
+    Json c = run(s, "sketch.curves", {{"sketch", id}});
+    REQUIRE(c.at("curves").size() == 3);
+    // Line 0 is now the remaining piece -20..10 (added at the end).
+    const auto& last = c.at("curves")[2];
+    CHECK(last.at("kind") == "line");
+    CHECK(lineLength(last) == Approx(30).margin(1e-6));
+
+    // The circle's quarter between the two lines (upper right) goes: a 270 degree arc stays.
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    std::size_t circle = 0;
+    for (std::size_t i = 0; i < c.at("curves").size(); ++i)
+        if (c.at("curves")[i].at("kind") == "circle")
+            circle = i;
+    run(s, "sketch.trim", {{"sketch", id}, {"curve", circle}, {"at", {7, 7}}});
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    bool arc = false;
+    for (const auto& k : c.at("curves")) {
+        if (k.at("kind") != "arc")
+            continue;
+        arc = true;
+        const auto& p = k.at("points");
+        // From (0, 10) round the left to (10, 0): the through point is at (-10, 0)-ish side.
+        CHECK(p[1][0].get<double>() < 0);
+        const std::set<std::pair<long, long>> ends{{std::lround(p[0][0].get<double>()), std::lround(p[0][1].get<double>())},
+                                                   {std::lround(p[2][0].get<double>()), std::lround(p[2][1].get<double>())}};
+        CHECK(ends == std::set<std::pair<long, long>>{{0, 10}, {10, 0}});
+    }
+    CHECK(arc);
+
+    // A line that crosses nothing is removed whole; one undo step.
+    const std::size_t before = c.at("curves").size();
+    run(s, "sketch.add_curves", {{"sketch", id}, {"curves", Json::array({{{"type", "line"}, {"start", {50, 50}}, {"end", {60, 50}}}})}});
+    run(s, "sketch.trim", {{"sketch", id}, {"curve", before}, {"at", {55, 50}}});
+    CHECK(run(s, "sketch.curves", {{"sketch", id}}).at("curves").size() == before);
+    run(s, "edit.undo");
+    CHECK(run(s, "sketch.curves", {{"sketch", id}}).at("curves").size() == before + 1);
+}
+
+TEST_CASE("Design commands: mirror sketch curves (CAD-126)", "[commands][cad][solver]")
+{
+    commands::Session s;
+    // A vertical centre line at x = 0, a triangle on its right and a circle.
+    const auto id = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "line"}, {"start", {0, -30}}, {"end", {0, 30}}, {"construction", true}},
+                                                 {{"type", "line"}, {"start", {0, 0}}, {"end", {20, 0}}},
+                                                 {{"type", "line"}, {"start", {20, 0}}, {"end", {0, 15}}},
+                                                 {{"type", "circle"}, {"center", {10, 20}}, {"radius", 3}}})}})
+                        .at("id")
+                        .get<std::uint64_t>();
+    run(s, "sketch.mirror", {{"sketch", id}, {"curves", {1, 2, 3}}, {"line", 0}});
+    Json c = run(s, "sketch.curves", {{"sketch", id}});
+    REQUIRE(c.at("curves").size() == 7);
+    CHECK(c.at("curves")[4].at("points")[1][0].get<double>() == Approx(-20).margin(1e-6));
+    CHECK(c.at("curves")[6].at("points")[0][0].get<double>() == Approx(-10).margin(1e-6));
+    CHECK(c.at("curves")[6].at("radius").get<double>() == Approx(3).margin(1e-6));
+    // Closed with the mirrored side: one triangle profile (two halves) plus the circles.
+    CHECK(run(s, "sketch.profiles", {{"sketch", id}}).at("profiles").size() >= 3);
+
+    // The copies follow: a dimension on the original moves the mirrored point too (the
+    // mirror line is fixed, else the solver may move it as well).
+    run(s, "sketch.add_constraints",
+        {{"sketch", id}, {"constraints", Json::array({{{"type", "fix"}, {"curve", 0}}, {{"type", "length"}, {"curve", 1}, {"value", 25}}, {{"type", "radius"}, {"curve", 3}, {"value", 5}}})}});
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    const double xo = c.at("curves")[1].at("points")[1][0].get<double>();
+    const double xm = c.at("curves")[4].at("points")[1][0].get<double>();
+    CHECK(xm == Approx(-xo).margin(1e-5));
+    CHECK(c.at("curves")[6].at("radius").get<double>() == Approx(5).margin(1e-6));
+
+    // A spline's copy keeps its ends mirrored.
+    {
+        commands::Session t;
+        const auto sid = run(t, "sketch.create",
+                             {{"plane", "XY"},
+                              {"curves", Json::array({{{"type", "line"}, {"start", {0, -30}}, {"end", {0, 30}}},
+                                                      {{"type", "spline"}, {"points", Json::array({{5, 0}, {10, 8}, {20, 3}})}}})}})
+                             .at("id")
+                             .get<std::uint64_t>();
+        run(t, "sketch.mirror", {{"sketch", sid}, {"curves", {1}}, {"line", 0}});
+        run(t, "sketch.add_constraints", {{"sketch", sid}, {"constraints", Json::array({{{"type", "fix"}, {"curve", 0}}})}});
+        run(t, "sketch.move_point", {{"sketch", sid}, {"point", {{"curve", 1}, {"point", "end"}}}, {"to", {25, 6}}});
+        const Json sc = run(t, "sketch.curves", {{"sketch", sid}});
+        const auto& copy = sc.at("curves")[2].at("points");
+        CHECK(copy.back()[0].get<double>() == Approx(-25).margin(1e-5));
+        CHECK(copy.back()[1].get<double>() == Approx(6).margin(1e-5));
+    }
+
+    // The mirror line must be a line; one undo step.
+    CHECK_FALSE(s.execute("sketch.mirror", {{"sketch", id}, {"curves", {1}}, {"line", 3}}).ok);
+    run(s, "edit.undo");
+    run(s, "edit.undo");
+    CHECK(run(s, "sketch.curves", {{"sketch", id}}).at("curves").size() == 4);
+}
+
+TEST_CASE("Design commands: sketch fillet (CAD-126)", "[commands][cad][solver]")
+{
+    commands::Session s;
+    const auto id = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "rectangle"}, {"corner", {0, 0}}, {"width", 40}, {"height", 20}}})}})
+                        .at("id")
+                        .get<std::uint64_t>();
+    // Bottom (0) and right (1) sides meet at (40, 0).
+    run(s, "sketch.fillet", {{"sketch", id}, {"curves", {0, 1}}, {"radius", 5}});
+    Json c = run(s, "sketch.curves", {{"sketch", id}});
+    REQUIRE(c.at("curves").size() == 5);
+    CHECK(c.at("curves")[4].at("kind") == "arc");
+    const auto ex = run(s, "feature.extrude", {{"sketch", id}, {"distance", 1}});
+    CHECK(ex.at("bodies").back().at("volume").get<double>() == Approx(800 - (25 - std::numbers::pi * 25 / 4)).epsilon(1e-6));
+
+    // The radius is a dimension: editing it updates the corner (and the extrude).
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    std::size_t radiusIndex = 0;
+    for (std::size_t i = 0; i < c.at("constraints").size(); ++i)
+        if (c.at("constraints")[i].at("type") == "radius")
+            radiusIndex = i;
+    run(s, "sketch.edit_constraint", {{"sketch", id}, {"index", radiusIndex}, {"value", 8}});
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    const auto& arcCurve = c.at("curves")[4];
+    CHECK(std::hypot(arcCurve.at("points")[0][0].get<double>() - arcCurve.at("center")[0].get<double>(),
+                     arcCurve.at("points")[0][1].get<double>() - arcCurve.at("center")[1].get<double>()) == Approx(8).margin(1e-6));
+    // Still tangent: the arc ends where the (still horizontal) bottom line ends.
+    const auto& bottom = c.at("curves")[2].at("points");
+    CHECK(bottom[0][1].get<double>() == Approx(bottom[1][1].get<double>()).margin(1e-6));
+    const Json tl = run(s, "timeline.list");
+    CHECK(tl.at("features").back().at("status") == "ok"); // the extrude still has its profile
+
+    // Too large a radius, or lines that do not meet: refused.
+    CHECK_FALSE(s.execute("sketch.fillet", {{"sketch", id}, {"curves", {0, 1}}, {"radius", 50}}).ok);
+
+    // Rounding a corner of two construction lines gives a construction arc (no new profile).
+    const auto cid = run(s, "sketch.create",
+                         {{"plane", "XY"},
+                          {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {20, 0}}, {"construction", true}},
+                                                  {{"type", "line"}, {"start", {20, 0}}, {"end", {20, 20}}, {"construction", true}}})}})
+                         .at("id")
+                         .get<std::uint64_t>();
+    run(s, "sketch.fillet", {{"sketch", cid}, {"curves", {0, 1}}, {"radius", 5}});
+    const Json cc = run(s, "sketch.curves", {{"sketch", cid}});
+    REQUIRE(cc.at("curves").size() == 3);
+    for (const auto& curve : cc.at("curves"))
+        CHECK(curve.at("construction") == true);
 }

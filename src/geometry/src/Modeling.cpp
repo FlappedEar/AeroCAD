@@ -8,6 +8,7 @@
 #include <BRepAlgoAPI_Common.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
+#include <BRepAlgoAPI_Splitter.hxx>
 #include <BRepBndLib.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
@@ -374,6 +375,92 @@ Shape extrude(const Shape& faces, const core::Vec3& direction, double distance, 
         if (!prism.IsDone())
             throw ModelingError("Extrude failed");
         return wrapShape(prism.Shape());
+    });
+}
+
+Shape extrudeToObject(const Shape& faces, const core::Vec3& direction, const Shape& target,
+                      const std::vector<std::size_t>& targetFaces, double reach)
+{
+    const TopoDS_Shape& s = occ(faces, "Extrude");
+    if (!hasSubShapes(s, TopAbs_FACE))
+        throw ModelingError("Extrude: no profile faces");
+    const TopoDS_Shape& t = occ(target, "Extrude to object");
+    const core::Vec3 dir = direction.normalized();
+    if (dir.length() < 0.5)
+        throw ModelingError("Extrude: zero direction");
+    return guarded("Extrude to object", [&] {
+        // The cutting tool: the picked faces, or the whole target.
+        TopoDS_Shape tool = t;
+        if (!targetFaces.empty()) {
+            const auto map = mapOf(t, TopAbs_FACE);
+            TopoDS_Compound c;
+            BRep_Builder b;
+            b.MakeCompound(c);
+            for (const std::size_t i : targetFaces) {
+                if (i >= static_cast<std::size_t>(map.Extent()))
+                    throw ModelingError("Extrude to object: no face " + std::to_string(i));
+                b.Add(c, map(static_cast<int>(i) + 1));
+            }
+            tool = c;
+        }
+        double length = reach;
+        if (length <= 0.0) {
+            Bnd_Box box;
+            BRepBndLib::Add(s, box);
+            BRepBndLib::Add(tool, box);
+            length = 2.0 * std::sqrt(box.SquareExtent()) + 1.0;
+        }
+        BRepPrimAPI_MakePrism prism(s, gp_Vec(dir.x * length, dir.y * length, dir.z * length), true);
+        if (!prism.IsDone())
+            throw ModelingError("Extrude failed");
+        GProp_GProps whole;
+        BRepGProp::VolumeProperties(prism.Shape(), whole);
+
+        TopTools_ListOfShape args, tools;
+        args.Append(prism.Shape());
+        tools.Append(tool);
+        BRepAlgoAPI_Splitter splitter;
+        splitter.SetArguments(args);
+        splitter.SetTools(tools);
+        splitter.SetRunParallel(false);
+        splitter.Build();
+        if (!splitter.IsDone() || splitter.HasErrors())
+            throw ModelingError("Extrude to object: cutting at the object failed");
+
+        // Keep the pieces that start on the profile: what lies before the object. A kept
+        // piece that still reaches the far end went past (or around) the object.
+        const double tol = 1e-6 * std::max(1.0, length);
+        gp_Trsf toFar;
+        toFar.SetTranslation(gp_Vec(dir.x * length, dir.y * length, dir.z * length));
+        const TopoDS_Shape farCap = BRepBuilderAPI_Transform(s, toFar, true).Shape();
+        TopoDS_Compound kept;
+        BRep_Builder b;
+        b.MakeCompound(kept);
+        double keptVolume = 0.0;
+        int count = 0;
+        for (TopExp_Explorer e(splitter.Shape(), TopAbs_SOLID); e.More(); e.Next()) {
+            BRepExtrema_DistShapeShape dist(e.Current(), s);
+            if (!dist.IsDone() || dist.Value() > tol)
+                continue;
+            GProp_GProps props;
+            BRepGProp::VolumeProperties(e.Current(), props);
+            if (std::abs(props.Mass()) < 1e-9)
+                continue;
+            BRepExtrema_DistShapeShape far(e.Current(), farCap);
+            if (far.IsDone() && far.Value() <= tol)
+                throw ModelingError("The object does not cover the whole profile: the extrusion would go past it");
+            b.Add(kept, e.Current());
+            keptVolume += std::abs(props.Mass());
+            ++count;
+        }
+        if (count == 0 || keptVolume >= std::abs(whole.Mass()) * (1.0 - 1e-6))
+            throw ModelingError("The extrusion does not reach the object: check the direction (Flip) or pick "
+                                "another face");
+        if (count == 1) {
+            TopExp_Explorer one(kept, TopAbs_SOLID);
+            return wrapShape(one.Current());
+        }
+        return wrapShape(kept);
     });
 }
 

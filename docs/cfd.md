@@ -89,6 +89,19 @@ panel in place of Properties:
 
 Runs continue when the panel or the app is closed.
 
+While a run runs, Results does not judge it yet: the badge reads *checks: after the run*
+(grey), and neither the quality warnings nor the reasons why final results are missing are
+listed, since every check is still incomplete then
+([running run](images/audit/cad-150-running-checks.png)). The live charts and provisional
+values are shown as before.
+
+While a run runs, Results and the run list say how long it has run (`elapsedSeconds`, for
+runs this app started) and, while solving, at most how long is left (`remainingSeconds`):
+the solver's speed since the initialisation ended, applied to the iterations left before
+the limit; it often stops sooner when it converges
+([fine mesh of the 200 mm box on 4 cores](images/audit/cad-149-run-time.png): meshing
+about 13 min, then "at most 1 h 55 min left").
+
 Runs on this computer share its processors: a run starts at once while its solver processes
 fit next to the runs already solving (up to the number of logical cores; each run uses half
 of them by default, so A and B run side by side). Further runs wait in a queue (state

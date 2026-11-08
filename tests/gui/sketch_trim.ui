@@ -1,0 +1,21 @@
+# CAD-126: Trim (T) removes the piece of a curve under the click, up to where other curves
+# cross it (Fusion). Before, a curve could only be deleted whole.
+# Run: AeroCAD --ui-script <this file>
+ui.wait(800)
+(() => { const r = controller.execute("sketch.create", { plane: "XY", curves: [{ type: "line", start: [-20, 0], end: [20, 0] }, { type: "line", start: [0, -20], end: [0, 20] }, { type: "circle", center: [0, 0], radius: 10 }] }); if (!r.ok) ui.fail("sketch: " + r.error) })()
+ui.wait(300)
+(() => { enterSketch(controller.execute("timeline.list").result.features[0].id) })()
+ui.wait(800)
+ui.key("T")
+ui.wait(300)
+(() => { if (sketchTool !== "trim") ui.fail("T did not start Trim: " + sketchTool) })()
+# The circle's upper-right quarter, then the line ends outside the circle on the right.
+(() => { const o = viewport.sketchOverlay; const p = o.toScreen([7.07, 7.07]); const w = o.mapToItem(null, p.x, p.y); ui.click(w.x, w.y) })()
+ui.wait(500)
+(() => { const r = controller.execute("sketch.curves", { sketch: activeSketch.id }).result; ui.log("after circle trim: " + r.curves.map(c => c.kind).join(", ")); if (r.curves.some(c => c.kind === "circle") || !r.curves.some(c => c.kind === "arc")) ui.fail("the circle was not trimmed to an arc") })()
+(() => { const o = viewport.sketchOverlay; const p = o.toScreen([15, 0]); const w = o.mapToItem(null, p.x, p.y); ui.click(w.x, w.y) })()
+ui.wait(500)
+(() => { const r = controller.execute("sketch.curves", { sketch: activeSketch.id }).result; const xs = r.curves.filter(c => c.kind === "line").map(c => Math.max(c.points[0][0], c.points[1][0])); ui.log("line right ends " + JSON.stringify(xs)); if (Math.max(...xs) > 10.001) ui.fail("the line end outside the circle was not trimmed") })()
+ui.shot("sketch-trim.png")
+# One undo step per trim.
+(() => { controller.execute("edit.undo"); const r = controller.execute("sketch.curves", { sketch: activeSketch.id }).result; const xs = r.curves.filter(c => c.kind === "line").map(c => Math.max(c.points[0][0], c.points[1][0])); if (Math.abs(Math.max(...xs) - 20) > 1e-6) ui.fail("undo did not bring the line end back") })()

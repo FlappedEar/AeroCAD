@@ -118,6 +118,14 @@ The menu lists only what can be done with what is under the pointer:
   **New sketch**.
 - **In a sketch**: the sketch menu (see Sketch below).
 
+## Command search
+
+Press **S** (as in Fusion) for a small search box at the pointer. Type part of a command's
+name, or of its menu ("sketch", "export"): Up / Down pick a result, Enter runs it, Esc
+closes the box. Each result shows its menu and shortcut. Commands that cannot run right now
+(nothing selected, for example) are listed last and dimmed. The list is read from the menus
+when the box opens, so every menu command can be found. In a text field S is typed as text.
+
 ## Browser
 
 The Browser lists the parts of the document. Click a row to select the part, hover it to
@@ -219,6 +227,7 @@ Qt maps Ctrl to Command and Alt to Option on macOS, so "Ctrl+Alt+V" is Option+Co
 | Toggle visibility of the selected part | V | V | yes |
 | Delete the selected part | Del | Delete (Backspace) or Fn+Delete | yes (Del) |
 | Rename the selected part (in the Browser) | F2 | F2 | no (Fusion renames from the Browser) |
+| Search commands and run one (box at the pointer) | S | S | yes (Fusion's S key) |
 | Fit all | F6 | F6 | Fusion lists F6 "Zoom to Fit" for the Electronics workspace |
 | Zoom in / out (towards the view centre) | Ctrl++ / Ctrl+- | Cmd++ / Cmd+- | yes (Fusion lists them for Windows) |
 | Move / Rotate / Scale the selected part | M | M | yes (Move/Copy) |
@@ -257,11 +266,12 @@ Save As, Import and the variant commands (Modify > Duplicate as New Variant, Tog
 have no shortcut (Fusion's list has no Save As).
 
 Fusion keys kept free because AeroCAD has no such command yet, so that they keep their
-Fusion meaning when the command comes: Q (Press Pull), S (toolbox search), A (Appearance),
+Fusion meaning when the command comes: Q (Press Pull), A (Appearance),
 J / Shift+J (Joint), T (Trim), O (Offset), P (Project), X (construction line),
 Ctrl+X (cut), Ctrl+B (Compute All). Source: Autodesk's
 [Fusion keyboard shortcuts reference](https://help.autodesk.com/cloudhelp/ENU/Fusion-GetStarted/files/GUID-F0491540-0324-470A-B651-2238D0EFAC30.htm)
 (checked 2026-11-08).
+S (Fusion's toolbox search) is the command search, see "Command search".
 
 Not mapped yet: Press Pull (Q), Trim (T), Offset (O), Project (P),
 Construction (X). 1/2/3 select the region selection tools on meshes,
@@ -289,6 +299,17 @@ See [cad.md](cad.md) for the timeline and the commands behind the tools.
   removes), click empty space to clear; Delete (Backspace on macOS) or right-click › Delete
   removes the selected curves with their constraints. One side of a rectangle (or polygon,
   slot) can be deleted: the other sides stay as lines that keep their constraints.
+  **Trim** (T, SKETCH › MODIFY): click the piece of a line, arc or circle to remove, up to
+  where other curves cross it; a curve that crosses nothing is removed whole, a circle
+  becomes an arc. Constraints on the trimmed curve go.
+  **Fillet** (SKETCH › MODIFY): click the corner where two lines meet; it is rounded with a
+  tangent arc (the last radius used, 5 mm at first) whose radius dimension can be edited
+  under Constraints.
+  **Mirror** (SKETCH › MODIFY): select curves, click Mirror, then click the mirror line; the
+  copies are held symmetric to the originals (they follow dimension changes).
+  **Construction** (X, or right-click › Construction): the selected curves become
+  construction geometry, drawn dashed; they take constraints but bound no profile. X with
+  only construction curves selected turns them back. One side of a rectangle can be switched.
   **Drag points** (no tool active): drag an end or centre point of a curve; the solver
   moves what the constraints leave free (a rectangle stays a rectangle, dimensions hold) and
   snaps the point to other points or the grid. One undo step per drag; a point the
@@ -315,6 +336,9 @@ See [cad.md](cad.md) for the timeline and the commands behind the tools.
   **Extrude** shows a distance arrow on the profile (dashed, with the distance next to its
   head): drag the head to set the distance, below the sketch to flip it; the value field
   and the preview follow. A distance typed as an expression is not dragged.
+  Extent **To Object** (Fusion): click the face of a body, a surface, a solid or a scan to
+  stop at; the solid follows its shape (a curved face gives a curved end). Clicking a body
+  stops at the clicked face. An extrusion that does not reach the object says so (try Flip).
   **Revolve** axis (Fusion: Axis selection): X / Y / Z from the list, or click a line of the
   sketch or a straight edge of a body (the button under the list, or right after the first
   profile click); the live preview does not get in the way of that click.

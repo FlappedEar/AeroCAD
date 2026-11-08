@@ -145,6 +145,8 @@ Pane {
 
     readonly property bool anyRunning: runs.some(r => r.state === "running")
     readonly property var activeStatus: runs.find(r => r.id === activeRun) ?? null
+    /// The shown run is still running: its checks and final numbers come after the run (CAD-150).
+    readonly property bool activeRunning: !!activeStatus && activeStatus.state === "running"
     // Re-read after any change of the parts (a Scale changes the size shown, CAD-109).
     property int partRevision: 0
     readonly property Connections _partWatch: Connections {
@@ -228,6 +230,28 @@ Pane {
 
     function num(v, digits) {
         return v === null || v === undefined || !isFinite(v) ? "–" : Number(v).toFixed(digits)
+    }
+    /// "45 s", "12 min", "1 h 05 min" (CAD-149).
+    function duration(seconds) {
+        const s = Math.max(0, Math.round(seconds))
+        if (s < 60)
+            return qsTr("%1 s").arg(s)
+        const min = Math.round(s / 60)
+        if (min < 60)
+            return qsTr("%1 min").arg(min)
+        return qsTr("%1 h %2 min").arg(Math.floor(min / 60)).arg(String(min % 60).padStart(2, "0"))
+    }
+    /// Time so far and at most how long is left, of a running run; "" when unknown.
+    function timeText(m) {
+        if (!m || m.state !== "running")
+            return ""
+        const known = v => v !== null && v !== undefined
+        const parts = []
+        if (known(m.elapsedSeconds))
+            parts.push(qsTr("%1 so far").arg(duration(m.elapsedSeconds)))
+        if (known(m.remainingSeconds))
+            parts.push(qsTr("at most %1 left").arg(duration(m.remainingSeconds)))
+        return parts.join(", ")
     }
 
     function checkEnvironment() {
@@ -1007,6 +1031,8 @@ Pane {
                                 let s = m.state
                                 if (m.state === "running")
                                     s += " · " + m.stage + (m.stage === "solve" ? " " + m.iteration + "/" + m.maxIterations : "")
+                                        + (m.remainingSeconds !== null && m.remainingSeconds !== undefined
+                                           ? " · " + qsTr("≤ %1 left").arg(root.duration(m.remainingSeconds)) : "")
                                 if (l.cd !== null && l.cd !== undefined)
                                     s += (m.state === "finished" ? " · latest Cd " : " · provisional Cd ")
                                         + root.num(l.cd, 3) + " · drag " + root.num(l.dragN, 3) + " N"
@@ -1045,7 +1071,10 @@ Pane {
                                                   (root.activeStatus.source.partName || root.activeStatus.id) : ""
                     }
                     Rectangle {
-                        readonly property string status: root.results ? root.results.quality.status : "unknown"
+                        // While the run runs every check is still missing: judged after the run (CAD-150).
+                        readonly property bool running: root.activeRunning
+                        readonly property string status: running ? "running"
+                                                         : root.results ? root.results.quality.status : "unknown"
                         radius: 3
                         implicitWidth: qualityLabel.implicitWidth + 10
                         implicitHeight: qualityLabel.implicitHeight + 4
@@ -1055,7 +1084,7 @@ Pane {
                             anchors.centerIn: parent
                             color: "white"
                             font.pixelSize: 11
-                            text: qsTr("checks: %1").arg(parent.status)
+                            text: parent.running ? qsTr("checks: after the run") : qsTr("checks: %1").arg(parent.status)
                         }
                     }
                 }
@@ -1072,7 +1101,9 @@ Pane {
                                 return ""
                             const step = m.stage === "solve" ? qsTr("solving, iteration %1 of max %2").arg(m.iteration).arg(m.maxIterations)
                                        : m.stage === "mesh" ? qsTr("meshing") : m.stage
-                            return m.state === "running" ? qsTr("Running: %1").arg(step) : m.state + (m.message ? ": " + m.message : "")
+                            const time = root.timeText(m)
+                            return m.state === "running" ? qsTr("Running: %1").arg(step) + (time ? " · " + time : "")
+                                                         : m.state + (m.message ? ": " + m.message : "")
                         }
                     }
                     RowLayout {
@@ -1087,12 +1118,13 @@ Pane {
                 }
 
                 Label {
-                    text: root.results && root.results.finalResults.available
-                        ? qsTr("Final results") : qsTr("Final results unavailable")
+                    text: root.results && root.results.finalResults.available ? qsTr("Final results")
+                          : root.activeRunning ? qsTr("Final results when the run has finished")
+                          : qsTr("Final results unavailable")
                     font.bold: true
                 }
                 Repeater {
-                    model: root.results ? root.results.finalResults.reasons : []
+                    model: root.results && !root.activeRunning ? root.results.finalResults.reasons : []
                     delegate: Label {
                         required property var modelData
                         Layout.fillWidth: true
@@ -1143,7 +1175,7 @@ Pane {
                     }
                 }
                 Repeater {
-                    model: root.results ? root.qualityLines(root.results.quality) : []
+                    model: root.results && !root.activeRunning ? root.qualityLines(root.results.quality) : []
                     delegate: Label {
                         required property var modelData
                         Layout.fillWidth: true

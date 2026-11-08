@@ -82,6 +82,7 @@ qt_add_qml_module(aerocad
         qml/HeatMapLegend.qml
         qml/PreferencesDialog.qml
         qml/ShortcutsDialog.qml
+        qml/CommandSearch.qml
         qml/ScanPanel.qml
         qml/SimulationPanel.qml
         qml/CfdResultsOverlay.qml
@@ -194,6 +195,13 @@ if(AEROCAD_BUILD_TESTS)
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_cfd_floor_height_test PROPERTIES LABELS gui TIMEOUT 60
         ENVIRONMENT "AEROCAD_CFD_DIR=${CMAKE_CURRENT_BINARY_DIR}/cfd-floor-height-runs")
+    # CAD-150: no quality verdict while a run is still running (stand-in docker, no OpenFOAM).
+    add_test(NAME app_cfd_running_checks_test
+        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl
+                --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/cfd_running_checks.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_cfd_running_checks_test PROPERTIES LABELS gui TIMEOUT 60
+        ENVIRONMENT "AEROCAD_CFD_DIR=${CMAKE_CURRENT_BINARY_DIR}/cfd-running-checks-runs;AEROCAD_DOCKER=${PROJECT_SOURCE_DIR}/tests/gui/fake-docker.sh")
     # CAD-105: Simplify a scan, then Ctrl+Z restores the full mesh (also with a reduced display).
     add_test(NAME app_simplify_undo_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl
@@ -246,6 +254,31 @@ if(AEROCAD_BUILD_TESTS)
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/scan_units_check.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_scan_units_check_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-126: Sketch Fillet rounds a corner of two lines.
+    add_test(NAME app_sketch_fillet_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_fillet.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_sketch_fillet_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-126: Sketch Mirror copies curves about a line, held symmetric.
+    add_test(NAME app_sketch_mirror_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_mirror.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_sketch_mirror_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-126: Trim removes the piece of a sketch curve between crossings.
+    add_test(NAME app_sketch_trim_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_trim.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_sketch_trim_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-126: X turns sketch curves into construction geometry.
+    add_test(NAME app_sketch_construction_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_construction.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_sketch_construction_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-125: Extrude up to an object (To Object), following its curved shape.
+    add_test(NAME app_extrude_to_object_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/extrude_to_object.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_extrude_to_object_test PROPERTIES LABELS gui TIMEOUT 60)
     # CAD-124: Revolve about a sketch line clicked in the view (through the live preview).
     add_test(NAME app_revolve_axis_pick_test
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/revolve_axis_pick.ui
@@ -321,6 +354,11 @@ if(AEROCAD_BUILD_TESTS)
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/orient_for_cfd.ui
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(app_orient_for_cfd_test PROPERTIES LABELS gui TIMEOUT 60)
+    add_test(NAME app_camera_feel_test
+        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl
+                --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/camera_feel.ui
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(app_camera_feel_test PROPERTIES LABELS gui TIMEOUT 60)
     add_test(NAME app_zoom_selection_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/zoom_selection.ui
@@ -365,6 +403,10 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/isolate_history.ui
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(app_isolate_history_test PROPERTIES LABELS gui TIMEOUT 120)
+    add_test(NAME app_command_search_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/command_search.ui
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(app_command_search_test PROPERTIES LABELS gui TIMEOUT 60)
     add_test(NAME app_large_scale_preview_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/large_scale_preview.ui

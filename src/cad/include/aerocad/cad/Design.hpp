@@ -177,6 +177,25 @@ public:
     /// revolve axis line and the sweep path curves of features that use the sketch.
     /// Throws DesignError (and leaves the design unchanged) when the sketch then fails.
     void deleteSketchCurves(FeatureId sketch, const std::vector<std::size_t>& curves);
+    /// Turns sketch curves (indices of the solved curves) into construction geometry or
+    /// back (Fusion: Construction, X). Construction curves are drawn dashed and bound no
+    /// profile. One side of a rectangle (polygon, slot) can be switched: the shape becomes
+    /// lines and arcs that keep its constraints; curve indices do not change.
+    void setSketchConstruction(FeatureId sketch, const std::vector<std::size_t>& curves, bool construction);
+    /// Trims a sketch curve (Fusion: Trim, T): the piece of curve `curve` under `at`
+    /// (sketch coordinates) between its nearest intersections with other curves is removed;
+    /// a curve that crosses nothing is removed whole. Lines, arcs and circles. Constraints
+    /// on the trimmed curve go; the remaining pieces are added as new curves at the end.
+    void trimSketchCurve(FeatureId sketch, std::size_t curve, const geometry::Vec2& at);
+    /// Mirrors sketch curves about sketch line `line` (Fusion: Sketch Mirror): the copies
+    /// are added at the end and held symmetric to the originals (symmetry constraints on
+    /// their points, equal radii), so they follow when the originals change.
+    void mirrorSketchCurves(FeatureId sketch, const std::vector<std::size_t>& curves, std::size_t line);
+    /// Rounds the corner where sketch lines `a` and `b` meet with an arc of `radius`
+    /// (Fusion: Sketch Fillet): both lines are shortened to the tangent points and the arc
+    /// is held tangent to them with a radius dimension. Lines that were horizontal or
+    /// vertical stay so. The new lines and arc are added at the end of the curves.
+    void filletSketchCorner(FeatureId sketch, std::size_t a, std::size_t b, double radius);
     /// Drags a sketch point (Fusion: drag sketch geometry). `point` is a constraint point
     /// reference ({curve, point: start | end | center}); it is held at `to` (sketch
     /// coordinates) while the solver moves the free degrees of freedom, and the sketch keeps

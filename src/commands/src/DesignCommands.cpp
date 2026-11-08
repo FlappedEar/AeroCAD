@@ -511,31 +511,26 @@ Json featureParams(const Json& params)
     return p;
 }
 
-/// Adds matching hints to {point} edge/face references of fillet, chamfer and shell: the
+/// Adds matching hints to {point} edge/face references in `items` on the body `bodyRef`: the
 /// point relative to the body's bounding box, the edge direction or face normal, and the
-/// edge/face type. Regeneration then finds the same edge after dimensions change (see
-/// matchTopology in Design.cpp). References that already carry hints are left alone.
-Json describeTopologyRefs(const cad::Design& d, const std::string& type, Json params)
+/// edge/face type. Regeneration then finds the same edge or face after dimensions change
+/// (see matchTopology in Design.cpp). References that already carry hints are left alone.
+void addTopologyHints(const cad::Design& d, const Json& bodyRef, Json& items, bool edgesWanted)
 {
-    const bool edgesWanted = type == "fillet" || type == "chamfer";
-    if (!edgesWanted && type != "shell")
-        return params;
-    const char* key = edgesWanted ? "edges" : "faces";
-    if (!params.contains(key) || !params[key].is_array() || !params.contains("body"))
-        return params;
+    if (!items.is_array())
+        return;
     const cad::Body* body = nullptr;
     for (const auto& [bid, b] : d.bodies()) {
-        const Json& ref = params["body"];
-        if ((ref.is_number_integer() && ref.get<cad::FeatureId>() == bid) ||
-            (ref.is_string() && ref.get<std::string>() == b.name))
+        if ((bodyRef.is_number_integer() && bodyRef.get<cad::FeatureId>() == bid) ||
+            (bodyRef.is_string() && bodyRef.get<std::string>() == b.name))
             body = &b;
     }
     if (body == nullptr)
-        return params;
+        return;
     const auto box = body->shape.bounds();
     const core::Vec3 size = box.size();
     auto rel = [&](double v, double lo, double extent) { return extent > 1e-9 ? (v - lo) / extent : 0.0; };
-    for (auto& item : params[key]) {
+    for (auto& item : items) {
         if (!item.is_object() || !item.contains("point") || item.contains("relative") || !item["point"].is_array())
             continue;
         bool numeric = true;
@@ -564,6 +559,19 @@ Json describeTopologyRefs(const cad::Design& d, const std::string& type, Json pa
             item["normal"] = vec(info.normal);
         }
     }
+}
+
+/// Topology hints for the picked references of fillet / chamfer (edges), shell (faces) and an
+/// extrude up to faces of a body (to.faces).
+Json describeTopologyRefs(const cad::Design& d, const std::string& type, Json params)
+{
+    if ((type == "fillet" || type == "chamfer") && params.contains("edges") && params.contains("body"))
+        addTopologyHints(d, params["body"], params["edges"], true);
+    else if (type == "shell" && params.contains("faces") && params.contains("body"))
+        addTopologyHints(d, params["body"], params["faces"], false);
+    else if (type == "extrude" && params.contains("to") && params["to"].is_object() &&
+             params["to"].contains("faces") && params["to"].contains("body"))
+        addTopologyHints(d, params["to"]["body"], params["to"]["faces"], false);
     return params;
 }
 
@@ -781,6 +789,92 @@ void registerSketchCommands(CommandRegistry& r)
               return addedFeature(design(ctx), ctx.document, id);
           });
 
+    r.add({"sketch.mirror", "Mirror Sketch Curves",
+           "Mirrors sketch curves about a line of the same sketch (Fusion: Sketch > Mirror). The copies are added "
+           "at the end of sketch.curves and held symmetric to the originals (symmetry constraints, equal radii), "
+           "so they follow dimension changes.",
+           objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
+                         {"curves", {{"type", "array"}, {"items", {{"type", "integer"}}}, {"minItems", 1}}},
+                         {"line", {{"type", "integer"}, {"description", "Index of the mirror line (sketch.curves)."}}}},
+                        {"sketch", "curves", "line"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              const auto id = params.at("sketch").get<cad::FeatureId>();
+              designChange(ctx, "Mirror Sketch Curves", [&](cad::Design& d) {
+                  (void)sketchFeature(d, id);
+                  d.mirrorSketchCurves(id, params.at("curves").get<std::vector<std::size_t>>(), params.at("line").get<std::size_t>());
+                  return Json{};
+              });
+              return addedFeature(design(ctx), ctx.document, id);
+          });
+
+    r.add({"sketch.fillet", "Sketch Fillet",
+           "Rounds the corner where two sketch lines meet (Fusion: Sketch > Fillet): both lines are shortened "
+           "and joined by a tangent arc with a radius dimension (edit it like any dimension). The two lines and the "
+           "arc are added at the end of sketch.curves; constraints on the old lines are removed, horizontal or "
+           "vertical lines stay so.",
+           objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
+                         {"curves", {{"type", "array"}, {"items", {{"type", "integer"}}}, {"minItems", 2}, {"maxItems", 2},
+                                     {"description", "The two lines (indices from sketch.curves)."}}},
+                         {"radius", {{"type", "number"}, {"exclusiveMinimum", 0}}}},
+                        {"sketch", "curves", "radius"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              const auto id = params.at("sketch").get<cad::FeatureId>();
+              const auto curves = params.at("curves").get<std::vector<std::size_t>>();
+              if (curves.size() != 2)
+                  throw CommandError("Give the two lines of the corner");
+              designChange(ctx, "Sketch Fillet", [&](cad::Design& d) {
+                  (void)sketchFeature(d, id);
+                  d.filletSketchCorner(id, curves[0], curves[1], params.at("radius").get<double>());
+                  return Json{};
+              });
+              return addedFeature(design(ctx), ctx.document, id);
+          });
+
+    r.add({"sketch.trim", "Trim",
+           "Trims a sketch curve (Fusion: Trim, T): removes the piece of `curve` nearest to `at` (sketch "
+           "coordinates) between its nearest crossings with other curves; a curve crossing nothing is removed "
+           "whole. Lines, arcs and circles (a circle becomes an arc). The remaining pieces are added at the end of "
+           "sketch.curves; constraints on the trimmed curve are removed.",
+           objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
+                         {"curve", {{"type", "integer"}, {"description", "Index from sketch.curves."}}},
+                         {"at", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", {{"type", "number"}}}}}},
+                        {"sketch", "curve", "at"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              const auto id = params.at("sketch").get<cad::FeatureId>();
+              const Json& at = params.at("at");
+              designChange(ctx, "Trim", [&](cad::Design& d) {
+                  (void)sketchFeature(d, id);
+                  d.trimSketchCurve(id, params.at("curve").get<std::size_t>(), {at[0].get<double>(), at[1].get<double>()});
+                  return Json{};
+              });
+              return addedFeature(design(ctx), ctx.document, id);
+          });
+
+    r.add({"sketch.set_construction", "Construction",
+           "Turns sketch curves into construction geometry or back (Fusion: Construction, X). Construction "
+           "curves are drawn dashed and bound no profile; they still take constraints. One side of a rectangle, "
+           "polygon or slot can be switched: the shape becomes lines and arcs that keep its constraints. Curve "
+           "indices (sketch.curves) do not change.",
+           objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
+                         {"curves", {{"type", "array"}, {"items", {{"type", "integer"}}}, {"minItems", 1}}},
+                         {"construction", {{"type", "boolean"}, {"description", "true (default): construction; false: normal."}}}},
+                        {"sketch", "curves"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              const auto id = params.at("sketch").get<cad::FeatureId>();
+              const auto curves = params.at("curves").get<std::vector<std::size_t>>();
+              const bool on = params.value("construction", true);
+              designChange(ctx, on ? "Construction" : "Normal Geometry", [&](cad::Design& d) {
+                  (void)sketchFeature(d, id);
+                  d.setSketchConstruction(id, curves, on);
+                  return Json{};
+              });
+              return addedFeature(design(ctx), ctx.document, id);
+          });
+
     r.add({"sketch.move_point", "Drag Sketch Point",
            "Drags a point of a sketch (Fusion: drag sketch geometry): the point goes to `to` (sketch "
            "coordinates) and the solver moves what its constraints leave free; dimensions and other "
@@ -993,14 +1087,20 @@ void registerFeatureCommands(CommandRegistry& r)
         merged(profileSelection(),
                {{"distance", numberOrExpr("Distance along the sketch normal (mm); negative goes the other way.")},
                 {"extent", {{"type", "string"},
-                            {"enum", {"one_side", "symmetric", "two_sides"}},
+                            {"enum", {"one_side", "symmetric", "two_sides", "to_object"}},
                             {"description", "one_side (default); symmetric: `distance` on both sides; two_sides: "
-                                            "`distance` forwards and `distance2` backwards."}}},
+                                            "`distance` forwards and `distance2` backwards; to_object: up to `to` "
+                                            "(no `distance`)."}}},
+                {"to", {{"type", "object"},
+                        {"description", "For extent to_object (Fusion: To Object): {body: id} (up to the first "
+                                        "face reached), {body: id, faces: [index or {point: [x,y,z]}]} (up to "
+                                        "those faces) or {part: id} (an imported surface, solid or scan). Curved "
+                                        "targets are followed."}}},
                 {"distance2", numberOrExpr("Backward distance for two_sides (mm).")},
                 {"flip", {{"type", "boolean"}, {"description", "Extrude against the sketch normal."}}},
                 {"operation", operationSchema()},
                 {"bodies", bodiesSchema()}}),
-        {"sketch", "distance"});
+        {"sketch"});
 
     addFeatureCommand(
         r, "revolve", "Revolve",
@@ -1241,7 +1341,17 @@ void registerFeatureCommands(CommandRegistry& r)
               // The body id of a second fin stands for the step that made it.
               const auto id = design(ctx).owningFeature(params.at("id").get<cad::FeatureId>());
               designChange(ctx, "Edit Feature", [&](cad::Design& d) {
-                  d.editFeature(id, params.at("params"));
+                  // Picked edges / faces in the patch get the same matching hints as when added.
+                  Json patch = params.at("params");
+                  if (const auto* f = d.feature(id); f != nullptr && patch.is_object()) {
+                      Json merged = f->params;
+                      merged.merge_patch(patch);
+                      const Json described = describeTopologyRefs(d, f->type, merged);
+                      for (const char* key : {"edges", "faces", "to"})
+                          if (patch.contains(key) && !patch[key].is_null() && described.contains(key))
+                              patch[key] = described[key];
+                  }
+                  d.editFeature(id, patch);
                   return Json{};
               });
               return addedFeature(design(ctx), ctx.document, id);
