@@ -301,6 +301,24 @@ TEST_CASE("Press Pull moves flat faces in and out", "[geometry][modeling]")
     CHECK_THROWS_WITH(pressPull(rounded, {blend}, 1.0), Catch::Matchers::ContainsSubstring("fillet"));
 }
 
+TEST_CASE("Press Pull on a curved face next to a shallow sharp edge", "[geometry][modeling]")
+{
+    // A cylinder under a cone with a 2 degree draft: the edge between them is sharp (not a
+    // fillet), so the cylinder's side can still move; the cone is trimmed to meet it.
+    const double top = 10 - 20 * std::tan(2 * std::numbers::pi / 180);
+    const auto g = buildSketch(Plane::xz(), {line({0, 0}, {10, 0}), line({10, 0}, {10, 10}), line({10, 10}, {top, 30}),
+                                             line({top, 30}, {0, 30}), line({0, 30}, {0, 0})});
+    REQUIRE(g.profiles.size() == 1);
+    const auto body = revolve(g.profiles[0], {0, 0, 0}, {0, 0, 1}, 360);
+    std::size_t side = 0;
+    for (const auto& f : faces(body))
+        if (f.type == "cylinder")
+            side = f.index;
+    const auto pushed = pressPull(body, {side}, -0.5);
+    CHECK(isValid(pushed));
+    CHECK(pushed.volume() < body.volume());
+}
+
 TEST_CASE("Press Pull on a curved face with windows cut through it", "[geometry][modeling]")
 {
     // The middle of the face's parameter range (the -X side) lies in a window: the curvature check must

@@ -832,8 +832,13 @@ Shape pressPull(const Shape& shape, const std::vector<std::size_t>& faceIndices,
                         const auto k = static_cast<std::size_t>(map.FindIndex(other) - 1);
                         if (other.IsSame(f) || std::find(faceIndices.begin(), faceIndices.end(), k) != faceIndices.end())
                             continue;
+                        // Tangent: the modeller marked the edge smooth (fillets are), or
+                        // the normals agree to within about 0.05 degrees. A shallow sharp
+                        // edge (a 2 degree draft) is not a blend.
                         const auto b = faceNormalNear(shape, k, mid);
-                        if (a && b && a->x * b->x + a->y * b->y + a->z * b->z > 0.999)
+                        const bool smooth = BRep_Tool::HasContinuity(edge, f, TopoDS::Face(other))
+                            && BRep_Tool::Continuity(edge, f, TopoDS::Face(other)) >= GeomAbs_G1;
+                        if (smooth || (a && b && a->x * b->x + a->y * b->y + a->z * b->z > 1 - 4e-7))
                             throw ModelingError("Press Pull: face " + std::to_string(i)
                                                 + " blends smoothly into the next face (a fillet?); change the fillet's radius instead");
                     }
