@@ -98,7 +98,12 @@ double FieldGeometry::scalePosition(const QString& scalar, double value, double 
     return hi > lo ? (value - lo) / (hi - lo) : 0.5;
 }
 
-FieldGeometry::FieldGeometry(QQuick3DObject* parent) : QQuick3DGeometry(parent) {}
+FieldGeometry::FieldGeometry(QQuick3DObject* parent) : QQuick3DGeometry(parent)
+{
+    // A valid empty layout until the first (queued) rebuild: a frame drawn before it with
+    // stride 0 makes Qt Quick 3D divide by zero (crash seen on a large F1 result).
+    rebuild();
+}
 
 QVariantList FieldGeometry::colormap() const
 {

@@ -23,4 +23,7 @@ ui.shot("cfd-results-overlay.png")
 (() => { cfdOverlay.fields = []; cfdOverlay.results = null })()
 ui.wait(300)
 (() => { if (cfdOverlay.visible) ui.fail("overlay still shown without results"); if (!contextBar.visible) ui.fail("the guide bar does not come back") })()
+# CAD-148: section kinds are resolved per run; a run made before the section stacks (B
+# here) keeps its centre sections and has no section across the flow.
+(() => { simulationPanel.runSections = { a: [{ axis: "z", defaultIndex: 3, lengthMm: 60, positions: [{ kind: "sectionZ_0", index: 0, fraction: 0.05, mm: 3 }, { kind: "sectionZ_3", index: 3, fraction: 0.5, mm: 30 }] }, { axis: "x", defaultIndex: 12, lengthMm: 80, positions: [{ kind: "sectionX_12", index: 12, fraction: 1.1, mm: 88 }] }], b: [] }; const h = simulationPanel.fieldChoices.find(f => f.kind === "sectionHorizontal"); const c = simulationPanel.fieldChoices.find(f => f.kind === "sectionCross"); const k = [simulationPanel.fieldKind(h, "a"), simulationPanel.fieldKind(h, "b"), simulationPanel.fieldKind(c, "a"), simulationPanel.fieldKind(c, "b"), simulationPanel.fieldKind(Object.assign({}, h, { pos: 0 }), "a")]; ui.log("SECTION KINDS " + JSON.stringify(k)); if (JSON.stringify(k) !== JSON.stringify(["sectionZ_3", "sectionHorizontal", "sectionX_12", null, "sectionZ_0"])) ui.fail("section kinds per run"); simulationPanel.runSections = ({}) })()
 ui.log("cfd results overlay done")

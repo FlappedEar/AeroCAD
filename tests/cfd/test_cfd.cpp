@@ -234,6 +234,26 @@ TEST_CASE("writeCase writes a complete OpenFOAM case in SI units", "[cfd]")
     CHECK(control.find("Aref " + std::to_string(info.referenceArea).substr(0, 5)) != std::string::npos);
     CHECK(control.find("magUInf $aerocadUInf") != std::string::npos);
     CHECK(control.find("patches (part)") != std::string::npos);
+    // Section stacks for the result view (CAD-148): every plane, cropped to the region
+    // around the part.
+    for (const auto& stack : cfd::sectionStacks())
+        for (std::size_t i = 0; i < stack.fractions.size(); ++i)
+            CHECK(control.find(cfd::sectionName(stack.axis, static_cast<int>(i)) + " { type cuttingPlane;") !=
+                  std::string::npos);
+    CHECK(cfd::sectionName('x', 12) == "sectionX_12");
+    {
+        const auto region = cfd::resultRegion(info);
+        const std::size_t at = control.find("sectionY_2 { type cuttingPlane; point ");
+        REQUIRE(at != std::string::npos);
+        const std::string line = control.substr(at, control.find('\n', at) - at);
+        CHECK(line.find("normal (0 1 0)") != std::string::npos);
+        CHECK(line.find("bounds (") != std::string::npos);
+        // The region holds the part with 0.4 lengths around it and 1.5 lengths of wake.
+        const double L = info.characteristicLength;
+        CHECK(region.min.x == Approx(info.partBounds.min.x - 0.4 * L));
+        CHECK(region.max.x == Approx(info.partBounds.max.x + 1.5 * L));
+        CHECK(region.min.z == Approx(info.partBounds.min.z - 0.4 * L)); // No floor here.
+    }
     CHECK(slurp(tmp.path() / "Allrun").find("runParallel simpleFoam") != std::string::npos);
     CHECK(slurp(tmp.path() / "Allrun").find("\"${WM_PROJECT_VERSION:-}\" > aerocad.engine") != std::string::npos); // CAD-84
     CHECK(slurp(tmp.path() / "system/blockMeshDict").find("ground") == std::string::npos);
@@ -902,6 +922,26 @@ TEST_CASE("OpenFOAM: box in a wind tunnel", "[.openfoam]")
     CHECK(r.at("quality").at("meshOk") == true);
     for (const char* kind : {"surface", "sectionHorizontal", "sectionVertical", "streamlines"})
         CHECK_FALSE(runs.field(id, kind).empty());
+    // Every plane of the section stacks (CAD-148) is listed and readable; a plane across
+    // the flow lies at its listed distance behind the part's front.
+    const auto& sections = r.at("fields").at("sections");
+    REQUIRE(sections.size() == cfd::sectionStacks().size());
+    for (const auto& stack : sections)
+        for (const auto& p : stack.at("positions"))
+            CHECK_FALSE(runs.field(id, p.at("kind").get<std::string>()).empty());
+    {
+        const auto& x = sections.at(0);
+        REQUIRE(x.at("axis") == "x");
+        const auto& p = x.at("positions").at(6); // Half the part's length.
+        const auto plane = runs.field(id, p.at("kind").get<std::string>());
+        double y = 0;
+        for (const auto& q : plane.points)
+            y += q.y;
+        y /= static_cast<double>(plane.points.size());
+        // +Y flow: the box spans y 0..200 mm, so the plane at 0.5 lies at y = 100 mm.
+        CHECK(p.at("mm").get<double>() == Approx(100.0).margin(1.0));
+        CHECK(y == Approx(100.0).margin(1.0));
+    }
     // Streamlines come back in model coordinates: they travel along +Y.
     const auto lines = runs.field(id, "streamlines");
     const auto& u = lines.vectors.at("U");

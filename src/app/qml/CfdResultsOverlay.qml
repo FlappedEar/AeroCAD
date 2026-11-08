@@ -47,7 +47,9 @@ Item {
         return kind === "surface" ? qsTr("on the part")
              : kind === "streamlines" ? qsTr("streamlines")
              : kind === "sectionHorizontal" ? qsTr("horizontal section")
-             : kind === "sectionVertical" ? qsTr("vertical section") : kind
+             : kind === "sectionVertical" || kind.indexOf("sectionY_") === 0 ? qsTr("vertical section")
+             : kind.indexOf("sectionZ_") === 0 ? qsTr("horizontal section")
+             : kind.indexOf("sectionX_") === 0 ? qsTr("section across the flow") : kind
     }
     /// Tick values from bottom to top: five evenly spaced, with zero on pressure scales.
     function ticks(l) {

@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace aerocad::cfd {
 
@@ -61,6 +62,26 @@ struct CaseInfo {
     [[nodiscard]] Json toJson() const;
     static CaseInfo fromJson(const Json& json);
 };
+
+/// Region around the part kept in the result view, in the case frame (m): 0.4
+/// characteristic lengths ahead, beside and above the part, `wake` lengths behind it, down
+/// to the floor when the case has one (CAD-129, CAD-135). Empty when the part bounds are.
+[[nodiscard]] core::BoundingBox resultRegion(const CaseInfo& info, double wake = 1.5);
+
+/// Velocity sections written by each run for the result view (CAD-148): stacks of planes
+/// normal to an axis of the case frame, at fractions of the part's size along that axis
+/// (0 = the part's minimum, 1 = its maximum), cropped to resultRegion(). Axis 'x' gives
+/// planes across the flow (fractions past 1 lie in the wake), 'y' vertical planes along
+/// the flow, 'z' horizontal planes.
+struct SectionStack {
+    char axis = 'x';
+    std::vector<double> fractions;
+    int defaultIndex = 0; ///< Position shown first.
+};
+[[nodiscard]] const std::vector<SectionStack>& sectionStacks();
+/// Name of a section plane in the case ("sectionX_3"), also its VTK file name without
+/// the extension.
+[[nodiscard]] std::string sectionName(char axis, int index);
 
 /// Area of the projection of a mesh onto the plane normal to +X (case frame), computed by
 /// rasterising the projected triangles on a grid of `resolution` x `resolution` cells over

@@ -3,7 +3,8 @@
 # minute): the results in 3D have one colour bar per quantity and the forces card, the guide
 # bar steps aside, the sections and streamlines are cropped to the region around the part,
 # the dense rakes give many streamlines, the pointer reads the value under it, and the
-# pressure colours and Cp range can be changed.
+# pressure colours and Cp range can be changed, and the section across the flow can be
+# moved along the wake (CAD-148).
 # Run: AEROCAD_CFD_DIR=<empty dir> AeroCAD tests/data/box_200x80x60.stl --ui-script <this file>
 ui.wait(800)
 (() => { const p = controller.execute("document.parts").result.parts[0]; window.selectPart(p.id) })()
@@ -69,4 +70,18 @@ ui.shot("cfd-results-3d.png")
 (() => { simulationPanel.pressurePalette = "coolwarm"; simulationPanel.setRangeOverride("Cp", -1, 1) })()
 ui.wait(500)
 (() => { const l = cfdOverlay.legends.find(x => x.scalar === "Cp"); ui.log("CP LEGEND " + JSON.stringify(l)); if (!l || l.palette !== "coolwarm" || l.min !== -1 || l.max !== 1) ui.fail("pressure colours or Cp range not applied") })()
+# CAD-148: the run wrote stacks of sections; the section across the flow is shown at its
+# default position just behind the part and a click at the end of its slider moves it to
+# the last plane of the wake.
+(() => { const st = simulationPanel.results.fields.sections; ui.log("STACKS " + JSON.stringify(st.map(x => [x.axis, x.positions.length, x.defaultIndex]))); if (st.length !== 3 || st.some(x => x.positions.length < 5)) ui.fail("section stacks missing") })()
+(() => { const i = simulationPanel.fieldChoices.findIndex(f => f.kind === "sectionCross"); simulationPanel.setField(i, true) })()
+ui.wait(800)
+(() => { const f = simulationPanel.viewportFields.find(x => x.kind.indexOf("sectionX_") === 0); ui.log("CROSS " + JSON.stringify(f)); if (!f || f.kind !== "sectionX_12") ui.fail("the section across the flow is not drawn at its default position") })()
+(() => { const find = i => { if (!i) return null; if (i.objectName === "sectionSlider_x") return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = find(ch[k]); if (r) return r } return null }; const sl = find(simulationPanel); if (!sl || !sl.visible) { ui.fail("no slider for the section across the flow"); return } let f = sl.parent; while (f && f.contentY === undefined) f = f.parent; if (f) { const y = sl.mapToItem(f.contentItem, 0, 0).y; f.contentY = Math.max(0, Math.min(y - 100, f.contentHeight - f.height)) } })()
+ui.wait(300)
+(() => { const find = i => { if (!i) return null; if (i.objectName === "sectionSlider_x") return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = find(ch[k]); if (r) return r } return null }; const sl = find(simulationPanel); const x0 = sl.leftPadding + sl.availableWidth * sl.visualPosition; const a = sl.mapToItem(null, x0, sl.height / 2); const b = sl.mapToItem(null, sl.width - 2, sl.height / 2); ui.drag(a.x, a.y, b.x, b.y, "left", "", 20) })()
+ui.wait(1000)
+(() => { const f = simulationPanel.viewportFields.find(x => x.kind.indexOf("sectionX_") === 0); ui.log("CROSS END " + JSON.stringify(f)); if (!f || f.kind !== "sectionX_14") ui.fail("dragging the slider did not move the section through the planes to the end of the wake"); const r = controller.execute("simulation.field", { run: simulationPanel.activeRun, kind: f.kind }).result; const b = controller.execute("simulation.field", { run: simulationPanel.activeRun, kind: "surface" }).result.bounds; ui.log("CROSS BOUNDS " + JSON.stringify(r.bounds) + " part " + JSON.stringify(b)); if (!(r.bounds.min[1] > b.max[1])) ui.fail("the last section should lie behind the part (+Y flow)") })()
+ui.clickText(simulationPanel.sectionPositionText("x", simulationPanel.sectionPosition(simulationPanel.fieldChoices.find(f => f.kind === "sectionCross"))))
+(() => { const l = cfdOverlay.legends.find(x => x.scalar === "speed"); const names = l ? l.kinds.map(k => cfdOverlay.kindName(k)) : []; ui.log("SPEED LEGEND " + names.join(", ")); if (names.indexOf("section across the flow") < 0) ui.fail("the speed legend does not name the section across the flow") })()
 ui.log("cfd results 3d done")
