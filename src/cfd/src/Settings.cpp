@@ -207,6 +207,54 @@ Json settingsSchema()
     };
 }
 
+std::string describeCondition(const std::string& key, const Json& a, const Json& b)
+{
+    struct Label {
+        const char* key;
+        const char* name;
+        const char* unit; ///< Appended to numbers; empty for none.
+        double factor;    ///< Shown value = stored value * factor.
+    };
+    static constexpr std::array labels{
+        Label{"preset", "Setup preset", "", 1.0},
+        Label{"speed", "Air speed", " m/s", 1.0},
+        Label{"flowDirection", "Flow direction", "", 1.0},
+        Label{"kinematicViscosity", "Air viscosity", " m²/s", 1.0},
+        Label{"density", "Air density", " kg/m³", 1.0},
+        Label{"turbulenceIntensity", "Turbulence intensity", " %", 100.0},
+        Label{"viscosityRatio", "Turbulent viscosity ratio", "", 1.0},
+        Label{"mesh", "Mesh", "", 1.0},
+        Label{"ground", "Floor", "", 1.0},
+        Label{"groundMoving", "Floor motion", "", 1.0},
+        Label{"groundHeight", "Floor height", " mm", 1.0},
+        Label{"referenceArea", "Reference area", " cm²", 1e4},
+        Label{"referenceLength", "Reference length", " mm", 1e3},
+    };
+    const auto it = std::find_if(labels.begin(), labels.end(), [&](const Label& l) { return key == l.key; });
+    if (it == labels.end())
+        return key;
+    auto value = [&](const Json& settings) -> std::string {
+        const Json v = settings.value(key, Json());
+        if (key == "ground")
+            return v.is_boolean() && v.get<bool>() ? "on" : "off";
+        if (key == "groundMoving")
+            return v.is_boolean() && !v.get<bool>() ? "fixed" : "moving";
+        if (key == "groundHeight" && v.is_null())
+            return "just under the part";
+        if ((key == "referenceArea" || key == "referenceLength") && v.is_null())
+            return "from the part";
+        if (v.is_number()) {
+            char text[48];
+            std::snprintf(text, sizeof text, "%g", v.get<double>() * it->factor);
+            return text + std::string(it->unit);
+        }
+        if (v.is_string())
+            return v.get<std::string>();
+        return v.is_null() ? "not set" : v.dump();
+    };
+    return std::string(it->name) + ": A " + value(a) + ", B " + value(b);
+}
+
 std::vector<std::string> differingConditions(const Json& a, const Json& b)
 {
     // Everything that defines the flow problem. Processes and iterations do not change

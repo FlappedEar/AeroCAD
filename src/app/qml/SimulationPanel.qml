@@ -1460,9 +1460,12 @@ Pane {
                     }
                 }
                 Repeater {
-                    model: root.comparison ? root.comparison.differingConditions.map(c => qsTr("Different condition: %1").arg(c))
-                                             .concat((root.comparison.unknownConditions || []).map(c => qsTr("Unknown condition: %1").arg(c)))
-                                             .concat(root.comparison.reasons).concat(root.comparison.notes) : []
+                    // CAD-159: each differing condition in words with both values.
+                    model: !root.comparison ? []
+                           : (root.comparison.conditionChanges || root.comparison.differingConditions)
+                               .map(c => qsTr("Different: %1").arg(c))
+                               .concat((root.comparison.unknownConditions || []).map(c => qsTr("Unknown condition: %1").arg(c)))
+                               .concat(root.comparison.reasons).concat(root.comparison.notes)
                     delegate: Label {
                         required property var modelData
                         Layout.fillWidth: true
