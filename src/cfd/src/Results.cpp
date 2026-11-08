@@ -226,6 +226,53 @@ PolyData readVtk(const fs::path& path)
     return data;
 }
 
+PolyData cropPolygons(const PolyData& data, const core::BoundingBox& box)
+{
+    PolyData out;
+    constexpr auto unused = std::numeric_limits<std::uint32_t>::max();
+    std::vector<std::uint32_t> remap(data.points.size(), unused);
+    std::vector<std::uint32_t> kept; // Old indices of the kept points, in new order.
+    auto inside = [&](const core::Vec3& p) {
+        return p.x >= box.min.x && p.x <= box.max.x && p.y >= box.min.y && p.y <= box.max.y &&
+               p.z >= box.min.z && p.z <= box.max.z;
+    };
+    for (const auto& poly : data.polygons) {
+        if (poly.empty())
+            continue;
+        core::Vec3 c;
+        for (const auto i : poly)
+            c = c + data.points[i];
+        if (!inside(c * (1.0 / static_cast<double>(poly.size()))))
+            continue;
+        std::vector<std::uint32_t> mapped;
+        mapped.reserve(poly.size());
+        for (const auto i : poly) {
+            if (remap[i] == unused) {
+                remap[i] = static_cast<std::uint32_t>(kept.size());
+                kept.push_back(i);
+            }
+            mapped.push_back(remap[i]);
+        }
+        out.polygons.push_back(std::move(mapped));
+    }
+    out.points.reserve(kept.size());
+    for (const auto i : kept)
+        out.points.push_back(data.points[i]);
+    for (const auto& [name, values] : data.scalars) {
+        auto& v = out.scalars[name];
+        v.reserve(kept.size());
+        for (const auto i : kept)
+            v.push_back(i < values.size() ? values[i] : std::nan(""));
+    }
+    for (const auto& [name, values] : data.vectors) {
+        auto& v = out.vectors[name];
+        v.reserve(kept.size());
+        for (const auto i : kept)
+            v.push_back(i < values.size() ? values[i] : core::Vec3{});
+    }
+    return out;
+}
+
 std::vector<fs::path> timeDirectories(const fs::path& dir)
 {
     std::vector<std::pair<double, fs::path>> found;

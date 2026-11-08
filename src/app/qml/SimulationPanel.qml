@@ -25,9 +25,20 @@ Pane {
             if (!f.on || !fieldStats[run + "/" + f.kind])
                 continue
             const r = scaleFor(f.kind, f.scalar)
-            out.push({ run: run, kind: f.kind, scalar: f.scalar, min: r[0], max: r[1] })
+            out.push({ run: run, kind: f.kind, scalar: f.scalar, min: r[0], max: r[1], tubeRadius: tubeRadius })
         }
         return out
+    }
+    /// Streamline tube radius in mm: 0.4 % of the part's largest dimension (0 = automatic).
+    readonly property real tubeRadius: {
+        const c = results ? results.conditions : null
+        return c && c.characteristicLength > 0 ? c.characteristicLength * 1000 * 0.004 : 0
+    }
+    /// Name of the run drawn in 3D, for the viewport card.
+    readonly property string displayedRunTitle: {
+        if (!displayedRun)
+            return ""
+        return (showB && finalComparisonAvailable ? "B: " : "") + runTitle(displayedRun, "")
     }
     /// Parts hidden while their pressure map is shown (they would overlap).
     readonly property var hiddenPartIds: {
@@ -304,11 +315,17 @@ Pane {
     /// symmetric around zero, clipped to Cp in [-2, 1] where the data allows.
     function scaleFor(kind, scalar) {
         let lo = Infinity, hi = -Infinity
+        // One scale per quantity: the sections and the streamlines share the speed scale,
+        // so one legend reads them all (CAD-128).
         for (const id of finalComparisonAvailable ? [activeRun, compareRun] : [displayedRun]) {
-            const s = fieldStats[id + "/" + kind]
-            if (s && s[scalar]) {
-                lo = Math.min(lo, s[scalar].min)
-                hi = Math.max(hi, s[scalar].max)
+            for (const f of fieldChoices) {
+                if (f.scalar !== scalar)
+                    continue
+                const s = fieldStats[id + "/" + f.kind]
+                if (s && s[scalar]) {
+                    lo = Math.min(lo, s[scalar].min)
+                    hi = Math.max(hi, s[scalar].max)
+                }
             }
         }
         if (!isFinite(lo))
@@ -318,12 +335,8 @@ Pane {
         return [0, hi]
     }
 
-    function startRun() {
-        error = ""
-        if (!partInfo.id) {
-            error = qsTr("Select a part first.")
-            return
-        }
+    /// Settings of a new run as they stand in the panel (simulation.run / propose_run).
+    function runParams() {
         const params = {
             id: partInfo.id,
             speed: Number(speedField.text),
@@ -331,14 +344,54 @@ Pane {
             mesh: meshBox.currentValue,
             ground: groundBox.checked
         }
-        if (labelField.text.length > 0)
-            params.label = labelField.text
         if (contextBox.checked) {
             const parts = controller.execute("document.parts")
             if (parts.ok)
                 params.context = parts.result.parts
                     .filter(p => p.id !== partInfo.id && p.visible && p.kind !== "sketch" && p.kind !== "plane").map(p => p.id)
         }
+        return params
+    }
+
+    /// The planned run of the selected part (simulation.propose_run without the engine
+    /// check): part size, tunnel and flow in model mm, size warnings. Drawn in the view
+    /// while a new run is set up; null when there is nothing to plan.
+    property var proposal: null
+    function refreshProposal() {
+        if (!visible || tab !== 0 || !partInfo.id || partInfo.kind === "sketch" || partInfo.kind === "plane") {
+            proposal = null
+            return
+        }
+        const params = runParams()
+        // Preview only: a cleared or zero speed still shows the tunnel. A run with such a
+        // speed is refused by simulation.run, never started at another speed.
+        if (!(params.speed > 0))
+            params.speed = 20
+        params.checkEngine = false
+        const r = controller.execute("simulation.propose_run", params)
+        proposal = r.ok ? r.result : null
+    }
+    Timer {
+        id: proposalTimer
+        interval: 120
+        onTriggered: root.refreshProposal()
+    }
+    onTabChanged: proposalTimer.restart()
+    onPartInfoChanged: proposalTimer.restart()
+    Connections {
+        target: root.controller
+        function onBoundsChanged() { proposalTimer.restart() }
+    }
+
+    function startRun() {
+        error = ""
+        if (!partInfo.id) {
+            error = qsTr("Select a part first.")
+            return
+        }
+        const params = runParams()
+        if (labelField.text.length > 0)
+            params.label = labelField.text
         const r = controller.execute("simulation.run", params)
         if (!r.ok) {
             error = r.error
@@ -374,7 +427,14 @@ Pane {
         return { name: name, color: color, x: x || [], y: y || [] }
     }
 
-    onVisibleChanged: if (visible) { if (!environment) checkEnvironment(); refreshRuns() }
+    onVisibleChanged: {
+        proposalTimer.restart()
+        if (visible) {
+            if (!environment)
+                checkEnvironment()
+            refreshRuns()
+        }
+    }
     Component.onCompleted: if (visible) { checkEnvironment(); refreshRuns() }
 
     // A part deleted, changed or brought back by undo: show or hide its results at once.
@@ -570,14 +630,18 @@ Pane {
                     Label { text: qsTr("Speed (m/s)"); opacity: 0.7 }
                     TextField {
                         id: speedField
+                        objectName: "cfdSpeedField"
                         Layout.fillWidth: true
                         text: "20"
                         validator: DoubleValidator { bottom: 0.1; top: 150; locale: "C" }
+                        onEditingFinished: proposalTimer.restart()
                     }
                     Label { text: qsTr("Air flows"); opacity: 0.7 }
                     ComboBox {
                         id: flowBox
+                        objectName: "cfdFlowBox"
                         Layout.fillWidth: true
+                        onActivated: proposalTimer.restart()
                         textRole: "text"
                         valueRole: "value"
                         model: [
@@ -591,6 +655,7 @@ Pane {
                     ComboBox {
                         id: meshBox
                         Layout.fillWidth: true
+                        onActivated: proposalTimer.restart()
                         textRole: "text"
                         valueRole: "value"
                         model: [
@@ -601,10 +666,16 @@ Pane {
                     }
                     Label { text: qsTr("Label"); opacity: 0.7 }
                     TextField { id: labelField; Layout.fillWidth: true; placeholderText: qsTr("e.g. v2, long splitter") }
-                    CheckBox { id: groundBox; Layout.columnSpan: 2; text: qsTr("Moving floor under the geometry") }
+                    CheckBox {
+                        id: groundBox
+                        Layout.columnSpan: 2
+                        text: qsTr("Moving floor under the geometry")
+                        onToggled: proposalTimer.restart()
+                    }
                     CheckBox {
                         id: contextBox
                         Layout.columnSpan: 2
+                        onToggled: proposalTimer.restart()
                         text: qsTr("Other visible parts in the flow (not in the forces)")
                     }
                     Button {

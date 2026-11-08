@@ -340,6 +340,10 @@ nobody needs to know the commands beforehand:
   an explanation; Enter applies. The result of an action that makes a new part (fit,
   cut out, thicken, part on surface) is selected, and the part it was made from is hidden
   when they overlap, so the guide continues with the next step.
+- On a scan, an outline (or a fin) already drawn on it marks the drawing step done and
+  gives the next step its button (Part on surface / Fin on surface, with the sketch to
+  use), so nobody has to find the sketch in the Browser. A part or fin made on a scan
+  offers **Export for printing** as its next step.
 - Toolbar tooltips explain each command under its name (`Theme.commandHelps`).
 
 ![Guide for a scan with an area selected](images/ui/guide-scan.png)
@@ -352,7 +356,7 @@ All of this comes from one registry, **`src/app/qml/ContextActions.qml`**:
   is disabled, `primary` marks the recommended next step, `params` lists the values the
   popup asks for (`_num(...)`, `_choice(...)`).
 - `guide(info)` groups actions into sections and numbered steps per part role
-  (`role(info)`: `empty`, `mesh`, `surface`, `sketch`, `body`, `solid`).
+  (`role(info)`: `empty`, `mesh`, `surface`, `sketch`, `body`, `solid`, `plane`).
 - `run(id, info, values)` executes it (a command through `controller.execute` or a
   function of the main window).
 

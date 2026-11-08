@@ -48,6 +48,11 @@ struct PolyData {
 /// Throws std::runtime_error on a malformed file.
 [[nodiscard]] PolyData readVtk(const std::filesystem::path& path);
 
+/// The polygons of `data` whose centre lies inside `box`, with only the points they use
+/// (scalars and vectors follow). Lines are dropped. Used to keep a cutting plane through
+/// the whole wind tunnel to the region around the part.
+[[nodiscard]] PolyData cropPolygons(const PolyData& data, const core::BoundingBox& box);
+
 /// Directories that OpenFOAM writes a function object's output into, sorted by time.
 [[nodiscard]] std::vector<std::filesystem::path> timeDirectories(const std::filesystem::path& functionObjectDir);
 

@@ -23,6 +23,9 @@ QtObject {
     /// openExport, editFeature, setSelectionTool.
     required property var host
 
+    /// The largest selection surface.fit_selection fits (SurfaceCommands.cpp, maxTriangles).
+    readonly property int maxFitTriangles: 200000
+
     /// Changes whenever the document changes, so bindings that call guide() / actions()
     /// re-evaluate.
     property int revision: 0
@@ -35,11 +38,11 @@ QtObject {
     // --- Classification ----------------------------------------------------------------
 
     /// "mesh" (scan), "surface" (fitted NURBS surface), "solid" (imported exact solid),
-    /// "body" (timeline body), "sketch", or "" (nothing selected).
+    /// "body" (timeline body), "sketch", "plane" (construction plane), or "" (nothing selected).
     function role(info) {
         if (!info || !info.id)
             return ""
-        if (info.kind === "sketch" || info.kind === "body")
+        if (info.kind === "sketch" || info.kind === "body" || info.kind === "plane")
             return info.kind
         if (info.hasBrep && (info.solids ?? 0) > 0)
             return "solid"
@@ -56,11 +59,11 @@ QtObject {
 
     function roleName(r) {
         return ({ mesh: qsTr("Scan (mesh)"), surface: qsTr("Surface"), solid: qsTr("Solid"),
-                  body: qsTr("Body"), sketch: qsTr("Sketch") })[r] || ""
+                  body: qsTr("Body"), sketch: qsTr("Sketch"), plane: qsTr("Construction plane") })[r] || ""
     }
 
     function roleIcon(r) {
-        return ({ mesh: "mesh", surface: "surface", solid: "body", body: "body", sketch: "sketch" })[r] || "tool"
+        return ({ mesh: "mesh", surface: "surface", solid: "body", body: "body", sketch: "sketch", plane: "plane" })[r] || "tool"
     }
 
     /// Sketches of the document, newest first: [{ name, featureId, partId }].
@@ -98,6 +101,38 @@ QtObject {
         return own.concat(closed.filter(k => own.indexOf(k) < 0))
     }
 
+    /// Sketches with a closed outline drawn on part `info` (a scan or surface), newest first,
+    /// with `across` true for fin sketches: [{ name, featureId, partId, across }] (CAD-132).
+    function sketchesOn(info) {
+        const out = []
+        for (const k of sketches()) {
+            const r = controller.execute("sketch.profiles", { sketch: k.featureId })
+            if (r.ok && r.result.onSurface && r.result.onSurface.part === info.id && (r.result.profiles ?? []).length > 0)
+                out.push(Object.assign({ across: !!r.result.onSurface.across }, k))
+        }
+        return out
+    }
+
+    /// For a scan: the sketches a part (`across` false) or a fin (`across` true) can be made
+    /// from, newest first.
+    function scanSketches(info, across) {
+        return sketchesOn(info).filter(k => k.across === across)
+    }
+
+    /// The sketch choice of Part on surface / Fin on surface offered on the scan itself.
+    function _sketchParam(list) {
+        return { key: "sketch", label: qsTr("Sketch"), type: "sketch", value: list.length ? list[0].featureId : 0,
+                 options: list.map(s => ({ value: s.featureId, label: s.name })),
+                 help: qsTr("The outline drawn on this scan. The newest one is preselected.") }
+    }
+
+    /// True for a body made on a scan or surface (Part on surface, Fin on surface): its next
+    /// step is printing (CAD-131).
+    function madeOnSurface(info) {
+        const f = ownFeature(info)
+        return !!f && (f.type === "part_on_surface" || f.type === "fin_on_surface")
+    }
+
     function sketchHasProfiles(featureId) {
         if (!(featureId > 0))
             return false // no sketch (the toolbar asks without a part)
@@ -115,6 +150,13 @@ QtObject {
         const r = controller.execute("timeline.list")
         const id = info.featureId % 1099511627776 // 2^40: see cad::featureOfBody
         return r.ok ? (r.result.features.find(f => f.id === id) ?? null) : null
+    }
+
+    /// The timeline feature with id `featureId` ({ id, type, params }), or null.
+    function timelineFeature(featureId) {
+        void revision
+        const r = controller.execute("timeline.list")
+        return r.ok ? (r.result.features.find(f => f.id === featureId) ?? null) : null
     }
 
     /// True for a surface piece made by "Cut out by sketch" (its next step is Thicken).
@@ -175,12 +217,19 @@ QtObject {
         case "clearSelection":
             return { id: id, text: qsTr("Clear"), icon: "close", enabled: selected,
                      reason: qsTr("Nothing is selected."), tip: qsTr("Deselects the area.") }
-        case "fitSurface":
-            return { id: id, text: qsTr("Fit smooth surface"), icon: "surface", enabled: selected, primary: true,
-                     reason: qsTr("Select an area of the scan first (step 1)."),
+        case "fitSurface": {
+            // surface.fit_selection refuses more (CAD-138): say so before the popup.
+            const tooLarge = (info.selectedTriangles ?? 0) > maxFitTriangles
+            return { id: id, text: qsTr("Fit smooth surface"), icon: "surface", enabled: selected && !tooLarge, primary: true,
+                     reason: tooLarge
+                             ? qsTr("The selected area is too large for one surface (%1 triangles, at most %2). Select a smaller area with Draw around or Paint (or set Max total for Click an area), or draw the part straight on the scan with Sketch on the scan.")
+                                   .arg(Number(info.selectedTriangles).toLocaleString(Qt.locale(), "f", 0))
+                                   .arg(Number(maxFitTriangles).toLocaleString(Qt.locale(), "f", 0))
+                             : qsTr("Select an area of the scan first (step 1)."),
                      tip: qsTr("Turns the selected area into one smooth, exact (NURBS) surface you can design on. Holes in the area are cut out. The result is a new part; the scan is kept."),
                      params: [_num("tolerance", qsTr("Tolerance"), 0.25, "mm",
                                    qsTr("How far the surface may deviate from the scan. Smaller follows the scan more closely but may be bumpier."))] }
+        }
         case "fitWhole":
             return { id: id, text: selected ? qsTr("Fit patches to selection") : qsTr("Whole scan to solid"),
                      icon: "body", enabled: true,
@@ -196,7 +245,8 @@ QtObject {
                                    qsTr("Deviations up to this are green; the colours reach full red or blue at twice this."))] }
         }
         case "sketchOnScan":
-            return { id: id, text: qsTr("Sketch on the scan"), icon: "sketch", enabled: true, primary: !selected,
+            return { id: id, text: qsTr("Sketch on the scan"), icon: "sketch", enabled: true,
+                     primary: !selected && sketchesOn(info).length === 0,
                      tip: qsTr("Starts a sketch on a plane fitted to the scan where you click (or over the selected area). Draw the outline of the part, then click Finish Sketch.") }
         case "sketchFin":
             return { id: id, text: qsTr("Sketch a fin"), icon: "sketch", enabled: true,
@@ -225,7 +275,8 @@ QtObject {
         case "trim": {
             const sk = outlineSketches(info)
             return { id: id, text: qsTr("Cut out by sketch"), icon: "section", enabled: sk.length > 0,
-                     primary: sk.length > 0 && !isCutOut(info),
+                     // Part on surface does both steps at once when the outline is on this surface (CAD-137).
+                     primary: sk.length > 0 && !isCutOut(info) && scanSketches(info, false).length === 0,
                      reason: qsTr("Draw a closed outline in a sketch first (step 1)."),
                      tip: qsTr("Projects the sketch outline onto this curved surface and keeps the piece inside it, as a new surface that follows the curvature exactly."),
                      params: [{ key: "sketch", label: qsTr("Sketch"), type: "sketch", value: sk.length ? sk[0].featureId : 0,
@@ -250,11 +301,17 @@ QtObject {
 
         // Sketch
         case "finOnSurface": {
-            const ok = sketchHasProfiles(info.featureId)
-            return { id: id, text: qsTr("Fin on surface"), icon: "thickness", enabled: ok, primary: true,
-                     reason: qsTr("The sketch needs a closed outline."),
+            // On the scan itself (CAD-132): the fin sketches drawn on it.
+            const onScan = info.kind !== "sketch"
+            const sk = onScan ? scanSketches(info, true) : []
+            const ok = onScan ? sk.length > 0 : sketchHasProfiles(info.featureId)
+            const newest = onScan ? sketchesOn(info)[0] : null
+            return { id: id, text: qsTr("Fin on surface"), icon: "thickness", enabled: ok,
+                     primary: onScan ? ok && newest.across : true,
+                     reason: onScan ? qsTr("Sketch the fin first (step 1).") : qsTr("The sketch needs a closed outline."),
                      tip: qsTr("Gives the fin outline a thickness (half each side of the sketch) and cuts its root to the surface, so it sits flush on it."),
-                     params: [_num("thickness", qsTr("Thickness"), 2, "mm"),
+                     params: [...(onScan ? [_sketchParam(sk)] : []),
+                              _num("thickness", qsTr("Thickness"), 2, "mm"),
                               _num("rootFillet", qsTr("Root fillet"), 2, "mm", qsTr("Rounds the joint between the fin and the surface; 0 for a sharp joint.")),
                               _num("count", qsTr("Fins"), 1, "", qsTr("More than one: copies stacked across the sketch, each set on the surface where it lands.")),
                               _num("spacing", qsTr("Spacing"), 40, "mm", qsTr("Distance between the fins; negative puts the copies on the other side.")),
@@ -270,15 +327,31 @@ QtObject {
                      reason: qsTr("This body has no step of its own in the timeline."),
                      tip: qsTr("Changes the settings of the timeline step that made this body; the model is rebuilt.") }
         }
+        // Construction plane (CAD-133)
+        case "sketchOnPlane":
+            return { id: id, text: qsTr("Sketch on this plane"), icon: "sketch", enabled: true, primary: true,
+                     tip: qsTr("Starts a sketch on this plane. Draw an outline, then extrude or revolve it, or cut a part with it.") }
+        case "editPlane": {
+            const f = timelineFeature(info.featureId)
+            return { id: id, text: qsTr("Edit plane"), icon: "plane", enabled: !!f,
+                     reason: qsTr("This plane has no step in the timeline."),
+                     tip: qsTr("Changes the plane's base, offset or angle; sketches on it follow.") }
+        }
         case "editSketch":
             return { id: id, text: qsTr("Edit sketch"), icon: "sketch", enabled: true,
                      tip: qsTr("Opens the sketch again to change curves and dimensions.") }
         case "partOnSurface": {
-            const ok = sketchHasProfiles(info.featureId)
-            return { id: id, text: qsTr("Part on surface"), icon: "thickness", enabled: ok, primary: true,
-                     reason: qsTr("The sketch needs a closed outline."),
+            // On the scan itself (CAD-132): the outlines drawn on it.
+            const onScan = info.kind !== "sketch"
+            const sk = onScan ? scanSketches(info, false) : []
+            const ok = onScan ? sk.length > 0 : sketchHasProfiles(info.featureId)
+            const newest = onScan ? sketchesOn(info)[0] : null
+            return { id: id, text: qsTr("Part on surface"), icon: "thickness", enabled: ok,
+                     primary: onScan ? ok && !newest.across : true,
+                     reason: onScan ? qsTr("Draw the outline first (step 1).") : qsTr("The sketch needs a closed outline."),
                      tip: qsTr("In one step: cuts the outline out of the surface it was drawn on and thickens it into a solid that follows the curvature."),
-                     params: [_num("thickness", qsTr("Thickness"), 2, "mm"),
+                     params: [...(onScan ? [_sketchParam(sk)] : []),
+                              _num("thickness", qsTr("Thickness"), 2, "mm"),
                               _choice("side", qsTr("Direction"), [{ value: "inside", label: qsTr("Into the surface") },
                                                                   { value: "outside", label: qsTr("Out of the surface") },
                                                                   { value: "both", label: qsTr("Both sides, centred") }])] }
@@ -298,7 +371,8 @@ QtObject {
 
         // Body / solid
         case "sketchOnFace":
-            return { id: id, text: qsTr("Sketch on a face"), icon: "sketch", enabled: true, primary: info.kind === "body",
+            return { id: id, text: qsTr("Sketch on a face"), icon: "sketch", enabled: true,
+                     primary: info.kind === "body" && !madeOnSurface(info),
                      tip: qsTr("Click a flat face of the body to draw on it, e.g. the outline of a pocket or a boss.") }
         case "fillet":
             return { id: id, text: qsTr("Round edges"), icon: "fillet", enabled: editableSolid(info),
@@ -334,8 +408,9 @@ QtObject {
                      reason: qsTr("Sketches are not exported."),
                      tip: qsTr("Saves this part as STL or 3MF (3D printing) or STEP (CAD).") }
         case "exportForPrint":
-            return { id: id, text: qsTr("Export for printing…"), icon: "export", enabled: role(info) === "solid",
-                     primary: role(info) === "solid",
+            // Bodies too: a part or fin made on a scan is a timeline body (CAD-131).
+            return { id: id, text: qsTr("Export for printing…"), icon: "export", enabled: role(info) === "solid" || role(info) === "body",
+                     primary: role(info) === "solid" || madeOnSurface(info),
                      reason: qsTr("Only solids can be printed."),
                      tip: qsTr("Writes every visible solid (e.g. all the fins) to a folder you choose, each as its own STL for the printer and STEP for CAD. Hide what you do not want printed.") }
         case "moveRotate": {
@@ -402,23 +477,28 @@ QtObject {
                      sections: [{ title: "", steps: [], actions: [a("import"), a("newSketch"), a("box")] }] }
         }
         if (r === "mesh") {
+            // Outlines already drawn on this scan finish step 1 and give step 2 its button (CAD-132).
+            const partSketch = scanSketches(info, false).length > 0
+            const finSketch = scanSketches(info, true).length > 0
             return { title: roleName(r),
                      intro: qsTr("A scan is made of many small triangles. To design on it, draw the outline of the new part on the scan, or turn an area into a smooth surface first."),
                      sections: [
                          { title: qsTr("Part on the scan (e.g. an aileron)"), steps: [
-                               { title: qsTr("Draw the outline on the scan"), done: false,
-                                 text: qsTr("Click the button, then click the scan where the part goes. Draw a closed outline and click Finish Sketch."),
+                               { title: qsTr("Draw the outline on the scan"), done: partSketch,
+                                 text: partSketch ? qsTr("An outline is drawn on the scan. Draw another one for a second part.")
+                                                  : qsTr("Click the button, then click the scan where the part goes. Draw a closed outline and click Finish Sketch."),
                                  actions: [a("sketchOnScan")] },
                                { title: qsTr("Create the part"), done: false,
-                                 text: qsTr("Select the sketch and choose Part on surface: it is cut out of the scan's shape and thickened."),
-                                 actions: [] }] },
+                                 text: qsTr("The outline is cut out of the scan's shape and thickened into a solid."),
+                                 actions: [a("partOnSurface")] }] },
                          { title: qsTr("Fin on the scan (e.g. a canard)"), steps: [
-                               { title: qsTr("Sketch the fin"), done: false,
-                                 text: qsTr("Click the button, then click the scan where the fin stands. Draw its outline with the root a little past the orange surface line and click Finish Sketch."),
+                               { title: qsTr("Sketch the fin"), done: finSketch,
+                                 text: finSketch ? qsTr("A fin is sketched on the scan. Sketch another one for a different fin.")
+                                                 : qsTr("Click the button, then click the scan where the fin stands. Draw its outline with the root a little past the orange surface line and click Finish Sketch."),
                                  actions: [a("sketchFin")] },
                                { title: qsTr("Create the fin"), done: false,
                                  text: qsTr("Set the thickness and click Create: the root is cut to the scan's shape."),
-                                 actions: [] }] },
+                                 actions: [a("finOnSurface")] }] },
                          { title: qsTr("Smooth surface from an area"), steps: [
                                { title: qsTr("Select the area"), done: selected,
                                  text: selected
@@ -438,6 +518,23 @@ QtObject {
             const cut = isCutOut(info)
             // Done only for a sketch with a closed outline: an empty one is nothing to cut out (CAD-114).
             const hasSketch = cut || outlineSketches(info).length > 0
+            // An outline drawn on this surface: one step, as the pane after Finish Sketch (CAD-137).
+            const own = !cut && scanSketches(info, false).length > 0
+            if (own)
+                return { title: roleName(r),
+                         intro: qsTr("A smooth, exact surface fitted to the scan. Cut the part you need out of it and give it a thickness."),
+                         sections: [
+                             { title: qsTr("Make a part from this surface"), steps: [
+                                   { title: qsTr("Draw the outline"), done: true,
+                                     text: qsTr("A sketch exists. Draw another one if you need a different outline."),
+                                     actions: [a("sketchOnSurface")] },
+                                   { title: qsTr("Create the part"), done: false,
+                                     text: qsTr("Cuts the outline out of this surface and thickens it into a solid, in one step."),
+                                     actions: [a("partOnSurface")] },
+                                   { title: qsTr("Or step by step"), done: false,
+                                     text: qsTr("Cut out first (also keeps the outside of the outline), then thicken the piece."),
+                                     actions: [a("trim"), a("thicken")] }] },
+                             { title: qsTr("More"), steps: [], actions: [...fitted, a("sketchFin"), a("offset"), a("cutWithThis"), a("scale"), a("export"), a("hide"), a("rename"), a("delete")] }] }
             return { title: roleName(r),
                      intro: qsTr("A smooth, exact surface fitted to the scan. Cut the part you need out of it and give it a thickness."),
                      sections: [
@@ -454,6 +551,15 @@ QtObject {
                                  text: qsTr("Turns the piece into a solid with the thickness you type."),
                                  actions: [a("thicken")] }] },
                          { title: qsTr("More"), steps: [], actions: [...fitted, a("sketchFin"), a("offset"), a("cutWithThis"), a("scale"), a("export"), a("hide"), a("rename"), a("delete")] }] }
+        }
+        if (r === "plane") {
+            return { title: roleName(r),
+                     intro: qsTr("A flat reference plane for sketches. It is not part of the model and is not exported."),
+                     sections: [{ title: qsTr("Next step"), steps: [
+                                      { title: qsTr("Sketch on this plane"), done: false,
+                                        text: qsTr("Draw a closed outline on the plane and click Finish Sketch."),
+                                        actions: [a("sketchOnPlane")] }] },
+                                { title: qsTr("More"), steps: [], actions: [a("editPlane"), a("hide"), a("rename"), a("delete")] }] }
         }
         if (r === "sketch") {
             const onSurface = sketchSurface(info.featureId) > 0
@@ -477,12 +583,20 @@ QtObject {
         }
         // body / solid
         const editable = r === "body"
+        // A part or fin made on a scan is finished: printing comes first (CAD-131).
+        const onSurface = editable && madeOnSurface(info)
+        const print = { title: qsTr("Use it"), steps: [
+                            { title: qsTr("Export for printing"), done: false,
+                              text: qsTr("Every visible solid gets its own STL for the printer and STEP for CAD, in a folder you choose. Hide what you do not want printed."),
+                              actions: [a("exportForPrint")] }] }
+        const change = { title: qsTr("Change the shape"), steps: [],
+                         actions: [a("editStep"), a("sketchOnFace"), a("fillet"), a("chamfer"), a("shell"), a("hole"), a("combine")] }
         return { title: roleName(r),
-                 intro: editable ? qsTr("A solid in the design timeline. Add features to it; every step can be edited later in the timeline at the bottom.")
+                 intro: onSurface ? qsTr("A solid made on the scan, as a step in the design timeline. Export it for printing, or keep shaping it; Edit step changes its outline or thickness.")
+                      : editable ? qsTr("A solid in the design timeline. Add features to it; every step can be edited later in the timeline at the bottom.")
                                  : qsTr("An exact solid from a file or a fit. Make it editable to add fillets, holes and cuts, or export it as it is."),
                  sections: editable
-                     ? [{ title: qsTr("Change the shape"), steps: [],
-                          actions: [a("editStep"), a("sketchOnFace"), a("fillet"), a("chamfer"), a("shell"), a("hole"), a("combine")] },
+                     ? [...(onSurface ? [print, change] : [change, print]),
                         { title: qsTr("More"), steps: [], actions: [a("export"), a("hide"), a("rename"), a("delete")] }]
                      : [{ title: qsTr("Use it"), steps: [
                               { title: qsTr("Export for printing or CAD"), done: false,
@@ -645,14 +759,16 @@ QtObject {
         }
         case "offset": return _selectResult(controller.execute("surface.offset", { id: pid, distance: v.distance }))
         case "partOnSurface": {
-            const r = controller.execute("surface.part_from_sketch", { sketch: info.featureId, thickness: v.thickness, side: v.side || "inside" })
+            const sketch = info.kind === "sketch" ? info.featureId : v.sketch
+            const r = controller.execute("surface.part_from_sketch", { sketch: sketch, thickness: v.thickness, side: v.side || "inside" })
             if (r.ok)
                 controller.showStatus(qsTr("Part \"%1\" created on the surface. Hide the scan (eye icon in the Browser) to see it on its own. Next: export it.")
                                       .arg(r.result.name))
             return _selectResult(r)
         }
         case "finOnSurface": {
-            const r = controller.execute("surface.fin_from_sketch", { sketch: info.featureId, thickness: v.thickness, rootFillet: v.rootFillet || 0,
+            const sketch = info.kind === "sketch" ? info.featureId : v.sketch
+            const r = controller.execute("surface.fin_from_sketch", { sketch: sketch, thickness: v.thickness, rootFillet: v.rootFillet || 0,
                                                                           count: Math.max(1, Math.round(v.count || 1)), spacing: v.spacing || 40,
                                                                           mirror: !!v.mirror && v.mirror !== "no", mirrorPlane: v.mirror && v.mirror !== "no" ? v.mirror : "auto" })
             if (r.ok && r.result.warnings.length > 0)
@@ -664,6 +780,11 @@ QtObject {
         }
         case "finishSketch": return host.finishSketch(true)
         case "editSketch": return host.editFeature({ type: "sketch", id: info.featureId })
+        case "sketchOnPlane": return host.createSketch({ plane: { plane: info.featureId } })
+        case "editPlane": {
+            const f = timelineFeature(info.featureId)
+            return f ? host.editFeature(f) : null
+        }
         case "editStep": {
             const f = ownFeature(info)
             return f ? host.editFeature(f) : null

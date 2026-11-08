@@ -15,7 +15,9 @@ class AppController;
 
 /// A simulation result field in the viewport, coloured by a scalar: pressure on the part
 /// ("surface"), a velocity section, or streamlines. Positions are model coordinates (mm);
-/// colours are baked into the vertices (draw with vertex colours, no lighting).
+/// colours are baked into the vertices. The surface has smooth normals and streamlines are
+/// built as tubes with normals, so both can be drawn lit and read as 3D shapes; sections
+/// are flat (draw unlit so their colours match the legend exactly).
 class FieldGeometry : public QQuick3DGeometry {
     Q_OBJECT
     QML_ELEMENT
@@ -28,6 +30,8 @@ class FieldGeometry : public QQuick3DGeometry {
     /// Colour scale. When rangeMin >= rangeMax the data range is used.
     Q_PROPERTY(double rangeMin READ rangeMin WRITE setRangeMin NOTIFY changed)
     Q_PROPERTY(double rangeMax READ rangeMax WRITE setRangeMax NOTIFY changed)
+    /// Streamline tube radius in mm; 0 = 0.4 % of the streamlines' extent.
+    Q_PROPERTY(double tubeRadius READ tubeRadius WRITE setTubeRadius NOTIFY changed)
     /// Bump to reload the files (e.g. when the run finishes).
     Q_PROPERTY(int revision READ revision WRITE setRevision NOTIFY changed)
     Q_PROPERTY(double dataMin READ dataMin NOTIFY dataChanged)
@@ -51,6 +55,8 @@ public:
     void setRangeMin(double v);
     [[nodiscard]] double rangeMax() const { return m_rangeMax; }
     void setRangeMax(double v);
+    [[nodiscard]] double tubeRadius() const { return m_tubeRadius; }
+    void setTubeRadius(double r);
     [[nodiscard]] int revision() const { return m_revision; }
     void setRevision(int revision);
     [[nodiscard]] double dataMin() const { return m_dataMin; }
@@ -61,6 +67,12 @@ public:
     /// Colour of t in [0, 1] on the map used for `scalar` (diverging for pressure,
     /// sequential for speed).
     [[nodiscard]] static QColor mapColor(const QString& scalar, double t);
+    /// Position of `value` on the colour scale [lo, hi] as t in [0, 1]. Pressure scalars
+    /// (Cp, pressure, p) whose range spans zero keep zero, the free-stream pressure, at the
+    /// neutral middle of the diverging map; each side is scaled on its own (CAD-127).
+    [[nodiscard]] static double scalePosition(const QString& scalar, double value, double lo, double hi);
+    /// Number of floats per vertex: position, normal, RGBA.
+    static constexpr int kFloatsPerVertex = 10;
 
 signals:
     void changed();
@@ -69,6 +81,7 @@ signals:
 private:
     void reload();
     void rebuild();
+    void schedule(bool reloadFiles);
 
     QPointer<AppController> m_controller;
     QString m_run;
@@ -76,7 +89,10 @@ private:
     QString m_scalar = QStringLiteral("Cp");
     double m_rangeMin = 0.0;
     double m_rangeMax = 0.0;
+    double m_tubeRadius = 0.0;
     int m_revision = 0;
+    bool m_updatePending = false;
+    bool m_reloadPending = false;
     double m_dataMin = 0.0;
     double m_dataMax = 0.0;
     cfd::PolyData m_data;

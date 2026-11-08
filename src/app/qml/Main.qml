@@ -1853,6 +1853,7 @@ ApplicationWindow {
                     window.controller.showStatus(qsTr("Nothing there to sketch on: click on or next to the surface"))
             }
             onZoomToPartRequested: id => window.zoomToSelection(id)
+            cfdPreview: simulationPanel.visible ? simulationPanel.proposal : null
             onSketchContextRequested: (x, y) => {
                 sketchMenu.drawing = viewport.sketchDrawing
                 sketchMenu.popup(viewport, x, y)
@@ -1922,7 +1923,7 @@ ApplicationWindow {
                 maximumWidth: parent.width - 2 * Theme.space4
                 width: Math.min(implicitWidth, maximumWidth)
                 visible: !!window.selectedPartId && !window.activeSketch && !featureDialog.visible
-                         && !window.pickingSketchPlane
+                         && !window.pickingSketchPlane && !cfdOverlay.visible
                 registry: contextActions
                 popup: actionPopup
                 info: window.selectionInfo
@@ -1980,6 +1981,16 @@ ApplicationWindow {
                 anchors.bottom: parent.bottom
                 anchors.margins: 8
                 controller: window.controller
+            }
+            // Wind tunnel results: colour bars and the forces of the run shown in 3D.
+            CfdResultsOverlay {
+                id: cfdOverlay
+                objectName: "cfdOverlay"
+                anchors.fill: parent
+                controller: window.controller
+                fields: viewport.simulationFields
+                results: simulationPanel.displayedRun === simulationPanel.activeRun ? simulationPanel.results : null
+                runTitle: simulationPanel.displayedRunTitle
             }
 
             ScanPanel {

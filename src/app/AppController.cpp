@@ -940,4 +940,9 @@ QVariantList AppController::colormap(const QString& scalar) const
     return out;
 }
 
+double AppController::fieldScalePosition(const QString& scalar, double value, double lo, double hi) const
+{
+    return FieldGeometry::scalePosition(scalar, value, lo, hi);
+}
+
 } // namespace aerocad::app
