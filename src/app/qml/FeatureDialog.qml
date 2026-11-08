@@ -249,8 +249,11 @@ Pane {
             { key: "flip", type: "bool", label: qsTr("Flip"), showIf: v => v.type !== undefined && v.type !== "equal_distance" }] },
         press_pull: { title: qsTr("Press Pull"), command: "feature.press_pull", fields: [
             { key: "body", type: "body", label: qsTr("Body") },
-            { key: "faces", type: "facePicks", label: qsTr("Faces"), hint: qsTr("Click flat faces to move") },
+            { key: "faces", type: "facePicks", label: qsTr("Faces"), hint: qsTr("Click faces to move") },
             { key: "distance", type: "expr", label: qsTr("Distance (negative: push in)"), init: 5 }] },
+        delete_faces: { title: qsTr("Delete Face"), command: "feature.delete_faces", fields: [
+            { key: "body", type: "body", label: qsTr("Body") },
+            { key: "faces", type: "facePicks", label: qsTr("Faces to delete"), hint: qsTr("Click every face of the hole, fillet or boss") }] },
         shell: { title: qsTr("Shell"), command: "feature.shell", fields: [
             { key: "body", type: "body", label: qsTr("Body") },
             { key: "faces", type: "facePicks", label: qsTr("Faces to remove"), hint: qsTr("Click faces (none: closed hollow)") },

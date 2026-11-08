@@ -131,7 +131,7 @@ const std::vector<std::string>& Design::featureTypes()
     static const std::vector<std::string> types{"sketch", "extrude", "revolve", "fillet", "chamfer",
                                                 "shell",  "combine", "box",     "cylinder", "base_body", "hole",
                                                 "mirror",  "rectangular_pattern", "circular_pattern", "loft", "sweep", "plane",
-                                                "part_on_surface", "fin_on_surface", "move", "press_pull", "split"};
+                                                "part_on_surface", "fin_on_surface", "move", "press_pull", "split", "delete_faces"};
     return types;
 }
 
@@ -223,6 +223,7 @@ std::string Design::defaultName(const std::string& type) const
     std::string base = type == "part_on_surface" ? "PartOnSurface" : type == "fin_on_surface" ? "Fin"
                        : type == "press_pull"     ? "PressPull"
                        : type == "split"          ? "Split"
+                       : type == "delete_faces"   ? "DeleteFace"
                                                   : type;
     base[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(base[0])));
     for (int n = 1;; ++n) {
@@ -2108,6 +2109,11 @@ void Design::evaluateFeature(const Feature& f)
         Body& b = bodyRef(required(p, "body"));
         const auto idx = resolveIndices(b.shape, required(p, "faces"), false);
         b.shape = geometry::pressPull(b.shape, idx, ev.num(p, "distance"));
+    } else if (f.type == "delete_faces") {
+        // Fusion: Modify > Delete on faces: the gap closes from the neighbouring faces.
+        Body& b = bodyRef(required(p, "body"));
+        const auto idx = resolveIndices(b.shape, required(p, "faces"), false);
+        b.shape = geometry::deleteFaces(b.shape, idx);
     } else if (f.type == "split") {
         // Fusion: Split Body by a plane. The body keeps what is behind the plane; a new
         // body gets what is in front of it (along the plane's normal).

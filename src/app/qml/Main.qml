@@ -649,7 +649,7 @@ ApplicationWindow {
         // editable first, so its edges can be rounded or bevelled in one step. The dialog
         // owns the conversion: Cancel undoes it, OK makes it one undo step with the feature.
         const convert = info.kind !== "body" && info.kind !== "sketch" && info.hasBrep && (info.solids ?? 0) > 0
-                        && ["fillet", "chamfer", "shell", "press_pull", "hole", "combine", "split"].includes(type)
+                        && ["fillet", "chamfer", "shell", "press_pull", "hole", "combine", "split", "delete_faces"].includes(type)
         if (convert) {
             const b = featureDialog.convertToBody(info.id)
             if (b) {
@@ -667,7 +667,7 @@ ApplicationWindow {
             if (type === "combine")
                 initial.target = info.featureId
             else if (["fillet", "chamfer", "shell", "press_pull", "hole", "move", "mirror", "rectangular_pattern",
-                      "circular_pattern", "split"].includes(type))
+                      "circular_pattern", "split", "delete_faces"].includes(type))
                 initial.body = info.featureId
         }
         pickingSketchPlane = false
@@ -1224,6 +1224,8 @@ ApplicationWindow {
     Action { id: holeAction; text: qsTr("H&ole"); shortcut: "H"; enabled: !window.activeSketch; onTriggered: window.openFeature("hole") }
     Action { id: chamferAction; text: qsTr("C&hamfer"); onTriggered: window.openFeature("chamfer") }
     Action { id: shellAction; text: qsTr("S&hell"); onTriggered: window.openFeature("shell") }
+    // Fusion: Modify > Delete on faces (the gap heals from the neighbours).
+    Action { id: deleteFacesAction; text: qsTr("&Delete Face"); enabled: !window.activeSketch; onTriggered: window.openFeature("delete_faces") }
     // Fusion: Modify > Split Body (by a plane: origin plane, construction plane or flat face).
     Action { id: splitAction; text: qsTr("Spli&t Body"); enabled: !window.activeSketch; onTriggered: window.openFeature("split") }
     Action { id: combineAction; text: qsTr("Co&mbine"); onTriggered: window.openFeature("combine") }
@@ -1564,6 +1566,7 @@ ApplicationWindow {
             MenuItem { action: shellAction }
             MenuItem { action: combineAction }
             MenuItem { action: splitAction }
+            MenuItem { action: deleteFacesAction }
             MenuSeparator {}
             MenuItem { action: parametersAction }
             MenuSeparator {}

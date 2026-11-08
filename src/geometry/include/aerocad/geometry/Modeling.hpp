@@ -107,6 +107,11 @@ struct ChamferOptions {
 /// deeper than the face's curvature.
 [[nodiscard]] Shape pressPull(const Shape& shape, const std::vector<std::size_t>& faceIndices, double distance);
 
+/// Removes faces of a solid and heals the gap (Fusion: Modify > Delete on faces): the
+/// neighbouring faces grow to close it, so a hole, a fillet or a boss disappears. Throws
+/// ModelingError when the gap cannot be closed (e.g. a face whose neighbours never meet).
+[[nodiscard]] Shape deleteFaces(const Shape& shape, const std::vector<std::size_t>& faceIndices);
+
 /// The two sides of a body cut by a plane (Fusion: Split Body). Each side is a solid, or a
 /// compound when that side has several separate pieces.
 struct SplitResult {

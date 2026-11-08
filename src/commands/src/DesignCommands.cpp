@@ -573,7 +573,8 @@ Json describeTopologyRefs(const cad::Design& d, const std::string& type, Json pa
 {
     if ((type == "fillet" || type == "chamfer") && params.contains("edges") && params.contains("body"))
         addTopologyHints(d, params["body"], params["edges"], true);
-    else if ((type == "shell" || type == "press_pull") && params.contains("faces") && params.contains("body"))
+    else if ((type == "shell" || type == "press_pull" || type == "delete_faces") && params.contains("faces") &&
+             params.contains("body"))
         addTopologyHints(d, params["body"], params["faces"], false);
     else if (type == "extrude" && params.contains("to") && params["to"].is_object() &&
              params["to"].contains("faces") && params["to"].contains("body"))
@@ -1182,6 +1183,13 @@ void registerFeatureCommands(CommandRegistry& r)
                        {"offset", numberOrExpr("Offset of the mirror plane along its normal (mm).")},
                        {"operation", patternOperation}},
                       {"body"});
+
+    addFeatureCommand(r, "delete_faces", "Delete Face",
+                      "Removes faces of a body and heals the gap from the neighbouring faces (Fusion: Modify > "
+                      "Delete on faces): pick all faces of a hole, fillet or boss to make it disappear, e.g. to "
+                      "clean an imported part. Fails with a clear error when the neighbours cannot close the gap.",
+                      {{"body", bodyRefSchema("Body.")}, {"faces", topologyListSchema("face")}},
+                      {"body", "faces"});
 
     addFeatureCommand(r, "split", "Split Body",
                       "Cuts a body with a plane into two bodies (Fusion: Modify > Split Body), e.g. to print a "

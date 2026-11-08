@@ -242,6 +242,20 @@ TEST_CASE("Split Body in the timeline makes a second body and follows an edited 
     CHECK_THROWS_AS(d.addFeature("split", {{"body", block}, {"plane", "YZ"}, {"offset", 100}}), cad::DesignError);
 }
 
+TEST_CASE("Delete Face in the timeline removes a hole and follows an edited box", "[cad][design]")
+{
+    Design d;
+    const auto block = d.addFeature("box", {{"size", {40, 20, 10}}});
+    const auto pin = d.addFeature("cylinder", {{"center", {20, 10, -10}}, {"radius", 3}, {"height", 40}});
+    d.addFeature("combine", {{"target", block}, {"tools", {pin}}, {"operation", "cut"}});
+    CHECK(bodyVolume(d, block) < 8000);
+    const auto del = d.addFeature("delete_faces", {{"body", block}, {"faces", Json::array({{{"point", {23, 10, 5}}}})}});
+    CHECK(bodyVolume(d, block) == Approx(8000).epsilon(1e-6));
+    d.editFeature(block, {{"size", {40, 20, 20}}});
+    CHECK(bodyVolume(d, block) == Approx(16000).epsilon(1e-6));
+    CHECK_THROWS_AS(d.editFeature(del, {{"body", block}, {"faces", Json::array({{{"point", {20, 10, 20}}}})}}), cad::DesignError);
+}
+
 TEST_CASE("Chamfer types in the timeline", "[cad][design]")
 {
     Design d;

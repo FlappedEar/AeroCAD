@@ -624,3 +624,35 @@ TEST_CASE("Split Body cuts a body by a plane into two sides", "[geometry][modeli
     CHECK_THROWS_AS(splitByPlane(box, {50, 0, 0}, {1, 0, 0}), ModelingError);
     CHECK_THROWS_AS(splitByPlane(box, {40, 0, 0}, {1, 0, 0}), ModelingError); // touches a face only
 }
+
+TEST_CASE("Delete Face removes a hole and a fillet and heals the body", "[geometry][modeling]")
+{
+    const auto box = makeBox(40, 20, 10);
+    // A through hole: its one cylindrical face goes, the top and bottom close over it.
+    const auto drilled = boolean(box, translated(makeCylinder(3, 10), {20, 10, 0}), BooleanOp::Cut);
+    std::size_t hole = 0;
+    for (const auto& f : faces(drilled))
+        if (f.type == "cylinder")
+            hole = f.index;
+    const auto healed = deleteFaces(drilled, {hole});
+    CHECK(isValid(healed));
+    CHECK(healed.volume() == Approx(8000).epsilon(1e-6));
+    CHECK(faces(healed).size() == 6);
+    // A fillet: the two faces it joined meet in a sharp edge again.
+    const auto rounded = fillet(box, {0}, 4.0);
+    std::size_t blend = 0;
+    for (const auto& f : faces(rounded))
+        if (f.type != "plane")
+            blend = f.index;
+    const auto sharp = deleteFaces(rounded, {blend});
+    CHECK(isValid(sharp));
+    CHECK(sharp.volume() == Approx(8000).epsilon(1e-6));
+    // The top of a box: the sides never meet above it, so there is nothing to close it with.
+    std::size_t top = 0;
+    for (const auto& f : faces(box))
+        if (f.normal.z > 0.9)
+            top = f.index;
+    CHECK_THROWS_AS(deleteFaces(box, {top}), ModelingError);
+    CHECK_THROWS_AS(deleteFaces(box, {}), ModelingError);
+    CHECK_THROWS_AS(deleteFaces(box, {99}), ModelingError);
+}

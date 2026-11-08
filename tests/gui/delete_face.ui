@@ -1,0 +1,31 @@
+# CAD-176: Delete Face (Fusion: Modify > Delete on faces) with real clicks:
+#  - a click selects the drilled box; Modify > Delete Face opens the dialog on it;
+#  - a click on the hole's wall picks it; the preview and OK close the hole (one undo step);
+#  - a face whose neighbours cannot close the gap (the top of a box) gives a clear error.
+# Run: AeroCAD --ui-script <this file>
+Qt.createQmlObject('import QtQuick; Item { objectName: "dfTest"; visible: false; function clickAt(x, y, z) { const v = viewport.viewPoint(Qt.vector3d(x, y, z)); const p = viewport.mapToItem(null, v.x, v.y); ui.click(p.x, p.y) } function volume() { return Math.round(controller.execute("timeline.list").result.bodies[0].volume) } }', window.contentItem)
+ui.wait(800)
+(() => { const b = controller.execute("feature.box", { size: [40, 20, 10] }); const c = controller.execute("feature.cylinder", { center: [20, 10, -10], radius: 6, height: 40 }); if (!b.ok || !c.ok) ui.fail("setup"); const k = controller.execute("feature.combine", { target: b.result.featureId ?? b.result.id, tools: [c.result.featureId ?? c.result.id], operation: "cut" }); if (!k.ok) ui.fail("combine: " + k.error); viewport.fitAll() })()
+ui.wait(500)
+(() => { ui.log("drilled volume " + Array.from(window.contentItem.children).find(c => c.objectName === "dfTest").volume()); Array.from(window.contentItem.children).find(c => c.objectName === "dfTest").clickAt(5, 5, 10) })()
+ui.wait(300)
+(() => { if (!ui.clickText("Modify")) ui.fail("no Modify menu") })()
+ui.wait(400)
+(() => { if (!ui.clickText("Delete Face")) ui.fail("no Delete Face in the Modify menu") })()
+ui.wait(400)
+(() => { ui.log("dialog " + featureDialog.visible + " type " + featureDialog.type + " body " + featureDialog.values.body); if (!featureDialog.visible || featureDialog.type !== "delete_faces") ui.fail("Delete Face did not open"); if (featureDialog.values.body === undefined) ui.fail("Delete Face did not take the selected body") })()
+# The far wall of the hole, seen through the opening.
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "dfTest").clickAt(20 - 4.24, 10 + 4.24, 8) })()
+ui.wait(800)
+(() => { const f = featureDialog.values.faces || []; ui.log("picked " + JSON.stringify(f) + ", preview volume " + Array.from(window.contentItem.children).find(c => c.objectName === "dfTest").volume()); if (f.length !== 1) ui.fail("the click did not pick the hole's wall") })()
+ui.shot("build/delete-face-preview.png")
+(() => { if (!ui.clickText("OK")) ui.fail("no OK button") })()
+ui.wait(800)
+(() => { const v = Array.from(window.contentItem.children).find(c => c.objectName === "dfTest").volume(); ui.log("after OK: volume " + v + ", undo '" + controller.undoText + "'"); if (Math.abs(v - 8000) > 1) ui.fail("the hole did not close: volume " + v) })()
+ui.shot("build/delete-face.png")
+(() => { undoAction.trigger() })()
+ui.wait(500)
+(() => { const v = Array.from(window.contentItem.children).find(c => c.objectName === "dfTest").volume(); ui.log("Ctrl+Z: volume " + v); if (Math.abs(v - (8000 - Math.PI * 36 * 10)) > 1) ui.fail("one undo did not bring the hole back: " + v) })()
+# The top face cannot go: clear error.
+(() => { const b = controller.execute("document.parts").result.parts.find(x => x.kind === "body"); const r = controller.execute("feature.delete_faces", { body: b.featureId, faces: [{ point: [5, 5, 10] }] }); ui.log("top: " + r.ok + " " + r.error); if (r.ok) ui.fail("deleting the top face did not fail"); if (!/do not meet/.test(r.error || "")) ui.fail("unclear error: " + r.error) })()
+ui.log("delete face OK")
