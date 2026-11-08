@@ -78,6 +78,12 @@ panel in place of Properties:
 
 Runs continue when the panel or the app is closed.
 
+While a run runs, Results does not judge it yet: the badge reads *checks: after the run*
+(grey), and neither the quality warnings nor the reasons why final results are missing are
+listed, since every check is still incomplete then
+([running run](images/audit/cad-150-running-checks.png)). The live charts and provisional
+values are shown as before.
+
 While a run runs, Results and the run list say how long it has run (`elapsedSeconds`, for
 runs this app started) and, while solving, at most how long is left (`remainingSeconds`):
 the solver's speed since the initialisation ended, applied to the iterations left before

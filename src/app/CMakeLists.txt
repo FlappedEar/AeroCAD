@@ -195,6 +195,13 @@ if(AEROCAD_BUILD_TESTS)
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_cfd_floor_height_test PROPERTIES LABELS gui TIMEOUT 60
         ENVIRONMENT "AEROCAD_CFD_DIR=${CMAKE_CURRENT_BINARY_DIR}/cfd-floor-height-runs")
+    # CAD-150: no quality verdict while a run is still running (stand-in docker, no OpenFOAM).
+    add_test(NAME app_cfd_running_checks_test
+        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl
+                --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/cfd_running_checks.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_cfd_running_checks_test PROPERTIES LABELS gui TIMEOUT 60
+        ENVIRONMENT "AEROCAD_CFD_DIR=${CMAKE_CURRENT_BINARY_DIR}/cfd-running-checks-runs;AEROCAD_DOCKER=${PROJECT_SOURCE_DIR}/tests/gui/fake-docker.sh")
     # CAD-105: Simplify a scan, then Ctrl+Z restores the full mesh (also with a reduced display).
     add_test(NAME app_simplify_undo_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl
