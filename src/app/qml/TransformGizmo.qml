@@ -29,6 +29,10 @@ Item {
     property point _last
     property real _accum: 0 // mm or degrees since the drag started, before snapping
     property real _applied: 0 // what has been applied of _accum (snapped)
+    // Ring drags: screen direction (unit) and pixels per radian of the ring where it was
+    // grabbed; pointer motion along it turns the ring, so the grabbed point follows.
+    property point _tangent
+    property real _pxPerRadian: 0
 
     visible: active
 
@@ -100,7 +104,52 @@ Item {
         return Number(v).toLocaleString(Qt.locale(), "f", decimals)
     }
 
+    /// Where a ring was grabbed: the ring point under p nearest to the viewer (the near
+    /// side, where a ring seen at a slant overlaps itself), and the ring's screen tangent
+    /// there. Sets _tangent / _pxPerRadian; 0 when the ring is seen edge-on there.
+    function grabRing(i, p) {
+        const c3 = center()
+        const g = layout()
+        const r = g.len * 0.72
+        const u = axes[(i + 1) % 3], v = axes[(i + 2) % 3]
+        const at = t => c3.plus(u.times(Math.cos(t) * r)).plus(v.times(Math.sin(t) * r))
+        let best = -1, bestDepth = Infinity, bestD = Infinity
+        const n = 256
+        for (let k = 0; k < n; ++k) {
+            const t = k / n * 2 * Math.PI
+            const q = viewport.modelToScreen(at(t))
+            const d = Math.hypot(q.x - p.x, q.y - p.y)
+            if (d > 9)
+                continue
+            // Towards the viewer = the ring point's direction from the centre faces the eye.
+            const depth = viewport.axisTowardsViewer(at(t).minus(c3), c3) ? 0 : 1
+            if (depth < bestDepth || (depth === bestDepth && d < bestD)) {
+                best = t
+                bestDepth = depth
+                bestD = d
+            }
+        }
+        if (best < 0)
+            best = Math.atan2(p.y - g.c.y, p.x - g.c.x) // not on the ring: any tangent will do
+        // d(screen)/d(angle), right-hand about axis i (u x v = axis i).
+        const e = 1e-3
+        const q0 = viewport.modelToScreen(at(best - e)), q1 = viewport.modelToScreen(at(best + e))
+        const tx = (q1.x - q0.x) / (2 * e), ty = (q1.y - q0.y) / (2 * e)
+        const len = Math.hypot(tx, ty)
+        const screenR = Math.max(1, arrowLength * 0.72)
+        if (len < 1e-6) {
+            _pxPerRadian = 0
+            return
+        }
+        _tangent = Qt.point(tx / len, ty / len)
+        // Seen nearly edge-on the tangent shrinks: keep a sensible speed (at least a third
+        // of the ring's radius per radian).
+        _pxPerRadian = Math.max(len, screenR / 3)
+    }
+
     function beginDrag(handle, p) {
+        if (handle.startsWith("rotate"))
+            grabRing(Number(handle.charAt(6)), p)
         dragging = handle
         _last = p
         _accum = 0
@@ -127,16 +176,23 @@ Item {
             feedback = (target >= 0 ? "+" : "") + fmt(target, snap ? 0 : 2) + " mm"
         } else if (h.startsWith("rotate")) {
             const i = Number(h.charAt(6))
-            const a0 = Math.atan2(_last.y - g.c.y, _last.x - g.c.x)
-            const a1 = Math.atan2(p.y - g.c.y, p.x - g.c.x)
-            let d = a1 - a0
-            if (d > Math.PI) d -= 2 * Math.PI
-            if (d < -Math.PI) d += 2 * Math.PI
-            // Screen y points down, so a positive screen angle is clockwise. The axis tip
-            // towards the viewer (it projects as seen from its tip): right-hand rotation is
-            // anticlockwise, i.e. a negative screen angle.
-            const towardsViewer = viewport.axisTowardsViewer(axes[i], center())
-            _accum += -d * 180 / Math.PI * (towardsViewer ? 1 : -1)
+            if (_pxPerRadian > 0) {
+                // Pointer motion along the ring where it was grabbed (Fusion: the grabbed
+                // point follows the pointer, whatever the angle the ring is seen at).
+                const along = (p.x - _last.x) * _tangent.x + (p.y - _last.y) * _tangent.y
+                _accum += along / _pxPerRadian * 180 / Math.PI
+            } else {
+                // Ring seen exactly edge-on where grabbed: turn with the angle about the centre.
+                const a0 = Math.atan2(_last.y - g.c.y, _last.x - g.c.x)
+                const a1 = Math.atan2(p.y - g.c.y, p.x - g.c.x)
+                let d = a1 - a0
+                if (d > Math.PI) d -= 2 * Math.PI
+                if (d < -Math.PI) d += 2 * Math.PI
+                // Screen y points down: a positive screen angle is clockwise; seen from the
+                // axis tip, a right-hand turn is anticlockwise.
+                const towardsViewer = viewport.axisTowardsViewer(axes[i], center())
+                _accum += -d * 180 / Math.PI * (towardsViewer ? 1 : -1)
+            }
             const target = snap ? Math.round(_accum / 15) * 15 : _accum
             viewport.rotateTransform(axes[i], target - _applied)
             _applied = target

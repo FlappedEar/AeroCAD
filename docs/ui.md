@@ -107,7 +107,8 @@ key M as in Fusion's Move/Copy) works directly in the view, with no dialog to co
 change:
 
 - **Arrows** (red X, green Y, blue Z) move the part along that axis; **rings** turn it about
-  that axis through its centre; the **white square** in the middle scales it evenly. Hold
+  that axis through its centre (the point of the ring you grab follows the pointer, also on
+  a ring seen at a slant); the **white square** in the middle scales it evenly. Hold
   **Shift** while dragging to snap (1 mm, 15°, 5 %). The value shows next to the pointer.
 - The part follows live. A small panel (top left of the view) shows the exact Move (mm),
   Rotate (° about X, then Y, then Z) and Scale (%); typing a value previews it at once.
