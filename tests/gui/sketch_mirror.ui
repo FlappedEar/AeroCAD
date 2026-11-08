@@ -1,0 +1,22 @@
+# CAD-126: Sketch Mirror (Fusion): select curves, Mirror, click the mirror line; the copies
+# stay symmetric to the originals.
+# Run: AeroCAD --ui-script <this file>
+ui.wait(800)
+(() => { const r = controller.execute("sketch.create", { plane: "XY", curves: [{ type: "line", start: [0, -25], end: [0, 25], construction: true }, { type: "line", start: [0, 0], end: [20, 0] }, { type: "line", start: [20, 0], end: [0, 15] }] }); if (!r.ok) ui.fail("sketch: " + r.error) })()
+ui.wait(300)
+(() => { enterSketch(controller.execute("timeline.list").result.features[0].id) })()
+ui.wait(800)
+ui.key("Esc")
+ui.wait(300)
+(() => { const o = viewport.sketchOverlay; for (const [u, v, mod] of [[10, 0, ""], [10, 7.5, "shift"]]) { const p = o.toScreen([u, v]); const w = o.mapToItem(null, p.x, p.y); ui.click(w.x, w.y, "left", mod) } })()
+ui.wait(300)
+(() => { if (viewport.sketchOverlay.selectedCurves.length !== 2) ui.fail("expected 2 curves selected: " + JSON.stringify(viewport.sketchOverlay.selectedCurves)) })()
+(() => { if (!ui.clickText("Mirror")) ui.fail("no Mirror button") })()
+ui.wait(300)
+(() => { if (sketchTool !== "mirror" || viewport.sketchOverlay.mirrorCurves.length !== 2) ui.fail("Mirror did not start with the selection: " + sketchTool + " " + JSON.stringify(viewport.sketchOverlay.mirrorCurves)) })()
+ui.shot("sketch-mirror-pick.png")
+# Click the centre line.
+(() => { const o = viewport.sketchOverlay; const p = o.toScreen([0, 20]); const w = o.mapToItem(null, p.x, p.y); ui.click(w.x, w.y) })()
+ui.wait(500)
+(() => { const r = controller.execute("sketch.curves", { sketch: activeSketch.id }).result; ui.log("curves " + r.curves.length + ", profiles " + controller.execute("sketch.profiles", { sketch: activeSketch.id }).result.profiles.length); if (r.curves.length !== 5) ui.fail("expected 2 mirrored curves added, got " + r.curves.length); if (Math.abs(r.curves[3].points[1][0] + 20) > 1e-6) ui.fail("the copy is not mirrored: " + JSON.stringify(r.curves[3].points)); if (sketchTool !== "") ui.fail("the tool stays after mirroring") })()
+ui.shot("sketch-mirror.png")

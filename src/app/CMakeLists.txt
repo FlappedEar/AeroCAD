@@ -246,6 +246,31 @@ if(AEROCAD_BUILD_TESTS)
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/scan_units_check.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_scan_units_check_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-126: Sketch Fillet rounds a corner of two lines.
+    add_test(NAME app_sketch_fillet_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_fillet.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_sketch_fillet_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-126: Sketch Mirror copies curves about a line, held symmetric.
+    add_test(NAME app_sketch_mirror_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_mirror.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_sketch_mirror_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-126: Trim removes the piece of a sketch curve between crossings.
+    add_test(NAME app_sketch_trim_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_trim.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_sketch_trim_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-126: X turns sketch curves into construction geometry.
+    add_test(NAME app_sketch_construction_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_construction.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_sketch_construction_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-125: Extrude up to an object (To Object), following its curved shape.
+    add_test(NAME app_extrude_to_object_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/extrude_to_object.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_extrude_to_object_test PROPERTIES LABELS gui TIMEOUT 60)
     # CAD-124: Revolve about a sketch line clicked in the view (through the live preview).
     add_test(NAME app_revolve_axis_pick_test
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/revolve_axis_pick.ui

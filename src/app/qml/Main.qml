@@ -166,6 +166,13 @@ ApplicationWindow {
             font.bold: true
             onTriggered: viewport.sketchOverlay.deleteSelection()
         }
+        SketchMenuItem {
+            objectName: "constructionCurves"
+            text: qsTr("Construction (X)")
+            icon.source: Theme.iconUrl("construction")
+            visible: !sketchMenu.drawing && viewport.sketchOverlay.selectedCurves.length > 0
+            onTriggered: viewport.sketchOverlay.toggleConstruction()
+        }
         MenuSeparator {
             visible: !sketchMenu.drawing && viewport.sketchOverlay.selectedCurves.length > 0
             height: visible ? implicitHeight : 0
@@ -1148,7 +1155,12 @@ ApplicationWindow {
     Action { id: concentricAction; text: qsTr("Concentric"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "concentric"; onTriggered: window.sketchTool_("concentric") }
     Action { id: midpointAction; text: qsTr("Midpoint"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "midpoint"; onTriggered: window.sketchTool_("midpoint") }
     Action { id: collinearAction; text: qsTr("Collinear"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "collinear"; onTriggered: window.sketchTool_("collinear") }
+    // Fusion: Construction (X) switches the selected sketch curves.
+    Action { id: constructionAction; text: qsTr("Construction"); shortcut: "X"; enabled: !!window.activeSketch && viewport.sketchOverlay.selectedCurves.length > 0; onTriggered: viewport.sketchOverlay.toggleConstruction() }
     Action { id: fixAction; text: qsTr("Fix/Unfix"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "fix"; onTriggered: window.sketchTool_("fix") }
+    Action { id: trimAction; text: qsTr("&Trim"); shortcut: "T"; enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "trim"; onTriggered: window.sketchTool_("trim") }
+    Action { id: sketchFilletAction; text: qsTr("&Fillet"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "fillet"; onTriggered: window.sketchTool_("fillet") }
+    Action { id: sketchMirrorAction; text: qsTr("&Mirror"); enabled: !!window.activeSketch && (viewport.sketchOverlay.selectedCurves.length > 0 || window.sketchTool === "mirror"); checkable: true; checked: window.sketchTool === "mirror"; onTriggered: { if (window.sketchTool !== "mirror") viewport.sketchOverlay.startMirror(); else window.sketchTool_("") } }
     Action { id: slotAction; text: qsTr("Sl&ot"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "slot"; onTriggered: window.sketchTool_("slot") }
 
     // Scan area selection tools (shortcuts 1/2/3 are in Viewport.qml).
@@ -1438,6 +1450,11 @@ ApplicationWindow {
             MenuItem { action: arcAction }
             MenuItem { action: polygonAction }
             MenuItem { action: slotAction }
+            MenuSeparator {}
+            MenuItem { action: sketchFilletAction }
+            MenuItem { action: trimAction }
+            MenuItem { action: sketchMirrorAction }
+            MenuItem { action: constructionAction }
             MenuSeparator {}
             MenuItem { action: dimensionAction }
             Menu {
@@ -1883,6 +1900,15 @@ ApplicationWindow {
             ToolSeparator { tab: "sketch" }
             ToolGroup {
                 tab: "sketch"
+                caption: qsTr("MODIFY")
+                ToolCommand { action: sketchFilletAction; text: qsTr("Fillet"); iconName: "fillet" }
+                ToolCommand { action: trimAction; text: qsTr("Trim"); iconName: "trim" }
+                ToolCommand { action: sketchMirrorAction; text: qsTr("Mirror"); iconName: "mirror" }
+                ToolCommand { action: constructionAction; text: qsTr("Construction"); iconName: "construction" }
+            }
+            ToolSeparator { tab: "sketch" }
+            ToolGroup {
+                tab: "sketch"
                 caption: qsTr("CONSTRAINTS")
                 maxVisible: 6
                 ToolCommand { action: horizontalAction; text: qsTr("Horizontal"); iconName: "horizontal" }
@@ -2050,6 +2076,37 @@ ApplicationWindow {
                 } else {
                     window.controller.preview("sketch.move_point", args)
                 }
+                window.refreshSketchSnaps()
+            }
+            onSketchConstructionToggled: (list, on) => {
+                if (window.activeSketch)
+                    window.controller.execute("sketch.set_construction", { sketch: window.activeSketch.id, curves: list, construction: on })
+                window.refreshSketchSnaps()
+            }
+            onSketchFilletRequested: (curves, radius) => {
+                if (!window.activeSketch)
+                    return
+                const r = window.controller.execute("sketch.fillet", { sketch: window.activeSketch.id, curves: curves, radius: radius })
+                if (!r.ok)
+                    window.controller.showStatus(r.error)
+                else
+                    window.controller.showStatus(qsTr("Fillet R%1: edit its radius under Constraints").arg(radius))
+                window.refreshSketchSnaps()
+            }
+            onSketchMirrorRequested: (curves, line) => {
+                if (!window.activeSketch)
+                    return
+                const r = window.controller.execute("sketch.mirror", { sketch: window.activeSketch.id, curves: curves, line: line })
+                if (!r.ok)
+                    window.controller.showStatus(r.error)
+                window.refreshSketchSnaps()
+            }
+            onSketchTrimRequested: (curve, at) => {
+                if (!window.activeSketch)
+                    return
+                const r = window.controller.execute("sketch.trim", { sketch: window.activeSketch.id, curve: curve, at: at })
+                if (!r.ok)
+                    window.controller.showStatus(r.error)
                 window.refreshSketchSnaps()
             }
             onSketchCurvesDeleted: list => {

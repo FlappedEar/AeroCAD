@@ -76,13 +76,17 @@ rebuilding, AeroCAD reports the problem; Undo restores the previous source.
 |---|---|---|
 | `sketch.create` | Create Sketch | `plane` XY / XZ / YZ / {plane: construction plane id} / {origin, normal, xDir}, or `face` {body, index or point}, or `surface` {part, point / useSelection} (best-fit plane over a curved surface or scan); `offset`; `curves` |
 | `sketch.add_curves` | (draw in sketch) | appends curves |
+| `sketch.fillet` | Fillet, click a corner | `curves` [a, b] (two lines meeting at a corner), `radius`: both lines are shortened and joined by an arc held tangent with a radius dimension; the new lines and arc go at the end of `sketch.curves` |
+| `sketch.mirror` | select curves, Mirror, click a line | `curves`, `line`: copies mirrored about the line, added at the end of `sketch.curves`, with symmetry constraints on their points (and equal radii) |
+| `sketch.trim` | Trim (T) | `curve`, `at` [u, v]: the piece of the curve under `at` between its nearest crossings goes (whole curve when it crosses nothing; a circle becomes an arc); the pieces left are added at the end of `sketch.curves`; constraints on the curve are removed |
+| `sketch.set_construction` | select sketch curves, X | `curves` (indices from `sketch.curves`), `construction` (default true): construction curves are dashed and bound no profile; part of a rectangle / polygon / slot becomes lines and arcs that keep its constraints; indices do not change |
 | `sketch.move_point` | drag a sketch point | `point` {curve, point: start / end / center}, `to` [u, v]: the point goes there and the solver moves the free degrees of freedom; item parameters are rewritten where the curves are now; refused (no change) when the constraints hold the point |
 | `sketch.delete_curves` | select sketch curves, Delete | `curves`: indices from `sketch.curves`; a rectangle, polygon or slot that loses some curves becomes lines and arcs that keep its constraints; constraints on removed curves go, the others (and a revolve axis line or sweep path curves) are re-indexed; a revolve or sweep whose axis or path curve was removed reports an error until it is picked again |
 | `sketch.profiles` | | closed regions with area and centroid |
 | `sketch.add_constraints` | Sketch > Constraints, Sketch Dimension (D) | see Constraints below |
 | `sketch.edit_constraint` | double-click a dimension / delete a constraint | `index`, `value` or `remove` |
 | `sketch.curves` | | solved curves, constraints, degrees of freedom |
-| `feature.extrude` | Extrude (E) | `distance`, `extent` one_side / symmetric / two_sides, `flip`, `profiles` or `points` |
+| `feature.extrude` | Extrude (E) | `distance`, `extent` one_side / symmetric / two_sides / to_object, `to` (to_object: `{body, faces?}` or `{part}`; stops on the target's shape, curved too; an error when it is not reached), `flip`, `profiles` or `points` |
 | `feature.revolve` | Revolve | `axis` X / Y / Z, {line: sketch curve index} or {origin, direction} (the UI sets these from a clicked sketch line or straight body edge); `angle` |
 | `feature.sweep` | Sweep | profiles of `sketch` moved along `path` {sketch, curves} (default: all curves of the path sketch) |
 | `feature.loft` | Loft | `sections`: sketch ids or {sketch, profile}, in order; `solid`, `ruled` |

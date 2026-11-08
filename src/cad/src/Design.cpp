@@ -582,6 +582,199 @@ void appendCurves(const Eval& ev, const Json& item, std::vector<SketchCurve>& ou
 
 
 /// A solved sketch curve as a single sketch item (line or three-point arc).
+/// A line, arc or circle of a sketch for trimming: a segment a-b, or a circle (centre,
+/// radius) with the arc from angle `a0` over `sweep` (signed; 2 pi for a full circle).
+struct TrimCurve {
+    bool line = true;
+    Vec2 a, b;
+    Vec2 c;
+    double r = 0.0, a0 = 0.0, sweep = 0.0;
+};
+
+Vec2 circleThrough(const Vec2& p1, const Vec2& p2, const Vec2& p3)
+{
+    const double d = 2 * (p1.x * (p2.y - p3.y) + p2.x * (p3.y - p1.y) + p3.x * (p1.y - p2.y));
+    if (std::abs(d) < 1e-12)
+        throw DesignError("Degenerate arc");
+    const double s1 = p1.x * p1.x + p1.y * p1.y, s2 = p2.x * p2.x + p2.y * p2.y, s3 = p3.x * p3.x + p3.y * p3.y;
+    return {(s1 * (p2.y - p3.y) + s2 * (p3.y - p1.y) + s3 * (p1.y - p2.y)) / d,
+            (s1 * (p3.x - p2.x) + s2 * (p1.x - p3.x) + s3 * (p2.x - p1.x)) / d};
+}
+
+double wrap2pi(double a)
+{
+    const double t = std::fmod(a, 2 * std::numbers::pi);
+    return t < 0 ? t + 2 * std::numbers::pi : t;
+}
+
+std::optional<TrimCurve> trimCurve(const SketchCurve& k)
+{
+    TrimCurve t;
+    if (k.kind == SketchCurve::Kind::Line) {
+        t.a = k.points[0];
+        t.b = k.points[1];
+        return t;
+    }
+    t.line = false;
+    if (k.kind == SketchCurve::Kind::Circle) {
+        t.c = k.points[0];
+        t.r = k.radius;
+        t.sweep = 2 * std::numbers::pi;
+        return t;
+    }
+    if (k.kind != SketchCurve::Kind::Arc)
+        return std::nullopt;
+    t.c = circleThrough(k.points[0], k.points[1], k.points[2]);
+    t.r = std::hypot(k.points[0].x - t.c.x, k.points[0].y - t.c.y);
+    auto ang = [&](const Vec2& p) { return std::atan2(p.y - t.c.y, p.x - t.c.x); };
+    t.a0 = ang(k.points[0]);
+    double sweep = wrap2pi(ang(k.points[2]) - t.a0);
+    if (wrap2pi(ang(k.points[1]) - t.a0) > sweep)
+        sweep -= 2 * std::numbers::pi; // clockwise
+    t.sweep = sweep;
+    return t;
+}
+
+/// Parameter in [0, 1] of point `p` (on or near the curve) along it; for a circle the
+/// angle from 0 over 2 pi. nullopt when the point is outside an arc.
+std::optional<double> trimParam(const TrimCurve& t, const Vec2& p, double tol = 1e-9)
+{
+    if (t.line) {
+        const Vec2 d = t.b - t.a;
+        const double l2 = d.x * d.x + d.y * d.y;
+        const double u = ((p.x - t.a.x) * d.x + (p.y - t.a.y) * d.y) / l2;
+        if (u < -tol || u > 1 + tol)
+            return std::nullopt;
+        return std::clamp(u, 0.0, 1.0);
+    }
+    const double a = std::atan2(p.y - t.c.y, p.x - t.c.x);
+    double along = t.sweep >= 0 ? wrap2pi(a - t.a0) : wrap2pi(t.a0 - a);
+    const double span = std::abs(t.sweep);
+    if (along > span + tol) {
+        if (2 * std::numbers::pi - along < tol)
+            along = 0.0;
+        else
+            return std::nullopt;
+    }
+    return std::min(along, span) / span;
+}
+
+Vec2 trimPoint(const TrimCurve& t, double u)
+{
+    if (t.line)
+        return t.a + (t.b - t.a) * u;
+    const double a = t.a0 + t.sweep * u;
+    return {t.c.x + t.r * std::cos(a), t.c.y + t.r * std::sin(a)};
+}
+
+/// Points where two curves cross.
+std::vector<Vec2> crossings(const TrimCurve& p, const TrimCurve& q)
+{
+    std::vector<Vec2> pts;
+    auto lineCircle = [&](const TrimCurve& l, const TrimCurve& c) {
+        const Vec2 d = l.b - l.a, f = l.a - c.c;
+        const double A = d.x * d.x + d.y * d.y, B = 2 * (f.x * d.x + f.y * d.y), C = f.x * f.x + f.y * f.y - c.r * c.r;
+        const double disc = B * B - 4 * A * C;
+        if (disc < -1e-12 * A * c.r * c.r)
+            return;
+        const double sq = std::sqrt(std::max(0.0, disc));
+        for (const double u : {(-B - sq) / (2 * A), (-B + sq) / (2 * A)})
+            pts.push_back(l.a + d * u);
+    };
+    if (p.line && q.line) {
+        const Vec2 r = p.b - p.a, s = q.b - q.a;
+        const double den = r.x * s.y - r.y * s.x;
+        if (std::abs(den) < 1e-12)
+            return pts;
+        const Vec2 w = q.a - p.a;
+        const double u = (w.x * s.y - w.y * s.x) / den;
+        pts.push_back(p.a + r * u);
+    } else if (p.line) {
+        lineCircle(p, q);
+    } else if (q.line) {
+        lineCircle(q, p);
+    } else {
+        const Vec2 d = q.c - p.c;
+        const double dist = std::hypot(d.x, d.y);
+        if (dist < 1e-12 || dist > p.r + q.r + 1e-9 || dist < std::abs(p.r - q.r) - 1e-9)
+            return pts;
+        const double a = (p.r * p.r - q.r * q.r + dist * dist) / (2 * dist);
+        const double h = std::sqrt(std::max(0.0, p.r * p.r - a * a));
+        const Vec2 m = p.c + d * (a / dist);
+        const Vec2 n{-d.y / dist, d.x / dist};
+        pts.push_back(m + n * h);
+        if (h > 1e-12)
+            pts.push_back(m - n * h);
+    }
+    // Only where both curves really are (within their ends / arc spans).
+    std::vector<Vec2> out;
+    for (const auto& x : pts) {
+        if (trimParam(p, x, 1e-7) && trimParam(q, x, 1e-7))
+            out.push_back(x);
+    }
+    return out;
+}
+
+/// A piece of a trimmed curve, from u0 to u1, as a sketch item.
+Json trimPiece(const TrimCurve& t, double u0, double u1, bool construction)
+{
+    auto pt = [](const Vec2& v) { return Json::array({v.x, v.y}); };
+    Json item;
+    if (t.line)
+        item = {{"type", "line"}, {"start", pt(trimPoint(t, u0))}, {"end", pt(trimPoint(t, u1))}};
+    else
+        item = {{"type", "arc"},
+                {"start", pt(trimPoint(t, u0))},
+                {"through", pt(trimPoint(t, (u0 + u1) / 2))},
+                {"end", pt(trimPoint(t, u1))}};
+    if (construction)
+        item["construction"] = true;
+    return item;
+}
+
+/// Line segments (pairs of points) of a polyline list (pairs) cut into dashes.
+std::vector<core::Vec3> dashed(const std::vector<core::Vec3>& segments, double dash)
+{
+    std::vector<core::Vec3> out;
+    double phase = 0.0; // distance along the current dash period
+    for (std::size_t i = 0; i + 1 < segments.size(); i += 2) {
+        const core::Vec3 a = segments[i], b = segments[i + 1];
+        const double len = (b - a).length();
+        double t = 0.0;
+        while (t < len) {
+            const bool on = phase < dash;
+            const double step = std::min(len - t, (on ? dash : 2 * dash) - phase);
+            if (on) {
+                out.push_back(a + (b - a) * (t / len));
+                out.push_back(a + (b - a) * ((t + step) / len));
+            }
+            t += step;
+            phase += step;
+            if (phase >= 2 * dash - 1e-12)
+                phase = 0.0;
+        }
+    }
+    return out;
+}
+
+/// What a sketch part draws: its curves, construction curves dashed (Fusion).
+std::vector<core::Vec3> sketchSegments(const SketchResult& s)
+{
+    std::vector<SketchCurve> solid, construction;
+    for (const auto& c : s.curves)
+        (c.construction ? construction : solid).push_back(c);
+    if (construction.empty())
+        return geometry::edgeSegments(s.geometry.curves);
+    std::vector<core::Vec3> out = solid.empty() ? std::vector<core::Vec3>{}
+                                                : geometry::edgeSegments(geometry::curveEdges(s.plane, solid));
+    const geometry::Shape edges = geometry::curveEdges(s.plane, construction);
+    const auto box = edges.bounds();
+    const double dash = std::clamp((box.max - box.min).length() / 60.0, 0.4, 4.0);
+    for (const auto& p : dashed(geometry::edgeSegments(edges), dash))
+        out.push_back(p);
+    return out;
+}
+
 Json curveItem(const SketchCurve& c)
 {
     auto pt = [](const Vec2& v) { return Json::array({v.x, v.y}); };
@@ -808,6 +1001,357 @@ void Design::moveSketchPoint(FeatureId sketchId, const Json& point, const geomet
         g.params.erase("constraints");
     else
         g.params["constraints"] = constraints;
+    regenerateChecked(sketchId, before);
+}
+
+void Design::mirrorSketchCurves(FeatureId sketchId, const std::vector<std::size_t>& picked, std::size_t lineIdx)
+{
+    const State before = m_state;
+    Feature& f = m_state.features[indexOf(sketchId)];
+    if (f.type != "sketch")
+        throw DesignError("Feature " + std::to_string(sketchId) + " is not a sketch");
+    auto it = m_sketches.find(sketchId);
+    if (it == m_sketches.end())
+        throw DesignError(f.name + " is not evaluated");
+    const std::vector<SketchCurve> curves = it->second.curves;
+    if (lineIdx >= curves.size() || curves[lineIdx].kind != SketchCurve::Kind::Line)
+        throw DesignError("Pick a line of " + f.name + " to mirror about");
+    const Vec2 a = curves[lineIdx].points[0], b = curves[lineIdx].points[1];
+    const Vec2 d = b - a;
+    const double l2 = d.x * d.x + d.y * d.y;
+    if (l2 < 1e-18)
+        throw DesignError("The mirror line has no length");
+    auto mirror = [&](const Vec2& p) {
+        const double t = ((p.x - a.x) * d.x + (p.y - a.y) * d.y) / l2;
+        const Vec2 foot = a + d * t;
+        return foot * 2.0 - p;
+    };
+    auto pt = [](const Vec2& v) { return Json::array({v.x, v.y}); };
+    std::vector<std::size_t> list;
+    for (const std::size_t i : picked) {
+        if (i >= curves.size())
+            throw DesignError(f.name + " has no curve " + std::to_string(i));
+        if (i != lineIdx && std::find(list.begin(), list.end(), i) == list.end())
+            list.push_back(i);
+    }
+    if (list.empty())
+        throw DesignError("Select the curves to mirror (not only the mirror line)");
+
+    Json items = f.params.value("curves", Json::array());
+    Json constraints = f.params.value("constraints", Json::array());
+    std::size_t next = curves.size();
+    for (const std::size_t i : list) {
+        const SketchCurve& c = curves[i];
+        Json item;
+        std::vector<const char*> points;
+        switch (c.kind) {
+        case SketchCurve::Kind::Line:
+            item = {{"type", "line"}, {"start", pt(mirror(c.points[0]))}, {"end", pt(mirror(c.points[1]))}};
+            points = {"start", "end"};
+            break;
+        case SketchCurve::Kind::Arc:
+            item = {{"type", "arc"},
+                    {"start", pt(mirror(c.points[0]))},
+                    {"through", pt(mirror(c.points[1]))},
+                    {"end", pt(mirror(c.points[2]))}};
+            points = {"start", "end", "center"};
+            break;
+        case SketchCurve::Kind::Circle:
+            item = {{"type", "circle"}, {"center", pt(mirror(c.points[0]))}, {"radius", c.radius}};
+            points = {"center"};
+            break;
+        case SketchCurve::Kind::Spline: {
+            Json p = Json::array();
+            for (const auto& q : c.points)
+                p.push_back(pt(mirror(q)));
+            item = {{"type", "spline"}, {"points", p}, {"closed", c.closed}};
+            points = {"start", "end"}; // its ends follow; inner fit points cannot be constrained
+            break;
+        }
+        }
+        if (c.construction)
+            item["construction"] = true;
+        items.push_back(item);
+        for (const char* name : points)
+            constraints.push_back({{"type", "symmetric"},
+                                   {"points", Json::array({{{"curve", i}, {"point", name}}, {{"curve", next}, {"point", name}}})},
+                                   {"curve", lineIdx}});
+        if (c.kind == SketchCurve::Kind::Circle || c.kind == SketchCurve::Kind::Arc)
+            constraints.push_back({{"type", "equal"}, {"curves", Json::array({i, next})}});
+        ++next;
+    }
+    f.params["curves"] = items;
+    f.params["constraints"] = constraints;
+    regenerateChecked(sketchId, before);
+}
+
+void Design::filletSketchCorner(FeatureId sketchId, std::size_t ia, std::size_t ib, double radius)
+{
+    const State before = m_state;
+    const Feature& f = m_state.features[indexOf(sketchId)];
+    if (f.type != "sketch")
+        throw DesignError("Feature " + std::to_string(sketchId) + " is not a sketch");
+    auto it = m_sketches.find(sketchId);
+    if (it == m_sketches.end())
+        throw DesignError(f.name + " is not evaluated");
+    const std::vector<SketchCurve> curves = it->second.curves;
+    if (ia == ib || ia >= curves.size() || ib >= curves.size() || curves[ia].kind != SketchCurve::Kind::Line ||
+        curves[ib].kind != SketchCurve::Kind::Line)
+        throw DesignError("A sketch fillet rounds the corner of two lines");
+    if (!(radius > 0))
+        throw DesignError("The fillet radius must be positive");
+    const SketchCurve& la = curves[ia];
+    const SketchCurve& lb = curves[ib];
+    // The shared corner and the far ends.
+    const double tol = 1e-6;
+    auto close = [&](const Vec2& p, const Vec2& q) { return std::hypot(p.x - q.x, p.y - q.y) < tol; };
+    std::optional<Vec2> corner;
+    Vec2 farA, farB;
+    for (int i = 0; i < 2 && !corner; ++i)
+        for (int j = 0; j < 2 && !corner; ++j)
+            if (close(la.points[i], lb.points[j])) {
+                corner = la.points[i];
+                farA = la.points[1 - i];
+                farB = lb.points[1 - j];
+            }
+    if (!corner)
+        throw DesignError("The two lines do not meet at a corner");
+    const Vec2 c = *corner;
+    auto unit = [](const Vec2& v) {
+        const double l = std::hypot(v.x, v.y);
+        return Vec2{v.x / l, v.y / l};
+    };
+    const Vec2 u = unit(farA - c), v = unit(farB - c);
+    const double cosT = std::clamp(u.x * v.x + u.y * v.y, -1.0, 1.0);
+    const double theta = std::acos(cosT); // angle between the lines at the corner
+    if (theta < 1e-6 || theta > std::numbers::pi - 1e-6)
+        throw DesignError("The lines are in line: there is no corner to round");
+    const double t = radius / std::tan(theta / 2); // corner to tangent point
+    const double lenA = std::hypot(farA.x - c.x, farA.y - c.y), lenB = std::hypot(farB.x - c.x, farB.y - c.y);
+    if (t >= lenA - tol || t >= lenB - tol)
+        throw DesignError("The radius is too large for these lines");
+    const Vec2 ta = c + u * t, tb = c + v * t;
+    const Vec2 bis = unit(u + v);
+    const double toCenter = radius / std::sin(theta / 2);
+    const Vec2 center = c + bis * toCenter;
+    const Vec2 mid = center - bis * radius; // the arc's middle, nearest the corner
+
+    auto pt = [](const Vec2& p) { return Json::array({p.x, p.y}); };
+    auto lineItem = [&](const SketchCurve& orig, const Vec2& far, const Vec2& tp) {
+        Json item{{"type", "line"}, {"start", pt(far)}, {"end", pt(tp)}};
+        if (orig.construction)
+            item["construction"] = true;
+        return item;
+    };
+    auto axisConstraint = [](const SketchCurve& l, std::size_t index) -> std::optional<Json> {
+        const double dx = l.points[1].x - l.points[0].x, dy = l.points[1].y - l.points[0].y;
+        if (std::abs(dy) < 1e-9 * std::max(1.0, std::abs(dx)))
+            return Json{{"type", "horizontal"}, {"curve", index}};
+        if (std::abs(dx) < 1e-9 * std::max(1.0, std::abs(dy)))
+            return Json{{"type", "vertical"}, {"curve", index}};
+        return std::nullopt;
+    };
+    try {
+        deleteSketchCurves(sketchId, {ia, ib});
+        Feature& g = m_state.features[indexOf(sketchId)];
+        Json items = g.params.value("curves", Json::array());
+        // Index of the first new curve: the curves left after the delete.
+        std::size_t first = m_sketches.count(sketchId) ? m_sketches.at(sketchId).curves.size() : curves.size() - 2;
+        items.push_back(lineItem(la, farA, ta));
+        items.push_back(lineItem(lb, farB, tb));
+        Json arc{{"type", "arc"}, {"start", pt(ta)}, {"through", pt(mid)}, {"end", pt(tb)}};
+        // Rounding a construction corner gives a construction arc: it must not bound a profile.
+        if (la.construction && lb.construction)
+            arc["construction"] = true;
+        items.push_back(arc);
+        g.params["curves"] = items;
+        Json constraints = g.params.value("constraints", Json::array());
+        constraints.push_back({{"type", "tangent"}, {"curves", Json::array({first, first + 2})}});
+        constraints.push_back({{"type", "tangent"}, {"curves", Json::array({first + 1, first + 2})}});
+        constraints.push_back({{"type", "radius"}, {"curve", first + 2}, {"value", radius}});
+        if (const auto h = axisConstraint(la, first))
+            constraints.push_back(*h);
+        if (const auto h = axisConstraint(lb, first + 1))
+            constraints.push_back(*h);
+        g.params["constraints"] = constraints;
+        regenerateChecked(sketchId, before);
+    } catch (...) {
+        m_state = before;
+        regenerate();
+        throw;
+    }
+}
+
+void Design::trimSketchCurve(FeatureId sketchId, std::size_t curve, const geometry::Vec2& at)
+{
+    const State before = m_state;
+    const Feature& f = m_state.features[indexOf(sketchId)];
+    if (f.type != "sketch")
+        throw DesignError("Feature " + std::to_string(sketchId) + " is not a sketch");
+    auto it = m_sketches.find(sketchId);
+    if (it == m_sketches.end() || curve >= it->second.curves.size())
+        throw DesignError(f.name + " has no curve " + std::to_string(curve));
+    const std::vector<SketchCurve> curves = it->second.curves;
+    const SketchCurve& k = curves[curve];
+    const auto target = trimCurve(k);
+    if (!target)
+        throw DesignError("Trim works on lines, arcs and circles");
+
+    // Where the others cross it, as parameters along it.
+    std::vector<double> cuts;
+    for (std::size_t i = 0; i < curves.size(); ++i) {
+        if (i == curve)
+            continue;
+        const auto other = trimCurve(curves[i]);
+        if (!other)
+            continue;
+        for (const Vec2& x : crossings(*target, *other)) {
+            if (const auto u = trimParam(*target, x, 1e-7))
+                cuts.push_back(*u);
+        }
+    }
+    std::sort(cuts.begin(), cuts.end());
+    const auto pu = trimParam(*target, at, 1.0); // the click is near the curve, not on it
+    double u = pu ? *pu : 0.5;
+    if (!target->line && std::abs(target->sweep) < 2 * std::numbers::pi) {
+        // An arc: the click's angle, clamped to the arc.
+        const double a = std::atan2(at.y - target->c.y, at.x - target->c.x);
+        const double along = target->sweep >= 0 ? wrap2pi(a - target->a0) : wrap2pi(target->a0 - a);
+        const double span = std::abs(target->sweep);
+        u = along <= span ? along / span : (along - span < 2 * std::numbers::pi - along ? 1.0 : 0.0);
+    }
+
+    Json pieces = Json::array();
+    const double eps = 1e-6;
+    const bool full = !target->line && std::abs(target->sweep) >= 2 * std::numbers::pi - 1e-12;
+    std::vector<double> inner;
+    for (const double c : cuts) {
+        if (full || (c > eps && c < 1 - eps))
+            if (inner.empty() || c - inner.back() > eps)
+                inner.push_back(c);
+    }
+    if (full) {
+        if (inner.size() >= 2) {
+            // The piece under the click goes; the circle becomes the arc around the rest.
+            auto after = std::upper_bound(inner.begin(), inner.end(), u);
+            const double hi = after == inner.end() ? inner.front() + 1.0 : *after;
+            const double lo = after == inner.begin() ? inner.back() - 1.0 : *(after - 1);
+            pieces.push_back(trimPiece(*target, hi, lo + 1.0, k.construction));
+        }
+    } else {
+        double lo = 0.0, hi = 1.0;
+        for (const double c : inner) {
+            if (c <= u)
+                lo = c;
+            else {
+                hi = c;
+                break;
+            }
+        }
+        if (lo > eps)
+            pieces.push_back(trimPiece(*target, 0.0, lo, k.construction));
+        if (hi < 1 - eps)
+            pieces.push_back(trimPiece(*target, hi, 1.0, k.construction));
+    }
+
+    try {
+        deleteSketchCurves(sketchId, {curve});
+        Feature& g = m_state.features[indexOf(sketchId)];
+        Json items = g.params.value("curves", Json::array());
+        for (const auto& p : pieces)
+            items.push_back(p);
+        g.params["curves"] = items;
+        regenerateChecked(sketchId, before);
+    } catch (...) {
+        m_state = before;
+        regenerate();
+        throw;
+    }
+}
+
+void Design::setSketchConstruction(FeatureId sketchId, const std::vector<std::size_t>& picked, bool construction)
+{
+    const State before = m_state;
+    Feature& f = m_state.features[indexOf(sketchId)];
+    if (f.type != "sketch")
+        throw DesignError("Feature " + std::to_string(sketchId) + " is not a sketch");
+    if (picked.empty())
+        throw DesignError("Select at least one sketch curve");
+    const Eval ev{*this};
+    const Json items = f.params.value("curves", Json::array());
+    std::vector<std::vector<SketchCurve>> made;
+    std::vector<std::vector<SketchConstraint>> implicit;
+    std::size_t total = 0;
+    for (const auto& item : items) {
+        made.emplace_back();
+        implicit.emplace_back();
+        appendCurves(ev, item, made.back(), implicit.back());
+        total += made.back().size();
+    }
+    const SketchResult* solved = nullptr;
+    if (auto it = m_sketches.find(sketchId); it != m_sketches.end() && it->second.curves.size() == total)
+        solved = &it->second;
+    std::vector<bool> on(total, false);
+    for (const std::size_t i : picked) {
+        if (i >= total)
+            throw DesignError(f.name + " has no curve " + std::to_string(i));
+        on[i] = true;
+    }
+
+    Json newItems = Json::array();
+    Json extra = Json::array();
+    std::size_t first = 0;
+    for (std::size_t k = 0; k < made.size(); ++k) {
+        const std::size_t n = made[k].size();
+        std::size_t count = 0;
+        for (std::size_t j = 0; j < n; ++j)
+            count += on[first + j] ? 1 : 0;
+        if (count == 0 || count == n) {
+            Json item = items[k];
+            if (count == n) {
+                if (construction)
+                    item["construction"] = true;
+                else
+                    item.erase("construction");
+            }
+            newItems.push_back(item);
+            first += n;
+            continue;
+        }
+        // Part of a shape: its curves become single items in the same order (indices stay),
+        // where they are shown now, and its own constraints become explicit ones.
+        for (std::size_t j = 0; j < n; ++j) {
+            Json item = curveItem(solved != nullptr ? solved->curves[first + j] : made[k][j]);
+            const bool c = on[first + j] ? construction : made[k][j].construction;
+            if (c)
+                item["construction"] = true;
+            else
+                item.erase("construction");
+            newItems.push_back(item);
+        }
+        for (const auto& c : implicit[k]) {
+            const char* name = implicitName(c.type);
+            if (name == nullptr)
+                continue;
+            Json curves = Json::array();
+            for (const std::size_t local : c.curves)
+                curves.push_back(first + local);
+            Json e{{"type", name}};
+            if (curves.size() == 1)
+                e["curve"] = curves[0];
+            else
+                e["curves"] = curves;
+            extra.push_back(e);
+        }
+        first += n;
+    }
+    f.params["curves"] = newItems;
+    if (!extra.empty()) {
+        Json constraints = f.params.value("constraints", Json::array());
+        for (const auto& e : extra)
+            constraints.push_back(e);
+        f.params["constraints"] = constraints;
+    }
     regenerateChecked(sketchId, before);
 }
 
@@ -1209,6 +1753,56 @@ void Design::evaluateFeature(const Feature& f)
         SketchResult* sk = nullptr;
         const auto faces = profiles(sk);
         const std::string extent = lower(p.value("extent", std::string("one_side")));
+        core::Vec3 dir = sk->plane.normal;
+        if (p.value("flip", false))
+            dir = dir * -1.0;
+        if (extent == "to_object") {
+            // Fusion: Extent "To Object": up to a body, some of its faces, or an imported
+            // surface, solid or scan.
+            const Json& to = required(p, "to");
+            geometry::Shape target;
+            std::vector<std::size_t> targetFaces;
+            if (has(to, "body")) {
+                const Body& t = bodyRef(to.at("body"));
+                target = t.shape;
+                if (has(to, "faces"))
+                    targetFaces = resolveIndices(target, to.at("faces"), false);
+            } else if (has(to, "part")) {
+                const auto partId = to.at("part").get<model::PartId>();
+                const model::Part* part = m_partLookup ? m_partLookup(partId) : nullptr;
+                if (part == nullptr)
+                    throw DesignError("No part with id " + std::to_string(partId));
+                if (part->shape && !part->shape->isNull()) {
+                    target = *part->shape;
+                } else if (part->mesh) {
+                    core::BoundingBox reach;
+                    for (const auto& face : faces) {
+                        const auto b = face.bounds();
+                        reach.extend(b.min);
+                        reach.extend(b.max);
+                    }
+                    // Far enough to reach the scan wherever it is: the size of the box around
+                    // both the profile and the scan.
+                    const auto pb = part->mesh->bounds();
+                    core::BoundingBox both = reach;
+                    both.extend(pb.min);
+                    both.extend(pb.max);
+                    const double span = 2.0 * (both.max - both.min).length();
+                    reach.extend(reach.min + dir * span);
+                    reach.extend(reach.max + dir * span);
+                    target = scanSurfaceUnder(*part, reach);
+                } else {
+                    throw DesignError("Part '" + part->name + "' has no geometry");
+                }
+            } else {
+                throw DesignError("Extrude to object: give `to` as {body, faces?} or {part}");
+            }
+            std::vector<geometry::Shape> solids;
+            for (const auto& face : faces)
+                solids.push_back(geometry::extrudeToObject(face, dir, target, targetFaces));
+            applyOperation(unionAll(solids));
+            return;
+        }
         double d1 = ev.num(p, "distance");
         double d2 = 0.0;
         if (extent == "symmetric")
@@ -1216,10 +1810,7 @@ void Design::evaluateFeature(const Feature& f)
         else if (extent == "two_sides")
             d2 = ev.num(p, "distance2");
         else if (extent != "one_side")
-            throw DesignError("Unknown extent '" + extent + "' (one_side, symmetric, two_sides)");
-        core::Vec3 dir = sk->plane.normal;
-        if (p.value("flip", false))
-            dir = dir * -1.0;
+            throw DesignError("Unknown extent '" + extent + "' (one_side, symmetric, two_sides, to_object)");
         std::vector<geometry::Shape> solids;
         for (const auto& face : faces)
             solids.push_back(geometry::extrude(face, dir, d1, d2));
@@ -2042,7 +2633,7 @@ void Design::syncDocument(model::Document& document)
     }
     for (const auto& [id, s] : m_sketches) {
         const geometry::Shape profiles = geometry::makeCompound(s.geometry.profiles);
-        auto segments = geometry::edgeSegments(s.geometry.curves);
+        auto segments = sketchSegments(s);
         auto fill = geometry::tessellate(profiles);
         if (const Feature* f = feature(id); f != nullptr && f->params.contains("onSurface") && !segments.empty()) {
             const Json& on = f->params.at("onSurface");
