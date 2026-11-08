@@ -124,4 +124,44 @@ TriangleMesh decimateToTarget(const TriangleMesh& mesh, std::size_t targetTriang
     return result;
 }
 
+std::vector<Vec3> smoothCornerNormals(const TriangleMesh& mesh)
+{
+    const auto& vertices = mesh.vertices();
+    const auto& triangles = mesh.triangles();
+    std::vector<Vec3> faces(triangles.size());
+    std::vector<Vec3> sums(vertices.size());
+    std::vector<Vec3> largest(vertices.size());
+    std::vector<double> areas(vertices.size(), 0.0);
+    for (std::size_t t = 0; t < triangles.size(); ++t) {
+        const auto& tri = triangles[t];
+        faces[t] = (vertices[tri[1]] - vertices[tri[0]]).cross(vertices[tri[2]] - vertices[tri[0]]);
+        const double area = faces[t].length();
+        for (const std::uint32_t vi : tri) {
+            sums[vi] = sums[vi] + faces[t];
+            areas[vi] += area;
+            if (area > largest[vi].length())
+                largest[vi] = faces[t];
+        }
+    }
+    // The side most faces around a vertex face; when they cancel, the largest face's.
+    for (std::size_t vi = 0; vi < sums.size(); ++vi)
+        if (sums[vi].length() <= 1e-3 * areas[vi])
+            sums[vi] = largest[vi];
+    std::vector<Vec3> aligned(vertices.size());
+    for (std::size_t t = 0; t < triangles.size(); ++t)
+        for (const std::uint32_t vi : triangles[t])
+            aligned[vi] = aligned[vi] + (sums[vi].dot(faces[t]) < 0.0 ? faces[t] * -1.0 : faces[t]);
+    std::vector<Vec3> corners;
+    corners.reserve(triangles.size() * 3);
+    for (std::size_t t = 0; t < triangles.size(); ++t)
+        for (const std::uint32_t vi : triangles[t]) {
+            // Nothing to average (only degenerate faces around it): the face's own normal.
+            Vec3 n = aligned[vi].length() > 0.0 ? aligned[vi].normalized() : faces[t].normalized();
+            if (n.dot(faces[t]) < 0.0)
+                n = n * -1.0;
+            corners.push_back(n);
+        }
+    return corners;
+}
+
 } // namespace aerocad::core

@@ -410,3 +410,70 @@ TEST_CASE("faceTurn lays a face down or turns it about Z to the front", "[core][
     CHECK((faceTurn(up, FaceTarget::Front) * up.normalized()).y == Approx(-1).margin(1e-9));
 }
 
+
+TEST_CASE("smoothCornerNormals: one unit normal per corner, also where flipped faces cancel", "[core][scan]")
+{
+    // A flat grid whose two triangles in every square face opposite ways (Codex's case on
+    // PR #105): around many vertices the face normals sum to zero, before and after
+    // simplification.
+    std::vector<Vec3> v;
+    std::vector<TriangleMesh::Triangle> t;
+    const int n = 64;
+    for (int j = 0; j <= n; ++j)
+        for (int i = 0; i <= n; ++i)
+            v.push_back({double(i), double(j), 0.0});
+    auto idx = [&](int i, int j) { return static_cast<std::uint32_t>(j * (n + 1) + i); };
+    for (int j = 0; j < n; ++j)
+        for (int i = 0; i < n; ++i) {
+            t.push_back({idx(i, j), idx(i + 1, j), idx(i + 1, j + 1)});
+            t.push_back({idx(i, j), idx(i, j + 1), idx(i + 1, j + 1)}); // turned the other way
+        }
+    const TriangleMesh grid(std::move(v), std::move(t));
+    for (const TriangleMesh& mesh : {grid, decimateToTarget(grid, 2000)}) {
+        REQUIRE(mesh.triangleCount() > 0);
+        const auto normals = smoothCornerNormals(mesh);
+        REQUIRE(normals.size() == mesh.triangleCount() * 3);
+        std::size_t corner = 0;
+        for (const auto& tri : mesh.triangles()) {
+            const Vec3 face = (mesh.vertices()[tri[1]] - mesh.vertices()[tri[0]])
+                                  .cross(mesh.vertices()[tri[2]] - mesh.vertices()[tri[0]]);
+            for (int k = 0; k < 3; ++k) {
+                const Vec3& nk = normals[corner++];
+                CHECK(nk.length() == Catch::Approx(1.0));
+                // Flat: along z, on the side of its own triangle.
+                CHECK(std::abs(nk.z) == Catch::Approx(1.0));
+                CHECK(nk.dot(face) > 0.0);
+            }
+        }
+    }
+}
+
+TEST_CASE("smoothCornerNormals averages across triangles on a curved surface", "[core][scan]")
+{
+    // A cylinder of radius 10 around z, 2 degree facets: at a corner a facet's normal is 1
+    // degree off radial; the averaged one is within half of that, also with every third
+    // triangle flipped.
+    std::vector<Vec3> v;
+    std::vector<TriangleMesh::Triangle> t;
+    const int seg = 180;
+    for (int k = 0; k < seg; ++k) {
+        const double a = 2.0 * std::numbers::pi * k / seg;
+        v.push_back({10.0 * std::cos(a), 10.0 * std::sin(a), 0.0});
+        v.push_back({10.0 * std::cos(a), 10.0 * std::sin(a), 5.0});
+    }
+    for (int k = 0; k < seg; ++k) {
+        const auto a0 = static_cast<std::uint32_t>(2 * k), a1 = a0 + 1;
+        const auto b0 = static_cast<std::uint32_t>(2 * ((k + 1) % seg)), b1 = b0 + 1;
+        t.push_back(k % 3 == 0 ? TriangleMesh::Triangle{a0, a1, b0} : TriangleMesh::Triangle{a0, b0, a1});
+        t.push_back({b0, b1, a1});
+    }
+    const TriangleMesh cylinder(std::move(v), std::move(t));
+    const auto normals = smoothCornerNormals(cylinder);
+    std::size_t corner = 0;
+    for (const auto& tri : cylinder.triangles())
+        for (const std::uint32_t vi : tri) {
+            const Vec3& p = cylinder.vertices()[vi];
+            const Vec3 radial = Vec3{p.x, p.y, 0.0}.normalized();
+            CHECK(std::abs(normals[corner++].dot(radial)) > std::cos(0.5 * std::numbers::pi / 180.0));
+        }
+}

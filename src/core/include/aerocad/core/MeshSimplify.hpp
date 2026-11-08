@@ -4,6 +4,7 @@
 #include "aerocad/core/Mesh.hpp"
 
 #include <cstddef>
+#include <vector>
 
 namespace aerocad::core {
 
@@ -19,5 +20,14 @@ namespace aerocad::core {
 
 /// One clustering pass with a given cell size (mm).
 [[nodiscard]] TriangleMesh clusterVertices(const TriangleMesh& mesh, double cellSize);
+
+/// Unit normals to draw a simplified scan smooth: three per triangle, in triangle order
+/// (corner k of triangle t at 3t + k). Clustered vertices are averages over grid cells, so
+/// flat normals show bands where the surface crosses a grid plane. Each corner gets the
+/// area-weighted average of the faces around its vertex, every face turned to the side most
+/// of them face (the largest face's side when they cancel), and then turned to the side of
+/// its own triangle: flipped scan triangles are lit like the others, from either side.
+/// Never a zero normal for a triangle with an area.
+[[nodiscard]] std::vector<Vec3> smoothCornerNormals(const TriangleMesh& mesh);
 
 } // namespace aerocad::core
