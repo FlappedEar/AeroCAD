@@ -650,6 +650,7 @@ ApplicationWindow {
         property var partIds: []
         title: partIds.length ? qsTr("Export selected part") : qsTr("Export visible parts")
         fileMode: FileDialog.SaveFile
+        acceptLabel: qsTr("Export")
         nameFilters: window.controller.exportNameFilters
         defaultSuffix: selectedNameFilter.extensions.length ? selectedNameFilter.extensions[0] : "stl"
         onAccepted: {
@@ -721,6 +722,14 @@ ApplicationWindow {
 
     function openExport(ids) {
         exportDialog.partIds = ids
+        // Suggest a file name as Fusion does: the part's name, or the project's for all
+        // visible parts (CAD-115).
+        const parts = window.controller.execute("document.parts")
+        const part = ids.length === 1 && parts.ok ? parts.result.parts.find(p => p.id === ids[0]) : null
+        const base = (part ? part.name : window.controller.projectName) || qsTr("export")
+        const safe = base.replace(/[\\/:*?"<>|]+/g, "_").trim()
+        const folder = exportDialog.currentFolder.toString().replace(/\/$/, "")
+        exportDialog.selectedFile = folder + "/" + encodeURIComponent(safe) + "." + exportDialog.defaultSuffix
         exportDialog.open()
     }
 

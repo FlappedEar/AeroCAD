@@ -185,7 +185,7 @@ double round3(double v)
 }
 
 /// Checks parts before they are written (see document.export_check). `format` decides what
-/// is an error: STL / 3MF need a watertight mesh, STEP needs exact geometry.
+/// is an error: printing needs a watertight mesh, STEP needs exact geometry.
 Json exportCheck(const std::vector<const model::Part*>& parts, io::FileFormat format, double minWall, bool print = false,
                  const cad::Design* design = nullptr)
 {
@@ -236,17 +236,20 @@ Json exportCheck(const std::vector<const model::Part*>& parts, io::FileFormat fo
             r["oriented"] = c.oriented();
             r["shells"] = c.shells;
             r["volume"] = c.closed() ? Json(round3(c.signedVolume)) : Json(nullptr);
+            // Only printing needs a watertight solid. A plain STL / 3MF / STEP export of an
+            // open mesh (a scan to use in another program) is allowed with a warning (CAD-115).
+            Json& meshProblems = print ? errorList : warningList;
             if (!c.closed()) {
-                // An open surface: fine as STEP geometry, but not a printable solid.
+                // An open surface: fine as STEP geometry or a scan file, but not a printable solid.
                 const std::string msg = c.boundaryEdges > 0
                                             ? "Not closed: " + std::to_string(c.boundaryEdges) +
                                                   " open edges, so it is a surface, not a solid. Slicers cannot print it."
                                             : "Not a solid: " + std::to_string(c.nonManifoldEdges) +
                                                   " edges are shared by more than two faces.";
-                (step ? warningList : errorList).push_back(msg);
+                meshProblems.push_back(msg);
             } else if (!c.watertight()) {
                 for (const auto& problem : c.problems())
-                    (step ? warningList : errorList).push_back(problem);
+                    meshProblems.push_back(problem);
             }
             if (c.closed() && minWall > 0.0) {
                 const WallReport w = measureWalls(welded, minWall);
@@ -318,38 +321,39 @@ void registerCheck(CommandRegistry& r)
             return out;
         });
 
-    r.add({"document.export_check", "Check before export",
-           "Checks parts before they are written to STL, 3MF or STEP and explains what is wrong: watertight "
-           "and manifold mesh (STL/3MF need a closed solid), exact geometry present and valid (STEP), and "
-           "walls thinner than minWall for 3D printing (thinnest wall, where, share of the surface). "
-           "status per part: ok, warning (can be exported, but check it) or error (the export would fail or "
-           "the file is not printable). Writes nothing.",
-           objectSchema(
-               {{"format",
-                 {{"type", "string"},
-                  {"enum", {"stl", "3mf", "step"}},
-                  {"description", "Target format. Default stl."}}},
-                {"ids",
-                 {{"type", "array"},
-                  {"items", {{"type", "integer"}, {"minimum", 1}}},
-                  {"minItems", 1},
-                  {"description", "Parts to check; defaults to all visible bodies and imported parts, as document.export."}}},
-                {"minWall",
-                 {{"type", "number"},
-                  {"minimum", 0},
-                  {"description", "Minimum wall thickness for printing, mm. Default 0.8; 0 skips the wall check."}}},
-                {"print",
-                 {{"type", "boolean"},
-                  {"description", "Check for document.export_for_print: the same default parts (visible solids), STL rules."}}}})},
-          [](CommandContext& ctx, const Json& params) {
-              const bool print = params.value("print", false);
-              io::FileFormat format = io::FileFormat::Stl;
-              if (params.contains("format") && !print)
-                  format = parseFormat(params, {});
-              const auto parts = print ? selectPrintParts(ctx.document, params) : selectParts(ctx.document, params);
-              return exportCheck(parts, format, params.value("minWall", kDefaultMinWall), print, ctx.design);
-          });
-
+    r.add(
+        {"document.export_check", "Check before export",
+         "Checks parts before they are written to STL, 3MF or STEP and explains what is wrong: watertight "
+         "and manifold mesh (printing needs a closed solid; an open mesh in a plain STL/3MF is a warning), exact "
+         "geometry present and valid (STEP), and "
+         "walls thinner than minWall for 3D printing (thinnest wall, where, share of the surface). "
+         "status per part: ok, warning (can be exported, but check it) or error (the export would fail or "
+         "the file is not printable). Writes nothing.",
+         objectSchema(
+             {{"format",
+               {{"type", "string"}, {"enum", {"stl", "3mf", "step"}}, {"description", "Target format. Default stl."}}},
+              {"ids",
+               {{"type", "array"},
+                {"items", {{"type", "integer"}, {"minimum", 1}}},
+                {"minItems", 1},
+                {"description",
+                 "Parts to check; defaults to all visible bodies and imported parts, as document.export."}}},
+              {"minWall",
+               {{"type", "number"},
+                {"minimum", 0},
+                {"description", "Minimum wall thickness for printing, mm. Default 0.8; 0 skips the wall check."}}},
+              {"print",
+               {{"type", "boolean"},
+                {"description",
+                 "Check for document.export_for_print: the same default parts (visible solids), STL rules."}}}})},
+        [](CommandContext& ctx, const Json& params) {
+            const bool print = params.value("print", false);
+            io::FileFormat format = io::FileFormat::Stl;
+            if (params.contains("format") && !print)
+                format = parseFormat(params, {});
+            const auto parts = print ? selectPrintParts(ctx.document, params) : selectParts(ctx.document, params);
+            return exportCheck(parts, format, params.value("minWall", kDefaultMinWall), print, ctx.design);
+        });
 }
 
 void registerExport(CommandRegistry& r)

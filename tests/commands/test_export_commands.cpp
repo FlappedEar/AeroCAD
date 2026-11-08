@@ -406,7 +406,16 @@ TEST_CASE("document.export_check explains what blocks or weakens an export", "[c
     SECTION("an open mesh cannot be printed; a mesh cannot be STEP")
     {
         const auto open = addMeshPart(s, "open", false, 50.0);
+        // An open mesh (a scan) can be written as STL for another program, with a warning
+        // (CAD-115) ...
         auto r = s.execute("document.export_check", {{"ids", {open}}, {"format", "stl"}});
+        REQUIRE(r.ok);
+        CHECK(r.data.at("canExport") == true);
+        CHECK(r.data.at("errors") == 0);
+        CHECK(r.data.at("parts").at(0).at("status") == "warning");
+        CHECK_THAT(r.data.at("parts").at(0).at("warnings").at(0).get<std::string>(), ContainsSubstring("3 open edges"));
+        // ... but not exported for printing.
+        r = s.execute("document.export_check", {{"ids", {open}}, {"print", true}});
         REQUIRE(r.ok);
         CHECK(r.data.at("canExport") == false);
         CHECK(r.data.at("errors") == 1);
