@@ -364,6 +364,10 @@ TEST_CASE("writeCase writes a complete OpenFOAM case in SI units", "[cfd]")
     CHECK(control.find("type runTimeControl;") != std::string::npos); // CAD-155
     CHECK(control.find("fields (CdMean ClMean);") != std::string::npos);
     CHECK(control.find("satisfiedAction end;") != std::string::npos);
+    // Vortex cores (CAD-175): Q at 20 (U / L)^2, the same structures at any speed and size.
+    CHECK(control.find("type Q;") != std::string::npos);
+    CHECK(cfd::vortexQ(info) == Approx(20.0 * std::pow(info.settings.speed / info.characteristicLength, 2)));
+    CHECK(control.find("vortices { type isoSurface; isoField Q; isoValue ") != std::string::npos);
     // Section stacks for the result view (CAD-148): every plane, cropped to the region
     // around the part.
     for (const auto& stack : cfd::sectionStacks())
@@ -1193,6 +1197,8 @@ TEST_CASE("OpenFOAM: box in a wind tunnel", "[.openfoam]")
         CHECK(r.at("fields").at(kind) == true);
         CHECK_FALSE(runs.field(id, kind).empty());
     }
+    // The vortex cores (CAD-175) are written; a coarse box may have none off its skin.
+    CHECK(r.at("fields").at("vortices") == true);
     {
         // The total-pressure loss (CAD-165) lies along and behind the box, with its speed.
         const auto wake = runs.field(id, "wake");

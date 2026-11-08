@@ -25,7 +25,7 @@ class FieldGeometry : public QQuick3DGeometry {
     QML_ELEMENT
     Q_PROPERTY(aerocad::app::AppController* controller READ controller WRITE setController NOTIFY changed)
     Q_PROPERTY(QString run READ run WRITE setRun NOTIFY changed)
-    /// surface, sectionHorizontal, sectionVertical, a section stack plane, wake, streamlines.
+    /// surface, sectionHorizontal, sectionVertical, a section stack plane, wake, vortices, streamlines.
     Q_PROPERTY(QString kind READ kind WRITE setKind NOTIFY changed)
     /// Run B: with kind surface, the pressure difference B - A on run's surface (scalars
     /// dCp, dpressure; CAD-141). Empty: run's own field.

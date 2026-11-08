@@ -521,7 +521,8 @@ void registerSimulationCommands(CommandRegistry& r)
            "pressure in Pa), sectionHorizontal / sectionVertical (velocity sections through the part centre: speed "
            "in m/s, Cp), a plane of a section stack (sectionX_<i> across the flow, sectionY_<i> vertical along "
            "it, sectionZ_<i> horizontal; positions in simulation.results fields.sections), wake (isosurface of zero "
-           "total pressure, Cp0 = 0, around and behind the part: speed, Cp) or streamlines. "
+           "total pressure, Cp0 = 0, around and behind the part: speed, Cp), vortices (vortex cores: isosurface of "
+           "the Q-criterion at 20 (U / L)^2, from three surface cells off the part: speed, Cp) or streamlines. "
            "available = false until the run has written it. Scalars have min, max, "
            "mean and the 2nd/98th percentiles p02/p98. With compare (run B) and kind surface: the pressure "
            "difference B - A on run's part surface (dCp, dpressure in Pa), NaN where B's part has no surface "
@@ -529,7 +530,7 @@ void registerSimulationCommands(CommandRegistry& r)
            objectSchema({{"run", runIdParam()},
                          {"kind",
                           {{"type", "string"},
-                           {"pattern", "^(surface|sectionHorizontal|sectionVertical|wake|streamlines|section[XYZ]_[0-9]+)$"}}},
+                           {"pattern", "^(surface|sectionHorizontal|sectionVertical|wake|vortices|streamlines|section[XYZ]_[0-9]+)$"}}},
                          {"compare", runIdParam("Run B: return the surface difference B - A.")}},
                         {"run", "kind"})},
           [](CommandContext& ctx, const Json& params) {

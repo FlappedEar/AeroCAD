@@ -774,11 +774,11 @@ Item {
                         lighting: fieldModel.flat ? DefaultMaterial.NoLighting : DefaultMaterial.FragmentLighting
                         specularAmount: 0.15
                         cullMode: Material.NoCulling
-                        // Dense streamlines and the wake surface are see-through, so the part
+                        // Dense streamlines, the wake and the vortex cores are see-through, so the part
                         // shows behind them.
                         opacity: fieldModel.modelData.kind === "streamlines"
                                  ? ((fieldModel.modelData.palette ?? "").indexOf("smoke") === 0 ? 0.8 : 0.55)
-                               : fieldModel.modelData.kind === "wake" ? 0.8 : 1.0
+                               : (fieldModel.modelData.kind === "wake" || fieldModel.modelData.kind === "vortices") ? 0.8 : 1.0
                     }
                 }
             }
