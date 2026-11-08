@@ -374,7 +374,7 @@ QVariantMap FieldGeometry::pick(const QVector3D& origin, const QVector3D& direct
     if (m_kind == QLatin1String("streamlines") || m_data.polygons.empty())
         return {};
     const core::Vec3 o{origin.x(), origin.y(), origin.z()};
-    const core::Vec3 d{direction.x(), direction.y(), direction.z()};
+    const core::Vec3 dir{direction.x(), direction.y(), direction.z()};
     double bestT = std::numeric_limits<double>::max();
     std::array<std::uint32_t, 3> bestTri{};
     double bestU = 0, bestV = 0;
@@ -387,7 +387,7 @@ QVariantMap FieldGeometry::pick(const QVector3D& origin, const QVector3D& direct
             // Möller-Trumbore, both sides.
             const core::Vec3 e1 = m_data.points[ib] - m_data.points[ia];
             const core::Vec3 e2 = m_data.points[ic] - m_data.points[ia];
-            const core::Vec3 pv = d.cross(e2);
+            const core::Vec3 pv = dir.cross(e2);
             const double det = e1.dot(pv);
             if (std::abs(det) < 1e-18)
                 continue;
@@ -397,7 +397,7 @@ QVariantMap FieldGeometry::pick(const QVector3D& origin, const QVector3D& direct
             if (u < 0.0 || u > 1.0)
                 continue;
             const core::Vec3 qv = tv.cross(e1);
-            const double v = d.dot(qv) * inv;
+            const double v = dir.dot(qv) * inv;
             if (v < 0.0 || u + v > 1.0)
                 continue;
             const double t = e2.dot(qv) * inv;
@@ -412,7 +412,7 @@ QVariantMap FieldGeometry::pick(const QVector3D& origin, const QVector3D& direct
     if (bestT == std::numeric_limits<double>::max())
         return {};
     const double w = 1.0 - bestU - bestV;
-    const core::Vec3 p = o + d * bestT;
+    const core::Vec3 p = o + dir * bestT;
     QVariantMap values;
     for (const auto& [name, column] : m_data.scalars) {
         if (bestTri[0] >= column.size() || bestTri[1] >= column.size() || bestTri[2] >= column.size())

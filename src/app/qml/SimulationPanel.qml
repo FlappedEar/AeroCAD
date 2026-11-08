@@ -1052,7 +1052,8 @@ Pane {
                         objectName: "cpMinField"
                         Layout.preferredWidth: 64
                         placeholderText: root.num(root.autoScale("Cp")[0], 2)
-                        validator: DoubleValidator {}
+                        // C locale: the text is read with parseFloat, so a decimal comma must not validate.
+                        validator: DoubleValidator { locale: "C" }
                         onEditingFinished: root.setRangeOverride("Cp", parseFloat(cpMin.text), parseFloat(cpMax.text))
                     }
                     TextField {
@@ -1060,7 +1061,8 @@ Pane {
                         objectName: "cpMaxField"
                         Layout.preferredWidth: 64
                         placeholderText: root.num(root.autoScale("Cp")[1], 2)
-                        validator: DoubleValidator {}
+                        // C locale: the text is read with parseFloat, so a decimal comma must not validate.
+                        validator: DoubleValidator { locale: "C" }
                         onEditingFinished: root.setRangeOverride("Cp", parseFloat(cpMin.text), parseFloat(cpMax.text))
                     }
                     Button {
