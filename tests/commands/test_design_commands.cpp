@@ -575,3 +575,61 @@ TEST_CASE("Design commands: deleting sketch curves re-indexes a revolve axis", "
     CHECK(tl.at("features")[1].at("status") == "ok");
     CHECK(tl.at("bodies")[0].at("volume").get<double>() == Approx(volume));
 }
+
+TEST_CASE("Design commands: deleting a side of a later shape keeps its own constraints (CAD-122 review)",
+          "[commands][cad][solver]")
+{
+    commands::Session s;
+    // A circle first: the rectangle's sides are curves 1..4.
+    const Json sk = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "circle"}, {"center", {-30, 0}}, {"radius", 4}},
+                                                 {{"type", "rectangle"}, {"corner", {0, 0}}, {"width", 40}, {"height", 20}}})}});
+    const auto id = sk.at("id").get<std::uint64_t>();
+    run(s, "sketch.delete_curves", {{"sketch", id}, {"curves", {3}}}); // the rectangle's top
+    const Json c = run(s, "sketch.curves", {{"sketch", id}});
+    REQUIRE(c.at("curves").size() == 4);
+    CHECK(c.at("curves")[0].at("kind") == "circle");
+    std::vector<std::pair<std::string, int>> kept;
+    for (const auto& k : c.at("constraints"))
+        kept.emplace_back(k.at("type").get<std::string>(), k.at("curve").get<int>());
+    // bottom (1) horizontal, right (2) and left (3) vertical; nothing on the circle.
+    CHECK(kept == std::vector<std::pair<std::string, int>>{{"horizontal", 1}, {"vertical", 2}, {"vertical", 3}});
+}
+
+TEST_CASE("Design commands: splitting a dimensioned shape keeps its solved size (CAD-122 review)",
+          "[commands][cad][solver]")
+{
+    commands::Session s;
+    const Json sk = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "rectangle"}, {"corner", {0, 0}}, {"width", 40}, {"height", 20}}})},
+                         {"constraints", Json::array({{{"type", "length"}, {"curve", 0}, {"value", 60}}})}});
+    const auto id = sk.at("id").get<std::uint64_t>();
+    run(s, "sketch.delete_curves", {{"sketch", id}, {"curves", {0}}}); // the dimensioned bottom
+    const Json c = run(s, "sketch.curves", {{"sketch", id}});
+    REQUIRE(c.at("curves").size() == 3);
+    const auto& top = c.at("curves")[1].at("points");
+    CHECK(std::abs(top[1][0].get<double>() - top[0][0].get<double>()) == Approx(60).margin(1e-6));
+}
+
+TEST_CASE("Design commands: a deleted revolve axis line stays missing when lines are added (CAD-122 review)",
+          "[commands][cad]")
+{
+    commands::Session s;
+    const Json sk = run(s, "sketch.create",
+                        {{"plane", "XZ"},
+                         {"curves", Json::array({{{"type", "line"}, {"start", {0, -5}}, {"end", {0, 25}}, {"construction", true}},
+                                                 {{"type", "rectangle"}, {"corner", {5, 0}}, {"width", 5}, {"height", 20}}})}});
+    const auto id = sk.at("id").get<std::uint64_t>();
+    run(s, "feature.revolve", {{"sketch", id}, {"axis", {{"line", 0}}}});
+    run(s, "sketch.delete_curves", {{"sketch", id}, {"curves", {0}}});
+    Json tl = run(s, "timeline.list");
+    CHECK(tl.at("features")[1].at("status") == "error");
+    // A new line takes the next index; the revolve must not turn about it.
+    run(s, "sketch.add_curves",
+        {{"sketch", id}, {"curves", Json::array({{{"type", "line"}, {"start", {30, 0}}, {"end", {30, 20}}}})}});
+    tl = run(s, "timeline.list");
+    CHECK(tl.at("features")[1].at("status") == "error");
+    CHECK(tl.at("features")[1].at("error").get<std::string>().find("deleted") != std::string::npos);
+}

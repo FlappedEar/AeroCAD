@@ -650,6 +650,10 @@ void Design::deleteSketchCurves(FeatureId sketchId, const std::vector<std::size_
         appendCurves(ev, item, made.back(), implicit.back());
         total += made.back().size();
     }
+    // The solved curves of the sketch as shown (same order as the expansion above).
+    const SketchResult* solved = nullptr;
+    if (auto it = m_sketches.find(sketchId); it != m_sketches.end() && it->second.curves.size() == total)
+        solved = &it->second;
     std::vector<bool> gone(total, false);
     for (const std::size_t i : removed) {
         if (i >= total)
@@ -677,12 +681,13 @@ void Design::deleteSketchCurves(FeatureId sketchId, const std::vector<std::size_
         }
         if (kept == 0)
             continue;
-        // Split: the remaining curves as single items, where the solver had them start.
+        // Split: the remaining curves as single items, where they are shown now (solved by
+        // the dimensions), so deleting one side does not reset the others.
         for (std::size_t j = 0; j < n; ++j) {
             if (gone[first + j])
                 continue;
             map[first + j] = newIndex++;
-            newItems.push_back(curveItem(made[k][j]));
+            newItems.push_back(curveItem(solved != nullptr ? solved->curves[first + j] : made[k][j]));
         }
         // The shape's own constraints: those between kept curves stay; equal sides (a
         // polygon chains them to its first side) are chained to the first kept side.
@@ -693,22 +698,24 @@ void Design::deleteSketchCurves(FeatureId sketchId, const std::vector<std::size_
             if (name == nullptr)
                 continue;
             if (c.type == SketchConstraint::Type::Equal) {
-                for (const std::size_t i : c.curves) {
-                    if (!map[i])
+                for (const std::size_t local : c.curves) {
+                    const auto& to = map[first + local];
+                    if (!to)
                         continue;
                     if (!equalAnchor)
-                        equalAnchor = *map[i];
-                    else if (*map[i] != *equalAnchor && equalLinked.insert(*map[i]).second)
-                        extra.push_back({{"type", "equal"}, {"curves", Json::array({*equalAnchor, *map[i]})}});
+                        equalAnchor = *to;
+                    else if (*to != *equalAnchor && equalLinked.insert(*to).second)
+                        extra.push_back({{"type", "equal"}, {"curves", Json::array({*equalAnchor, *to})}});
                 }
                 continue;
             }
             Json curves = Json::array();
             bool ok = true;
-            for (const std::size_t i : c.curves) {
-                ok = ok && map[i].has_value();
+            for (const std::size_t local : c.curves) {
+                const auto& to = map[first + local];
+                ok = ok && to.has_value();
                 if (ok)
-                    curves.push_back(*map[i]);
+                    curves.push_back(*to);
             }
             if (!ok)
                 continue;
@@ -732,23 +739,35 @@ void Design::deleteSketchCurves(FeatureId sketchId, const std::vector<std::size_
     if (!constraints.empty() || f.params.contains("constraints"))
         f.params["constraints"] = constraints;
 
-    // Later features that name curves of this sketch follow the new indices. A feature
-    // whose curve is gone keeps the old index and reports an error, like Fusion's red
-    // timeline steps.
-    auto remapIndex = [&](Json& idx) {
-        if (idx.is_number_integer() && idx.get<std::size_t>() < map.size() && map[idx.get<std::size_t>()])
-            idx = *map[idx.get<std::size_t>()];
-        else if (idx.is_number_integer())
-            idx = newIndex; // past the last curve: no longer a curve of the sketch
+    // Later features that name curves of this sketch follow the new indices. A reference to
+    // a removed curve is marked as deleted (it never points at a curve drawn later), and
+    // the feature reports an error, like Fusion's red timeline steps.
+    auto mapped = [&](const Json& idx) -> std::optional<std::size_t> {
+        if (!idx.is_number_integer() || idx.get<std::size_t>() >= map.size())
+            return std::nullopt;
+        return map[idx.get<std::size_t>()];
     };
     for (auto& g : m_state.features) {
         if (g.type == "revolve" && g.params.value("sketch", Json()) == sketchId && g.params.contains("axis") &&
-            g.params["axis"].is_object() && g.params["axis"].contains("line"))
-            remapIndex(g.params["axis"]["line"]);
+            g.params["axis"].is_object() && g.params["axis"].contains("line")) {
+            Json& axis = g.params["axis"];
+            if (const auto to = mapped(axis["line"]))
+                axis["line"] = *to;
+            else
+                axis = Json{{"deletedLine", axis["line"]}};
+        }
         if (g.type == "sweep" && g.params.contains("path") && g.params["path"].is_object() &&
-            g.params["path"].value("sketch", Json()) == sketchId && g.params["path"].contains("curves"))
-            for (auto& i : g.params["path"]["curves"])
-                remapIndex(i);
+            g.params["path"].value("sketch", Json()) == sketchId && g.params["path"].contains("curves")) {
+            Json& path = g.params["path"];
+            Json kept = Json::array();
+            for (const auto& i : path["curves"]) {
+                if (const auto to = mapped(i))
+                    kept.push_back(*to);
+                else
+                    path["deletedCurves"] = true;
+            }
+            path["curves"] = kept;
+        }
     }
     regenerateChecked(sketchId, before);
 }
@@ -1039,6 +1058,8 @@ void Design::evaluateFeature(const Feature& f)
                 dir = {0, 0, 1};
             else
                 throw DesignError("Unknown axis '" + axis.get<std::string>() + "' (X, Y, Z)");
+        } else if (has(axis, "deletedLine")) {
+            throw DesignError("The axis line was deleted from " + sk->name + ": pick another axis");
         } else if (has(axis, "line")) {
             const auto idx = axis.at("line").get<std::size_t>();
             if (idx >= sk->curves.size() || sk->curves[idx].kind != SketchCurve::Kind::Line)
@@ -1297,6 +1318,8 @@ void Design::evaluateFeature(const Feature& f)
         SketchResult* sk = nullptr;
         const auto faces = profiles(sk);
         const Json& path = required(p, "path");
+        if (path.is_object() && path.value("deletedCurves", false))
+            throw DesignError("Curves of the sweep path were deleted from its sketch: pick the path again");
         const FeatureId pid = required(path, "sketch").get<FeatureId>();
         auto it = m_sketches.find(pid);
         if (it == m_sketches.end())
