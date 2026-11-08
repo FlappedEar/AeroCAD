@@ -2,6 +2,7 @@
 # CAD-117: the A/B table names the runs (label and start time), explains "check quality", and
 # shows no percentage for a force at noise level. The comparison is the one of two real coarse
 # OpenFOAM v2506 runs of the same box (labels "A" and "B"; the newer one became A).
+# The convergence chart (CAD-179) uses injected histories.
 ui.wait(1000)
 (() => { const p = controller.execute("document.parts").result.parts[0]; window.selectPart(p.id) })()
 ui.clickText("SIMULATE")
@@ -31,6 +32,11 @@ ui.shot("cfd-ab-table.png")
 (() => { const r = simulationPanel.runs.slice(); r.push({ id: "r3", created: "2026-11-08T14:54:51Z", state: "running", progress: 0.42, source: { label: "B", partName: "box" } }); simulationPanel.runs = r; const c = Object.assign({}, simulationPanel.comparison); c.meshSensitivity = { status: "pending", levels: [], message: "Waiting for the runs on the other mesh level.", runningRuns: ["r3"] }; simulationPanel.comparison = c })()
 ui.wait(400)
 ui.clickText("42 %")
+# A and B convergence on the same axes (CAD-179); B's Cd on the reference area of A, like the table.
+(() => { simulationPanel.results = { history: { iteration: [1, 2, 3, 4], cd: [0.9, 0.84, 0.82, 0.817] }, conditions: { referenceArea: 0.012 } }; simulationPanel.resultsB = { history: { iteration: [1, 2, 3, 4, 5], cd: [0.45, 0.42, 0.41, 0.403, 0.4025] }, conditions: { referenceArea: 0.024 } } })()
+ui.wait(400)
+(() => { const find = (i, n) => { if (!i) return null; if (i.objectName === n) return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = find(ch[k], n); if (r) return r } return null }; const c = find(simulationPanel, "cfdChartAB"); if (!c || !c.visible) ui.fail("no A/B chart"); const s = c.series; ui.log("AB CHART " + JSON.stringify(s.map(x => ({ name: x.name, y: x.y })))); if (s.length !== 2 || s[0].name !== "Cd A" || s[1].name !== "Cd B") ui.fail("series: " + s.map(x => x.name)); if (s[0].y[3] !== 0.817 || Math.abs(s[1].y[4] - 0.805) > 1e-12 || s[1].x.length !== 5) ui.fail("values") })()
+ui.shot("cfd-ab-convergence.png")
 # Differing conditions are listed in words with both values, not as internal names (CAD-159).
 (() => { const c = Object.assign({}, simulationPanel.comparison); c.verdict = "not comparable"; c.differingConditions = ["groundHeight"]; c.conditionChanges = ["Floor height: A -40 mm, B -150 mm"]; simulationPanel.comparison = c })()
 ui.wait(400)
