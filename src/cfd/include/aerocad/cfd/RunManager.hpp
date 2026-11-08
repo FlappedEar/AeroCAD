@@ -183,7 +183,8 @@ public:
 
     /// Field data for the result view, converted to model coordinates (mm):
     /// kind "surface" (pressure on the part), "sectionHorizontal", "sectionVertical",
-    /// a plane of a section stack ("sectionX_3", see sectionStacks()), "streamlines". Empty PolyData when the run has not written it (yet).
+    /// a plane of a section stack ("sectionX_3", see sectionStacks()), "wake" (the
+    /// total pressure isosurface Cp0 = 0, CAD-165), "streamlines". Empty PolyData when the run has not written it (yet).
     [[nodiscard]] PolyData field(const std::string& id, std::string_view kind);
     /// Pressure difference B - A on A's part surface (CAD-141): dCp, dpressure, dp at A's
     /// points from the nearest point of B's surface within 1 % of A's part size; NaN where

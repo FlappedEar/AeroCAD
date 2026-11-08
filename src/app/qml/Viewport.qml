@@ -774,8 +774,10 @@ Item {
                         lighting: fieldModel.flat ? DefaultMaterial.NoLighting : DefaultMaterial.FragmentLighting
                         specularAmount: 0.15
                         cullMode: Material.NoCulling
-                        // Dense streamlines are see-through, so the part shows behind them.
-                        opacity: fieldModel.modelData.kind === "streamlines" ? 0.55 : 1.0
+                        // Dense streamlines and the wake surface are see-through, so the part
+                        // shows behind them.
+                        opacity: fieldModel.modelData.kind === "streamlines" ? 0.55
+                               : fieldModel.modelData.kind === "wake" ? 0.45 : 1.0
                     }
                 }
             }
@@ -1039,6 +1041,15 @@ Item {
                 best = null
         }
         fieldProbe = best ? { x: x, y: y, kind: best.kind, values: best.values } : null
+    }
+    /// The 3D model drawing a result field of the given kind, or null (for checks).
+    function simulationFieldModel(kind) {
+        for (let i = 0; i < fieldRepeater.count; ++i) {
+            const m = fieldRepeater.objectAt(i)
+            if (m && m.modelData.kind === kind)
+                return m
+        }
+        return null
     }
     function probeText(p) {
         if (!p)
