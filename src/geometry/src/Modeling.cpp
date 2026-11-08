@@ -427,8 +427,12 @@ Shape extrudeToObject(const Shape& faces, const core::Vec3& direction, const Sha
         if (!splitter.IsDone() || splitter.HasErrors())
             throw ModelingError("Extrude to object: cutting at the object failed");
 
-        // Keep the pieces that start on the profile: what lies before the object.
+        // Keep the pieces that start on the profile: what lies before the object. A kept
+        // piece that still reaches the far end went past (or around) the object.
         const double tol = 1e-6 * std::max(1.0, length);
+        gp_Trsf toFar;
+        toFar.SetTranslation(gp_Vec(dir.x * length, dir.y * length, dir.z * length));
+        const TopoDS_Shape farCap = BRepBuilderAPI_Transform(s, toFar, true).Shape();
         TopoDS_Compound kept;
         BRep_Builder b;
         b.MakeCompound(kept);
@@ -442,6 +446,9 @@ Shape extrudeToObject(const Shape& faces, const core::Vec3& direction, const Sha
             BRepGProp::VolumeProperties(e.Current(), props);
             if (std::abs(props.Mass()) < 1e-9)
                 continue;
+            BRepExtrema_DistShapeShape far(e.Current(), farCap);
+            if (far.IsDone() && far.Value() <= tol)
+                throw ModelingError("The object does not cover the whole profile: the extrusion would go past it");
             b.Add(kept, e.Current());
             keptVolume += std::abs(props.Mass());
             ++count;

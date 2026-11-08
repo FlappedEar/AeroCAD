@@ -1065,6 +1065,7 @@ void Design::mirrorSketchCurves(FeatureId sketchId, const std::vector<std::size_
             for (const auto& q : c.points)
                 p.push_back(pt(mirror(q)));
             item = {{"type", "spline"}, {"points", p}, {"closed", c.closed}};
+            points = {"start", "end"}; // its ends follow; inner fit points cannot be constrained
             break;
         }
         }
@@ -1776,8 +1777,13 @@ void Design::evaluateFeature(const Feature& f)
                         reach.extend(b.min);
                         reach.extend(b.max);
                     }
+                    // Far enough to reach the scan wherever it is: the size of the box around
+                    // both the profile and the scan.
                     const auto pb = part->mesh->bounds();
-                    const double span = (pb.max - pb.min).length() + (reach.max - reach.min).length();
+                    core::BoundingBox both = reach;
+                    both.extend(pb.min);
+                    both.extend(pb.max);
+                    const double span = 2.0 * (both.max - both.min).length();
                     reach.extend(reach.min + dir * span);
                     reach.extend(reach.max + dir * span);
                     target = scanSurfaceUnder(*part, reach);

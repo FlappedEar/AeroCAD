@@ -811,6 +811,16 @@ TEST_CASE("Design commands: extrude to object (CAD-125)", "[commands][cad]")
              {{"sketch", sq}, {"extent", "to_object"}, {"to", {{"body", box}, {"faces", Json::array({{{"point", {0, 0, 15}}}})}}}});
     // Through the box (its top face at z = 15 picked): 10 x 10 x 15.
     CHECK(ex.at("bodies").back().at("volume").get<double>() == Approx(1500).epsilon(1e-6));
+
+    // A target narrower than the profile does not stop all of it: refused, not a column
+    // running past the object.
+    const auto wide = run(s, "sketch.create",
+                          {{"plane", "XY"},
+                           {"curves", Json::array({{{"type", "center_rectangle"}, {"center", {100, 0}}, {"width", 20}, {"height", 20}}})}})
+                          .at("id")
+                          .get<std::uint64_t>();
+    const auto small = run(s, "feature.box", {{"corner", {95, -5, 20}}, {"size", {10, 10, 10}}}).at("id").get<std::uint64_t>();
+    CHECK_FALSE(s.execute("feature.extrude", {{"sketch", wide}, {"extent", "to_object"}, {"to", {{"body", small}}}}).ok);
 }
 
 TEST_CASE("Design commands: construction curves (CAD-126)", "[commands][cad]")
@@ -937,6 +947,24 @@ TEST_CASE("Design commands: mirror sketch curves (CAD-126)", "[commands][cad][so
     const double xm = c.at("curves")[4].at("points")[1][0].get<double>();
     CHECK(xm == Approx(-xo).margin(1e-5));
     CHECK(c.at("curves")[6].at("radius").get<double>() == Approx(5).margin(1e-6));
+
+    // A spline's copy keeps its ends mirrored.
+    {
+        commands::Session t;
+        const auto sid = run(t, "sketch.create",
+                             {{"plane", "XY"},
+                              {"curves", Json::array({{{"type", "line"}, {"start", {0, -30}}, {"end", {0, 30}}},
+                                                      {{"type", "spline"}, {"points", Json::array({{5, 0}, {10, 8}, {20, 3}})}}})}})
+                             .at("id")
+                             .get<std::uint64_t>();
+        run(t, "sketch.mirror", {{"sketch", sid}, {"curves", {1}}, {"line", 0}});
+        run(t, "sketch.add_constraints", {{"sketch", sid}, {"constraints", Json::array({{{"type", "fix"}, {"curve", 0}}})}});
+        run(t, "sketch.move_point", {{"sketch", sid}, {"point", {{"curve", 1}, {"point", "end"}}}, {"to", {25, 6}}});
+        const Json sc = run(t, "sketch.curves", {{"sketch", sid}});
+        const auto& copy = sc.at("curves")[2].at("points");
+        CHECK(copy.back()[0].get<double>() == Approx(-25).margin(1e-5));
+        CHECK(copy.back()[1].get<double>() == Approx(6).margin(1e-5));
+    }
 
     // The mirror line must be a line; one undo step.
     CHECK_FALSE(s.execute("sketch.mirror", {{"sketch", id}, {"curves", {1}}, {"line", 3}}).ok);
