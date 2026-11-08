@@ -182,6 +182,11 @@ public:
     /// profile. One side of a rectangle (polygon, slot) can be switched: the shape becomes
     /// lines and arcs that keep its constraints; curve indices do not change.
     void setSketchConstruction(FeatureId sketch, const std::vector<std::size_t>& curves, bool construction);
+    /// Trims a sketch curve (Fusion: Trim, T): the piece of curve `curve` under `at`
+    /// (sketch coordinates) between its nearest intersections with other curves is removed;
+    /// a curve that crosses nothing is removed whole. Lines, arcs and circles. Constraints
+    /// on the trimmed curve go; the remaining pieces are added as new curves at the end.
+    void trimSketchCurve(FeatureId sketch, std::size_t curve, const geometry::Vec2& at);
     /// Drags a sketch point (Fusion: drag sketch geometry). `point` is a constraint point
     /// reference ({curve, point: start | end | center}); it is held at `to` (sketch
     /// coordinates) while the solver moves the free degrees of freedom, and the sketch keeps

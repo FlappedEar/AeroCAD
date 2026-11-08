@@ -781,6 +781,27 @@ void registerSketchCommands(CommandRegistry& r)
               return addedFeature(design(ctx), ctx.document, id);
           });
 
+    r.add({"sketch.trim", "Trim",
+           "Trims a sketch curve (Fusion: Trim, T): removes the piece of `curve` nearest to `at` (sketch "
+           "coordinates) between its nearest crossings with other curves; a curve crossing nothing is removed "
+           "whole. Lines, arcs and circles (a circle becomes an arc). The remaining pieces are added at the end of "
+           "sketch.curves; constraints on the trimmed curve are removed.",
+           objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
+                         {"curve", {{"type", "integer"}, {"description", "Index from sketch.curves."}}},
+                         {"at", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", {{"type", "number"}}}}}},
+                        {"sketch", "curve", "at"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              const auto id = params.at("sketch").get<cad::FeatureId>();
+              const Json& at = params.at("at");
+              designChange(ctx, "Trim", [&](cad::Design& d) {
+                  (void)sketchFeature(d, id);
+                  d.trimSketchCurve(id, params.at("curve").get<std::size_t>(), {at[0].get<double>(), at[1].get<double>()});
+                  return Json{};
+              });
+              return addedFeature(design(ctx), ctx.document, id);
+          });
+
     r.add({"sketch.set_construction", "Construction",
            "Turns sketch curves into construction geometry or back (Fusion: Construction, X). Construction "
            "curves are drawn dashed and bound no profile; they still take constraints. One side of a rectangle, "

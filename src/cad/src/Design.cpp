@@ -582,6 +582,156 @@ void appendCurves(const Eval& ev, const Json& item, std::vector<SketchCurve>& ou
 
 
 /// A solved sketch curve as a single sketch item (line or three-point arc).
+/// A line, arc or circle of a sketch for trimming: a segment a-b, or a circle (centre,
+/// radius) with the arc from angle `a0` over `sweep` (signed; 2 pi for a full circle).
+struct TrimCurve {
+    bool line = true;
+    Vec2 a, b;
+    Vec2 c;
+    double r = 0.0, a0 = 0.0, sweep = 0.0;
+};
+
+Vec2 circleThrough(const Vec2& p1, const Vec2& p2, const Vec2& p3)
+{
+    const double d = 2 * (p1.x * (p2.y - p3.y) + p2.x * (p3.y - p1.y) + p3.x * (p1.y - p2.y));
+    if (std::abs(d) < 1e-12)
+        throw DesignError("Degenerate arc");
+    const double s1 = p1.x * p1.x + p1.y * p1.y, s2 = p2.x * p2.x + p2.y * p2.y, s3 = p3.x * p3.x + p3.y * p3.y;
+    return {(s1 * (p2.y - p3.y) + s2 * (p3.y - p1.y) + s3 * (p1.y - p2.y)) / d,
+            (s1 * (p3.x - p2.x) + s2 * (p1.x - p3.x) + s3 * (p2.x - p1.x)) / d};
+}
+
+double wrap2pi(double a)
+{
+    const double t = std::fmod(a, 2 * std::numbers::pi);
+    return t < 0 ? t + 2 * std::numbers::pi : t;
+}
+
+std::optional<TrimCurve> trimCurve(const SketchCurve& k)
+{
+    TrimCurve t;
+    if (k.kind == SketchCurve::Kind::Line) {
+        t.a = k.points[0];
+        t.b = k.points[1];
+        return t;
+    }
+    t.line = false;
+    if (k.kind == SketchCurve::Kind::Circle) {
+        t.c = k.points[0];
+        t.r = k.radius;
+        t.sweep = 2 * std::numbers::pi;
+        return t;
+    }
+    if (k.kind != SketchCurve::Kind::Arc)
+        return std::nullopt;
+    t.c = circleThrough(k.points[0], k.points[1], k.points[2]);
+    t.r = std::hypot(k.points[0].x - t.c.x, k.points[0].y - t.c.y);
+    auto ang = [&](const Vec2& p) { return std::atan2(p.y - t.c.y, p.x - t.c.x); };
+    t.a0 = ang(k.points[0]);
+    double sweep = wrap2pi(ang(k.points[2]) - t.a0);
+    if (wrap2pi(ang(k.points[1]) - t.a0) > sweep)
+        sweep -= 2 * std::numbers::pi; // clockwise
+    t.sweep = sweep;
+    return t;
+}
+
+/// Parameter in [0, 1] of point `p` (on or near the curve) along it; for a circle the
+/// angle from 0 over 2 pi. nullopt when the point is outside an arc.
+std::optional<double> trimParam(const TrimCurve& t, const Vec2& p, double tol = 1e-9)
+{
+    if (t.line) {
+        const Vec2 d = t.b - t.a;
+        const double l2 = d.x * d.x + d.y * d.y;
+        const double u = ((p.x - t.a.x) * d.x + (p.y - t.a.y) * d.y) / l2;
+        if (u < -tol || u > 1 + tol)
+            return std::nullopt;
+        return std::clamp(u, 0.0, 1.0);
+    }
+    const double a = std::atan2(p.y - t.c.y, p.x - t.c.x);
+    double along = t.sweep >= 0 ? wrap2pi(a - t.a0) : wrap2pi(t.a0 - a);
+    const double span = std::abs(t.sweep);
+    if (along > span + tol) {
+        if (2 * std::numbers::pi - along < tol)
+            along = 0.0;
+        else
+            return std::nullopt;
+    }
+    return std::min(along, span) / span;
+}
+
+Vec2 trimPoint(const TrimCurve& t, double u)
+{
+    if (t.line)
+        return t.a + (t.b - t.a) * u;
+    const double a = t.a0 + t.sweep * u;
+    return {t.c.x + t.r * std::cos(a), t.c.y + t.r * std::sin(a)};
+}
+
+/// Points where two curves cross.
+std::vector<Vec2> crossings(const TrimCurve& p, const TrimCurve& q)
+{
+    std::vector<Vec2> pts;
+    auto lineCircle = [&](const TrimCurve& l, const TrimCurve& c) {
+        const Vec2 d = l.b - l.a, f = l.a - c.c;
+        const double A = d.x * d.x + d.y * d.y, B = 2 * (f.x * d.x + f.y * d.y), C = f.x * f.x + f.y * f.y - c.r * c.r;
+        const double disc = B * B - 4 * A * C;
+        if (disc < -1e-12 * A * c.r * c.r)
+            return;
+        const double sq = std::sqrt(std::max(0.0, disc));
+        for (const double u : {(-B - sq) / (2 * A), (-B + sq) / (2 * A)})
+            pts.push_back(l.a + d * u);
+    };
+    if (p.line && q.line) {
+        const Vec2 r = p.b - p.a, s = q.b - q.a;
+        const double den = r.x * s.y - r.y * s.x;
+        if (std::abs(den) < 1e-12)
+            return pts;
+        const Vec2 w = q.a - p.a;
+        const double u = (w.x * s.y - w.y * s.x) / den;
+        pts.push_back(p.a + r * u);
+    } else if (p.line) {
+        lineCircle(p, q);
+    } else if (q.line) {
+        lineCircle(q, p);
+    } else {
+        const Vec2 d = q.c - p.c;
+        const double dist = std::hypot(d.x, d.y);
+        if (dist < 1e-12 || dist > p.r + q.r + 1e-9 || dist < std::abs(p.r - q.r) - 1e-9)
+            return pts;
+        const double a = (p.r * p.r - q.r * q.r + dist * dist) / (2 * dist);
+        const double h = std::sqrt(std::max(0.0, p.r * p.r - a * a));
+        const Vec2 m = p.c + d * (a / dist);
+        const Vec2 n{-d.y / dist, d.x / dist};
+        pts.push_back(m + n * h);
+        if (h > 1e-12)
+            pts.push_back(m - n * h);
+    }
+    // Only where both curves really are (within their ends / arc spans).
+    std::vector<Vec2> out;
+    for (const auto& x : pts) {
+        if (trimParam(p, x, 1e-7) && trimParam(q, x, 1e-7))
+            out.push_back(x);
+    }
+    return out;
+}
+
+/// A piece of a trimmed curve, from u0 to u1, as a sketch item.
+Json trimPiece(const TrimCurve& t, double u0, double u1, bool construction)
+{
+    auto pt = [](const Vec2& v) { return Json::array({v.x, v.y}); };
+    Json item;
+    if (t.line)
+        item = {{"type", "line"}, {"start", pt(trimPoint(t, u0))}, {"end", pt(trimPoint(t, u1))}};
+    else
+        item = {{"type", "arc"},
+                {"start", pt(trimPoint(t, u0))},
+                {"through", pt(trimPoint(t, (u0 + u1) / 2))},
+                {"end", pt(trimPoint(t, u1))}};
+    if (construction)
+        item["construction"] = true;
+    return item;
+}
+
 /// Line segments (pairs of points) of a polyline list (pairs) cut into dashes.
 std::vector<core::Vec3> dashed(const std::vector<core::Vec3>& segments, double dash)
 {
@@ -852,6 +1002,93 @@ void Design::moveSketchPoint(FeatureId sketchId, const Json& point, const geomet
     else
         g.params["constraints"] = constraints;
     regenerateChecked(sketchId, before);
+}
+
+void Design::trimSketchCurve(FeatureId sketchId, std::size_t curve, const geometry::Vec2& at)
+{
+    const State before = m_state;
+    const Feature& f = m_state.features[indexOf(sketchId)];
+    if (f.type != "sketch")
+        throw DesignError("Feature " + std::to_string(sketchId) + " is not a sketch");
+    auto it = m_sketches.find(sketchId);
+    if (it == m_sketches.end() || curve >= it->second.curves.size())
+        throw DesignError(f.name + " has no curve " + std::to_string(curve));
+    const std::vector<SketchCurve> curves = it->second.curves;
+    const SketchCurve& k = curves[curve];
+    const auto target = trimCurve(k);
+    if (!target)
+        throw DesignError("Trim works on lines, arcs and circles");
+
+    // Where the others cross it, as parameters along it.
+    std::vector<double> cuts;
+    for (std::size_t i = 0; i < curves.size(); ++i) {
+        if (i == curve)
+            continue;
+        const auto other = trimCurve(curves[i]);
+        if (!other)
+            continue;
+        for (const Vec2& x : crossings(*target, *other)) {
+            if (const auto u = trimParam(*target, x, 1e-7))
+                cuts.push_back(*u);
+        }
+    }
+    std::sort(cuts.begin(), cuts.end());
+    const auto pu = trimParam(*target, at, 1.0); // the click is near the curve, not on it
+    double u = pu ? *pu : 0.5;
+    if (!target->line && std::abs(target->sweep) < 2 * std::numbers::pi) {
+        // An arc: the click's angle, clamped to the arc.
+        const double a = std::atan2(at.y - target->c.y, at.x - target->c.x);
+        const double along = target->sweep >= 0 ? wrap2pi(a - target->a0) : wrap2pi(target->a0 - a);
+        const double span = std::abs(target->sweep);
+        u = along <= span ? along / span : (along - span < 2 * std::numbers::pi - along ? 1.0 : 0.0);
+    }
+
+    Json pieces = Json::array();
+    const double eps = 1e-6;
+    const bool full = !target->line && std::abs(target->sweep) >= 2 * std::numbers::pi - 1e-12;
+    std::vector<double> inner;
+    for (const double c : cuts) {
+        if (full || (c > eps && c < 1 - eps))
+            if (inner.empty() || c - inner.back() > eps)
+                inner.push_back(c);
+    }
+    if (full) {
+        if (inner.size() >= 2) {
+            // The piece under the click goes; the circle becomes the arc around the rest.
+            auto after = std::upper_bound(inner.begin(), inner.end(), u);
+            const double hi = after == inner.end() ? inner.front() + 1.0 : *after;
+            const double lo = after == inner.begin() ? inner.back() - 1.0 : *(after - 1);
+            pieces.push_back(trimPiece(*target, hi, lo + 1.0, k.construction));
+        }
+    } else {
+        double lo = 0.0, hi = 1.0;
+        for (const double c : inner) {
+            if (c <= u)
+                lo = c;
+            else {
+                hi = c;
+                break;
+            }
+        }
+        if (lo > eps)
+            pieces.push_back(trimPiece(*target, 0.0, lo, k.construction));
+        if (hi < 1 - eps)
+            pieces.push_back(trimPiece(*target, hi, 1.0, k.construction));
+    }
+
+    try {
+        deleteSketchCurves(sketchId, {curve});
+        Feature& g = m_state.features[indexOf(sketchId)];
+        Json items = g.params.value("curves", Json::array());
+        for (const auto& p : pieces)
+            items.push_back(p);
+        g.params["curves"] = items;
+        regenerateChecked(sketchId, before);
+    } catch (...) {
+        m_state = before;
+        regenerate();
+        throw;
+    }
 }
 
 void Design::setSketchConstruction(FeatureId sketchId, const std::vector<std::size_t>& picked, bool construction)

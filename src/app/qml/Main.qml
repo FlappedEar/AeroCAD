@@ -169,7 +169,7 @@ ApplicationWindow {
         SketchMenuItem {
             objectName: "constructionCurves"
             text: qsTr("Construction (X)")
-            icon.source: Theme.iconUrl("line")
+            icon.source: Theme.iconUrl("construction")
             visible: !sketchMenu.drawing && viewport.sketchOverlay.selectedCurves.length > 0
             onTriggered: viewport.sketchOverlay.toggleConstruction()
         }
@@ -1077,6 +1077,7 @@ ApplicationWindow {
     // Fusion: Construction (X) switches the selected sketch curves.
     Action { id: constructionAction; text: qsTr("Construction"); shortcut: "X"; enabled: !!window.activeSketch && viewport.sketchOverlay.selectedCurves.length > 0; onTriggered: viewport.sketchOverlay.toggleConstruction() }
     Action { id: fixAction; text: qsTr("Fix/Unfix"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "fix"; onTriggered: window.sketchTool_("fix") }
+    Action { id: trimAction; text: qsTr("&Trim"); shortcut: "T"; enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "trim"; onTriggered: window.sketchTool_("trim") }
     Action { id: slotAction; text: qsTr("Sl&ot"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "slot"; onTriggered: window.sketchTool_("slot") }
 
     // Scan area selection tools (shortcuts 1/2/3 are in Viewport.qml).
@@ -1364,6 +1365,9 @@ ApplicationWindow {
             MenuItem { action: arcAction }
             MenuItem { action: polygonAction }
             MenuItem { action: slotAction }
+            MenuSeparator {}
+            MenuItem { action: trimAction }
+            MenuItem { action: constructionAction }
             MenuSeparator {}
             MenuItem { action: dimensionAction }
             Menu {
@@ -1806,6 +1810,13 @@ ApplicationWindow {
             ToolSeparator { tab: "sketch" }
             ToolGroup {
                 tab: "sketch"
+                caption: qsTr("MODIFY")
+                ToolCommand { action: trimAction; text: qsTr("Trim"); iconName: "trim" }
+                ToolCommand { action: constructionAction; text: qsTr("Construction"); iconName: "construction" }
+            }
+            ToolSeparator { tab: "sketch" }
+            ToolGroup {
+                tab: "sketch"
                 caption: qsTr("CONSTRAINTS")
                 maxVisible: 6
                 ToolCommand { action: horizontalAction; text: qsTr("Horizontal"); iconName: "horizontal" }
@@ -1976,6 +1987,14 @@ ApplicationWindow {
             onSketchConstructionToggled: (list, on) => {
                 if (window.activeSketch)
                     window.controller.execute("sketch.set_construction", { sketch: window.activeSketch.id, curves: list, construction: on })
+                window.refreshSketchSnaps()
+            }
+            onSketchTrimRequested: (curve, at) => {
+                if (!window.activeSketch)
+                    return
+                const r = window.controller.execute("sketch.trim", { sketch: window.activeSketch.id, curve: curve, at: at })
+                if (!r.ok)
+                    window.controller.showStatus(r.error)
                 window.refreshSketchSnaps()
             }
             onSketchCurvesDeleted: list => {

@@ -31,6 +31,8 @@ Item {
     /// Construction (X) was asked for the selected curves: `on` true turns them into
     /// construction geometry, false back to normal.
     signal constructionToggled(var indices, bool on)
+    /// Trim tool (T): the piece of curve `curve` under `at` (sketch coordinates) is to go.
+    signal trimRequested(int curve, var at)
     /// A point is being dragged in select mode (CAD-123): `point` is a constraint point
     /// reference, `to` where it is now (sketch coordinates); `done` on release.
     signal pointDragged(var point, var to, bool done)
@@ -478,6 +480,14 @@ Item {
                 constraintLayer.hoverAt(mouse.x, mouse.y)
                 return
             }
+            if (root.tool === "trim") {
+                const i = root.curveAt(mouse.x, mouse.y)
+                if (i !== root.hoverCurve) {
+                    root.hoverCurve = i
+                    canvas.requestPaint()
+                }
+                return
+            }
             if (pressed && !dragging && dragTool && root.points.length === 0
                     && Math.hypot(mouse.x - pressAt.x, mouse.y - pressAt.y) > 8) {
                 const first = root.snap(pressAt.x, pressAt.y)
@@ -510,6 +520,14 @@ Item {
         onClicked: mouse => {
             if (root.selecting)
                 return
+            if (root.tool === "trim") {
+                const i = root.curveAt(mouse.x, mouse.y)
+                const at = root.screenToLocal(mouse.x, mouse.y)
+                if (i >= 0 && at !== null)
+                    root.trimRequested(i, at)
+                root.forceActiveFocus()
+                return
+            }
             if (dragEnded) {
                 dragEnded = false
                 root.forceActiveFocus()
@@ -693,6 +711,7 @@ Item {
                     : root.tool === "" ? (root.selectedCurves.length > 0
                         ? qsTr("%n curve(s) selected: Delete removes, X construction, Esc clears", "", root.selectedCurves.length)
                         : qsTr("Click curves to select (Shift adds), drag points to move them; or pick a tool (L line, R rectangle, C circle, D dimension)"))
+                    : root.tool === "trim" ? qsTr("Trim: click the piece of a curve to remove (up to where other curves cross it)")
                     : root.tool === "line" ? qsTr("Line: click points; Esc (or right-click › End Curve) ends the chain")
                     : root.tool === "rectangle" ? qsTr("Rectangle: drag or click two corners; type width, height")
                     : root.tool === "circle" ? qsTr("Circle: click centre and a point; type the diameter")
@@ -732,7 +751,7 @@ Item {
                 }
             }
             RowLayout {
-                visible: root.active && !root.constraintTool
+                visible: root.active && !root.constraintTool && root.tool !== "trim"
                 Label { text: root.tool === "rectangle" ? qsTr("Width, height") : root.tool === "line" ? qsTr("Length") : qsTr("Size") }
                 TextField {
                     id: dimension

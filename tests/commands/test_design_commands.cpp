@@ -6,6 +6,7 @@
 
 #include <cmath>
 #include <numbers>
+#include <set>
 
 using namespace aerocad;
 using commands::Json;
@@ -848,4 +849,60 @@ TEST_CASE("Design commands: construction curves (CAD-126)", "[commands][cad]")
     run(s, "edit.undo");
     c = run(s, "sketch.curves", {{"sketch", id}});
     CHECK(c.at("curves")[2].at("construction") == true);
+}
+
+TEST_CASE("Design commands: trim sketch curves (CAD-126)", "[commands][cad]")
+{
+    commands::Session s;
+    // A plus sign: two lines crossing at (0, 0), and a circle of radius 10 through both.
+    const auto id = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "line"}, {"start", {-20, 0}}, {"end", {20, 0}}},
+                                                 {{"type", "line"}, {"start", {0, -20}}, {"end", {0, 20}}},
+                                                 {{"type", "circle"}, {"center", {0, 0}}, {"radius", 10}}})}})
+                        .at("id")
+                        .get<std::uint64_t>();
+    auto lineLength = [](const Json& c) {
+        const auto& p = c.at("points");
+        return std::hypot(p[1][0].get<double>() - p[0][0].get<double>(), p[1][1].get<double>() - p[0][1].get<double>());
+    };
+
+    // The horizontal line's end outside the circle (x 10..20) goes.
+    run(s, "sketch.trim", {{"sketch", id}, {"curve", 0}, {"at", {15, 0.3}}});
+    Json c = run(s, "sketch.curves", {{"sketch", id}});
+    REQUIRE(c.at("curves").size() == 3);
+    // Line 0 is now the remaining piece -20..10 (added at the end).
+    const auto& last = c.at("curves")[2];
+    CHECK(last.at("kind") == "line");
+    CHECK(lineLength(last) == Approx(30).margin(1e-6));
+
+    // The circle's quarter between the two lines (upper right) goes: a 270 degree arc stays.
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    std::size_t circle = 0;
+    for (std::size_t i = 0; i < c.at("curves").size(); ++i)
+        if (c.at("curves")[i].at("kind") == "circle")
+            circle = i;
+    run(s, "sketch.trim", {{"sketch", id}, {"curve", circle}, {"at", {7, 7}}});
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    bool arc = false;
+    for (const auto& k : c.at("curves")) {
+        if (k.at("kind") != "arc")
+            continue;
+        arc = true;
+        const auto& p = k.at("points");
+        // From (0, 10) round the left to (10, 0): the through point is at (-10, 0)-ish side.
+        CHECK(p[1][0].get<double>() < 0);
+        const std::set<std::pair<long, long>> ends{{std::lround(p[0][0].get<double>()), std::lround(p[0][1].get<double>())},
+                                                   {std::lround(p[2][0].get<double>()), std::lround(p[2][1].get<double>())}};
+        CHECK(ends == std::set<std::pair<long, long>>{{0, 10}, {10, 0}});
+    }
+    CHECK(arc);
+
+    // A line that crosses nothing is removed whole; one undo step.
+    const std::size_t before = c.at("curves").size();
+    run(s, "sketch.add_curves", {{"sketch", id}, {"curves", Json::array({{{"type", "line"}, {"start", {50, 50}}, {"end", {60, 50}}}})}});
+    run(s, "sketch.trim", {{"sketch", id}, {"curve", before}, {"at", {55, 50}}});
+    CHECK(run(s, "sketch.curves", {{"sketch", id}}).at("curves").size() == before);
+    run(s, "edit.undo");
+    CHECK(run(s, "sketch.curves", {{"sketch", id}}).at("curves").size() == before + 1);
 }
