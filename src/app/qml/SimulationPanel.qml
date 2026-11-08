@@ -383,6 +383,7 @@ Pane {
     function clearSelection() {
         // Copied run settings refer to the closed document's parts (CAD-162).
         copiedContext = null
+        copiedContextForeign = 0
         copiedSettings = ({})
         groundFixed = false
         autoSelect = false
@@ -518,6 +519,9 @@ Pane {
     property var copiedSettings: ({})
     /// The surroundings of the copied run, by part id; null = use the visible parts.
     property var copiedContext: null
+    /// Surrounding parts of a copied run from another design: part ids are per document,
+    /// so they cannot be restored here; the count is shown as a warning instead.
+    property int copiedContextForeign: 0
     /// Parts of the copied surroundings that are no longer in the document.
     readonly property int copiedContextMissing: {
         void partRevision // re-checked when parts are removed, undone or redone
@@ -552,8 +556,12 @@ Pane {
         copiedSettings = extra
         const run = runs.find(x => x.id === id)
         const context = run && run.source ? (run.source.contextPartIds || []) : []
-        contextBox.checked = context.length > 0
-        copiedContext = context.length > 0 ? context.slice() : null
+        // Only a run of this design names its surroundings by ids of this document; the same
+        // ids in another design may be unrelated parts.
+        const own = !!run && run.sourceInDocument
+        contextBox.checked = own && context.length > 0
+        copiedContext = own && context.length > 0 ? context.slice() : null
+        copiedContextForeign = own ? 0 : context.length
         proposalTimer.restart()
         return true
     }
@@ -1014,7 +1022,7 @@ Pane {
                     CheckBox {
                         id: contextBox
                         Layout.columnSpan: 2
-                        onToggled: { root.copiedContext = null; proposalTimer.restart() }
+                        onToggled: { root.copiedContext = null; root.copiedContextForeign = 0; proposalTimer.restart() }
                         text: root.copiedContext
                               ? qsTr("Surroundings of A in the flow: %n part(s) (not in the forces)", "", root.copiedContext.length)
                               : qsTr("Other visible parts in the flow (not in the forces)")
@@ -1024,7 +1032,9 @@ Pane {
                         Layout.columnSpan: 2
                         Layout.fillWidth: true
                         visible: text.length > 0
-                        text: root.copiedContextMissing > 0
+                        text: root.copiedContextForeign > 0
+                              ? qsTr("A ran with %n surrounding part(s) of another design; they cannot be restored here, so B's flow differs from A's.", "", root.copiedContextForeign)
+                              : root.copiedContextMissing > 0
                               ? qsTr("%n part(s) of A's surroundings are no longer in the design, so B's flow differs from A's.", "", root.copiedContextMissing)
                               : ""
                         color: Theme.warning

@@ -25,7 +25,8 @@ panel in place of Properties:
   both heights, shown under **Run CFD** before the run. With a run selected (A), *Use the
   settings of A* fills in its speed, flow direction, mesh, floor (also a fixed one), floor
   height and surroundings (A's own context parts, not whatever is visible now; parts since
-  removed are named in a warning), and sends A's air, turbulence and reference settings
+  removed are named in a warning; a run of another design cannot bring its surroundings
+  over, since part ids are per design, and says so), and sends A's air, turbulence and reference settings
   that the form has no fields for, so a variant B runs under the same conditions and the
   A/B comparison stays comparable (CAD-162, [form](images/audit/cad-162-use-settings.png)).
   The part's size is shown above the

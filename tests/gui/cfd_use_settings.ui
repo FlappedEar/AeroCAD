@@ -31,6 +31,10 @@ ui.wait(300)
 ui.key("Z", "ctrl")
 ui.wait(300)
 (() => { if (simulationPanel.copiedContextMissing !== 0) ui.fail("warning stays after undo"); const p = simulationPanel.runParams(); if (p.context.length !== 1) ui.fail("restored support not sent: " + JSON.stringify(p.context)) })()
+# A run of another design (its part is gone): its surrounding ids are not reused here.
+(() => { const r = simulationPanel.runs.find(x => x.source.label === "A run"); controller.execute("part.remove", { id: r.source.partId }); simulationPanel.refreshRuns(); const a = simulationPanel.runs.find(x => x.source.label === "A run"); if (a.sourceInDocument) ui.fail("run still counted as this design's"); if (!simulationPanel.useSettingsOf(a.id)) ui.fail("settings of another design's run not read"); if (simulationPanel.copiedContext !== null || simulationPanel.copiedContextForeign !== 1) ui.fail("foreign surroundings copied by id: " + JSON.stringify(simulationPanel.copiedContext)); const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const n = t.find(simulationPanel, "cfdCopiedNote"); if (n.text.indexOf("of another design") < 0) ui.fail("no warning: " + n.text) })()
+ui.wait(300)
+(() => { const p = simulationPanel.runParams(); if (p.context && p.context.length) ui.fail("foreign surroundings sent: " + JSON.stringify(p.context)) })()
 # A new document drops what was copied from the old one.
-(() => { simulationPanel.clearSelection(); if (simulationPanel.copiedContext !== null || Object.keys(simulationPanel.copiedSettings).length !== 0 || simulationPanel.groundFixed) ui.fail("copied settings survive a workspace reset") })()
+(() => { simulationPanel.clearSelection(); if (simulationPanel.copiedContext !== null || simulationPanel.copiedContextForeign !== 0 || Object.keys(simulationPanel.copiedSettings).length !== 0 || simulationPanel.groundFixed) ui.fail("copied settings survive a workspace reset") })()
 ui.log("cfd use settings done")
