@@ -638,7 +638,178 @@ bool remapConstraint(Json& c, const std::vector<std::optional<std::size_t>>& map
     return true;
 }
 
+/// A sketch item rewritten with where its curves are now (`c`: the solved curves it
+/// made, in order), so a drag result stays. Implicit shape constraints still hold, so a
+/// rectangle stays a rectangle, a polygon regular.
+Json itemFromSolved(const Json& item, const SketchCurve* c, std::size_t n)
+{
+    auto pt = [](const Vec2& v) { return Json::array({v.x, v.y}); };
+    Json out = item;
+    const std::string type = lower(item.at("type").get<std::string>());
+    auto arcCenter = [](const SketchCurve& a) {
+        const Vec2 p1 = a.points[0], p2 = a.points[1], p3 = a.points[2];
+        const double d = 2 * (p1.x * (p2.y - p3.y) + p2.x * (p3.y - p1.y) + p3.x * (p1.y - p2.y));
+        const double s1 = p1.x * p1.x + p1.y * p1.y, s2 = p2.x * p2.x + p2.y * p2.y, s3 = p3.x * p3.x + p3.y * p3.y;
+        return Vec2{(s1 * (p2.y - p3.y) + s2 * (p3.y - p1.y) + s3 * (p1.y - p2.y)) / d,
+                    (s1 * (p3.x - p2.x) + s2 * (p1.x - p3.x) + s3 * (p2.x - p1.x)) / d};
+    };
+    if (type == "line") {
+        out["start"] = pt(c[0].points[0]);
+        out["end"] = pt(c[0].points[1]);
+    } else if (type == "rectangle") {
+        out.erase("width");
+        out.erase("height");
+        out["corner"] = pt(c[0].points[0]);
+        out["opposite"] = pt(c[2].points[0]);
+    } else if (type == "center_rectangle") {
+        const Vec2 a = c[0].points[0], b = c[2].points[0];
+        out["center"] = pt({(a.x + b.x) / 2, (a.y + b.y) / 2});
+        // Signed, so the corners keep their places (a corner dragged past the opposite one).
+        out["width"] = b.x - a.x;
+        out["height"] = b.y - a.y;
+    } else if (type == "circle") {
+        out.erase("diameter");
+        out["center"] = pt(c[0].points[0]);
+        out["radius"] = c[0].radius;
+    } else if (type == "arc") {
+        out["start"] = pt(c[0].points[0]);
+        out["through"] = pt(c[0].points[1]);
+        out["end"] = pt(c[0].points[2]);
+    } else if (type == "center_arc") {
+        const Vec2 ctr = arcCenter(c[0]);
+        auto ang = [&](const Vec2& p) { return std::atan2(p.y - ctr.y, p.x - ctr.x) / kDegToRad; };
+        out["center"] = pt(ctr);
+        out["radius"] = std::hypot(c[0].points[0].x - ctr.x, c[0].points[0].y - ctr.y);
+        out["startAngle"] = ang(c[0].points[0]);
+        out["endAngle"] = ang(c[0].points[2]);
+    } else if (type == "polygon") {
+        Vec2 ctr{0, 0};
+        for (std::size_t i = 0; i < n; ++i)
+            ctr = ctr + c[i].points[0] * (1.0 / static_cast<double>(n));
+        const Vec2 v = c[0].points[0];
+        out["center"] = pt(ctr);
+        out["radius"] = std::hypot(v.x - ctr.x, v.y - ctr.y);
+        out["angle"] = std::atan2(v.y - ctr.y, v.x - ctr.x) / kDegToRad;
+    } else if (type == "slot") {
+        const Vec2 a = arcCenter(c[3]), b = arcCenter(c[1]);
+        out["start"] = pt(a);
+        out["end"] = pt(b);
+        out["width"] = 2 * std::hypot(c[1].points[0].x - b.x, c[1].points[0].y - b.y);
+    } else if (type == "spline") {
+        Json pts = Json::array();
+        for (const auto& q : c[0].points)
+            pts.push_back(pt(q));
+        out["points"] = pts;
+    }
+    return out;
+}
+
 } // namespace
+
+void Design::moveSketchPoint(FeatureId sketchId, const Json& point, const geometry::Vec2& to)
+{
+    const State before = m_state;
+    Feature& f = m_state.features[indexOf(sketchId)];
+    if (f.type != "sketch")
+        throw DesignError("Feature " + std::to_string(sketchId) + " is not a sketch");
+    if (!point.is_object() || !point.contains("curve"))
+        throw DesignError("Give the point to drag as {curve, point}");
+    const Json items = f.params.value("curves", Json::array());
+    const Json constraints = f.params.value("constraints", Json::array());
+    const Eval ev{*this};
+    // Where the curves are before the drag, to leave the items that do not move as they
+    // are (with their parameter expressions).
+    std::vector<SketchCurve> original;
+    if (auto o = m_sketches.find(sketchId); o != m_sketches.end())
+        original = o->second.curves;
+
+    // 1. Solve with the point held at the cursor. A polygon keeps its corner angles too, so
+    // a dragged vertex leaves it regular (its sides alone are only kept equal).
+    Json held = constraints;
+    held.push_back({{"type", "fix"}, {"points", Json::array({point})}, {"at", Json::array({Json::array({to.x, to.y})})}});
+    {
+        std::size_t at = 0;
+        for (const auto& item : items) {
+            std::vector<SketchCurve> made;
+            std::vector<SketchConstraint> implicit;
+            appendCurves(ev, item, made, implicit);
+            if (lower(item.at("type").get<std::string>()) == "polygon") {
+                const double turn = 360.0 / static_cast<double>(made.size());
+                for (std::size_t i = 0; i + 1 < made.size(); ++i)
+                    held.push_back({{"type", "angle"}, {"curves", Json::array({at + i, at + i + 1})}, {"value", turn}});
+            }
+            at += made.size();
+        }
+    }
+    f.params["constraints"] = held;
+    regenerate();
+    const FeatureStatus st = status(sketchId);
+    auto it = m_sketches.find(sketchId);
+    if (st.state == FeatureStatus::State::Error || it == m_sketches.end()) {
+        m_state = before;
+        regenerate();
+        throw DesignError("That point cannot move there: its constraints hold it (" + st.message + ")");
+    }
+    const std::vector<SketchCurve> solved = it->second.curves;
+
+    // 2. Keep the result: each item that moved rewritten where its curves are now, without
+    // the hold; values that did not change keep their expressions.
+    auto same = [](const SketchCurve& a, const SketchCurve& b) {
+        if (a.points.size() != b.points.size() || std::abs(a.radius - b.radius) > 1e-7)
+            return false;
+        for (std::size_t i = 0; i < a.points.size(); ++i) {
+            if (std::hypot(a.points[i].x - b.points[i].x, a.points[i].y - b.points[i].y) > 1e-7)
+                return false;
+        }
+        return true;
+    };
+    auto keepExpressions = [&](const Json& item, Json out) {
+        auto equal = [](double a, double b) { return std::abs(a - b) <= 1e-7 * std::max(1.0, std::abs(a)); };
+        for (const auto& [key, value] : item.items()) {
+            if (!value.is_string() || !out.contains(key) || !out.at(key).is_number())
+                continue;
+            if (equal(ev.num(value), out.at(key).get<double>()))
+                out[key] = value;
+        }
+        if (has(item, "diameter") && out.contains("radius") && equal(ev.num(item.at("diameter")), 2 * out.at("radius").get<double>())) {
+            out.erase("radius");
+            out["diameter"] = item.at("diameter");
+        }
+        // A rectangle drawn with width / height keeps them when its size did not change.
+        if (has(item, "width") && has(item, "height") && out.contains("opposite") && out.contains("corner")) {
+            const auto& a = out.at("corner");
+            const auto& b = out.at("opposite");
+            if (equal(ev.num(item.at("width")), b[0].get<double>() - a[0].get<double>()) &&
+                equal(ev.num(item.at("height")), b[1].get<double>() - a[1].get<double>())) {
+                out.erase("opposite");
+                out["width"] = item.at("width");
+                out["height"] = item.at("height");
+            }
+        }
+        return out;
+    };
+    Json newItems = Json::array();
+    std::size_t first = 0;
+    for (const auto& item : items) {
+        std::vector<SketchCurve> made;
+        std::vector<SketchConstraint> implicit;
+        appendCurves(ev, item, made, implicit);
+        if (first + made.size() > solved.size())
+            throw DesignError("Sketch changed while dragging");
+        bool moved = original.size() != solved.size();
+        for (std::size_t i = 0; i < made.size() && !moved; ++i)
+            moved = !same(original[first + i], solved[first + i]);
+        newItems.push_back(moved ? keepExpressions(item, itemFromSolved(item, solved.data() + first, made.size())) : item);
+        first += made.size();
+    }
+    Feature& g = m_state.features[indexOf(sketchId)];
+    g.params["curves"] = newItems;
+    if (constraints.empty() && !before.features[indexOf(sketchId)].params.contains("constraints"))
+        g.params.erase("constraints");
+    else
+        g.params["constraints"] = constraints;
+    regenerateChecked(sketchId, before);
+}
 
 void Design::deleteSketchCurves(FeatureId sketchId, const std::vector<std::size_t>& removed)
 {

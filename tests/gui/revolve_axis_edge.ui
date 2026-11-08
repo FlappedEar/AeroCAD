@@ -1,0 +1,23 @@
+# CAD-124 review: a body edge is picked as the Revolve axis through a construction plane in
+# front of it (the click goes through planes and sketches to the bodies).
+# Run: AeroCAD --ui-script <this file>
+ui.wait(800)
+(() => { let r = controller.execute("feature.box", { corner: [0, 0, 0], size: [10, 10, 10] }); if (!r.ok) ui.fail("box: " + r.error); r = controller.execute("sketch.create", { plane: "XZ", curves: [{ type: "rectangle", corner: [20, 0], width: 10, height: 10 }] }); if (!r.ok) ui.fail("sketch: " + r.error); for (const o of [-30, 30]) { r = controller.execute("feature.plane", { base: "XZ", offset: o }); if (!r.ok) ui.fail("plane: " + r.error) } })()
+ui.wait(300)
+(() => { viewport.setViewDirection(Qt.vector3d(0, -1, 0)); viewport.fitAll(); const c = viewport.cameraState(); c.pivot = [0, 0, 5]; c.distance = 140; viewport.restoreCameraState(c) })()
+ui.wait(500)
+(() => { if (!ui.clickText("SOLID")) ui.fail("no SOLID tab") })()
+ui.wait(300)
+(() => { if (!ui.clickText("Revolve")) ui.fail("no Revolve button") })()
+ui.wait(800)
+(() => { const s = controller.execute("timeline.list").result.features.find(f => f.type === "sketch"); featureDialog.setValue("sketch", s.id) })()
+ui.wait(300)
+(() => { if (!ui.clickText("Pick in the view")) ui.fail("no axis pick button") })()
+ui.wait(300)
+# The box's vertical edge at x = 10 on the side facing the camera, behind a plane.
+(() => { const front = viewport.cameraState(); const s = viewport.modelToScreen(Qt.vector3d(10, 0, 5)); const w = viewport.mapToItem(null, s.x, s.y); ui.click(w.x, w.y) })()
+ui.wait(800)
+(() => { const a = featureDialog.values.axis; ui.log("axis " + JSON.stringify(a)); if (!a || !a.direction || Math.abs(Math.abs(a.direction[2]) - Math.hypot(...a.direction)) > 1e-6 || Math.abs(a.origin[0] - 10) > 1e-6) ui.fail("the box edge at x = 10 was not picked through the plane: " + JSON.stringify(a)) })()
+(() => { if (!ui.clickText("OK")) ui.fail("no OK button") })()
+ui.wait(800)
+(() => { const b = controller.execute("timeline.list").result.bodies; const v = b[b.length - 1].volume; const ring = Math.PI * (20 * 20 - 10 * 10) * 10; ui.log("volume " + v.toFixed(1) + " (ring " + ring.toFixed(1) + ")"); if (Math.abs(v - ring) > 1) ui.fail("not a ring about the box edge") })()

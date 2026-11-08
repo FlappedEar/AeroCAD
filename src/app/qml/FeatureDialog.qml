@@ -42,6 +42,50 @@ Pane {
         return out
     }
 
+    /// Extrude: the distance arrow on the profile, along the sketch normal (Viewport
+    /// distanceArrow), or null. The distance is signed: negative means Flip.
+    readonly property var distanceArrow: {
+        if (type !== "extrude" || values.sketch === undefined)
+            return null
+        const d = Number(values.distance)
+        if (!isFinite(d))
+            return null // an expression: typed, not dragged
+        const r = controller.execute("sketch.profiles", { sketch: values.sketch })
+        if (!r.ok || r.result.profiles.length === 0)
+            return null
+        const pl = r.result.plane
+        let base
+        const picks = values.points || []
+        if (picks.length > 0) {
+            const uv = picks[0]
+            base = [0, 1, 2].map(i => pl.origin[i] + pl.xDir[i] * uv[0] + pl.yDir[i] * uv[1])
+        } else {
+            // Area-weighted centre of all profiles.
+            let a = 0
+            base = [0, 0, 0]
+            for (const p of r.result.profiles) {
+                a += p.area
+                for (let i = 0; i < 3; ++i)
+                    base[i] += p.centroidWorld[i] * p.area
+            }
+            base = base.map(x => a > 0 ? x / a : 0)
+        }
+        return { base: base, direction: pl.normal, distance: values.flip ? -d : d }
+    }
+
+    /// The distance arrow was dragged to signed distance `t` (mm): set Distance and Flip.
+    function dragDistance(t) {
+        if (type !== "extrude")
+            return
+        const v = Object.assign({}, values)
+        v.distance = Math.round(Math.abs(t) * 1e4) / 1e4
+        if (t < 0)
+            v.flip = true
+        else
+            delete v.flip
+        values = v
+    }
+
     visible: type !== ""
     padding: Theme.space3
     width: 300
@@ -76,8 +120,7 @@ Pane {
         revolve: { title: qsTr("Revolve"), command: "feature.revolve", fields: [
             { key: "sketch", type: "sketch", label: qsTr("Sketch") },
             { key: "points", type: "profilePicks", label: qsTr("Profiles"), hint: qsTr("All profiles (click inside profiles to pick)") },
-            { key: "axis", type: "choice", label: qsTr("Axis"), init: "Z", options: [
-                { value: "X", label: "X" }, { value: "Y", label: "Y" }, { value: "Z", label: "Z" }] },
+            { key: "axis", type: "axisPick", label: qsTr("Axis"), init: "Z", hint: qsTr("Click a sketch line or a straight edge") },
             { key: "angle", type: "expr", label: qsTr("Angle (deg)"), init: 360 },
             { key: "operation", type: "choice", label: qsTr("Operation"), init: "new_body", options: operations }] },
         fillet: { title: qsTr("Fillet"), command: "feature.fillet", fields: [
@@ -235,7 +278,7 @@ Pane {
         // The first selection still to make receives viewport picks (Combine with a target
         // already set starts with the tools).
         const pickFields = s.fields.filter(f => f.type.endsWith("Picks") || f.type === "pointPick" || f.type === "planePick"
-                                                || f.type === "targetPick")
+                                                || f.type === "targetPick" || f.type === "axisPick")
         const firstPick = pickFields.find(f => v[f.key] === undefined) || pickFields[0]
         pickKey = firstPick ? firstPick.key : ""
         previewTimer.restart()
@@ -285,6 +328,8 @@ Pane {
             return "" // faces of bodies and construction planes
         if (f.type === "toolPicks")
             return "" // bodies, solids, surfaces and scans
+        if (f.type === "axisPick")
+            return "axis" // lines of sketches, straight edges of bodies other than the preview
         // "solid": bodies and exact solids outside the timeline, made editable when picked.
         return f.type === "profilePicks" ? "sketch" : "solid"
     }
@@ -385,6 +430,83 @@ Pane {
         return { id: body.partId, kind: "body", featureId: body.id }
     }
 
+    /// Revolve axis from a click at view position (x, y) of `view` (the Viewport): a line of
+    /// the dialog's sketch within a few pixels ({line: index}), else the nearest straight
+    /// edge of the body under the cursor ({origin, direction}); the dialog's own preview
+    /// body is looked through. Returns false when the click found neither.
+    function pickAxisAt(view, x, y) {
+        if (!spec || !pickKey)
+            return false
+        const field = spec.fields.find(f => f.key === pickKey)
+        if (!field || field.type !== "axisPick")
+            return false
+        let axis = null
+        if (values.sketch !== undefined) {
+            const pr = controller.execute("sketch.profiles", { sketch: values.sketch })
+            const cr = controller.execute("sketch.curves", { sketch: values.sketch })
+            if (pr.ok && cr.ok) {
+                const pl = pr.result.plane
+                const v3 = a => Qt.vector3d(a[0], a[1], a[2])
+                const w = view.planePoint(x, y, v3(pl.origin), v3(pl.normal))
+                if (w) {
+                    const d = w.minus(v3(pl.origin))
+                    const uv = [d.dotProduct(v3(pl.xDir)), d.dotProduct(v3(pl.yDir))]
+                    const tol = 8 * view.worldPerPixelAt(w)
+                    let bestD = tol
+                    for (const c of cr.result.curves) {
+                        if (c.kind !== "line")
+                            continue
+                        const p0 = c.points[0], p1 = c.points[1]
+                        const dx = p1[0] - p0[0], dy = p1[1] - p0[1]
+                        const l2 = dx * dx + dy * dy
+                        const t = l2 > 0 ? Math.max(0, Math.min(1, ((uv[0] - p0[0]) * dx + (uv[1] - p0[1]) * dy) / l2)) : 0
+                        const dist = Math.hypot(uv[0] - p0[0] - t * dx, uv[1] - p0[1] - t * dy)
+                        if (dist <= bestD) { axis = { line: c.index }; bestD = dist }
+                    }
+                }
+            }
+        }
+        if (!axis) {
+            // Only bodies (not the preview) take the click: planes, sketches and scans in
+            // front are clicked through.
+            const parts = controller.execute("document.parts")
+            const ids = parts.ok ? parts.result.parts.filter(p => p.kind === "body" && p.featureId !== previewFeatureId).map(p => p.id) : []
+            const hit = view.pickPartAmong(x, y, ids)
+            const info = hit ? controller.partInfo(hit.partId) : null
+            if (info && info.kind === "body")
+                axis = edgeAxis(info.featureId, hit.point)
+        }
+        if (!axis) {
+            controller.showStatus(qsTr("Click a line of the sketch or a straight edge of a body"))
+            return false
+        }
+        setValue(pickKey, axis)
+        return true
+    }
+
+    /// The straight edge of body `featureId` nearest to `point`, as {origin, direction}.
+    function edgeAxis(featureId, point) {
+        const er = controller.execute("body.edges", { body: featureId })
+        if (!er.ok)
+            return null
+        let best = null, bestD = Infinity
+        for (const e of er.result.edges) {
+            if (e.type !== "line")
+                continue
+            const a = e.start, b = e.end
+            const ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]]
+            const ap = [point.x - a[0], point.y - a[1], point.z - a[2]]
+            const l2 = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2]
+            const t = l2 > 0 ? Math.max(0, Math.min(1, (ap[0] * ab[0] + ap[1] * ab[1] + ap[2] * ab[2]) / l2)) : 0
+            const dist = Math.hypot(ap[0] - t * ab[0], ap[1] - t * ab[1], ap[2] - t * ab[2])
+            if (dist < bestD) { best = e; bestD = dist }
+        }
+        if (!best)
+            return null
+        const r4 = x => Math.round(x * 1e4) / 1e4
+        return { origin: best.start.map(r4), direction: [0, 1, 2].map(i => r4(best.end[i] - best.start[i])) }
+    }
+
     /// Viewport pick while the dialog is open: `part` is controller.partInfo().
     function addPick(part, point) {
         if (!spec || !pickKey || !part || !part.id)
@@ -419,6 +541,8 @@ Pane {
             setValue(pickKey, list)
             return
         }
+        if (field.type === "axisPick")
+            return // handled by pickAxisAt
         if (field.type === "planePick") {
             if (part.kind === "plane")
                 setValue(pickKey, { plane: part.featureId })
@@ -449,8 +573,17 @@ Pane {
             if (values.sketch !== part.featureId) {
                 setValue("sketch", part.featureId)
                 list.length = 0
+                if (values.axis && values.axis.line !== undefined)
+                    setValue("axis", "Z")
             }
             list.push(uv.map(x => Math.round(x * 1e4) / 1e4))
+            // Revolve (Fusion): the axis is picked next, unless one was clicked already.
+            const axisField = spec.fields.find(f => f.type === "axisPick")
+            if (axisField && list.length === 1 && typeof values[axisField.key] !== "object") {
+                setValue(pickKey, list)
+                pickKey = axisField.key
+                return
+            }
         } else {
             if (!(part = asBody(part)))
                 return
@@ -554,6 +687,7 @@ Pane {
                         case "sketchList": return sketchListEditor
                         case "pathSketch": return pathSketchEditor
                         case "planePick": return planeEditor
+                        case "axisPick": return axisEditor
                         case "vec3": return vec3Editor
                         default: return pickEditor
                         }
@@ -618,7 +752,13 @@ Pane {
             textRole: "name"
             valueRole: "id"
             currentIndex: items.findIndex(s => s.id === root.values[field.key])
-            onActivated: { root.setValue(field.key, currentValue); root.setValue("points", undefined) }
+            onActivated: {
+                root.setValue(field.key, currentValue)
+                root.setValue("points", undefined)
+                // A picked sketch line belongs to the old sketch.
+                if (root.values.axis && root.values.axis.line !== undefined)
+                    root.setValue("axis", "Z")
+            }
         }
     }
     Component {
@@ -677,6 +817,35 @@ Pane {
             model: items.map(i => i.name)
             currentIndex: items.findIndex(i => JSON.stringify(i.value) === JSON.stringify(current))
             onActivated: index => root.setValue(field.key, items[index].value)
+        }
+    }
+    Component {
+        id: axisEditor
+        // Revolve axis (Fusion: Axis selection): X / Y / Z, or a line / edge clicked in the view.
+        ColumnLayout {
+            property var field: parent ? parent.field : ({})
+            readonly property var current: root.values[field.key]
+            spacing: 2
+            ComboBox {
+                Layout.fillWidth: true
+                readonly property var items: {
+                    const out = [{ name: "X", value: "X" }, { name: "Y", value: "Y" }, { name: "Z", value: "Z" }]
+                    if (current && typeof current === "object")
+                        out.push({ name: current.line !== undefined ? qsTr("Sketch line %1").arg(current.line + 1)
+                                                                   : qsTr("Picked edge"), value: current })
+                    return out
+                }
+                model: items.map(i => i.name)
+                currentIndex: items.findIndex(i => JSON.stringify(i.value) === JSON.stringify(current))
+                onActivated: index => root.setValue(field.key, items[index].value)
+            }
+            Button {
+                Layout.fillWidth: true
+                checkable: true
+                checked: root.pickKey === field.key
+                text: root.pickKey === field.key ? field.hint : qsTr("Pick in the view")
+                onClicked: root.pickKey = field.key
+            }
         }
     }
     Component {

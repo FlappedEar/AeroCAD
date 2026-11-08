@@ -28,6 +28,13 @@ Item {
     signal constraintRemoved(int index)
     /// Delete was asked for the selected curves (indices of sketch.curves).
     signal curvesDeleted(var indices)
+    /// A point is being dragged in select mode (CAD-123): `point` is a constraint point
+    /// reference, `to` where it is now (sketch coordinates); `done` on release.
+    signal pointDragged(var point, var to, bool done)
+    /// The point drag was cancelled (Esc): its live preview is to be undone.
+    signal pointDragCancelled()
+    /// A point is being dragged in select mode.
+    readonly property bool pointDragging: input.pointDragging
     /// A palette button asks for another sketch tool.
     signal toolRequested(string tool)
 
@@ -68,6 +75,19 @@ Item {
     /// A curve or constraint pick is under way (the sketch menu offers to end it).
     readonly property bool drawing: points.length > 0 || constraintLayer.picks.length > 0 || constraintLayer.pending !== null
 
+    /// Cancels a point drag (Esc): nothing is kept, and the release that follows does
+    /// nothing either.
+    function cancelPointDrag() {
+        if (!input.pointDragging && input.dragPoint === null)
+            return false
+        const was = input.pointDragging
+        input.pointDragging = false
+        input.dragPoint = null
+        if (was)
+            pointDragCancelled()
+        return true
+    }
+
     /// Ends the curve being drawn (a line chain) or the constraint pick, as Esc does.
     function endCurrent() {
         reset()
@@ -106,6 +126,42 @@ Item {
             if (d <= bestD) { best = c.index; bestD = d }
         }
         return best
+    }
+
+    /// Point (end, centre) of a sketch curve within the snap distance of (x, y):
+    /// {point: {curve, point}, pos: [u, v]}, or null.
+    function pointAt(x, y) {
+        let best = null, bestD = snapPixels
+        for (const c of constraintLayer.pointCandidates()) {
+            if (c.point === "origin" || !c.pos)
+                continue
+            const s = toScreen(c.pos)
+            const d = Math.hypot(s.x - x, s.y - y)
+            if (d <= bestD) { best = c; bestD = d }
+        }
+        return best
+    }
+
+    /// Where a dragged point lands: another point within the snap distance, else the grid.
+    /// The dragged point itself (`ref`, where it was pressed and where the live preview has
+    /// it now, with the ends joined to it there) is not a snap target.
+    function dragTarget(x, y, from, ref) {
+        const p = screenToLocal(x, y)
+        if (p === null)
+            return null
+        const self = [from]
+        const now = constraintLayer.pointCandidates().find(c => c.point.curve === ref.curve && c.point.point === ref.point)
+        if (now)
+            self.push(now.pos)
+        for (const c of snapPoints.concat([[0, 0]])) {
+            if (self.some(q => dist(c, q) < 1e-6))
+                continue
+            const s = toScreen(c)
+            if (Math.hypot(s.x - x, s.y - y) <= snapPixels)
+                return [c[0], c[1]]
+        }
+        const step = gridStep(x, y)
+        return [round6(Math.round(p[0] / step) * step), round6(Math.round(p[1] / step) * step)]
     }
 
     /// Click in select mode: a curve replaces the selection, or with Shift / Ctrl (Cmd)
@@ -348,6 +404,7 @@ Item {
     // --- Input ----------------------------------------------------------------------------
 
     MouseArea {
+        id: input
         anchors.fill: parent
         enabled: root.active || root.selecting
         hoverEnabled: true
@@ -360,13 +417,20 @@ Item {
         property point pressAt
         property bool dragging: false
         property bool dragEnded: false
+        /// Select mode: the point pressed on ({point, pos}) and whether it is being dragged.
+        property var dragPoint: null
+        property bool pointDragging: false
         readonly property bool dragTool: root.tool === "rectangle" || root.tool === "circle" || root.tool === "polygon"
         onPressed: mouse => {
             if (root.selecting) {
                 // Select mode: a curve under the cursor is picked here; anything else goes
                 // on to the view (a click on empty space also clears the curve selection).
+                // A press on a point of a curve may also start dragging it (CAD-123).
+                pressAt = Qt.point(mouse.x, mouse.y)
+                pointDragging = false
+                dragPoint = root.pointAt(mouse.x, mouse.y)
                 root.selectAt(mouse.x, mouse.y, mouse.modifiers)
-                if (root.curveAt(mouse.x, mouse.y) < 0)
+                if (dragPoint === null && root.curveAt(mouse.x, mouse.y) < 0)
                     mouse.accepted = false
                 root.forceActiveFocus()
                 return
@@ -377,6 +441,16 @@ Item {
         }
         onPositionChanged: mouse => {
             if (root.selecting) {
+                if (pressed && dragPoint !== null) {
+                    if (!pointDragging && Math.hypot(mouse.x - pressAt.x, mouse.y - pressAt.y) > 4)
+                        pointDragging = true
+                    if (pointDragging) {
+                        const to = root.dragTarget(mouse.x, mouse.y, dragPoint.pos, dragPoint.point)
+                        if (to !== null)
+                            root.pointDragged(dragPoint.point, to, false)
+                    }
+                    return
+                }
                 const i = root.curveAt(mouse.x, mouse.y)
                 if (i !== root.hoverCurve) {
                     root.hoverCurve = i
@@ -400,6 +474,15 @@ Item {
             canvas.requestPaint()
         }
         onReleased: mouse => {
+            if (root.selecting) {
+                if (pointDragging) {
+                    const to = root.dragTarget(mouse.x, mouse.y, dragPoint.pos, dragPoint.point)
+                    root.pointDragged(dragPoint.point, to !== null ? to : dragPoint.pos, true)
+                }
+                pointDragging = false
+                dragPoint = null
+                return
+            }
             if (!dragging)
                 return
             dragging = false
@@ -432,6 +515,7 @@ Item {
     // Typing a number starts the dimension input, as in Fusion.
     Keys.onPressed: event => {
         if (event.key === Qt.Key_Escape) {
+            cancelPointDrag()
             reset()
             constraintLayer.reset()
             event.accepted = true
@@ -592,7 +676,7 @@ Item {
                 text: root.constraintTool ? constraintLayer.hint()
                     : root.tool === "" ? (root.selectedCurves.length > 0
                         ? qsTr("%n curve(s) selected: Delete removes, Esc clears", "", root.selectedCurves.length)
-                        : qsTr("Click curves to select (Shift adds); or pick a tool (L line, R rectangle, C circle, D dimension)"))
+                        : qsTr("Click curves to select (Shift adds), drag points to move them; or pick a tool (L line, R rectangle, C circle, D dimension)"))
                     : root.tool === "line" ? qsTr("Line: click points; Esc (or right-click › End Curve) ends the chain")
                     : root.tool === "rectangle" ? qsTr("Rectangle: drag or click two corners; type width, height")
                     : root.tool === "circle" ? qsTr("Circle: click centre and a point; type the diameter")

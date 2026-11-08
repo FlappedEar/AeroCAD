@@ -210,6 +210,11 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_select_delete.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_sketch_select_delete_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-123: dragging a sketch point moves it through the solver.
+    add_test(NAME app_sketch_drag_point_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_drag_point.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_sketch_drag_point_test PROPERTIES LABELS gui TIMEOUT 60)
     # CAD-131, CAD-132: the guide leads from an outline drawn on a scan to the part and to printing.
     add_test(NAME app_scan_to_part_next_steps_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl
@@ -234,6 +239,20 @@ if(AEROCAD_BUILD_TESTS)
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/scan_units_check.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_scan_units_check_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-124: Revolve about a sketch line clicked in the view (through the live preview).
+    add_test(NAME app_revolve_axis_pick_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/revolve_axis_pick.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_revolve_axis_pick_test PROPERTIES LABELS gui TIMEOUT 60)
+    add_test(NAME app_revolve_axis_edge_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/revolve_axis_edge.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_revolve_axis_edge_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-125: drag the Extrude distance arrow (distance, Flip below the sketch).
+    add_test(NAME app_extrude_drag_arrow_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/extrude_drag_arrow.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_extrude_drag_arrow_test PROPERTIES LABELS gui TIMEOUT 60)
     # CAD-115: Export suggests a file name.
     add_test(NAME app_export_file_name_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl

@@ -1,0 +1,27 @@
+# CAD-125: Extrude shows a distance arrow on the profile; dragging it sets Distance (and Flip
+# below the sketch), with the live preview following, as in Fusion. Before, the distance
+# could only be typed.
+# Run: AeroCAD --ui-script <this file>
+ui.wait(800)
+(() => { const r = controller.execute("sketch.create", { plane: "XY", curves: [{ type: "center_rectangle", center: [0, 0], width: 40, height: 20 }] }); if (!r.ok) ui.fail("sketch: " + r.error) })()
+ui.wait(300)
+(() => { viewport.restoreCameraState({ pivot: [-25, 0, 10], pitch: -20, yaw: 30, distance: 220, orthographic: false }) })()
+ui.wait(300)
+(() => { if (!ui.clickText("SOLID")) ui.fail("no SOLID tab") })()
+ui.wait(300)
+(() => { if (!ui.clickText("Extrude")) ui.fail("no Extrude button") })()
+ui.wait(800)
+(() => { const a = viewport.distanceArrow; ui.log("arrow " + JSON.stringify(a)); if (!a || Math.abs(a.distance - 10) > 1e-9 || Math.abs(a.direction[2] - 1) > 1e-9) ui.fail("no distance arrow at 10 mm along +Z") })()
+ui.shot("extrude-arrow-start.png")
+# Drag the arrow head from 10 mm up to about 30 mm.
+(() => { const g = (z) => { const p = viewport.viewPoint(Qt.vector3d(0, 0, z)); return viewport.mapToItem(null, p.x, p.y) }; const a = g(10), b = g(30); ui.drag(a.x, a.y, b.x, b.y, "left", "", 12) })()
+ui.wait(800)
+(() => { const v = featureDialog.values; ui.log("after drag up: distance " + v.distance + " flip " + !!v.flip); if (Math.abs(v.distance - 30) > 1.5 || v.flip) ui.fail("dragging up did not set about 30 mm") })()
+ui.shot("extrude-arrow-dragged.png")
+# Drag it below the sketch: Flip turns on.
+(() => { const d = featureDialog.values.distance; const g = (z) => { const p = viewport.viewPoint(Qt.vector3d(0, 0, z)); return viewport.mapToItem(null, p.x, p.y) }; const a = g(d), b = g(-15); ui.drag(a.x, a.y, b.x, b.y, "left", "", 12) })()
+ui.wait(800)
+(() => { const v = featureDialog.values; ui.log("after drag down: distance " + v.distance + " flip " + !!v.flip); if (Math.abs(v.distance - 15) > 1.5 || !v.flip) ui.fail("dragging below the sketch did not flip to about 15 mm") })()
+(() => { if (!ui.clickText("OK")) ui.fail("no OK button") })()
+ui.wait(800)
+(() => { const b = controller.execute("timeline.list").result.bodies[0]; const d = featureDialog.values.distance; ui.log("body volume " + b.volume.toFixed(1)); if (!b || b.volume < 40 * 20 * 13.5 || b.volume > 40 * 20 * 16.5) ui.fail("the body does not have the dragged depth") })()

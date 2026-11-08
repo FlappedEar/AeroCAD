@@ -781,6 +781,28 @@ void registerSketchCommands(CommandRegistry& r)
               return addedFeature(design(ctx), ctx.document, id);
           });
 
+    r.add({"sketch.move_point", "Drag Sketch Point",
+           "Drags a point of a sketch (Fusion: drag sketch geometry): the point goes to `to` (sketch "
+           "coordinates) and the solver moves what its constraints leave free; dimensions and other "
+           "constraints keep holding. Refused when the constraints do not let the point move there.",
+           objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
+                         {"point",
+                          {{"type", "object"},
+                           {"description", "{curve: index from sketch.curves, point: start | end | center}"}}},
+                         {"to", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", {{"type", "number"}}}}}},
+                        {"sketch", "point", "to"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              const auto id = params.at("sketch").get<cad::FeatureId>();
+              const Json& to = params.at("to");
+              designChange(ctx, "Drag Sketch Point", [&](cad::Design& d) {
+                  (void)sketchFeature(d, id);
+                  d.moveSketchPoint(id, params.at("point"), {to[0].get<double>(), to[1].get<double>()});
+                  return Json{};
+              });
+              return addedFeature(design(ctx), ctx.document, id);
+          });
+
     r.add({"sketch.profiles", "Sketch profiles",
            "Lists the closed profiles of a sketch with their area and centroid (sketch and world coordinates), "
            "to pick profiles for extrude/revolve.",

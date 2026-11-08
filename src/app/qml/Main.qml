@@ -1222,6 +1222,8 @@ ApplicationWindow {
                 window.pickingSketchPlane = false
             // In a sketch, as in Fusion: Esc ends what is being drawn, then the tool, then
             // clears the curve selection; only then does it leave the sketch.
+            else if (window.activeSketch && viewport.sketchOverlay.pointDragging)
+                viewport.sketchOverlay.cancelPointDrag() // the drag is dropped, the point goes back
             else if (window.activeSketch && viewport.sketchOverlay.drawing)
                 viewport.sketchOverlay.endCurrent()
             else if (window.activeSketch && window.sketchTool !== "")
@@ -1864,6 +1866,9 @@ ApplicationWindow {
             pickKind: featureDialog.visible ? featureDialog.pickKind : ""
             shownSketch: featureDialog.shownSketch
             unpickablePlane: featureDialog.visible ? featureDialog.ownPlane : -1
+            unpickableBody: featureDialog.visible ? featureDialog.previewFeatureId : -1
+            distanceArrow: featureDialog.visible ? featureDialog.distanceArrow : null
+            onDistanceArrowDragged: t => featureDialog.dragDistance(t)
             simulationFields: window.simulationVisible ? simulationPanel.viewportFields : []
             hiddenPartIds: window.simulationVisible ? simulationPanel.hiddenPartIds : []
             overlayLines: measurePanel.keptLines.concat(measurePanel.overlayLines)
@@ -1877,6 +1882,10 @@ ApplicationWindow {
             }
             onZoomToPartRequested: id => window.zoomToSelection(id)
             cfdPreview: simulationPanel.visible ? simulationPanel.proposal : null
+            onAxisClicked: (x, y) => {
+                if (featureDialog.visible)
+                    featureDialog.pickAxisAt(viewport, x, y)
+            }
             onSketchContextRequested: (x, y) => {
                 sketchMenu.drawing = viewport.sketchDrawing
                 sketchMenu.popup(viewport, x, y)
@@ -1933,6 +1942,26 @@ ApplicationWindow {
             onConstraintRemoved: index => {
                 if (window.activeSketch)
                     window.controller.execute("sketch.edit_constraint", { sketch: window.activeSketch.id, index: index, remove: true })
+                window.refreshSketchSnaps()
+            }
+            // Dragging a sketch point (CAD-123): a live preview while moving, one undo step
+            // on release; the solver keeps the constraints and dimensions.
+            onSketchPointDragCancelled: {
+                window.controller.cancelPreview()
+                window.refreshSketchSnaps()
+            }
+            onSketchPointDragged: (point, to, done) => {
+                if (!window.activeSketch)
+                    return
+                const args = { sketch: window.activeSketch.id, point: point, to: to }
+                if (done) {
+                    window.controller.cancelPreview()
+                    const r = window.controller.execute("sketch.move_point", args)
+                    if (!r.ok)
+                        window.controller.showStatus(r.error)
+                } else {
+                    window.controller.preview("sketch.move_point", args)
+                }
                 window.refreshSketchSnaps()
             }
             onSketchCurvesDeleted: list => {

@@ -1,0 +1,31 @@
+# CAD-124: Revolve about a line of the sketch picked in the view (Fusion: Axis selection).
+# A triangle away from the origin, its left side on x = 10: click inside the profile, then
+# on that side. Before, only world X / Y / Z could be chosen, so the profile turned about
+# the Z axis through the origin into a ring.
+# Run: AeroCAD --ui-script <this file>
+ui.wait(800)
+(() => { const r = controller.execute("sketch.create", { plane: "XZ", curves: [{ type: "line", start: [10, 0], end: [10, 20] }, { type: "line", start: [10, 20], end: [20, 0] }, { type: "line", start: [20, 0], end: [10, 0] }] }); if (!r.ok) ui.fail("sketch: " + r.error) })()
+ui.wait(300)
+# Front view, the sketch right of the dialog (top left of the view).
+(() => { viewport.setViewDirection(Qt.vector3d(0, -1, 0)); viewport.fitAll(); const c = viewport.cameraState(); c.pivot = [-15, 0, 10]; c.distance = 120; viewport.restoreCameraState(c) })()
+ui.wait(500)
+(() => { if (!ui.clickText("SOLID")) ui.fail("no SOLID tab") })()
+ui.wait(300)
+(() => { if (!ui.clickText("Revolve")) ui.fail("no Revolve button") })()
+ui.wait(800)
+# The only profile is used (all profiles); "Pick in the view" waits for the axis. (Clicking a
+# profile through the preview body is CAD-94.)
+(() => { if (!ui.clickText("Pick in the view")) ui.fail("no axis pick button") })()
+ui.wait(300)
+(() => { if (featureDialog.pickKey !== "axis") ui.fail("the dialog does not wait for the axis") })()
+# Click on the left side of the triangle (x = 10), through the preview body.
+(() => { const s = viewport.modelToScreen(Qt.vector3d(10, 0, 12)); const w = viewport.mapToItem(null, s.x, s.y); ui.click(w.x, w.y) })()
+ui.wait(800)
+(() => { const a = featureDialog.values.axis; ui.log("axis " + JSON.stringify(a)); if (!a || a.line !== 0) ui.fail("the clicked sketch line is not the axis: " + JSON.stringify(a)) })()
+ui.shot("revolve-axis-pick.png")
+(() => { if (!ui.clickText("OK")) ui.fail("no OK button") })()
+ui.wait(800)
+(() => { const b = controller.execute("timeline.list").result.bodies; const v = b.length ? b[0].volume : 0; const cone = Math.PI * 100 * 20 / 3; ui.log("volume " + v.toFixed(1) + " (cone " + cone.toFixed(1) + ")"); if (Math.abs(v - cone) > 1) ui.fail("not a cone about the picked line") })()
+(() => { viewport.restoreCameraState({ pivot: [10, 0, 8], pitch: -25, yaw: 30, distance: 90, orthographic: false }) })()
+ui.wait(500)
+ui.shot("revolve-axis-cone.png")
