@@ -1942,6 +1942,22 @@ ApplicationWindow {
                     window.controller.execute("sketch.edit_constraint", { sketch: window.activeSketch.id, index: index, remove: true })
                 window.refreshSketchSnaps()
             }
+            // Dragging a sketch point (CAD-123): a live preview while moving, one undo step
+            // on release; the solver keeps the constraints and dimensions.
+            onSketchPointDragged: (point, to, done) => {
+                if (!window.activeSketch)
+                    return
+                const args = { sketch: window.activeSketch.id, point: point, to: to }
+                if (done) {
+                    window.controller.cancelPreview()
+                    const r = window.controller.execute("sketch.move_point", args)
+                    if (!r.ok)
+                        window.controller.showStatus(r.error)
+                } else {
+                    window.controller.preview("sketch.move_point", args)
+                }
+                window.refreshSketchSnaps()
+            }
             onSketchCurvesDeleted: list => {
                 if (window.activeSketch)
                     window.controller.execute("sketch.delete_curves", { sketch: window.activeSketch.id, curves: list })
