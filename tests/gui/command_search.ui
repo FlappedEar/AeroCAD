@@ -1,0 +1,43 @@
+# CAD-119: S opens the command search (Fusion's S key), with real keys:
+#  - S over the view opens the box with the focus in its field; typing "isol" lists
+#    Isolate first; Enter runs it on the selected part and closes the box;
+#  - a disabled command (Unisolate with nothing isolated) is listed but Enter does not run it;
+#    Esc closes the box;
+#  - S typed into a text field (renaming a part) is text and does not open the box.
+# Run: AeroCAD --ui-script <this file>
+Qt.createQmlObject('import QtQuick; Item { objectName: "csTest"; visible: false; property var s: ({}); function first() { const r = commandSearch.results; return r.count > 0 ? r.model[0] : null } }', window.contentItem)
+ui.wait(800)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "csTest"); for (let i = 0; i < 2; ++i) controller.execute("feature.box", { size: [20, 20, 20], corner: [30 * i, 0, 0] }); t.s.ids = controller.execute("document.parts").result.parts.map(p => p.id); viewport.fitAll(); window.selectPart(t.s.ids[0]) })()
+ui.wait(300)
+(() => { ui.move(viewport.mapToItem(null, 0, 0).x + 200, viewport.mapToItem(null, 0, 0).y + 300) })()
+ui.key("S")
+ui.wait(300)
+(() => { const f = commandSearch.field; ui.log("S: box open " + commandSearch.visible + ", field focus " + f.activeFocus + ", at " + commandSearch.x.toFixed(0) + "," + commandSearch.y.toFixed(0)); if (!commandSearch.visible || !f.activeFocus) ui.fail("S did not open the command search with the focus in its field") })()
+ui.type("isol")
+ui.wait(200)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "csTest"); const c = t.first(); ui.log("\"isol\": " + commandSearch.results.count + " results, first " + (c ? c.name + " (" + c.path + ")" : "none")); if (!c || c.name !== "Isolate") ui.fail("Isolate is not the first result") })()
+ui.shot("build/command-search.png")
+ui.key("Return")
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "csTest"); ui.log("Enter: box open " + commandSearch.visible + ", isolated " + (window.isolation ? window.isolation.id : "none")); if (commandSearch.visible) ui.fail("the box stayed open"); if (!window.isolation || window.isolation.id !== t.s.ids[0]) ui.fail("Enter did not run Isolate") })()
+(() => { window.unisolate(); window.selectPart(0) })()
+ui.wait(200)
+ui.key("S")
+ui.wait(200)
+ui.type("unisol")
+ui.wait(200)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "csTest"); const m = commandSearch.results.model; t.s.k = m.findIndex(c => c.name === "Unisolate"); ui.log("\"unisol\": " + m.map(c => c.name + (c.item.enabled ? "" : " (disabled)")).join(", ")); if (t.s.k < 0 || m[t.s.k].item.enabled) ui.fail("Unisolate should be listed disabled"); if (m.some((c, i) => i > t.s.k && c.item.enabled)) ui.fail("a disabled command is listed before an enabled one") })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "csTest"); for (let i = 0; i < t.s.k; ++i) ui.key("Down") })()
+ui.key("Return")
+ui.wait(200)
+(() => { ui.log("Enter on a disabled command: box open " + commandSearch.visible); if (!commandSearch.visible) ui.fail("Enter closed the box on a disabled command") })()
+ui.key("Escape")
+ui.wait(200)
+(() => { ui.log("Esc: box open " + commandSearch.visible); if (commandSearch.visible) ui.fail("Esc did not close the box") })()
+# S inside a text field is text.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "csTest"); window.renamePart(t.s.ids[1]) })()
+ui.wait(300)
+ui.type("Ss")
+ui.wait(200)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "csTest"); const r = browser.rowItem(t.s.ids[1]); ui.log("typing S in the rename field: box open " + commandSearch.visible + ", text " + r.nameField.text); if (commandSearch.visible) ui.fail("S in a text field opened the box"); if (r.nameField.text !== "Ss") ui.fail("the field did not get the text") })()
+ui.key("Escape")
