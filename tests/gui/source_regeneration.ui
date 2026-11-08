@@ -2,7 +2,7 @@
 # CAD-77: an imported source edit must rebuild its timeline body in the live GUI.
 # Run from the repository root:
 #   AeroCAD tests/data/tetrahedron.stl --ui-script tests/gui/source_regeneration.ui
-# Uses the actual ribbon, Scale popup and Edit menu; command queries assert geometry.
+# Uses the actual ribbon, Move / Rotate / Scale panel and Edit menu; command queries assert geometry.
 # Output: docs/images/audit/cad-77-regenerated-source.png and build/source-regeneration.aerocad.
 window.width = 1440; window.height = 900
 ui.wait(500)
@@ -14,9 +14,9 @@ ui.wait(300)
 (() => { const source = controller.execute("document.parts").result.parts.find(p => p.kind === "imported"); window.selectPart(source.id) })()
 (() => { const find = i => i.actionId === "scale" && i.visible && i.enabled ? i : Array.from(i.children).map(find).find(Boolean); const button = find(window.contentItem.parent); if (!button) ui.fail("no enabled Scale ribbon command"); else { const p = button.mapToItem(null, button.width / 2, button.height / 2); ui.click(p.x, p.y) } })()
 ui.wait(200)
-(() => { const find = i => i.selectByMouse !== undefined && i.text === "100" && i.visible ? i : Array.from(i.children).map(find).find(Boolean); const field = find(actionPopup.contentItem); if (!field) ui.fail("Scale input was not shown"); else { const p = field.mapToItem(null, field.width / 2, field.height / 2); ui.click(p.x, p.y); field.text = "200" } })()
-(() => { if (actionPopup.values.percent !== 200) ui.fail("Scale input is not 200 percent") })()
-ui.clickText("Apply")
+(() => { if (!transformPanel.visible) ui.fail("Scale did not start the Move / Rotate / Scale tool"); const find = i => i.objectName === "scale" && i.visible ? i : Array.from(i.children).map(find).find(Boolean); const field = find(transformPanel.contentItem); if (!field) ui.fail("Scale input was not shown"); else { const p = field.mapToItem(null, field.width / 2, field.height / 2); ui.click(p.x, p.y); field.selectAll(); field.text = "200"; field.typed = true; field.apply() } })()
+(() => { if (Math.abs(viewport.transformScale - 2) > 1e-9) ui.fail("Scale input is not 200 percent") })()
+ui.clickText("Done")
 ui.wait(300)
 (() => { const p = controller.execute("document.parts").result.parts; for (const part of p) if (Math.abs(part.bounds.size[0] - 20) > 0.001) ui.fail(part.kind + " stayed stale after Scale"); ui.log("After Scale: " + JSON.stringify(p.map(v => ({ id: v.id, kind: v.kind, size: v.bounds.size })))) })()
 ui.clickText("&Edit")

@@ -74,7 +74,7 @@ rebuilding, AeroCAD reports the problem; Undo restores the previous source.
 | `feature.sweep` | Sweep | profiles of `sketch` moved along `path` {sketch, curves} (default: all curves of the path sketch) |
 | `feature.loft` | Loft | `sections`: sketch ids or {sketch, profile}, in order; `solid`, `ruled` |
 | `feature.mirror` | Mirror | `body`, `plane` XY / XZ / YZ / {origin, normal} / planar face, `offset`; join or new_body |
-| `feature.move` | Move/Rotate | `body`, `axis` X / Y / Z or [x, y, z], `angle` (deg, about `center`, default the body's box centre), `translate` [dx, dy, dz] (Fusion: Move/Copy, M) |
+| `feature.move` | Move/Rotate/Scale | `body`, `scale` (uniform factor, default 1), `axis` X / Y / Z or [x, y, z], `angle` (deg); scale and rotation about `center` (default the body's box centre), then `translate` [dx, dy, dz] (Fusion: Move/Copy, M) |
 | `feature.rectangular_pattern` | Rectangular Pattern | `direction`, `count`, `spacing`, optional `direction2` / `count2` / `spacing2` |
 | `feature.circular_pattern` | Circular Pattern | `axis` X / Y / Z or {origin, direction}, `count`, `angle` (360 = full turn) |
 | `feature.plane` | Construct > Offset Plane, Plane at Angle, Midplane, Plane Through Three Points | `base` (XY / XZ / YZ, {plane: id}, planar face {body, point}), `offset`, `angle` + `axis` x / y, `base2` (midplane) or `points` (3 points) |

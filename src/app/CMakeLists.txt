@@ -66,6 +66,8 @@ qt_add_qml_module(aerocad
         qml/PartsPanel.qml
         qml/PropertiesPanel.qml
         qml/ViewCube.qml
+        qml/TransformGizmo.qml
+        qml/TransformPanel.qml
         qml/NavigationBar.qml
         qml/McpPanel.qml
         qml/SketchOverlay.qml
@@ -101,7 +103,7 @@ set_target_properties(aerocad PROPERTIES
 
 target_include_directories(aerocad PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(aerocad PRIVATE
-    Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::Quick3D
+    Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::Quick3D Qt6::Test
     AeroCAD::buildinfo AeroCAD::commands AeroCAD::io AeroCAD::mcp_ipc aerocad_styleplugin)
 
 # Bundle the MCP server with the application: next to the executable, and inside the
@@ -167,6 +169,12 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/navigation.ui)
     set_tests_properties(app_navigation_test PROPERTIES LABELS gui TIMEOUT 60)
+    # Live Move / Rotate / Scale (handles, panel, Enter / Esc / click away) and free orbit.
+    add_test(NAME app_transform_tool_test
+        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl
+                --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/transform_tool.ui
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(app_transform_tool_test PROPERTIES LABELS gui TIMEOUT 90)
     # Touchpad gestures from a fresh start (sideways first, diagonal applied once).
     add_test(NAME app_touchpad_gestures_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl
@@ -183,6 +191,14 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome.step
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/feature_dialog_owned_history.ui)
     set_tests_properties(app_feature_dialog_owned_history_test PROPERTIES LABELS gui TIMEOUT 90)
+    # CAD-78: fitted surfaces remain editable through the timeline and modelling tools.
+    foreach(_surface_test surface_timeline surface_timeline_move surface_timeline_combine)
+        add_test(NAME app_${_surface_test}_test
+            COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome.stl
+                    --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/${_surface_test}.ui)
+        set_tests_properties(app_${_surface_test}_test PROPERTIES LABELS gui TIMEOUT 180
+            RESOURCE_LOCK gui_surface_timeline)
+    endforeach()
     # Runs a coarse OpenFOAM case, so it needs the engine (label openfoam, not in CI). The
     # runs directory is in the build tree: under the home directory on macOS, which the
     # engine's VM can mount.

@@ -38,7 +38,7 @@ Pane {
             ? [run.source.partId] : []
     }
     /// Run whose fields are drawn: B while "Show B in 3D" is on, otherwise A.
-    readonly property string displayedRun: showB && compareRun ? compareRun : activeRun
+    readonly property string displayedRun: showB && finalComparisonAvailable ? compareRun : activeRun
     /// The part the displayed run was made from is in the open document, unchanged (runs that
     /// record no part, e.g. imported from elsewhere, are always drawn).
     readonly property bool displayedSourcePresent: {
@@ -57,6 +57,7 @@ Pane {
     property bool showB: false
     property var results: null
     property var comparison: null
+    readonly property bool finalComparisonAvailable: !!comparison && comparison.reasons.length === 0
     property var fieldStats: ({})
     property string error: ""
     /// True after "Install for me" until the engine is ready (the environment is polled).
@@ -208,13 +209,15 @@ Pane {
         }
         const r = controller.execute("simulation.compare", { a: activeRun, b: compareRun })
         comparison = r.ok ? r.result : null
+        if (!finalComparisonAvailable)
+            showB = false
     }
 
     /// Colour scale for a field: shared between A and B in compare mode. Pressure maps are
     /// symmetric around zero, clipped to Cp in [-2, 1] where the data allows.
     function scaleFor(kind, scalar) {
         let lo = Infinity, hi = -Infinity
-        for (const id of comparison ? [activeRun, compareRun] : [activeRun]) {
+        for (const id of finalComparisonAvailable ? [activeRun, compareRun] : [displayedRun]) {
             const s = fieldStats[id + "/" + kind]
             if (s && s[scalar]) {
                 lo = Math.min(lo, s[scalar].min)
@@ -603,7 +606,8 @@ Pane {
                                 if (m.state === "running")
                                     s += " · " + m.stage + (m.stage === "solve" ? " " + m.iteration + "/" + m.maxIterations : "")
                                 if (l.cd !== null && l.cd !== undefined)
-                                    s += " · Cd " + root.num(l.cd, 3) + " · drag " + root.num(l.dragN, 3) + " N"
+                                    s += (m.state === "finished" ? " · latest Cd " : " · provisional Cd ")
+                                        + root.num(l.cd, 3) + " · drag " + root.num(l.dragN, 3) + " N"
                                 return s
                             }
                         }
@@ -680,6 +684,21 @@ Pane {
                     }
                 }
 
+                Label {
+                    text: root.results && root.results.finalResults.available
+                        ? qsTr("Final results") : qsTr("Final results unavailable")
+                    font.bold: true
+                }
+                Repeater {
+                    model: root.results ? root.results.finalResults.reasons : []
+                    delegate: Label {
+                        required property var modelData
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        color: Theme.warning
+                        text: modelData
+                    }
+                }
                 GridLayout {
                     columns: 4
                     columnSpacing: 10
@@ -712,11 +731,13 @@ Pane {
                         const c = root.results ? root.results.conditions : null
                         if (!c)
                             return ""
-                        return qsTr("%1 m/s, flow %2, %3 mesh%4 · Aref %5 cm² · OpenFOAM %6 · mean of the last 20 % of %7 iterations")
+                        const conditions = qsTr("%1 m/s, flow %2, %3 mesh%4 · Aref %5 cm² · OpenFOAM %6")
                             .arg(c.settings.speed).arg(c.settings.flowDirection).arg(c.settings.mesh)
                             .arg(!c.settings.ground ? "" : c.settings.groundMoving === false ? qsTr(", fixed floor") : qsTr(", moving floor"))
                             .arg(root.num(c.referenceArea * 1e4, 1)).arg(c.openfoam)
-                            .arg(root.results.summary.iterations)
+                        return conditions + (root.results.provisional
+                            ? qsTr(" · %1 recorded iterations; provisional data")
+                            : qsTr(" · mean of the last 20 % of %1 iterations")).arg(root.results.summary.iterations)
                     }
                 }
                 Repeater {
@@ -733,7 +754,7 @@ Pane {
 
                 LineChart {
                     Layout.fillWidth: true
-                    title: qsTr("Coefficients")
+                    title: root.results && root.results.provisional ? qsTr("Coefficients (provisional)") : qsTr("Coefficients")
                     series: root.results ? [
                         root.series("Cd", Theme.chart1, root.results.history.iteration, root.results.history.cd),
                         root.series("Cl", Theme.chart2, root.results.history.iteration, root.results.history.cl),
@@ -742,7 +763,7 @@ Pane {
                 }
                 LineChart {
                     Layout.fillWidth: true
-                    title: qsTr("Forces (N)")
+                    title: root.results && root.results.provisional ? qsTr("Forces (N, provisional)") : qsTr("Forces (N)")
                     series: root.results ? [
                         root.series(qsTr("drag"), Theme.chart1, root.results.history.forceIteration, root.results.history.dragN),
                         root.series(qsTr("lift"), Theme.chart2, root.results.history.forceIteration, root.results.history.liftN),
@@ -751,7 +772,7 @@ Pane {
                 }
                 LineChart {
                     Layout.fillWidth: true
-                    title: qsTr("Residuals")
+                    title: root.results && root.results.provisional ? qsTr("Residuals (provisional)") : qsTr("Residuals")
                     logY: true
                     series: {
                         const r = root.results ? root.results.residuals : null
@@ -823,6 +844,11 @@ Pane {
                     color: !root.comparison ? Theme.text : root.comparison.verdict === "comparable" ? Theme.success : Theme.warning
                     text: root.comparison ? qsTr("Verdict: %1").arg(root.comparison.verdict) : ""
                 }
+                Label {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    text: root.comparison ? qsTr("A: %1 · B: %2").arg(root.comparison.states.a).arg(root.comparison.states.b) : ""
+                }
                 GridLayout {
                     columns: 5
                     columnSpacing: 8
@@ -855,7 +881,8 @@ Pane {
                 }
                 Repeater {
                     model: root.comparison ? root.comparison.differingConditions.map(c => qsTr("Different condition: %1").arg(c))
-                                             .concat(root.comparison.notes) : []
+                                             .concat((root.comparison.unknownConditions || []).map(c => qsTr("Unknown condition: %1").arg(c)))
+                                             .concat(root.comparison.reasons).concat(root.comparison.notes) : []
                     delegate: Label {
                         required property var modelData
                         Layout.fillWidth: true
@@ -869,7 +896,9 @@ Pane {
                 ColumnLayout {
                     id: meshCheck
                     readonly property var ms: root.comparison ? root.comparison.meshSensitivity : null
-                    visible: !!ms && ms.status !== undefined && root.comparison.sameConditions
+                    // Also for a target-part variant whose only difference is its own domain.
+                    visible: !!ms && ms.status !== undefined && !root.comparison.reasons.length
+                             && root.comparison.verdict !== "not comparable"
                     Layout.fillWidth: true
                     Layout.topMargin: 6
                     spacing: 2
@@ -902,7 +931,8 @@ Pane {
                 }
                 Switch {
                     text: qsTr("Show B in 3D (same colour scale)")
-                    checked: root.showB
+                    enabled: root.finalComparisonAvailable
+                    checked: root.showB && root.finalComparisonAvailable
                     onToggled: root.showB = checked
                 }
             }

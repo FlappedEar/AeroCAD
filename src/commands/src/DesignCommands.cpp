@@ -987,13 +987,15 @@ void registerFeatureCommands(CommandRegistry& r)
                       {"body"});
 
     addFeatureCommand(r, "move", "Move/Rotate",
-                      "Moves and/or rotates a body (Fusion: Modify > Move/Copy, M): rotation about `axis` "
-                      "through `center` (default the body's bounding box centre) first, then translation.",
+                      "Moves, rotates and/or uniformly scales a body (Fusion: Modify > Move/Copy, M): scale and "
+                      "rotation about `axis` through `center` (default the body's bounding box centre) first, then "
+                      "translation.",
                       {{"body", bodyRefSchema("Body to move.")},
                        {"translate", point3("Offset [dx, dy, dz] in mm.")},
                        {"axis", directionSchema},
                        {"angle", numberOrExpr("Rotation in degrees (right-hand rule about the axis).")},
-                       {"center", point3("Rotation centre [x, y, z] in mm.")}},
+                       {"scale", numberOrExpr("Uniform scale factor about `center` (default 1).")},
+                       {"center", point3("Rotation and scale centre [x, y, z] in mm.")}},
                       {"body"});
 
     addFeatureCommand(r, "rectangular_pattern", "Rectangular Pattern",

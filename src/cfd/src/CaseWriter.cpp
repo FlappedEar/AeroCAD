@@ -8,6 +8,9 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <tuple>
+#include <vector>
 
 namespace aerocad::cfd {
 
@@ -94,6 +97,7 @@ Json CaseInfo::toJson() const
         {"domain", boxJson(domain)},
         {"baseCellSize", baseCellSize},
         {"geometryHash", geometryHash},
+        {"contextHash", contextHash ? Json(*contextHash) : Json(nullptr)},
     };
 }
 
@@ -109,6 +113,9 @@ CaseInfo CaseInfo::fromJson(const Json& j)
     c.domain = boxFrom(j.at("domain"));
     c.baseCellSize = j.value("baseCellSize", 0.0);
     c.geometryHash = j.value("geometryHash", std::uint64_t{0});
+    if (auto it = j.find("contextHash"); it != j.end() && it->is_number_unsigned())
+        c.contextHash = it->get<std::uint64_t>();
+    c.openfoam = j.value("openfoam", std::string());
     return c;
 }
 
@@ -504,6 +511,9 @@ std::string allrun(int processes)
          "cd \"${0%/*}\" || exit 1\n"
          ". \"${WM_PROJECT_DIR:?}\"/bin/tools/RunFunctions\n"
          "rm -f aerocad.status\n"
+         "# The engine that actually runs the solver, for A/B comparisons. RunFunctions skips an\n"
+         "# application whose log exists, so reused results keep the engine that produced them.\n"
+         "engine() { [ -f log.simpleFoam ] || printf '%s\\n' \"${WM_PROJECT_VERSION:-}\" > aerocad.engine; }\n"
          "step() { echo \"$1\" > aerocad.stage; }\n"
          "fail() { echo \"failed $1\" > aerocad.status; exit 1; }\n\n"
          "step features;   runApplication surfaceFeatureExtract || fail features\n"
@@ -514,6 +524,7 @@ std::string allrun(int processes)
              "step check;      runParallel checkMesh -constant\n"
              "restore0Dir -processor\n"
              "step initialise; runParallel potentialFoam -writephi || fail initialise\n"
+             "engine\n"
              "step solve;      runParallel simpleFoam || fail solve\n"
              "step reconstruct\n"
              "runApplication reconstructParMesh -constant || fail reconstruct\n"
@@ -523,6 +534,7 @@ std::string allrun(int processes)
              "step check;      runApplication checkMesh -constant\n"
              "restore0Dir\n"
              "step initialise; runApplication potentialFoam -writephi || fail initialise\n"
+             "engine\n"
              "step solve;      runApplication simpleFoam || fail solve\n";
     }
     t << "step done\necho finished > aerocad.status\n";
@@ -592,6 +604,39 @@ std::uint64_t meshFingerprint(const TriangleMesh& mesh)
     return hash;
 }
 
+namespace {
+
+/// Fingerprint of a surface that does not depend on the order of its triangles or of the
+/// parts it was gathered from (context: [2, 3] and [3, 2] are the same surroundings, CAD-84).
+/// Each triangle is hashed from its vertex positions, starting at its smallest vertex so the
+/// orientation is kept; the triangle hashes are sorted before they are combined.
+std::uint64_t unorderedSurfaceFingerprint(const TriangleMesh& mesh)
+{
+    const auto& v = mesh.vertices();
+    std::vector<std::uint64_t> hashes;
+    hashes.reserve(mesh.triangles().size());
+    for (const auto& t : mesh.triangles()) {
+        const auto less = [&v](std::uint32_t a, std::uint32_t b) {
+            return std::tie(v[a].x, v[a].y, v[a].z) < std::tie(v[b].x, v[b].y, v[b].z);
+        };
+        std::size_t first = 0;
+        for (std::size_t k = 1; k < 3; ++k)
+            if (less(t[k], t[first]))
+                first = k;
+        std::uint64_t h = fnv1a({});
+        for (std::size_t k = 0; k < 3; ++k) {
+            const Vec3& p = v[t[(first + k) % 3]];
+            for (const double c : {p.x, p.y, p.z})
+                h = fnv1a(std::string_view(reinterpret_cast<const char*>(&c), sizeof(c)), h);
+        }
+        hashes.push_back(h);
+    }
+    std::sort(hashes.begin(), hashes.end());
+    return fnv1a(std::string_view(reinterpret_cast<const char*>(hashes.data()), hashes.size() * sizeof(std::uint64_t)));
+}
+
+} // namespace
+
 std::uint64_t caseGeometryHash(const CaseGeometry& geometry, const Settings& s)
 {
     const CaseInfo info = planCase(geometry, s);
@@ -628,10 +673,15 @@ CaseInfo writeCase(const fs::path& dir, const CaseGeometry& geometry, const Sett
     const std::string partStl = asciiStl(part, "part");
     writeFile(dir / "constant" / "triSurface" / "part.stl", partStl);
     info.geometryHash = fnv1a(partStl);
+    info.contextHash = 0;
     if (hasContext) {
         const std::string contextStl = asciiStl(context, "context");
         writeFile(dir / "constant" / "triSurface" / "context.stl", contextStl);
         info.geometryHash = fnv1a(contextStl, info.geometryHash);
+        // In model coordinates (the case frame is centred on the target part, so the same
+        // surroundings next to a variant of another size are written at other coordinates),
+        // independent of the order of the context parts.
+        info.contextHash = unorderedSurfaceFingerprint(geometry.context);
     }
 
     writeFile(dir / "constant" / "transportProperties",

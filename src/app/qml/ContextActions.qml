@@ -210,10 +210,8 @@ QtObject {
                                    Math.max(1000, Math.round((info.triangles ?? 200000) / 4)), "",
                                    qsTr("How many triangles to keep at most."))] }
         case "scale":
-            return { id: id, text: qsTr("Scale"), icon: "scale", enabled: info.kind === "imported",
-                     reason: qsTr("Scale the imported source instead."),
-                     tip: qsTr("Makes the part bigger or smaller, e.g. when a scan came in the wrong unit."),
-                     params: [_num("percent", qsTr("Scale"), 100, "%", qsTr("100 % keeps the size, 1000 % turns cm into mm."))] }
+            return { id: id, text: qsTr("Scale"), icon: "scale", enabled: true,
+                     tip: qsTr("Makes the part bigger or smaller, e.g. when a scan came in the wrong unit: drag the middle square or type a percentage (1000 % turns cm into mm).") }
 
         // Surface
         case "sketchOnSurface":
@@ -338,21 +336,12 @@ QtObject {
                      tip: qsTr("Writes every visible solid (e.g. all the fins) to a folder you choose, each as its own STL for the printer and STEP for CAD. Hide what you do not want printed.") }
         case "moveRotate": {
             const r = role(info)
-            // Shape role determines which modelling tools fit; ownership determines
-            // whether a transform is a timeline feature or an imported-part edit.
-            if (info.kind === "body")
-                return { id: id, text: qsTr("Move / Rotate…"), icon: "move", enabled: true,
-                         tip: qsTr("Turns the part about an axis and moves it by a distance. Added to the timeline, so it can be edited later. Shortcut M.") }
-            return { id: id, text: qsTr("Move / Rotate…"), icon: "move", enabled: r !== "sketch" && r !== "" && info.kind !== "plane",
+            return { id: id, text: qsTr("Move / Rotate / Scale"), icon: "move",
+                     enabled: r !== "sketch" && r !== "" && info.kind !== "plane",
                      reason: qsTr("Move the solid the sketch belongs to instead."),
-                     tip: qsTr("Turns the part about an axis through its centre and moves it by a distance. Shortcut M."),
-                     params: [_choice("axis", qsTr("Rotate about"), [{ value: "z", label: qsTr("Z axis (up)") },
-                                                                      { value: "x", label: qsTr("X axis") },
-                                                                      { value: "y", label: qsTr("Y axis") }]),
-                              _num("angle", qsTr("Angle"), 90, "°", qsTr("Positive turns anticlockwise looking down the axis. 0 only moves.")),
-                              _num("dx", qsTr("Move X"), 0, "mm"),
-                              _num("dy", qsTr("Move Y"), 0, "mm"),
-                              _num("dz", qsTr("Move Z"), 0, "mm")] }
+                     tip: r === "body"
+                          ? qsTr("Drag the arrows, rings or the middle square in the view; the body follows live. Enter applies it as a timeline step, Esc cancels. Shortcut M.")
+                          : qsTr("Drag the arrows, rings or the middle square in the view; the part follows live. Enter applies, Esc cancels. Shortcut M.") }
         }
         case "zoomTo":
             return { id: id, text: qsTr("Zoom to this"), icon: "fit", enabled: true,
@@ -617,7 +606,7 @@ QtObject {
         }
         case "repair": return controller.execute("mesh.repair", { id: pid })
         case "simplify": return controller.execute("mesh.decimate", { id: pid, targetTriangles: Math.max(4, Math.round(v.targetTriangles)) })
-        case "scale": return v.percent > 0 && v.percent !== 100 ? controller.execute("part.scale", { id: pid, factor: v.percent / 100 }) : null
+        case "scale": return host.startTransform(pid)
         case "trim": {
             const r = controller.execute("surface.trim_by_sketch", { id: pid, sketch: v.sketch, keep: v.keep || "inside" })
             _hideSource(r, pid)
@@ -670,20 +659,7 @@ QtObject {
         case "cutWithThis": return host.openFeature("combine")
         case "export": return host.openExport([pid])
         case "exportForPrint": return host.openPrintExport()
-        case "moveRotate": {
-            if (info.kind === "body")
-                return host.openFeature("move")
-            const params = { id: pid }
-            const angle = Number(v.angle) || 0
-            if (angle !== 0) {
-                params.axis = v.axis === "x" ? [1, 0, 0] : v.axis === "y" ? [0, 1, 0] : [0, 0, 1]
-                params.angle = angle
-            }
-            const t = [Number(v.dx) || 0, Number(v.dy) || 0, Number(v.dz) || 0]
-            if (t.some(c => c !== 0))
-                params.translate = t
-            return params.angle !== undefined || params.translate ? controller.execute("part.transform", params) : null
-        }
+        case "moveRotate": return host.startTransform(pid)
         case "zoomTo": return host.zoomToPart(pid)
         case "hide": return controller.execute("part.set_visible", { id: pid, visible: !info.visible })
         case "delete": return host.deleteSelected()
