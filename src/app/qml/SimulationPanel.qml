@@ -420,6 +420,9 @@ Pane {
             mesh: meshBox.currentValue,
             ground: groundBox.checked
         }
+        // The road under a part mounted on a car (CAD-147); empty = just below the parts.
+        if (groundBox.checked && floorField.text.trim().length > 0)
+            params.groundHeight = Number(floorField.text.replace(",", "."))
         if (contextBox.checked) {
             const parts = controller.execute("document.parts")
             if (parts.ok)
@@ -433,9 +436,12 @@ Pane {
     /// check): part size, tunnel and flow in model mm, size warnings. Drawn in the view
     /// while a new run is set up; null when there is nothing to plan.
     property var proposal: null
+    /// Why the planned run cannot be set up (for example a floor above the part); "" = fine.
+    property string proposalError: ""
     function refreshProposal() {
         if (!visible || tab !== 0 || !partInfo.id || partInfo.kind === "sketch" || partInfo.kind === "plane") {
             proposal = null
+            proposalError = ""
             return
         }
         const params = runParams()
@@ -446,6 +452,7 @@ Pane {
         params.checkEngine = false
         const r = controller.execute("simulation.propose_run", params)
         proposal = r.ok ? r.result : null
+        proposalError = r.ok ? "" : r.error
     }
     Timer {
         id: proposalTimer
@@ -759,6 +766,26 @@ Pane {
                         text: qsTr("Moving floor under the geometry")
                         onToggled: proposalTimer.restart()
                     }
+                    // Where the road is (CAD-147): a part mounted on a car sits well above it.
+                    Label { text: qsTr("Floor at Z (mm)"); opacity: 0.7; visible: groundBox.checked }
+                    TextField {
+                        id: floorField
+                        objectName: "cfdFloorField"
+                        Layout.fillWidth: true
+                        visible: groundBox.checked
+                        placeholderText: qsTr("just below the parts")
+                        validator: RegularExpressionValidator { regularExpression: /^-?\d*([.,]\d*)?$/ }
+                        onTextEdited: proposalTimer.restart()
+                    }
+                    Label {
+                        Layout.columnSpan: 2
+                        Layout.fillWidth: true
+                        visible: groundBox.checked
+                        text: qsTr("Where the road is. Empty puts it just below the parts; for a part on a car, give the road's Z so the gap is as on the car.")
+                        color: Theme.textMuted
+                        wrapMode: Text.WordWrap
+                        font.pixelSize: 11
+                    }
                     CheckBox {
                         id: contextBox
                         Layout.columnSpan: 2
@@ -772,6 +799,17 @@ Pane {
                         highlighted: true
                         enabled: !!root.partInfo.id && root.partInfo.kind !== "sketch" && root.partInfo.kind !== "plane"
                         onClicked: root.startRun()
+                    }
+                    // Why this run cannot be set up, before Run CFD is pressed (CAD-147).
+                    Label {
+                        objectName: "cfdProposalError"
+                        Layout.columnSpan: 2
+                        Layout.fillWidth: true
+                        visible: text.length > 0
+                        text: root.proposalError
+                        color: Theme.warning
+                        wrapMode: Text.WordWrap
+                        font.pixelSize: 11
                     }
                     Label {
                         Layout.columnSpan: 2
