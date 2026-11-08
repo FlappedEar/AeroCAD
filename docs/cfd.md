@@ -235,7 +235,10 @@ sampling is supported. Numerical quality is assessed separately in the quality r
 The quality report's `checks` object records `passed`, `failed` or `missing` for each
 required check. Status is `ok` only when every check passed, `warning` when any failed,
 and otherwise `unknown` because evidence is missing. `warnings` explains failed and missing
-checks in the results panel. Truncated histories, stale residuals/coefficients that do not
+checks in the results panel; the panel shows the residual warnings and the solver's "not converged"
+line as one line with the final residuals, and says when Cd is steady (force stability passed),
+so a usual coarse run reads as two lines instead of seven
+([real coarse run of the 200 mm box](images/audit/cad-116-cfd-results.png)). Truncated histories, stale residuals/coefficients that do not
 reach the final logged iteration, and non-finite data cannot receive a clean verdict.
 Available raw diagnostics remain in the report even if another required check is missing.
 These checks flag results to read with care; they are not a validation of the physics.

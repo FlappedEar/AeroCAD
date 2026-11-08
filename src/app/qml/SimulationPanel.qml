@@ -89,6 +89,38 @@ Pane {
         return selectedPartId ? controller.partInfo(selectedPartId) : ({})
     }
 
+    /// The quality report as short lines (CAD-116): the per-field residual warnings and the
+    /// solver's "not converged" line become one line with the final residuals, and a steady
+    /// drag coefficient is said too, so a usual coarse run does not show seven warnings.
+    function qualityLines(q) {
+        if (!q)
+            return []
+        const lines = []
+        const residuals = []
+        const warnings = q.warnings || []
+        const residualLine = /^(\w+): residual has not reached the preset target/
+        for (const w of warnings) {
+            const m = residualLine.exec(w)
+            if (m)
+                residuals.push(m[1])
+        }
+        for (const w of warnings) {
+            const solverLine = w.indexOf("solver: finished without reaching") === 0
+            if (!residualLine.test(w) && !(solverLine && residuals.length > 0))
+                lines.push({ text: w, ok: false })
+        }
+        if (residuals.length > 0) {
+            const fr = q.finalResiduals || {}
+            const values = residuals.map(f => fr[f] !== undefined ? f + " " + Number(fr[f]).toExponential(1) : f)
+            lines.unshift({ text: qsTr("Not converged to the preset targets (1e-5, p 1e-4); final residuals %1").arg(values.join(", ")),
+                            ok: false })
+        }
+        if (q.checks && q.checks.forceStability === "passed" && q.cdFluctuation !== undefined)
+            lines.push({ text: qsTr("Cd is steady: it changes %1 % over the last 20 % of the iterations")
+                                   .arg(root.num(100 * q.cdFluctuation, 2)), ok: true })
+        return lines
+    }
+
     function num(v, digits) {
         return v === null || v === undefined || !isFinite(v) ? "–" : Number(v).toFixed(digits)
     }
@@ -359,7 +391,8 @@ Pane {
                 readonly property bool pulling: !!pull && pull.state === "running"
                 id: setupBox
                 Layout.fillWidth: true
-                visible: !!setup && (setup.action !== "none" || pulling || root.installing)
+                // A "manual" step only repeats the engine line above: do not show it twice.
+                visible: !!setup && ((setup.action !== "none" && setup.action !== "manual") || pulling || root.installing)
                 spacing: 4
                 RowLayout {
                     Layout.fillWidth: true
@@ -771,14 +804,14 @@ Pane {
                     }
                 }
                 Repeater {
-                    model: root.results ? root.results.quality.warnings : []
+                    model: root.results ? root.qualityLines(root.results.quality) : []
                     delegate: Label {
                         required property var modelData
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
                         font.pixelSize: 11
-                        color: Theme.warning
-                        text: "⚠ " + modelData
+                        color: modelData.ok ? Theme.success : Theme.warning
+                        text: (modelData.ok ? "✓ " : "⚠ ") + modelData.text
                     }
                 }
 

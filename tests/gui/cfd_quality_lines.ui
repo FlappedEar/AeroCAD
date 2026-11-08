@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CAD-116: the Wind Tunnel panel. The quality report of a real coarse OpenFOAM v2506 run (box,
+# 20 m/s, 300 iterations) reads as one convergence line plus "Cd is steady", not seven warnings;
+# Results and A/B are dimmed before any run.
+ui.wait(1000)
+(() => { const p = controller.execute("document.parts").result.parts[0]; window.selectPart(p.id) })()
+ui.clickText("SIMULATE")
+ui.wait(300)
+ui.clickText("Wind Tunnel")
+ui.wait(1500)
+(() => { const q = {"cdFluctuation": 0.00020865859043581774, "checks": {"convergence": "failed", "forceStability": "passed", "massBalance": "passed", "mesh": "passed", "residual.Ux": "failed", "residual.Uy": "failed", "residual.Uz": "failed", "residual.k": "failed", "residual.omega": "failed", "residual.p": "failed"}, "finalResiduals": {"Ux": 6.9790319e-05, "Uy": 0.0011395444, "Uz": 0.00070567739, "k": 2.1164382e-05, "omega": 2.0324663e-05, "p": 0.00016315363}, "status": "warning", "warnings": ["solver: finished without reaching the preset convergence targets", "Ux: residual has not reached the preset target 1e-5", "Uy: residual has not reached the preset target 1e-5", "Uz: residual has not reached the preset target 1e-5", "p: residual has not reached the preset target 1e-4", "k: residual has not reached the preset target 1e-5", "omega: residual has not reached the preset target 1e-5"]}; const lines = simulationPanel.qualityLines(q); ui.log("LINES " + JSON.stringify(lines)); if (lines.length !== 2) ui.fail("expected 2 lines, got " + lines.length); if (lines[0].ok || lines[0].text.indexOf("Uy 1.1e-3") < 0 || lines[0].text.indexOf("omega 2.0e-5") < 0) ui.fail("residual line: " + lines[0].text); if (!lines[1].ok || lines[1].text.indexOf("0.02 %") < 0) ui.fail("steady line: " + lines[1].text) })()
+# Other warnings stay as they are, and the solver line stays when no residual line explains it.
+(() => { const q = {"checks": {"forceStability": "failed"}, "warnings": ["solver: finished without reaching the preset convergence targets", "Cd still changes by more than 2 % over the last 20 % of the iterations"]}; const lines = simulationPanel.qualityLines(q); ui.log("LINES2 " + JSON.stringify(lines)); if (lines.length !== 2 || lines.some(l => l.ok)) ui.fail("other warnings changed: " + JSON.stringify(lines)) })()
+(() => { const tabs = []; function walk(it) { for (let i = 0; i < it.children.length; ++i) { const c = it.children[i]; if (c.text === "Results" && c.checkable !== undefined) tabs.push(c); walk(c) } } walk(simulationPanel); ui.log("RESULTS tabs " + tabs.length + " enabled " + (tabs.length ? tabs[0].enabled : "-") + " color " + (tabs.length ? tabs[0].contentItem.color : "-")); if (tabs.length !== 1 || tabs[0].enabled) ui.fail("Results tab state"); else if (String(tabs[0].contentItem.color) !== String(Theme.textFaint)) ui.fail("a disabled tab is not dimmed: " + tabs[0].contentItem.color) })()
+ui.shot("cfd-quality-lines.png")
+ui.log("cfd quality lines done")
