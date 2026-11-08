@@ -120,7 +120,9 @@ machine (up to 16 processes), and every 10 s the progress files, logs and
 `postProcessing/` are copied back, so the panel shows progress as usual. At the end the
 results are copied back and the container is removed. The mesh and field files stay out of
 the copy, so `case.foam` of a remote run does not open in ParaView. When the app is closed
-the run continues there, and the app follows it again on the next start. Cancel removes
+the run continues there, and the app follows it again on the next start. Listing runs
+(`simulation.list`, the panel refresh) only reads: a remote run that another open AeroCAD
+window started is shown, but only that window follows it. Cancel removes
 the container. Install for me downloads the OpenFOAM image on that machine.
 
 ### Linux
@@ -239,6 +241,20 @@ mesh, preset, fluid, ground, reference values), the quality of both runs and sha
 colour scale ranges (Cp on the surface, speed in the sections). Verdict:
 `comparable`, `difference inconclusive`, `check quality` or `not comparable`. Variants of very different size get
 different domain and mesh sizes, which is reported as a note.
+
+The resolved setup is compared too, not only the requested settings. Each case records a
+fingerprint of its surroundings (context parts in model coordinates, independent of their
+order); `Allrun` records the engine that actually runs the solver (`WM_PROJECT_VERSION`, in
+`aerocad.engine`). OpenFOAM skips an application whose log already exists, so a rerun that
+reuses `log.simpleFoam` keeps the engine recorded with those results (or none). `results.conditions` carries `domain`, `contextHash`, `engine` (null when
+not recorded) and `engineTarget` (the version the case was written for). Different surroundings (for example the part alone against the same part next to
+the car body) add `context` to `differingConditions`, a different engine adds `engine`;
+either makes the verdict `not comparable`. A flow domain that differs by more than 1 µm adds
+`domain` and sets `sameDomain` to false. The target part itself may differ, since that is the
+A/B: when the domain is the only difference, the forces are still compared, a note gives the
+difference in mm and the verdict is `different domains` instead of `comparable`. What an
+older run did not record (surroundings, domain or engine) is listed in `unknownConditions`
+and makes the verdict `not comparable`.
 
 Both runs must have final results. Otherwise the verdict is `not comparable`, force
 and coefficient differences and shared colour scales are empty, and `states` / `reasons`

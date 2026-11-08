@@ -213,8 +213,8 @@ double round3(double v)
     return std::round(v * 1000.0) / 1000.0;
 }
 
-/// Checks parts before they are written (see document.export_check). `format` decides what
-/// is an error: STL / 3MF need a watertight mesh, STEP needs exact geometry.
+/// Checks parts before they are written (see document.export_check). Ordinary STL/3MF
+/// may contain an explicitly accepted open surface; print export still needs a solid.
 Json exportCheck(const std::vector<const model::Part*>& parts, io::FileFormat format, double minWall, bool print = false,
                  const cad::Design* design = nullptr)
 {
@@ -272,7 +272,11 @@ Json exportCheck(const std::vector<const model::Part*>& parts, io::FileFormat fo
                                                   " open edges, so it is a surface, not a solid. Slicers cannot print it."
                                             : "Not a solid: " + std::to_string(c.nonManifoldEdges) +
                                                   " edges are shared by more than two faces.";
-                (step ? warningList : errorList).push_back(msg);
+                // An ordinary export can intentionally contain a scan or a surface.
+                // Keep malformed topology blocking and never relax print preflight.
+                const bool openSurface = !print && !step && c.boundaryEdges > 0 && c.manifold() && c.oriented() &&
+                                         c.shells > 0 && c.degenerateTriangles == 0;
+                (step || openSurface ? warningList : errorList).push_back(msg);
             } else if (!c.watertight()) {
                 for (const auto& problem : c.problems())
                     (step ? warningList : errorList).push_back(problem);

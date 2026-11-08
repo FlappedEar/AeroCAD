@@ -66,6 +66,8 @@ qt_add_qml_module(aerocad
         qml/PartsPanel.qml
         qml/PropertiesPanel.qml
         qml/ViewCube.qml
+        qml/TransformGizmo.qml
+        qml/TransformPanel.qml
         qml/NavigationBar.qml
         qml/McpPanel.qml
         qml/SketchOverlay.qml
@@ -101,7 +103,7 @@ set_target_properties(aerocad PROPERTIES
 
 target_include_directories(aerocad PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(aerocad PRIVATE
-    Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::Quick3D
+    Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::Quick3D Qt6::Test
     AeroCAD::buildinfo AeroCAD::commands AeroCAD::io AeroCAD::mcp_ipc aerocad_styleplugin)
 
 # Bundle the MCP server with the application: next to the executable, and inside the
@@ -167,6 +169,12 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/navigation.ui)
     set_tests_properties(app_navigation_test PROPERTIES LABELS gui TIMEOUT 60)
+    # Live Move / Rotate / Scale (handles, panel, Enter / Esc / click away) and free orbit.
+    add_test(NAME app_transform_tool_test
+        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl
+                --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/transform_tool.ui
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(app_transform_tool_test PROPERTIES LABELS gui TIMEOUT 90)
     # Touchpad gestures from a fresh start (sideways first, diagonal applied once).
     add_test(NAME app_touchpad_gestures_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl

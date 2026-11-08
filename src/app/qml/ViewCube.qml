@@ -19,6 +19,9 @@ Item {
     signal viewRequested(vector3d direction)
     signal homeRequested()
     signal orbitRequested(real dx, real dy)
+    /// The arrows: turn the view by 90 degrees (dPitch < 0: more from above, dYaw > 0: more
+    /// from the right). They keep going over the top and the bottom.
+    signal stepRequested(real dPitch, real dYaw)
     signal setHomeRequested()
     signal resetHomeRequested()
     signal projectionRequested(bool orthographic)
@@ -208,6 +211,73 @@ Item {
             root.orbitRequested(p.x - last.x, p.y - last.y)
             last = p
         }
+    }
+
+    // Fusion-style arrows around the cube: one click turns the view by 90 degrees, so the
+    // view can always go further, also past Top and Bottom.
+    component StepArrow: AbstractButton {
+        id: arrow
+        property real angle: 0 // 0 = pointing up
+        width: 18
+        height: 18
+        z: 2
+        opacity: hover.hovered || arrow.hovered ? 1 : 0
+        Behavior on opacity { NumberAnimation { duration: 120 } }
+        focusPolicy: Qt.NoFocus
+        ToolTip.visible: hovered
+        ToolTip.delay: 500
+        contentItem: Canvas {
+            id: arrowCanvas
+            rotation: arrow.angle
+            onPaint: {
+                const ctx = getContext("2d")
+                ctx.reset()
+                ctx.fillStyle = arrow.hovered ? Theme.accent : Theme.icon
+                ctx.beginPath()
+                ctx.moveTo(width / 2, 3)
+                ctx.lineTo(width - 3, height - 5)
+                ctx.lineTo(3, height - 5)
+                ctx.closePath()
+                ctx.fill()
+            }
+            Connections {
+                target: arrow
+                function onHoveredChanged() { arrowCanvas.requestPaint() }
+            }
+        }
+        background: null
+    }
+
+    StepArrow {
+        objectName: "viewCubeUp"
+        anchors.top: parent.top
+        anchors.horizontalCenter: parent.horizontalCenter
+        ToolTip.text: qsTr("Turn the view up (over the top)")
+        onClicked: root.stepRequested(-90, 0)
+    }
+    StepArrow {
+        objectName: "viewCubeDown"
+        angle: 180
+        anchors.bottom: parent.bottom
+        anchors.horizontalCenter: parent.horizontalCenter
+        ToolTip.text: qsTr("Turn the view down")
+        onClicked: root.stepRequested(90, 0)
+    }
+    StepArrow {
+        objectName: "viewCubeLeft"
+        angle: -90
+        anchors.left: parent.left
+        anchors.verticalCenter: parent.verticalCenter
+        ToolTip.text: qsTr("Turn the view left")
+        onClicked: root.stepRequested(0, -90)
+    }
+    StepArrow {
+        objectName: "viewCubeRight"
+        angle: 90
+        anchors.right: parent.right
+        anchors.verticalCenter: parent.verticalCenter
+        ToolTip.text: qsTr("Turn the view right")
+        onClicked: root.stepRequested(0, 90)
     }
 
     ToolButton {

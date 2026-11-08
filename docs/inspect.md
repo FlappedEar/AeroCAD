@@ -112,7 +112,7 @@ dialog lists each part with what is wrong, in plain words:
 
 | Check | STL / 3MF / print | STEP |
 |---|---|---|
-| Closed solid (no open edges, every edge shared by two faces) | error | warning |
+| Closed solid (no open edges, every edge shared by two faces) | print: error; ordinary export: warning for an oriented manifold open surface, otherwise error | warning |
 | Consistent, outward normals; no degenerate triangles | error | warning |
 | Exact geometry (B-rep) present | print: warning (STL only) | error |
 | B-rep passes the validity check | warning | warning |
@@ -132,13 +132,14 @@ thinAreaPercent, limit}`.
 
 Before **Export Anyway** writes, the application runs the check again. If the project,
 variant, document, exported part set, or wall limit changed, the updated report needs a
-new confirmation; a failed check writes nothing. GUI STL/3MF exports also require the
-writer's mesh validity check to pass.
+new confirmation; a failed check writes nothing. An ordinary STL/3MF export of an open,
+oriented manifold surface requires explicit warning consent and is not a printable solid.
+The print-export writer continues to reject meshes that are not watertight.
 
 The check also returns an opaque `state` string. Commands `document.export` and
 `document.export_for_print` accept it as optional `expectedState`; a changed project,
-document, effective part IDs, or export mode is rejected before writing. The GUI uses
-this guard and separately binds warning consent to the checked wall limit. The token
+document, effective part IDs, or export mode is rejected before writing. The token does
+not include the wall limit; the GUI separately binds warning consent to that value. It
 is local to the running session and is not a printability certificate.
 
 ### Writing a print-file set

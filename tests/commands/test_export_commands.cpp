@@ -486,23 +486,55 @@ TEST_CASE("document.export_check explains what blocks or weakens an export", "[c
         CHECK_FALSE(off.data.at("parts").at(0).contains("minWall"));
     }
 
-    SECTION("an open mesh cannot be printed; a mesh cannot be STEP")
+    SECTION("an open surface may be exported with a warning but cannot be printed")
     {
+        TempDir dir;
         const auto open = addMeshPart(s, "open", false, 50.0);
-        auto r = s.execute("document.export_check", {{"ids", {open}}, {"format", "stl"}});
+        for (const char* format : {"stl", "3mf"}) {
+            const auto check = s.execute("document.export_check", {{"ids", {open}}, {"format", format}});
+            REQUIRE(check.ok);
+            CHECK(check.data.at("passed") == false);
+            CHECK(check.data.at("canExport") == true);
+            CHECK(check.data.at("errors") == 0);
+            const Json& part = check.data.at("parts").at(0);
+            CHECK(part.at("status") == "warning");
+            CHECK_THAT(part.at("warnings").at(0).get<std::string>(), ContainsSubstring("3 open edges"));
+            CHECK_FALSE(part.contains("minWall"));
+            const std::string path = dir.file(std::string("surface.") + format);
+            REQUIRE(s.execute("document.export", {{"path", path}, {"ids", {open}},
+                                                   {"expectedState", check.data.at("state")}}).ok);
+            CHECK(fs::file_size(core::pathFromUtf8(path)) > 0);
+        }
+        auto r = s.execute("document.export_check", {{"ids", {open}}, {"print", true}});
         REQUIRE(r.ok);
         CHECK(r.data.at("canExport") == false);
         CHECK(r.data.at("errors") == 1);
-        const Json& part = r.data.at("parts").at(0);
-        CHECK(part.at("status") == "error");
-        CHECK_THAT(part.at("errors").at(0).get<std::string>(), ContainsSubstring("3 open edges"));
-        CHECK_FALSE(part.contains("minWall"));
+        const auto print = s.execute("document.export_for_print", {{"ids", {open}}, {"folder", dir.file("print")}});
+        CHECK_FALSE(print.ok);
+        CHECK_THAT(print.error, ContainsSubstring("not every part is a watertight solid"));
+    }
 
+    SECTION("a mesh without exact geometry cannot be STEP")
+    {
         const auto closed = addMeshPart(s, "closed", true, 80.0);
-        r = s.execute("document.export_check", {{"ids", {closed}}, {"format", "step"}});
+        const auto r = s.execute("document.export_check", {{"ids", {closed}}, {"format", "step"}});
         REQUIRE(r.ok);
         CHECK(r.data.at("canExport") == false);
         CHECK_THAT(r.data.at("parts").at(0).at("errors").at(0).get<std::string>(),
                    ContainsSubstring("STEP needs exact geometry"));
+    }
+
+    SECTION("a non-manifold open mesh remains a blocking error")
+    {
+        model::Part part;
+        part.name = "non-manifold";
+        part.mesh = std::make_shared<const core::TriangleMesh>(
+            std::vector<core::Vec3>{{0, 0, 0}, {10, 0, 0}, {0, 10, 0}, {0, -10, 0}, {0, 0, 10}},
+            std::vector<core::TriangleMesh::Triangle>{{0, 1, 2}, {1, 0, 3}, {0, 1, 4}});
+        const auto id = s.document().addPart(std::move(part));
+        const auto r = s.execute("document.export_check", {{"ids", {id}}, {"format", "stl"}});
+        REQUIRE(r.ok);
+        CHECK(r.data.at("canExport") == false);
+        CHECK(r.data.at("parts").at(0).at("status") == "error");
     }
 }

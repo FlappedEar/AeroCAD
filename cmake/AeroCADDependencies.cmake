@@ -59,15 +59,10 @@ endif()
 # --- miniz (3MF zip container) -------------------------------------------------
 find_package(miniz CONFIG QUIET)
 if(NOT miniz_FOUND)
-    message(STATUS "miniz not found, fetching")
-    FetchContent_Declare(miniz
-        URL https://github.com/richgel999/miniz/releases/download/3.0.2/miniz-3.0.2.zip
-        URL_HASH SHA256=ada38db0b703a56d3dd6d57bf84a9c5d664921d870d8fea4db153979fb5332c5
-        DOWNLOAD_EXTRACT_TIMESTAMP ON)
-    FetchContent_GetProperties(miniz)
-    if(NOT miniz_POPULATED)
-        FetchContent_Populate(miniz)
-    endif()
+    # Bundled copy of the 3.0.2 release (miniz.c/miniz.h/LICENSE from miniz-3.0.2.zip,
+    # SHA256 ada38db0...5332c5): the GitHub release download kept failing in CI (HTTP 504).
+    message(STATUS "miniz not found, using third_party/miniz")
+    set(miniz_SOURCE_DIR ${PROJECT_SOURCE_DIR}/third_party/miniz)
     add_library(miniz STATIC ${miniz_SOURCE_DIR}/miniz.c)
     target_include_directories(miniz SYSTEM PUBLIC ${miniz_SOURCE_DIR})
     set_target_properties(miniz PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -89,6 +84,7 @@ endif()
 
 # --- Qt 6 (application only) ---------------------------------------------------
 if(AEROCAD_BUILD_APP)
-    find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Network Qml Quick QuickControls2 Quick3D)
+    # Test: real key presses (through shortcuts) for the --ui-script GUI tests.
+    find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Network Qml Quick QuickControls2 Quick3D Test)
     message(STATUS "Qt ${Qt6_VERSION}")
 endif()

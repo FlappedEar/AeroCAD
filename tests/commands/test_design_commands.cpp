@@ -135,6 +135,25 @@ TEST_CASE("Design commands: move/rotate a body is a timeline step", "[commands][
     CHECK(bounds().min.x == Approx(0).margin(1e-6));
 }
 
+TEST_CASE("Design commands: move scales a body about its centre in the same step", "[commands][cad]")
+{
+    commands::Session s;
+    const auto box = run(s, "feature.box", {{"size", {20, 10, 4}}}).at("id").get<std::uint64_t>();
+    // 150 % about the box centre (10, 5, 2), 90 degrees about Z, then 100 mm along X.
+    run(s, "feature.move",
+        {{"body", box}, {"scale", 1.5}, {"axis", "Z"}, {"angle", 90}, {"translate", {100, 0, 0}}});
+    const auto b = s.design().bodies().at(box).shape.bounds();
+    CHECK(b.min.x == Approx(110 - 7.5).margin(1e-6));
+    CHECK(b.max.x == Approx(110 + 7.5).margin(1e-6));
+    CHECK(b.min.y == Approx(5 - 15).margin(1e-6));
+    CHECK(b.max.y == Approx(5 + 15).margin(1e-6));
+    CHECK(b.min.z == Approx(2 - 3).margin(1e-6));
+    CHECK(s.design().bodies().at(box).shape.volume() == Approx(800 * 1.5 * 1.5 * 1.5));
+    CHECK_FALSE(s.execute("feature.move", {{"body", box}, {"scale", 0}}).ok);
+    run(s, "edit.undo");
+    CHECK(s.design().bodies().at(box).shape.volume() == Approx(800));
+}
+
 TEST_CASE("Design commands: a region selection is dropped when the body's tessellation changes", "[commands][cad]")
 {
     commands::Session s;

@@ -4,7 +4,10 @@
 #include "aerocad/cfd/Settings.hpp"
 #include "aerocad/core/Mesh.hpp"
 
+#include <cstdint>
 #include <filesystem>
+#include <optional>
+#include <string>
 
 namespace aerocad::cfd {
 
@@ -49,6 +52,11 @@ struct CaseInfo {
     core::BoundingBox domain;       ///< Case frame, m.
     double baseCellSize = 0.0;      ///< Background mesh cell size, m.
     std::uint64_t geometryHash = 0; ///< FNV-1a of the written surfaces (reproducibility).
+    /// Fingerprint of the context surface in model coordinates; 0 when the case has no context. A/B
+    /// comparisons need the same surroundings (CAD-84). Empty for cases written before it
+    /// was recorded.
+    std::optional<std::uint64_t> contextHash;
+    std::string openfoam; ///< Engine version the case was written for (case.json "openfoam").
 
     [[nodiscard]] Json toJson() const;
     static CaseInfo fromJson(const Json& json);
