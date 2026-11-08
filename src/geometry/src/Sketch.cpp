@@ -400,10 +400,10 @@ std::vector<SketchCurve> offsetCurves(const std::vector<SketchCurve>& curves, do
                 const double t0 = ac.FirstParameter(), t1 = ac.LastParameter();
                 const double t = reversed ? t1 + (t0 - t1) * s : t0 + (t1 - t0) * s;
                 gp_Pnt p;
-                gp_Vec d;
-                ac.D1(t, p, d);
-                if (tangent != nullptr && d.Magnitude() > 1e-12)
-                    *tangent = (reversed ? -d : d).Normalized();
+                gp_Vec deriv;
+                ac.D1(t, p, deriv);
+                if (tangent != nullptr && deriv.Magnitude() > 1e-12)
+                    *tangent = (reversed ? -deriv : deriv).Normalized();
                 return p;
             };
             auto smooth = [&](const Piece& a, const Piece& b) {
