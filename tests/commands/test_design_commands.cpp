@@ -633,3 +633,39 @@ TEST_CASE("Design commands: a deleted revolve axis line stays missing when lines
     CHECK(tl.at("features")[1].at("status") == "error");
     CHECK(tl.at("features")[1].at("error").get<std::string>().find("deleted") != std::string::npos);
 }
+
+TEST_CASE("Design commands: a deleted axis or path can be picked again (CAD-122 review)", "[commands][cad]")
+{
+    commands::Session s;
+    const Json sk = run(s, "sketch.create",
+                        {{"plane", "XZ"},
+                         {"curves", Json::array({{{"type", "line"}, {"start", {0, -5}}, {"end", {0, 25}}, {"construction", true}},
+                                                 {{"type", "rectangle"}, {"corner", {5, 0}}, {"width", 5}, {"height", 20}}})}});
+    const auto id = sk.at("id").get<std::uint64_t>();
+    const auto rev = run(s, "feature.revolve", {{"sketch", id}, {"axis", {{"line", 0}}}}).at("id").get<std::uint64_t>();
+    run(s, "sketch.delete_curves", {{"sketch", id}, {"curves", {0}}});
+    run(s, "sketch.add_curves",
+        {{"sketch", id}, {"curves", Json::array({{{"type", "line"}, {"start", {0, -5}}, {"end", {0, 25}}, {"construction", true}}})}});
+    // The dialog sends the new axis as a merge patch.
+    run(s, "feature.edit", {{"id", rev}, {"params", {{"axis", {{"line", 4}}}}}});
+    Json tl = run(s, "timeline.list");
+    CHECK(tl.at("features")[1].at("status") == "ok");
+    CHECK_FALSE(tl.at("features")[1].at("params").at("axis").contains("deletedLine"));
+
+    // Sweep: a deleted path curve, then the path sketch picked again (all its curves).
+    const Json path = run(s, "sketch.create",
+                          {{"plane", "XY"},
+                           {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {0, 40}}},
+                                                   {{"type", "line"}, {"start", {50, 0}}, {"end", {50, 40}}}})}});
+    const auto pid = path.at("id").get<std::uint64_t>();
+    const Json prof = run(s, "sketch.create",
+                          {{"plane", "XZ"}, {"curves", Json::array({{{"type", "circle"}, {"center", {0, 0}}, {"radius", 2}}})}});
+    const auto sw = run(s, "feature.sweep",
+                        {{"sketch", prof.at("id")}, {"path", {{"sketch", pid}, {"curves", {0}}}}}).at("id").get<std::uint64_t>();
+    run(s, "sketch.delete_curves", {{"sketch", pid}, {"curves", {0}}});
+    tl = run(s, "timeline.list");
+    CHECK(tl.at("features").back().at("status") == "error");
+    run(s, "feature.edit", {{"id", sw}, {"params", {{"path", {{"sketch", pid}}}}}});
+    tl = run(s, "timeline.list");
+    CHECK(tl.at("features").back().at("status") == "ok");
+}

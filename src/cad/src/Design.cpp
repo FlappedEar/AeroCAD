@@ -274,6 +274,17 @@ void Design::editFeature(FeatureId id, const Json& patch)
     const State before = m_state;
     Feature& f = m_state.features[indexOf(id)];
     f.params.merge_patch(patch);
+    // A newly picked revolve axis or sweep path replaces one marked as deleted (a merge
+    // patch would keep the marker). A path given without curves uses all of its sketch.
+    if (patch.contains("axis") && patch["axis"].is_object() && !patch["axis"].contains("deletedLine") &&
+        f.params["axis"].is_object())
+        f.params["axis"].erase("deletedLine");
+    if (patch.contains("path") && patch["path"].is_object() && !patch["path"].contains("deletedCurves") &&
+        f.params["path"].is_object() && f.params["path"].contains("deletedCurves")) {
+        f.params["path"].erase("deletedCurves");
+        if (!patch["path"].contains("curves"))
+            f.params["path"].erase("curves");
+    }
     regenerateChecked(id, before);
 }
 
