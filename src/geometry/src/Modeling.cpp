@@ -10,6 +10,7 @@
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepAlgoAPI_Splitter.hxx>
 #include <BRepBndLib.hxx>
+#include <BRepClass_FaceClassifier.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepBuilderAPI_MakeSolid.hxx>
@@ -19,6 +20,7 @@
 #include <ShapeFix_Solid.hxx>
 #include <TopoDS_Shell.hxx>
 #include <TopoDS_Solid.hxx>
+#include <gp_Pnt2d.hxx>
 #include <BRepExtrema_DistShapeShape.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
 #include <BRepCheck_Analyzer.hxx>
@@ -845,6 +847,19 @@ Shape pressPull(const Shape& shape, const std::vector<std::size_t>& faceIndices,
             if (!offset.IsDone())
                 throw ModelingError("Press Pull failed: the faces could not be offset by " + std::to_string(distance) + " mm");
             TopoDS_Shape result = offset.Shape();
+            // The offset can come back as a closed shell rather than a solid (a face with
+            // holes in it, for example): close it into a solid.
+            if (!result.IsNull() && !hasSubShapes(result, TopAbs_SOLID) && hasSubShapes(result, TopAbs_SHELL)) {
+                BRepBuilderAPI_MakeSolid make;
+                for (TopExp_Explorer e(result, TopAbs_SHELL); e.More(); e.Next())
+                    make.Add(TopoDS::Shell(e.Current()));
+                if (make.IsDone()) {
+                    ShapeFix_Solid fix;
+                    fix.Init(make.Solid());
+                    fix.Perform();
+                    result = fix.Solid();
+                }
+            }
             if (result.IsNull() || !hasSubShapes(result, TopAbs_SOLID))
                 throw ModelingError("Press Pull: nothing left of the body (distance too large?)");
             result = unify(result);
@@ -857,9 +872,30 @@ Shape pressPull(const Shape& shape, const std::vector<std::size_t>& faceIndices,
             const Shape out = wrapShape(result);
             for (const std::size_t i : faceIndices) {
                 const TopoDS_Face& f = TopoDS::Face(map(static_cast<int>(i) + 1));
+                // A point on the face itself: the middle of its parameter range can lie in a
+                // hole or a cut-away part, so take the grid point nearest the middle that
+                // the face's boundary keeps.
                 BRepAdaptor_Surface surf(f);
-                BRepLProp_SLProps lp(surf, (surf.FirstUParameter() + surf.LastUParameter()) / 2,
-                                     (surf.FirstVParameter() + surf.LastVParameter()) / 2, 1, 1e-6);
+                const double u0 = surf.FirstUParameter(), u1 = surf.LastUParameter();
+                const double v0 = surf.FirstVParameter(), v1 = surf.LastVParameter();
+                std::optional<gp_Pnt2d> uv;
+                double best = 0;
+                constexpr int grid = 17; // odd: the middle itself is tried
+                for (int a = 0; a < grid; ++a)
+                    for (int b = 0; b < grid; ++b) {
+                        const double ta = (a + 0.5) / grid, tb = (b + 0.5) / grid;
+                        const gp_Pnt2d c(u0 + (u1 - u0) * ta, v0 + (v1 - v0) * tb);
+                        const double d = (ta - 0.5) * (ta - 0.5) + (tb - 0.5) * (tb - 0.5);
+                        if (uv && d >= best)
+                            continue;
+                        if (BRepClass_FaceClassifier(f, c, 1e-7).State() == TopAbs_IN) {
+                            uv = c;
+                            best = d;
+                        }
+                    }
+                if (!uv)
+                    continue;
+                BRepLProp_SLProps lp(surf, uv->X(), uv->Y(), 1, 1e-6);
                 if (!lp.IsNormalDefined())
                     continue;
                 gp_Dir n = lp.Normal();

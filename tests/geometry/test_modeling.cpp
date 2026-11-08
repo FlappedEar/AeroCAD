@@ -3,6 +3,7 @@
 #include "aerocad/geometry/Primitives.hpp"
 #include "aerocad/geometry/Sketch.hpp"
 #include "aerocad/geometry/Tessellation.hpp"
+#include "aerocad/geometry/Transform.hpp"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -298,6 +299,21 @@ TEST_CASE("Press Pull moves flat faces in and out", "[geometry][modeling]")
         if (f.type != "plane")
             blend = f.index;
     CHECK_THROWS_WITH(pressPull(rounded, {blend}, 1.0), Catch::Matchers::ContainsSubstring("fillet"));
+}
+
+TEST_CASE("Press Pull on a curved face with windows cut through it", "[geometry][modeling]")
+{
+    // The middle of the face's parameter range (the -X side) lies in a window: the curvature check must
+    // sample a point on the face itself.
+    const auto tube = boolean(makeCylinder(10, 40), translated(makeBox(20, 4, 30), {-20, -2, 5}), BooleanOp::Cut);
+    std::size_t round = 0;
+    for (const auto& f : faces(tube))
+        if (f.type != "plane")
+            round = f.index;
+    const auto grown = pressPull(tube, {round}, 1.0);
+    CHECK(isValid(grown));
+    CHECK(grown.volume() > tube.volume());
+    CHECK(grown.bounds().size().y == Approx(22).epsilon(1e-4));
 }
 
 TEST_CASE("Shell with no open face hollows the solid", "[geometry][modeling]")
