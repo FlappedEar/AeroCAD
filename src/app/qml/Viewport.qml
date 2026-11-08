@@ -310,30 +310,25 @@ Item {
     }
 
     /// After a typed Move or Scale value: when the preview no longer fits the view (the
-    /// camera ends up inside a part scaled up, or the part shrinks to a dot or moves off
-    /// screen), frame it, so the whole part stays visible while it is placed.
+    /// camera ends up inside a part scaled up, the part reaches past an edge, shrinks to a
+    /// dot or moves off screen), frame it, so the whole part stays visible while it is placed.
     function keepPreviewInView() {
         const p = previewSphere()
         if (!p)
             return
         const r = Math.max(p.radius, 1e-6)
+        // The preview's bounding sphere on screen: its centre and its radius in pixels (the
+        // same in both projections: a point one radius to the right of the centre).
         const s = view.mapFrom3DScene(p.center)
-        const onScreen = s.z > 0 && s.x >= 0 && s.y >= 0 && s.x <= width && s.y <= height
-        let fits
-        if (orthographic) {
-            // The zoom is the magnification: compare the preview's size on screen with the
-            // view (bigger than the view, or a dot under 1/20 of it).
-            const half = Math.min(width, height) / 2
-            const px = r * orthoCamera.verticalMagnification
-            fits = px <= half && px >= half / 20
-        } else {
-            const dist = p.center.minus(view.camera.scenePosition).length()
-            const needed = frameDistance(r)
-            fits = dist >= needed * 0.8 && dist <= needed * 20
-        }
-        if (!fits || !onScreen) {
+        const e = view.mapFrom3DScene(p.center.plus(view.camera.right.times(r)))
+        const px = Math.hypot(e.x - s.x, e.y - s.y)
+        const inside = !orthographic && p.center.minus(view.camera.scenePosition).length() < r * 1.1
+        const fits = !inside && s.z > 0 && px >= Math.min(width, height) / 40
+                     && s.x - px >= 0 && s.x + px <= width && s.y - px >= 0 && s.y + px <= height
+        if (!fits) {
             const m = previewPoint(transformTarget.partId, transformTarget.center)
-            frameAround([m.x, m.y, m.z], r)
+            // No 1 mm floor here: a part scaled down to a speck is still shown large enough.
+            frameAround([m.x, m.y, m.z], r, 1e-3)
         }
     }
 
@@ -353,10 +348,11 @@ Item {
 
     /// Frames the area of `radius` (mm) around a model point (a place being worked on), as
     /// fitAll() does: the whole sphere fits also in a narrow window.
-    function frameAround(point, radius) {
+    /// `minRadius` (default 1 mm) keeps a click on a tiny feature from zooming in too far.
+    function frameAround(point, radius, minRadius) {
         // Model (x, y, z) is (x, z, -y) in the Y-up scene.
         cameraInput.pivot.position = Qt.vector3d(point[0], point[2], -point[1])
-        cameraInput.distance = frameDistance(Math.max(radius, 1))
+        cameraInput.distance = frameDistance(Math.max(radius, minRadius ?? 1))
         updateClipping()
     }
 
