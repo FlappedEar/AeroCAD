@@ -582,6 +582,49 @@ void appendCurves(const Eval& ev, const Json& item, std::vector<SketchCurve>& ou
 
 
 /// A solved sketch curve as a single sketch item (line or three-point arc).
+/// Line segments (pairs of points) of a polyline list (pairs) cut into dashes.
+std::vector<core::Vec3> dashed(const std::vector<core::Vec3>& segments, double dash)
+{
+    std::vector<core::Vec3> out;
+    double phase = 0.0; // distance along the current dash period
+    for (std::size_t i = 0; i + 1 < segments.size(); i += 2) {
+        const core::Vec3 a = segments[i], b = segments[i + 1];
+        const double len = (b - a).length();
+        double t = 0.0;
+        while (t < len) {
+            const bool on = phase < dash;
+            const double step = std::min(len - t, (on ? dash : 2 * dash) - phase);
+            if (on) {
+                out.push_back(a + (b - a) * (t / len));
+                out.push_back(a + (b - a) * ((t + step) / len));
+            }
+            t += step;
+            phase += step;
+            if (phase >= 2 * dash - 1e-12)
+                phase = 0.0;
+        }
+    }
+    return out;
+}
+
+/// What a sketch part draws: its curves, construction curves dashed (Fusion).
+std::vector<core::Vec3> sketchSegments(const SketchResult& s)
+{
+    std::vector<SketchCurve> solid, construction;
+    for (const auto& c : s.curves)
+        (c.construction ? construction : solid).push_back(c);
+    if (construction.empty())
+        return geometry::edgeSegments(s.geometry.curves);
+    std::vector<core::Vec3> out = solid.empty() ? std::vector<core::Vec3>{}
+                                                : geometry::edgeSegments(geometry::curveEdges(s.plane, solid));
+    const geometry::Shape edges = geometry::curveEdges(s.plane, construction);
+    const auto box = edges.bounds();
+    const double dash = std::clamp((box.max - box.min).length() / 60.0, 0.4, 4.0);
+    for (const auto& p : dashed(geometry::edgeSegments(edges), dash))
+        out.push_back(p);
+    return out;
+}
+
 Json curveItem(const SketchCurve& c)
 {
     auto pt = [](const Vec2& v) { return Json::array({v.x, v.y}); };
@@ -808,6 +851,92 @@ void Design::moveSketchPoint(FeatureId sketchId, const Json& point, const geomet
         g.params.erase("constraints");
     else
         g.params["constraints"] = constraints;
+    regenerateChecked(sketchId, before);
+}
+
+void Design::setSketchConstruction(FeatureId sketchId, const std::vector<std::size_t>& picked, bool construction)
+{
+    const State before = m_state;
+    Feature& f = m_state.features[indexOf(sketchId)];
+    if (f.type != "sketch")
+        throw DesignError("Feature " + std::to_string(sketchId) + " is not a sketch");
+    if (picked.empty())
+        throw DesignError("Select at least one sketch curve");
+    const Eval ev{*this};
+    const Json items = f.params.value("curves", Json::array());
+    std::vector<std::vector<SketchCurve>> made;
+    std::vector<std::vector<SketchConstraint>> implicit;
+    std::size_t total = 0;
+    for (const auto& item : items) {
+        made.emplace_back();
+        implicit.emplace_back();
+        appendCurves(ev, item, made.back(), implicit.back());
+        total += made.back().size();
+    }
+    const SketchResult* solved = nullptr;
+    if (auto it = m_sketches.find(sketchId); it != m_sketches.end() && it->second.curves.size() == total)
+        solved = &it->second;
+    std::vector<bool> on(total, false);
+    for (const std::size_t i : picked) {
+        if (i >= total)
+            throw DesignError(f.name + " has no curve " + std::to_string(i));
+        on[i] = true;
+    }
+
+    Json newItems = Json::array();
+    Json extra = Json::array();
+    std::size_t first = 0;
+    for (std::size_t k = 0; k < made.size(); ++k) {
+        const std::size_t n = made[k].size();
+        std::size_t count = 0;
+        for (std::size_t j = 0; j < n; ++j)
+            count += on[first + j] ? 1 : 0;
+        if (count == 0 || count == n) {
+            Json item = items[k];
+            if (count == n) {
+                if (construction)
+                    item["construction"] = true;
+                else
+                    item.erase("construction");
+            }
+            newItems.push_back(item);
+            first += n;
+            continue;
+        }
+        // Part of a shape: its curves become single items in the same order (indices stay),
+        // where they are shown now, and its own constraints become explicit ones.
+        for (std::size_t j = 0; j < n; ++j) {
+            Json item = curveItem(solved != nullptr ? solved->curves[first + j] : made[k][j]);
+            const bool c = on[first + j] ? construction : made[k][j].construction;
+            if (c)
+                item["construction"] = true;
+            else
+                item.erase("construction");
+            newItems.push_back(item);
+        }
+        for (const auto& c : implicit[k]) {
+            const char* name = implicitName(c.type);
+            if (name == nullptr)
+                continue;
+            Json curves = Json::array();
+            for (const std::size_t local : c.curves)
+                curves.push_back(first + local);
+            Json e{{"type", name}};
+            if (curves.size() == 1)
+                e["curve"] = curves[0];
+            else
+                e["curves"] = curves;
+            extra.push_back(e);
+        }
+        first += n;
+    }
+    f.params["curves"] = newItems;
+    if (!extra.empty()) {
+        Json constraints = f.params.value("constraints", Json::array());
+        for (const auto& e : extra)
+            constraints.push_back(e);
+        f.params["constraints"] = constraints;
+    }
     regenerateChecked(sketchId, before);
 }
 
@@ -2084,7 +2213,7 @@ void Design::syncDocument(model::Document& document)
     }
     for (const auto& [id, s] : m_sketches) {
         const geometry::Shape profiles = geometry::makeCompound(s.geometry.profiles);
-        auto segments = geometry::edgeSegments(s.geometry.curves);
+        auto segments = sketchSegments(s);
         auto fill = geometry::tessellate(profiles);
         if (const Feature* f = feature(id); f != nullptr && f->params.contains("onSurface") && !segments.empty()) {
             const Json& on = f->params.at("onSurface");

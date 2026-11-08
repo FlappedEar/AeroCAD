@@ -811,3 +811,41 @@ TEST_CASE("Design commands: extrude to object (CAD-125)", "[commands][cad]")
     // Through the box (its top face at z = 15 picked): 10 x 10 x 15.
     CHECK(ex.at("bodies").back().at("volume").get<double>() == Approx(1500).epsilon(1e-6));
 }
+
+TEST_CASE("Design commands: construction curves (CAD-126)", "[commands][cad]")
+{
+    commands::Session s;
+    const Json sk = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "rectangle"}, {"corner", {0, 0}}, {"width", 40}, {"height", 20}},
+                                                 {{"type", "line"}, {"start", {0, 0}}, {"end", {40, 20}}}})}});
+    const auto id = sk.at("id").get<std::uint64_t>();
+    CHECK(sk.at("profiles") == 2); // the diagonal splits the rectangle
+
+    // The diagonal as construction: one profile again; indices do not change.
+    Json r = run(s, "sketch.set_construction", {{"sketch", id}, {"curves", {4}}});
+    CHECK(r.at("profiles") == 1);
+    Json c = run(s, "sketch.curves", {{"sketch", id}});
+    CHECK(c.at("curves")[4].at("construction") == true);
+    CHECK(c.at("curves")[0].at("construction") == false);
+
+    // One side of the rectangle: the shape keeps its constraints (still a rectangle when a
+    // side is dimensioned), and the outline is open: no profile.
+    r = run(s, "sketch.set_construction", {{"sketch", id}, {"curves", {2}}});
+    CHECK(r.at("profiles") == 0);
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    CHECK(c.at("curves").size() == 5);
+    CHECK(c.at("curves")[2].at("construction") == true);
+    run(s, "sketch.add_constraints", {{"sketch", id}, {"constraints", Json::array({{{"type", "length"}, {"curve", 1}, {"value", 30}}})}});
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    const auto& left = c.at("curves")[3].at("points");
+    CHECK(std::abs(left[0][1].get<double>() - left[1][1].get<double>()) == Approx(30).margin(1e-4)); // parallel sides follow
+
+    // Back to normal: the outline closes again; one undo step each.
+    run(s, "sketch.set_construction", {{"sketch", id}, {"curves", {2}}, {"construction", false}});
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    CHECK(c.at("curves")[2].at("construction") == false);
+    run(s, "edit.undo");
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    CHECK(c.at("curves")[2].at("construction") == true);
+}

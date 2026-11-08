@@ -285,6 +285,9 @@ See [cad.md](cad.md) for the timeline and the commands behind the tools.
   removes), click empty space to clear; Delete (Backspace on macOS) or right-click › Delete
   removes the selected curves with their constraints. One side of a rectangle (or polygon,
   slot) can be deleted: the other sides stay as lines that keep their constraints.
+  **Construction** (X, or right-click › Construction): the selected curves become
+  construction geometry, drawn dashed; they take constraints but bound no profile. X with
+  only construction curves selected turns them back. One side of a rectangle can be switched.
   **Drag points** (no tool active): drag an end or centre point of a curve; the solver
   moves what the constraints leave free (a rectangle stays a rectangle, dimensions hold) and
   snaps the point to other points or the grid. One undo step per drag; a point the

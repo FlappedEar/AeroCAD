@@ -781,6 +781,28 @@ void registerSketchCommands(CommandRegistry& r)
               return addedFeature(design(ctx), ctx.document, id);
           });
 
+    r.add({"sketch.set_construction", "Construction",
+           "Turns sketch curves into construction geometry or back (Fusion: Construction, X). Construction "
+           "curves are drawn dashed and bound no profile; they still take constraints. One side of a rectangle, "
+           "polygon or slot can be switched: the shape becomes lines and arcs that keep its constraints. Curve "
+           "indices (sketch.curves) do not change.",
+           objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
+                         {"curves", {{"type", "array"}, {"items", {{"type", "integer"}}}, {"minItems", 1}}},
+                         {"construction", {{"type", "boolean"}, {"description", "true (default): construction; false: normal."}}}},
+                        {"sketch", "curves"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              const auto id = params.at("sketch").get<cad::FeatureId>();
+              const auto curves = params.at("curves").get<std::vector<std::size_t>>();
+              const bool on = params.value("construction", true);
+              designChange(ctx, on ? "Construction" : "Normal Geometry", [&](cad::Design& d) {
+                  (void)sketchFeature(d, id);
+                  d.setSketchConstruction(id, curves, on);
+                  return Json{};
+              });
+              return addedFeature(design(ctx), ctx.document, id);
+          });
+
     r.add({"sketch.move_point", "Drag Sketch Point",
            "Drags a point of a sketch (Fusion: drag sketch geometry): the point goes to `to` (sketch "
            "coordinates) and the solver moves what its constraints leave free; dimensions and other "

@@ -28,6 +28,9 @@ Item {
     signal constraintRemoved(int index)
     /// Delete was asked for the selected curves (indices of sketch.curves).
     signal curvesDeleted(var indices)
+    /// Construction (X) was asked for the selected curves: `on` true turns them into
+    /// construction geometry, false back to normal.
+    signal constructionToggled(var indices, bool on)
     /// A point is being dragged in select mode (CAD-123): `point` is a constraint point
     /// reference, `to` where it is now (sketch coordinates); `done` on release.
     signal pointDragged(var point, var to, bool done)
@@ -111,6 +114,17 @@ Item {
         hoverCurve = -1
         curvesDeleted(list)
         canvas.requestPaint()
+        return true
+    }
+
+    /// Construction (Fusion: X): the selected curves become construction geometry, or
+    /// normal again when all of them already are. False when none is selected.
+    function toggleConstruction() {
+        if (selectedCurves.length === 0)
+            return false
+        const list = selectedCurves.slice().sort((a, b) => a - b)
+        const all = list.every(i => { const c = sketchCurves.find(x => x.index === i); return c && c.construction })
+        constructionToggled(list, !all)
         return true
     }
 
@@ -393,12 +407,14 @@ Item {
             for (let i = 0; i <= 48; ++i)
                 uv.push([ctr[0] + r * Math.cos(a0 + sweep * i / 48), ctr[1] + r * Math.sin(a0 + sweep * i / 48)])
         }
+        ctx.setLineDash(c.construction ? [6, 4] : []) // construction geometry stays dashed
         ctx.beginPath()
         for (let i = 0; i < uv.length; ++i) {
             const q = toScreen(uv[i])
             if (i === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y)
         }
         ctx.stroke()
+        ctx.setLineDash([])
     }
 
     // --- Input ----------------------------------------------------------------------------
@@ -675,7 +691,7 @@ Item {
             Label {
                 text: root.constraintTool ? constraintLayer.hint()
                     : root.tool === "" ? (root.selectedCurves.length > 0
-                        ? qsTr("%n curve(s) selected: Delete removes, Esc clears", "", root.selectedCurves.length)
+                        ? qsTr("%n curve(s) selected: Delete removes, X construction, Esc clears", "", root.selectedCurves.length)
                         : qsTr("Click curves to select (Shift adds), drag points to move them; or pick a tool (L line, R rectangle, C circle, D dimension)"))
                     : root.tool === "line" ? qsTr("Line: click points; Esc (or right-click › End Curve) ends the chain")
                     : root.tool === "rectangle" ? qsTr("Rectangle: drag or click two corners; type width, height")

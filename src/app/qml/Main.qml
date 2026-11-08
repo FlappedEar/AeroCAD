@@ -166,6 +166,13 @@ ApplicationWindow {
             font.bold: true
             onTriggered: viewport.sketchOverlay.deleteSelection()
         }
+        SketchMenuItem {
+            objectName: "constructionCurves"
+            text: qsTr("Construction (X)")
+            icon.source: Theme.iconUrl("line")
+            visible: !sketchMenu.drawing && viewport.sketchOverlay.selectedCurves.length > 0
+            onTriggered: viewport.sketchOverlay.toggleConstruction()
+        }
         MenuSeparator {
             visible: !sketchMenu.drawing && viewport.sketchOverlay.selectedCurves.length > 0
             height: visible ? implicitHeight : 0
@@ -1067,6 +1074,8 @@ ApplicationWindow {
     Action { id: concentricAction; text: qsTr("Concentric"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "concentric"; onTriggered: window.sketchTool_("concentric") }
     Action { id: midpointAction; text: qsTr("Midpoint"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "midpoint"; onTriggered: window.sketchTool_("midpoint") }
     Action { id: collinearAction; text: qsTr("Collinear"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "collinear"; onTriggered: window.sketchTool_("collinear") }
+    // Fusion: Construction (X) switches the selected sketch curves.
+    Action { id: constructionAction; text: qsTr("Construction"); shortcut: "X"; enabled: !!window.activeSketch && viewport.sketchOverlay.selectedCurves.length > 0; onTriggered: viewport.sketchOverlay.toggleConstruction() }
     Action { id: fixAction; text: qsTr("Fix/Unfix"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "fix"; onTriggered: window.sketchTool_("fix") }
     Action { id: slotAction; text: qsTr("Sl&ot"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "slot"; onTriggered: window.sketchTool_("slot") }
 
@@ -1962,6 +1971,11 @@ ApplicationWindow {
                 } else {
                     window.controller.preview("sketch.move_point", args)
                 }
+                window.refreshSketchSnaps()
+            }
+            onSketchConstructionToggled: (list, on) => {
+                if (window.activeSketch)
+                    window.controller.execute("sketch.set_construction", { sketch: window.activeSketch.id, curves: list, construction: on })
                 window.refreshSketchSnaps()
             }
             onSketchCurvesDeleted: list => {

@@ -177,6 +177,11 @@ public:
     /// revolve axis line and the sweep path curves of features that use the sketch.
     /// Throws DesignError (and leaves the design unchanged) when the sketch then fails.
     void deleteSketchCurves(FeatureId sketch, const std::vector<std::size_t>& curves);
+    /// Turns sketch curves (indices of the solved curves) into construction geometry or
+    /// back (Fusion: Construction, X). Construction curves are drawn dashed and bound no
+    /// profile. One side of a rectangle (polygon, slot) can be switched: the shape becomes
+    /// lines and arcs that keep its constraints; curve indices do not change.
+    void setSketchConstruction(FeatureId sketch, const std::vector<std::size_t>& curves, bool construction);
     /// Drags a sketch point (Fusion: drag sketch geometry). `point` is a constraint point
     /// reference ({curve, point: start | end | center}); it is held at `to` (sketch
     /// coordinates) while the solver moves the free degrees of freedom, and the sketch keeps

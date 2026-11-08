@@ -1,0 +1,27 @@
+# CAD-126: X turns the selected sketch curves into construction geometry (Fusion): drawn
+# dashed, no longer bounding profiles; X again turns them back.
+# Run: AeroCAD --ui-script <this file>
+ui.wait(800)
+(() => { const r = controller.execute("sketch.create", { plane: "XY", curves: [{ type: "rectangle", corner: [0, 0], width: 40, height: 20 }, { type: "line", start: [0, 0], end: [40, 20] }] }); if (!r.ok) ui.fail("sketch: " + r.error); if (r.result.profiles !== 2) ui.fail("expected 2 profiles, got " + r.result.profiles) })()
+ui.wait(300)
+(() => { enterSketch(controller.execute("timeline.list").result.features[0].id) })()
+ui.wait(800)
+ui.key("Esc")
+ui.wait(300)
+# Click the diagonal and press X.
+(() => { const o = viewport.sketchOverlay; const p = o.toScreen([20, 10]); const w = o.mapToItem(null, p.x, p.y); ui.click(w.x, w.y) })()
+ui.wait(300)
+(() => { const sel = viewport.sketchOverlay.selectedCurves; if (sel.length !== 1 || sel[0] !== 4) ui.fail("expected the diagonal (curve 4) selected, got " + JSON.stringify(sel)) })()
+ui.key("X")
+ui.wait(500)
+(() => { const r = controller.execute("sketch.curves", { sketch: activeSketch.id }).result; const p = controller.execute("sketch.profiles", { sketch: activeSketch.id }).result; ui.log("construction " + r.curves.map(c => c.construction).join(",") + " profiles " + p.profiles.length); if (!r.curves[4].construction) ui.fail("X did not make the diagonal construction"); if (p.profiles.length !== 1) ui.fail("the construction line still splits the profile") })()
+ui.shot("sketch-construction.png")
+(() => { viewport.sketchOverlay.clearSelection() })()
+ui.wait(300)
+ui.shot("sketch-construction-plain.png")
+(() => { const o = viewport.sketchOverlay; const p = o.toScreen([20, 10]); const w = o.mapToItem(null, p.x, p.y); ui.click(w.x, w.y) })()
+ui.wait(300)
+# X again: normal geometry.
+ui.key("X")
+ui.wait(500)
+(() => { const r = controller.execute("sketch.curves", { sketch: activeSketch.id }).result; if (r.curves[4].construction) ui.fail("second X did not turn the diagonal back") })()
