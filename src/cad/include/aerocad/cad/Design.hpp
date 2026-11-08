@@ -177,6 +177,11 @@ public:
     /// revolve axis line and the sweep path curves of features that use the sketch.
     /// Throws DesignError (and leaves the design unchanged) when the sketch then fails.
     void deleteSketchCurves(FeatureId sketch, const std::vector<std::size_t>& curves);
+    /// Drags a sketch point (Fusion: drag sketch geometry). `point` is a constraint point
+    /// reference ({curve, point: start | end | center}); it is held at `to` (sketch
+    /// coordinates) while the solver moves the free degrees of freedom, and the sketch keeps
+    /// the result. Throws DesignError (design unchanged) when the constraints do not allow it.
+    void moveSketchPoint(FeatureId sketch, const Json& point, const geometry::Vec2& to);
     /// Moves the timeline marker (0 = before the first feature, size() = at the end).
     void setMarker(std::size_t marker);
 

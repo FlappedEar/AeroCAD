@@ -669,3 +669,46 @@ TEST_CASE("Design commands: a deleted axis or path can be picked again (CAD-122 
     tl = run(s, "timeline.list");
     CHECK(tl.at("features").back().at("status") == "ok");
 }
+
+TEST_CASE("Design commands: dragging sketch points (CAD-123)", "[commands][cad][solver]")
+{
+    commands::Session s;
+    const Json sk = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "rectangle"}, {"corner", {0, 0}}, {"width", 40}, {"height", 20}},
+                                                 {{"type", "circle"}, {"center", {80, 0}}, {"radius", 5}}})},
+                         {"constraints", Json::array({{{"type", "radius"}, {"curve", 4}, {"value", 5}}})}});
+    const auto id = sk.at("id").get<std::uint64_t>();
+
+    // The top-right corner of the rectangle goes to (50, 30): it stays a rectangle.
+    run(s, "sketch.move_point", {{"sketch", id}, {"point", {{"curve", 1}, {"point", "end"}}}, {"to", {50, 30}}});
+    Json c = run(s, "sketch.curves", {{"sketch", id}});
+    const auto& right = c.at("curves")[1].at("points");
+    CHECK(right[1][0].get<double>() == Approx(50).margin(1e-4));
+    CHECK(right[1][1].get<double>() == Approx(30).margin(1e-4));
+    CHECK(right[0][0].get<double>() == Approx(50).margin(1e-4)); // still vertical
+    const auto& bottom = c.at("curves")[0].at("points");
+    CHECK(bottom[0][1].get<double>() == Approx(bottom[1][1].get<double>()).margin(1e-6));
+    CHECK(c.at("constraints").size() == 1); // the hold is not kept
+
+    // The circle's centre moves; its radius dimension holds.
+    run(s, "sketch.move_point", {{"sketch", id}, {"point", {{"curve", 4}, {"point", "center"}}}, {"to", {90, 10}}});
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    CHECK(c.at("curves")[4].at("points")[0][0].get<double>() == Approx(90).margin(1e-4));
+    CHECK(c.at("curves")[4].at("radius").get<double>() == Approx(5).margin(1e-6));
+
+    // A fixed point does not move, and nothing changes.
+    run(s, "sketch.add_constraints",
+        {{"sketch", id}, {"constraints", Json::array({{{"type", "fix"}, {"points", Json::array({{{"curve", 0}, {"point", "start"}}})}}})}});
+    const auto bad = s.execute("sketch.move_point",
+                               {{"sketch", id}, {"point", {{"curve", 0}, {"point", "start"}}}, {"to", {-10, -10}}});
+    CHECK_FALSE(bad.ok);
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    CHECK(c.at("curves")[0].at("points")[0][0].get<double>() == Approx(0).margin(1e-6));
+
+    // One undo step per drag.
+    run(s, "edit.undo"); // the fix
+    run(s, "edit.undo"); // the circle drag
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    CHECK(c.at("curves")[4].at("points")[0][0].get<double>() == Approx(80).margin(1e-4));
+}
