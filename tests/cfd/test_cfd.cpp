@@ -809,6 +809,40 @@ TEST_CASE("Quality report from logs and histories", "[cfd]")
     CHECK(bad.status == "warning");
 }
 
+TEST_CASE("Quality report tells an oscillating Cd from a drifting one", "[cfd][quality]")
+{
+    // CAD-168: both fail the 2 % band, but only the drift is "still changing".
+    TempDir tmp;
+    fakeFinishedRun(tmp.path(), 0.8, 1.0);
+    auto coefficients = [&](auto cdAt) {
+        std::ostringstream data;
+        data << "# Time Cd Cl Cs\n";
+        for (int row = 1; row <= 100; ++row) // The fake log ends at 100.
+            data << row << ' ' << cdAt(row) << " 0.1 0.01\n";
+        write(tmp.path() / "postProcessing" / "forceCoeffs" / "0" / "coefficient.dat", data.str());
+        return cfd::assessQuality(tmp.path());
+    };
+    const auto oscillating = coefficients([](int i) { return 0.8 * (1.0 + 0.015 * std::sin(i * 0.9)); });
+    REQUIRE(oscillating.cdFluctuation);
+    REQUIRE(oscillating.cdDrift);
+    CHECK(*oscillating.cdFluctuation > 0.02);
+    CHECK(*oscillating.cdDrift < 0.01);
+    CHECK(oscillating.checks.at("forceStability") == "failed");
+    CHECK(std::any_of(oscillating.warnings.begin(), oscillating.warnings.end(), [](const std::string& w) {
+        return w.find("Cd oscillates by ") != std::string::npos &&
+               w.find("the results are that mean") != std::string::npos;
+    }));
+    CHECK(oscillating.toJson().at("cdDrift").get<double>() < 0.01);
+
+    const auto drifting = coefficients([](int i) { return 0.8 + 0.002 * i; });
+    REQUIRE(drifting.cdDrift);
+    CHECK(*drifting.cdDrift > 0.01);
+    CHECK(drifting.checks.at("forceStability") == "failed");
+    CHECK(std::any_of(drifting.warnings.begin(), drifting.warnings.end(), [](const std::string& w) {
+        return w.find("Cd still changes by more than 2 %") != std::string::npos;
+    }));
+}
+
 TEST_CASE("Quality report never accepts missing convergence evidence", "[cfd][quality]")
 {
     TempDir tmp;

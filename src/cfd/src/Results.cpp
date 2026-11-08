@@ -7,6 +7,7 @@
 #include <charconv>
 #include <cmath>
 #include <fstream>
+#include <iomanip>
 #include <limits>
 #include <locale>
 #include <sstream>
@@ -491,6 +492,7 @@ Json QualityReport::toJson() const
     j["iterations"] = iterations ? Json(*iterations) : Json(nullptr);
     j["continuityError"] = continuityError ? Json(*continuityError) : Json(nullptr);
     j["cdFluctuation"] = cdFluctuation ? Json(*cdFluctuation) : Json(nullptr);
+    j["cdDrift"] = cdDrift ? Json(*cdDrift) : Json(nullptr);
     return j;
 }
 
@@ -649,18 +651,25 @@ QualityReport assessQuality(const fs::path& caseDir)
     // Keep a usable Cd diagnostic even when other required evidence is missing.
     if (const auto* cd = coeffs.column("Cd"); !invalidCoefficients && cd && cd->size() >= 20) {
         const std::size_t start = cd->size() - std::max<std::size_t>(cd->size() / 5, 10);
-        double lo = std::numeric_limits<double>::max(), hi = std::numeric_limits<double>::lowest(), sum = 0;
+        const std::size_t half = start + (cd->size() - start) / 2;
+        double lo = std::numeric_limits<double>::max(), hi = std::numeric_limits<double>::lowest(), sum = 0,
+               firstHalf = 0;
         for (std::size_t i = start; i < cd->size(); ++i) {
             lo = std::min(lo, (*cd)[i]);
             hi = std::max(hi, (*cd)[i]);
             sum += (*cd)[i];
+            if (i < half)
+                firstHalf += (*cd)[i];
         }
         const double mean = sum / static_cast<double>(cd->size() - start);
+        const double drift = std::abs((sum - firstHalf) / static_cast<double>(cd->size() - half) -
+                                      firstHalf / static_cast<double>(half - start));
         if (!std::isfinite(sum) || !std::isfinite(hi - lo)) {
             invalidCoefficients = true;
         } else if (std::abs(mean) > 1e-12) {
             q.cdFluctuation = (hi - lo) / std::abs(mean);
-            invalidCoefficients = !std::isfinite(*q.cdFluctuation);
+            q.cdDrift = drift / std::abs(mean);
+            invalidCoefficients = !std::isfinite(*q.cdFluctuation) || !std::isfinite(*q.cdDrift);
         }
     }
     if (invalidCoefficients) {
@@ -671,6 +680,15 @@ QualityReport assessQuality(const fs::path& caseDir)
     } else if (!q.cdFluctuation) {
         record("forceStability", "missing",
                "force coefficients: Cd is too close to zero to assess relative fluctuation");
+    } else if (*q.cdFluctuation > 0.02 && q.cdDrift && *q.cdDrift < 0.01) {
+        // CAD-168: a band of more than 2 % without a drift is an oscillation around a
+        // steady mean, which is what the results report; the band still fails the check.
+        std::ostringstream t;
+        t.imbue(std::locale::classic());
+        t << std::fixed << std::setprecision(1) << "Cd oscillates by " << *q.cdFluctuation * 100.0
+          << " % (more than 2 %) over the last 20 % of the iterations around a steady mean (drift "
+          << *q.cdDrift * 100.0 << " %); the results are that mean";
+        record("forceStability", "failed", t.str());
     } else if (*q.cdFluctuation > 0.02) {
         record("forceStability", "failed",
                "Cd still changes by more than 2 % over the last 20 % of the iterations");

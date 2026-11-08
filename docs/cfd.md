@@ -345,7 +345,11 @@ sampling is supported. Numerical quality is assessed separately in the quality r
 - residuals: all final initial residuals must meet the existing `external-flow-v1` targets:
   p below 1e-4 and Ux, Uy, Uz, k and omega below 1e-5,
 - force history: at least 20 complete, finite Cd/Cl/Cs samples; band of Cd over the last
-  20 % of the iterations (at least 10 samples; warning above 2 %).
+  20 % of the iterations (at least 10 samples; warning above 2 %). The report also gives the drift
+  `cdDrift`, the change of the mean of Cd between the two halves of that window. A band
+  above 2 % with a drift below 1 % is reported as an oscillation around a steady mean
+  (the averaged results are that mean) rather than as Cd still changing; it still fails
+  the check.
 
 The quality report's `checks` object records `passed`, `failed` or `missing` for each
 required check. Status is `ok` only when every check passed, `warning` when any failed,
