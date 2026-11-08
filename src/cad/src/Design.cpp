@@ -976,10 +976,14 @@ void Design::evaluateFeature(const Feature& f)
         else
             m_bodies.at(targetId).shape = result;
     } else if (f.type == "move") {
-        // Fusion: Modify > Move/Copy (M). Rotates the body about an axis through `center`
-        // (default: the centre of its bounding box), then translates it.
+        // Fusion: Modify > Move/Copy (M). Scales the body uniformly and rotates it about an
+        // axis through `center` (default: the centre of its bounding box), then translates it.
         Body& body = bodyRef(required(p, "body"));
         core::Affine tf;
+        const core::Vec3 c = has(p, "center") ? ev.vec3(p.at("center")) : body.shape.bounds().center();
+        const double factor = ev.num(p, "scale", 1.0);
+        if (!std::isfinite(factor) || factor < geometry::kMinScaleFactor || factor > geometry::kMaxScaleFactor)
+            throw DesignError("scale must be between 0.000001 and 1000000");
         const double angle = ev.num(p, "angle", 0.0);
         if (std::abs(angle) > 1e-12) {
             core::Vec3 axis{0, 0, 1};
@@ -997,12 +1001,13 @@ void Design::evaluateFeature(const Feature& f)
             }
             if (axis.length() < 1e-12)
                 throw DesignError("Rotation axis is zero");
-            const core::Vec3 c = has(p, "center") ? ev.vec3(p.at("center")) : body.shape.bounds().center();
             const core::Mat3 rot = core::Mat3::rotation(axis.normalized(), angle * std::numbers::pi / 180.0);
             tf = core::Affine{rot, c - rot * c};
         }
         if (has(p, "translate"))
             tf = core::Affine::translationBy(ev.vec3(p.at("translate"))).after(tf);
+        if (factor != 1.0)
+            body.shape = geometry::scaled(body.shape, factor, c);
         body.shape = geometry::transformed(body.shape, tf);
     } else if (f.type == "mirror" || f.type == "rectangular_pattern" || f.type == "circular_pattern") {
         // Fusion: Mirror, Rectangular Pattern, Circular Pattern of a body. "join" (default)

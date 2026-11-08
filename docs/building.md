@@ -5,7 +5,9 @@ Qt 6.4+ with Qt Quick 3D and Qt Shader Tools (CI uses Qt 6.8), Open CASCADE 7.6+
 (CI uses 8.0 from vcpkg).
 
 The small libraries (nlohmann_json, pugixml, miniz, Catch2) are taken from the system or
-vcpkg if present, otherwise CMake downloads them (FetchContent).
+vcpkg if present, otherwise CMake downloads them (FetchContent). miniz is the exception: a
+copy of its 3.0.2 release is bundled in `third_party/miniz` (MIT licence), because its
+GitHub download kept failing in CI.
 
 ## Windows 11 x64
 

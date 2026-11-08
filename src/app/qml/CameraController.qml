@@ -114,8 +114,10 @@ Item {
         const before = Qt.quaternion(r.scalar, r.x, r.y, r.z)
         // The model follows the pointer; the preference turns that around.
         const s = invertOrbit ? -orbitSpeed : orbitSpeed
-        yaw -= dx * s
-        pitch = Math.max(-90, Math.min(90, pitch - dy * s))
+        // Free orbit: no stop at the top or the bottom, the view goes over the pole. Upside
+        // down the world's up points down on screen, so turning about it goes the other way.
+        yaw -= dx * s * (upright() ? 1 : -1)
+        pitch = wrapAngle(pitch - dy * s)
         if (orbitAroundPoint) {
             // Turn the whole camera rig (pivot + camera) by the same rotation around the
             // centre, so the point under the pointer stays put.
@@ -167,9 +169,32 @@ Item {
         return Math.pow(zoomStep, invertZoom ? angle : -angle)
     }
 
+    /// Angle in (-180, 180].
+    function wrapAngle(a) {
+        let w = ((a + 180) % 360 + 360) % 360 - 180
+        return w === -180 ? 180 : w
+    }
+
+    /// False while the view is upside down (orbited over the top or the bottom).
+    function upright() {
+        return Math.cos(pitch * Math.PI / 180) >= -1e-9
+    }
+
+    /// Turns the view by 90-degree steps as the ViewCube arrows do: dPitch < 0 looks more
+    /// from above (over the top when already there), dYaw > 0 looks more from the right.
+    function stepView(dPitch, dYaw) {
+        viewAnimation.stop()
+        _zoomAnchor = null
+        pitch = wrapAngle(pitch)
+        pitchAnimation.to = pitch + dPitch
+        yawAnimation.to = yaw + dYaw * (upright() ? 1 : -1)
+        viewAnimation.start()
+    }
+
     /// Rotates to the given view along the shortest path.
     function animateTo(targetPitch, targetYaw) {
         viewAnimation.stop()
+        pitch = wrapAngle(pitch)
         let delta = (targetYaw - yaw) % 360
         if (delta > 180)
             delta -= 360
