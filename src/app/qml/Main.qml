@@ -252,6 +252,27 @@ ApplicationWindow {
             zoomToPart(pid)
     }
 
+    /// Parts that Copy takes: bodies and imported parts, not sketches or planes.
+    function canCopyPart(id) {
+        const kind = controller.partInfo(id).kind
+        return kind === "body" || kind === "imported"
+    }
+
+    /// Paste: a copy of the copied part, selected and open in Move / Rotate / Scale (Fusion).
+    function pastePart() {
+        viewport.finishTransform(true)
+        const r = controller.execute("part.duplicate", { id: copiedPartId })
+        if (!r.ok) {
+            controller.showStatus(qsTr("Nothing to paste: %1").arg(r.error))
+            copiedPartId = 0
+            return
+        }
+        selectPart(r.result.id)
+        startTransform(r.result.id)
+        if (viewport.transformActive)
+            viewport.transformPasted = true
+    }
+
     /// Grow / shrink / invert the area selected on the selected scan.
     function changeSelection(command, params) {
         const info = selectedInfo()
@@ -801,7 +822,7 @@ ApplicationWindow {
         onTriggered: {
             // Undo inside Move / Rotate / Scale drops the preview first (as Fusion's Esc).
             if (viewport.transformActive)
-                viewport.finishTransform(false)
+                viewport.cancelTransform()
             else
                 window.controller.execute("edit.undo")
         }
@@ -847,6 +868,26 @@ ApplicationWindow {
         text: qsTr("&Zoom to Selection")
         enabled: !!window.selectedPartId
         onTriggered: window.zoomToSelection(0)
+    }
+    // Copy / Paste a part (Fusion: Ctrl+C / Ctrl+V; the pasted copy opens in Move, as there).
+    // Text fields keep Ctrl+C / Ctrl+V for their text.
+    property var copiedPartId: 0
+    Action {
+        id: copyAction
+        text: qsTr("&Copy")
+        shortcut: StandardKey.Copy
+        enabled: !!window.selectedPartId && !window.activeSketch && window.canCopyPart(window.selectedPartId)
+        onTriggered: {
+            window.copiedPartId = window.selectedPartId
+            window.controller.showStatus(qsTr("Copied %1: Ctrl+V pastes it").arg(window.controller.partInfo(window.copiedPartId).name))
+        }
+    }
+    Action {
+        id: pasteAction
+        text: qsTr("&Paste")
+        shortcut: StandardKey.Paste
+        enabled: !!window.copiedPartId && !window.activeSketch
+        onTriggered: window.pastePart()
     }
     Action {
         id: zoomInAction
@@ -1035,6 +1076,7 @@ ApplicationWindow {
         window.partOnSurfaceSketch = null
         window.finishSketch()
         window.selectPart(0)
+        window.copiedPartId = 0 // part ids restart in the next project: never paste another part
         closeToolPanels()
         scanPanel.reset()
         heatMapPanel.result = null
@@ -1119,7 +1161,7 @@ ApplicationWindow {
                 return
             }
             if (viewport.transformActive) {
-                viewport.finishTransform(false)
+                viewport.cancelTransform()
                 return
             }
             if (viewport.leaveSelectionTool())
@@ -1199,6 +1241,9 @@ ApplicationWindow {
             title: qsTr("&Edit")
             MenuItem { action: undoAction }
             MenuItem { action: redoAction }
+            MenuSeparator {}
+            MenuItem { action: copyAction }
+            MenuItem { action: pasteAction }
             MenuSeparator {}
             MenuItem { action: visibilityAction }
             MenuItem { action: deleteAction }

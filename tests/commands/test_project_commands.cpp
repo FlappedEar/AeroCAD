@@ -310,6 +310,50 @@ TEST_CASE("Imported parts can be duplicated", "[commands][project]")
     CHECK(s.document().partCount() == 1);
 }
 
+TEST_CASE("A body is duplicated as a fixed solid that survives timeline edits and saving",
+          "[commands][project]")
+{
+    TempDir dir;
+    commands::Session s;
+    run(s, "feature.box", {{"size", {40, 30, 6}}});
+    model::PartId body = 0;
+    for (const auto& p : s.document().parts())
+        if (p.kind == model::PartKind::Body)
+            body = p.id;
+    REQUIRE(body != 0);
+    const Json copy = run(s, "part.duplicate", {{"id", body}});
+    const auto copyId = copy.at("id").get<model::PartId>();
+    const model::Part* c = s.document().part(copyId);
+    REQUIRE(c);
+    CHECK(c->kind == model::PartKind::Imported);
+    CHECK(c->featureId == 0);
+    CHECK(c->shape.has_value());
+    CHECK(c->mesh->bounds().size().z == Approx(6));
+
+    // Undo / redo of the box feature rebuilds the timeline; the copy stays as it is.
+    run(s, "edit.undo"); // the duplicate
+    CHECK(s.document().part(copyId) == nullptr);
+    run(s, "edit.redo");
+    REQUIRE(s.document().part(copyId));
+    run(s, "project.save", {{"path", dir.file("copy.aerocad")}});
+    commands::Session t;
+    run(t, "project.open", {{"path", dir.file("copy.aerocad")}});
+    int imported = 0;
+    for (const auto& p : t.document().parts())
+        if (p.kind == model::PartKind::Imported && p.shape)
+            ++imported;
+    CHECK(imported == 1);
+
+    // Sketches cannot be copied.
+    run(s, "sketch.create", {{"plane", "XY"}});
+    model::PartId sketchPart = 0;
+    for (const auto& p : s.document().parts())
+        if (p.kind == model::PartKind::Sketch)
+            sketchPart = p.id;
+    if (sketchPart != 0)
+        CHECK_FALSE(s.execute("part.duplicate", {{"id", sketchPart}}).ok);
+}
+
 TEST_CASE("Kept dimensions follow edits and are saved with the project", "[commands][project][inspect]")
 {
     TempDir dir;

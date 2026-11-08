@@ -59,7 +59,7 @@ Pane {
         Keys.onEscapePressed: {
             typed = false
             text = root.fmt(value, decimals)
-            root.viewport.finishTransform(false)
+            root.viewport.cancelTransform()
         }
     }
 
@@ -185,7 +185,7 @@ Pane {
             Item { Layout.fillWidth: true }
             Button {
                 text: qsTr("Cancel")
-                onClicked: root.viewport.finishTransform(false)
+                onClicked: root.viewport.cancelTransform()
             }
             Button {
                 text: qsTr("Done")

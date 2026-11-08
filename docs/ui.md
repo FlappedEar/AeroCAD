@@ -111,6 +111,14 @@ The menu lists only what can be done with what is under the pointer:
   **New sketch**.
 - **In a sketch**: the sketch menu (see Sketch below).
 
+## Copy and paste
+
+**Edit › Copy** (Ctrl+C) and **Paste** (Ctrl+V) copy the selected body or scan, as in Fusion:
+the copy is added, selected and opened in Move / Rotate / Scale, so it can be dragged into
+place and applied with Enter. Esc right after pasting removes the copy again. A body of the
+timeline is copied as a fixed solid (its shape, not its features). Sketches and planes are
+not copied. In a text field Ctrl+C / Ctrl+V copy and paste text.
+
 ## Move / Rotate / Scale
 
 **Move / Rotate / Scale** (SOLID › MODIFY, MESH › PREPARE, MESH › Scale, right-click menu,
@@ -187,6 +195,7 @@ Qt maps Ctrl to Command and Alt to Option on macOS, so "Ctrl+Alt+V" is Option+Co
 | Fit all | F6 | F6 | Fusion lists F6 "Zoom to Fit" for the Electronics workspace |
 | Zoom in / out (towards the view centre) | Ctrl++ / Ctrl+- | Cmd++ / Cmd+- | yes (Fusion lists them for Windows) |
 | Move / Rotate / Scale the selected part | M | M | yes (Move/Copy) |
+| Copy / paste a part (the copy opens in Move; Esc pastes nothing) | Ctrl+C / Ctrl+V | Cmd+C / Cmd+V | yes |
 | Grow / shrink the area selected on a scan | Shift+Up / Shift+Down | Shift+Up / Shift+Down | yes (Direct Mesh) |
 | Invert the area selected on a scan | Alt+N | Option+N | yes (Direct Mesh) |
 | Export selected / export all visible | Ctrl+E / Ctrl+Shift+E | Cmd+E / Cmd+Shift+E | no (Fusion has no export key) |
@@ -223,7 +232,7 @@ have no shortcut (Fusion's list has no Save As).
 Fusion keys kept free because AeroCAD has no such command yet, so that they keep their
 Fusion meaning when the command comes: Q (Press Pull), S (toolbox search), A (Appearance),
 J / Shift+J (Joint), T (Trim), O (Offset), P (Project), X (construction line),
-Ctrl+C / Ctrl+V / Ctrl+X (copy, paste, cut), Ctrl+B (Compute All). Source: Autodesk's
+Ctrl+X (cut), Ctrl+B (Compute All). Source: Autodesk's
 [Fusion keyboard shortcuts reference](https://help.autodesk.com/cloudhelp/ENU/Fusion-GetStarted/files/GUID-F0491540-0324-470A-B651-2238D0EFAC30.htm)
 (checked 2026-11-08).
 
