@@ -547,14 +547,20 @@ Pane {
     /// The name field lost focus. A refresh rebuilding the row hands it to the new field; a
     /// click elsewhere (another field, the view) applies the name, as in the Browser (CAD-108).
     function renameFocusLeft() {
+        // Only the run whose field lost the focus: a click on another run's ✎ has already
+        // applied it and opened the other one (startRename).
+        const id = renamingRun
         Qt.callLater(() => {
             const f = root.Window.activeFocusItem
-            if (!renamingRun || !f || (f.objectName || "").indexOf("runRenameField_") === 0)
+            if (!id || renamingRun !== id || !f || (f.objectName || "").indexOf("runRenameField_") === 0)
                 return
-            renameRun(renamingRun, renameText)
+            renameRun(id, renameText)
         })
     }
     function startRename(run) {
+        // Switching to another run applies the pending edit, like any other click elsewhere.
+        if (renamingRun && renamingRun !== run.id)
+            renameRun(renamingRun, renameText)
         renameText = run.source.label || ""
         renameCursor = null
         renamingRun = run.id
@@ -1290,6 +1296,11 @@ Pane {
                                 objectName: "renameButton_" + runRow.modelData.id
                                 visible: root.renamingRun !== runRow.modelData.id
                                 text: "✎"
+                                // Keeps the focus in an open name field while pressed (as on
+                                // macOS), so the click reaches startRename, which applies that
+                                // name first, instead of the field applying it on press and
+                                // rebuilding the list under the button.
+                                focusPolicy: Qt.NoFocus
                                 ToolTip.visible: hovered
                                 ToolTip.text: qsTr("Rename run")
                                 onClicked: root.startRename(runRow.modelData)
