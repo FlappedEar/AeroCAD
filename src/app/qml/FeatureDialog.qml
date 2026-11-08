@@ -106,44 +106,36 @@ Pane {
     /// Cache of sizeArrow(): {key, place}. Mutated in place, not a binding dependency.
     readonly property var sizeArrowPlace: ({ key: "", place: null })
 
+    /// Params of body.edges / body.faces for the picked body: when editing a feature, the
+    /// body as it was before it (the picks were made there; Fusion rolls back the same way).
+    function bodyQuery(extra) {
+        const q = Object.assign({ body: values.body }, extra)
+        if (editId)
+            q.before = editId
+        return q
+    }
+
     /// {base, direction} of the size arrow for the pick at `point`, or null.
     function sizeArrowAt(point) {
         const v3 = a => Qt.vector3d(a[0], a[1], a[2])
         const arr = q => [q.x, q.y, q.z]
         if (type === "shell") {
-            const r = controller.execute("body.faces", { body: values.body })
-            if (!r.ok || r.result.faces.length === 0)
+            // The removed face nearest the pick, with its normal at the pick (curved faces too).
+            const r = controller.execute("body.faces", bodyQuery({ point: point }))
+            if (!r.ok || !r.result.nearest || !r.result.nearest.normal)
                 return null
-            const p = v3(point)
-            let best = null, bestD = Infinity
-            for (const f of r.result.faces) {
-                const n = v3(f.normal)
-                const d = Math.abs(n.dotProduct(p.minus(v3(f.center)))) + 1e-3 * p.minus(v3(f.center)).length()
-                if (d < bestD) { bestD = d; best = f }
-            }
-            return { base: point, direction: arr(v3(best.normal).times(-1).normalized()) }
+            return { base: point, direction: arr(v3(r.result.nearest.normal).times(-1).normalized()) }
         }
-        const r = controller.execute("body.edges", { body: values.body })
-        if (!r.ok || r.result.edges.length === 0)
+        const r = controller.execute("body.edges", bodyQuery({ point: point }))
+        if (!r.ok || !r.result.nearest)
             return null
-        const p = v3(point)
-        const segDist = (a, b) => {
-            const ab = b.minus(a)
-            const l2 = ab.dotProduct(ab)
-            const t = l2 > 0 ? Math.max(0, Math.min(1, p.minus(a).dotProduct(ab) / l2)) : 0
-            return p.minus(a.plus(ab.times(t))).length()
-        }
-        let edge = null, edgeD = Infinity
-        for (const e of r.result.edges) {
-            const d = Math.min(segDist(v3(e.start), v3(e.middle)), segDist(v3(e.middle), v3(e.end)))
-            if (d < edgeD) { edgeD = d; edge = e }
-        }
+        const edge = r.result.edges[r.result.nearest.index]
         const mid = v3(edge.middle)
         const along = v3(edge.end).minus(v3(edge.start))
         const dirAlong = along.length() > 1e-9 ? along.normalized() : Qt.vector3d(0, 0, 0)
         // The two faces whose planes hold the edge (nearest first): the arrow goes against
         // the sum of their normals, into the corner.
-        const fr = controller.execute("body.faces", { body: values.body })
+        const fr = controller.execute("body.faces", bodyQuery({}))
         const faces = fr.ok ? fr.result.faces : []
         const scale = Math.max(1e-3, along.length())
         const holding = faces.filter(f => {
@@ -340,6 +332,9 @@ Pane {
     /// `featureId`, to edit an existing one with its current params.
     function open(featureType, initial, featureId) {
         refreshTimeline()
+        // Earlier features may have changed the body since the arrow was last placed.
+        sizeArrowPlace.key = ""
+        sizeArrowPlace.place = null
         const s = specs[featureType]
         if (!s)
             return false

@@ -39,3 +39,18 @@ ui.shot("shell-arrow-dragged.png")
 ui.wait(800)
 (() => { const tl = controller.execute("timeline.list").result; const f = tl.features.find(x => x.type === "shell"); if (!f || f.status !== "ok") ui.fail("no shell step: " + JSON.stringify(f)); const t = Number(f.params.thickness), r = 6; const b = tl.bodies.slice(-1)[0]; const rounded = 40 * 30 * 20 - 40 * r * r * (1 - Math.PI / 4); const section = (30 - 2 * t) * (20 - t) - ((r - t) * r - Math.PI * (r - t) * (r - t) / 4); const want = rounded - (40 - 2 * t) * section; ui.log("shell t " + t + " volume " + b.volume.toFixed(2) + ", want " + want.toFixed(2)); if (Math.abs(b.volume - want) > 1e-3 * want) ui.fail("the shell does not have the dragged thickness") })()
 ui.shot("shell-arrow-done.png")
+# Editing the fillet: the arrow is on the picked edge of the body before the fillet (Fusion
+# rolls back), and after an earlier step changes the body it follows the resized edge
+# (Codex on PR #125: not where it was placed last time).
+(() => { const tl = controller.execute("timeline.list").result; const f = tl.features.find(x => x.type === "fillet"); editFeature(f) })()
+ui.wait(800)
+(() => { const a = viewport.distanceArrow; const k = Math.SQRT1_2; ui.log("edited fillet arrow " + JSON.stringify(a)); if (!a || Math.abs(a.base[0] - 20) > 1e-6 || Math.abs(a.base[1]) > 1e-6 || Math.abs(a.base[2] - 20) > 1e-6) ui.fail("edited fillet: arrow not on the middle of the picked edge"); if (Math.abs(a.direction[1] - k) > 1e-6 || Math.abs(a.direction[2] + k) > 1e-6) ui.fail("edited fillet: the arrow does not point into the corner") })()
+(() => { featureDialog.close() })()
+ui.wait(300)
+(() => { const tl = controller.execute("timeline.list").result; const box = tl.features.find(x => x.type === "box"); const r = controller.execute("feature.edit", { id: box.id, params: { size: [60, 30, 20] } }); if (!r.ok) ui.fail("box edit: " + r.error) })()
+ui.wait(800)
+(() => { const tl = controller.execute("timeline.list").result; const f = tl.features.find(x => x.type === "fillet"); editFeature(f) })()
+ui.wait(800)
+(() => { const a = viewport.distanceArrow; ui.log("reopened fillet arrow " + JSON.stringify(a)); if (!a || Math.abs(a.base[0] - 30) > 1e-6 || Math.abs(a.base[1]) > 1e-6 || Math.abs(a.base[2] - 20) > 1e-6) ui.fail("reopened fillet after the box grew: arrow not on the middle x = 30 of the longer edge") })()
+(() => { const tl = controller.execute("timeline.list").result; if (tl.marker !== undefined && tl.marker !== tl.features.length) ui.fail("placing the arrow moved the timeline marker: " + tl.marker) })()
+(() => { featureDialog.close() })()

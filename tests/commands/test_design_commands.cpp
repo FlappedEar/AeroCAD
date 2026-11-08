@@ -7,6 +7,7 @@
 #include <cmath>
 #include <numbers>
 #include <set>
+#include <utility>
 
 using namespace aerocad;
 using commands::Json;
@@ -1113,4 +1114,49 @@ TEST_CASE("Design commands: project body edges into a sketch (CAD-126)", "[comma
     CHECK(std::hypot(ends[0][0].get<double>() - ends[1][0].get<double>(), ends[0][1].get<double>() - ends[1][1].get<double>()) ==
           Approx(20).margin(1e-6));
     CHECK(c.at("degreesOfFreedom") == 0);
+}
+
+TEST_CASE("Design commands: body.faces gives the nearest face and its normal at a point", "[commands][cad]")
+{
+    // Codex on PR #125: on a cylinder, a pick on the side opposite the face's parameter
+    // middle is nearer the caps' planes than the side's tangent plane there.
+    commands::Session s;
+    run(s, "feature.cylinder", {{"center", {0, 0, 0}}, {"radius", 10}, {"height", 20}});
+    const double k = std::sqrt(0.5);
+    for (const auto& [px, py] : {std::pair{10.0, 0.0}, std::pair{-10.0, 0.0}, std::pair{0.0, -10.0},
+                                 std::pair{10 * k, 10 * k}}) {
+        const Json r = run(s, "body.faces", {{"body", "Body1"}, {"point", {px, py, 10}}});
+        const auto& faces = r.at("faces");
+        const auto idx = r.at("nearest").at("index").get<std::size_t>();
+        CHECK(faces.at(idx).at("type").get<std::string>() == "cylinder");
+        const auto& n = r.at("nearest").at("normal");
+        CHECK(n[0].get<double>() == Approx(px / 10).margin(1e-6));
+        CHECK(n[1].get<double>() == Approx(py / 10).margin(1e-6));
+        CHECK(n[2].get<double>() == Approx(0).margin(1e-6));
+    }
+    const Json top = run(s, "body.faces", {{"body", "Body1"}, {"point", {3, 2, 20}}});
+    CHECK(top.at("nearest").at("normal")[2].get<double>() == Approx(1).margin(1e-9));
+    CHECK_FALSE(run(s, "body.faces", {{"body", "Body1"}}).contains("nearest"));
+}
+
+TEST_CASE("Design commands: body.edges / body.faces before a feature see the rolled-back body", "[commands][cad]")
+{
+    // The size arrow of an edited fillet is placed on the body as it was before the fillet.
+    commands::Session s;
+    run(s, "feature.box", {{"corner", {0, 0, 0}}, {"size", {40, 30, 20}}});
+    const Json fillet =
+        run(s, "feature.fillet", {{"body", "Body1"}, {"edges", Json::array({{{"point", {28, 0, 20}}}})}, {"radius", 6}});
+    const auto filletId = fillet.at("id").get<std::uint64_t>();
+    CHECK(run(s, "body.edges", {{"body", "Body1"}}).at("edges").size() > 12);
+    const Json before = run(s, "body.edges", {{"body", "Body1"}, {"before", filletId}, {"point", {28, 0, 20}}});
+    CHECK(before.at("edges").size() == 12);
+    const auto& e = before.at("edges").at(before.at("nearest").at("index").get<std::size_t>());
+    CHECK(e.at("middle")[0].get<double>() == Approx(20));
+    CHECK(e.at("middle")[1].get<double>() == Approx(0).margin(1e-9));
+    CHECK(e.at("middle")[2].get<double>() == Approx(20));
+    CHECK(run(s, "body.faces", {{"body", "Body1"}, {"before", filletId}}).at("faces").size() == 6);
+    // The design itself is untouched: still filleted, marker at the end, nothing to undo added.
+    const double pi = std::numbers::pi;
+    CHECK(s.design().bodies().begin()->second.shape.volume() == Approx(24000 - 40 * 36 * (1 - pi / 4)).epsilon(1e-6));
+    CHECK(s.design().marker() == s.design().features().size());
 }

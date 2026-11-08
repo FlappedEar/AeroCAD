@@ -112,7 +112,7 @@ rebuilding, AeroCAD reports the problem; Undo restores the previous source.
 | `feature.edit` / `rename` / `suppress` / `delete` | timeline context menu | edit = JSON merge patch of params |
 | `timeline.list`, `timeline.set_marker` | timeline | |
 | `parameter.set` / `remove` | Change Parameters | |
-| `body.faces`, `body.edges` | | for picking by index or point |
+| `body.faces`, `body.edges` | | for picking by index or point; `point` adds the nearest edge / face (and the face normal there), `before` lists the body as it is before a feature (rolled back, as when editing it) |
 
 Sketch curves: `line {start, end}`, `rectangle {corner, width, height | opposite}`,
 `center_rectangle {center, width, height}`, `circle {center, radius | diameter}`,
