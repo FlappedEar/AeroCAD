@@ -47,8 +47,10 @@
 #include <TopoDS.hxx>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <limits>
 #include <string>
 
@@ -284,6 +286,15 @@ void addImages(Algo& algo, const TopoDS_Shape& shape, TopTools_MapOfShape& into)
 TopoDS_Shape filletedFin(const TopTools_ListOfShape& blanks, const TopoDS_Shape& surface, const gp_Vec& up,
                          const gp_Vec& across, double radius, const Handle(Geom_Surface)& surf)
 {
+    // Diagnostic checkpoint only: save construction stages without changing inputs.
+    static std::atomic<unsigned> probeCounter{0};
+    const char* probeDirectory = std::getenv("AEROCAD_CAD95_STAGE_DIR");
+    const std::string probePrefix = probeDirectory == nullptr ? std::string() :
+        std::string(probeDirectory) + "/fin-" + std::to_string(probeCounter.fetch_add(1));
+    const auto capture = [&](const char* label, const TopoDS_Shape& shape) {
+        if (!probePrefix.empty() && !BRepTools::Write(shape, (probePrefix + "-" + label + ".brep").c_str()))
+            throw OffsetError("Could not write CAD-95 diagnostic stage");
+    };
     // A frame on the surface under the fin: `a` across its thickness, `b` along its chord.
     gp_Vec a = across - up * across.Dot(up);
     if (a.Magnitude() < 1e-9)
@@ -354,6 +365,7 @@ TopoDS_Shape filletedFin(const TopTools_ListOfShape& blanks, const TopoDS_Shape&
     fuse.Build();
     if (!fuse.IsDone() || fuse.HasErrors())
         throw OffsetError("Joining the fin to the surface for the root fillet failed");
+    capture("fuse", fuse.Shape());
     TopTools_MapOfShape topImages, finImages;
     addImages(fuse, topFace, topImages);
     for (TopTools_ListIteratorOfListOfShape it(blanks); it.More(); it.Next())
@@ -383,10 +395,12 @@ TopoDS_Shape filletedFin(const TopTools_ListOfShape& blanks, const TopoDS_Shape&
     }
     if (!fillet.IsDone())
         throw OffsetError("A root fillet of " + mm(radius) + " mm does not fit this fin; try a smaller radius");
+    capture("fillet", fillet.Shape());
 
     BRepAlgoAPI_Cut cut(fillet.Shape(), pad);
     if (!cut.IsDone() || cut.HasErrors())
         throw OffsetError("Cutting the fin back to the surface after the root fillet failed");
+    capture("cut", cut.Shape());
     std::vector<TopoDS_Shape> kept;
     for (TopExp_Explorer e(cut.Shape(), TopAbs_SOLID); e.More(); e.Next()) {
         GProp_GProps props;
@@ -418,6 +432,7 @@ TopoDS_Shape filletedFin(const TopTools_ListOfShape& blanks, const TopoDS_Shape&
         if (!BRepCheck_Analyzer(result).IsValid())
             throw OffsetError("The root fillet produced invalid geometry; try a smaller radius");
     }
+    capture("result", result);
     return result;
 }
 
