@@ -944,3 +944,40 @@ TEST_CASE("Design commands: mirror sketch curves (CAD-126)", "[commands][cad][so
     run(s, "edit.undo");
     CHECK(run(s, "sketch.curves", {{"sketch", id}}).at("curves").size() == 4);
 }
+
+TEST_CASE("Design commands: sketch fillet (CAD-126)", "[commands][cad][solver]")
+{
+    commands::Session s;
+    const auto id = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "rectangle"}, {"corner", {0, 0}}, {"width", 40}, {"height", 20}}})}})
+                        .at("id")
+                        .get<std::uint64_t>();
+    // Bottom (0) and right (1) sides meet at (40, 0).
+    run(s, "sketch.fillet", {{"sketch", id}, {"curves", {0, 1}}, {"radius", 5}});
+    Json c = run(s, "sketch.curves", {{"sketch", id}});
+    REQUIRE(c.at("curves").size() == 5);
+    CHECK(c.at("curves")[4].at("kind") == "arc");
+    const auto ex = run(s, "feature.extrude", {{"sketch", id}, {"distance", 1}});
+    CHECK(ex.at("bodies").back().at("volume").get<double>() == Approx(800 - (25 - std::numbers::pi * 25 / 4)).epsilon(1e-6));
+
+    // The radius is a dimension: editing it updates the corner (and the extrude).
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    std::size_t radiusIndex = 0;
+    for (std::size_t i = 0; i < c.at("constraints").size(); ++i)
+        if (c.at("constraints")[i].at("type") == "radius")
+            radiusIndex = i;
+    run(s, "sketch.edit_constraint", {{"sketch", id}, {"index", radiusIndex}, {"value", 8}});
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    const auto& arcCurve = c.at("curves")[4];
+    CHECK(std::hypot(arcCurve.at("points")[0][0].get<double>() - arcCurve.at("center")[0].get<double>(),
+                     arcCurve.at("points")[0][1].get<double>() - arcCurve.at("center")[1].get<double>()) == Approx(8).margin(1e-6));
+    // Still tangent: the arc ends where the (still horizontal) bottom line ends.
+    const auto& bottom = c.at("curves")[2].at("points");
+    CHECK(bottom[0][1].get<double>() == Approx(bottom[1][1].get<double>()).margin(1e-6));
+    const Json tl = run(s, "timeline.list");
+    CHECK(tl.at("features").back().at("status") == "ok"); // the extrude still has its profile
+
+    // Too large a radius, or lines that do not meet: refused.
+    CHECK_FALSE(s.execute("sketch.fillet", {{"sketch", id}, {"curves", {0, 1}}, {"radius", 50}}).ok);
+}

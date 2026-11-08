@@ -191,6 +191,11 @@ public:
     /// are added at the end and held symmetric to the originals (symmetry constraints on
     /// their points, equal radii), so they follow when the originals change.
     void mirrorSketchCurves(FeatureId sketch, const std::vector<std::size_t>& curves, std::size_t line);
+    /// Rounds the corner where sketch lines `a` and `b` meet with an arc of `radius`
+    /// (Fusion: Sketch Fillet): both lines are shortened to the tangent points and the arc
+    /// is held tangent to them with a radius dimension. Lines that were horizontal or
+    /// vertical stay so. The new lines and arc are added at the end of the curves.
+    void filletSketchCorner(FeatureId sketch, std::size_t a, std::size_t b, double radius);
     /// Drags a sketch point (Fusion: drag sketch geometry). `point` is a constraint point
     /// reference ({curve, point: start | end | center}); it is held at `to` (sketch
     /// coordinates) while the solver moves the free degrees of freedom, and the sketch keeps

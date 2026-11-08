@@ -800,6 +800,30 @@ void registerSketchCommands(CommandRegistry& r)
               return addedFeature(design(ctx), ctx.document, id);
           });
 
+    r.add({"sketch.fillet", "Sketch Fillet",
+           "Rounds the corner where two sketch lines meet (Fusion: Sketch > Fillet): both lines are shortened "
+           "and joined by a tangent arc with a radius dimension (edit it like any dimension). The two lines and the "
+           "arc are added at the end of sketch.curves; constraints on the old lines are removed, horizontal or "
+           "vertical lines stay so.",
+           objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
+                         {"curves", {{"type", "array"}, {"items", {{"type", "integer"}}}, {"minItems", 2}, {"maxItems", 2},
+                                     {"description", "The two lines (indices from sketch.curves)."}}},
+                         {"radius", {{"type", "number"}, {"exclusiveMinimum", 0}}}},
+                        {"sketch", "curves", "radius"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              const auto id = params.at("sketch").get<cad::FeatureId>();
+              const auto curves = params.at("curves").get<std::vector<std::size_t>>();
+              if (curves.size() != 2)
+                  throw CommandError("Give the two lines of the corner");
+              designChange(ctx, "Sketch Fillet", [&](cad::Design& d) {
+                  (void)sketchFeature(d, id);
+                  d.filletSketchCorner(id, curves[0], curves[1], params.at("radius").get<double>());
+                  return Json{};
+              });
+              return addedFeature(design(ctx), ctx.document, id);
+          });
+
     r.add({"sketch.trim", "Trim",
            "Trims a sketch curve (Fusion: Trim, T): removes the piece of `curve` nearest to `at` (sketch "
            "coordinates) between its nearest crossings with other curves; a curve crossing nothing is removed "

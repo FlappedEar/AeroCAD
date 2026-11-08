@@ -1084,6 +1084,99 @@ void Design::mirrorSketchCurves(FeatureId sketchId, const std::vector<std::size_
     regenerateChecked(sketchId, before);
 }
 
+void Design::filletSketchCorner(FeatureId sketchId, std::size_t ia, std::size_t ib, double radius)
+{
+    const State before = m_state;
+    const Feature& f = m_state.features[indexOf(sketchId)];
+    if (f.type != "sketch")
+        throw DesignError("Feature " + std::to_string(sketchId) + " is not a sketch");
+    auto it = m_sketches.find(sketchId);
+    if (it == m_sketches.end())
+        throw DesignError(f.name + " is not evaluated");
+    const std::vector<SketchCurve> curves = it->second.curves;
+    if (ia == ib || ia >= curves.size() || ib >= curves.size() || curves[ia].kind != SketchCurve::Kind::Line ||
+        curves[ib].kind != SketchCurve::Kind::Line)
+        throw DesignError("A sketch fillet rounds the corner of two lines");
+    if (!(radius > 0))
+        throw DesignError("The fillet radius must be positive");
+    const SketchCurve& la = curves[ia];
+    const SketchCurve& lb = curves[ib];
+    // The shared corner and the far ends.
+    const double tol = 1e-6;
+    auto close = [&](const Vec2& p, const Vec2& q) { return std::hypot(p.x - q.x, p.y - q.y) < tol; };
+    std::optional<Vec2> corner;
+    Vec2 farA, farB;
+    for (int i = 0; i < 2 && !corner; ++i)
+        for (int j = 0; j < 2 && !corner; ++j)
+            if (close(la.points[i], lb.points[j])) {
+                corner = la.points[i];
+                farA = la.points[1 - i];
+                farB = lb.points[1 - j];
+            }
+    if (!corner)
+        throw DesignError("The two lines do not meet at a corner");
+    const Vec2 c = *corner;
+    auto unit = [](const Vec2& v) {
+        const double l = std::hypot(v.x, v.y);
+        return Vec2{v.x / l, v.y / l};
+    };
+    const Vec2 u = unit(farA - c), v = unit(farB - c);
+    const double cosT = std::clamp(u.x * v.x + u.y * v.y, -1.0, 1.0);
+    const double theta = std::acos(cosT); // angle between the lines at the corner
+    if (theta < 1e-6 || theta > std::numbers::pi - 1e-6)
+        throw DesignError("The lines are in line: there is no corner to round");
+    const double t = radius / std::tan(theta / 2); // corner to tangent point
+    const double lenA = std::hypot(farA.x - c.x, farA.y - c.y), lenB = std::hypot(farB.x - c.x, farB.y - c.y);
+    if (t >= lenA - tol || t >= lenB - tol)
+        throw DesignError("The radius is too large for these lines");
+    const Vec2 ta = c + u * t, tb = c + v * t;
+    const Vec2 bis = unit(u + v);
+    const double toCenter = radius / std::sin(theta / 2);
+    const Vec2 center = c + bis * toCenter;
+    const Vec2 mid = center - bis * radius; // the arc's middle, nearest the corner
+
+    auto pt = [](const Vec2& p) { return Json::array({p.x, p.y}); };
+    auto lineItem = [&](const SketchCurve& orig, const Vec2& far, const Vec2& tp) {
+        Json item{{"type", "line"}, {"start", pt(far)}, {"end", pt(tp)}};
+        if (orig.construction)
+            item["construction"] = true;
+        return item;
+    };
+    auto axisConstraint = [](const SketchCurve& l, std::size_t index) -> std::optional<Json> {
+        const double dx = l.points[1].x - l.points[0].x, dy = l.points[1].y - l.points[0].y;
+        if (std::abs(dy) < 1e-9 * std::max(1.0, std::abs(dx)))
+            return Json{{"type", "horizontal"}, {"curve", index}};
+        if (std::abs(dx) < 1e-9 * std::max(1.0, std::abs(dy)))
+            return Json{{"type", "vertical"}, {"curve", index}};
+        return std::nullopt;
+    };
+    try {
+        deleteSketchCurves(sketchId, {ia, ib});
+        Feature& g = m_state.features[indexOf(sketchId)];
+        Json items = g.params.value("curves", Json::array());
+        // Index of the first new curve: the curves left after the delete.
+        std::size_t first = m_sketches.count(sketchId) ? m_sketches.at(sketchId).curves.size() : curves.size() - 2;
+        items.push_back(lineItem(la, farA, ta));
+        items.push_back(lineItem(lb, farB, tb));
+        items.push_back({{"type", "arc"}, {"start", pt(ta)}, {"through", pt(mid)}, {"end", pt(tb)}});
+        g.params["curves"] = items;
+        Json constraints = g.params.value("constraints", Json::array());
+        constraints.push_back({{"type", "tangent"}, {"curves", Json::array({first, first + 2})}});
+        constraints.push_back({{"type", "tangent"}, {"curves", Json::array({first + 1, first + 2})}});
+        constraints.push_back({{"type", "radius"}, {"curve", first + 2}, {"value", radius}});
+        if (const auto h = axisConstraint(la, first))
+            constraints.push_back(*h);
+        if (const auto h = axisConstraint(lb, first + 1))
+            constraints.push_back(*h);
+        g.params["constraints"] = constraints;
+        regenerateChecked(sketchId, before);
+    } catch (...) {
+        m_state = before;
+        regenerate();
+        throw;
+    }
+}
+
 void Design::trimSketchCurve(FeatureId sketchId, std::size_t curve, const geometry::Vec2& at)
 {
     const State before = m_state;

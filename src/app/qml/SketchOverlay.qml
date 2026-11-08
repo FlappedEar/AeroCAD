@@ -35,6 +35,11 @@ Item {
     signal trimRequested(int curve, var at)
     /// Mirror tool: `curves` are to be mirrored about line `line`.
     signal mirrorRequested(var curves, int line)
+    /// Fillet tool: the corner of lines `curves` (two indices) is to be rounded.
+    signal filletRequested(var curves, real radius)
+    /// Radius the next sketch fillet starts with (the last one used); its dimension can be
+    /// edited afterwards like any other.
+    property real filletRadius: 5
     /// Curves the Mirror tool copies (the selection when it started).
     property var mirrorCurves: []
     /// A point is being dragged in select mode (CAD-123): `point` is a constraint point
@@ -148,6 +153,29 @@ Item {
         toolRequested("mirror")
         mirrorCurves = list
         canvas.requestPaint()
+        return true
+    }
+
+    /// Fillet tool: the two lines meeting at the corner nearest (x, y) are rounded, with
+    /// the last radius used (smaller when the lines are short).
+    function filletAt(x, y) {
+        const p = pointAt(x, y)
+        if (p === null)
+            return false
+        const lines = []
+        for (const c of sketchCurves) {
+            if (c.kind !== "line")
+                continue
+            if (dist(c.points[0], p.pos) < 1e-6 || dist(c.points[1], p.pos) < 1e-6)
+                lines.push(c)
+        }
+        if (lines.length !== 2)
+            return false
+        const shortest = Math.min(dist(lines[0].points[0], lines[0].points[1]), dist(lines[1].points[0], lines[1].points[1]))
+        let r = filletRadius
+        if (r > 0.4 * shortest)
+            r = Number((0.25 * shortest).toPrecision(2))
+        filletRequested([lines[0].index, lines[1].index], r)
         return true
     }
 
@@ -553,6 +581,11 @@ Item {
                 root.forceActiveFocus()
                 return
             }
+            if (root.tool === "fillet") {
+                root.filletAt(mouse.x, mouse.y)
+                root.forceActiveFocus()
+                return
+            }
             if (root.tool === "trim") {
                 const i = root.curveAt(mouse.x, mouse.y)
                 const at = root.screenToLocal(mouse.x, mouse.y)
@@ -744,6 +777,7 @@ Item {
                     : root.tool === "" ? (root.selectedCurves.length > 0
                         ? qsTr("%n curve(s) selected: Delete removes, X construction, Esc clears", "", root.selectedCurves.length)
                         : qsTr("Click curves to select (Shift adds), drag points to move them; or pick a tool (L line, R rectangle, C circle, D dimension)"))
+                    : root.tool === "fillet" ? qsTr("Fillet: click a corner of two lines; then edit its radius under Constraints")
                     : root.tool === "mirror" ? qsTr("Mirror: click the line to mirror the %n selected curve(s) about", "", root.mirrorCurves.length)
                     : root.tool === "trim" ? qsTr("Trim: click the piece of a curve to remove (up to where other curves cross it)")
                     : root.tool === "line" ? qsTr("Line: click points; Esc (or right-click › End Curve) ends the chain")
@@ -785,7 +819,7 @@ Item {
                 }
             }
             RowLayout {
-                visible: root.active && !root.constraintTool && root.tool !== "trim" && root.tool !== "mirror"
+                visible: root.active && !root.constraintTool && root.tool !== "trim" && root.tool !== "mirror" && root.tool !== "fillet"
                 Label { text: root.tool === "rectangle" ? qsTr("Width, height") : root.tool === "line" ? qsTr("Length") : qsTr("Size") }
                 TextField {
                     id: dimension

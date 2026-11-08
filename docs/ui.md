@@ -288,6 +288,9 @@ See [cad.md](cad.md) for the timeline and the commands behind the tools.
   **Trim** (T, SKETCH › MODIFY): click the piece of a line, arc or circle to remove, up to
   where other curves cross it; a curve that crosses nothing is removed whole, a circle
   becomes an arc. Constraints on the trimmed curve go.
+  **Fillet** (SKETCH › MODIFY): click the corner where two lines meet; it is rounded with a
+  tangent arc (the last radius used, 5 mm at first) whose radius dimension can be edited
+  under Constraints.
   **Mirror** (SKETCH › MODIFY): select curves, click Mirror, then click the mirror line; the
   copies are held symmetric to the originals (they follow dimension changes).
   **Construction** (X, or right-click › Construction): the selected curves become
