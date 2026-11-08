@@ -24,6 +24,14 @@ ui.wait(500)
 ui.wait(300)
 (() => { const tl = controller.execute("timeline.list").result; if (tl.marker !== 2) ui.fail("Finish moved a marker the user had set: " + tl.marker) })()
 (() => { controller.execute("timeline.set_marker", {}) })()
+# Codex on PR #134: deleting a later feature while editing the sketch still rolls forward to
+# the (new) end on Finish.
+(() => { editFeature(controller.execute("timeline.list").result.features[0]) })()
+ui.wait(500)
+(() => { const tl = controller.execute("timeline.list").result; const box = tl.features[2]; if (box.type !== "box") ui.fail("expected the box third: " + box.type); const r = controller.execute("feature.delete", { id: box.id }); if (!r.ok) ui.fail("delete: " + r.error) })()
+(() => { finishSketch(false) })()
+ui.wait(300)
+(() => { const tl = controller.execute("timeline.list").result; ui.log("after delete + finish: marker " + tl.marker + " of " + tl.features.length); if (tl.marker !== tl.features.length) ui.fail("Finish did not roll forward after a later feature was deleted: " + tl.marker) })()
 # A new sketch at the end does not roll anything back.
 (() => { const s = controller.execute("sketch.create", { plane: "XY", curves: [{ type: "circle", center: [200, 0], radius: 5 }] }); enterSketch(s.result.id) })()
 ui.wait(500)

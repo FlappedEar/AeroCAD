@@ -555,7 +555,7 @@ ApplicationWindow {
     }
 
     /// Editing an earlier sketch rolls the timeline back to just after it (Fusion): what came
-    /// later is hidden and cannot be snapped to or projected. {sketch, marker, rolledTo} to
+    /// later is hidden and cannot be snapped to or projected. {sketch, marker, rolledTo, atEnd} to
     /// roll forward again when the sketch ends; null when nothing was rolled back.
     property var sketchRollback: null
 
@@ -567,7 +567,8 @@ ApplicationWindow {
         if (index < 0 || index + 1 >= tl.result.marker)
             return
         if (controller.execute("timeline.set_marker", { position: index + 1 }).ok)
-            sketchRollback = { sketch: id, marker: tl.result.marker, rolledTo: index + 1 }
+            sketchRollback = { sketch: id, marker: tl.result.marker, rolledTo: index + 1,
+                               atEnd: tl.result.marker === tl.result.features.length }
     }
 
     /// Rolls forward to where the timeline was before the sketch edit, unless the user moved
@@ -582,8 +583,13 @@ ApplicationWindow {
             return
         const t = tl.result
         const sketchAt = t.features.findIndex(f => f.id === rb.sketch)
-        if (t.marker === rb.rolledTo && sketchAt === rb.rolledTo - 1 && rb.marker <= t.features.length)
-            controller.execute("timeline.set_marker", { position: rb.marker })
+        if (t.marker !== rb.rolledTo || sketchAt !== rb.rolledTo - 1)
+            return
+        // Features after the sketch may have been deleted meanwhile: back to the end if it was
+        // there, else no further than the end.
+        const target = rb.atEnd ? t.features.length : Math.min(rb.marker, t.features.length)
+        if (target > t.marker)
+            controller.execute("timeline.set_marker", { position: target })
     }
 
     function enterSketch(id) {
