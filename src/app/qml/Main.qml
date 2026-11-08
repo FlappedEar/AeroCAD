@@ -92,14 +92,19 @@ ApplicationWindow {
     /// Move / Rotate / Scale (Fusion: Move/Copy, M): handles in the view and a small panel,
     /// live preview, one undo step when done.
     function startTransform(id) {
-        viewport.finishTransform(true) // a running one first, so the centre below is current
-        const info = controller.partInfo(id || selectedPartId)
-        if (activeSketch || !info.id)
+        if (activeSketch)
             return null
+        // Everything that may still change the geometry ends first (a running transform, a
+        // feature dialog's preview), so the centre read below is the one on screen.
+        const partId = id || selectedPartId
+        viewport.finishTransform(true)
         closeToolPanels()
         featureDialog.close()
         pickingSketchPlane = false
         viewport.leaveSelectionTool()
+        const info = controller.partInfo(partId)
+        if (!info.id)
+            return null
         if (selectedPartId !== info.id)
             selectPart(info.id)
         if (!viewport.startTransform(info)) {
@@ -359,6 +364,7 @@ ApplicationWindow {
 
     /// Runs `fn` now, or after asking to save unsaved changes.
     function withUnsavedCheck(fn) {
+        viewport.finishTransform(true) // a move still on screen counts as a change
         if (!controller.projectDirty) {
             fn()
             return
@@ -424,6 +430,8 @@ ApplicationWindow {
     }
 
     onClosing: close => {
+        if (!closeConfirmed)
+            viewport.finishTransform(true) // a move still on screen counts as a change
         if (closeConfirmed || !controller.projectDirty) {
             controller.discardAutosaves(true)
             return
