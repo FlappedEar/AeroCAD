@@ -58,6 +58,8 @@ QVariant PartListModel::data(const QModelIndex& index, int role) const
         if (!p.shape || p.shape->isNull())
             return QString();
         return p.shape->solidCount() > 0 ? QStringLiteral("solid") : QStringLiteral("surface");
+    case ColorRole:
+        return QString::fromStdString(p.color);
     default:
         return {};
     }
@@ -69,7 +71,7 @@ QHash<int, QByteArray> PartListModel::roleNames() const
         {PartIdRole, "partId"},       {NameRole, "name"},       {VisibleRole, "partVisible"},
         {TrianglesRole, "triangles"}, {HasBrepRole, "hasBrep"}, {SourceRole, "source"},
         {RevisionRole, "revision"},   {KindRole, "kind"},       {FeatureIdRole, "featureId"},
-        {ShapeKindRole, "shapeKind"},
+        {ShapeKindRole, "shapeKind"}, {ColorRole, "partColor"},
     };
 }
 

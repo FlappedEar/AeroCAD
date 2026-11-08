@@ -2409,20 +2409,22 @@ void Design::clear()
     regenerate();
 }
 
-void Design::setPartInfo(FeatureId feature, model::PartId part, std::string name, bool visible)
+void Design::setPartInfo(FeatureId feature, model::PartId part, std::string name, bool visible,
+                         std::string color)
 {
     m_partIds[feature] = part;
-    m_partMeta[feature] = {std::move(name), visible};
+    m_partMeta[feature] = {std::move(name), visible, std::move(color)};
 }
 
 std::vector<Design::PartInfo> Design::partInfos() const
 {
     std::vector<PartInfo> out;
     for (const auto& [feature, part] : m_partIds) {
-        PartInfo info{feature, part, {}, true};
+        PartInfo info{feature, part, {}, true, {}};
         if (auto meta = m_partMeta.find(feature); meta != m_partMeta.end()) {
             info.name = meta->second.name;
             info.visible = meta->second.visible;
+            info.color = meta->second.color;
         }
         out.push_back(std::move(info));
     }
@@ -2682,7 +2684,7 @@ void Design::syncDocument(model::Document& document)
     // (suppress, roll back, delete) comes back with them (unsuppress, undo, ...).
     for (const auto& part : document.parts()) {
         if (part.kind != model::PartKind::Imported)
-            m_partMeta[part.featureId] = {part.name, part.visible};
+            m_partMeta[part.featureId] = {part.name, part.visible, part.color};
     }
 
     // Remove parts whose feature output disappeared.
@@ -2734,6 +2736,7 @@ void Design::syncDocument(model::Document& document)
             if (auto meta = m_partMeta.find(fid); meta != m_partMeta.end()) {
                 part.name = meta->second.name;
                 part.visible = meta->second.visible;
+                part.color = meta->second.color;
             }
             m_partIds[fid] = document.addPart(std::move(part));
         }

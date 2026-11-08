@@ -29,6 +29,7 @@ inline Json partToJson(const model::Part& p)
         {"name", p.name},
         {"source", p.source},
         {"visible", p.visible},
+        {"color", p.color},
         {"vertices", p.mesh ? p.mesh->vertexCount() : 0},
         {"triangles", p.mesh ? p.mesh->triangleCount() : 0},
         {"hasBrep", p.shape.has_value()},

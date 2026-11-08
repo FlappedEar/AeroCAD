@@ -46,6 +46,16 @@ model::PartKind kindFromName(const std::string& name)
     throw ProjectError("Unknown part kind '" + name + "'");
 }
 
+/// A part's saved Appearance colour; anything that is not "#rrggbb" is ignored (default).
+std::string savedColor(const Json& j)
+{
+    const auto it = j.find("color");
+    if (it == j.end() || !it->is_string())
+        return {};
+    std::string c = it->get<std::string>();
+    return model::isPartColor(c) ? c : std::string{};
+}
+
 std::string utcNow()
 {
     const std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
@@ -149,6 +159,8 @@ std::string encodeProject(const ProjectData& data)
         if (p.kind != model::PartKind::Imported)
             throw ProjectError("Only imported parts are stored; '" + p.name + "' comes from the timeline");
         Json j{{"id", p.id}, {"name", p.name}, {"source", p.source}, {"visible", p.visible}, {"kind", "imported"}};
+        if (!p.color.empty())
+            j["color"] = p.color;
         if (p.mesh && !p.mesh->isEmpty()) {
             const std::string entry = "meshes/" + std::to_string(p.id) + ".amesh";
             blobs.emplace_back(entry, encodeMesh(*p.mesh));
@@ -170,6 +182,8 @@ std::string encodeProject(const ProjectData& data)
     Json timelineParts = Json::array();
     for (const auto& t : data.timelineParts) {
         Json j{{"feature", t.feature}, {"id", t.id}, {"name", t.name}, {"visible", t.visible}};
+        if (!t.color.empty())
+            j["color"] = t.color;
         if (t.kind)
             j["kind"] = kindName(*t.kind);
         if (t.selection && !t.selection->empty()) {
@@ -269,6 +283,7 @@ ProjectData decodeImpl(std::string_view bytes)
         p.name = field<std::string>(j, "name", "part " + std::to_string(p.id));
         p.source = j.value("source", "");
         p.visible = j.value("visible", true);
+        p.color = savedColor(j);
         p.kind = kindFromName(j.value("kind", "imported"));
         if (p.kind != model::PartKind::Imported)
             throw ProjectError("Part " + p.name + ": only imported parts are stored");
@@ -308,6 +323,7 @@ ProjectData decodeImpl(std::string_view bytes)
         t.id = field<model::PartId>(j, "id", "timeline part");
         t.name = j.value("name", "");
         t.visible = j.value("visible", true);
+        t.color = savedColor(j);
         if (j.contains("selection")) {
             t.selection = std::make_shared<const core::TriangleSet>(
                 decodeIndices(zip.read(field<std::string>(j, "selection", "timeline part"))));
