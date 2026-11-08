@@ -296,6 +296,10 @@ Pane {
             { key: "angle", type: "expr", label: qsTr("Angle (deg)"), init: 90 },
             { key: "translate", type: "vec3", label: qsTr("Move by"), init: [0, 0, 0] },
             { key: "scale", type: "expr", label: qsTr("Scale (factor)"), init: 1 }] },
+        split: { title: qsTr("Split Body"), command: "feature.split", fields: [
+            { key: "body", type: "body", label: qsTr("Body to split") },
+            { key: "plane", type: "planePick", label: qsTr("Splitting plane"), init: "YZ", hint: qsTr("Origin plane, construction plane, or click a planar face") },
+            { key: "offset", type: "expr", label: qsTr("Offset"), init: 0 }] },
         mirror: { title: qsTr("Mirror"), command: "feature.mirror", fields: [
             { key: "body", type: "body", label: qsTr("Body") },
             { key: "plane", type: "choice", label: qsTr("Mirror plane"), init: "YZ", options: planes },

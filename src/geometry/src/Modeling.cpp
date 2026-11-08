@@ -37,6 +37,8 @@
 #include <BRepOffsetAPI_ThruSections.hxx>
 #include <BRepTools.hxx>
 #include <gp_Ax2.hxx>
+#include <gp_Ax3.hxx>
+#include <gp_Pln.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <BRepPrimAPI_MakeRevol.hxx>
 #include <BRep_Builder.hxx>
@@ -948,6 +950,63 @@ Shape pressPull(const Shape& shape, const std::vector<std::size_t>& faceIndices,
         if (!BRepCheck_Analyzer(result).IsValid())
             throw ModelingError("Press Pull failed: the result is not a valid solid");
         return wrapShape(result);
+    });
+}
+
+SplitResult splitByPlane(const Shape& shape, const core::Vec3& origin, const core::Vec3& normal)
+{
+    const TopoDS_Shape& s = occ(shape, "Split Body");
+    const gp_Dir n = dirOf(normal, "Split Body");
+    return guarded("Split Body", [&] {
+        Bnd_Box box;
+        BRepBndLib::Add(s, box);
+        const double size = 2.0 * std::sqrt(box.SquareExtent()) + 1.0;
+        // A square of the plane larger than the body around the body's projection on it.
+        const gp_Pnt o = toPnt(origin);
+        double xmin = 0, ymin = 0, zmin = 0, xmax = 0, ymax = 0, zmax = 0;
+        box.Get(xmin, ymin, zmin, xmax, ymax, zmax);
+        const gp_Pnt c((xmin + xmax) / 2, (ymin + ymax) / 2, (zmin + zmax) / 2);
+        const gp_Pnt centre = c.Translated(gp_Vec(n) * (gp_Vec(c, o) * gp_Vec(n)));
+        const gp_Pln plane(gp_Ax3(centre, n));
+        const TopoDS_Face tool = BRepBuilderAPI_MakeFace(plane, -size, size, -size, size).Face();
+
+        TopTools_ListOfShape args, tools;
+        args.Append(s);
+        tools.Append(tool);
+        BRepAlgoAPI_Splitter splitter;
+        splitter.SetArguments(args);
+        splitter.SetTools(tools);
+        splitter.SetRunParallel(false);
+        splitter.Build();
+        if (!splitter.IsDone() || splitter.HasErrors())
+            throw ModelingError("Split Body failed");
+
+        TopoDS_Compound back, front;
+        BRep_Builder b;
+        b.MakeCompound(back);
+        b.MakeCompound(front);
+        int nBack = 0, nFront = 0;
+        TopoDS_Shape lastBack, lastFront;
+        for (TopExp_Explorer e(splitter.Shape(), TopAbs_SOLID); e.More(); e.Next()) {
+            GProp_GProps props;
+            BRepGProp::VolumeProperties(e.Current(), props);
+            if (std::abs(props.Mass()) < 1e-9)
+                continue;
+            const double side = gp_Vec(o, props.CentreOfMass()) * gp_Vec(n);
+            if (side < 0) {
+                b.Add(back, e.Current());
+                lastBack = e.Current();
+                ++nBack;
+            } else {
+                b.Add(front, e.Current());
+                lastFront = e.Current();
+                ++nFront;
+            }
+        }
+        if (nBack == 0 || nFront == 0)
+            throw ModelingError("Split Body: the plane does not cut through the body; move it (offset) or pick another plane");
+        return SplitResult{wrapShape(nBack == 1 ? lastBack : TopoDS_Shape(back)),
+                           wrapShape(nFront == 1 ? lastFront : TopoDS_Shape(front))};
     });
 }
 

@@ -497,6 +497,10 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/press_pull.ui
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(app_press_pull_test PROPERTIES LABELS gui TIMEOUT 60)
+    add_test(NAME app_split_body_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/split_body.ui
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(app_split_body_test PROPERTIES LABELS gui TIMEOUT 60)
     add_test(NAME app_transform_status_test
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/transform_status.ui
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})

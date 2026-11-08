@@ -114,6 +114,7 @@ rebuilding, AeroCAD reports the problem; Undo restores the previous source.
 | `feature.chamfer` | Chamfer | `edges`, `type` equal_distance (default) / two_distances (`distance`, `distance2`) / distance_angle (`distance`, `angle`), `flip` swaps the first face |
 | `feature.shell` | Shell | `faces` to remove, `thickness` |
 | `feature.press_pull` | Press Pull (Q) | `faces` (flat or curved: a curved face is offset, like Fusion's Offset Face; a fillet face is refused, change its radius instead), `distance` along the outward normal (negative pushes in) |
+| `feature.split` | Split Body | `body`, `plane` XY / XZ / YZ / {plane: construction plane} / {origin, normal} / planar face, `offset`; the body keeps what is behind the plane, a new body (the feature's id) gets what is in front |
 | `feature.hole` | Hole (H) | `point` on a planar face, `diameter`, `depth` or through all |
 | `feature.combine` | Combine, Split Body | `target`, `tools` (bodies, or imported parts `{part: id}`), join / cut / intersect, `keepTools`, `flip` |
 | `feature.box`, `feature.cylinder` | Box, Cylinder | primitives with an operation |

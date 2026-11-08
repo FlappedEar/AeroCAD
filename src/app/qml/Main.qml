@@ -649,7 +649,7 @@ ApplicationWindow {
         // editable first, so its edges can be rounded or bevelled in one step. The dialog
         // owns the conversion: Cancel undoes it, OK makes it one undo step with the feature.
         const convert = info.kind !== "body" && info.kind !== "sketch" && info.hasBrep && (info.solids ?? 0) > 0
-                        && ["fillet", "chamfer", "shell", "press_pull", "hole", "combine"].includes(type)
+                        && ["fillet", "chamfer", "shell", "press_pull", "hole", "combine", "split"].includes(type)
         if (convert) {
             const b = featureDialog.convertToBody(info.id)
             if (b) {
@@ -667,7 +667,7 @@ ApplicationWindow {
             if (type === "combine")
                 initial.target = info.featureId
             else if (["fillet", "chamfer", "shell", "press_pull", "hole", "move", "mirror", "rectangular_pattern",
-                      "circular_pattern"].includes(type))
+                      "circular_pattern", "split"].includes(type))
                 initial.body = info.featureId
         }
         pickingSketchPlane = false
@@ -1218,12 +1218,14 @@ ApplicationWindow {
     Action { id: revolveAction; text: qsTr("Re&volve"); onTriggered: window.openFeature("revolve") }
     Action { id: boxAction; text: qsTr("&Box"); onTriggered: window.openFeature("box") }
     Action { id: cylinderAction; text: qsTr("C&ylinder"); onTriggered: window.openFeature("cylinder") }
-    // Fusion: Press Pull, Q (here on flat faces: moves them in or out).
+    // Fusion: Press Pull, Q (moves faces in or out; a curved face is offset).
     Action { id: pressPullAction; text: qsTr("&Press Pull"); shortcut: "Q"; enabled: !window.activeSketch; onTriggered: window.openFeature("press_pull") }
     Action { id: filletAction; text: qsTr("&Fillet"); shortcut: "F"; enabled: !window.activeSketch; onTriggered: window.openFeature("fillet") }
     Action { id: holeAction; text: qsTr("H&ole"); shortcut: "H"; enabled: !window.activeSketch; onTriggered: window.openFeature("hole") }
     Action { id: chamferAction; text: qsTr("C&hamfer"); onTriggered: window.openFeature("chamfer") }
     Action { id: shellAction; text: qsTr("S&hell"); onTriggered: window.openFeature("shell") }
+    // Fusion: Modify > Split Body (by a plane: origin plane, construction plane or flat face).
+    Action { id: splitAction; text: qsTr("Spli&t Body"); enabled: !window.activeSketch; onTriggered: window.openFeature("split") }
     Action { id: combineAction; text: qsTr("Co&mbine"); onTriggered: window.openFeature("combine") }
     Action { id: planeAction; text: qsTr("Construction &Plane"); enabled: !window.activeSketch; onTriggered: window.openFeature("plane") }
     Action { id: loftAction; text: qsTr("&Loft"); enabled: !window.activeSketch; onTriggered: window.openFeature("loft") }
@@ -1561,6 +1563,7 @@ ApplicationWindow {
             MenuItem { action: chamferAction }
             MenuItem { action: shellAction }
             MenuItem { action: combineAction }
+            MenuItem { action: splitAction }
             MenuSeparator {}
             MenuItem { action: parametersAction }
             MenuSeparator {}
@@ -1845,6 +1848,7 @@ ApplicationWindow {
                 ToolCommand { action: chamferAction; text: qsTr("Chamfer"); iconName: "chamfer" }
                 ToolCommand { action: shellAction; text: qsTr("Shell"); iconName: "shell" }
                 ToolCommand { action: combineAction; text: qsTr("Combine"); iconName: "combine" }
+                ToolCommand { action: splitAction; text: qsTr("Split Body"); iconName: "section" }
                 ToolCommand { action: parametersAction; text: qsTr("Parameters"); iconName: "parameters" }
                 ToolCommand { action: deleteAction; text: qsTr("Delete"); iconName: "delete" }
                 ToolCommand { action: visibilityAction; text: qsTr("Show/Hide"); iconName: "visible" }

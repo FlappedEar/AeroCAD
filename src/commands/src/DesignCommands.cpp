@@ -1179,6 +1179,17 @@ void registerFeatureCommands(CommandRegistry& r)
                        {"operation", patternOperation}},
                       {"body"});
 
+    addFeatureCommand(r, "split", "Split Body",
+                      "Cuts a body with a plane into two bodies (Fusion: Modify > Split Body), e.g. to print a "
+                      "part larger than the printer bed. The body keeps what is behind the plane; a new body "
+                      "gets what is in front of it (along the plane's normal). The result's id is the new body.",
+                      {{"body", bodyRefSchema("Body to split.")},
+                       {"plane", {{"type", Json::array({"string", "object"})},
+                                  {"description", "\"XY\", \"XZ\", \"YZ\" (default), {plane: construction plane id or "
+                                                  "name}, {origin, normal}, or a planar face {body, index | point}."}}},
+                       {"offset", numberOrExpr("Offset of the plane along its normal (mm).")}},
+                      {"body"});
+
     addFeatureCommand(r, "move", "Move/Rotate",
                       "Moves, rotates and/or uniformly scales a body (Fusion: Modify > Move/Copy, M): scale and "
                       "rotation about `axis` through `center` (default the body's bounding box centre) first, then "
@@ -1290,8 +1301,9 @@ void registerFeatureCommands(CommandRegistry& r)
                       {"body", "thickness"});
 
     addFeatureCommand(r, "press_pull", "Press Pull",
-                      "Moves flat faces of a body along their outward normal (Fusion: Press Pull, shortcut Q): a "
-                      "positive distance adds material, a negative one removes it. Curved faces are not supported.",
+                      "Moves faces of a body along their outward normal (Fusion: Press Pull, shortcut Q): a "
+                      "positive distance adds material, a negative one removes it. A curved face is offset (Fusion's "
+                      "Offset Face); a fillet face is refused (change the fillet's radius instead).",
                       {{"body", bodyRefSchema("Body.")},
                        {"faces", topologyListSchema("face")},
                        {"distance", numberOrExpr("Distance (mm) along the outward normal; negative pushes in.")}},

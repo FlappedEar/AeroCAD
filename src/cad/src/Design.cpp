@@ -131,7 +131,7 @@ const std::vector<std::string>& Design::featureTypes()
     static const std::vector<std::string> types{"sketch", "extrude", "revolve", "fillet", "chamfer",
                                                 "shell",  "combine", "box",     "cylinder", "base_body", "hole",
                                                 "mirror",  "rectangular_pattern", "circular_pattern", "loft", "sweep", "plane",
-                                                "part_on_surface", "fin_on_surface", "move", "press_pull"};
+                                                "part_on_surface", "fin_on_surface", "move", "press_pull", "split"};
     return types;
 }
 
@@ -222,6 +222,7 @@ std::string Design::defaultName(const std::string& type) const
 {
     std::string base = type == "part_on_surface" ? "PartOnSurface" : type == "fin_on_surface" ? "Fin"
                        : type == "press_pull"     ? "PressPull"
+                       : type == "split"          ? "Split"
                                                   : type;
     base[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(base[0])));
     for (int n = 1;; ++n) {
@@ -2104,6 +2105,15 @@ void Design::evaluateFeature(const Feature& f)
         Body& b = bodyRef(required(p, "body"));
         const auto idx = resolveIndices(b.shape, required(p, "faces"), false);
         b.shape = geometry::pressPull(b.shape, idx, ev.num(p, "distance"));
+    } else if (f.type == "split") {
+        // Fusion: Split Body by a plane. The body keeps what is behind the plane; a new
+        // body gets what is in front of it (along the plane's normal).
+        Body& b = bodyRef(required(p, "body"));
+        const Plane pl = resolvePlane(p.value("plane", Json("YZ"))).normalized();
+        const core::Vec3 origin = pl.origin + pl.normal * ev.num(p, "offset", 0.0);
+        auto sides = geometry::splitByPlane(b.shape, origin, pl.normal);
+        b.shape = std::move(sides.back);
+        newBody(std::move(sides.front));
     } else if (f.type == "combine") {
         Body& target = bodyRef(required(p, "target"));
         const std::string op = lower(p.value("operation", std::string("join")));

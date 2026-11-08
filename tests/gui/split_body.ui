@@ -1,0 +1,44 @@
+# CAD-172: Split Body (Fusion: Modify > Split Body) with real clicks:
+#  - a click selects the box; Modify > Split Body opens the dialog on it (plane YZ);
+#  - offset 15 shows the cut live; OK leaves two bodies (15 and 25 mm long) and one undo step;
+#  - a construction plane clicked in the view becomes the splitting plane;
+#  - a plane that misses the body gives a clear error.
+# Run: AeroCAD --ui-script <this file>
+Qt.createQmlObject('import QtQuick; Item { objectName: "sbTest"; visible: false; function clickAt(x, y, z) { const v = viewport.viewPoint(Qt.vector3d(x, y, z)); const p = viewport.mapToItem(null, v.x, v.y); ui.click(p.x, p.y) } function sizes() { return controller.execute("document.parts").result.parts.filter(x => x.kind === "body").map(p => { const i = controller.partInfo(p.id); return [i.sizeX, i.sizeY, i.sizeZ].map(v => Math.round(v * 1000) / 1000).join("x") }).sort() } }', window.contentItem)
+ui.wait(800)
+(() => { const r = controller.execute("feature.box", { size: [40, 20, 10] }); if (!r.ok) ui.fail("box: " + r.error); viewport.fitAll() })()
+ui.wait(400)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "sbTest").clickAt(20, 10, 10) })()
+ui.wait(300)
+(() => { if (!ui.clickText("Modify")) ui.fail("no Modify menu") })()
+ui.wait(400)
+(() => { if (!ui.clickText("Split Body")) ui.fail("no Split Body in the Modify menu") })()
+ui.wait(400)
+(() => { ui.log("dialog " + featureDialog.visible + " type " + featureDialog.type + " body " + featureDialog.values.body + " plane " + JSON.stringify(featureDialog.values.plane)); if (!featureDialog.visible || featureDialog.type !== "split") ui.fail("Split Body did not open"); if (featureDialog.values.body === undefined) ui.fail("Split Body did not take the selected body") })()
+(() => { featureDialog.setValue("offset", 15) })()
+ui.wait(800)
+(() => { const s = Array.from(window.contentItem.children).find(c => c.objectName === "sbTest").sizes(); ui.log("preview: " + JSON.stringify(s)); if (JSON.stringify(s) !== JSON.stringify(["15x20x10", "25x20x10"])) ui.fail("the preview does not show two pieces: " + JSON.stringify(s)) })()
+ui.shot("build/split-body-preview.png")
+(() => { if (!ui.clickText("OK")) ui.fail("no OK button") })()
+ui.wait(800)
+(() => { const s = Array.from(window.contentItem.children).find(c => c.objectName === "sbTest").sizes(); ui.log("split: " + JSON.stringify(s) + ", undo '" + controller.undoText + "', browser rows " + controller.parts.rowCount()); if (JSON.stringify(s) !== JSON.stringify(["15x20x10", "25x20x10"])) ui.fail("expected two bodies 15 and 25 mm long, got " + JSON.stringify(s)) })()
+ui.shot("build/split-body.png")
+(() => { undoAction.trigger() })()
+ui.wait(500)
+(() => { const s = Array.from(window.contentItem.children).find(c => c.objectName === "sbTest").sizes(); ui.log("Ctrl+Z: " + JSON.stringify(s)); if (JSON.stringify(s) !== JSON.stringify(["40x20x10"])) ui.fail("one undo did not take the split back: " + JSON.stringify(s)) })()
+# A construction plane at x = 10 (YZ offset 10), clicked in the view, splits the box there.
+(() => { const r = controller.execute("feature.plane", { base: "YZ", offset: 10 }); if (!r.ok) ui.fail("plane: " + r.error); viewport.fitAll() })()
+ui.wait(400)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "sbTest").clickAt(20, 10, 10) })()
+ui.wait(300)
+(() => { window.openFeature("split") })()
+ui.wait(300)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "sbTest").clickAt(10, 10, 14) })()
+ui.wait(800)
+(() => { ui.log("picked plane " + JSON.stringify(featureDialog.values.plane)); if (!featureDialog.values.plane || featureDialog.values.plane.plane === undefined) ui.fail("clicking the construction plane did not pick it") })()
+(() => { if (!ui.clickText("OK")) ui.fail("no OK button") })()
+ui.wait(800)
+(() => { const s = Array.from(window.contentItem.children).find(c => c.objectName === "sbTest").sizes(); ui.log("split at the plane: " + JSON.stringify(s)); if (JSON.stringify(s) !== JSON.stringify(["10x20x10", "30x20x10"])) ui.fail("expected 10 and 30 mm, got " + JSON.stringify(s)) })()
+# A plane that misses the body: clear error.
+(() => { const b = controller.execute("document.parts").result.parts.find(x => x.kind === "body"); const r = controller.execute("feature.split", { body: b.featureId, plane: "YZ", offset: 100 }); ui.log("miss: " + r.ok + " " + r.error); if (r.ok) ui.fail("a plane beside the body did not fail"); if (!/does not cut through/.test(r.error || "")) ui.fail("unclear error: " + r.error) })()
+ui.log("split body OK")
