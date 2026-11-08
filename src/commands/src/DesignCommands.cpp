@@ -511,31 +511,26 @@ Json featureParams(const Json& params)
     return p;
 }
 
-/// Adds matching hints to {point} edge/face references of fillet, chamfer and shell: the
+/// Adds matching hints to {point} edge/face references in `items` on the body `bodyRef`: the
 /// point relative to the body's bounding box, the edge direction or face normal, and the
-/// edge/face type. Regeneration then finds the same edge after dimensions change (see
-/// matchTopology in Design.cpp). References that already carry hints are left alone.
-Json describeTopologyRefs(const cad::Design& d, const std::string& type, Json params)
+/// edge/face type. Regeneration then finds the same edge or face after dimensions change
+/// (see matchTopology in Design.cpp). References that already carry hints are left alone.
+void addTopologyHints(const cad::Design& d, const Json& bodyRef, Json& items, bool edgesWanted)
 {
-    const bool edgesWanted = type == "fillet" || type == "chamfer";
-    if (!edgesWanted && type != "shell")
-        return params;
-    const char* key = edgesWanted ? "edges" : "faces";
-    if (!params.contains(key) || !params[key].is_array() || !params.contains("body"))
-        return params;
+    if (!items.is_array())
+        return;
     const cad::Body* body = nullptr;
     for (const auto& [bid, b] : d.bodies()) {
-        const Json& ref = params["body"];
-        if ((ref.is_number_integer() && ref.get<cad::FeatureId>() == bid) ||
-            (ref.is_string() && ref.get<std::string>() == b.name))
+        if ((bodyRef.is_number_integer() && bodyRef.get<cad::FeatureId>() == bid) ||
+            (bodyRef.is_string() && bodyRef.get<std::string>() == b.name))
             body = &b;
     }
     if (body == nullptr)
-        return params;
+        return;
     const auto box = body->shape.bounds();
     const core::Vec3 size = box.size();
     auto rel = [&](double v, double lo, double extent) { return extent > 1e-9 ? (v - lo) / extent : 0.0; };
-    for (auto& item : params[key]) {
+    for (auto& item : items) {
         if (!item.is_object() || !item.contains("point") || item.contains("relative") || !item["point"].is_array())
             continue;
         bool numeric = true;
@@ -564,6 +559,19 @@ Json describeTopologyRefs(const cad::Design& d, const std::string& type, Json pa
             item["normal"] = vec(info.normal);
         }
     }
+}
+
+/// Topology hints for the picked references of fillet / chamfer (edges), shell (faces) and an
+/// extrude up to faces of a body (to.faces).
+Json describeTopologyRefs(const cad::Design& d, const std::string& type, Json params)
+{
+    if ((type == "fillet" || type == "chamfer") && params.contains("edges") && params.contains("body"))
+        addTopologyHints(d, params["body"], params["edges"], true);
+    else if (type == "shell" && params.contains("faces") && params.contains("body"))
+        addTopologyHints(d, params["body"], params["faces"], false);
+    else if (type == "extrude" && params.contains("to") && params["to"].is_object() &&
+             params["to"].contains("faces") && params["to"].contains("body"))
+        addTopologyHints(d, params["to"]["body"], params["to"]["faces"], false);
     return params;
 }
 
@@ -1333,7 +1341,17 @@ void registerFeatureCommands(CommandRegistry& r)
               // The body id of a second fin stands for the step that made it.
               const auto id = design(ctx).owningFeature(params.at("id").get<cad::FeatureId>());
               designChange(ctx, "Edit Feature", [&](cad::Design& d) {
-                  d.editFeature(id, params.at("params"));
+                  // Picked edges / faces in the patch get the same matching hints as when added.
+                  Json patch = params.at("params");
+                  if (const auto* f = d.feature(id); f != nullptr && patch.is_object()) {
+                      Json merged = f->params;
+                      merged.merge_patch(patch);
+                      const Json described = describeTopologyRefs(d, f->type, merged);
+                      for (const char* key : {"edges", "faces", "to"})
+                          if (patch.contains(key) && !patch[key].is_null() && described.contains(key))
+                              patch[key] = described[key];
+                  }
+                  d.editFeature(id, patch);
                   return Json{};
               });
               return addedFeature(design(ctx), ctx.document, id);

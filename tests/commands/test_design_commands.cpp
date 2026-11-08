@@ -811,6 +811,12 @@ TEST_CASE("Design commands: extrude to object (CAD-125)", "[commands][cad]")
              {{"sketch", sq}, {"extent", "to_object"}, {"to", {{"body", box}, {"faces", Json::array({{{"point", {0, 0, 15}}}})}}}});
     // Through the box (its top face at z = 15 picked): 10 x 10 x 15.
     CHECK(ex.at("bodies").back().at("volume").get<double>() == Approx(1500).epsilon(1e-6));
+    // The picked top face is followed when the box gets taller (z 12..20): the old pick point
+    // (z = 15) is now nearer the bottom, but the hints keep the top.
+    run(s, "feature.edit", {{"id", box}, {"params", {{"size", {40, 40, 8}}}}});
+    Json bodiesNow = run(s, "timeline.list").at("bodies");
+    CHECK(bodiesNow.back().at("volume").get<double>() == Approx(2000).epsilon(1e-6));
+    run(s, "feature.edit", {{"id", box}, {"params", {{"size", {40, 40, 3}}}}});
 
     // A target narrower than the profile does not stop all of it: refused, not a column
     // running past the object.
