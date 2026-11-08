@@ -355,6 +355,7 @@ TopoDS_Shape filletedFin(const TopTools_ListOfShape& blanks, const TopoDS_Shape&
     if (!padMaker.IsDone())
         throw OffsetError("Could not build the pad for the root fillet");
     const TopoDS_Shape pad = padMaker.Shape();
+    capture("pad", pad);
 
     TopTools_ListOfShape tools;
     tools.Append(pad);
@@ -396,6 +397,15 @@ TopoDS_Shape filletedFin(const TopTools_ListOfShape& blanks, const TopoDS_Shape&
     if (!fillet.IsDone())
         throw OffsetError("A root fillet of " + mm(radius) + " mm does not fit this fin; try a smaller radius");
     capture("fillet", fillet.Shape());
+    if (!probePrefix.empty()) {
+        // Keep shared topology between the two inputs in the same BREP file.
+        TopoDS_Compound inputs;
+        BRep_Builder builder;
+        builder.MakeCompound(inputs);
+        builder.Add(inputs, fillet.Shape());
+        builder.Add(inputs, pad);
+        capture("cut-inputs", inputs);
+    }
 
     BRepAlgoAPI_Cut cut(fillet.Shape(), pad);
     if (!cut.IsDone() || cut.HasErrors())
