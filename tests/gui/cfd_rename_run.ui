@@ -58,4 +58,12 @@ ui.type("first")
 ui.wait(500)
 (() => { const labels = controller.execute("simulation.list").result.runs.map(r => controller.execute("simulation.status", { run: r.id }).result.source.label); ui.log("LABELS " + labels.join(", ")); if (labels.indexOf("first") < 0) ui.fail("switching runs discarded the edit"); const o = simulationPanel.runs.find(r => r.source.label === "second"); if (!o || simulationPanel.renamingRun !== o.id) ui.fail("the second run's field is not open") })()
 ui.key("Escape")
+# A click on another row button while a name is open applies the name and still does what the
+# button does (here: B, compare).
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const runs = simulationPanel.runs; simulationPanel.selectRun(runs[0].id); const b = t.find(simulationPanel, "renameButton_" + runs[0].id); const p = b.mapToItem(null, b.width / 2, b.height / 2); ui.click(p.x, p.y) })()
+ui.wait(300)
+ui.type("third")
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const o = simulationPanel.runs[1]; const b = t.find(simulationPanel, "compareButton_" + o.id); let fl = b.parent; while (fl && fl.contentY === undefined) fl = fl.parent; if (fl) { const q = b.mapToItem(fl.contentItem, 0, 0); fl.contentY = Math.max(0, Math.min(fl.contentHeight - fl.height, q.y - fl.height / 2)) } const p = b.mapToItem(null, b.width / 2, b.height / 2); ui.click(p.x, p.y) })()
+ui.wait(800)
+(() => { const s = controller.execute("simulation.status", { run: simulationPanel.runs[0].id }).result; ui.log("B CLICK label " + s.source.label + ", compare " + simulationPanel.compareRun); if (s.source.label !== "third") ui.fail("the name was not applied: " + s.source.label); if (simulationPanel.compareRun !== simulationPanel.runs[1].id) ui.fail("the B click was lost") })()
 ui.log("cfd rename run done")

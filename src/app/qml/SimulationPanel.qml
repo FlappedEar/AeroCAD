@@ -385,6 +385,7 @@ Pane {
         const signature = list => list.map(x => x.id + ":" + x.state).join(",")
         const beforeAll = signature(runs)
         runs = r.result.runs
+        renamedRun = null
         // On first show, the newest run of this design (never one of another design) (CAD-136).
         const own = runs.filter(x => x.sourceInDocument)
         if (!activeRun && autoSelect && own.length > 0) {
@@ -572,8 +573,18 @@ Pane {
             controller.showStatus(qsTr("Rename failed: %1").arg(r.error))
             return false
         }
-        refreshRuns()
+        // The list is rebuilt a moment later, not now: the rename is often applied on the press
+        // of another row button (focus leaves the field), and rebuilding the rows here would
+        // destroy that button before its click. The row shows the new name meanwhile.
+        renamedRun = { id: id, label: label.trim() }
+        renameRefresh.restart()
         return true
+    }
+    property var renamedRun: null
+    Timer {
+        id: renameRefresh
+        interval: 400
+        onTriggered: root.refreshRuns()
     }
 
     /// Where the last results export went, or why it failed (CAD-167).
@@ -1221,6 +1232,8 @@ Pane {
                     visible: root.tab === 0
                     readonly property bool isA: modelData.id === root.activeRun
                     readonly property bool isB: modelData.id === root.compareRun
+                    readonly property string label: root.renamedRun && root.renamedRun.id === modelData.id ?
+                                                       root.renamedRun.label : (modelData.source.label || "")
                     Layout.fillWidth: true
                     implicitHeight: rowContent.implicitHeight + 10
                     radius: 4
@@ -1245,10 +1258,10 @@ Pane {
                                 elide: Text.ElideRight
                                 font.bold: true
                                 text: (runRow.isA ? "[A] " : runRow.isB ? "[B] " : "") +
-                                      (runRow.modelData.source.label ? runRow.modelData.source.label + " · " : "") +
+                                      (runRow.label ? runRow.label + " · " : "") +
                                       (runRow.modelData.source.partName || runRow.modelData.id)
                             }
-                            // Rename in place (CAD-174): Enter applies, Esc or leaving the field cancels.
+                            // Rename in place (CAD-174): Enter or leaving the field applies, Esc cancels.
                             TextField {
                                 id: renameField
                                 objectName: "runRenameField_" + runRow.modelData.id
