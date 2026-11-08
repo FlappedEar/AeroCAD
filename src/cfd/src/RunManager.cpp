@@ -1267,6 +1267,17 @@ PolyData RunManager::field(const std::string& id, std::string_view kind)
     return d;
 }
 
+PolyData RunManager::surfaceDifference(const std::string& a, const std::string& b)
+{
+    const PolyData pa = field(a, "surface");
+    const PolyData pb = field(b, "surface");
+    if (pa.empty() || pb.empty())
+        return {};
+    const auto info = caseInfo(a);
+    const double size = info ? info->characteristicLength * 1000.0 : 0.0; // Model space is mm.
+    return cfd::surfaceDifference(pa, pb, std::max(size * 0.01, 1e-6));
+}
+
 bool RunManager::startImagePull(const fs::path& docker, const std::string& host)
 {
     if (m_imagePull && m_imagePull->running())

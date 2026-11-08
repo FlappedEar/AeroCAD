@@ -27,6 +27,9 @@ class FieldGeometry : public QQuick3DGeometry {
     Q_PROPERTY(QString run READ run WRITE setRun NOTIFY changed)
     /// surface, sectionHorizontal, sectionVertical, streamlines.
     Q_PROPERTY(QString kind READ kind WRITE setKind NOTIFY changed)
+    /// Run B: with kind surface, the pressure difference B - A on run's surface (scalars
+    /// dCp, dpressure; CAD-141). Empty: run's own field.
+    Q_PROPERTY(QString compareRun READ compareRun WRITE setCompareRun NOTIFY changed)
     /// Scalar to colour by: Cp, pressure, p, speed.
     Q_PROPERTY(QString scalar READ scalar WRITE setScalar NOTIFY changed)
     /// Colour map: "rainbow" (turbo-like, high contrast), "coolwarm" (blue-white-red) or
@@ -52,6 +55,8 @@ public:
     void setController(AppController* controller);
     [[nodiscard]] QString run() const { return m_run; }
     void setRun(const QString& run);
+    [[nodiscard]] QString compareRun() const { return m_compareRun; }
+    void setCompareRun(const QString& run);
     [[nodiscard]] QString kind() const { return m_kind; }
     void setKind(const QString& kind);
     [[nodiscard]] QString scalar() const { return m_scalar; }
@@ -97,6 +102,7 @@ private:
 
     QPointer<AppController> m_controller;
     QString m_run;
+    QString m_compareRun;
     QString m_kind = QStringLiteral("surface");
     QString m_scalar = QStringLiteral("Cp");
     QString m_palette;

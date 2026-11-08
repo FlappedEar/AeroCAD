@@ -551,6 +551,24 @@ TEST_CASE("cropLines splits lines at the region and appendPolyData merges sets",
     CHECK(merged.scalars.count("k") == 0);
 }
 
+TEST_CASE("surfaceDifference maps B - A onto A's surface", "[cfd]")
+{
+    cfd::PolyData a;
+    a.points = {{0, 0, 0}, {10, 0, 0}, {0, 10, 0}};
+    a.polygons = {{0, 1, 2}};
+    a.scalars["Cp"] = {0.5, -0.2, 0.0};
+    cfd::PolyData b;
+    b.points = {{0.05, 0, 0}, {10, 0.02, 0}, {50, 50, 0}}; // B has no surface near A's third point.
+    b.scalars["Cp"] = {0.7, -0.5, 1.0};
+    const auto d = cfd::surfaceDifference(a, b, 0.5);
+    CHECK(d.points.size() == 3);
+    CHECK(d.polygons.size() == 1);
+    const auto& dcp = d.scalars.at("dCp");
+    CHECK(dcp[0] == Approx(0.2));
+    CHECK(dcp[1] == Approx(-0.3));
+    CHECK(std::isnan(dcp[2]));
+}
+
 TEST_CASE("Quality report from logs and histories", "[cfd]")
 {
     TempDir tmp;

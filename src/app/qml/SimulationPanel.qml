@@ -24,12 +24,51 @@ Pane {
         for (const f of fieldChoices) {
             if (!f.on || !fieldStats[run + "/" + f.kind])
                 continue
+            if (f.kind === "surface" && differenceShown) {
+                // The pressure difference B - A on A's part replaces the pressure map (CAD-141).
+                const d = differenceScale()
+                out.push({ run: activeRun, compareRun: compareRun, kind: "surface", scalar: "dCp", min: d[0], max: d[1],
+                           tubeRadius: tubeRadius, palette: "coolwarm" })
+                continue
+            }
             const r = scaleFor(f.kind, f.scalar)
             out.push({ run: run, kind: f.kind, scalar: f.scalar, min: r[0], max: r[1], tubeRadius: tubeRadius,
                        palette: paletteFor(f.scalar) })
         }
         return out
     }
+    /// "Difference B - A" ticked in Show in 3D (CAD-141).
+    property bool showDifference: false
+    /// Statistics of the pressure difference B - A on A's part (simulation.field with
+    /// compare), or null.
+    property var differenceStats: null
+    /// The difference is drawn: ticked, A and B comparable, both surfaces written, and A's
+    /// part in the open design (the difference lies on it).
+    readonly property bool differenceShown: {
+        if (!showDifference || !finalComparisonAvailable || !differenceStats)
+            return false
+        const a = runs.find(r => r.id === activeRun)
+        return !!a && (!a.source || a.source.partFingerprint === "0" || a.sourceInDocument)
+    }
+    function loadDifferenceStats() {
+        differenceStats = null
+        // Read comparison itself: this runs from onComparisonChanged, before the
+        // finalComparisonAvailable binding has been updated.
+        if (!comparison || comparison.reasons.length > 0)
+            return
+        const r = controller.execute("simulation.field", { run: activeRun, kind: "surface", compare: compareRun })
+        differenceStats = r.ok && r.result.available && r.result.scalars.dCp ? r.result.scalars.dCp : null
+    }
+    /// Symmetric ΔCp scale around zero over the 2nd-98th percentile, so blue and red mean
+    /// the same amount of change.
+    function differenceScale() {
+        const s = differenceStats
+        if (!s)
+            return [0, 0]
+        const m = Math.max(Math.abs(s.p02 ?? s.min), Math.abs(s.p98 ?? s.max), 1e-3)
+        return [-m, m]
+    }
+    onComparisonChanged: loadDifferenceStats()
     /// Streamline tube radius in mm: 0.08 % of the part's largest dimension, thin enough
     /// for the dense rakes of CAD-135 (0 = automatic).
     readonly property real tubeRadius: {
@@ -40,13 +79,17 @@ Pane {
     readonly property string displayedRunTitle: {
         if (!displayedRun)
             return ""
-        return (showB && finalComparisonAvailable ? "B: " : "") + runTitle(displayedRun, "")
+        return (showB && finalComparisonAvailable ? "B: " : differenceShown ? "A: " : "") + runTitle(displayedRun, "")
     }
     /// Parts hidden while their pressure map is shown (they would overlap).
     readonly property var hiddenPartIds: {
         const f = fieldChoices.find(c => c.kind === "surface")
         const run = runs.find(r => r.id === displayedRun)
         // Only when the open document still has that part (ids are per document).
+        if (f && f.on && differenceShown) {
+            const a = runs.find(r => r.id === activeRun)
+            return a && a.source && a.sourceInDocument ? [a.source.partId] : []
+        }
         return f && f.on && run && run.source && run.sourceInDocument && fieldStats[run.id + "/surface"]
             ? [run.source.partId] : []
     }
@@ -266,6 +309,8 @@ Pane {
         comparison = null
         fieldStats = ({})
         rangeOverrides = ({})
+        showDifference = false
+        differenceStats = null
         cpMin.text = ""
         cpMax.text = ""
         error = ""
@@ -789,6 +834,7 @@ Pane {
                                       (runRow.modelData.source.partName || runRow.modelData.id)
                             }
                             ToolButton {
+                                objectName: "compareButton_" + runRow.modelData.id
                                 text: "B"
                                 checkable: true
                                 checked: runRow.isB
@@ -1056,6 +1102,23 @@ Pane {
                             }
                         }
                     }
+                }
+                // A/B: the change of pressure on the part (CAD-141).
+                CheckBox {
+                    objectName: "differenceCheck"
+                    visible: root.finalComparisonAvailable
+                    enabled: !!root.differenceStats
+                    text: qsTr("Difference B − A on the part (ΔCp)")
+                    checked: root.showDifference
+                    onToggled: root.showDifference = checked
+                }
+                Label {
+                    Layout.fillWidth: true
+                    visible: root.differenceShown
+                    wrapMode: Text.WordWrap
+                    font.pixelSize: 11
+                    color: Theme.textMuted
+                    text: qsTr("On A's part: red where B has higher pressure, blue where lower; grey where B's part has another shape.")
                 }
                 // Colours of the pressure map and the Cp range (CAD-135).
                 GridLayout {
