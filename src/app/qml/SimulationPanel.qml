@@ -1161,6 +1161,8 @@ Pane {
 
                 Label {
                     text: root.results && root.results.finalResults.available ? qsTr("Final results")
+                          : root.activeRunning && root.results && root.results.current
+                            ? qsTr("Current values (provisional): mean of the last 20 % so far")
                           : root.activeRunning ? qsTr("Final results when the run has finished")
                           : qsTr("Final results unavailable")
                     font.bold: true
@@ -1176,10 +1178,15 @@ Pane {
                     }
                 }
                 GridLayout {
+                    objectName: "cfdSummaryGrid"
                     columns: 4
                     columnSpacing: 10
                     rowSpacing: 2
-                    readonly property var s: root.results ? root.results.summary : ({})
+                    // While running: the current means so far (CAD-158), dimmed as provisional.
+                    readonly property bool current: !!root.results && !root.results.finalResults.available
+                                                    && root.activeRunning && !!root.results.current
+                    readonly property var s: !root.results ? ({}) : current ? root.results.current : root.results.summary
+                    opacity: current ? 0.75 : 1.0
                     Label { text: qsTr("Drag"); opacity: 0.7 }
                     Label { text: root.num(parent.s.dragN, 3) + " N"; font.bold: true }
                     Label { text: "Cd"; opacity: 0.7 }

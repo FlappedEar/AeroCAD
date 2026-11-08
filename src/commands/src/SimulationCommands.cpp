@@ -448,7 +448,8 @@ void registerSimulationCommands(CommandRegistry& r)
            "iterations), histories per iteration, residuals, quality checks (mesh, mass balance, residuals, force "
            "convergence) and the simulation conditions. Summary values are null until the run finishes successfully "
            "with complete finite force/coefficient outputs; finalResults gives availability and reasons. "
-           "Histories remain available and provisional is true until final results are available.",
+           "Histories remain available and provisional is true until final results are available. While the run is "
+           "running, current gives the same means over the iterations recorded so far (never final; null otherwise).",
            objectSchema({{"run", runIdParam()},
                          {"maxPoints",
                           {{"type", "integer"},
