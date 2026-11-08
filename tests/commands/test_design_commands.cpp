@@ -770,4 +770,42 @@ TEST_CASE("Design commands: dragging keeps expressions and regular polygons (CAD
         const auto& p = c.at("curves")[i].at("points")[0];
         CHECK(std::hypot(p[0].get<double>() - cx, p[1].get<double>() - cy) == Approx(r0).epsilon(1e-6));
     }
+TEST_CASE("Design commands: extrude to object (CAD-125)", "[commands][cad]")
+{
+    commands::Session s;
+    // A round bar along X at z = 30 (radius 10) and a 10 x 10 square under it.
+    const auto barSketch = run(s, "sketch.create",
+                               {{"plane", "YZ"},
+                                {"curves", Json::array({{{"type", "circle"}, {"center", {0, 30}}, {"radius", 10}}})}})
+                               .at("id")
+                               .get<std::uint64_t>();
+    const auto bar = run(s, "feature.extrude", {{"sketch", barSketch}, {"distance", 20}, {"extent", "symmetric"}})
+                         .at("id")
+                         .get<std::uint64_t>();
+    const auto sq = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "center_rectangle"}, {"center", {0, 0}}, {"width", 10}, {"height", 10}}})}})
+                        .at("id")
+                        .get<std::uint64_t>();
+
+    // Up to the bar: the top follows its round underside.
+    // V = 10 * (10 * 30 - integral of sqrt(100 - y^2) over [-5, 5]).
+    const double expected = 10.0 * (300.0 - (5.0 * std::sqrt(75.0) + 100.0 * std::asin(0.5)));
+    Json ex = run(s, "feature.extrude", {{"sketch", sq}, {"extent", "to_object"}, {"to", {{"body", bar}}}});
+    REQUIRE(ex.at("bodies").size() == 2); // the bar and the new body
+    CHECK(ex.at("bodies").back().at("volume").get<double>() == Approx(expected).epsilon(1e-4));
+    const auto ext = ex.at("id").get<std::uint64_t>();
+
+    // The other way (flip) nothing is there: an error, nothing built.
+    const auto bad = s.execute("feature.edit", {{"id", ext}, {"params", {{"flip", true}}}});
+    CHECK_FALSE(bad.ok);
+
+    // Up to a picked flat face: the bar's end cap is not in the way, a box top is.
+    run(s, "edit.undo"); // the extrude
+    const auto box = run(s, "feature.box", {{"corner", {-20, -20, 12}}, {"size", {40, 40, 3}}}).at("id").get<std::uint64_t>();
+    (void)box;
+    ex = run(s, "feature.extrude",
+             {{"sketch", sq}, {"extent", "to_object"}, {"to", {{"body", box}, {"faces", Json::array({{{"point", {0, 0, 15}}}})}}}});
+    // Through the box (its top face at z = 15 picked): 10 x 10 x 15.
+    CHECK(ex.at("bodies").back().at("volume").get<double>() == Approx(1500).epsilon(1e-6));
 }

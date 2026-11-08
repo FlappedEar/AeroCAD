@@ -993,14 +993,20 @@ void registerFeatureCommands(CommandRegistry& r)
         merged(profileSelection(),
                {{"distance", numberOrExpr("Distance along the sketch normal (mm); negative goes the other way.")},
                 {"extent", {{"type", "string"},
-                            {"enum", {"one_side", "symmetric", "two_sides"}},
+                            {"enum", {"one_side", "symmetric", "two_sides", "to_object"}},
                             {"description", "one_side (default); symmetric: `distance` on both sides; two_sides: "
-                                            "`distance` forwards and `distance2` backwards."}}},
+                                            "`distance` forwards and `distance2` backwards; to_object: up to `to` "
+                                            "(no `distance`)."}}},
+                {"to", {{"type", "object"},
+                        {"description", "For extent to_object (Fusion: To Object): {body: id} (up to the first "
+                                        "face reached), {body: id, faces: [index or {point: [x,y,z]}]} (up to "
+                                        "those faces) or {part: id} (an imported surface, solid or scan). Curved "
+                                        "targets are followed."}}},
                 {"distance2", numberOrExpr("Backward distance for two_sides (mm).")},
                 {"flip", {{"type", "boolean"}, {"description", "Extrude against the sketch normal."}}},
                 {"operation", operationSchema()},
                 {"bodies", bodiesSchema()}}),
-        {"sketch", "distance"});
+        {"sketch"});
 
     addFeatureCommand(
         r, "revolve", "Revolve",

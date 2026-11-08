@@ -44,6 +44,14 @@ namespace aerocad::geometry {
 /// `distance` extrudes in the opposite direction.
 [[nodiscard]] Shape extrude(const Shape& faces, const core::Vec3& direction, double distance, double backDistance = 0.0);
 
+/// Extrudes planar faces along `direction` until they reach `target` (Fusion: Extrude,
+/// Extent "To Object"): a solid body (up to its first face reached), a surface, or the
+/// faces `targetFaces` of `target` when given. Works for curved targets: each profile stops
+/// on the target's shape. `reach` bounds the search (0: from the bounds of both).
+/// Throws ModelingError when the extrusion does not reach the target everywhere.
+[[nodiscard]] Shape extrudeToObject(const Shape& faces, const core::Vec3& direction, const Shape& target,
+                                    const std::vector<std::size_t>& targetFaces = {}, double reach = 0.0);
+
 /// Revolves faces about an axis by `angleDegrees` (360 for a full revolution).
 [[nodiscard]] Shape revolve(const Shape& faces, const core::Vec3& axisOrigin, const core::Vec3& axisDirection,
                             double angleDegrees);

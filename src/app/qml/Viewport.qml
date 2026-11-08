@@ -600,7 +600,8 @@ Item {
                              && root.hiddenPartIds.indexOf(partId) < 0
                     pickable: (root.pickKind === "" || kind === root.pickKind
                                || (root.pickKind === "solid" && (kind === "body" || (kind === "imported" && hasBrep)))
-                               || (root.pickKind === "axis" && kind === "body" && featureId != root.unpickableBody))
+                               || (root.pickKind === "axis" && kind === "body" && featureId != root.unpickableBody)
+                               || (root.pickKind === "object" && (kind === "imported" || (kind === "body" && featureId != root.unpickableBody))))
                               && !(kind === "plane" && featureId == root.unpickablePlane)
                     geometry: sectioned ? clippedGeometry : heatMapped ? heatGeometry : plainGeometry
                     // Fusion-like colours: grey bodies, translucent orange sketch profiles and planes.

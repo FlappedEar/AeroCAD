@@ -239,6 +239,11 @@ if(AEROCAD_BUILD_TESTS)
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/scan_units_check.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_scan_units_check_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-125: Extrude up to an object (To Object), following its curved shape.
+    add_test(NAME app_extrude_to_object_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/extrude_to_object.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_extrude_to_object_test PROPERTIES LABELS gui TIMEOUT 60)
     # CAD-124: Revolve about a sketch line clicked in the view (through the live preview).
     add_test(NAME app_revolve_axis_pick_test
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/revolve_axis_pick.ui

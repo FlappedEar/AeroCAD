@@ -1209,6 +1209,51 @@ void Design::evaluateFeature(const Feature& f)
         SketchResult* sk = nullptr;
         const auto faces = profiles(sk);
         const std::string extent = lower(p.value("extent", std::string("one_side")));
+        core::Vec3 dir = sk->plane.normal;
+        if (p.value("flip", false))
+            dir = dir * -1.0;
+        if (extent == "to_object") {
+            // Fusion: Extent "To Object": up to a body, some of its faces, or an imported
+            // surface, solid or scan.
+            const Json& to = required(p, "to");
+            geometry::Shape target;
+            std::vector<std::size_t> targetFaces;
+            if (has(to, "body")) {
+                const Body& t = bodyRef(to.at("body"));
+                target = t.shape;
+                if (has(to, "faces"))
+                    targetFaces = resolveIndices(target, to.at("faces"), false);
+            } else if (has(to, "part")) {
+                const auto partId = to.at("part").get<model::PartId>();
+                const model::Part* part = m_partLookup ? m_partLookup(partId) : nullptr;
+                if (part == nullptr)
+                    throw DesignError("No part with id " + std::to_string(partId));
+                if (part->shape && !part->shape->isNull()) {
+                    target = *part->shape;
+                } else if (part->mesh) {
+                    core::BoundingBox reach;
+                    for (const auto& face : faces) {
+                        const auto b = face.bounds();
+                        reach.extend(b.min);
+                        reach.extend(b.max);
+                    }
+                    const auto pb = part->mesh->bounds();
+                    const double span = (pb.max - pb.min).length() + (reach.max - reach.min).length();
+                    reach.extend(reach.min + dir * span);
+                    reach.extend(reach.max + dir * span);
+                    target = scanSurfaceUnder(*part, reach);
+                } else {
+                    throw DesignError("Part '" + part->name + "' has no geometry");
+                }
+            } else {
+                throw DesignError("Extrude to object: give `to` as {body, faces?} or {part}");
+            }
+            std::vector<geometry::Shape> solids;
+            for (const auto& face : faces)
+                solids.push_back(geometry::extrudeToObject(face, dir, target, targetFaces));
+            applyOperation(unionAll(solids));
+            return;
+        }
         double d1 = ev.num(p, "distance");
         double d2 = 0.0;
         if (extent == "symmetric")
@@ -1216,10 +1261,7 @@ void Design::evaluateFeature(const Feature& f)
         else if (extent == "two_sides")
             d2 = ev.num(p, "distance2");
         else if (extent != "one_side")
-            throw DesignError("Unknown extent '" + extent + "' (one_side, symmetric, two_sides)");
-        core::Vec3 dir = sk->plane.normal;
-        if (p.value("flip", false))
-            dir = dir * -1.0;
+            throw DesignError("Unknown extent '" + extent + "' (one_side, symmetric, two_sides, to_object)");
         std::vector<geometry::Shape> solids;
         for (const auto& face : faces)
             solids.push_back(geometry::extrude(face, dir, d1, d2));
