@@ -125,6 +125,8 @@ Pane {
     onShowBChanged: if (showB) showDifference = false
     onShowDifferenceChanged: if (showDifference) showB = false
     property var results: null
+    /// Results of B (history sampled like A's) for the A/B convergence chart (CAD-179).
+    property var resultsB: null
     property var comparison: null
     readonly property bool finalComparisonAvailable: !!comparison && comparison.reasons.length === 0
     property var fieldStats: ({})
@@ -450,16 +452,19 @@ Pane {
         const stats = {}
         // Section stacks of each run (CAD-148): B may be a run made before them.
         const sections = {}
+        let rb = null
         for (const id of [activeRun, compareRun]) {
             if (!id)
                 continue
             if (id === activeRun) {
                 sections[id] = results && results.fields ? results.fields.sections ?? [] : []
             } else {
-                const r = controller.execute("simulation.results", { run: id, maxPoints: 2 })
-                sections[id] = r.ok && r.result.fields ? r.result.fields.sections ?? [] : []
+                const r = controller.execute("simulation.results", { run: id, maxPoints: 300 })
+                rb = r.ok ? r.result : null
+                sections[id] = rb && rb.fields ? rb.fields.sections ?? [] : []
             }
         }
+        resultsB = rb
         runSections = sections
         for (const id of [activeRun, compareRun]) {
             if (!id)
@@ -833,6 +838,16 @@ Pane {
         return qsTr("%1 mm above the part's bottom").arg(mm)
     }
 
+    /// Cd of B per iteration on the reference area of A, like the A/B table (CAD-179).
+    function cdOfBOnAreaOfA() {
+        const h = resultsB && resultsB.history ? resultsB.history : null
+        if (!h || !h.cd)
+            return []
+        const areaA = results && results.conditions ? results.conditions.referenceArea || 0 : 0
+        const areaB = resultsB.conditions ? resultsB.conditions.referenceArea || 0 : 0
+        const k = areaA > 0 && areaB > 0 ? areaB / areaA : 1
+        return h.cd.map(v => v === null || v === undefined ? v : v * k)
+    }
     function series(name, color, x, y) {
         return { name: name, color: color, x: x || [], y: y || [] }
     }
@@ -1887,6 +1902,19 @@ Pane {
                         text: qsTr("Run A and B on the %1 mesh").arg(meshCheck.ms ? meshCheck.ms.suggestedMesh : "")
                         onClicked: root.refineComparison(meshCheck.ms.suggestedMesh)
                     }
+                }
+                // How A and B converged, on the same axes (CAD-179): is the difference larger
+                // than the oscillation of Cd?
+                LineChart {
+                    objectName: "cfdChartAB"
+                    Layout.fillWidth: true
+                    Layout.topMargin: 6
+                    visible: !!root.comparison
+                    title: qsTr("Cd per iteration")
+                    series: root.comparison && root.results && root.resultsB ? [
+                        root.series(qsTr("Cd A"), Theme.chart1, root.results.history.iteration, root.results.history.cd),
+                        root.series(qsTr("Cd B"), Theme.chart2, root.resultsB.history.iteration, root.cdOfBOnAreaOfA())
+                    ] : []
                 }
                 Switch {
                     text: qsTr("Show B in 3D (same colour scale)")

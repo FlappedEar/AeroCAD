@@ -447,6 +447,10 @@ The A/B tab's table has drag, lift and side force, pressure drag and friction dr
 drag counts shows). Each row has A, B, B − A and the change in %. A value under 2 % of the
 largest one in its group (forces or coefficients) gets no percentage (CAD-171,
 [A/B](images/audit/cad-171-ab-coefficients.png)).
+Below it, *Cd per iteration* draws the Cd histories of A and B (B on A's reference area)
+on the same axes, so a difference can be weighed against how much Cd still oscillates;
+hovering it reads both values at an iteration (CAD-179,
+[chart](images/audit/cad-179-ab-convergence.png)).
 
 `conditionChanges` lists the same differences in words with the value of each run, which
 the A/B tab shows (CAD-159), for example "Floor height: A -40 mm, B -150 mm" or "Air speed:
