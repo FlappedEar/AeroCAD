@@ -922,7 +922,9 @@ void registerSurfaceCommands(CommandRegistry& r)
 
               const auto& rep = fit.report;
               Json result = partToJson(*doc.part(id));
-              result["fit"] = {{"meshToSurfaceMax", rep.meshToSurfaceMax},
+              // maxDeviation is what withinTolerance is decided on: the larger of both directions.
+              result["fit"] = {{"maxDeviation", std::max(rep.meshToSurfaceMax, rep.surfaceToMeshMax)},
+                               {"meshToSurfaceMax", rep.meshToSurfaceMax},
                                {"meshToSurfaceRms", rep.meshToSurfaceRms},
                                {"surfaceToMeshMax", rep.surfaceToMeshMax},
                                {"outsideTrimMax", rep.outsideTrimMax},
@@ -987,7 +989,8 @@ void registerSurfaceCommands(CommandRegistry& r)
                                          params.value("name", source.name + (fit.solid ? " solid" : " surfaces")),
                                          "surface.fit_regions", "Fit surfaces");
               Json patches = Json::array();
-              double worst = 0.0;
+              double worst = 0.0; // both directions: what withinTolerance is decided on
+              double worstMeshToSurface = 0.0;
               bool allWithin = true;
               for (const auto& p : fit.patches) {
                   Json j{{"triangles", p.triangles.size()}};
@@ -996,7 +999,8 @@ void registerSurfaceCommands(CommandRegistry& r)
                       j["surfaceToMeshMax"] = p.report.surfaceToMeshMax;
                       j["withinTolerance"] = p.report.withinTolerance;
                       j["method"] = p.report.method;
-                      worst = std::max(worst, p.report.meshToSurfaceMax);
+                      worstMeshToSurface = std::max(worstMeshToSurface, p.report.meshToSurfaceMax);
+                      worst = std::max({worst, p.report.meshToSurfaceMax, p.report.surfaceToMeshMax});
                       allWithin = allWithin && p.report.withinTolerance;
                   } else {
                       j["error"] = p.error;
@@ -1009,7 +1013,8 @@ void registerSurfaceCommands(CommandRegistry& r)
                                {"freeEdges", fit.freeEdges},
                                {"solid", fit.solid},
                                {"volume", fit.volume},
-                               {"meshToSurfaceMax", worst},
+                               {"maxDeviation", worst},
+                               {"meshToSurfaceMax", worstMeshToSurface},
                                {"withinTolerance", allWithin},
                                {"tolerance", options.fit.tolerance},
                                {"sewTolerance", fit.sewTolerance},

@@ -186,6 +186,18 @@ if(AEROCAD_BUILD_TESTS)
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/simplify_undo.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_simplify_undo_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-110: Fit smooth surface reports the deviation its tolerance verdict uses.
+    add_test(NAME app_fit_deviation_message_test
+        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl
+                --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/fit_deviation_message.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_fit_deviation_message_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-114: the outline step on a fitted surface (empty sketch, rectangle drawn by dragging).
+    add_test(NAME app_surface_outline_drag_test
+        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl
+                --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/surface_outline_drag.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_surface_outline_drag_test PROPERTIES LABELS gui TIMEOUT 60)
     # Live Move / Rotate / Scale (handles, panel, Enter / Esc / click away) and free orbit.
     add_test(NAME app_transform_tool_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl

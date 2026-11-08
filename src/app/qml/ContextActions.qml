@@ -90,6 +90,14 @@ QtObject {
         return r.ok && !!r.result.onSurface && !!r.result.onSurface.across
     }
 
+    /// Sketches with a closed outline that can cut `info` (a surface), the ones drawn on it
+    /// first, newest first otherwise. An empty or open sketch is left out (CAD-114).
+    function outlineSketches(info) {
+        const closed = sketches().filter(k => sketchHasProfiles(k.featureId))
+        const own = closed.filter(k => sketchSurface(k.featureId) === info.id)
+        return own.concat(closed.filter(k => own.indexOf(k) < 0))
+    }
+
     function sketchHasProfiles(featureId) {
         if (!(featureId > 0))
             return false // no sketch (the toolbar asks without a part)
@@ -212,17 +220,17 @@ QtObject {
         // Surface
         case "sketchOnSurface":
             return { id: id, text: qsTr("Sketch the outline"), icon: "sketch", enabled: true,
-                     primary: sketches().length === 0,
+                     primary: outlineSketches(info).length === 0,
                      tip: qsTr("Starts a sketch on a plane fitted to this surface. Draw the closed outline of the part (e.g. an aileron), then click Finish Sketch.") }
         case "trim": {
-            const sk = sketches()
+            const sk = outlineSketches(info)
             return { id: id, text: qsTr("Cut out by sketch"), icon: "section", enabled: sk.length > 0,
                      primary: sk.length > 0 && !isCutOut(info),
                      reason: qsTr("Draw a closed outline in a sketch first (step 1)."),
                      tip: qsTr("Projects the sketch outline onto this curved surface and keeps the piece inside it, as a new surface that follows the curvature exactly."),
                      params: [{ key: "sketch", label: qsTr("Sketch"), type: "sketch", value: sk.length ? sk[0].featureId : 0,
                                 options: sk.map(s => ({ value: s.featureId, label: s.name })),
-                                help: qsTr("The outline to cut out. The newest sketch is preselected.") },
+                                help: qsTr("The outline to cut out. The newest sketch on this surface is preselected.") },
                               _choice("keep", qsTr("Keep"), [{ value: "inside", label: qsTr("Inside the outline") },
                                                              { value: "outside", label: qsTr("Outside the outline") }])] }
         }
@@ -379,7 +387,7 @@ QtObject {
                      intro: qsTr("You are drawing in a sketch. The tools are on the SKETCH tab at the top."),
                      sections: [{ title: qsTr("Draw the outline"), steps: [
                                       { title: qsTr("Draw a closed outline"), done: false,
-                                        text: qsTr("Line: click the points, click the first point again to close it. Rectangle: drag two corners. Closed outlines are filled orange."),
+                                        text: qsTr("Line: click the points, click the first point again to close it. Rectangle: drag or click two corners. Closed outlines are filled orange."),
                                         actions: [] },
                                       { title: qsTr("Finish"), done: false,
                                         text: qsTr("Click Finish Sketch (or Esc). Then select the sketch to make a part from it."),
@@ -425,7 +433,8 @@ QtObject {
         }
         if (r === "surface") {
             const cut = isCutOut(info)
-            const hasSketch = cut || sketches().length > 0
+            // Done only for a sketch with a closed outline: an empty one is nothing to cut out (CAD-114).
+            const hasSketch = cut || outlineSketches(info).length > 0
             return { title: roleName(r),
                      intro: qsTr("A smooth, exact surface fitted to the scan. Cut the part you need out of it and give it a thickness."),
                      sections: [
@@ -517,6 +526,14 @@ QtObject {
         return r
     }
 
+    /// A fit's largest deviation (mesh to surface and back), the one its tolerance verdict uses
+    /// (CAD-110). Two decimals are not enough to tell 0.249 from 0.251 against a 0.25 tolerance.
+    function fitDeviationText(f) {
+        const d = Number(f.maxDeviation ?? f.meshToSurfaceMax)
+        const s = d.toFixed(2)
+        return (Number(s) <= f.tolerance) !== (d <= f.tolerance) ? d.toFixed(3) : s
+    }
+
     /// Runs action `id` on part `info` with the popup's values ({key: value}).
     function run(id, info, values) {
         const v = values || {}
@@ -540,9 +557,13 @@ QtObject {
                 controller.execute("selection.clear", { id: pid })
                 _hideSource(r, pid)
                 const f = r.result.fit
-                controller.showStatus(qsTr("Surface \"%1\" fitted: max deviation %2 mm (%3). The scan is hidden. Draw the outline of the part and click Finish Sketch.")
-                    .arg(r.result.name).arg(Number(f.meshToSurfaceMax).toFixed(2))
-                    .arg(f.withinTolerance ? qsTr("within tolerance") : qsTr("more than the tolerance")))
+                let msg = qsTr("Surface \"%1\" fitted: max deviation %2 mm (%3).")
+                    .arg(r.result.name).arg(fitDeviationText(f))
+                    .arg(f.withinTolerance ? qsTr("within the %1 mm tolerance").arg(f.tolerance)
+                                           : qsTr("more than the %1 mm tolerance").arg(f.tolerance))
+                if (!f.withinTolerance && (r.result.warnings ?? []).length > 0)
+                    msg += " " + r.result.warnings.join(" ")
+                controller.showStatus(msg + " " + qsTr("The scan is hidden. Draw the outline of the part and click Finish Sketch."))
             }
             _selectResult(r)
             // The next step is always the outline: start the sketch on the new surface.
@@ -557,8 +578,9 @@ QtObject {
                 const f = r.result.fit
                 let msg = qsTr("\"%1\": %2 patches, %3, max deviation %4 mm (%5).").arg(r.result.name).arg(f.faces)
                     .arg(f.solid ? qsTr("closed solid") : qsTr("open shell with %1 free edges").arg(f.freeEdges))
-                    .arg(Number(f.meshToSurfaceMax).toFixed(2))
-                    .arg(f.withinTolerance ? qsTr("within tolerance") : qsTr("MORE THAN THE TOLERANCE"))
+                    .arg(fitDeviationText(f))
+                    .arg(f.withinTolerance ? qsTr("within the %1 mm tolerance").arg(f.tolerance)
+                                           : qsTr("MORE THAN THE %1 mm TOLERANCE").arg(f.tolerance))
                 if (f.smoothSeams > 0)
                     msg += " " + qsTr("Smooth seams within %1°.").arg(Number(f.seamAngleMaxDeg).toFixed(2))
                 if ((r.result.warnings ?? []).length > 0)
