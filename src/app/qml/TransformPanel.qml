@@ -34,8 +34,12 @@ Pane {
         horizontalAlignment: TextInput.AlignRight
         selectByMouse: true
         validator: DoubleValidator { notation: DoubleValidator.StandardNotation; locale: "C" }
+        /// Typed by the user and not applied yet. Only such text is applied, so a field
+        /// left after a drag in the view never writes its old value back.
+        property bool typed: false
         text: root.fmt(value, decimals)
-        onValueChanged: if (!activeFocus) text = root.fmt(value, decimals)
+        onTextEdited: typed = true
+        onValueChanged: if (!typed) text = root.fmt(value, decimals)
         onActiveFocusChanged: {
             if (!activeFocus) {
                 apply()
@@ -44,11 +48,16 @@ Pane {
         }
         onAccepted: apply()
         function apply() {
+            if (!typed)
+                return
+            typed = false
             const v = Number(String(text).replace(",", "."))
             if (isFinite(v) && Math.abs(v - value) > 1e-9)
                 edited(v)
+            text = root.fmt(value, decimals)
         }
         Keys.onEscapePressed: {
+            typed = false
             text = root.fmt(value, decimals)
             root.viewport.finishTransform(false)
         }

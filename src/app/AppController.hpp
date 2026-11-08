@@ -151,8 +151,10 @@ public:
     Q_INVOKABLE QVariantMap partInfo(quint64 id) const;
 
     /// Nearest hit of a ray (model coordinates) with the visible parts' meshes:
-    /// {partId, point (QVector3D), triangle}, or {} when nothing is hit.
-    Q_INVOKABLE QVariantMap pickSurface(const QVector3D& origin, const QVector3D& direction) const;
+    /// {partId, point (QVector3D), triangle}, or {} when nothing is hit. With `skipId`
+    /// that part is left out; with `onlyId` only that part is tried.
+    Q_INVOKABLE QVariantMap pickSurface(const QVector3D& origin, const QVector3D& direction, quint64 skipId = 0,
+                                        quint64 onlyId = 0) const;
     /// For a click that misses (into a hole of a scan, such as a grille opening): the
     /// visible surface point seen closest to the ray, within `maxAngleDeg` of it, as
     /// pickSurface's map plus snapped: true; {} when nothing is that close.

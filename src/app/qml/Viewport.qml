@@ -110,13 +110,34 @@ Item {
     /// camera}, or null. Ray-cast against the mesh triangles in C++: Qt Quick 3D picks
     /// custom geometry by its bounding volume only.
     function pickPart(x, y) {
-        const near = modelSpace.mapPositionFromScene(view.mapTo3DScene(Qt.vector3d(x, y, 0)))
-        const far = modelSpace.mapPositionFromScene(view.mapTo3DScene(Qt.vector3d(x, y, 100)))
-        const hit = controller.pickSurface(near, far.minus(near))
-        if (!hit.partId)
-            return null
+        const sceneNear = view.mapTo3DScene(Qt.vector3d(x, y, 0))
+        const sceneFar = view.mapTo3DScene(Qt.vector3d(x, y, 100))
+        const near = modelSpace.mapPositionFromScene(sceneNear)
+        const far = modelSpace.mapPositionFromScene(sceneFar)
         const eye = modelSpace.mapPositionFromScene(view.camera.scenePosition)
-        return { partId: hit.partId, point: hit.point, distance: hit.point.minus(eye).length() }
+        const node = transformActive ? previewNode(transformTarget.partId) : null
+        if (!node) {
+            const hit = controller.pickSurface(near, far.minus(near))
+            if (!hit.partId)
+                return null
+            return { partId: hit.partId, point: hit.point, distance: hit.point.minus(eye).length() }
+        }
+        // Move / Rotate / Scale running: pick the moved part where it is shown (the ray taken
+        // back into its own, unmoved coordinates), the other parts as they are.
+        let best = null
+        const others = controller.pickSurface(near, far.minus(near), transformTarget.partId, 0)
+        if (others.partId)
+            best = { partId: others.partId, point: others.point, distance: others.point.minus(eye).length() }
+        const localNear = node.mapPositionFromScene(sceneNear)
+        const localFar = node.mapPositionFromScene(sceneFar)
+        const own = controller.pickSurface(localNear, localFar.minus(localNear), 0, transformTarget.partId)
+        if (own.partId) {
+            const p = modelSpace.mapPositionFromScene(node.mapPositionToScene(own.point))
+            const d = p.minus(eye).length()
+            if (!best || d < best.distance)
+                best = { partId: own.partId, point: p, distance: d }
+        }
+        return best
     }
 
     /// Scene position under view position (x, y) for zooming and orbiting: the model
@@ -1033,13 +1054,17 @@ Item {
     }
 
     /// Where the preview puts a model point of the part being moved (for tests): model mm.
-    function previewPoint(partId, p) {
+    function previewNode(partId) {
         for (let i = 0; i < partRepeater.count; ++i) {
             const node = partRepeater.objectAt(i)
             if (node && node.partId === partId)
-                return modelSpace.mapPositionFromScene(node.mapPositionToScene(p))
+                return node
         }
-        return p
+        return null
+    }
+    function previewPoint(partId, p) {
+        const node = previewNode(partId)
+        return node ? modelSpace.mapPositionFromScene(node.mapPositionToScene(p)) : p
     }
 
     // Selection markers, re-projected whenever the camera moves.

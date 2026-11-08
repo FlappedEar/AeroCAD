@@ -709,14 +709,15 @@ void AppController::brushCancel()
     emit selectionPreviewChanged(id);
 }
 
-QVariantMap AppController::pickSurface(const QVector3D& origin, const QVector3D& direction) const
+QVariantMap AppController::pickSurface(const QVector3D& origin, const QVector3D& direction, quint64 skipId,
+                                       quint64 onlyId) const
 {
     const core::Vec3 o{origin.x(), origin.y(), origin.z()};
     const core::Vec3 d{direction.x(), direction.y(), direction.z()};
     std::optional<core::RayHit> best;
     model::PartId bestPart = 0;
     for (const auto& p : m_session.document().parts()) {
-        if (!p.visible || !p.mesh)
+        if (!p.visible || !p.mesh || (skipId != 0 && p.id == skipId) || (onlyId != 0 && p.id != onlyId))
             continue;
         std::optional<core::RayHit> hit;
         const commands::SectionAnalysis& section = m_session.inspect().section();
