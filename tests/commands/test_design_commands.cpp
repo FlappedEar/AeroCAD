@@ -906,3 +906,41 @@ TEST_CASE("Design commands: trim sketch curves (CAD-126)", "[commands][cad]")
     run(s, "edit.undo");
     CHECK(run(s, "sketch.curves", {{"sketch", id}}).at("curves").size() == before + 1);
 }
+
+TEST_CASE("Design commands: mirror sketch curves (CAD-126)", "[commands][cad][solver]")
+{
+    commands::Session s;
+    // A vertical centre line at x = 0, a triangle on its right and a circle.
+    const auto id = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "line"}, {"start", {0, -30}}, {"end", {0, 30}}, {"construction", true}},
+                                                 {{"type", "line"}, {"start", {0, 0}}, {"end", {20, 0}}},
+                                                 {{"type", "line"}, {"start", {20, 0}}, {"end", {0, 15}}},
+                                                 {{"type", "circle"}, {"center", {10, 20}}, {"radius", 3}}})}})
+                        .at("id")
+                        .get<std::uint64_t>();
+    run(s, "sketch.mirror", {{"sketch", id}, {"curves", {1, 2, 3}}, {"line", 0}});
+    Json c = run(s, "sketch.curves", {{"sketch", id}});
+    REQUIRE(c.at("curves").size() == 7);
+    CHECK(c.at("curves")[4].at("points")[1][0].get<double>() == Approx(-20).margin(1e-6));
+    CHECK(c.at("curves")[6].at("points")[0][0].get<double>() == Approx(-10).margin(1e-6));
+    CHECK(c.at("curves")[6].at("radius").get<double>() == Approx(3).margin(1e-6));
+    // Closed with the mirrored side: one triangle profile (two halves) plus the circles.
+    CHECK(run(s, "sketch.profiles", {{"sketch", id}}).at("profiles").size() >= 3);
+
+    // The copies follow: a dimension on the original moves the mirrored point too (the
+    // mirror line is fixed, else the solver may move it as well).
+    run(s, "sketch.add_constraints",
+        {{"sketch", id}, {"constraints", Json::array({{{"type", "fix"}, {"curve", 0}}, {{"type", "length"}, {"curve", 1}, {"value", 25}}, {{"type", "radius"}, {"curve", 3}, {"value", 5}}})}});
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    const double xo = c.at("curves")[1].at("points")[1][0].get<double>();
+    const double xm = c.at("curves")[4].at("points")[1][0].get<double>();
+    CHECK(xm == Approx(-xo).margin(1e-5));
+    CHECK(c.at("curves")[6].at("radius").get<double>() == Approx(5).margin(1e-6));
+
+    // The mirror line must be a line; one undo step.
+    CHECK_FALSE(s.execute("sketch.mirror", {{"sketch", id}, {"curves", {1}}, {"line", 3}}).ok);
+    run(s, "edit.undo");
+    run(s, "edit.undo");
+    CHECK(run(s, "sketch.curves", {{"sketch", id}}).at("curves").size() == 4);
+}

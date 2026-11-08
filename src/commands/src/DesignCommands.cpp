@@ -781,6 +781,25 @@ void registerSketchCommands(CommandRegistry& r)
               return addedFeature(design(ctx), ctx.document, id);
           });
 
+    r.add({"sketch.mirror", "Mirror Sketch Curves",
+           "Mirrors sketch curves about a line of the same sketch (Fusion: Sketch > Mirror). The copies are added "
+           "at the end of sketch.curves and held symmetric to the originals (symmetry constraints, equal radii), "
+           "so they follow dimension changes.",
+           objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
+                         {"curves", {{"type", "array"}, {"items", {{"type", "integer"}}}, {"minItems", 1}}},
+                         {"line", {{"type", "integer"}, {"description", "Index of the mirror line (sketch.curves)."}}}},
+                        {"sketch", "curves", "line"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              const auto id = params.at("sketch").get<cad::FeatureId>();
+              designChange(ctx, "Mirror Sketch Curves", [&](cad::Design& d) {
+                  (void)sketchFeature(d, id);
+                  d.mirrorSketchCurves(id, params.at("curves").get<std::vector<std::size_t>>(), params.at("line").get<std::size_t>());
+                  return Json{};
+              });
+              return addedFeature(design(ctx), ctx.document, id);
+          });
+
     r.add({"sketch.trim", "Trim",
            "Trims a sketch curve (Fusion: Trim, T): removes the piece of `curve` nearest to `at` (sketch "
            "coordinates) between its nearest crossings with other curves; a curve crossing nothing is removed "

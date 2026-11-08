@@ -76,6 +76,7 @@ rebuilding, AeroCAD reports the problem; Undo restores the previous source.
 |---|---|---|
 | `sketch.create` | Create Sketch | `plane` XY / XZ / YZ / {plane: construction plane id} / {origin, normal, xDir}, or `face` {body, index or point}, or `surface` {part, point / useSelection} (best-fit plane over a curved surface or scan); `offset`; `curves` |
 | `sketch.add_curves` | (draw in sketch) | appends curves |
+| `sketch.mirror` | select curves, Mirror, click a line | `curves`, `line`: copies mirrored about the line, added at the end of `sketch.curves`, with symmetry constraints on their points (and equal radii) |
 | `sketch.trim` | Trim (T) | `curve`, `at` [u, v]: the piece of the curve under `at` between its nearest crossings goes (whole curve when it crosses nothing; a circle becomes an arc); the pieces left are added at the end of `sketch.curves`; constraints on the curve are removed |
 | `sketch.set_construction` | select sketch curves, X | `curves` (indices from `sketch.curves`), `construction` (default true): construction curves are dashed and bound no profile; part of a rectangle / polygon / slot becomes lines and arcs that keep its constraints; indices do not change |
 | `sketch.move_point` | drag a sketch point | `point` {curve, point: start / end / center}, `to` [u, v]: the point goes there and the solver moves the free degrees of freedom; item parameters are rewritten where the curves are now; refused (no change) when the constraints hold the point |

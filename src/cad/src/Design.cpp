@@ -1004,6 +1004,86 @@ void Design::moveSketchPoint(FeatureId sketchId, const Json& point, const geomet
     regenerateChecked(sketchId, before);
 }
 
+void Design::mirrorSketchCurves(FeatureId sketchId, const std::vector<std::size_t>& picked, std::size_t lineIdx)
+{
+    const State before = m_state;
+    Feature& f = m_state.features[indexOf(sketchId)];
+    if (f.type != "sketch")
+        throw DesignError("Feature " + std::to_string(sketchId) + " is not a sketch");
+    auto it = m_sketches.find(sketchId);
+    if (it == m_sketches.end())
+        throw DesignError(f.name + " is not evaluated");
+    const std::vector<SketchCurve> curves = it->second.curves;
+    if (lineIdx >= curves.size() || curves[lineIdx].kind != SketchCurve::Kind::Line)
+        throw DesignError("Pick a line of " + f.name + " to mirror about");
+    const Vec2 a = curves[lineIdx].points[0], b = curves[lineIdx].points[1];
+    const Vec2 d = b - a;
+    const double l2 = d.x * d.x + d.y * d.y;
+    if (l2 < 1e-18)
+        throw DesignError("The mirror line has no length");
+    auto mirror = [&](const Vec2& p) {
+        const double t = ((p.x - a.x) * d.x + (p.y - a.y) * d.y) / l2;
+        const Vec2 foot = a + d * t;
+        return foot * 2.0 - p;
+    };
+    auto pt = [](const Vec2& v) { return Json::array({v.x, v.y}); };
+    std::vector<std::size_t> list;
+    for (const std::size_t i : picked) {
+        if (i >= curves.size())
+            throw DesignError(f.name + " has no curve " + std::to_string(i));
+        if (i != lineIdx && std::find(list.begin(), list.end(), i) == list.end())
+            list.push_back(i);
+    }
+    if (list.empty())
+        throw DesignError("Select the curves to mirror (not only the mirror line)");
+
+    Json items = f.params.value("curves", Json::array());
+    Json constraints = f.params.value("constraints", Json::array());
+    std::size_t next = curves.size();
+    for (const std::size_t i : list) {
+        const SketchCurve& c = curves[i];
+        Json item;
+        std::vector<const char*> points;
+        switch (c.kind) {
+        case SketchCurve::Kind::Line:
+            item = {{"type", "line"}, {"start", pt(mirror(c.points[0]))}, {"end", pt(mirror(c.points[1]))}};
+            points = {"start", "end"};
+            break;
+        case SketchCurve::Kind::Arc:
+            item = {{"type", "arc"},
+                    {"start", pt(mirror(c.points[0]))},
+                    {"through", pt(mirror(c.points[1]))},
+                    {"end", pt(mirror(c.points[2]))}};
+            points = {"start", "end", "center"};
+            break;
+        case SketchCurve::Kind::Circle:
+            item = {{"type", "circle"}, {"center", pt(mirror(c.points[0]))}, {"radius", c.radius}};
+            points = {"center"};
+            break;
+        case SketchCurve::Kind::Spline: {
+            Json p = Json::array();
+            for (const auto& q : c.points)
+                p.push_back(pt(mirror(q)));
+            item = {{"type", "spline"}, {"points", p}, {"closed", c.closed}};
+            break;
+        }
+        }
+        if (c.construction)
+            item["construction"] = true;
+        items.push_back(item);
+        for (const char* name : points)
+            constraints.push_back({{"type", "symmetric"},
+                                   {"points", Json::array({{{"curve", i}, {"point", name}}, {{"curve", next}, {"point", name}}})},
+                                   {"curve", lineIdx}});
+        if (c.kind == SketchCurve::Kind::Circle || c.kind == SketchCurve::Kind::Arc)
+            constraints.push_back({{"type", "equal"}, {"curves", Json::array({i, next})}});
+        ++next;
+    }
+    f.params["curves"] = items;
+    f.params["constraints"] = constraints;
+    regenerateChecked(sketchId, before);
+}
+
 void Design::trimSketchCurve(FeatureId sketchId, std::size_t curve, const geometry::Vec2& at)
 {
     const State before = m_state;

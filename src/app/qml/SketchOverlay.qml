@@ -33,6 +33,10 @@ Item {
     signal constructionToggled(var indices, bool on)
     /// Trim tool (T): the piece of curve `curve` under `at` (sketch coordinates) is to go.
     signal trimRequested(int curve, var at)
+    /// Mirror tool: `curves` are to be mirrored about line `line`.
+    signal mirrorRequested(var curves, int line)
+    /// Curves the Mirror tool copies (the selection when it started).
+    property var mirrorCurves: []
     /// A point is being dragged in select mode (CAD-123): `point` is a constraint point
     /// reference, `to` where it is now (sketch coordinates); `done` on release.
     signal pointDragged(var point, var to, bool done)
@@ -61,7 +65,12 @@ Item {
     enabled: sketch !== null
     visible: sketch !== null
 
-    onToolChanged: { reset(); clearSelection() }
+    onToolChanged: {
+        reset()
+        clearSelection()
+        if (tool !== "mirror")
+            mirrorCurves = []
+    }
     onSketchChanged: { reset(); clearSelection() }
     // The curves changed (a delete, an undo): drop picks that no longer exist.
     onSketchCurvesChanged: {
@@ -127,6 +136,18 @@ Item {
         const list = selectedCurves.slice().sort((a, b) => a - b)
         const all = list.every(i => { const c = sketchCurves.find(x => x.index === i); return c && c.construction })
         constructionToggled(list, !all)
+        return true
+    }
+
+    /// Mirror (Fusion: Sketch > Mirror): the selected curves are kept for the tool, which
+    /// then waits for the mirror line. False when nothing is selected.
+    function startMirror() {
+        if (selectedCurves.length === 0)
+            return false
+        const list = selectedCurves.slice()
+        toolRequested("mirror")
+        mirrorCurves = list
+        canvas.requestPaint()
         return true
     }
 
@@ -480,7 +501,7 @@ Item {
                 constraintLayer.hoverAt(mouse.x, mouse.y)
                 return
             }
-            if (root.tool === "trim") {
+            if (root.tool === "trim" || root.tool === "mirror") {
                 const i = root.curveAt(mouse.x, mouse.y)
                 if (i !== root.hoverCurve) {
                     root.hoverCurve = i
@@ -520,6 +541,18 @@ Item {
         onClicked: mouse => {
             if (root.selecting)
                 return
+            if (root.tool === "mirror") {
+                const i = root.curveAt(mouse.x, mouse.y)
+                const c = root.sketchCurves.find(x => x.index === i)
+                if (c && c.kind === "line" && root.mirrorCurves.length > 0) {
+                    const list = root.mirrorCurves.filter(j => j !== i)
+                    root.toolRequested("")
+                    if (list.length > 0)
+                        root.mirrorRequested(list, i)
+                }
+                root.forceActiveFocus()
+                return
+            }
             if (root.tool === "trim") {
                 const i = root.curveAt(mouse.x, mouse.y)
                 const at = root.screenToLocal(mouse.x, mouse.y)
@@ -587,7 +620,7 @@ Item {
             }
             // Select mode: the curve under the cursor and the selected curves, highlighted.
             for (const c of root.sketchCurves) {
-                const sel = root.selectedCurves.indexOf(c.index) >= 0
+                const sel = root.selectedCurves.indexOf(c.index) >= 0 || root.mirrorCurves.indexOf(c.index) >= 0
                 if (!sel && c.index !== root.hoverCurve)
                     continue
                 ctx.lineWidth = sel ? 3.5 : 3
@@ -711,6 +744,7 @@ Item {
                     : root.tool === "" ? (root.selectedCurves.length > 0
                         ? qsTr("%n curve(s) selected: Delete removes, X construction, Esc clears", "", root.selectedCurves.length)
                         : qsTr("Click curves to select (Shift adds), drag points to move them; or pick a tool (L line, R rectangle, C circle, D dimension)"))
+                    : root.tool === "mirror" ? qsTr("Mirror: click the line to mirror the %n selected curve(s) about", "", root.mirrorCurves.length)
                     : root.tool === "trim" ? qsTr("Trim: click the piece of a curve to remove (up to where other curves cross it)")
                     : root.tool === "line" ? qsTr("Line: click points; Esc (or right-click › End Curve) ends the chain")
                     : root.tool === "rectangle" ? qsTr("Rectangle: drag or click two corners; type width, height")
@@ -751,7 +785,7 @@ Item {
                 }
             }
             RowLayout {
-                visible: root.active && !root.constraintTool && root.tool !== "trim"
+                visible: root.active && !root.constraintTool && root.tool !== "trim" && root.tool !== "mirror"
                 Label { text: root.tool === "rectangle" ? qsTr("Width, height") : root.tool === "line" ? qsTr("Length") : qsTr("Size") }
                 TextField {
                     id: dimension

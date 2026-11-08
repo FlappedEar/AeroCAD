@@ -288,6 +288,8 @@ See [cad.md](cad.md) for the timeline and the commands behind the tools.
   **Trim** (T, SKETCH › MODIFY): click the piece of a line, arc or circle to remove, up to
   where other curves cross it; a curve that crosses nothing is removed whole, a circle
   becomes an arc. Constraints on the trimmed curve go.
+  **Mirror** (SKETCH › MODIFY): select curves, click Mirror, then click the mirror line; the
+  copies are held symmetric to the originals (they follow dimension changes).
   **Construction** (X, or right-click › Construction): the selected curves become
   construction geometry, drawn dashed; they take constraints but bound no profile. X with
   only construction curves selected turns them back. One side of a rectangle can be switched.

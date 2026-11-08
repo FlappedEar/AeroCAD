@@ -187,6 +187,10 @@ public:
     /// a curve that crosses nothing is removed whole. Lines, arcs and circles. Constraints
     /// on the trimmed curve go; the remaining pieces are added as new curves at the end.
     void trimSketchCurve(FeatureId sketch, std::size_t curve, const geometry::Vec2& at);
+    /// Mirrors sketch curves about sketch line `line` (Fusion: Sketch Mirror): the copies
+    /// are added at the end and held symmetric to the originals (symmetry constraints on
+    /// their points, equal radii), so they follow when the originals change.
+    void mirrorSketchCurves(FeatureId sketch, const std::vector<std::size_t>& curves, std::size_t line);
     /// Drags a sketch point (Fusion: drag sketch geometry). `point` is a constraint point
     /// reference ({curve, point: start | end | center}); it is held at `to` (sketch
     /// coordinates) while the solver moves the free degrees of freedom, and the sketch keeps
