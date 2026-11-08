@@ -7,6 +7,7 @@
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Common.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
+#include <BRepAlgoAPI_Defeaturing.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepAlgoAPI_Splitter.hxx>
 #include <BRepBndLib.hxx>
@@ -1049,6 +1050,41 @@ Shape pressPull(const Shape& shape, const std::vector<std::size_t>& faceIndices,
         result = unify(result);
         if (!BRepCheck_Analyzer(result).IsValid())
             throw ModelingError("Press Pull failed: the result is not a valid solid");
+        return wrapShape(result);
+    });
+}
+
+Shape deleteFaces(const Shape& shape, const std::vector<std::size_t>& faceIndices)
+{
+    const TopoDS_Shape& s = occ(shape, "Delete Face");
+    if (faceIndices.empty())
+        throw ModelingError("Delete Face: pick a face");
+    return guarded("Delete Face", [&] {
+        const auto map = mapOf(s, TopAbs_FACE);
+        BRepAlgoAPI_Defeaturing algo;
+        algo.SetShape(s);
+        for (const std::size_t i : faceIndices) {
+            if (i >= static_cast<std::size_t>(map.Extent()))
+                throw ModelingError("Delete Face: no face " + std::to_string(i));
+            algo.AddFaceToRemove(map(static_cast<int>(i) + 1));
+        }
+        algo.SetRunParallel(false);
+        algo.Build();
+        if (!algo.IsDone() || algo.HasErrors())
+            throw ModelingError("Delete Face: the gap left by the faces cannot be closed by their neighbours; "
+                                "pick all faces of the hole, fillet or boss together");
+        // A face the algorithm could not take out (e.g. the top of a box: its neighbours
+        // never meet above it) is left in place with only a warning.
+        for (const std::size_t i : faceIndices)
+            if (!algo.IsDeleted(map(static_cast<int>(i) + 1)))
+                throw ModelingError("Delete Face: face " + std::to_string(i)
+                                    + " cannot go: the faces around it do not meet to close the gap");
+        TopoDS_Shape result = algo.Shape();
+        if (result.IsNull() || !hasSubShapes(result, TopAbs_SOLID))
+            throw ModelingError("Delete Face: nothing left of the body");
+        result = unify(result);
+        if (!BRepCheck_Analyzer(result).IsValid())
+            throw ModelingError("Delete Face failed: the result is not a valid solid");
         return wrapShape(result);
     });
 }
