@@ -45,7 +45,7 @@ Pane {
     /// Extrude: the distance arrow on the profile, along the sketch normal (Viewport
     /// distanceArrow), or null. The distance is signed: negative means Flip.
     readonly property var distanceArrow: {
-        if (type === "fillet" || type === "chamfer" || type === "shell")
+        if (type === "fillet" || type === "chamfer" || type === "shell" || type === "press_pull")
             return sizeArrow()
         if (type !== "extrude" || values.sketch === undefined || values.extent === "to_object")
             return null
@@ -76,7 +76,7 @@ Pane {
     }
 
     /// The value the size arrow of Fillet / Chamfer / Shell drags.
-    readonly property string sizeKey: type === "fillet" ? "radius" : type === "shell" ? "thickness"
+    readonly property string sizeKey: type === "fillet" ? "radius" : type === "shell" ? "thickness" : type === "press_pull" ? "distance"
                                      : type === "chamfer" && (values.type === undefined || values.type === "equal_distance") ? "distance" : ""
 
     /// Fillet / Chamfer: an arrow on the first picked edge, into the corner between its faces;
@@ -88,7 +88,7 @@ Pane {
         const size = Number(values[sizeKey])
         if (!isFinite(size))
             return null
-        const pick = ((type === "shell" ? values.faces : values.edges) || [])[0]
+        const pick = ((type === "shell" || type === "press_pull" ? values.faces : values.edges) || [])[0]
         if (!pick || !pick.point)
             return null
         // Where the arrow sits is found once per pick, on the body without the preview (with
@@ -119,12 +119,14 @@ Pane {
     function sizeArrowAt(point) {
         const v3 = a => Qt.vector3d(a[0], a[1], a[2])
         const arr = q => [q.x, q.y, q.z]
-        if (type === "shell") {
-            // The removed face nearest the pick, with its normal at the pick (curved faces too).
+        if (type === "shell" || type === "press_pull") {
+            // The face nearest the pick, with its normal at the pick (curved faces too): into
+            // the body for Shell, out of it for Press Pull (its distance is signed).
             const r = controller.execute("body.faces", bodyQuery({ point: point }))
             if (!r.ok || !r.result.nearest || !r.result.nearest.normal)
                 return null
-            return { base: point, direction: arr(v3(r.result.nearest.normal).times(-1).normalized()) }
+            const n = v3(r.result.nearest.normal).normalized()
+            return { base: point, direction: arr(type === "shell" ? n.times(-1) : n) }
         }
         const r = controller.execute("body.edges", bodyQuery({ point: point }))
         if (!r.ok || !r.result.nearest)
@@ -164,6 +166,14 @@ Pane {
 
     /// The distance arrow was dragged to signed distance `t` (mm): set Distance and Flip.
     function dragDistance(t) {
+        if (type === "press_pull") {
+            // Signed: out of the body or into it; never zero (Press Pull would refuse it).
+            const d = Math.round(t * 1e4) / 1e4
+            const v = Object.assign({}, values)
+            v.distance = Math.abs(d) < 0.01 ? (t < 0 ? -0.01 : 0.01) : d
+            values = v
+            return
+        }
         if (sizeKey !== "") {
             // A size is never negative or zero: the smallest drag step stays.
             const v = Object.assign({}, values)

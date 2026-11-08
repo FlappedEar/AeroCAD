@@ -1,6 +1,7 @@
 # CAD-157: Press Pull (Fusion, Q) on flat faces, with real keys and clicks:
 #  - Q with a body selected opens Press Pull on that body; a click on its top face picks it;
 #    OK pulls the face out by 5 mm (one timeline step, one undo step);
+#  - the distance arrow on the face drags the distance out and in;
 #  - a negative distance pushes the face in; the timeline step can be edited;
 #  - a curved face gives a clear error and leaves the body as it was.
 # Run: AeroCAD --ui-script <this file>
@@ -17,6 +18,18 @@ ui.wait(400)
 ui.wait(400)
 (() => { const f = featureDialog.values.faces || []; ui.log("picked faces " + JSON.stringify(f)); if (f.length !== 1) ui.fail("the click did not pick the top face") })()
 ui.shot("build/press-pull-preview.png")
+# The distance arrow sits on the picked face, pointing out; dragging it sets the distance
+# (in and out), as in Fusion.
+(() => { const a = viewport.distanceArrow; ui.log("arrow " + JSON.stringify(a)); if (!a || Math.abs(a.distance - 5) > 1e-9 || Math.abs(a.direction[2] - 1) > 1e-6) ui.fail("no distance arrow at 5 mm along +Z") })()
+(() => { const g = (z) => { const p = viewport.viewPoint(Qt.vector3d(20, 15, z)); return viewport.mapToItem(null, p.x, p.y) }; const a = g(25), b = g(32); ui.drag(a.x, a.y, b.x, b.y, "left", "", 12) })()
+ui.wait(800)
+(() => { const d = featureDialog.values.distance; ui.log("after drag out: distance " + d); if (Math.abs(d - 12) > 1.5) ui.fail("dragging out did not set about 12 mm, got " + d) })()
+(() => { const d = featureDialog.values.distance; const g = (z) => { const p = viewport.viewPoint(Qt.vector3d(20, 15, z)); return viewport.mapToItem(null, p.x, p.y) }; const a = g(20 + d), b = g(16); ui.drag(a.x, a.y, b.x, b.y, "left", "", 12) })()
+ui.wait(800)
+(() => { const d = featureDialog.values.distance; ui.log("after drag in: distance " + d); if (Math.abs(d + 4) > 1.5) ui.fail("dragging into the body did not set about -4 mm, got " + d) })()
+ui.shot("build/press-pull-dragged.png")
+(() => { featureDialog.setValue("distance", 5) })()
+ui.wait(400)
 (() => { if (!ui.clickText("OK")) ui.fail("no OK button") })()
 ui.wait(800)
 (() => { const s = Array.from(window.contentItem.children).find(c => c.objectName === "ppTest").size(); ui.log("pulled: " + s.join(" x ") + ", undo '" + controller.undoText + "'"); if (s.join() !== "40,30,25") ui.fail("expected 40 x 30 x 25, got " + s.join(" x ")) })()
