@@ -25,4 +25,13 @@ ui.key("A", "ctrl")
 ui.key("Backspace")
 ui.wait(500)
 (() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const z = t.floorZ(); ui.log("floor cleared: Z " + z + ", error '" + simulationPanel.proposalError + "'"); if (!(z < 0 && z > -10) || simulationPanel.proposalError) ui.fail("clearing the field does not go back to just below the parts"); if ("groundHeight" in simulationPanel.runParams()) ui.fail("an empty field still passes a floor height") })()
+# CAD-154: rotating wheels hide the floor height (the floor goes where the tyres touch it) and
+# say why a box cannot have them.
+ui.clickText("Rotating wheels (on the floor)")
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const p = simulationPanel.runParams(); ui.log("wheels: " + JSON.stringify(p) + " error '" + simulationPanel.proposalError + "'"); if (p.rotatingWheels !== true || "groundHeight" in p) ui.fail("rotating wheels not passed, or a floor height passed with them"); if (t.find(simulationPanel, "cfdFloorField").visible) ui.fail("floor height field shown with rotating wheels"); if (!/No wheels found/.test(simulationPanel.proposalError)) ui.fail("no reason shown for a part without wheels") })()
+ui.shot("cfd-rotating-wheels.png")
+ui.clickText("Rotating wheels (on the floor)")
+ui.wait(500)
+(() => { if (simulationPanel.proposalError || "rotatingWheels" in simulationPanel.runParams()) ui.fail("unticking rotating wheels does not clear them") })()
 ui.log("cfd floor height done")
