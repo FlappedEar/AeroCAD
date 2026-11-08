@@ -10,6 +10,8 @@ Item {
     required property AppController controller
     property var selectedPartId: 0
     signal partPicked(var id)
+    /// A click while a revolve axis is being picked (view coordinates).
+    signal axisClicked(real x, real y)
     /// Fill the view with part `id` (or its selected area); 0 = the selected part.
     signal zoomToPartRequested(var id)
     /// Right-click on a part (id 0: on empty space), at x, y in this item.
@@ -53,6 +55,8 @@ Item {
     property var shownSketch: -1
     /// Construction plane that clicks pass through (the one a dialog is creating).
     property var unpickablePlane: -1
+    /// Body (feature id) that must not catch clicks: a feature's own live preview.
+    property var unpickableBody: -1
     property var sketchCurves: []
     property var sketchConstraints: []
     property int sketchDegreesOfFreedom: -1
@@ -185,6 +189,18 @@ Item {
     }
 
     /// Sketch line within the pick radius of view position (x, y), like pickPart, or null.
+    /// Like pickPart without part `skipId` (and without the Move / Rotate / Scale preview).
+    function pickPartSkipping(x, y, skipId) {
+        const near = modelSpace.mapPositionFromScene(view.mapTo3DScene(Qt.vector3d(x, y, 0)))
+        const far = modelSpace.mapPositionFromScene(view.mapTo3DScene(Qt.vector3d(x, y, 100)))
+        const eye = modelSpace.mapPositionFromScene(view.camera.scenePosition)
+        const hit = controller.pickSurface(near, far.minus(near), skipId, 0)
+        if (!hit.partId)
+            return null
+        return { partId: hit.partId, point: hit.point, distance: hit.point.minus(eye).length(),
+                 triangle: hit.triangle, localPoint: hit.point }
+    }
+
     function pickSketchLine(x, y) {
         const near = modelSpace.mapPositionFromScene(view.mapTo3DScene(Qt.vector3d(x, y, 0)))
         const far = modelSpace.mapPositionFromScene(view.mapTo3DScene(Qt.vector3d(x, y, 100)))
@@ -575,7 +591,8 @@ Item {
                     visible: (partVisible || (kind === "sketch" && featureId == root.shownSketch))
                              && root.hiddenPartIds.indexOf(partId) < 0
                     pickable: (root.pickKind === "" || kind === root.pickKind
-                               || (root.pickKind === "solid" && (kind === "body" || (kind === "imported" && hasBrep))))
+                               || (root.pickKind === "solid" && (kind === "body" || (kind === "imported" && hasBrep)))
+                               || (root.pickKind === "axis" && kind === "body" && featureId != root.unpickableBody))
                               && !(kind === "plane" && featureId == root.unpickablePlane)
                     geometry: sectioned ? clippedGeometry : heatMapped ? heatGeometry : plainGeometry
                     // Fusion-like colours: grey bodies, translucent orange sketch profiles and planes.
@@ -798,6 +815,12 @@ Item {
                     root.orientToFace(hit)
                 else
                     root.controller.showStatus(qsTr("Click a face of %1.").arg(root.transformTarget.name))
+                return
+            }
+            // Revolve axis (Fusion: Axis selection): the dialog resolves the click itself, as
+            // a sketch line or a body edge behind its own preview.
+            if (root.pickKind === "axis") {
+                root.axisClicked(eventPoint.position.x, eventPoint.position.y)
                 return
             }
             if (root.pickSketchLines) {

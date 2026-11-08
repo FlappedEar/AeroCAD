@@ -1864,6 +1864,7 @@ ApplicationWindow {
             pickKind: featureDialog.visible ? featureDialog.pickKind : ""
             shownSketch: featureDialog.shownSketch
             unpickablePlane: featureDialog.visible ? featureDialog.ownPlane : -1
+            unpickableBody: featureDialog.visible ? featureDialog.previewFeatureId : -1
             simulationFields: window.simulationVisible ? simulationPanel.viewportFields : []
             hiddenPartIds: window.simulationVisible ? simulationPanel.hiddenPartIds : []
             overlayLines: measurePanel.keptLines.concat(measurePanel.overlayLines)
@@ -1877,6 +1878,10 @@ ApplicationWindow {
             }
             onZoomToPartRequested: id => window.zoomToSelection(id)
             cfdPreview: simulationPanel.visible ? simulationPanel.proposal : null
+            onAxisClicked: (x, y) => {
+                if (featureDialog.visible)
+                    featureDialog.pickAxisAt(viewport, x, y)
+            }
             onSketchContextRequested: (x, y) => {
                 sketchMenu.drawing = viewport.sketchDrawing
                 sketchMenu.popup(viewport, x, y)

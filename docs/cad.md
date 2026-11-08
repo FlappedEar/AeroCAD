@@ -75,7 +75,7 @@ rebuilding, AeroCAD reports the problem; Undo restores the previous source.
 | `sketch.edit_constraint` | double-click a dimension / delete a constraint | `index`, `value` or `remove` |
 | `sketch.curves` | | solved curves, constraints, degrees of freedom |
 | `feature.extrude` | Extrude (E) | `distance`, `extent` one_side / symmetric / two_sides, `flip`, `profiles` or `points` |
-| `feature.revolve` | Revolve | `axis` X / Y / Z, {line: sketch curve index} or {origin, direction}; `angle` |
+| `feature.revolve` | Revolve | `axis` X / Y / Z, {line: sketch curve index} or {origin, direction} (the UI sets these from a clicked sketch line or straight body edge); `angle` |
 | `feature.sweep` | Sweep | profiles of `sketch` moved along `path` {sketch, curves} (default: all curves of the path sketch) |
 | `feature.loft` | Loft | `sections`: sketch ids or {sketch, profile}, in order; `solid`, `ruled` |
 | `feature.mirror` | Mirror | `body`, `plane` XY / XZ / YZ / {origin, normal} / planar face, `offset`; join or new_body |
