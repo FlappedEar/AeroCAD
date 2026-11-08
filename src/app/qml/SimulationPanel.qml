@@ -182,9 +182,15 @@ Pane {
         if (residuals.length > 0) {
             const fr = q.finalResiduals || {}
             const values = residuals.map(f => fr[f] !== undefined ? f + " " + Number(fr[f]).toExponential(1) : f)
-            lines.unshift({ text: qsTr("Not converged to the preset targets (1e-5, p 1e-4); final residuals %1").arg(values.join(", ")),
+            lines.unshift({ text: q.forcesSettled
+                                  ? qsTr("Forces settled, but residuals are above 1e-3: %1").arg(values.join(", "))
+                                  : qsTr("Not converged to the preset targets (1e-5, p 1e-4); final residuals %1").arg(values.join(", ")),
                             ok: false })
         }
+        // CAD-155: the solver stopped early because Cd and Cl no longer changed.
+        if (q.forcesSettled)
+            lines.push({ text: q.iterations ? qsTr("Stopped after %1 iterations: Cd and Cl have settled").arg(q.iterations)
+                                            : qsTr("Stopped early: Cd and Cl have settled"), ok: true })
         if (q.checks && q.checks.forceStability === "passed" && q.cdFluctuation !== undefined)
             lines.push({ text: qsTr("Cd is steady: it changes %1 % over the last 20 % of the iterations")
                                    .arg(root.num(100 * q.cdFluctuation, 2)), ok: true })

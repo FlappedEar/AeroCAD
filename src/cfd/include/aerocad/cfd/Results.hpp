@@ -74,6 +74,10 @@ struct QualityReport {
     std::optional<std::int64_t> cells;   ///< Volume mesh cells.
     int failedMeshChecks = 0;
     bool solverConverged = false;        ///< Residual targets reached before the iteration limit.
+    /// The solver stopped because Cd and Cl had settled (CAD-155); residuals then only need
+    /// to be below 1e-3.
+    bool forcesSettled = false;
+    std::optional<int> iterations;       ///< Last solver iteration.
     std::optional<double> continuityError; ///< Last "sum local" time step continuity error.
     std::map<std::string, double> finalResiduals; ///< Initial residual of the last iteration.
     /// Relative band (max - min) / |mean| of Cd over the last 20 % of the iterations.
