@@ -88,6 +88,24 @@ void write(const fs::path& p, const std::string& text)
 
 /// Writes the output files of a finished solver run into a case directory, in the
 /// formats OpenFOAM v2506 writes them (abridged).
+const char* const kBrokenMeshLog =
+    "Checking geometry...\n"
+    "    Overall domain bounding box (-0.1 -0.2 0) (0.3 0.2 0.2)\n"
+    " ***Zero or negative cell volume detected.  Minimum negative volume: -1.2e-15, Number of negative volume "
+    "cells: 3\n"
+    "  <<Writing 3 zero volume cells to set zeroVolumeCells\n"
+    "    Mesh non-orthogonality Max: 88.1 average: 9.2\n"
+    " ***Number of non-orthogonality errors: 12\n"
+    " ***Error in face pyramids: 24 faces are incorrectly oriented.\n"
+    " ***Max skewness = 6.2, 4 highly skew faces detected which may impair the quality of the results\n"
+    "\nFailed 4 mesh checks.\n\nEnd\n";
+const char* const kPoorMeshLog = "Checking geometry...\n"
+                                 "    Mesh non-orthogonality Max: 72.1 average: 9.2\n"
+                                 " ***Number of non-orthogonality errors: 12\n"
+                                 " ***Max skewness = 6.2, 4 highly skew faces detected which may impair the "
+                                 "quality of the results\n"
+                                 "\nFailed 2 mesh checks.\n\nEnd\n";
+
 void fakeFinishedRun(const fs::path& dir, double cd, double dragN, double liftN = 0.2)
 {
     std::ostringstream coeffs, forces, residuals;
@@ -291,6 +309,46 @@ TEST_CASE("Allrun keeps the engine of reused solver results (CAD-84)", "[cfd]")
         fs::remove(tmp.path() / "log.simpleFoam");
         REQUIRE(run("v2506") == 0);
         CHECK(slurp(tmp.path() / "aerocad.engine") == "v2506\n");
+    }
+}
+
+TEST_CASE("Allrun stops before the solve on a mesh with fatal checkMesh defects (CAD-103)", "[cfd]")
+{
+    // Stand-in RunFunctions with OpenFOAM's rule that an application whose log exists is
+    // skipped, so a prepared log.checkMesh is what the check step reads.
+    TempDir foam;
+    fs::create_directories(foam.path() / "bin/tools");
+    write(foam.path() / "bin/tools/RunFunctions",
+          "runApplication() { [ -f \"log.$1\" ] && return 0; echo ran > \"log.$1\"; }\n"
+          "runParallel() { runApplication \"$@\"; }\n"
+          "restore0Dir() { :; }\n");
+    for (const int processes : {1, 3}) {
+        INFO("processes " << processes);
+        for (const bool broken : {true, false}) {
+            INFO((broken ? "broken mesh" : "poor but usable mesh"));
+            TempDir tmp;
+            cfd::CaseGeometry g;
+            g.part = box({0, 0, 0}, {100, 50, 20});
+            cfd::Settings s;
+            s.processes = processes;
+            cfd::writeCase(tmp.path(), g, s);
+            write(tmp.path() / "log.checkMesh", broken ? kBrokenMeshLog : kPoorMeshLog);
+            const std::string cmd = "WM_PROJECT_DIR=\"" + foam.path().string() + "\" sh \"" +
+                                    (tmp.path() / "Allrun").string() + "\" >/dev/null 2>&1";
+            const int rc = std::system(cmd.c_str());
+            if (broken) {
+                CHECK(rc != 0);
+                CHECK(slurp(tmp.path() / "aerocad.status") == "failed check\n");
+                CHECK_FALSE(fs::exists(tmp.path() / "log.potentialFoam"));
+                CHECK_FALSE(fs::exists(tmp.path() / "log.simpleFoam"));
+                // The diagnosis stays in place.
+                CHECK(slurp(tmp.path() / "log.checkMesh") == kBrokenMeshLog);
+            } else {
+                CHECK(rc == 0);
+                CHECK(slurp(tmp.path() / "aerocad.status") == "finished\n");
+                CHECK(fs::exists(tmp.path() / "log.simpleFoam"));
+            }
+        }
     }
 }
 #endif
@@ -1259,4 +1317,78 @@ TEST_CASE("The same surroundings given in another part order are the same contex
     INFO(cmp.dump());
     CHECK(cmp.at("sameConditions") == true);
     CHECK(cmp.at("verdict") == "comparable");
+}
+
+TEST_CASE("A failed run says why: fatal mesh defects or a diverged solve (CAD-103)", "[cfd]")
+{
+    TempDir tmp;
+    cfd::RunManager runs(tmp.path());
+    cfd::CaseGeometry g;
+    g.part = box({0, 0, 0}, {200, 80, 60});
+    const std::string id = runs.prepare(g, cfd::Settings{}, cfd::RunSource{});
+    const fs::path dir = tmp.path() / id;
+
+    // Stopped by the check: the fatal reports, not the warnings or the "Failed N" count.
+    write(dir / "log.checkMesh", kBrokenMeshLog);
+    write(dir / "aerocad.status", "failed check\n");
+    auto st = runs.status(id);
+    REQUIRE(st);
+    CHECK(st->state == cfd::RunState::Failed);
+    INFO(st->message);
+    CHECK(st->message.find("solve was not started") != std::string::npos);
+    CHECK(st->message.find("Zero or negative cell volume detected.") != std::string::npos);
+    CHECK(st->message.find("..") == std::string::npos);
+    CHECK(st->message.find("Number of negative volume cells: 3") != std::string::npos);
+    CHECK(st->message.find("Error in face pyramids: 24 faces are incorrectly oriented.") != std::string::npos);
+    CHECK(st->message.find("skewness") == std::string::npos);
+    CHECK(st->message.find("non-orthogonality") == std::string::npos);
+    CHECK(st->message.find("log.checkMesh") != std::string::npos);
+
+    // A solver that diverged and died of SIGFPE in a parallel run: the reason, not the
+    // MPI separator line or a stack frame.
+    const std::string crash = "Time = 254\n\nsmoothSolver:  Solving for Ux, Initial residual = 0.9\n\nTime = 255\n\n"
+                              "[3] #0  Foam::error::printStack(Foam::Ostream&) at ??:?\n"
+                              "[3] #1  Foam::sigFpe::sigHandler(int) at ??:?\n"
+                              "[3] #2  ? in /lib/x86_64-linux-gnu/libc.so.6\n";
+    const std::string separator = "--------------------------------------------------------------------------\n";
+    for (const std::string& tail :
+         {std::string(), separator,
+          separator +
+              "prterun noticed that process rank 3 with PID 0 on node x exited on signal 8 (Floating "
+              "point exception).\n" +
+              separator}) {
+        write(dir / "log.simpleFoam", crash + tail);
+        write(dir / "aerocad.status", "failed solve\n");
+        st = runs.status(id);
+        REQUIRE(st);
+        INFO(st->message);
+        CHECK(st->message.find("Step 'solve' failed (log.simpleFoam)") != std::string::npos);
+        CHECK(st->message.find("floating-point exception: the solution diverged at iteration 255") !=
+              std::string::npos);
+        CHECK(st->message.find("----") == std::string::npos);
+    }
+
+    // OpenFOAM's start-up banner when trapping is on is not a crash: a later segmentation
+    // fault keeps its own reason.
+    write(dir / "log.simpleFoam",
+          "sigFpe : Enabling floating point exception trapping (FOAM_SIGFPE).\nTime = 12\n\n"
+          "[2] #0  Foam::error::printStack(Foam::Ostream&) at ??:?\n[2] #1  Foam::sigSegv::sigHandler(int) at ??:?\n" +
+              separator +
+              "prterun noticed that process rank 2 with PID 0 on node x exited on signal 11 (Segmentation "
+              "fault).\n" +
+              separator);
+    st = runs.status(id);
+    INFO(st->message);
+    CHECK(st->message.find("diverged") == std::string::npos);
+    CHECK(st->message.find("Segmentation fault") != std::string::npos);
+
+    // A fatal error keeps its first line; a mesh check without fatal reports keeps the old summary.
+    write(dir / "log.simpleFoam", "--> FOAM FATAL ERROR: (openfoam-2506)\n\n    Unknown patch type wall2\n\n"
+                                  "    From Foam::fvPatch::New\n");
+    st = runs.status(id);
+    CHECK(st->message.find("Unknown patch type wall2") != std::string::npos);
+    write(dir / "log.checkMesh", "Checking geometry...\n\nEnd\n");
+    write(dir / "aerocad.status", "failed check\n");
+    st = runs.status(id);
+    CHECK(st->message == "Step 'check' failed (log.checkMesh): End");
 }
