@@ -125,14 +125,14 @@ ApplicationWindow {
     /// Runs `step(id)` for every selected part and joins what they did into one undo step.
     /// The steps are joined every 50 parts on the way, so a large selection never pushes
     /// its first steps out of the 200-step history before they are joined.
-    function forEachSelected(label, step) {
+    function forEachSelected(label, step, items) {
         let tokens = []
         let done = 0
         const join = () => {
             if (tokens.length > 1 && controller.mergeHistoryIds(tokens, label.arg(done)))
                 tokens = [controller.historyTopId()]
         }
-        for (const id of selectedExisting()) {
+        for (const id of (items ?? selectedExisting())) {
             const before = controller.historyTopId()
             step(id)
             const after = controller.historyTopId()
@@ -373,17 +373,30 @@ ApplicationWindow {
             viewport.sketchOverlay.deleteSelection()
             return
         }
-        forEachSelected(qsTr("Delete %1 parts"), id => {
-            // Deleting a feature may have taken this part already.
+        // What to delete is read before anything goes: deleting a sketch makes the body
+        // extruded from it fail and vanish from the parts, yet its feature stays in the
+        // timeline. Bodies, sketches and planes come from the timeline, so their features
+        // are deleted, the last in the timeline first (a feature never needs a later one).
+        const tl = controller.execute("timeline.list")
+        const order = tl.ok ? tl.result.features.map(f => f.id) : []
+        const features = [], parts = []
+        for (const id of selectedExisting()) {
             const info = controller.partInfo(id)
-            if (!info.id)
-                return
-            // Bodies, sketches and planes come from the timeline: delete the feature that made them.
-            if (info.kind === "body" || info.kind === "sketch" || info.kind === "plane")
-                controller.execute("feature.delete", { id: info.featureId })
-            else
-                controller.execute("part.remove", { id: id })
-        })
+            if (info.kind === "body" || info.kind === "sketch" || info.kind === "plane") {
+                if (features.indexOf(info.featureId) < 0)
+                    features.push(info.featureId)
+            } else {
+                parts.push(id)
+            }
+        }
+        features.sort((a, b) => order.indexOf(b) - order.indexOf(a))
+        const items = features.map(f => ({ feature: f })).concat(parts.map(p => ({ part: p })))
+        forEachSelected(qsTr("Delete %1 parts"), item => {
+            if (item.feature !== undefined)
+                controller.execute("feature.delete", { id: item.feature })
+            else if (controller.partInfo(item.part).id)
+                controller.execute("part.remove", { id: item.part })
+        }, items)
     }
 
     // --- View (right-click menu on empty space) ----------------------------------------

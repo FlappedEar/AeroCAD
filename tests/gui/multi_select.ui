@@ -6,7 +6,8 @@
 #  - V hides all selected parts and Ctrl+Z shows them all again (one undo step);
 #  - a right-click on a selected part, in the view or the Browser, keeps the selection;
 #  - Ctrl+A selects every visible part; Delete removes them all (timeline bodies and a
-#    copied solid) and one Ctrl+Z brings them all back.
+#    copied solid) and one Ctrl+Z brings them all back;
+#  - a sketch and its extruded body, picked in that order: Delete removes both features.
 # Run: AeroCAD --ui-script <this file>
 Qt.createQmlObject('import QtQuick; Item { objectName: "msTest"; visible: false; property var s: ({}); function at(i) { const c = Qt.vector3d(40 * i + 10, 10, 10); const v = viewport.viewPoint(c); return viewport.mapToItem(null, v.x, v.y) } function clickPart(i, mods) { const p = at(i); ui.click(p.x, p.y, "left", mods || "") } function clickRow(i, mods, button) { const r = browser.rowItem(s.ids[i]); const p = r.mapToItem(null, r.width / 3, r.height / 2); ui.click(p.x, p.y, button || "left", mods || "") } function sel() { return window.selectedPartIds.map(id => s.ids.indexOf(id)) } function check(label, want) { const got = sel(); ui.log(label + ": selected " + got.join(",") + " (last " + s.ids.indexOf(window.selectedPartId) + ")"); if (got.slice().sort().join() !== want.slice().sort().join()) ui.fail(label + ": selected " + got.join() + ", expected " + want.join()); if (want.length && window.selectedPartId !== s.ids[want[want.length - 1]]) ui.fail(label + ": last picked part is " + s.ids.indexOf(window.selectedPartId) + ", expected " + want[want.length - 1]); if (!want.length && window.selectedPartId) ui.fail(label + ": a part is still the current one") } function vis() { return s.ids.map(id => controller.partInfo(id).visible) } function count() { return controller.execute("document.parts").result.parts.length } }', window.contentItem)
 ui.wait(800)
@@ -75,3 +76,19 @@ ui.wait(500)
 ui.wait(500)
 (() => { const n = Array.from(window.contentItem.children).find(c => c.objectName === "msTest").count(); ui.log("Ctrl+Z: " + n + " parts"); if (n !== 4) ui.fail("one Ctrl+Z after Delete brought back " + n + " parts, expected 4") })()
 ui.log("multi-select OK")
+# A sketch and the body extruded from it, picked in that order: Delete removes both
+# features (Codex: deleting the sketch first made the body vanish and its feature stay).
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "msTest"); let r = controller.execute("sketch.create", { plane: "XY", curves: [{ type: "center_rectangle", center: [0, 100], width: 20, height: 20 }] }); if (!r.ok) ui.fail("sketch: " + r.error); t.s.sketchFeature = r.result.id; r = controller.execute("feature.extrude", { sketch: r.result.id, distance: 10 }); if (!r.ok) ui.fail("extrude: " + r.error); t.s.extrudeFeature = r.result.id; const parts = controller.execute("document.parts").result.parts; t.s.ids = [parts.find(p => p.kind === "sketch" && p.featureId === t.s.sketchFeature).id, parts.find(p => p.kind === "body" && p.featureId === t.s.extrudeFeature).id] })()
+ui.wait(400)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "msTest").clickRow(0) })()
+ui.wait(300)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "msTest").clickRow(1, "ctrl") })()
+ui.wait(300)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "msTest").check("sketch, then its body", [0, 1]) })()
+ui.key("Delete")
+ui.wait(600)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "msTest"); const left = controller.execute("timeline.list").result.features.filter(f => f.id === t.s.sketchFeature || f.id === t.s.extrudeFeature); ui.log("Delete sketch + body: " + left.length + " of their features left"); if (left.length) ui.fail("Delete left " + left.map(f => f.name + " (" + f.status + ")").join(", ") + " in the timeline") })()
+(() => { undoAction.trigger() })()
+ui.wait(600)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "msTest"); const back = controller.execute("timeline.list").result.features.filter(f => (f.id === t.s.sketchFeature || f.id === t.s.extrudeFeature) && f.status === "ok"); ui.log("Ctrl+Z: " + back.length + " features back"); if (back.length !== 2) ui.fail("one Ctrl+Z brought back " + back.length + " of 2 features") })()
+ui.log("multi-select sketch + body OK")
