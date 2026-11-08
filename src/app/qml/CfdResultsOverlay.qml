@@ -47,6 +47,7 @@ Item {
         return kind === "surface" ? qsTr("on the part")
              : kind === "streamlines" ? qsTr("streamlines")
              : kind === "wake" ? qsTr("wake (Cp0 = 0)")
+             : kind === "vortices" ? qsTr("vortex cores")
              : kind === "sectionHorizontal" ? qsTr("horizontal section")
              : kind === "sectionVertical" || kind.indexOf("sectionY_") === 0 ? qsTr("vertical section")
              : kind.indexOf("sectionZ_") === 0 ? qsTr("horizontal section")

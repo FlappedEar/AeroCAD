@@ -144,7 +144,8 @@ Pane {
         { kind: "streamlines", scalar: "speed", label: qsTr("Streamlines (speed)"), on: true },
         { kind: "sectionCross", axis: "x", scalar: "speed", label: qsTr("Section across the flow (speed)"), on: false },
         // CAD-165: where the air has lost all of its total pressure, as in motorsport CFD.
-        { kind: "wake", scalar: "speed", label: qsTr("Wake: total pressure lost, Cp0 = 0 (speed)"), on: false }
+        { kind: "wake", scalar: "speed", label: qsTr("Wake: total pressure lost, Cp0 = 0 (speed)"), on: false },
+        { kind: "vortices", scalar: "speed", label: qsTr("Vortex cores, Q-criterion (speed)"), on: false }
     ]
 
     readonly property bool anyRunning: runs.some(r => r.state === "running")
@@ -1602,14 +1603,17 @@ Pane {
                             onToggled: root.setField(fieldRow.index, checked)
                         }
                         Label {
-                            objectName: "wakeMissing"
-                            visible: fieldRow.modelData.kind === "wake" && !!root.results && !root.results.fields.wake
+                            objectName: fieldRow.modelData.kind + "Missing"
+                            visible: (fieldRow.modelData.kind === "wake" || fieldRow.modelData.kind === "vortices")
+                                     && !!root.results && !root.results.fields[fieldRow.modelData.kind]
                             Layout.leftMargin: 28
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
                             font.pixelSize: 11
                             color: Theme.textMuted
-                            text: qsTr("This run was made before the wake surface was added: run it again to see the wake.")
+                            text: fieldRow.modelData.kind === "wake"
+                                  ? qsTr("This run was made before the wake surface was added: run it again to see the wake.")
+                                  : qsTr("This run was made before the vortex cores were added: run it again to see them.")
                         }
                         // Where the section lies (CAD-148): steps through the planes the run wrote.
                         RowLayout {

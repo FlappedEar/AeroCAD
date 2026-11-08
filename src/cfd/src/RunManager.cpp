@@ -52,6 +52,10 @@ std::string_view runStateName(RunState state)
 
 namespace {
 
+/// How far from the part, in surface cells, the vortex cores start (CAD-175): closer, Q
+/// marks the boundary layer, not a vortex.
+constexpr double kVortexSkin = 3.0;
+
 std::string env(const char* name)
 {
     const char* v = std::getenv(name);
@@ -1487,7 +1491,7 @@ Json RunManager::results(const std::string& id, int maxPoints)
     j["quality"] = assessQuality(run.caseDir).toJson();
 
     Json fields = Json::object();
-    for (const char* kind : {"surface", "sectionHorizontal", "sectionVertical", "wake", "streamlines"}) {
+    for (const char* kind : {"surface", "sectionHorizontal", "sectionVertical", "wake", "vortices", "streamlines"}) {
         const bool streamlines = std::string_view(kind) == "streamlines";
         const fs::path base = streamlines ? run.caseDir / "postProcessing" / "sets" / "streamLines"
                                           : run.caseDir / "postProcessing" / "surfaces";
@@ -1567,7 +1571,7 @@ PolyData RunManager::field(const std::string& id, std::string_view kind)
             appendPolyData(d, region.isEmpty() ? lines : cropLines(lines, region));
         }
     } else if (kind == "surface" || kind == "sectionHorizontal" || kind == "sectionVertical" || kind == "wake" ||
-               isStackSection(kind)) {
+               kind == "vortices" || isStackSection(kind)) {
         const auto dirs = timeDirectories(run->caseDir / "postProcessing" / "surfaces");
         const std::string file = kind == "surface" ? "part.vtk" : std::string(kind) + ".vtk";
         if (dirs.empty() || !fs::is_regular_file(dirs.back() / file, ec))
@@ -1580,9 +1584,12 @@ PolyData RunManager::field(const std::string& id, std::string_view kind)
         // pressure map; only what lies further away is the wake (CAD-165).
         if (kind == "wake" && !d.empty() && fs::is_regular_file(dirs.back() / "part.vtk", ec))
             d = dropNearPoints(d, readVtk(dirs.back() / "part.vtk").points, surfaceCellSize(*info));
+        // Q is also high in the boundary layer, which is a few cells thick (CAD-175).
+        if (kind == "vortices" && !d.empty() && fs::is_regular_file(dirs.back() / "part.vtk", ec))
+            d = dropNearPoints(d, readVtk(dirs.back() / "part.vtk").points, kVortexSkin * surfaceCellSize(*info));
     } else {
         throw std::runtime_error("Unknown field '" + std::string(kind) +
-                                 "' (surface, sectionHorizontal, sectionVertical, wake, sectionX_<i>, sectionY_<i>, "
+                                 "' (surface, sectionHorizontal, sectionVertical, wake, vortices, sectionX_<i>, sectionY_<i>, "
                                  "sectionZ_<i>, streamlines)");
     }
     if (d.empty())

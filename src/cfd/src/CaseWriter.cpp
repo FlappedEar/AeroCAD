@@ -212,6 +212,12 @@ double surfaceCellSize(const CaseInfo& info)
     return info.characteristicLength / plan.cellsPerLength / std::pow(2.0, plan.surfaceMin);
 }
 
+double vortexQ(const CaseInfo& info)
+{
+    const double rate = info.settings.speed / info.characteristicLength;
+    return kVortexQ * rate * rate;
+}
+
 namespace {
 
 /// Number formatting independent of the global locale.
@@ -470,6 +476,9 @@ std::string controlDict(const Settings& s, const CaseInfo& info)
       << "    totalPressure\n    {\n        type pressure;\n        libs (fieldFunctionObjects);\n"
       << "        mode total;\n        result totalP;\n        rho rhoInf;\n        rhoInf 1;\n"
       << "        writeControl none;\n    }\n"
+      // Q-criterion (CAD-175) for the vortex cores: where rotation outweighs strain.
+      << "    vorticity\n    {\n        type Q;\n        libs (fieldFunctionObjects);\n"
+      << "        writeControl none;\n    }\n"
       // Fields for the result view: pressure on the part, two velocity sections through
       // the part centre, streamlines from a grid of seeds upstream.
       << "    surfaces\n    {\n        type surfaces;\n        libs (sampling);\n"
@@ -500,6 +509,8 @@ std::string controlDict(const Settings& s, const CaseInfo& info)
     }
     t << "            wake { type isoSurface; isoField totalP; isoValue 0; interpolate true; regularise true; bounds "
       << region.min << ' ' << region.max << "; }\n";
+    t << "            vortices { type isoSurface; isoField Q; isoValue " << vortexQ(info)
+      << "; interpolate true; regularise true; bounds " << region.min << ' ' << region.max << "; }\n";
     t << "        }\n    }\n";
     // Streamlines (CAD-135): a dense 16 x 10 rake just ahead of the part, a little wider
     // and taller than it, so the lines wrap the body closely; and an 8 x 5 rake just behind

@@ -383,7 +383,7 @@ p, Cp and Pa), `sectionHorizontal` / `sectionVertical` (planes through the part 
 speed in m/s and Cp), a plane of a section stack (`sectionX_<i>` across the flow,
 `sectionY_<i>` vertical along it, `sectionZ_<i>` horizontal; `simulation.results` lists
 the run's planes in `fields.sections` with their fraction of the part and position in mm),
-`wake` and `streamlines` (a rake ahead of the part and one in the wake).
+`wake`, `vortices` and `streamlines` (a rake ahead of the part and one in the wake).
 
 The wake surface (CAD-165) is the isosurface of zero total pressure, Cp0 = 0, as in
 motorsport CFD: the air inside it has lost all of its dynamic pressure, so it outlines the
@@ -394,6 +394,14 @@ lost in the boundary layer, so the isosurface wraps the whole part in a skin abo
 off its surface that would hide the pressure map; the result view drops the parts of it
 closer to the part than one surface cell of the run's mesh, which leaves the wake. "Show in 3D" draws it
 see-through and coloured by speed. Runs made before it say so and need a new run.
+
+The vortex cores (CAD-175) are the isosurface of the Q-criterion, where the rotation of
+the air outweighs its strain, as ParaView and other post-processors show them. The case
+computes Q (`Q` function object) and samples the isosurface at Q = 20 (U / L)², with U the
+speed and L the characteristic length, so the same structures show at any speed and size;
+on the F1 model it picks out the rear wing tip vortices and the wheel wakes. Q is also high
+in the boundary layer, so the result view drops what lies within three surface cells of
+the part. "Show in 3D" draws them like the wake; runs made before need a new run.
 Each scalar has `min`, `max`, `mean` and the 2nd/98th percentiles `p02`/`p98`, which the
 app uses for the pressure colour range.
 
