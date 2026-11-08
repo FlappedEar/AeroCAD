@@ -174,6 +174,12 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/section_sketch_snap.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_section_sketch_snap_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-109: the Wind tunnel panel shows the part size and warns about implausible units.
+    add_test(NAME app_cfd_size_warning_test
+        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl
+                --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/cfd_size_warning.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_cfd_size_warning_test PROPERTIES LABELS gui TIMEOUT 60)
     # Live Move / Rotate / Scale (handles, panel, Enter / Esc / click away) and free orbit.
     add_test(NAME app_transform_tool_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl

@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CAD-109: the Wind tunnel panel shows the part size and warns before a run when the part is
+# far too small for a wind tunnel (most likely the wrong unit); converting the units clears it.
+ui.wait(1000)
+(() => { const p = controller.execute("document.parts").result.parts[0]; window.selectPart(p.id) })()
+ui.clickText("SIMULATE")
+ui.wait(300)
+ui.clickText("Wind Tunnel")
+ui.wait(600)
+(() => { const w = simulationPanel.partInfo.id && controller.partSizeWarning(simulationPanel.partInfo.id); ui.log("200 mm box warning: '" + w + "'"); if (w) ui.fail("a 200 mm box must not warn") })()
+ui.clickText("200 × 80 × 60 mm")
+# The box read from a file in metres as millimetres: 0.2 mm long.
+(() => { const p = controller.execute("document.parts").result.parts[0]; const r = controller.execute("part.convert_units", {id: p.id, from: "mm", to: "m"}); if (!r.ok) ui.fail(r.error) })()
+ui.wait(500)
+(() => { const w = controller.partSizeWarning(simulationPanel.partInfo.id); ui.log("0.2 mm box warning: " + w); if (w.indexOf("only 0.2 mm long") < 0) ui.fail("no size warning for a 0.2 mm part") })()
+ui.clickText("0.20 × 0.08 × 0.06 mm")
+ui.shot("cfd-size-warning.png")
+ui.key("Z", "ctrl")
+ui.wait(500)
+(() => { if (controller.partSizeWarning(simulationPanel.partInfo.id)) ui.fail("warning stays after Undo") })()
+ui.clickText("200 × 80 × 60 mm")
+ui.log("cfd size warning done")

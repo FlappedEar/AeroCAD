@@ -18,6 +18,15 @@ namespace aerocad::commands {
 
 namespace {
 
+/// Warnings about the part to show before a run starts (CAD-109).
+Json sizeWarnings(double characteristicLength)
+{
+    Json w = Json::array();
+    if (const std::string size = cfd::partSizeWarning(characteristicLength); !size.empty())
+        w.push_back(size);
+    return w;
+}
+
 Json objectSchema(Json properties, Json required = Json::array())
 {
     return Json{{"type", "object"},
@@ -249,9 +258,9 @@ void registerSimulationCommands(CommandRegistry& r)
                      {"referenceLength", plan.referenceLength},
                      {"characteristicLength", plan.characteristicLength},
                      {"baseCellSize", plan.baseCellSize},
-                     {"domainSize",
-                      {plan.domain.size().x, plan.domain.size().y, plan.domain.size().z}},
+                     {"domainSize", {plan.domain.size().x, plan.domain.size().y, plan.domain.size().z}},
                      {"environment", cfd::detectEnvironment().toJson()},
+                     {"warnings", sizeWarnings(plan.characteristicLength)},
                      {"next", "Call simulation.run with the same parameters to start it."}};
               return j;
           });
@@ -286,7 +295,10 @@ void registerSimulationCommands(CommandRegistry& r)
               } catch (const std::exception& e) {
                   throw CommandError(e.what());
               }
-              return statusJson(ctx, *runs(ctx).status(id));
+              Json j = statusJson(ctx, *runs(ctx).status(id));
+              const auto info = runs(ctx).caseInfo(id);
+              j["warnings"] = sizeWarnings(info ? info->characteristicLength : 0.0);
+              return j;
           });
 
     r.add({"simulation.refine", "Run on another mesh",
