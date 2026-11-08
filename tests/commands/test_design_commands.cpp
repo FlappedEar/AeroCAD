@@ -1008,4 +1008,17 @@ TEST_CASE("Design commands: sketch fillet (CAD-126)", "[commands][cad][solver]")
 
     // Too large a radius, or lines that do not meet: refused.
     CHECK_FALSE(s.execute("sketch.fillet", {{"sketch", id}, {"curves", {0, 1}}, {"radius", 50}}).ok);
+
+    // Rounding a corner of two construction lines gives a construction arc (no new profile).
+    const auto cid = run(s, "sketch.create",
+                         {{"plane", "XY"},
+                          {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {20, 0}}, {"construction", true}},
+                                                  {{"type", "line"}, {"start", {20, 0}}, {"end", {20, 20}}, {"construction", true}}})}})
+                         .at("id")
+                         .get<std::uint64_t>();
+    run(s, "sketch.fillet", {{"sketch", cid}, {"curves", {0, 1}}, {"radius", 5}});
+    const Json cc = run(s, "sketch.curves", {{"sketch", cid}});
+    REQUIRE(cc.at("curves").size() == 3);
+    for (const auto& curve : cc.at("curves"))
+        CHECK(curve.at("construction") == true);
 }

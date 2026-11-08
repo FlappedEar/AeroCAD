@@ -1159,7 +1159,11 @@ void Design::filletSketchCorner(FeatureId sketchId, std::size_t ia, std::size_t 
         std::size_t first = m_sketches.count(sketchId) ? m_sketches.at(sketchId).curves.size() : curves.size() - 2;
         items.push_back(lineItem(la, farA, ta));
         items.push_back(lineItem(lb, farB, tb));
-        items.push_back({{"type", "arc"}, {"start", pt(ta)}, {"through", pt(mid)}, {"end", pt(tb)}});
+        Json arc{{"type", "arc"}, {"start", pt(ta)}, {"through", pt(mid)}, {"end", pt(tb)}};
+        // Rounding a construction corner gives a construction arc: it must not bound a profile.
+        if (la.construction && lb.construction)
+            arc["construction"] = true;
+        items.push_back(arc);
         g.params["curves"] = items;
         Json constraints = g.params.value("constraints", Json::array());
         constraints.push_back({{"type", "tangent"}, {"curves", Json::array({first, first + 2})}});
