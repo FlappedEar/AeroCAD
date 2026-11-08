@@ -56,7 +56,8 @@ use the same operations, and every change is one undo step.
   A fit that misses its tolerance is kept and marked as an approximation (CAD-85), except
   when what is left is the scan's own noise (CAD-141): the noise is estimated from the scan
   under the outline (`fit.scanNoise`, one standard deviation, mm), and when 99% of the scan
-  is within 3 of it and the rms not above 1.2 of it (`fit.withinScanNoise`), the surface runs
+  is within 3 of it, the rms not above 1.2 of it and the deviations of nearby samples do not
+  correlate (no missed ripple or ridge; `fit.withinScanNoise`), the surface runs
   through the middle of the noise. Finer control points would only make it follow the noise,
   so the fit stops there, and it is not called an approximation.
 - Failing features: a new or edited feature that fails is rejected (nothing changes).

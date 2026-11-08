@@ -609,3 +609,41 @@ TEST_CASE("A part on a noisy scan runs through the noise and is not called an ap
     CHECK(exact.report.scanNoise < 0.01);
     CHECK_FALSE(exact.report.withinScanNoise);
 }
+
+namespace {
+
+double corrugated(double x, double y)
+{
+    return 0.5 * std::sin(2.0 * std::numbers::pi * x / 5.0) + 0.5 * std::sin(2.0 * std::numbers::pi * y / 5.0);
+}
+
+double plain(double, double) { return 0.0; }
+
+} // namespace
+
+TEST_CASE("Fine clean shape is not taken for scan noise; a thin noisy outline is (CAD-142, Codex)",
+          "[geometry][surface]")
+{
+    const geometry::Plane plane{{0, 0, 50}, {0, 0, 1}, {1, 0, 0}};
+
+    // A clean 5 mm corrugation, finer than the control points: the noise estimate is
+    // large, but the deviation left has a pattern, so it stays an approximation.
+    const auto rippled = noisySheet(0.0, corrugated);
+    const core::MeshProjector projector(rippled, {0, 0, 1});
+    const auto part = geometry::partOnScan(projector, areaOver(10, 10, 150, 150, 0),
+                                           {rectangleOutline(plane, 10, 10, 140, 140)}, 2.0,
+                                           geometry::ThickenSide::Outside);
+    INFO("noise " << part.report.scanNoise << ", p99 " << part.report.p99Deviation);
+    CHECK(part.report.p99Deviation > 0.25);
+    CHECK_FALSE(part.report.withinScanNoise);
+
+    // A 120 x 12 mm strip (a fin's root) on a noisy flat scan: the noise is still told
+    // from the samples along it.
+    const auto noisy = noisySheet(0.2, plain);
+    const core::MeshProjector noisyProjector(noisy, {0, 0, 1});
+    geometry::DrapeArea strip = areaOver(20, 70, 140, 82, 0);
+    geometry::DrapeFitReport report;
+    (void)geometry::skinOnScan(noisyProjector, strip, &report);
+    INFO("strip noise " << report.scanNoise << ", p99 " << report.p99Deviation);
+    CHECK(report.scanNoise > 0.1);
+}

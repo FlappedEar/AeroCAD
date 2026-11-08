@@ -51,7 +51,8 @@ struct DrapeFitReport {
     /// be told). A scan with noise s is never followed closer than about 2.6 s.
     double scanNoise = 0.0;
     /// More than the tolerance is left, but it is the scan's noise, not missed shape: 99%
-    /// within 3 scanNoise and the rms not above 1.2 scanNoise. The surface then runs through the middle of the
+    /// within 3 scanNoise, the rms not above 1.2 scanNoise, and no pattern in it (nearby
+    /// samples' deviations do not correlate). The surface then runs through the middle of the
     /// noise, and refining further would only make it follow the noise.
     bool withinScanNoise = false;
     int uPoles = 0;

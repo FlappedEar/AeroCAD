@@ -116,13 +116,17 @@ double estimateNoise(const Raster& r, const DrapeArea& a, int lag)
     // At most about 40,000 differences: every step-th sample in both directions.
     const std::size_t samples = static_cast<std::size_t>(r.nu) * static_cast<std::size_t>(r.nv);
     const int step = std::max(1, static_cast<int>(std::sqrt(static_cast<double>(samples) / 20000.0)));
+    // Each direction needs room only along itself: a long, thin outline (a fin's root)
+    // still gets the differences along its length.
     const int reach = 2 * lag;
-    for (int j = reach; j + reach < r.nv; j += step)
-        for (int i = reach; i + reach < r.nu; i += step) {
+    for (int j = 0; j < r.nv; j += step)
+        for (int i = 0; i < r.nu; i += step) {
             if (!inside(i, j) || !r.known[r.at(i, j)])
                 continue;
-            fourth(i, j, lag, 0);
-            fourth(i, j, 0, lag);
+            if (i >= reach && i + reach < r.nu)
+                fourth(i, j, lag, 0);
+            if (j >= reach && j + reach < r.nv)
+                fourth(i, j, 0, lag);
         }
     if (d.size() < 32)
         return 0.0;
@@ -130,6 +134,39 @@ double estimateNoise(const Raster& r, const DrapeArea& a, int lag)
     std::nth_element(d.begin(), mid, d.end());
     // Median of |N(0, s^2)| is 0.6745 s.
     return static_cast<double>(*mid) / 0.6745 / std::sqrt(70.0);
+}
+
+/// Whether what is left after a fit is spread like scan noise rather than shape: its
+/// correlation between samples 1 to 4 times `lag` apart, along each direction, stays
+/// within +-0.3. Scan noise is independent from one scanned point to the next; missed
+/// shape (ridges, ripples, a corrugation finer than the control points) is not: a wave
+/// cannot be near zero at both x and 2x (cos 2x = 2 cos^2 x - 1), and waves across the
+/// direction add correlation at every distance. NaN marks samples with no residual. A
+/// direction with too few pairs (a thin outline) is not judged.
+bool residualLooksLikeNoise(const std::vector<double>& residual, int nu, int nv, int lag)
+{
+    for (int shift : {lag, 2 * lag, 3 * lag, 4 * lag})
+        for (int axis = 0; axis < 2; ++axis) {
+            double ab = 0.0, aa = 0.0, bb = 0.0;
+            std::size_t pairs = 0;
+            const int di = axis == 0 ? shift : 0, dj = axis == 0 ? 0 : shift;
+            for (int j = 0; j + dj < nv; ++j)
+                for (int i = 0; i + di < nu; ++i) {
+                    const double a = residual[static_cast<std::size_t>(j) * nu + i];
+                    const double b = residual[static_cast<std::size_t>(j + dj) * nu + i + di];
+                    if (std::isnan(a) || std::isnan(b))
+                        continue;
+                    ab += a * b;
+                    aa += a * a;
+                    bb += b * b;
+                    ++pairs;
+                }
+            if (pairs < 200 || !(aa > 0.0) || !(bb > 0.0))
+                continue;
+            if (std::abs(ab / std::sqrt(aa * bb)) > 0.3)
+                return false;
+        }
+    return true;
 }
 
 /// Keeps the largest sheet under the outline: samples joined by steps no steeper than
@@ -603,7 +640,8 @@ SkinFit fitSkin(const core::MeshProjector& scan, const DrapeArea& area, const Dr
         throw SurfaceFitError("The scan is not under the outline (seen along the sketch normal)");
     // Before the gaps are filled: only scanned samples tell the noise. Samples about half
     // the finest pole spacing apart, so the five span two of them.
-    const double noise = estimateNoise(raster, area, std::max(1, static_cast<int>(std::lround(0.5 * finest / raster.du))));
+    const int noiseLag = std::max(1, static_cast<int>(std::lround(0.5 * finest / raster.du)));
+    const double noise = estimateNoise(raster, area, noiseLag);
     std::vector<double> skin = fillGaps(raster);
 
     SkinFit result;
@@ -623,6 +661,7 @@ SkinFit fitSkin(const core::MeshProjector& scan, const DrapeArea& area, const Dr
         // Deviation on the skin under the outline.
         std::vector<float> deviations;
         deviations.reserve(insideKnown);
+        std::vector<double> residual(result.raster.z.size(), std::numeric_limits<double>::quiet_NaN());
         double squares = 0.0, worst = 0.0;
         for (int j = 0; j < result.raster.nv; ++j) {
             const double v = area.v0 + j * result.raster.dv;
@@ -641,7 +680,8 @@ SkinFit fitSkin(const core::MeshProjector& scan, const DrapeArea& area, const Dr
                     for (int a = 0; a < 4; ++a)
                         z += wv[static_cast<std::size_t>(b)] * wu[static_cast<std::size_t>(a)] *
                              result.poles[static_cast<std::size_t>(fv + b) * pu + static_cast<std::size_t>(fu + a)];
-                const double d = std::abs(z - result.raster.z[result.raster.at(i, j)]);
+                residual[result.raster.at(i, j)] = z - result.raster.z[result.raster.at(i, j)];
+                const double d = std::abs(residual[result.raster.at(i, j)]);
                 worst = std::max(worst, d);
                 squares += d * d;
                 deviations.push_back(static_cast<float>(d));
@@ -653,11 +693,13 @@ SkinFit fitSkin(const core::MeshProjector& scan, const DrapeArea& area, const Dr
         result.report.p99Deviation = *nth;
         result.report.rmsDeviation = std::sqrt(squares / static_cast<double>(deviations.size()));
         // What is left is the scan's own noise when it is spread like noise: 99% within
-        // 3 deviations (2.58 for normal noise) and the rms not above it. Finer control points
-        // would only follow the noise, making the surface bumpy, not closer to the shape.
+        // 3 deviations (2.58 for normal noise), the rms not above it, and no pattern in it
+        // (fine shape the noise estimate took for noise). Finer control points would only
+        // follow the noise, making the surface bumpy, not closer to the shape.
         result.report.withinScanNoise = result.report.p99Deviation > options.tolerance &&
                                         result.report.p99Deviation <= 3.0 * noise &&
-                                        result.report.rmsDeviation <= 1.2 * noise;
+                                        result.report.rmsDeviation <= 1.2 * noise &&
+                                        residualLooksLikeNoise(residual, result.raster.nu, result.raster.nv, noiseLag);
         // Single spikes (a loose triangle, a wall) do not drive the refinement.
         if (result.report.p99Deviation <= options.tolerance || result.report.withinScanNoise || spacing <= finest)
             break;
