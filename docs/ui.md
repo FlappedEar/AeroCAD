@@ -75,6 +75,13 @@ The left button is reserved for selection. The navigation bar's **Orbit**, **Pan
 tools temporarily map left drag to that navigation (useful without a middle button); click the
 tool again to turn it off.
 
+As in Fusion, the part under the pointer is drawn **highlighted** (a light blue tint over its
+grey; planes and sketch profiles a lighter blue) so it is clear what a click picks. The
+selected part keeps its stronger selection blue. Only parts that can be picked at that moment
+are highlighted (while a command asks for a plane, a body is not), and nothing is highlighted
+while a mouse button is held (orbit, pan, a drag), with the Region, Lasso or Brush tools, or
+in a sketch.
+
 **Zoom to selection** fills the view with what is selected: the selected area of a scan
 (Region, Lasso, Brush) when there is one, else the selected part. It is in the navigation bar
 (next to Fit all), in **View › Zoom to Selection**, and a double click on a part does it for

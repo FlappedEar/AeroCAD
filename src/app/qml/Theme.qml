@@ -73,11 +73,14 @@ QtObject {
     readonly property color edgeColor: pick("#242a31", "#14171b")
     readonly property color selectedColor: pick("#6ea4ff", "#78a9ff")
     readonly property color hoverColor: pick("#9cc0ff", "#9cc0ff")
+    /// Laid over a part's colour under the pointer: lighter than the selection, still grey.
+    readonly property color hoverTint: Qt.rgba(0.43, 0.64, 1.0, 0.4)
     readonly property color sketchColor: pick("#1f5fd6", "#62a0ff")
     readonly property color sketchProfile: Qt.rgba(1.0, 0.72, 0.38, 0.40)
     /// Construction planes: translucent orange squares, like Fusion.
     readonly property color planeFill: Qt.rgba(0.95, 0.62, 0.25, 0.22)
     readonly property color planeSelected: Qt.rgba(0.5, 0.7, 1.0, 0.3)
+    readonly property color planeHover: Qt.rgba(0.6, 0.78, 1.0, 0.22)
     readonly property color planeEdge: pick("#c77a2a", "#e0954a")
     readonly property color regionColor: "#ff9a3c"
     /// Overlay palettes drawn over the 3D view (navigation bar, selection tools).
