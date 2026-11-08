@@ -426,6 +426,12 @@ difference in mm and the verdict is `different domains` instead of `comparable`.
 older run did not record (surroundings, domain or engine) is listed in `unknownConditions`
 and makes the verdict `not comparable`.
 
+The A/B tab's table has drag, lift and side force, pressure drag and friction drag
+(in N), and Cd, Cl and Cs with B on A's reference area (to 4 decimals, so a change of a few
+drag counts shows). Each row has A, B, B − A and the change in %. A value under 2 % of the
+largest one in its group (forces or coefficients) gets no percentage (CAD-171,
+[A/B](images/audit/cad-171-ab-coefficients.png)).
+
 `conditionChanges` lists the same differences in words with the value of each run, which
 the A/B tab shows (CAD-159), for example "Floor height: A -40 mm, B -150 mm" or "Air speed:
 A 30 m/s, B 40 m/s" ([A/B](images/audit/cad-159-ab-conditions.png)). The note on differing
