@@ -808,6 +808,45 @@ void registerSketchCommands(CommandRegistry& r)
               return addedFeature(design(ctx), ctx.document, id);
           });
 
+    r.add({"sketch.project", "Project",
+           "Projects edges of a body onto a sketch's plane (Fusion: Sketch > Project): lines, circles and arcs "
+           "parallel to the plane stay so, other edges become splines. The curves are added at the end of "
+           "sketch.curves, fixed where they are; they do not follow later changes of the body.",
+           objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
+                         {"body", bodyRefSchema("Body whose edges are projected.")},
+                         {"edges", {{"type", "array"}, {"minItems", 1},
+                                    {"description", "Edge indices (body.edges) or {point: [x,y,z]} near each edge."}}}},
+                        {"sketch", "body", "edges"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              const auto id = params.at("sketch").get<cad::FeatureId>();
+              designChange(ctx, "Project", [&](cad::Design& d) {
+                  (void)sketchFeature(d, id);
+                  d.projectToSketch(id, requireBody(d, params.at("body")).id, params.at("edges"));
+                  return Json{};
+              });
+              return addedFeature(design(ctx), ctx.document, id);
+          });
+
+    r.add({"sketch.offset", "Sketch Offset",
+           "Offsets a connected chain of sketch curves (Fusion: Sketch > Offset): `distance` > 0 outwards for a "
+           "closed chain (to the left of an open one), < 0 the other way. Corners are rounded. The offset curves "
+           "are added at the end of sketch.curves.",
+           objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
+                         {"curves", {{"type", "array"}, {"items", {{"type", "integer"}}}, {"minItems", 1}}},
+                         {"distance", {{"type", "number"}}}},
+                        {"sketch", "curves", "distance"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              const auto id = params.at("sketch").get<cad::FeatureId>();
+              designChange(ctx, "Sketch Offset", [&](cad::Design& d) {
+                  (void)sketchFeature(d, id);
+                  d.offsetSketchCurves(id, params.at("curves").get<std::vector<std::size_t>>(), params.at("distance").get<double>());
+                  return Json{};
+              });
+              return addedFeature(design(ctx), ctx.document, id);
+          });
+
     r.add({"sketch.fillet", "Sketch Fillet",
            "Rounds the corner where two sketch lines meet (Fusion: Sketch > Fillet): both lines are shortened "
            "and joined by a tangent arc with a radius dimension (edit it like any dimension). The two lines and the "
@@ -1054,6 +1093,8 @@ void registerSketchCommands(CommandRegistry& r)
                           {"construction", c.construction}};
                   if (c.kind == geometry::SketchCurve::Kind::Circle)
                       cj["radius"] = c.radius;
+                  if (c.kind == geometry::SketchCurve::Kind::Spline)
+                      cj["closed"] = c.closed;
                   if (const auto ctr = arcCenter(c))
                       cj["center"] = Json::array({ctr->x, ctr->y});
                   curves.push_back(cj);

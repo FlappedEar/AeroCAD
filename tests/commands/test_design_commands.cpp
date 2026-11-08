@@ -1028,3 +1028,89 @@ TEST_CASE("Design commands: sketch fillet (CAD-126)", "[commands][cad][solver]")
     for (const auto& curve : cc.at("curves"))
         CHECK(curve.at("construction") == true);
 }
+
+TEST_CASE("Design commands: sketch offset (CAD-126)", "[commands][cad]")
+{
+    commands::Session s;
+    const auto id = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "rectangle"}, {"corner", {0, 0}}, {"width", 40}, {"height", 20}},
+                                                 {{"type", "circle"}, {"center", {100, 0}}, {"radius", 5}}})}})
+                        .at("id")
+                        .get<std::uint64_t>();
+    // The rectangle 2 mm outwards: 4 sides and 4 corner arcs; the ring between them is
+    // its own profile.
+    run(s, "sketch.offset", {{"sketch", id}, {"curves", {0, 1, 2, 3}}, {"distance", 2}});
+    Json c = run(s, "sketch.curves", {{"sketch", id}});
+    CHECK(c.at("curves").size() == 5 + 8);
+    double minX = 1e9;
+    for (std::size_t i = 5; i < c.at("curves").size(); ++i)
+        for (const auto& p : c.at("curves")[i].at("points"))
+            minX = std::min(minX, p[0].get<double>());
+    CHECK(minX == Approx(-2).margin(1e-6));
+    // A circle 1 mm inwards.
+    run(s, "sketch.offset", {{"sketch", id}, {"curves", {4}}, {"distance", -1}});
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    CHECK(c.at("curves").back().at("kind") == "circle");
+    CHECK(c.at("curves").back().at("radius").get<double>() == Approx(4).margin(1e-6));
+    // Too far inwards collapses: refused.
+    CHECK_FALSE(s.execute("sketch.offset", {{"sketch", id}, {"curves", {4}}, {"distance", -6}}).ok);
+
+    // A closed spline gives a closed (periodic) spline: smooth at the seam, its end point
+    // not repeated.
+    Json oval = Json::array();
+    for (int i = 0; i < 8; ++i) {
+        const double a = 2 * std::numbers::pi * i / 8;
+        oval.push_back({200 + 20 * std::cos(a), 10 * std::sin(a)});
+    }
+    const auto sp = run(s, "sketch.create",
+                        {{"plane", "XY"}, {"curves", Json::array({{{"type", "spline"}, {"points", oval}, {"closed", true}}})}})
+                        .at("id")
+                        .get<std::uint64_t>();
+    run(s, "sketch.offset", {{"sketch", sp}, {"curves", {0}}, {"distance", 2}});
+    c = run(s, "sketch.curves", {{"sketch", sp}});
+    REQUIRE(c.at("curves").size() == 2);
+    const auto& outer = c.at("curves")[1];
+    CHECK(outer.at("kind") == "spline");
+    CHECK(outer.at("closed") == true);
+    const auto& pts = outer.at("points");
+    CHECK(std::hypot(pts.front()[0].get<double>() - pts.back()[0].get<double>(),
+                     pts.front()[1].get<double>() - pts.back()[1].get<double>()) > 1.0);
+}
+
+TEST_CASE("Design commands: project body edges into a sketch (CAD-126)", "[commands][cad]")
+{
+    commands::Session s;
+    // A cylinder r 10 standing on XY at (30, 0), and a box; a sketch on a plane above.
+    run(s, "feature.cylinder", {{"center", {30, 0, 0}}, {"radius", 10}, {"height", 15}});
+    const auto box = run(s, "feature.box", {{"corner", {-20, -5, 0}}, {"size", {10, 10, 10}}}).at("id").get<std::uint64_t>();
+    const auto id = run(s, "sketch.create", {{"plane", "XY"}, {"offset", 40}}).at("id").get<std::uint64_t>();
+    // The box's top edge along x at y = -5, z = 10 and a vertical edge (seen end-on: left out).
+    run(s, "sketch.project", {{"sketch", id}, {"body", box}, {"edges", Json::array({{{"point", {-15, -5, 10}}}, {{"point", {-20, -5, 5}}}})}});
+    Json c = run(s, "sketch.curves", {{"sketch", id}});
+    REQUIRE(c.at("curves").size() == 1);
+    CHECK(c.at("curves")[0].at("kind") == "line");
+    CHECK(c.at("curves")[0].at("points")[0][1].get<double>() == Approx(-5).margin(1e-6));
+    // The cylinder's top circle stays a circle.
+    run(s, "sketch.project", {{"sketch", id}, {"body", "Body1"}, {"edges", Json::array({{{"point", {30, 10, 15}}}})}});
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    REQUIRE(c.at("curves").size() == 2);
+    CHECK(c.at("curves")[1].at("kind") == "circle");
+    CHECK(c.at("curves")[1].at("radius").get<double>() == Approx(10).margin(1e-6));
+    CHECK(c.at("curves")[1].at("points")[0][0].get<double>() == Approx(30).margin(1e-6));
+    CHECK(c.at("degreesOfFreedom") == 0); // fixed
+    // The projected circle bounds a profile to extrude.
+    CHECK(run(s, "sketch.profiles", {{"sketch", id}}).at("profiles").size() == 1);
+
+    // Seen edge-on from a side plane, the rim is its diameter: a line, not a spline that
+    // runs there and back.
+    const auto side = run(s, "sketch.create", {{"plane", "XZ"}, {"offset", 30}}).at("id").get<std::uint64_t>();
+    run(s, "sketch.project", {{"sketch", side}, {"body", "Body1"}, {"edges", Json::array({{{"point", {30, 10, 15}}}})}});
+    c = run(s, "sketch.curves", {{"sketch", side}});
+    REQUIRE(c.at("curves").size() == 1);
+    CHECK(c.at("curves")[0].at("kind") == "line");
+    const auto& ends = c.at("curves")[0].at("points");
+    CHECK(std::hypot(ends[0][0].get<double>() - ends[1][0].get<double>(), ends[0][1].get<double>() - ends[1][1].get<double>()) ==
+          Approx(20).margin(1e-6));
+    CHECK(c.at("degreesOfFreedom") == 0);
+}

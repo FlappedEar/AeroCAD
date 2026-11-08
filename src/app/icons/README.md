@@ -38,4 +38,4 @@ From [Tabler Icons](https://github.com/tabler/tabler-icons) 3.19.0, MIT licence 
 sketch, extrude, revolve, hole, fillet, chamfer, shell, combine, mesh-to-body, mesh, body,
 slot, arc, dimension, sweep, loft, mirror, pattern, circular-pattern, plane, section,
 deviation, thickness, clearance, tool, wind-tunnel, fit-selection, and the sketch constraints horizontal, vertical,
-coincident, tangent, equal, parallel, perpendicular, concentric, midpoint, collinear, fix, trim, construction.
+coincident, tangent, equal, parallel, perpendicular, concentric, midpoint, collinear, fix, trim, construction, offset, project.

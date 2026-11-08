@@ -272,14 +272,13 @@ have no shortcut (Fusion's list has no Save As).
 
 Fusion keys kept free because AeroCAD has no such command yet, so that they keep their
 Fusion meaning when the command comes: Q (Press Pull),
-J / Shift+J (Joint), T (Trim), O (Offset), P (Project), X (construction line),
-Ctrl+X (cut), Ctrl+B (Compute All). Source: Autodesk's
+J / Shift+J (Joint), Ctrl+X (cut), Ctrl+B (Compute All). Source: Autodesk's
 [Fusion keyboard shortcuts reference](https://help.autodesk.com/cloudhelp/ENU/Fusion-GetStarted/files/GUID-F0491540-0324-470A-B651-2238D0EFAC30.htm)
 (checked 2026-11-08).
 S (Fusion's toolbox search) is the command search, see "Command search"; A is Appearance.
 
-Not mapped yet: Press Pull (Q), Trim (T), Offset (O), Project (P),
-Construction (X). 1/2/3 select the region selection tools on meshes,
+In a sketch, T (Trim), O (Offset), P (Project) and X (Construction) work as in Fusion.
+Not mapped yet: Press Pull (Q). 1/2/3 select the region selection tools on meshes,
 see "Region selection" in [macos.md](macos.md).
 
 ## Scans
@@ -307,6 +306,10 @@ See [cad.md](cad.md) for the timeline and the commands behind the tools.
   **Trim** (T, SKETCH › MODIFY): click the piece of a line, arc or circle to remove, up to
   where other curves cross it; a curve that crosses nothing is removed whole, a circle
   becomes an arc. Constraints on the trimmed curve go.
+  **Project** (P, SKETCH › MODIFY): click an edge of a body; it is projected onto the sketch
+  plane as fixed geometry (circles keep a radius dimension), to sketch against it.
+  **Offset** (O, SKETCH › MODIFY): select a connected chain of curves, click Offset, type the
+  distance and press Enter (negative goes inwards); corners are rounded.
   **Fillet** (SKETCH › MODIFY): click the corner where two lines meet; it is rounded with a
   tangent arc (the last radius used, 5 mm at first) whose radius dimension can be edited
   under Constraints.
