@@ -776,7 +776,8 @@ Item {
                         cullMode: Material.NoCulling
                         // Dense streamlines and the wake surface are see-through, so the part
                         // shows behind them.
-                        opacity: fieldModel.modelData.kind === "streamlines" ? 0.55
+                        opacity: fieldModel.modelData.kind === "streamlines"
+                                 ? ((fieldModel.modelData.palette ?? "").indexOf("smoke") === 0 ? 0.8 : 0.55)
                                : fieldModel.modelData.kind === "wake" ? 0.8 : 1.0
                     }
                 }

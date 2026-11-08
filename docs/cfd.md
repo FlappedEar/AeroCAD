@@ -72,7 +72,12 @@ panel in place of Properties:
   Streamlines start from a 16 x 10 rake just ahead of the part, a little wider and taller
   than it, and from an 8 x 5 rake just behind it traced both ways, which shows the
   recirculation in the wake (runs made before this change have 35 lines from far
-  upstream). Hovering over the pressure map shows Cp and the pressure in Pa at the
+  upstream). *Streamline colours* switches them from speed colours to *Smoke* (CAD-170):
+  half as thick and grey, the slowest air in the strongest contrast to the background
+  (near white on the dark theme, near black on the light one), so the wake and the
+  vortices behind wheels and wings stand out and the pressure map stays readable, as in
+  motorsport CFD renders; the smoke has its own legend and the sections keep their
+  colours. Hovering over the pressure map shows Cp and the pressure in Pa at the
   pointer; over a section, the speed and Cp. The viewport shows a
   colour bar for each quantity (sections and streamlines share one speed scale) and a card
   with drag, lift and side force in N, Cd/Cl/Cs and the run conditions; the guide bar
