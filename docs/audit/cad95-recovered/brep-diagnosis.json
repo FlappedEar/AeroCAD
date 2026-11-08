@@ -1,0 +1,418 @@
+{
+  "issue": "CAD-95",
+  "source": "Original saved project BREP; inputs unchanged",
+  "parts": [
+    {
+      "name": "Sketch1 fin 1",
+      "brep_entry": "results/2-0.brep",
+      "brepcheck_valid": true,
+      "self_interference_checker_has_errors": false,
+      "self_interference_faults": [
+        {
+          "status": "BOPAlgo_CheckStatus.BOPAlgo_SelfIntersect",
+          "shapes": [
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "type_index_one_based": 3,
+              "surface_type": "GeomAbs_SurfaceType.GeomAbs_BSplineSurface"
+            },
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "type_index_one_based": 11,
+              "surface_type": "GeomAbs_SurfaceType.GeomAbs_BSplineSurface"
+            }
+          ]
+        },
+        {
+          "status": "BOPAlgo_CheckStatus.BOPAlgo_SelfIntersect",
+          "shapes": [
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "type_index_one_based": 7,
+              "surface_type": "GeomAbs_SurfaceType.GeomAbs_BSplineSurface"
+            },
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "type_index_one_based": 11,
+              "surface_type": "GeomAbs_SurfaceType.GeomAbs_BSplineSurface"
+            }
+          ]
+        }
+      ],
+      "source_faces": 17,
+      "remeshed_triangles": 8376,
+      "linear_deflection_mm": 0.019772829198882513,
+      "all_stl_coordinates_equal_float32_source_mesh": true,
+      "original_witness_indices": [
+        143,
+        3758
+      ],
+      "matching_remeshed_indices": [
+        [
+          143
+        ],
+        [
+          3758
+        ]
+      ],
+      "witness_faces_one_based": [
+        3,
+        5
+      ],
+      "double_precision_source_pair_certificate": {
+        "segment_length_mm": "0.0026980310436992132932965098472324223222011364626753202628355581759828992939784252",
+        "start": [
+          "532.79344570483961440119381678463339242176553744819592572510696996323491001041613",
+          "50.833832204987054818972959574796759639785179028817427254286262811172686587564450",
+          "165.72584840967399552711735927144591114085816022308936598344997254987873183067102"
+        ],
+        "end": [
+          "532.79203147254246349994188752895694633840339984505520972738939807411495648203396",
+          "50.832737489307017467079497457860919400372146598843517174597440335627745985163142",
+          "165.72786853741806031999792066970524607550087169233358111369791597401289532892688"
+        ],
+        "shared_vertices": 0,
+        "decimal_precision": 80
+      },
+      "stl_crossing_midpoint_on_source_faces": [
+        {
+          "surface_type": "GeomAbs_SurfaceType.GeomAbs_BSplineSurface",
+          "surface_distance_mm": 2.7250170320531843e-05,
+          "uv": [
+            95.38488322400546,
+            -0.908963081521773
+          ],
+          "trim_class_at_1e_7": "TopAbs_State.TopAbs_OUT"
+        },
+        {
+          "surface_type": "GeomAbs_SurfaceType.GeomAbs_BSplineSurface",
+          "surface_distance_mm": 2.5484953827313917e-05,
+          "uv": [
+            11.987559555015478,
+            -1.9979299568631714
+          ],
+          "trim_class_at_1e_7": "TopAbs_State.TopAbs_IN"
+        }
+      ],
+      "shared_source_edges": [
+        {
+          "index_one_based": 12,
+          "tolerance_mm": 0.00362236830142257
+        }
+      ]
+    },
+    {
+      "name": "Sketch1 fin 2",
+      "brep_entry": "results/2-1.brep",
+      "brepcheck_valid": true,
+      "self_interference_checker_has_errors": false,
+      "self_interference_faults": [
+        {
+          "status": "BOPAlgo_CheckStatus.BOPAlgo_SelfIntersect",
+          "shapes": [
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "type_index_one_based": 5,
+              "surface_type": "GeomAbs_SurfaceType.GeomAbs_BSplineSurface"
+            },
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "type_index_one_based": 11,
+              "surface_type": "GeomAbs_SurfaceType.GeomAbs_BSplineSurface"
+            }
+          ]
+        },
+        {
+          "status": "BOPAlgo_CheckStatus.BOPAlgo_SelfIntersect",
+          "shapes": [
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "type_index_one_based": 3,
+              "surface_type": "GeomAbs_SurfaceType.GeomAbs_BSplineSurface"
+            },
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "type_index_one_based": 11,
+              "surface_type": "GeomAbs_SurfaceType.GeomAbs_BSplineSurface"
+            }
+          ]
+        },
+        {
+          "status": "BOPAlgo_CheckStatus.BOPAlgo_SelfIntersect",
+          "shapes": [
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "type_index_one_based": 7,
+              "surface_type": "GeomAbs_SurfaceType.GeomAbs_BSplineSurface"
+            },
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "type_index_one_based": 11,
+              "surface_type": "GeomAbs_SurfaceType.GeomAbs_BSplineSurface"
+            }
+          ]
+        },
+        {
+          "status": "BOPAlgo_CheckStatus.BOPAlgo_SelfIntersect",
+          "shapes": [
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "type_index_one_based": 11,
+              "surface_type": "GeomAbs_SurfaceType.GeomAbs_BSplineSurface"
+            },
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "type_index_one_based": 12,
+              "surface_type": "GeomAbs_SurfaceType.GeomAbs_BSplineSurface"
+            }
+          ]
+        }
+      ],
+      "source_faces": 17,
+      "remeshed_triangles": 8520,
+      "linear_deflection_mm": 0.019839262944788532,
+      "all_stl_coordinates_equal_float32_source_mesh": true,
+      "original_witness_indices": [
+        103,
+        8182
+      ],
+      "matching_remeshed_indices": [
+        [
+          103
+        ],
+        [
+          8182
+        ]
+      ],
+      "witness_faces_one_based": [
+        3,
+        12
+      ],
+      "double_precision_source_pair_certificate": {
+        "segment_length_mm": "0.0018122556956073227910890711562306821885549985666639057723962472567558470059495385",
+        "start": [
+          "462.00272318487158948239378286016580321551504846328345783004357668478040903169755",
+          "11.580832616516961178069951643791508775226003810324770034249625199593209487768850",
+          "110.76804301388247587893530694177363272413142208814382948953213573459357557643794"
+        ],
+        "end": [
+          "462.00429993735792777442838996648788452148437500000000000000000000000000000000000",
+          "11.581337886558252137092495104297995567321777343749999999999999999999999999999997",
+          "110.76877978011980019346083281561732292175292968750000000000000000000000000000003"
+        ],
+        "shared_vertices": 1,
+        "decimal_precision": 80
+      },
+      "stl_crossing_midpoint_on_source_faces": [
+        {
+          "surface_type": "GeomAbs_SurfaceType.GeomAbs_BSplineSurface",
+          "surface_distance_mm": 3.452586375006231e-06,
+          "uv": [
+            104.13999547318231,
+            80.68841953527476
+          ],
+          "trim_class_at_1e_7": "TopAbs_State.TopAbs_IN"
+        },
+        {
+          "surface_type": "GeomAbs_SurfaceType.GeomAbs_BSplineSurface",
+          "surface_distance_mm": 4.822434904493027e-06,
+          "uv": [
+            0.06476760379180731,
+            -1.8724851436588497
+          ],
+          "trim_class_at_1e_7": "TopAbs_State.TopAbs_OUT"
+        }
+      ],
+      "shared_source_edges": [
+        {
+          "index_one_based": 14,
+          "tolerance_mm": 0.00433960438903652
+        }
+      ]
+    },
+    {
+      "name": "Sketch1 fin 1 (mirror)",
+      "brep_entry": "results/2-2.brep",
+      "brepcheck_valid": true,
+      "self_interference_checker_has_errors": false,
+      "self_interference_faults": [
+        {
+          "status": "BOPAlgo_CheckStatus.BOPAlgo_SelfIntersect",
+          "shapes": [
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "type_index_one_based": 3,
+              "surface_type": "GeomAbs_SurfaceType.GeomAbs_BSplineSurface"
+            },
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "type_index_one_based": 11,
+              "surface_type": "GeomAbs_SurfaceType.GeomAbs_BSplineSurface"
+            }
+          ]
+        },
+        {
+          "status": "BOPAlgo_CheckStatus.BOPAlgo_SelfIntersect",
+          "shapes": [
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "type_index_one_based": 7,
+              "surface_type": "GeomAbs_SurfaceType.GeomAbs_BSplineSurface"
+            },
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "type_index_one_based": 11,
+              "surface_type": "GeomAbs_SurfaceType.GeomAbs_BSplineSurface"
+            }
+          ]
+        }
+      ],
+      "source_faces": 17,
+      "remeshed_triangles": 8120,
+      "linear_deflection_mm": 0.019764471653910043,
+      "all_stl_coordinates_equal_float32_source_mesh": true,
+      "original_witness_indices": [
+        3891,
+        7591
+      ],
+      "matching_remeshed_indices": [
+        [
+          3891
+        ],
+        [
+          7591
+        ]
+      ],
+      "witness_faces_one_based": [
+        7,
+        11
+      ],
+      "double_precision_source_pair_certificate": {
+        "segment_length_mm": "0.0095201650297531684385528799654547961007772974928101712840994903807602696308306622",
+        "start": [
+          "-463.65303652564038430878754883822856195711302596334260352621333795807022723872812",
+          "11.208965229536669133916834844901859182123794893735639591042323152683579486589540",
+          "173.84155074780416596049073374198430435106544387860435403246032050284577931723023"
+        ],
+        "end": [
+          "-463.64403654729540607679600697746036007889352050277687621574631549187216837114199",
+          "11.205874134261111498731651068910572850500386576007138893167708473127654963780632",
+          "173.84183192742839804827494799472782338539468187172531369679302344210977495640235"
+        ],
+        "shared_vertices": 0,
+        "decimal_precision": 80
+      },
+      "stl_crossing_midpoint_on_source_faces": [
+        {
+          "surface_type": "GeomAbs_SurfaceType.GeomAbs_BSplineSurface",
+          "surface_distance_mm": 9.496159658203879e-05,
+          "uv": [
+            0.23259237035594743,
+            -0.7439406300060313
+          ],
+          "trim_class_at_1e_7": "TopAbs_State.TopAbs_IN"
+        },
+        {
+          "surface_type": "GeomAbs_SurfaceType.GeomAbs_BSplineSurface",
+          "surface_distance_mm": 0.000102486999840332,
+          "uv": [
+            40.084598144981776,
+            4.031200629700238
+          ],
+          "trim_class_at_1e_7": "TopAbs_State.TopAbs_IN"
+        }
+      ],
+      "shared_source_edges": [
+        {
+          "index_one_based": 24,
+          "tolerance_mm": 5.05810002363516e-05
+        }
+      ]
+    },
+    {
+      "name": "Sketch1 fin 2 (mirror)",
+      "brep_entry": "results/2-3.brep",
+      "brepcheck_valid": true,
+      "self_interference_checker_has_errors": false,
+      "self_interference_faults": [
+        {
+          "status": "BOPAlgo_CheckStatus.BOPAlgo_SelfIntersect",
+          "shapes": [
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "type_index_one_based": 3,
+              "surface_type": "GeomAbs_SurfaceType.GeomAbs_BSplineSurface"
+            },
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "type_index_one_based": 11,
+              "surface_type": "GeomAbs_SurfaceType.GeomAbs_BSplineSurface"
+            }
+          ]
+        },
+        {
+          "status": "BOPAlgo_CheckStatus.BOPAlgo_SelfIntersect",
+          "shapes": [
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "type_index_one_based": 7,
+              "surface_type": "GeomAbs_SurfaceType.GeomAbs_BSplineSurface"
+            },
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "type_index_one_based": 11,
+              "surface_type": "GeomAbs_SurfaceType.GeomAbs_BSplineSurface"
+            }
+          ]
+        }
+      ],
+      "source_faces": 17,
+      "remeshed_triangles": 8266,
+      "linear_deflection_mm": 0.019885056642805706,
+      "all_stl_coordinates_equal_float32_source_mesh": true,
+      "original_witness_indices": [
+        3339,
+        3652
+      ],
+      "matching_remeshed_indices": [
+        [
+          3339
+        ],
+        [
+          3652
+        ]
+      ],
+      "witness_faces_one_based": [
+        5,
+        7
+      ],
+      "double_precision_source_pair_certificate": null,
+      "stl_crossing_midpoint_on_source_faces": [
+        {
+          "surface_type": "GeomAbs_SurfaceType.GeomAbs_BSplineSurface",
+          "surface_distance_mm": 1.1917201235433818e-05,
+          "uv": [
+            12.098641484985206,
+            6.208656773905271
+          ],
+          "trim_class_at_1e_7": "TopAbs_State.TopAbs_IN"
+        },
+        {
+          "surface_type": "GeomAbs_SurfaceType.GeomAbs_BSplineSurface",
+          "surface_distance_mm": 1.5212069121738589e-05,
+          "uv": [
+            0.08177538289529138,
+            79.90195888786862
+          ],
+          "trim_class_at_1e_7": "TopAbs_State.TopAbs_OUT"
+        }
+      ],
+      "shared_source_edges": [
+        {
+          "index_one_based": 19,
+          "tolerance_mm": 0.00499334794866033
+        }
+      ]
+    }
+  ]
+}

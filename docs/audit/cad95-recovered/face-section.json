@@ -1,0 +1,205 @@
+{
+  "issue": "CAD-95",
+  "source": "Original saved project BREP; inputs unchanged",
+  "parts": [
+    {
+      "name": "Sketch1 fin 1 (mirror)",
+      "brep_entry": "results/2-2.brep",
+      "brepcheck_valid": true,
+      "self_interference_checker_has_errors": false,
+      "self_interference_faults": [
+        {
+          "status": "BOPAlgo_CheckStatus.BOPAlgo_SelfIntersect",
+          "shapes": [
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "type_index_one_based": 3,
+              "surface_type": "GeomAbs_SurfaceType.GeomAbs_BSplineSurface"
+            },
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "type_index_one_based": 11,
+              "surface_type": "GeomAbs_SurfaceType.GeomAbs_BSplineSurface"
+            }
+          ]
+        },
+        {
+          "status": "BOPAlgo_CheckStatus.BOPAlgo_SelfIntersect",
+          "shapes": [
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "type_index_one_based": 7,
+              "surface_type": "GeomAbs_SurfaceType.GeomAbs_BSplineSurface"
+            },
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "type_index_one_based": 11,
+              "surface_type": "GeomAbs_SurfaceType.GeomAbs_BSplineSurface"
+            }
+          ]
+        }
+      ],
+      "source_faces": 17,
+      "remeshed_triangles": 8120,
+      "linear_deflection_mm": 0.019764471653910043,
+      "all_stl_coordinates_equal_float32_source_mesh": true,
+      "original_witness_indices": [
+        3891,
+        7591
+      ],
+      "matching_remeshed_indices": [
+        [
+          3891
+        ],
+        [
+          7591
+        ]
+      ],
+      "witness_faces_one_based": [
+        7,
+        11
+      ],
+      "double_precision_source_pair_certificate": {
+        "segment_length_mm": "0.0095201650297531684385528799654547961007772974928101712840994903807602696308306622",
+        "start": [
+          "-463.65303652564038430878754883822856195711302596334260352621333795807022723872812",
+          "11.208965229536669133916834844901859182123794893735639591042323152683579486589540",
+          "173.84155074780416596049073374198430435106544387860435403246032050284577931723023"
+        ],
+        "end": [
+          "-463.64403654729540607679600697746036007889352050277687621574631549187216837114199",
+          "11.205874134261111498731651068910572850500386576007138893167708473127654963780632",
+          "173.84183192742839804827494799472782338539468187172531369679302344210977495640235"
+        ],
+        "shared_vertices": 0,
+        "decimal_precision": 80
+      },
+      "stl_crossing_midpoint_on_source_faces": [
+        {
+          "surface_type": "GeomAbs_SurfaceType.GeomAbs_BSplineSurface",
+          "surface_distance_mm": 9.496159658203879e-05,
+          "uv": [
+            0.23259237035594743,
+            -0.7439406300060313
+          ],
+          "trim_class_at_1e_7": "TopAbs_State.TopAbs_IN"
+        },
+        {
+          "surface_type": "GeomAbs_SurfaceType.GeomAbs_BSplineSurface",
+          "surface_distance_mm": 0.000102486999840332,
+          "uv": [
+            40.084598144981776,
+            4.031200629700238
+          ],
+          "trim_class_at_1e_7": "TopAbs_State.TopAbs_IN"
+        }
+      ],
+      "shared_source_edges": [
+        {
+          "index_one_based": 24,
+          "tolerance_mm": 5.05810002363516e-05
+        }
+      ],
+      "face_section": {
+        "faces_one_based": [
+          7,
+          11
+        ],
+        "section_done": true,
+        "shared_edges": 1,
+        "section_edges": [
+          {
+            "length_mm": 10.888735132382317,
+            "same_as_shared_edge": false,
+            "maximum_sampled_distance_to_shared_edge_mm": 4.1879332105891404e-07,
+            "farthest_sample": [
+              -533.1843539343139,
+              51.60388184200886,
+              173.79810168074948
+            ],
+            "farthest_sample_on_faces": [
+              {
+                "surface_type": "GeomAbs_SurfaceType.GeomAbs_BSplineSurface",
+                "surface_distance_mm": 7.553172887309252e-14,
+                "uv": [
+                  0.0,
+                  80.11187210813652
+                ],
+                "trim_class_at_1e_7": "TopAbs_State.TopAbs_ON"
+              },
+              {
+                "surface_type": "GeomAbs_SurfaceType.GeomAbs_BSplineSurface",
+                "surface_distance_mm": 4.2250595175060785e-07,
+                "uv": [
+                  -40.3335810805059,
+                  3.9760590107530356
+                ],
+                "trim_class_at_1e_7": "TopAbs_State.TopAbs_ON"
+              }
+            ]
+          },
+          {
+            "length_mm": 69.51411962272111,
+            "same_as_shared_edge": false,
+            "maximum_sampled_distance_to_shared_edge_mm": 5.892572161857422e-06,
+            "farthest_sample": [
+              -463.636645988541,
+              11.203707683855198,
+              173.8485751629358
+            ],
+            "farthest_sample_on_faces": [
+              {
+                "surface_type": "GeomAbs_SurfaceType.GeomAbs_BSplineSurface",
+                "surface_distance_mm": 1.2791002765336182e-13,
+                "uv": [
+                  0.0,
+                  -0.7553889050238475
+                ],
+                "trim_class_at_1e_7": "TopAbs_State.TopAbs_ON"
+              },
+              {
+                "surface_type": "GeomAbs_SurfaceType.GeomAbs_BSplineSurface",
+                "surface_distance_mm": 4.703704338949646e-06,
+                "uv": [
+                  40.096585685019264,
+                  4.038232271210515
+                ],
+                "trim_class_at_1e_7": "TopAbs_State.TopAbs_ON"
+              }
+            ]
+          },
+          {
+            "length_mm": 0.5959617590256198,
+            "same_as_shared_edge": false,
+            "maximum_sampled_distance_to_shared_edge_mm": 0.0016310030493544173,
+            "farthest_sample": [
+              -524.572782426354,
+              44.39326464016703,
+              173.9665642086046
+            ],
+            "farthest_sample_on_faces": [
+              {
+                "surface_type": "GeomAbs_SurfaceType.GeomAbs_BSplineSurface",
+                "surface_distance_mm": 1.8372604511876137e-07,
+                "uv": [
+                  0.054079019065158815,
+                  68.96358655955991
+                ],
+                "trim_class_at_1e_7": "TopAbs_State.TopAbs_IN"
+              },
+              {
+                "surface_type": "GeomAbs_SurfaceType.GeomAbs_BSplineSurface",
+                "surface_distance_mm": 1.8452999413048895e-07,
+                "uv": [
+                  -29.260240370184604,
+                  4.018553131923818
+                ],
+                "trim_class_at_1e_7": "TopAbs_State.TopAbs_IN"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
