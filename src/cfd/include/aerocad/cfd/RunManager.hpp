@@ -6,6 +6,7 @@
 #include "aerocad/cfd/Results.hpp"
 #include "aerocad/cfd/Settings.hpp"
 
+#include <cstdint>
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -227,6 +228,7 @@ private:
     std::map<std::string, std::unique_ptr<Run>> m_runs;
     std::optional<Process> m_imagePull;
     int m_processorLimit = 0; ///< Set in the constructor.
+    std::uint64_t m_queueCounter = 0; ///< Last submission number given to a queued run.
 };
 
 } // namespace aerocad::cfd

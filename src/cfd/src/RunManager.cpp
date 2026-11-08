@@ -376,6 +376,8 @@ struct RunManager::Run {
     std::string dockerHost; ///< Remote engine the run was started on, empty = this machine.
     int processes = 0;      ///< Solver processes of a run started (or queued) by this manager.
     std::vector<std::string> queuedArgv; ///< Engine command of a run waiting for processors.
+    std::uint64_t queueOrder = 0;        ///< Submission order of a queued run (first in, first out).
+    std::string launchError;             ///< Why a queued run could not start.
     RunStatus status;
 };
 
@@ -861,6 +863,7 @@ std::string RunManager::start(const CaseGeometry& geometry, const Settings& sett
         const int inUse = localProcessesInUse();
         if (queueAhead || (inUse > 0 && inUse + run.processes > m_processorLimit)) {
             run.queuedArgv = argv;
+            run.queueOrder = ++m_queueCounter;
             std::ofstream(run.caseDir / "aerocad.stage") << "queued\n";
             return id;
         }
@@ -881,15 +884,25 @@ int RunManager::localProcessesInUse()
 
 void RunManager::startQueued()
 {
-    for (auto& [id, run] : m_runs) { // Ids start with the creation time: oldest first.
-        if (run->queuedArgv.empty())
-            continue;
+    // Submission order, not id order: ids of runs created within one second sort by part name.
+    std::vector<Run*> queue;
+    for (auto& [id, run] : m_runs)
+        if (!run->queuedArgv.empty())
+            queue.push_back(run.get());
+    std::sort(queue.begin(), queue.end(), [](const Run* a, const Run* b) { return a->queueOrder < b->queueOrder; });
+    for (Run* run : queue) {
         const int inUse = localProcessesInUse();
         if (inUse > 0 && inUse + run->processes > m_processorLimit)
             return; // First in, first out.
-        std::ofstream(run->caseDir / "aerocad.stage") << "starting\n";
-        run->process = Process::start(run->queuedArgv, run->caseDir, run->dir / "log.aerocad");
-        run->queuedArgv.clear();
+        std::vector<std::string> argv;
+        argv.swap(run->queuedArgv); // Leaves the queue whether or not it starts.
+        try {
+            std::ofstream(run->caseDir / "aerocad.stage") << "starting\n";
+            run->process = Process::start(argv, run->caseDir, run->dir / "log.aerocad");
+        } catch (const std::exception& e) {
+            // One run that cannot start must not block listing, cancelling or deleting the others.
+            run->launchError = e.what();
+        }
     }
 }
 
@@ -945,6 +958,11 @@ void RunManager::refresh(Run& run)
         s.cd = s.cl = s.cs = s.dragN = s.liftN = s.sideN = std::nullopt;
         s.message = "Waiting for the other runs on this computer to finish: one after the other they finish "
                     "sooner than all at once.";
+        return;
+    }
+    if (!run.launchError.empty()) {
+        s.state = RunState::Failed;
+        s.message = "The simulation engine could not start after waiting in the queue: " + run.launchError;
         return;
     }
 
