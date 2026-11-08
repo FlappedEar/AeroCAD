@@ -99,6 +99,12 @@ Json CaseInfo::toJson() const
         {"baseCellSize", baseCellSize},
         {"geometryHash", geometryHash},
         {"contextHash", contextHash ? Json(*contextHash) : Json(nullptr)},
+        {"wheels", [&] {
+             Json list = Json::array();
+             for (const Wheel& w : wheels)
+                 list.push_back(w.toJson());
+             return list;
+         }()},
     };
 }
 
@@ -117,6 +123,9 @@ CaseInfo CaseInfo::fromJson(const Json& j)
     if (auto it = j.find("contextHash"); it != j.end() && it->is_number_unsigned())
         c.contextHash = it->get<std::uint64_t>();
     c.openfoam = j.value("openfoam", std::string());
+    if (auto it = j.find("wheels"); it != j.end() && it->is_array())
+        for (const Json& w : *it)
+            c.wheels.push_back(Wheel::fromJson(w));
     return c;
 }
 
@@ -229,6 +238,29 @@ std::string header(std::string_view cls, std::string_view object)
     return t.str();
 }
 
+/// Patch of the wheels on an axle (CAD-154); "wheels0" is the front axle.
+std::string wheelPatch(int axle)
+{
+    return "wheels" + std::to_string(axle);
+}
+
+int axleCount(const std::vector<Wheel>& wheels)
+{
+    int n = 0;
+    for (const Wheel& w : wheels)
+        n = std::max(n, w.axle + 1);
+    return n;
+}
+
+/// The patches whose forces count: the part and its turning wheels.
+std::string partPatches(const std::vector<Wheel>& wheels)
+{
+    std::string out = "part";
+    for (int a = 0; a < axleCount(wheels); ++a)
+        out += " " + wheelPatch(a);
+    return out;
+}
+
 void writeFile(const fs::path& path, const std::string& content)
 {
     fs::create_directories(path.parent_path());
@@ -303,13 +335,15 @@ std::string blockMeshDict(const BoundingBox& d, const int cells[3], bool ground)
     return t.str();
 }
 
-std::string snappyHexMeshDict(const MeshPlan& plan, bool hasContext, const BoundingBox& nearBox,
+std::string snappyHexMeshDict(const MeshPlan& plan, bool hasContext, int axles, const BoundingBox& nearBox,
                               const BoundingBox& wakeBox, const Vec3& locationInMesh)
 {
     Text t;
     t << header("dictionary", "snappyHexMeshDict") << "castellatedMesh true;\nsnap            true;\naddLayers       "
       << (plan.layers > 0 ? "true" : "false") << ";\n\ngeometry\n{\n"
       << "    part.stl { type triSurfaceMesh; name part; }\n";
+    for (int a = 0; a < axles; ++a)
+        t << "    " << wheelPatch(a) << ".stl { type triSurfaceMesh; name " << wheelPatch(a) << "; }\n";
     if (hasContext)
         t << "    context.stl { type triSurfaceMesh; name context; }\n";
     t << "    near { type box; min " << nearBox.min << "; max " << nearBox.max << "; }\n"
@@ -318,11 +352,16 @@ std::string snappyHexMeshDict(const MeshPlan& plan, bool hasContext, const Bound
       << "    maxLocalCells 3000000;\n    maxGlobalCells 12000000;\n    minRefinementCells 10;\n"
       << "    maxLoadUnbalance 0.10;\n    nCellsBetweenLevels 3;\n\n    features\n    (\n"
       << "        { file \"part.eMesh\"; level " << plan.surfaceMax << "; }\n";
+    for (int a = 0; a < axles; ++a)
+        t << "        { file \"" << wheelPatch(a) << ".eMesh\"; level " << plan.surfaceMax << "; }\n";
     if (hasContext)
         t << "        { file \"context.eMesh\"; level " << plan.surfaceMin << "; }\n";
     t << "    );\n\n    refinementSurfaces\n    {\n"
       << "        part { level (" << plan.surfaceMin << ' ' << plan.surfaceMax
       << "); patchInfo { type wall; inGroups (walls); } }\n";
+    for (int a = 0; a < axles; ++a)
+        t << "        " << wheelPatch(a) << " { level (" << plan.surfaceMin << ' ' << plan.surfaceMax
+          << "); patchInfo { type wall; inGroups (walls); } }\n";
     if (hasContext)
         t << "        context { level (" << plan.surfaceMin << ' ' << plan.surfaceMin
           << "); patchInfo { type wall; inGroups (walls); } }\n";
@@ -334,7 +373,14 @@ std::string snappyHexMeshDict(const MeshPlan& plan, bool hasContext, const Bound
       << "    nFeatureSnapIter 10;\n    implicitFeatureSnap false;\n    explicitFeatureSnap true;\n"
       << "    multiRegionFeatureSnap false;\n}\n\n"
       << "addLayersControls\n{\n    relativeSizes true;\n    layers\n    {\n"
-      << "        part { nSurfaceLayers " << std::max(plan.layers, 1) << "; }\n    }\n"
+      << "        " << [&] {
+             if (axles == 0)
+                 return std::string("part");
+             std::string names = "\"(part";
+             for (int a = 0; a < axles; ++a)
+                 names += "|" + wheelPatch(a);
+             return names + ")\"";
+         }() << " { nSurfaceLayers " << std::max(plan.layers, 1) << "; }\n    }\n"
       << "    expansionRatio 1.2;\n    finalLayerThickness 0.5;\n    minThickness 0.1;\n    nGrow 0;\n"
       << "    featureAngle 60;\n    slipFeatureAngle 30;\n    nRelaxIter 3;\n    nSmoothSurfaceNormals 1;\n"
       << "    nSmoothNormals 3;\n    nSmoothThickness 10;\n    maxFaceThicknessRatio 0.5;\n"
@@ -345,16 +391,18 @@ std::string snappyHexMeshDict(const MeshPlan& plan, bool hasContext, const Bound
     return t.str();
 }
 
-std::string surfaceFeatureExtractDict(bool hasContext)
+std::string surfaceFeatureExtractDict(bool hasContext, int axles)
 {
     Text t;
     t << header("dictionary", "surfaceFeatureExtractDict");
-    auto entry = [&](const char* file) {
+    auto entry = [&](const std::string& file) {
         t << file
           << "\n{\n    extractionMethod extractFromSurface;\n    includedAngle 150;\n"
              "    subsetFeatures { nonManifoldEdges no; openEdges yes; }\n    writeObj no;\n}\n\n";
     };
     entry("part.stl");
+    for (int a = 0; a < axles; ++a)
+        entry(wheelPatch(a) + ".stl");
     if (hasContext)
         entry("context.stl");
     return t.str();
@@ -381,10 +429,10 @@ std::string controlDict(const Settings& s, const CaseInfo& info)
       << "aerocadRhoInf   " << s.density << ";\naerocadUInf     " << s.speed << ";\n\nfunctions\n{\n"
       // Forces in N on the part only (rho = rhoInf: the solver works with kinematic pressure).
       << "    forces\n    {\n        type forces;\n        libs (forces);\n        writeControl timeStep;\n"
-      << "        writeInterval 1;\n        log no;\n        patches (part);\n        rho rhoInf;\n"
+      << "        writeInterval 1;\n        log no;\n        patches (" << partPatches(info.wheels) << ");\n        rho rhoInf;\n"
       << "        rhoInf $aerocadRhoInf;\n        CofR " << c << ";\n    }\n"
       << "    forceCoeffs\n    {\n        type forceCoeffs;\n        libs (forces);\n"
-      << "        writeControl timeStep;\n        writeInterval 1;\n        log yes;\n        patches (part);\n"
+      << "        writeControl timeStep;\n        writeInterval 1;\n        log yes;\n        patches (" << partPatches(info.wheels) << ");\n"
       << "        rho rhoInf;\n        rhoInf $aerocadRhoInf;\n        magUInf $aerocadUInf;\n"
       << "        lRef " << info.referenceLength << ";\n        Aref " << info.referenceArea << ";\n"
       << "        CofR " << c << ";\n        dragDir (1 0 0);\n        liftDir (0 0 1);\n"
@@ -412,7 +460,7 @@ std::string controlDict(const Settings& s, const CaseInfo& info)
       << "        writeControl writeTime;\n        surfaceFormat vtk;\n"
       << "        formatOptions { vtk { format ascii; legacy true; } }\n        fields (p U);\n"
       << "        interpolationScheme cellPoint;\n        surfaces\n        {\n"
-      << "            part { type patch; patches (part); interpolate true; }\n"
+      << "            part { type patch; patches (" << partPatches(info.wheels) << "); interpolate true; }\n"
       << "            sectionHorizontal { type cuttingPlane; point " << c
       << "; normal (0 0 1); interpolate true; }\n"
       << "            sectionVertical { type cuttingPlane; point " << c
@@ -500,7 +548,7 @@ std::string decomposeParDict(int processes)
 
 /// Initial and boundary conditions. Patches: inlet, outlet, farfield (slip), ground
 /// (optional moving floor), part and context (walls, group "walls").
-void writeFields(const fs::path& zero, const Settings& s)
+void writeFields(const fs::path& zero, const Settings& s, const std::vector<Wheel>& wheels)
 {
     const double U = s.speed;
     const double k = 1.5 * std::pow(U * s.turbulenceIntensity, 2);
@@ -523,6 +571,15 @@ void writeFields(const fs::path& zero, const Settings& s)
         u += "    ground { type fixedValue; value $internalField; }\n"; // Floor moving with the air.
     else if (ground)
         u += "    ground { type noSlip; }\n"; // Fixed tunnel floor.
+    // CAD-154: each axle turns so that its tyres' bottom moves with the floor (+X at U):
+    // about -Y, at U / r.
+    for (int a = 0; a < axleCount(wheels); ++a) {
+        const auto w = std::find_if(wheels.begin(), wheels.end(), [a](const Wheel& x) { return x.axle == a; });
+        Text t;
+        t << "    " << wheelPatch(a) << " { type rotatingWallVelocity; origin " << w->centre
+          << "; axis (0 -1 0); omega " << U / w->radius << "; value uniform (0 0 0); }\n";
+        u += t.str();
+    }
     field("volVectorField", "U", "[0 1 -1 0 0 0 0]", "uniform $flowVelocity", u);
 
     std::string p = "    inlet { type zeroGradient; }\n"
@@ -663,6 +720,25 @@ CaseInfo planCase(const CaseGeometry& geometry, const Settings& s)
     const double h = L / meshPlan(s.mesh).cellsPerLength;
     BoundingBox d;
     double floor = all.min.z - 0.02 * L;
+    if (s.rotatingWheels) {
+        // CAD-154: the tyres stand on the moving floor. It is put a little above their
+        // bottom, so each tyre meets it in a contact patch instead of a line of degenerate
+        // cells; their surfaces then move with it there.
+        if (!s.ground || !s.groundMoving)
+            throw std::runtime_error("Rotating wheels need a moving floor: turn on the floor and let it move");
+        if (s.groundHeight)
+            throw std::runtime_error(
+                "With rotating wheels the floor is put where the tyres touch it: leave the floor height empty");
+        info.wheels = detectWheels(part, L);
+        if (info.wheels.empty())
+            throw std::runtime_error("No wheels found: rotating wheels need tyres standing on the bottom of the part");
+        double r = info.wheels.front().radius;
+        for (const Wheel& w : info.wheels)
+            r = std::min(r, w.radius);
+        floor = info.partBounds.min.z + 0.015 * r;
+        if (all.min.z < info.partBounds.min.z - 1e-9)
+            throw std::runtime_error("With rotating wheels no other part may reach below the tyres");
+    }
     if (s.ground && s.groundHeight) {
         floor = info.frame.toCase({0.0, 0.0, *s.groundHeight}).z; // Rotation is about Z only.
         if (floor > info.partBounds.min.z + 1e-9) {
@@ -774,8 +850,17 @@ CaseInfo writeCase(const fs::path& dir, const CaseGeometry& geometry, const Sett
 
     fs::create_directories(dir);
     const std::string partStl = asciiStl(part, "part");
-    writeFile(dir / "constant" / "triSurface" / "part.stl", partStl);
     info.geometryHash = fnv1a(partStl);
+    if (info.wheels.empty()) {
+        writeFile(dir / "constant" / "triSurface" / "part.stl", partStl);
+    } else {
+        // The turning wheels are surfaces of their own (one per axle), so they can move.
+        const WheelSplit split = splitWheels(part, info.wheels);
+        writeFile(dir / "constant" / "triSurface" / "part.stl", asciiStl(split.body, "part"));
+        for (std::size_t a = 0; a < split.axles.size(); ++a)
+            writeFile(dir / "constant" / "triSurface" / (wheelPatch(static_cast<int>(a)) + ".stl"),
+                      asciiStl(split.axles[a], wheelPatch(static_cast<int>(a))));
+    }
     info.contextHash = 0;
     if (hasContext) {
         const std::string contextStl = asciiStl(context, "context");
@@ -794,8 +879,8 @@ CaseInfo writeCase(const fs::path& dir, const CaseGeometry& geometry, const Sett
               header("dictionary", "turbulenceProperties") +
                   "simulationType RAS;\n\nRAS\n{\n    RASModel kOmegaSST;\n    turbulence on;\n    printCoeffs on;\n}\n");
     writeFile(dir / "system" / "blockMeshDict", blockMeshDict(d, cells, s.ground));
-    writeFile(dir / "system" / "snappyHexMeshDict", snappyHexMeshDict(plan, hasContext, nearBox, wake, location));
-    writeFile(dir / "system" / "surfaceFeatureExtractDict", surfaceFeatureExtractDict(hasContext));
+    writeFile(dir / "system" / "snappyHexMeshDict", snappyHexMeshDict(plan, hasContext, axleCount(info.wheels), nearBox, wake, location));
+    writeFile(dir / "system" / "surfaceFeatureExtractDict", surfaceFeatureExtractDict(hasContext, axleCount(info.wheels)));
     writeFile(dir / "system" / "controlDict", controlDict(s, info));
     writeFile(dir / "system" / "fvSchemes", fvSchemes());
     writeFile(dir / "system" / "fvSolution", fvSolution());
@@ -803,7 +888,7 @@ CaseInfo writeCase(const fs::path& dir, const CaseGeometry& geometry, const Sett
     writeFile(dir / "system" / "decomposeParDict", decomposeParDict(processes));
     fs::remove_all(dir / "0");
     fs::remove_all(dir / "0.orig");
-    writeFields(dir / "0.orig", s);
+    writeFields(dir / "0.orig", s, info.wheels);
 
     const fs::path script = dir / "Allrun";
     writeFile(script, allrun(processes));
