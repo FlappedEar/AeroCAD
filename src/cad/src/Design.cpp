@@ -304,6 +304,41 @@ void Design::setSuppressed(FeatureId id, bool suppressed)
     regenerate();
 }
 
+void Design::moveFeature(FeatureId id, std::size_t position)
+{
+    const std::size_t from = indexOf(id);
+    auto& fs = m_state.features;
+    if (position >= fs.size())
+        throw DesignError("Position " + std::to_string(position) + " is past the end of the timeline (" +
+                          std::to_string(fs.size()) + " features)");
+    if (position == from)
+        return;
+    const State before = m_state;
+    std::vector<FeatureId> working;
+    for (const auto& f : fs) {
+        if (status(f.id).state == FeatureStatus::State::Ok)
+            working.push_back(f.id);
+    }
+    Feature moved = std::move(fs[from]);
+    fs.erase(fs.begin() + static_cast<std::ptrdiff_t>(from));
+    fs.insert(fs.begin() + static_cast<std::ptrdiff_t>(position), std::move(moved));
+    if (from < m_state.marker && position >= m_state.marker)
+        --m_state.marker;
+    else if (from >= m_state.marker && position < m_state.marker)
+        ++m_state.marker;
+    regenerate();
+    for (const FeatureId w : working) {
+        const FeatureStatus st = status(w);
+        if (st.state != FeatureStatus::State::Error)
+            continue;
+        const Feature* f = feature(w);
+        const std::string name = f ? f->name : std::to_string(w);
+        m_state = before;
+        regenerate();
+        throw DesignError("Cannot move it there: " + name + " would fail (" + st.message + ")");
+    }
+}
+
 void Design::removeFeature(FeatureId id)
 {
     const std::size_t i = indexOf(id);

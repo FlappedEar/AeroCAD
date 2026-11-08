@@ -1,0 +1,35 @@
+# CAD-160: dragging a chip in the timeline moves the feature (Fusion); a move that breaks a
+# dependency is refused with a message; dragging the marker rolls back and forward.
+# Run: AeroCAD --ui-script <this file>
+ui.wait(800)
+(() => { const a = controller.execute("feature.box", { corner: [0, 0, 0], size: [40, 30, 20] }); const f = controller.execute("feature.fillet", { body: a.result.id, edges: [{ point: [28, 0, 20] }], radius: 4 }); const b = controller.execute("feature.box", { corner: [100, 0, 0], size: [10, 10, 10] }); if (!a.ok || !f.ok || !b.ok) ui.fail("setup failed") })()
+ui.wait(500)
+(() => { const names = controller.execute("timeline.list").result.features.map(f => f.name); ui.log("start " + JSON.stringify(names)) })()
+ui.shot("timeline-reorder-start.png")
+# Drag the second box (chip 2) in front of the first box: a real mouse drag.
+(() => { const a = timelineBar.chipPoint(2), b = timelineBar.slotPoint(0); if (!a) ui.fail("no chip 2"); ui.move(a.x, a.y); ui.press(a.x, a.y); for (let i = 1; i <= 12; ++i) ui.move(a.x + (b.x - a.x) * i / 12, a.y) })()
+ui.wait(300)
+(() => { if (timelineBar.dragKind !== "feature" || timelineBar.dragSlot !== 0) ui.fail("chip drag not shown: " + timelineBar.dragKind + " " + timelineBar.dragSlot) })()
+ui.shot("timeline-reorder-dragging.png")
+(() => { const b = timelineBar.slotPoint(0); ui.release(b.x, timelineBar.chipPoint(0).y) })()
+ui.wait(800)
+(() => { const tl = controller.execute("timeline.list").result; const types = tl.features.map(f => f.type + ":" + f.status); ui.log("after drag " + JSON.stringify(types)); if (tl.features[0].params.corner[0] !== 100 || tl.features[1].type !== "box" || tl.features[2].type !== "fillet") ui.fail("the box did not move to the front"); if (tl.features.some(f => f.status !== "ok")) ui.fail("a feature fails after the move") })()
+ui.shot("timeline-reorder-moved.png")
+# The fillet cannot go before the box it rounds.
+(() => { const a = timelineBar.chipPoint(2), b = timelineBar.slotPoint(1); ui.drag(a.x, a.y, b.x, a.y, "left", "", 12) })()
+ui.wait(800)
+(() => { const tl = controller.execute("timeline.list").result; if (tl.features[2].type !== "fillet") ui.fail("the fillet moved before its box"); if (controller.statusMessage.indexOf("Cannot move it there") < 0) ui.fail("no message for the refused move: " + controller.statusMessage) })()
+# Drag the marker from the end to after the first feature: the rest is rolled back.
+(() => { const a = timelineBar.slotPoint(3), b = timelineBar.slotPoint(1); ui.drag(a.x + 3, a.y, b.x, b.y, "left", "", 12) })()
+ui.wait(800)
+(() => { const tl = controller.execute("timeline.list").result; ui.log("marker " + tl.marker + " " + JSON.stringify(tl.features.map(f => f.status))); if (tl.marker !== 1) ui.fail("marker drag did not roll back to 1: " + tl.marker) })()
+ui.shot("timeline-marker-dragged.png")
+# And from there to before the first feature, then back to the end.
+(() => { const a = timelineBar.slotPoint(1), b = timelineBar.slotPoint(0); ui.drag(a.x + 3, a.y, b.x - 4, b.y, "left", "", 12) })()
+ui.wait(800)
+(() => { const tl = controller.execute("timeline.list").result; if (tl.marker !== 0) ui.fail("marker drag to the start: " + tl.marker) })()
+(() => { const a = timelineBar.slotPoint(0), b = timelineBar.slotPoint(3); ui.drag(a.x + 3, a.y, b.x + 20, b.y, "left", "", 12) })()
+ui.wait(800)
+(() => { const tl = controller.execute("timeline.list").result; if (tl.marker !== 3 || tl.features.some(f => f.status !== "ok")) ui.fail("marker drag to the end: " + tl.marker) })()
+# Undo takes back the marker drags and the move, one step each.
+(() => { for (let i = 0; i < 3; ++i) controller.execute("edit.undo"); const tl = controller.execute("timeline.list").result; if (tl.marker !== 3 || tl.features[0].params.corner[0] !== 100) ui.fail("undo of the marker drags"); controller.execute("edit.undo"); const t2 = controller.execute("timeline.list").result; if (t2.features[0].params.corner[0] !== 0) ui.fail("undo of the move") })()

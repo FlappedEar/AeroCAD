@@ -361,8 +361,12 @@ See [cad.md](cad.md) for the timeline and the commands behind the tools.
   an origin plane, another construction plane or a clicked planar face. Planes are drawn as
   translucent orange squares; Create Sketch accepts a click on a plane.
 - **Timeline** (bottom): features in order; double-click to edit (sketches reopen in the
-  sketch environment), right-click for Rename, Suppress, Roll Back To Here and Delete; the
-  playback buttons move the marker. Failed features are red with the reason in the tooltip.
+  sketch environment), right-click for Edit Profile Sketch (Extrude, Revolve, Sweep, Loft:
+  opens the sketch the profile comes from), Rename, Suppress, Roll Back To Here and Delete; the
+  playback buttons move the marker, or drag the marker itself. Drag a feature to another place
+  to reorder (a line shows where it drops); a move that would put a feature before something
+  it uses is refused and the status bar says which feature would fail. Failed features are
+  red with the reason in the tooltip.
 - **Parameters**: Modify > Change Parameters, user parameters used in expressions.
 - Command scripts: `AeroCAD --run script.json` runs a JSON array of `{name, params}`
   commands at start-up, the same calls an AI agent makes through MCP.
