@@ -555,24 +555,50 @@ ApplicationWindow {
     }
 
     /// Editing an earlier sketch rolls the timeline back to just after it (Fusion): what came
-    /// later is hidden and cannot be snapped to or projected. {sketch, marker, rolledTo, atEnd} to
-    /// roll forward again when the sketch ends; null when nothing was rolled back.
+    /// later is hidden and cannot be snapped to or projected. Kept by feature ids, not
+    /// positions, so deleting features meanwhile does not lose it: {sketch, atEnd, lastActive}
+    /// (the sketch, whether the marker was at the end, else the last feature before it);
+    /// null when nothing was rolled back.
     property var sketchRollback: null
 
     function rollBackToSketch(id) {
         const tl = controller.execute("timeline.list")
         if (!tl.ok)
             return
-        const index = tl.result.features.findIndex(f => f.id === id)
-        if (index < 0 || index + 1 >= tl.result.marker)
+        const t = tl.result
+        const index = t.features.findIndex(f => f.id === id)
+        if (index < 0 || index + 1 >= t.marker)
             return
+        const rb = { sketch: id, atEnd: t.marker === t.features.length, lastActive: t.features[t.marker - 1].id }
         if (controller.execute("timeline.set_marker", { position: index + 1 }).ok) {
-            sketchRollback = { sketch: id, marker: tl.result.marker, rolledTo: index + 1,
-                               atEnd: tl.result.marker === tl.result.features.length }
-            // Saving meanwhile stores the marker from before the edit, not the roll-back (at
-            // the end: whatever the end is then; project.save clamps it).
-            controller.savedMarker = sketchRollback.atEnd ? 2147483647 : tl.result.marker
+            sketchRollback = rb
+            updateSavedMarker()
         }
+    }
+
+    /// Where the marker goes back to for `rb` in timeline `t`: the end if it was there, else
+    /// just after the feature that was last before it (if that was deleted, no further than
+    /// the end). Null when the user moved the marker off the sketch meanwhile.
+    function rollbackTarget(rb, t) {
+        const sketchAt = t.features.findIndex(f => f.id === rb.sketch)
+        if (sketchAt < 0 || t.marker !== sketchAt + 1)
+            return null
+        if (rb.atEnd)
+            return t.features.length
+        const last = t.features.findIndex(f => f.id === rb.lastActive)
+        return last >= 0 ? last + 1 : t.features.length
+    }
+
+    /// Saves (and autosaves) store the marker from before the sketch edit, not the roll-back.
+    function updateSavedMarker() {
+        let marker = -1
+        if (sketchRollback) {
+            const tl = controller.execute("timeline.list")
+            const target = tl.ok ? rollbackTarget(sketchRollback, tl.result) : null
+            if (target !== null)
+                marker = target
+        }
+        controller.savedMarker = marker
     }
 
     /// Rolls forward to where the timeline was before the sketch edit, unless the user moved
@@ -586,14 +612,8 @@ ApplicationWindow {
         const tl = controller.execute("timeline.list")
         if (!tl.ok)
             return
-        const t = tl.result
-        const sketchAt = t.features.findIndex(f => f.id === rb.sketch)
-        if (t.marker !== rb.rolledTo || sketchAt !== rb.rolledTo - 1)
-            return
-        // Features after the sketch may have been deleted meanwhile: back to the end if it was
-        // there, else no further than the end.
-        const target = rb.atEnd ? t.features.length : Math.min(rb.marker, t.features.length)
-        if (target > t.marker)
+        const target = rollbackTarget(rb, tl.result)
+        if (target !== null && target > tl.result.marker)
             controller.execute("timeline.set_marker", { position: target })
     }
 
@@ -2779,7 +2799,12 @@ ApplicationWindow {
             viewport.restoreCameraState(view)
         }
         // Undo/redo and edits elsewhere (timeline, parameters) change the sketch too.
-        function onHistoryChanged() { window.refreshSketchSnaps() }
+        function onHistoryChanged() {
+            window.refreshSketchSnaps()
+            // Deleting or moving features during a sketch edit changes where Save rolls to.
+            if (window.sketchRollback)
+                window.updateSavedMarker()
+        }
         function onPartImported(id) {
             window.selectPart(id)
             viewport.fitAll()
