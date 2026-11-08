@@ -569,7 +569,189 @@ void appendCurves(const Eval& ev, const Json& item, std::vector<SketchCurve>& ou
     }
 }
 
+
+/// A solved sketch curve as a single sketch item (line or three-point arc).
+Json curveItem(const SketchCurve& c)
+{
+    auto pt = [](const Vec2& v) { return Json::array({v.x, v.y}); };
+    Json item;
+    if (c.kind == SketchCurve::Kind::Line)
+        item = {{"type", "line"}, {"start", pt(c.points[0])}, {"end", pt(c.points[1])}};
+    else if (c.kind == SketchCurve::Kind::Arc)
+        item = {{"type", "arc"}, {"start", pt(c.points[0])}, {"through", pt(c.points[1])}, {"end", pt(c.points[2])}};
+    else
+        throw DesignError("Only lines and arcs of a shape can be deleted separately");
+    if (c.construction)
+        item["construction"] = true;
+    return item;
+}
+
+const char* implicitName(SketchConstraint::Type t)
+{
+    using CT = SketchConstraint::Type;
+    switch (t) {
+    case CT::Horizontal: return "horizontal";
+    case CT::Vertical: return "vertical";
+    case CT::Parallel: return "parallel";
+    case CT::Tangent: return "tangent";
+    case CT::Equal: return "equal";
+    default: return nullptr;
+    }
+}
+
+/// Re-indexes the curve references of a constraint; false when it refers to a removed curve.
+bool remapConstraint(Json& c, const std::vector<std::optional<std::size_t>>& map)
+{
+    auto curve = [&](Json& idx) {
+        if (!idx.is_number_integer())
+            return true;
+        const auto i = idx.get<std::size_t>();
+        if (i >= map.size() || !map[i])
+            return false;
+        idx = *map[i];
+        return true;
+    };
+    auto point = [&](Json& ref) { return !ref.is_object() || !ref.contains("curve") || curve(ref["curve"]); };
+    if (c.contains("curve") && !curve(c["curve"]))
+        return false;
+    if (c.contains("curves") && c["curves"].is_array())
+        for (auto& i : c["curves"])
+            if (!curve(i))
+                return false;
+    if (c.contains("point") && !point(c["point"]))
+        return false;
+    if (c.contains("points") && c["points"].is_array())
+        for (auto& r : c["points"])
+            if (!point(r))
+                return false;
+    return true;
+}
+
 } // namespace
+
+void Design::deleteSketchCurves(FeatureId sketchId, const std::vector<std::size_t>& removed)
+{
+    const State before = m_state;
+    Feature& f = m_state.features[indexOf(sketchId)];
+    if (f.type != "sketch")
+        throw DesignError("Feature " + std::to_string(sketchId) + " is not a sketch");
+    if (removed.empty())
+        throw DesignError("Select at least one sketch curve");
+    const Eval ev{*this};
+    const Json items = f.params.value("curves", Json::array());
+
+    // Expand every item as the evaluation does, to know which curves it makes.
+    std::vector<std::vector<SketchCurve>> made;
+    std::vector<std::vector<SketchConstraint>> implicit;
+    std::size_t total = 0;
+    for (const auto& item : items) {
+        made.emplace_back();
+        implicit.emplace_back();
+        appendCurves(ev, item, made.back(), implicit.back());
+        total += made.back().size();
+    }
+    std::vector<bool> gone(total, false);
+    for (const std::size_t i : removed) {
+        if (i >= total)
+            throw DesignError(f.name + " has no curve " + std::to_string(i));
+        gone[i] = true;
+    }
+
+    Json newItems = Json::array();
+    Json extra = Json::array(); // the kept constraints of split shapes
+    std::vector<std::optional<std::size_t>> map(total);
+    std::size_t oldIndex = 0;
+    std::size_t newIndex = 0;
+    for (std::size_t k = 0; k < made.size(); ++k) {
+        const std::size_t first = oldIndex;
+        const std::size_t n = made[k].size();
+        oldIndex += n;
+        std::size_t kept = 0;
+        for (std::size_t j = 0; j < n; ++j)
+            kept += gone[first + j] ? 0 : 1;
+        if (kept == n) { // untouched: keep the item as written (with its expressions)
+            for (std::size_t j = 0; j < n; ++j)
+                map[first + j] = newIndex++;
+            newItems.push_back(items[k]);
+            continue;
+        }
+        if (kept == 0)
+            continue;
+        // Split: the remaining curves as single items, where the solver had them start.
+        for (std::size_t j = 0; j < n; ++j) {
+            if (gone[first + j])
+                continue;
+            map[first + j] = newIndex++;
+            newItems.push_back(curveItem(made[k][j]));
+        }
+        // The shape's own constraints: those between kept curves stay; equal sides (a
+        // polygon chains them to its first side) are chained to the first kept side.
+        std::optional<std::size_t> equalAnchor;
+        std::set<std::size_t> equalLinked;
+        for (const auto& c : implicit[k]) {
+            const char* name = implicitName(c.type);
+            if (name == nullptr)
+                continue;
+            if (c.type == SketchConstraint::Type::Equal) {
+                for (const std::size_t i : c.curves) {
+                    if (!map[i])
+                        continue;
+                    if (!equalAnchor)
+                        equalAnchor = *map[i];
+                    else if (*map[i] != *equalAnchor && equalLinked.insert(*map[i]).second)
+                        extra.push_back({{"type", "equal"}, {"curves", Json::array({*equalAnchor, *map[i]})}});
+                }
+                continue;
+            }
+            Json curves = Json::array();
+            bool ok = true;
+            for (const std::size_t i : c.curves) {
+                ok = ok && map[i].has_value();
+                if (ok)
+                    curves.push_back(*map[i]);
+            }
+            if (!ok)
+                continue;
+            Json e{{"type", name}};
+            if (curves.size() == 1)
+                e["curve"] = curves[0];
+            else
+                e["curves"] = curves;
+            extra.push_back(e);
+        }
+    }
+
+    Json constraints = Json::array();
+    for (auto c : f.params.value("constraints", Json::array()))
+        if (remapConstraint(c, map))
+            constraints.push_back(c);
+    for (const auto& e : extra)
+        constraints.push_back(e);
+
+    f.params["curves"] = newItems;
+    if (!constraints.empty() || f.params.contains("constraints"))
+        f.params["constraints"] = constraints;
+
+    // Later features that name curves of this sketch follow the new indices. A feature
+    // whose curve is gone keeps the old index and reports an error, like Fusion's red
+    // timeline steps.
+    auto remapIndex = [&](Json& idx) {
+        if (idx.is_number_integer() && idx.get<std::size_t>() < map.size() && map[idx.get<std::size_t>()])
+            idx = *map[idx.get<std::size_t>()];
+        else if (idx.is_number_integer())
+            idx = newIndex; // past the last curve: no longer a curve of the sketch
+    };
+    for (auto& g : m_state.features) {
+        if (g.type == "revolve" && g.params.value("sketch", Json()) == sketchId && g.params.contains("axis") &&
+            g.params["axis"].is_object() && g.params["axis"].contains("line"))
+            remapIndex(g.params["axis"]["line"]);
+        if (g.type == "sweep" && g.params.contains("path") && g.params["path"].is_object() &&
+            g.params["path"].value("sketch", Json()) == sketchId && g.params["path"].contains("curves"))
+            for (auto& i : g.params["path"]["curves"])
+                remapIndex(i);
+    }
+    regenerateChecked(sketchId, before);
+}
 
 void Design::evaluateFeature(const Feature& f)
 {

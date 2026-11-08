@@ -26,12 +26,19 @@ Item {
     signal constraintAdded(var constraint)
     signal constraintEdited(int index, var value)
     signal constraintRemoved(int index)
+    /// Delete was asked for the selected curves (indices of sketch.curves).
+    signal curvesDeleted(var indices)
     /// A palette button asks for another sketch tool.
     signal toolRequested(string tool)
 
     readonly property bool constraintTool: constraintLayer.toolNames.indexOf(tool) >= 0
 
     readonly property bool active: sketch !== null && tool !== ""
+    /// With no tool (Fusion's select mode): curves picked with the mouse, indices of
+    /// sketch.curves, and the curve under the cursor (-1 none).
+    property var selectedCurves: []
+    property int hoverCurve: -1
+    readonly property bool selecting: sketch !== null && tool === ""
     /// Clicked points of the curve being drawn, [[u, v], ...].
     property var points: []
     property var hover: null
@@ -42,8 +49,16 @@ Item {
     enabled: sketch !== null
     visible: sketch !== null
 
-    onToolChanged: reset()
-    onSketchChanged: reset()
+    onToolChanged: { reset(); clearSelection() }
+    onSketchChanged: { reset(); clearSelection() }
+    // The curves changed (a delete, an undo): drop picks that no longer exist.
+    onSketchCurvesChanged: {
+        const kept = selectedCurves.filter(i => i < sketchCurves.length)
+        if (kept.length !== selectedCurves.length)
+            selectedCurves = kept
+        hoverCurve = -1
+        canvas.requestPaint()
+    }
     // Previews and the surface line are projected points: redraw them when the view moves.
     Connections {
         target: root.viewport
@@ -57,6 +72,57 @@ Item {
     function endCurrent() {
         reset()
         constraintLayer.reset()
+    }
+
+    function clearSelection() {
+        if (selectedCurves.length === 0 && hoverCurve < 0)
+            return
+        selectedCurves = []
+        hoverCurve = -1
+        canvas.requestPaint()
+    }
+
+    /// Deletes the selected curves (Delete key, sketch menu). False when none is selected.
+    function deleteSelection() {
+        if (selectedCurves.length === 0)
+            return false
+        const list = selectedCurves.slice().sort((a, b) => a - b)
+        selectedCurves = []
+        hoverCurve = -1
+        curvesDeleted(list)
+        canvas.requestPaint()
+        return true
+    }
+
+    /// Index of the sketch curve within a few pixels of (x, y), or -1.
+    function curveAt(x, y) {
+        const p = screenToLocal(x, y)
+        const q = screenToLocal(x + 1, y)
+        if (p === null || q === null)
+            return -1
+        let best = -1, bestD = constraintLayer.pickPixels * Math.max(1e-9, dist(p, q))
+        for (const c of sketchCurves) {
+            const d = constraintLayer.curveDistance(p, c)
+            if (d <= bestD) { best = c.index; bestD = d }
+        }
+        return best
+    }
+
+    /// Click in select mode: a curve replaces the selection, or with Shift / Ctrl (Cmd)
+    /// is added or removed; empty space clears it.
+    function selectAt(x, y, modifiers) {
+        const i = curveAt(x, y)
+        const add = (modifiers & (Qt.ShiftModifier | Qt.ControlModifier)) !== 0
+        if (i < 0) {
+            if (!add)
+                clearSelection()
+            return
+        }
+        if (add)
+            selectedCurves = selectedCurves.indexOf(i) >= 0 ? selectedCurves.filter(j => j !== i) : selectedCurves.concat([i])
+        else
+            selectedCurves = [i]
+        canvas.requestPaint()
     }
 
     function reset() {
@@ -250,11 +316,40 @@ Item {
         canvas.requestPaint()
     }
 
+    /// Draws a solved sketch curve (sketch.curves format) as a polyline on the canvas.
+    function strokeCurve(ctx, c) {
+        let uv = []
+        if (c.kind === "line" || c.kind === "spline") {
+            uv = c.points
+        } else if (c.kind === "circle") {
+            const r = c.radius
+            for (let i = 0; i <= 72; ++i)
+                uv.push([c.points[0][0] + r * Math.cos(2 * Math.PI * i / 72), c.points[0][1] + r * Math.sin(2 * Math.PI * i / 72)])
+        } else if (c.kind === "arc") {
+            const ctr = c.center
+            const r = dist(c.points[0], ctr)
+            const ang = q => Math.atan2(q[1] - ctr[1], q[0] - ctr[0])
+            const norm = a => (a % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI)
+            const a0 = ang(c.points[0])
+            let sweep = norm(ang(c.points[2]) - a0)
+            if (norm(ang(c.points[1]) - a0) > sweep)
+                sweep -= 2 * Math.PI
+            for (let i = 0; i <= 48; ++i)
+                uv.push([ctr[0] + r * Math.cos(a0 + sweep * i / 48), ctr[1] + r * Math.sin(a0 + sweep * i / 48)])
+        }
+        ctx.beginPath()
+        for (let i = 0; i < uv.length; ++i) {
+            const q = toScreen(uv[i])
+            if (i === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y)
+        }
+        ctx.stroke()
+    }
+
     // --- Input ----------------------------------------------------------------------------
 
     MouseArea {
         anchors.fill: parent
-        enabled: root.active
+        enabled: root.active || root.selecting
         hoverEnabled: true
         // Left only: right drag orbits and a right click opens the sketch menu (Viewport),
         // as everywhere else in the view.
@@ -267,11 +362,28 @@ Item {
         property bool dragEnded: false
         readonly property bool dragTool: root.tool === "rectangle" || root.tool === "circle" || root.tool === "polygon"
         onPressed: mouse => {
+            if (root.selecting) {
+                // Select mode: a curve under the cursor is picked here; anything else goes
+                // on to the view (a click on empty space also clears the curve selection).
+                root.selectAt(mouse.x, mouse.y, mouse.modifiers)
+                if (root.curveAt(mouse.x, mouse.y) < 0)
+                    mouse.accepted = false
+                root.forceActiveFocus()
+                return
+            }
             pressAt = Qt.point(mouse.x, mouse.y)
             dragging = false
             dragEnded = false
         }
         onPositionChanged: mouse => {
+            if (root.selecting) {
+                const i = root.curveAt(mouse.x, mouse.y)
+                if (i !== root.hoverCurve) {
+                    root.hoverCurve = i
+                    canvas.requestPaint()
+                }
+                return
+            }
             if (root.constraintTool) {
                 constraintLayer.hoverAt(mouse.x, mouse.y)
                 return
@@ -297,6 +409,8 @@ Item {
                 root.click(p)
         }
         onClicked: mouse => {
+            if (root.selecting)
+                return
             if (dragEnded) {
                 dragEnded = false
                 root.forceActiveFocus()
@@ -353,6 +467,17 @@ Item {
                 }
                 ctx.stroke()
             }
+            // Select mode: the curve under the cursor and the selected curves, highlighted.
+            for (const c of root.sketchCurves) {
+                const sel = root.selectedCurves.indexOf(c.index) >= 0
+                if (!sel && c.index !== root.hoverCurve)
+                    continue
+                ctx.lineWidth = sel ? 3.5 : 3
+                ctx.strokeStyle = Theme.accent
+                ctx.globalAlpha = sel ? 1 : 0.45
+                root.strokeCurve(ctx, c)
+            }
+            ctx.globalAlpha = 1
             ctx.lineWidth = 1.5
             ctx.strokeStyle = Theme.sketchColor
             ctx.fillStyle = Theme.sketchColor
@@ -465,7 +590,9 @@ Item {
             spacing: 4
             Label {
                 text: root.constraintTool ? constraintLayer.hint()
-                    : root.tool === "" ? qsTr("Sketch: pick a tool (L line, R rectangle, C circle, D dimension)")
+                    : root.tool === "" ? (root.selectedCurves.length > 0
+                        ? qsTr("%n curve(s) selected: Delete removes, Esc clears", "", root.selectedCurves.length)
+                        : qsTr("Click curves to select (Shift adds); or pick a tool (L line, R rectangle, C circle, D dimension)"))
                     : root.tool === "line" ? qsTr("Line: click points; Esc (or right-click › End Curve) ends the chain")
                     : root.tool === "rectangle" ? qsTr("Rectangle: drag or click two corners; type width, height")
                     : root.tool === "circle" ? qsTr("Circle: click centre and a point; type the diameter")

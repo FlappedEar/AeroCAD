@@ -198,6 +198,11 @@ if(AEROCAD_BUILD_TESTS)
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/surface_outline_drag.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_surface_outline_drag_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-122: in a sketch Esc ends the tool, a click selects a curve and Delete removes it.
+    add_test(NAME app_sketch_select_delete_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_select_delete.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_sketch_select_delete_test PROPERTIES LABELS gui TIMEOUT 60)
     # CAD-115: Export suggests a file name.
     add_test(NAME app_export_file_name_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl

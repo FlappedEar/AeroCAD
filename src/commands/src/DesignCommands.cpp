@@ -756,6 +756,31 @@ void registerSketchCommands(CommandRegistry& r)
               return addedFeature(design(ctx), ctx.document, id);
           });
 
+    r.add({"sketch.delete_curves", "Delete Sketch Curves",
+           "Removes curves from a sketch (Fusion: select sketch curves, Delete). curves are indices from "
+           "sketch.curves. A rectangle, polygon or slot that loses some curves becomes separate lines and "
+           "arcs that keep their horizontal/vertical/equal/parallel/tangent constraints. Constraints on the "
+           "removed curves are removed; the other constraints are re-indexed.",
+           objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
+                         {"curves",
+                          {{"type", "array"},
+                           {"minItems", 1},
+                           {"items", {{"type", "integer"}, {"minimum", 0}}},
+                           {"description", "Curve indices as sketch.curves lists them."}}}},
+                        {"sketch", "curves"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              const auto id = params.at("sketch").get<cad::FeatureId>();
+              const auto curves = params.at("curves").get<std::vector<std::size_t>>();
+              designChange(ctx, curves.size() == 1 ? "Delete Sketch Curve" : "Delete Sketch Curves",
+                           [&](cad::Design& d) {
+                               (void)sketchFeature(d, id);
+                               d.deleteSketchCurves(id, curves);
+                               return Json{};
+                           });
+              return addedFeature(design(ctx), ctx.document, id);
+          });
+
     r.add({"sketch.profiles", "Sketch profiles",
            "Lists the closed profiles of a sketch with their area and centroid (sketch and world coordinates), "
            "to pick profiles for extrude/revolve.",

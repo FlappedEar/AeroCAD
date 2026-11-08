@@ -158,6 +158,18 @@ ApplicationWindow {
             onTriggered: viewport.endSketchCurve()
         }
         MenuSeparator { visible: sketchMenu.drawing; height: visible ? implicitHeight : 0 }
+        SketchMenuItem {
+            objectName: "deleteCurves"
+            text: qsTr("Delete (Del)")
+            icon.source: Theme.iconUrl("delete")
+            visible: !sketchMenu.drawing && viewport.sketchOverlay.selectedCurves.length > 0
+            font.bold: true
+            onTriggered: viewport.sketchOverlay.deleteSelection()
+        }
+        MenuSeparator {
+            visible: !sketchMenu.drawing && viewport.sketchOverlay.selectedCurves.length > 0
+            height: visible ? implicitHeight : 0
+        }
         SketchMenuItem { action: lineAction; icon.source: Theme.iconUrl("line") }
         SketchMenuItem { action: rectangleAction; icon.source: Theme.iconUrl("rectangle") }
         SketchMenuItem { action: circleAction; icon.source: Theme.iconUrl("circle") }
@@ -207,6 +219,10 @@ ApplicationWindow {
     }
 
     function deleteSelected() {
+        if (activeSketch) {
+            viewport.sketchOverlay.deleteSelection()
+            return
+        }
         if (!selectedPartId)
             return
         const info = controller.partInfo(selectedPartId)
@@ -856,7 +872,8 @@ ApplicationWindow {
     Action {
         id: deleteAction
         text: qsTr("&Delete")
-        enabled: !!window.selectedPartId
+        // In a sketch, Delete removes the selected sketch curves, never a part.
+        enabled: window.activeSketch ? viewport.sketchOverlay.selectedCurves.length > 0 : !!window.selectedPartId
         shortcut: "Delete" // Fusion: Del
         onTriggered: window.deleteSelected()
     }
@@ -1203,8 +1220,14 @@ ApplicationWindow {
                 scanPanel.close()
             else if (window.pickingSketchPlane)
                 window.pickingSketchPlane = false
-            else if (window.activeSketch && viewport.sketchOverlay.points.length > 0)
-                viewport.sketchOverlay.reset()
+            // In a sketch, as in Fusion: Esc ends what is being drawn, then the tool, then
+            // clears the curve selection; only then does it leave the sketch.
+            else if (window.activeSketch && viewport.sketchOverlay.drawing)
+                viewport.sketchOverlay.endCurrent()
+            else if (window.activeSketch && window.sketchTool !== "")
+                window.sketchTool = ""
+            else if (window.activeSketch && viewport.sketchOverlay.selectedCurves.length > 0)
+                viewport.sketchOverlay.clearSelection()
             else if (window.activeSketch)
                 window.finishSketch(true)
             else if (window.partOnSurfaceSketch)
@@ -1909,6 +1932,11 @@ ApplicationWindow {
             onConstraintRemoved: index => {
                 if (window.activeSketch)
                     window.controller.execute("sketch.edit_constraint", { sketch: window.activeSketch.id, index: index, remove: true })
+                window.refreshSketchSnaps()
+            }
+            onSketchCurvesDeleted: list => {
+                if (window.activeSketch)
+                    window.controller.execute("sketch.delete_curves", { sketch: window.activeSketch.id, curves: list })
                 window.refreshSketchSnaps()
             }
 

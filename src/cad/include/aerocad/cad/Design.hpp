@@ -169,6 +169,14 @@ public:
     void setSuppressed(FeatureId id, bool suppressed);
     /// Removes a feature. Later features that depended on it will report errors.
     void removeFeature(FeatureId id);
+    /// Removes curves from a sketch (Fusion: select sketch curves, Delete). `curves` are
+    /// indices of the evaluated sketch (as Sketch::curves lists them). A rectangle, polygon
+    /// or slot that loses some of its curves becomes separate lines and arcs that keep the
+    /// shape's own constraints (horizontal, vertical, equal, parallel, tangent).
+    /// Constraints on removed curves are dropped and the others re-indexed, as are the
+    /// revolve axis line and the sweep path curves of features that use the sketch.
+    /// Throws DesignError (and leaves the design unchanged) when the sketch then fails.
+    void deleteSketchCurves(FeatureId sketch, const std::vector<std::size_t>& curves);
     /// Moves the timeline marker (0 = before the first feature, size() = at the end).
     void setMarker(std::size_t marker);
 

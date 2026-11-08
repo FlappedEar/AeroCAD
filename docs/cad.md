@@ -69,6 +69,7 @@ rebuilding, AeroCAD reports the problem; Undo restores the previous source.
 |---|---|---|
 | `sketch.create` | Create Sketch | `plane` XY / XZ / YZ / {plane: construction plane id} / {origin, normal, xDir}, or `face` {body, index or point}, or `surface` {part, point / useSelection} (best-fit plane over a curved surface or scan); `offset`; `curves` |
 | `sketch.add_curves` | (draw in sketch) | appends curves |
+| `sketch.delete_curves` | select sketch curves, Delete | `curves`: indices from `sketch.curves`; a rectangle, polygon or slot that loses some curves becomes lines and arcs that keep its constraints; constraints on removed curves go, the others (and a revolve axis line or sweep path curves) are re-indexed |
 | `sketch.profiles` | | closed regions with area and centroid |
 | `sketch.add_constraints` | Sketch > Constraints, Sketch Dimension (D) | see Constraints below |
 | `sketch.edit_constraint` | double-click a dimension / delete a constraint | `index`, `value` or `remove` |
