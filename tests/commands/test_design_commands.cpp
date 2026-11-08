@@ -1028,3 +1028,31 @@ TEST_CASE("Design commands: sketch fillet (CAD-126)", "[commands][cad][solver]")
     for (const auto& curve : cc.at("curves"))
         CHECK(curve.at("construction") == true);
 }
+
+TEST_CASE("Design commands: sketch offset (CAD-126)", "[commands][cad]")
+{
+    commands::Session s;
+    const auto id = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "rectangle"}, {"corner", {0, 0}}, {"width", 40}, {"height", 20}},
+                                                 {{"type", "circle"}, {"center", {100, 0}}, {"radius", 5}}})}})
+                        .at("id")
+                        .get<std::uint64_t>();
+    // The rectangle 2 mm outwards: 4 sides and 4 corner arcs; the ring between them is
+    // its own profile.
+    run(s, "sketch.offset", {{"sketch", id}, {"curves", {0, 1, 2, 3}}, {"distance", 2}});
+    Json c = run(s, "sketch.curves", {{"sketch", id}});
+    CHECK(c.at("curves").size() == 5 + 8);
+    double minX = 1e9;
+    for (std::size_t i = 5; i < c.at("curves").size(); ++i)
+        for (const auto& p : c.at("curves")[i].at("points"))
+            minX = std::min(minX, p[0].get<double>());
+    CHECK(minX == Approx(-2).margin(1e-6));
+    // A circle 1 mm inwards.
+    run(s, "sketch.offset", {{"sketch", id}, {"curves", {4}}, {"distance", -1}});
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    CHECK(c.at("curves").back().at("kind") == "circle");
+    CHECK(c.at("curves").back().at("radius").get<double>() == Approx(4).margin(1e-6));
+    // Too far inwards collapses: refused.
+    CHECK_FALSE(s.execute("sketch.offset", {{"sketch", id}, {"curves", {4}}, {"distance", -6}}).ok);
+}

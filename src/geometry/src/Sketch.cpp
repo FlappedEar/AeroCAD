@@ -3,7 +3,12 @@
 
 #include "aerocad/geometry/OcctShape.hpp"
 
+#include <BRepAdaptor_Curve.hxx>
 #include <BRepAlgoAPI_BuilderAlgo.hxx>
+#include <BRepBuilderAPI_MakeWire.hxx>
+#include <BRepGProp_Face.hxx>
+#include <BRepOffsetAPI_MakeOffset.hxx>
+#include <TopoDS_Wire.hxx>
 #include <BRepAlgoAPI_Splitter.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
@@ -308,6 +313,98 @@ Shape curveEdges(const Plane& planeIn, const std::vector<SketchCurve>& curves)
         throw ModelingError(std::string("Sketch curve: ") + e.GetMessageString());
     }
     return wrapShape(comp);
+}
+
+std::vector<SketchCurve> offsetCurves(const std::vector<SketchCurve>& curves, double distance)
+{
+    if (curves.empty())
+        throw ModelingError("Select the curves to offset");
+    if (std::abs(distance) < kTol)
+        throw ModelingError("The offset distance must not be zero");
+    const Plane xy; // plane coordinates are XY here
+    try {
+        BRepBuilderAPI_MakeWire wire;
+        // Add the edges in an order that keeps the chain connected.
+        std::vector<TopoDS_Edge> edges;
+        for (const auto& c : curves)
+            edges.push_back(makeEdge(xy, c));
+        std::vector<bool> used(edges.size(), false);
+        wire.Add(edges[0]);
+        used[0] = true;
+        for (std::size_t added = 1; added < edges.size(); ++added) {
+            bool any = false;
+            for (std::size_t i = 0; i < edges.size() && !any; ++i) {
+                if (used[i])
+                    continue;
+                wire.Add(edges[i]);
+                if (wire.Error() == BRepBuilderAPI_WireDone) {
+                    used[i] = true;
+                    any = true;
+                }
+            }
+            if (!any)
+                throw ModelingError("The selected curves are not one connected chain");
+        }
+        if (!wire.IsDone())
+            throw ModelingError("The selected curves are not one connected chain");
+        const TopoDS_Wire w = wire.Wire();
+        const bool closed = BRep_Tool::IsClosed(w);
+        BRepOffsetAPI_MakeOffset offset;
+        offset.Init(GeomAbs_Arc, !closed);
+        offset.AddWire(w);
+        // OCCT offsets a closed wire outwards for a positive value when it runs
+        // counter-clockwise; make "positive = outwards" independent of the drawing order.
+        double d = distance;
+        if (closed) {
+            const TopoDS_Face face = BRepBuilderAPI_MakeFace(w, true).Face();
+            GProp_GProps props;
+            BRepGProp::SurfaceProperties(face, props);
+            BRepGProp_Face f(face);
+            double u1, u2, v1, v2;
+            f.Bounds(u1, u2, v1, v2);
+            gp_Pnt p;
+            gp_Vec n;
+            f.Normal((u1 + u2) / 2, (v1 + v2) / 2, p, n);
+            if (n.Z() < 0)
+                d = -d;
+        }
+        offset.Perform(d);
+        if (!offset.IsDone())
+            throw ModelingError("The offset could not be made (too large for these curves?)");
+        std::vector<SketchCurve> out;
+        auto uv = [](const gp_Pnt& p) { return Vec2{p.X(), p.Y()}; };
+        for (TopExp_Explorer e(offset.Shape(), TopAbs_EDGE); e.More(); e.Next()) {
+            const TopoDS_Edge edge = TopoDS::Edge(e.Current());
+            BRepAdaptor_Curve ac(edge);
+            const double t0 = ac.FirstParameter(), t1 = ac.LastParameter();
+            SketchCurve c;
+            if (ac.GetType() == GeomAbs_Line) {
+                c.kind = SketchCurve::Kind::Line;
+                c.points = {uv(ac.Value(t0)), uv(ac.Value(t1))};
+                if (distance2d(c.points[0], c.points[1]) < kTol)
+                    continue;
+            } else if (ac.GetType() == GeomAbs_Circle && std::abs(t1 - t0 - 2 * M_PI) < 1e-9) {
+                c.kind = SketchCurve::Kind::Circle;
+                c.points = {uv(ac.Circle().Location())};
+                c.radius = ac.Circle().Radius();
+            } else if (ac.GetType() == GeomAbs_Circle) {
+                c.kind = SketchCurve::Kind::Arc;
+                c.points = {uv(ac.Value(t0)), uv(ac.Value((t0 + t1) / 2)), uv(ac.Value(t1))};
+                if (distance2d(c.points[0], c.points[2]) < kTol)
+                    continue;
+            } else {
+                c.kind = SketchCurve::Kind::Spline;
+                for (int i = 0; i <= 24; ++i)
+                    c.points.push_back(uv(ac.Value(t0 + (t1 - t0) * i / 24.0)));
+            }
+            out.push_back(c);
+        }
+        if (out.empty())
+            throw ModelingError("The offset is empty (too large for these curves?)");
+        return out;
+    } catch (const Standard_Failure& e) {
+        throw ModelingError(std::string("Offset failed: ") + e.GetMessageString());
+    }
 }
 
 double area(const Shape& shape)

@@ -808,6 +808,25 @@ void registerSketchCommands(CommandRegistry& r)
               return addedFeature(design(ctx), ctx.document, id);
           });
 
+    r.add({"sketch.offset", "Sketch Offset",
+           "Offsets a connected chain of sketch curves (Fusion: Sketch > Offset): `distance` > 0 outwards for a "
+           "closed chain (to the left of an open one), < 0 the other way. Corners are rounded. The offset curves "
+           "are added at the end of sketch.curves.",
+           objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
+                         {"curves", {{"type", "array"}, {"items", {{"type", "integer"}}}, {"minItems", 1}}},
+                         {"distance", {{"type", "number"}}}},
+                        {"sketch", "curves", "distance"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              const auto id = params.at("sketch").get<cad::FeatureId>();
+              designChange(ctx, "Sketch Offset", [&](cad::Design& d) {
+                  (void)sketchFeature(d, id);
+                  d.offsetSketchCurves(id, params.at("curves").get<std::vector<std::size_t>>(), params.at("distance").get<double>());
+                  return Json{};
+              });
+              return addedFeature(design(ctx), ctx.document, id);
+          });
+
     r.add({"sketch.fillet", "Sketch Fillet",
            "Rounds the corner where two sketch lines meet (Fusion: Sketch > Fillet): both lines are shortened "
            "and joined by a tangent arc with a radius dimension (edit it like any dimension). The two lines and the "

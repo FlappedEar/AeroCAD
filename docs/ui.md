@@ -292,6 +292,8 @@ See [cad.md](cad.md) for the timeline and the commands behind the tools.
   **Trim** (T, SKETCH › MODIFY): click the piece of a line, arc or circle to remove, up to
   where other curves cross it; a curve that crosses nothing is removed whole, a circle
   becomes an arc. Constraints on the trimmed curve go.
+  **Offset** (SKETCH › MODIFY): select a connected chain of curves, click Offset, type the
+  distance and press Enter (negative goes inwards); corners are rounded.
   **Fillet** (SKETCH › MODIFY): click the corner where two lines meet; it is rounded with a
   tangent arc (the last radius used, 5 mm at first) whose radius dimension can be edited
   under Constraints.

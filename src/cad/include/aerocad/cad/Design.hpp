@@ -196,6 +196,10 @@ public:
     /// is held tangent to them with a radius dimension. Lines that were horizontal or
     /// vertical stay so. The new lines and arc are added at the end of the curves.
     void filletSketchCorner(FeatureId sketch, std::size_t a, std::size_t b, double radius);
+    /// Offsets a connected chain of sketch curves by `distance` (Fusion: Sketch Offset):
+    /// positive outwards (closed chain) or to the left (open chain). The offset curves are
+    /// added at the end; corners are rounded.
+    void offsetSketchCurves(FeatureId sketch, const std::vector<std::size_t>& curves, double distance);
     /// Drags a sketch point (Fusion: drag sketch geometry). `point` is a constraint point
     /// reference ({curve, point: start | end | center}); it is held at `to` (sketch
     /// coordinates) while the solver moves the free degrees of freedom, and the sketch keeps

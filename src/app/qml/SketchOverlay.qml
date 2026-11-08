@@ -40,6 +40,10 @@ Item {
     /// Radius the next sketch fillet starts with (the last one used); its dimension can be
     /// edited afterwards like any other.
     property real filletRadius: 5
+    /// Offset tool: `curves` (one chain) are to be offset by `distance`.
+    signal offsetRequested(var curves, real distance)
+    /// Curves the Offset tool offsets (the selection when it started).
+    property var offsetCurves: []
     /// Curves the Mirror tool copies (the selection when it started).
     property var mirrorCurves: []
     /// A point is being dragged in select mode (CAD-123): `point` is a constraint point
@@ -75,6 +79,8 @@ Item {
         clearSelection()
         if (tool !== "mirror")
             mirrorCurves = []
+        if (tool !== "offset")
+            offsetCurves = []
     }
     onSketchChanged: { reset(); clearSelection() }
     // The curves changed (a delete, an undo): drop picks that no longer exist.
@@ -176,6 +182,20 @@ Item {
         if (r > 0.4 * shortest)
             r = Number((0.25 * shortest).toPrecision(2))
         filletRequested([lines[0].index, lines[1].index], r)
+        return true
+    }
+
+    /// Offset (Fusion: Sketch > Offset): the selected chain is kept for the tool, which
+    /// then asks for the distance. False when nothing is selected.
+    function startOffset() {
+        if (selectedCurves.length === 0)
+            return false
+        const list = selectedCurves.slice()
+        toolRequested("offset")
+        offsetCurves = list
+        dimension.text = ""
+        dimension.forceActiveFocus()
+        canvas.requestPaint()
         return true
     }
 
@@ -619,7 +639,7 @@ Item {
             reset()
             constraintLayer.reset()
             event.accepted = true
-        } else if (active && !constraintTool && points.length > 0 && /^[0-9.(\-]$/.test(event.text)) {
+        } else if (active && !constraintTool && (points.length > 0 || tool === "offset") && /^[0-9.(\-]$/.test(event.text)) {
             dimension.text = event.text
             dimension.forceActiveFocus()
             event.accepted = true
@@ -654,6 +674,7 @@ Item {
             // Select mode: the curve under the cursor and the selected curves, highlighted.
             for (const c of root.sketchCurves) {
                 const sel = root.selectedCurves.indexOf(c.index) >= 0 || root.mirrorCurves.indexOf(c.index) >= 0
+                            || root.offsetCurves.indexOf(c.index) >= 0
                 if (!sel && c.index !== root.hoverCurve)
                     continue
                 ctx.lineWidth = sel ? 3.5 : 3
@@ -777,6 +798,7 @@ Item {
                     : root.tool === "" ? (root.selectedCurves.length > 0
                         ? qsTr("%n curve(s) selected: Delete removes, X construction, Esc clears", "", root.selectedCurves.length)
                         : qsTr("Click curves to select (Shift adds), drag points to move them; or pick a tool (L line, R rectangle, C circle, D dimension)"))
+                    : root.tool === "offset" ? qsTr("Offset: type the distance and press Enter (negative goes inwards)")
                     : root.tool === "fillet" ? qsTr("Fillet: click a corner of two lines; then edit its radius under Constraints")
                     : root.tool === "mirror" ? qsTr("Mirror: click the line to mirror the %n selected curve(s) about", "", root.mirrorCurves.length)
                     : root.tool === "trim" ? qsTr("Trim: click the piece of a curve to remove (up to where other curves cross it)")
@@ -820,12 +842,25 @@ Item {
             }
             RowLayout {
                 visible: root.active && !root.constraintTool && root.tool !== "trim" && root.tool !== "mirror" && root.tool !== "fillet"
-                Label { text: root.tool === "rectangle" ? qsTr("Width, height") : root.tool === "line" ? qsTr("Length") : qsTr("Size") }
+                Label { text: root.tool === "rectangle" ? qsTr("Width, height") : root.tool === "line" ? qsTr("Length")
+                            : root.tool === "offset" ? qsTr("Distance") : qsTr("Size") }
                 TextField {
                     id: dimension
                     Layout.preferredWidth: 140
                     placeholderText: qsTr("e.g. 40 or w/2")
-                    onAccepted: { root.applyDimension(text); root.forceActiveFocus() }
+                    onAccepted: {
+                        if (root.tool === "offset") {
+                            const d = Number(text)
+                            const list = root.offsetCurves.slice()
+                            if (isFinite(d) && d !== 0 && list.length > 0) {
+                                root.toolRequested("")
+                                root.offsetRequested(list, d)
+                            }
+                        } else {
+                            root.applyDimension(text)
+                        }
+                        root.forceActiveFocus()
+                    }
                     Keys.onEscapePressed: { root.reset(); root.forceActiveFocus() }
                 }
                 Label { visible: root.tool === "polygon"; text: qsTr("Sides") }

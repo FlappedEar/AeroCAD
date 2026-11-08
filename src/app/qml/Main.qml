@@ -1160,6 +1160,7 @@ ApplicationWindow {
     Action { id: fixAction; text: qsTr("Fix/Unfix"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "fix"; onTriggered: window.sketchTool_("fix") }
     Action { id: trimAction; text: qsTr("&Trim"); shortcut: "T"; enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "trim"; onTriggered: window.sketchTool_("trim") }
     Action { id: sketchFilletAction; text: qsTr("&Fillet"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "fillet"; onTriggered: window.sketchTool_("fillet") }
+    Action { id: sketchOffsetAction; text: qsTr("&Offset"); enabled: !!window.activeSketch && (viewport.sketchOverlay.selectedCurves.length > 0 || window.sketchTool === "offset"); checkable: true; checked: window.sketchTool === "offset"; onTriggered: { if (window.sketchTool !== "offset") viewport.sketchOverlay.startOffset(); else window.sketchTool_("") } }
     Action { id: sketchMirrorAction; text: qsTr("&Mirror"); enabled: !!window.activeSketch && (viewport.sketchOverlay.selectedCurves.length > 0 || window.sketchTool === "mirror"); checkable: true; checked: window.sketchTool === "mirror"; onTriggered: { if (window.sketchTool !== "mirror") viewport.sketchOverlay.startMirror(); else window.sketchTool_("") } }
     Action { id: slotAction; text: qsTr("Sl&ot"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "slot"; onTriggered: window.sketchTool_("slot") }
 
@@ -1453,6 +1454,7 @@ ApplicationWindow {
             MenuSeparator {}
             MenuItem { action: sketchFilletAction }
             MenuItem { action: trimAction }
+            MenuItem { action: sketchOffsetAction }
             MenuItem { action: sketchMirrorAction }
             MenuItem { action: constructionAction }
             MenuSeparator {}
@@ -1903,6 +1905,7 @@ ApplicationWindow {
                 caption: qsTr("MODIFY")
                 ToolCommand { action: sketchFilletAction; text: qsTr("Fillet"); iconName: "fillet" }
                 ToolCommand { action: trimAction; text: qsTr("Trim"); iconName: "trim" }
+                ToolCommand { action: sketchOffsetAction; text: qsTr("Offset"); iconName: "offset" }
                 ToolCommand { action: sketchMirrorAction; text: qsTr("Mirror"); iconName: "mirror" }
                 ToolCommand { action: constructionAction; text: qsTr("Construction"); iconName: "construction" }
             }
@@ -2081,6 +2084,14 @@ ApplicationWindow {
             onSketchConstructionToggled: (list, on) => {
                 if (window.activeSketch)
                     window.controller.execute("sketch.set_construction", { sketch: window.activeSketch.id, curves: list, construction: on })
+                window.refreshSketchSnaps()
+            }
+            onSketchOffsetRequested: (curves, distance) => {
+                if (!window.activeSketch)
+                    return
+                const r = window.controller.execute("sketch.offset", { sketch: window.activeSketch.id, curves: curves, distance: distance })
+                if (!r.ok)
+                    window.controller.showStatus(r.error)
                 window.refreshSketchSnaps()
             }
             onSketchFilletRequested: (curves, radius) => {

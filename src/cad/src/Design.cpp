@@ -1085,6 +1085,45 @@ void Design::mirrorSketchCurves(FeatureId sketchId, const std::vector<std::size_
     regenerateChecked(sketchId, before);
 }
 
+void Design::offsetSketchCurves(FeatureId sketchId, const std::vector<std::size_t>& picked, double distance)
+{
+    const State before = m_state;
+    Feature& f = m_state.features[indexOf(sketchId)];
+    if (f.type != "sketch")
+        throw DesignError("Feature " + std::to_string(sketchId) + " is not a sketch");
+    auto it = m_sketches.find(sketchId);
+    if (it == m_sketches.end())
+        throw DesignError(f.name + " is not evaluated");
+    std::vector<SketchCurve> chain;
+    for (const std::size_t i : picked) {
+        if (i >= it->second.curves.size())
+            throw DesignError(f.name + " has no curve " + std::to_string(i));
+        chain.push_back(it->second.curves[i]);
+    }
+    std::vector<SketchCurve> made;
+    try {
+        made = geometry::offsetCurves(chain, distance);
+    } catch (const geometry::ModelingError& e) {
+        throw DesignError(e.what());
+    }
+    auto pt = [](const Vec2& v) { return Json::array({v.x, v.y}); };
+    Json items = f.params.value("curves", Json::array());
+    for (const auto& c : made) {
+        if (c.kind == SketchCurve::Kind::Circle) {
+            items.push_back({{"type", "circle"}, {"center", pt(c.points[0])}, {"radius", c.radius}});
+        } else if (c.kind == SketchCurve::Kind::Spline) {
+            Json p = Json::array();
+            for (const auto& q : c.points)
+                p.push_back(pt(q));
+            items.push_back({{"type", "spline"}, {"points", p}});
+        } else {
+            items.push_back(curveItem(c));
+        }
+    }
+    f.params["curves"] = items;
+    regenerateChecked(sketchId, before);
+}
+
 void Design::filletSketchCorner(FeatureId sketchId, std::size_t ia, std::size_t ib, double radius)
 {
     const State before = m_state;
