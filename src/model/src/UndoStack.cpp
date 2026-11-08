@@ -14,7 +14,7 @@ void UndoStack::push(UndoEntry entry)
     entry.id = m_nextId++;
     m_entries.push_back(std::move(entry));
     if (m_limit > 0 && m_entries.size() > m_limit) {
-        m_firstKept = m_entries.front().id + 1;
+        m_expired.push_back(m_entries.front().id); // the oldest entry is always applied
         m_entries.erase(m_entries.begin());
     }
     m_index = m_entries.size();
@@ -93,6 +93,12 @@ bool UndoStack::isApplied(std::uint64_t id) const
                                   [id](const UndoEntry& e) { return e.id == id; });
 }
 
+bool UndoStack::isExpired(std::uint64_t id) const
+{
+    // Tokens only grow, and entries expire oldest first (clear() expires the rest, all newer).
+    return id != 0 && std::binary_search(m_expired.begin(), m_expired.end(), id);
+}
+
 bool UndoStack::mergeIds(const std::vector<std::uint64_t>& ids, std::string label)
 {
     if (ids.size() < 2 || topIds(ids.size()) != ids)
@@ -102,9 +108,10 @@ bool UndoStack::mergeIds(const std::vector<std::uint64_t>& ids, std::string labe
 
 void UndoStack::clear()
 {
+    for (std::size_t i = 0; i < m_index; ++i)
+        m_expired.push_back(m_entries[i].id);
     m_entries.clear();
     m_index = 0;
-    m_firstKept = m_nextId;
 }
 
 } // namespace aerocad::model

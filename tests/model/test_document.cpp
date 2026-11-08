@@ -187,9 +187,15 @@ TEST_CASE("UndoStack tells an expired entry from an undone one", "[model]")
     stack.push({"e", [] {}, [] {}}); // a dropped past the limit, still done
     CHECK_FALSE(stack.isApplied(a));
     CHECK(stack.isExpired(a));
+    for (int i = 0; i < 5; ++i)
+        stack.push({"f", [] {}, [] {}}); // everything older than b is gone by now
+    CHECK_FALSE(stack.isExpired(b)); // undone, so not done for good, however old
     const auto e = stack.topId();
-    stack.clear();
-    CHECK(stack.isExpired(e));
+    REQUIRE(stack.undo());
+    const auto before = stack.topId();
+    stack.clear(); // the applied entries expire, the undone one does not
+    CHECK(stack.isExpired(before));
+    CHECK_FALSE(stack.isExpired(e));
     CHECK_FALSE(stack.isExpired(0));
 }
 

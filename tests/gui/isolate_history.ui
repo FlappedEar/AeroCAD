@@ -1,0 +1,18 @@
+# CAD-118: an isolation stays on while its Isolate ages out of the 200-step history, also
+# after an undone Exit that a later edit discarded (Exit still shows the hidden part).
+# Run: AeroCAD --ui-script <this file>
+Qt.createQmlObject('import QtQuick; Item { objectName: "ihTest"; visible: false; property var s: ({}); function find(i, name) { if (!i) return null; if (i.objectName === name) return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = find(ch[k], name); if (r) return r } return null } function check(label, want, bar) { const v = s.ids.map(id => controller.partInfo(id).visible); const b = find(browser, "isolationBar"); ui.log(label + ": visible " + v.join(",") + ", bar " + b.visible); if (v.join() !== want.join()) ui.fail(label + ": visible " + v.join() + ", expected " + want.join()); if (b.visible !== bar) ui.fail(label + ": isolation bar shown " + b.visible) } function edits(n) { for (let i = 0; i < n; ++i) controller.execute("part.rename", { id: s.ids[0], name: "A" + i }) } }', window.contentItem)
+ui.wait(800)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "ihTest"); for (let i = 0; i < 2; ++i) controller.execute("feature.box", { size: [20, 20, 20], corner: [30 * i, 0, 0] }); t.s.ids = controller.execute("document.parts").result.parts.map(p => p.id); window.selectPart(t.s.ids[0]); isolateAction.trigger(); t.edits(201) })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "ihTest"); t.check("Isolate 201 edits ago", [true, false], true); unisolateAction.trigger() })()
+ui.wait(300)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "ihTest").check("Unisolate", [true, true], false) })()
+(() => { undoAction.trigger() })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "ihTest"); t.check("Undo of Unisolate", [true, false], true); t.edits(201) })()
+ui.wait(300)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "ihTest").check("201 edits after the undone Exit", [true, false], true) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "ihTest"); const b = t.find(browser, "exitIsolation"); const p = b.mapToItem(null, b.width / 2, b.height / 2); ui.click(p.x, p.y) })()
+ui.wait(300)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "ihTest").check("Exit", [true, true], false) })()

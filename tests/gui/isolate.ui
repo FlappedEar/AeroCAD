@@ -7,6 +7,7 @@
 #    after Unisolate does too;
 #  - hiding the isolated part (V) keeps the bar, so Exit can still show the parts it hid;
 #  - Isolate A, Exit, Isolate B, Ctrl+Z twice: A's isolation is back with its Exit button.
+# Isolation that outlives the 200-step history: isolate_history.ui.
 # Run: AeroCAD --ui-script <this file>
 Qt.createQmlObject('import QtQuick; Item { objectName: "isoTest"; visible: false; property var s: ({}); function find(i, name) { if (!i) return null; if (i.objectName === name) return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = find(ch[k], name); if (r) return r } return null } function vis() { return s.ids.map(id => controller.partInfo(id).visible) } function rightClickRow(id) { const r = browser.rowItem(id); const p = r.mapToItem(null, r.width / 3, r.height / 2); ui.click(p.x, p.y, "right") } function check(label, want, bar) { const v = vis(); const b = find(browser, "isolationBar"); ui.log(label + ": visible " + v.join(",") + ", bar " + b.visible); if (v.join() !== want.join()) ui.fail(label + ": visible " + v.join() + ", expected " + want.join()); if (b.visible !== bar) ui.fail(label + ": isolation bar shown " + b.visible) } }', window.contentItem)
 ui.wait(800)

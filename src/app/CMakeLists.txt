@@ -292,6 +292,10 @@ if(AEROCAD_BUILD_TESTS)
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/isolate_scan.ui
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(app_isolate_scan_test PROPERTIES LABELS gui TIMEOUT 60)
+    add_test(NAME app_isolate_history_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/isolate_history.ui
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(app_isolate_history_test PROPERTIES LABELS gui TIMEOUT 120)
     add_test(NAME app_large_scale_preview_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/large_scale_preview.ui
