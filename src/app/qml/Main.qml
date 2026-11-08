@@ -1865,6 +1865,8 @@ ApplicationWindow {
             shownSketch: featureDialog.shownSketch
             unpickablePlane: featureDialog.visible ? featureDialog.ownPlane : -1
             unpickableBody: featureDialog.visible ? featureDialog.previewFeatureId : -1
+            distanceArrow: featureDialog.visible ? featureDialog.distanceArrow : null
+            onDistanceArrowDragged: t => featureDialog.dragDistance(t)
             simulationFields: window.simulationVisible ? simulationPanel.viewportFields : []
             hiddenPartIds: window.simulationVisible ? simulationPanel.hiddenPartIds : []
             overlayLines: measurePanel.keptLines.concat(measurePanel.overlayLines)

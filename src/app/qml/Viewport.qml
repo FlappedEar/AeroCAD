@@ -1573,6 +1573,138 @@ Item {
         function onMoved(delta) { root.sectionDragged(delta) }
     }
 
+    // --- Distance arrow of a feature dialog (Fusion: drag the Extrude arrow) ---------------
+    /// {base: [x, y, z], direction: [x, y, z] (unit), distance: signed mm along it}, or null.
+    property var distanceArrow: null
+    /// Emitted while the arrow is dragged: the signed distance under the cursor (mm).
+    signal distanceArrowDragged(real distance)
+    /// Emitted when a drag of the arrow ends.
+    signal distanceArrowReleased()
+
+    /// Signed position along the line (base, dir) closest to the view ray at (x, y).
+    function lineParameterAt(x, y, base, dir) {
+        const a = modelSpace.mapPositionFromScene(view.mapTo3DScene(Qt.vector3d(x, y, 0)))
+        const b = modelSpace.mapPositionFromScene(view.mapTo3DScene(Qt.vector3d(x, y, 100)))
+        const r = b.minus(a).normalized()
+        const w = base.minus(a)
+        const k = dir.dotProduct(r)
+        const den = 1 - k * k
+        if (den < 1e-6)
+            return NaN // looking straight along the arrow
+        return (k * w.dotProduct(r) - w.dotProduct(dir)) / den
+    }
+
+    Item {
+        id: distanceHandle
+        objectName: "distanceArrow"
+        anchors.fill: parent
+        readonly property var arrow: root.distanceArrow
+        readonly property var ends: {
+            cameraInput.pitch; cameraInput.yaw; cameraInput.distance; pivot.position; root.width; root.height
+            root.orthographic
+            if (!arrow)
+                return null
+            const o = Qt.vector3d(arrow.base[0], arrow.base[1], arrow.base[2])
+            const n = Qt.vector3d(arrow.direction[0], arrow.direction[1], arrow.direction[2])
+            // A zero distance still shows a short arrow to grab.
+            const len = Math.abs(arrow.distance) > 1e-9 ? arrow.distance : root.controller.sceneRadius * 0.1
+            return { o: root.viewPoint(o), tip: root.viewPoint(o.plus(n.times(len))) }
+        }
+        visible: !!ends
+
+        Canvas {
+            anchors.fill: parent
+            readonly property var ends: distanceHandle.ends
+            onEndsChanged: requestPaint()
+            onPaint: {
+                const ctx = getContext("2d")
+                ctx.reset()
+                if (!ends)
+                    return
+                const dx = ends.tip.x - ends.o.x
+                const dy = ends.tip.y - ends.o.y
+                const len = Math.hypot(dx, dy)
+                ctx.strokeStyle = Theme.accent
+                ctx.fillStyle = Theme.accent
+                ctx.lineWidth = 2.5
+                ctx.setLineDash([6, 4])
+                ctx.beginPath()
+                ctx.moveTo(ends.o.x, ends.o.y)
+                ctx.lineTo(ends.tip.x, ends.tip.y)
+                ctx.stroke()
+                ctx.setLineDash([])
+                if (len > 1) {
+                    const ux = dx / len
+                    const uy = dy / len
+                    ctx.beginPath()
+                    ctx.moveTo(ends.tip.x + ux * 14, ends.tip.y + uy * 14)
+                    ctx.lineTo(ends.tip.x - uy * 8, ends.tip.y + ux * 8)
+                    ctx.lineTo(ends.tip.x + uy * 8, ends.tip.y - ux * 8)
+                    ctx.closePath()
+                    ctx.fill()
+                }
+                ctx.beginPath()
+                ctx.arc(ends.o.x, ends.o.y, 4, 0, 2 * Math.PI)
+                ctx.fill()
+                // The distance next to the head, as Fusion shows it while dragging.
+                ctx.font = "bold 12px sans-serif"
+                ctx.fillStyle = Theme.text
+                ctx.fillText(Preferences.formatLength(distanceHandle.arrow.distance, Preferences.lengthUnit),
+                             ends.tip.x + 20, ends.tip.y + 4)
+            }
+        }
+        // Grab area on the arrow head.
+        Rectangle {
+            id: distanceGrip
+            objectName: "distanceArrowGrip"
+            visible: !!distanceHandle.ends
+            x: distanceHandle.ends ? distanceHandle.ends.tip.x - width / 2 : 0
+            y: distanceHandle.ends ? distanceHandle.ends.tip.y - height / 2 : 0
+            width: 30
+            height: 30
+            radius: 15
+            color: distanceDrag.active || distanceHover.hovered ? Theme.accentSoft : "transparent"
+            border.color: Theme.accent
+            border.width: 1.5
+            HoverHandler {
+                id: distanceHover
+                cursorShape: Qt.SizeAllCursor
+            }
+            DragHandler {
+                id: distanceDrag
+                target: null
+                /// Where along the arrow the grab started, relative to its tip.
+                property real grabOffset: 0
+                onActiveChanged: {
+                    const a = root.distanceArrow
+                    if (active && a) {
+                        // From the press, not from where the drag threshold was passed.
+                        const p = distanceGrip.mapToItem(root, centroid.pressPosition.x, centroid.pressPosition.y)
+                        const t = root.lineParameterAt(p.x, p.y, Qt.vector3d(a.base[0], a.base[1], a.base[2]),
+                                                       Qt.vector3d(a.direction[0], a.direction[1], a.direction[2]))
+                        grabOffset = isFinite(t) ? t - a.distance : 0
+                    } else if (!active) {
+                        root.distanceArrowReleased()
+                    }
+                }
+                onCentroidChanged: {
+                    const a = root.distanceArrow
+                    if (!active || !a)
+                        return
+                    const p = distanceGrip.mapToItem(root, centroid.position.x, centroid.position.y)
+                    const base = Qt.vector3d(a.base[0], a.base[1], a.base[2])
+                    const t = root.lineParameterAt(p.x, p.y, base, Qt.vector3d(a.direction[0], a.direction[1], a.direction[2]))
+                    if (!isFinite(t))
+                        return
+                    // Round to a step that follows the zoom (0.1 mm close up, 1 mm or more far away).
+                    const wpp = root.worldPerPixelAt(base)
+                    const step = wpp < 0.05 ? 0.01 : wpp < 0.5 ? 0.1 : wpp < 5 ? 1 : 10
+                    root.distanceArrowDragged(Math.round((t - grabOffset) / step) * step)
+                }
+            }
+        }
+    }
+
     /// A curve or a constraint pick is under way in the sketch.
     readonly property bool sketchDrawing: sketchOverlay.drawing
     /// Ends it, as Esc does.

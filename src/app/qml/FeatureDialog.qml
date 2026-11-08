@@ -42,6 +42,50 @@ Pane {
         return out
     }
 
+    /// Extrude: the distance arrow on the profile, along the sketch normal (Viewport
+    /// distanceArrow), or null. The distance is signed: negative means Flip.
+    readonly property var distanceArrow: {
+        if (type !== "extrude" || values.sketch === undefined)
+            return null
+        const d = Number(values.distance)
+        if (!isFinite(d))
+            return null // an expression: typed, not dragged
+        const r = controller.execute("sketch.profiles", { sketch: values.sketch })
+        if (!r.ok || r.result.profiles.length === 0)
+            return null
+        const pl = r.result.plane
+        let base
+        const picks = values.points || []
+        if (picks.length > 0) {
+            const uv = picks[0]
+            base = [0, 1, 2].map(i => pl.origin[i] + pl.xDir[i] * uv[0] + pl.yDir[i] * uv[1])
+        } else {
+            // Area-weighted centre of all profiles.
+            let a = 0
+            base = [0, 0, 0]
+            for (const p of r.result.profiles) {
+                a += p.area
+                for (let i = 0; i < 3; ++i)
+                    base[i] += p.centroidWorld[i] * p.area
+            }
+            base = base.map(x => a > 0 ? x / a : 0)
+        }
+        return { base: base, direction: pl.normal, distance: values.flip ? -d : d }
+    }
+
+    /// The distance arrow was dragged to signed distance `t` (mm): set Distance and Flip.
+    function dragDistance(t) {
+        if (type !== "extrude")
+            return
+        const v = Object.assign({}, values)
+        v.distance = Math.round(Math.abs(t) * 1e4) / 1e4
+        if (t < 0)
+            v.flip = true
+        else
+            delete v.flip
+        values = v
+    }
+
     visible: type !== ""
     padding: Theme.space3
     width: 300

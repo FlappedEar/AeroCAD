@@ -304,6 +304,9 @@ See [cad.md](cad.md) for the timeline and the commands behind the tools.
   The model shows a live preview while the dialog is open; OK keeps it as one undo step,
   Cancel (or Esc) removes it. While picking profiles only sketches react to clicks, while
   picking edges/faces only bodies.
+  **Extrude** shows a distance arrow on the profile (dashed, with the distance next to its
+  head): drag the head to set the distance, below the sketch to flip it; the value field
+  and the preview follow. A distance typed as an expression is not dragged.
   **Revolve** axis (Fusion: Axis selection): X / Y / Z from the list, or click a line of the
   sketch or a straight edge of a body (the button under the list, or right after the first
   profile click); the live preview does not get in the way of that click.
