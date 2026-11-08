@@ -1339,6 +1339,16 @@ Json RunManager::meshSensitivity(const std::string& a, const std::string& b)
     if (!infoA)
         return Json{{"status", "not assessed"}, {"levels", Json::array()}, {"message", "No case information."}};
     const std::string own(meshLevelName(infoA->settings.mesh));
+    // A repeat run (same part, surroundings and conditions): the A/B difference is run-to-run
+    // noise, and A and B share their runs on other levels, so there is nothing to check (CAD-120).
+    const auto infoB = caseInfo(b);
+    if (infoB && infoB->geometryHash == infoA->geometryHash &&
+        differingConditions(toJson(infoA->settings), toJson(infoB->settings)).empty())
+        return Json{{"status", "same case"},
+                    {"levels", Json::array()},
+                    {"message",
+                     "A and B are the same case (same part, surroundings and conditions), so their "
+                     "difference is run-to-run variation: there is no difference to check on another mesh."}};
     auto othersA = sameCaseOnOtherMeshes(a);
     auto othersB = sameCaseOnOtherMeshes(b);
 
@@ -1348,13 +1358,10 @@ Json RunManager::meshSensitivity(const std::string& a, const std::string& b)
     };
     std::vector<Pair> pairs{{own, a, b}};
     bool pending = false;
-    // The newest finished run, other than `exclude`: when A and B are the same case (a repeat
-    // run), both see the same runs on the other level and must not share one of them (CAD-120).
-    auto newestFinished = [](const std::vector<RunStatus>& runs,
-                             const std::optional<std::string>& exclude = std::nullopt) -> std::optional<std::string> {
+    auto newestFinished = [](const std::vector<RunStatus>& runs) -> std::optional<std::string> {
         std::optional<std::string> best;
         for (const RunStatus& r : runs) // Run ids start with the creation time.
-            if (r.state == RunState::Finished && r.id != exclude && (!best || r.id > *best))
+            if (r.state == RunState::Finished && (!best || r.id > *best))
                 best = r.id;
         return best;
     };
@@ -1368,7 +1375,7 @@ Json RunManager::meshSensitivity(const std::string& a, const std::string& b)
     for (const auto& [mesh, runsA] : othersA) {
         const auto itB = othersB.find(mesh);
         const auto fa = newestFinished(runsA);
-        const auto fb = itB != othersB.end() ? newestFinished(itB->second, fa) : std::nullopt;
+        const auto fb = itB != othersB.end() ? newestFinished(itB->second) : std::nullopt;
         if (fa && fb) {
             pairs.push_back({mesh, *fa, *fb});
             continue;

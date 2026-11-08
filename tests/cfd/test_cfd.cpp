@@ -1036,48 +1036,42 @@ TEST_CASE("RunManager: mesh check names a smaller force that does not hold", "[c
     CHECK(cmp.at("verdict") == "check quality");
 }
 
-TEST_CASE("RunManager: mesh check of a repeat run uses two different runs per level", "[cfd]")
+TEST_CASE("RunManager: mesh check shows its running runs, and does not apply to a repeat run", "[cfd]")
 {
-    // A and B are the same case (a repeat run): the runs on the other mesh level belong to
-    // both, and the check must not compare one of them with itself (CAD-120).
     TempDir tmp;
     cfd::RunManager runs(tmp.path());
-    cfd::CaseGeometry g;
-    g.part = box({0, 0, 0}, {200, 80, 60});
-    auto prepare = [&](cfd::MeshLevel mesh) {
+    cfd::CaseGeometry ga, gb;
+    ga.part = box({0, 0, 0}, {200, 80, 60});
+    gb.part = box({0, 0, 0}, {200, 80, 70});
+    auto prepare = [&](const cfd::CaseGeometry& g, cfd::MeshLevel mesh) {
         cfd::Settings s;
         s.flowDirection = "+X";
         s.mesh = mesh;
         return runs.prepare(g, s, {});
     };
-    const std::string a = prepare(cfd::MeshLevel::Coarse);
+    const std::string a = prepare(ga, cfd::MeshLevel::Coarse);
     fakeFinishedRun(tmp.path() / a, 1.0, 1.0);
-    const std::string b = prepare(cfd::MeshLevel::Coarse);
-    fakeFinishedRun(tmp.path() / b, 1.0, 1.01);
+    const std::string b = prepare(gb, cfd::MeshLevel::Coarse);
+    fakeFinishedRun(tmp.path() / b, 1.1, 1.1);
 
-    // A medium run still solving: the check waits for it and names it, for its progress.
-    const std::string m1 = prepare(cfd::MeshLevel::Medium);
-    write(tmp.path() / m1 / "aerocad.stage", "solve\n");
-    write(tmp.path() / m1 / "aerocad.status", "");
-    write(tmp.path() / m1 / "log.simpleFoam", "Time = 10\n");
+    // A's medium run still solving: the check waits for it and names it, for its progress (CAD-120).
+    const std::string am = prepare(ga, cfd::MeshLevel::Medium);
+    write(tmp.path() / am / "aerocad.stage", "solve\n");
+    write(tmp.path() / am / "aerocad.status", "");
+    write(tmp.path() / am / "log.simpleFoam", "Time = 10\n");
     auto ms = runs.compare(a, b).at("meshSensitivity");
     CHECK(ms.at("status") == "pending");
-    CHECK(ms.at("runningRuns") == nlohmann::json{m1});
+    CHECK(ms.at("runningRuns") == nlohmann::json{am});
 
-    // One finished medium run is not a pair.
-    fakeFinishedRun(tmp.path() / m1, 1.1, 1.1);
-    ms = runs.compare(a, b).at("meshSensitivity");
-    CHECK(ms.at("status") == "not assessed");
-    CHECK(ms.at("levels").size() == 1);
-
-    const std::string m2 = prepare(cfd::MeshLevel::Medium);
-    fakeFinishedRun(tmp.path() / m2, 1.1, 1.12);
-    ms = runs.compare(a, b).at("meshSensitivity");
-    REQUIRE(ms.at("levels").size() == 2);
-    const auto& medium = ms.at("levels").at(1);
-    CHECK(medium.at("mesh") == "medium");
-    CHECK(medium.at("a") != medium.at("b"));
-    CHECK(std::abs(medium.at("dragN").at("difference").get<double>()) == Approx(0.02).epsilon(0.05));
+    // A repeat run (same case as A): its difference is run-to-run variation, so the mesh
+    // check does not apply and offers no runs on another mesh. Otherwise A and B would share
+    // the runs on the other level and the check would pair them arbitrarily (CAD-120).
+    const std::string a2 = prepare(ga, cfd::MeshLevel::Coarse);
+    fakeFinishedRun(tmp.path() / a2, 1.0, 1.01);
+    ms = runs.compare(a, a2).at("meshSensitivity");
+    CHECK(ms.at("status") == "same case");
+    CHECK_FALSE(ms.contains("suggestedMesh"));
+    CHECK(ms.at("message").get<std::string>().rfind("A and B are the same case", 0) == 0);
 }
 
 TEST_CASE("RunManager: runs from an earlier session", "[cfd]")
