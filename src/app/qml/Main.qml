@@ -92,6 +92,7 @@ ApplicationWindow {
     /// Move / Rotate / Scale (Fusion: Move/Copy, M): handles in the view and a small panel,
     /// live preview, one undo step when done.
     function startTransform(id) {
+        viewport.finishTransform(true) // a running one first, so the centre below is current
         const info = controller.partInfo(id || selectedPartId)
         if (activeSketch || !info.id)
             return null
