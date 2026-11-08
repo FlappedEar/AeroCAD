@@ -316,6 +316,13 @@ Item {
         onMoved: (dx, dy) => root.pan(dx, dy)
     }
 
+    /// A mouse button is held over the view (orbit, pan, a drag or a click on its way).
+    readonly property bool buttonHeld: anyButton.active
+    PointHandler {
+        id: anyButton
+        acceptedButtons: Qt.AllButtons
+    }
+
     // Zoom by dragging (not in the Fusion scheme, which zooms with the wheel only).
     DeltaDragHandler {
         enabled: root.mouseProfile !== "fusion"

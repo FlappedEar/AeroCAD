@@ -1,0 +1,45 @@
+# Hover highlight (Fusion), with real mouse moves:
+#  - the part under the pointer is drawn highlighted; moving off it clears the highlight;
+#  - a selected part keeps its selection colour (no hover colour on top);
+#  - no highlight while a mouse button is held (orbit / pan / drag);
+#  - only parts that can be picked now are highlighted (a plane pick ignores a body);
+#  - no highlight while drawing in a sketch.
+# Run: AeroCAD tests/data/box_200x80x60.stl --ui-script <this file>
+Qt.createQmlObject('import QtQuick; Item { objectName: "hvTest"; visible: false; property var s: ({}); function win(p) { const q = viewport.mapToItem(null, p.x, p.y); return Qt.point(q.x, q.y) } function node() { return viewport.previewNode(s.id) } }', window.contentItem)
+ui.wait(800)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "hvTest"); t.s.id = controller.execute("document.parts").result.parts[0].id; window.selectPart(0); viewport.fitAll(); const c = Qt.point(viewport.width / 2, viewport.height / 2); if (!viewport.pickPart(c.x, c.y)) ui.fail("the box is not under the view centre"); t.s.on = t.win(c); const e = [[-0.35, 0], [0.35, 0], [0, -0.35], [-0.35, 0.25]].map(f => Qt.point(c.x + viewport.width * f[0], c.y + viewport.height * f[1])).find(q => !viewport.pickPart(q.x, q.y)); if (!e) { ui.fail("no empty spot"); return } t.s.off = t.win(e); ui.move(t.s.off.x, t.s.off.y) })()
+ui.wait(200)
+# 1. Over the box: highlighted.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "hvTest"); ui.move(t.s.on.x - 4, t.s.on.y); ui.move(t.s.on.x, t.s.on.y) })()
+ui.wait(250)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "hvTest"); ui.log("over the box: hovered part " + viewport.hoveredPartId + ", drawn hovered " + t.node().hovered); if (viewport.hoveredPartId !== t.s.id || !t.node().hovered) ui.fail("the part under the pointer is not highlighted") })()
+ui.shot("build/hover-highlight-1-on.png")
+# 2. Off the box: cleared.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "hvTest"); ui.move(t.s.off.x, t.s.off.y) })()
+ui.wait(250)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "hvTest"); ui.log("off the box: hovered part " + viewport.hoveredPartId); if (viewport.hoveredPartId !== 0 || t.node().hovered) ui.fail("the highlight stayed after the pointer left the part") })()
+ui.shot("build/hover-highlight-2-off.png")
+# 3. Selected: the selection colour wins.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "hvTest"); window.selectPart(t.s.id); ui.move(t.s.on.x, t.s.on.y) })()
+ui.wait(250)
+ui.shot("build/hover-highlight-3-selected.png")
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "hvTest"); ui.log("selected and under the pointer: drawn hovered " + t.node().hovered + ", selected " + t.node().selected); if (t.node().hovered || !t.node().selected) ui.fail("a selected part is drawn in the hover colour"); window.selectPart(0) })()
+# 4. A middle button drag (pan) over the box: no highlight while the button is held.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "hvTest"); ui.move(t.s.off.x, t.s.off.y) })()
+ui.wait(150)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "hvTest"); ui.press(t.s.off.x, t.s.off.y, "middle"); ui.move(t.s.on.x - 20, t.s.on.y); ui.move(t.s.on.x, t.s.on.y) })()
+ui.wait(250)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "hvTest"); ui.log("middle button held over the box: hovered part " + viewport.hoveredPartId); if (viewport.hoveredPartId !== 0) ui.fail("a part is highlighted while panning"); ui.release(t.s.on.x, t.s.on.y, "middle") })()
+ui.wait(200)
+# 5. Picking a plane: a body under the pointer is not highlighted.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "hvTest"); viewport.fitAll(); viewport.pickKind = "plane"; ui.move(t.s.on.x - 3, t.s.on.y); ui.move(t.s.on.x, t.s.on.y) })()
+ui.wait(250)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "hvTest"); ui.log("plane pick over the box: hovered part " + viewport.hoveredPartId); if (viewport.hoveredPartId !== 0) ui.fail("a body is highlighted while only planes can be picked"); viewport.pickKind = ""; ui.move(t.s.on.x + 3, t.s.on.y) })()
+ui.wait(250)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "hvTest"); if (viewport.hoveredPartId !== t.s.id) ui.fail("the highlight did not come back after the plane pick") })()
+# 6. In a sketch: no part highlight.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "hvTest"); window.createSketch({ plane: "XY" }); if (!window.activeSketch) ui.fail("no sketch") })()
+ui.wait(400)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "hvTest"); ui.move(t.s.on.x - 3, t.s.on.y); ui.move(t.s.on.x, t.s.on.y) })()
+ui.wait(250)
+(() => { ui.log("in a sketch: sketch " + !!viewport.sketch + ", hovered part " + viewport.hoveredPartId); if (viewport.sketch && viewport.hoveredPartId !== 0) ui.fail("a part is highlighted while sketching"); if (!viewport.sketch) ui.fail("could not enter a sketch") })()

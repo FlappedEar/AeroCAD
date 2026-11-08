@@ -486,6 +486,7 @@ Item {
                     required property bool hasBrep
                     property var pickPartId: partId
                     readonly property bool selected: partId === root.selectedPartId
+                    readonly property bool hovered: partId === root.hoveredPartId && !selected
                     // Inspect: section view (cut + cap) and heat map replace the plain mesh.
                     readonly property bool sectioned: root.controller.inspectRevision >= 0
                                                       && root.controller.sectionCuts(partId)
@@ -526,9 +527,10 @@ Item {
                     PrincipledMaterial {
                         id: plainMaterial
                         baseColor: partModel.selected ? (partModel.kind === "plane" ? Theme.planeSelected : Theme.selectedColor)
-                                 : partModel.kind === "sketch" ? Theme.sketchProfile
-                                 : partModel.kind === "plane" ? Theme.planeFill
-                                 : partModel.kind === "body" ? Theme.bodyColor : Theme.meshColor
+                                 : partModel.kind === "sketch" ? (partModel.hovered ? Theme.planeHover : Theme.sketchProfile)
+                                 : partModel.kind === "plane" ? (partModel.hovered ? Theme.planeHover : Theme.planeFill)
+                                 : Qt.tint(partModel.kind === "body" ? Theme.bodyColor : Theme.meshColor,
+                                           partModel.hovered ? Theme.hoverTint : "transparent")
                         alphaMode: partModel.kind === "sketch" || partModel.kind === "plane" ? PrincipledMaterial.Blend : PrincipledMaterial.Default
                         metalness: 0.0
                         roughness: 0.45
@@ -842,6 +844,45 @@ Item {
             }
             lastScreen = pos
         }
+    }
+
+    /// Part under the pointer (0 = none), drawn highlighted like in Fusion so it is clear
+    /// what a click would pick. Only parts that can be picked now are highlighted.
+    property var hoveredPartId: 0
+    readonly property bool hoverHighlightEnabled: tool === "navigate" && !sketch && leftDragMode === ""
+    onHoverHighlightEnabledChanged: if (!hoverHighlightEnabled) hoveredPartId = 0
+    function updateHover(x, y) {
+        const hit = pickPart(x, y)
+        const node = hit ? previewNode(hit.partId) : null
+        hoveredPartId = node && node.visible && node.pickable ? hit.partId : 0
+    }
+    HoverHandler {
+        id: partHover
+        enabled: root.hoverHighlightEnabled
+        property point last
+        // A pick casts a ray through every triangle, so a dense scan is picked at most
+        // every 40 ms, at the last pointer position.
+        onPointChanged: {
+            last = point.position
+            // Orbiting, dragging the manipulator or a selection: no highlight, no picks.
+            if (cameraInput.buttonHeld) {
+                hoverTimer.stop()
+                root.hoveredPartId = 0
+                return
+            }
+            if (!hoverTimer.running)
+                hoverTimer.start()
+        }
+        onHoveredChanged: if (!hovered) { hoverTimer.stop(); root.hoveredPartId = 0 }
+    }
+    Connections {
+        target: cameraInput
+        function onButtonHeldChanged() { if (cameraInput.buttonHeld) { hoverTimer.stop(); root.hoveredPartId = 0 } }
+    }
+    Timer {
+        id: hoverTimer
+        interval: 40
+        onTriggered: if (partHover.hovered && !cameraInput.buttonHeld && root.hoverHighlightEnabled) root.updateHover(partHover.last.x, partHover.last.y)
     }
 
     // Brush outline under the pointer, sized from the surface depth.
