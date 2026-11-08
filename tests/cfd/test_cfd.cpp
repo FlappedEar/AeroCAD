@@ -1530,6 +1530,15 @@ TEST_CASE("Different surroundings or domains are not identical conditions (CAD-8
     const auto diff = cmp.at("differingConditions").get<std::vector<std::string>>();
     CHECK(std::find(diff.begin(), diff.end(), "context") != diff.end());
     CHECK(std::find(diff.begin(), diff.end(), "domain") != diff.end());
+    // The domain grew because of the surroundings, not the unchanged part (CAD-159).
+    bool surroundingsNamed = false, partBlamed = false;
+    for (const auto& n : cmp.at("notes")) {
+        const auto text = n.get<std::string>();
+        surroundingsNamed = surroundingsNamed || text.find("because the surroundings differ;") != std::string::npos;
+        partBlamed = partBlamed || text.find("part differs") != std::string::npos;
+    }
+    CHECK(surroundingsNamed);
+    CHECK_FALSE(partBlamed);
     CHECK(cmp.at("sameDomain") == false);
     CHECK(cmp.at("verdict") == "not comparable");
 

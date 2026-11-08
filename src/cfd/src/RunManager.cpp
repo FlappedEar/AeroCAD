@@ -1701,7 +1701,17 @@ Json RunManager::compare(const std::string& a, const std::string& b)
             const double cell = std::max(ca.value("baseCellSize", 0.0), cb.value("baseCellSize", 0.0));
             // Name what sized the domains differently (CAD-159): the part, the surroundings or the floor.
             std::vector<std::string> causes;
-            if (ca.value("geometryHash", Json()) != cb.value("geometryHash", Json()))
+            // geometryHash also covers the surroundings, so the part's own size and placement
+            // decide whether the part is a cause.
+            const auto infoA = caseInfo(a), infoB = caseInfo(b);
+            auto near = [](const core::Vec3& p, const core::Vec3& q, double tol) {
+                return std::abs(p.x - q.x) <= tol && std::abs(p.y - q.y) <= tol && std::abs(p.z - q.z) <= tol;
+            };
+            const bool partDiffers = !infoA || !infoB || !near(infoA->partBounds.min, infoB->partBounds.min, 1e-6) ||
+                                     !near(infoA->partBounds.max, infoB->partBounds.max, 1e-6) ||
+                                     !near(infoA->frame.origin, infoB->frame.origin, 1e-3) ||
+                                     infoA->frame.quarterTurns != infoB->frame.quarterTurns;
+            if (partDiffers)
                 causes.emplace_back("the part differs in size or position");
             if (ctxA != ctxB)
                 causes.emplace_back("the surroundings differ");
