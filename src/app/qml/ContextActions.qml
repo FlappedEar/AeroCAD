@@ -348,6 +348,9 @@ QtObject {
         case "finishSketch":
             return { id: id, text: qsTr("Finish Sketch"), icon: "finish-sketch", enabled: true, primary: true,
                      tip: qsTr("Closes the sketch. Select it afterwards (Browser) to turn the outline into a part.") }
+        case "rename":
+            return { id: id, text: qsTr("Rename"), icon: "rename", enabled: true,
+                     tip: qsTr("Edits the part's name in the Browser. Shortcut F2, or double-click the name.") }
         case "delete":
             return { id: id, text: qsTr("Delete"), icon: "delete", enabled: true,
                      tip: qsTr("Removes the part (timeline parts: removes the feature that made them). Undo brings it back.") }
@@ -441,7 +444,7 @@ QtObject {
                                { title: qsTr("Thicken"), done: false,
                                  text: qsTr("Turns the piece into a solid with the thickness you type."),
                                  actions: [a("thicken")] }] },
-                         { title: qsTr("More"), steps: [], actions: [...fitted, a("sketchFin"), a("offset"), a("cutWithThis"), a("scale"), a("export"), a("hide"), a("delete")] }] }
+                         { title: qsTr("More"), steps: [], actions: [...fitted, a("sketchFin"), a("offset"), a("cutWithThis"), a("scale"), a("export"), a("hide"), a("rename"), a("delete")] }] }
         }
         if (r === "sketch") {
             const onSurface = sketchSurface(info.featureId) > 0
@@ -461,7 +464,7 @@ QtObject {
             return { title: roleName(r),
                      intro: qsTr("A 2D drawing. Closed outlines (profiles) can become solids."),
                      sections: [{ title: qsTr("Next step"), steps: steps, actions: [] },
-                                { title: qsTr("More"), steps: [], actions: [a("editSketch"), a("hide"), a("delete")] }] }
+                                { title: qsTr("More"), steps: [], actions: [a("editSketch"), a("hide"), a("rename"), a("delete")] }] }
         }
         // body / solid
         const editable = r === "body"
@@ -471,7 +474,7 @@ QtObject {
                  sections: editable
                      ? [{ title: qsTr("Change the shape"), steps: [],
                           actions: [a("editStep"), a("sketchOnFace"), a("fillet"), a("chamfer"), a("shell"), a("hole"), a("combine")] },
-                        { title: qsTr("More"), steps: [], actions: [a("export"), a("hide"), a("delete")] }]
+                        { title: qsTr("More"), steps: [], actions: [a("export"), a("hide"), a("rename"), a("delete")] }]
                      : [{ title: qsTr("Use it"), steps: [
                               { title: qsTr("Export for printing or CAD"), done: false,
                                 text: qsTr("STL or 3MF for a 3D printer, STEP for other CAD programs. For printing, every visible solid gets its own files."),
@@ -479,7 +482,7 @@ QtObject {
                               { title: qsTr("Or keep designing"), done: false,
                                 text: qsTr("Round or bevel its edges right away, or make it editable for holes and cuts; the changes appear in the timeline."),
                                 actions: [a("fillet"), a("chamfer"), a("combine"), a("solidToBody")] }] },
-                        { title: qsTr("More"), steps: [], actions: [...fitted, a("scale"), a("hide"), a("delete")] }] }
+                        { title: qsTr("More"), steps: [], actions: [...fitted, a("scale"), a("hide"), a("rename"), a("delete")] }] }
     }
 
     /// Every action for the selection, flat (context bar and right-click menu).
@@ -657,6 +660,7 @@ QtObject {
         case "moveRotate": return host.startTransform(pid)
         case "zoomTo": return host.zoomToPart(pid)
         case "hide": return controller.execute("part.set_visible", { id: pid, visible: !info.visible })
+        case "rename": return host.renamePart(pid)
         case "delete": return host.deleteSelected()
         }
         return null

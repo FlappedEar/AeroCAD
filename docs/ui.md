@@ -118,6 +118,16 @@ The menu lists only what can be done with what is under the pointer:
   **New sketch**.
 - **In a sketch**: the sketch menu (see Sketch below).
 
+## Browser
+
+The Browser lists the parts of the document. Click a row to select the part, hover it to
+show its eye (Show / Hide, also V), right-click it for the part's menu (Hide, Rename, Delete
+and the part's commands). **Rename** a part in place: double-click its name, press **F2**
+with the part selected, or choose Rename in its right-click menu. Enter or clicking
+elsewhere applies the name (one undo step); Esc keeps the old one. While a name is typed,
+the keys go to the text only (V, M, Delete do not act on the part). A renamed timeline body
+keeps its name when the timeline is edited and in the saved project.
+
 ## Copy and paste
 
 **Edit › Copy** (Ctrl+C) and **Paste** (Ctrl+V) copy the selected body or scan, as in Fusion:
@@ -199,6 +209,7 @@ Qt maps Ctrl to Command and Alt to Option on macOS, so "Ctrl+Alt+V" is Option+Co
 | Redo | Ctrl+Y | Cmd+Shift+Z | yes |
 | Toggle visibility of the selected part | V | V | yes |
 | Delete the selected part | Del | Delete (Backspace) or Fn+Delete | yes (Del) |
+| Rename the selected part (in the Browser) | F2 | F2 | no (Fusion renames from the Browser) |
 | Fit all | F6 | F6 | Fusion lists F6 "Zoom to Fit" for the Electronics workspace |
 | Zoom in / out (towards the view centre) | Ctrl++ / Ctrl+- | Cmd++ / Cmd+- | yes (Fusion lists them for Windows) |
 | Move / Rotate / Scale the selected part | M | M | yes (Move/Copy) |
