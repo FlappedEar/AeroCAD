@@ -8,6 +8,7 @@ set(AEROCAD_APP_SOURCES
     main.cpp
     AppController.cpp
     AppController.hpp
+    PickFilter.hpp
     PartListModel.cpp
     PartListModel.hpp
     MeshGeometry.cpp

@@ -108,10 +108,15 @@ Item {
     /// Surface hit at viewport position (x, y): {partId, point (model mm), distance from the
     /// camera}, or null. Ray-cast against the mesh triangles in C++: Qt Quick 3D picks
     /// custom geometry by its bounding volume only.
-    function pickPart(x, y) {
+    function pickOptions(forNavigation) {
+        return { kind: forNavigation ? "" : root.pickKind, shownSketch: root.shownSketch,
+                 hiddenPartIds: root.hiddenPartIds, unpickablePlane: forNavigation ? -1 : root.unpickablePlane }
+    }
+
+    function pickPart(x, y, forNavigation) {
         const near = modelSpace.mapPositionFromScene(view.mapTo3DScene(Qt.vector3d(x, y, 0)))
         const far = modelSpace.mapPositionFromScene(view.mapTo3DScene(Qt.vector3d(x, y, 100)))
-        const hit = controller.pickSurface(near, far.minus(near))
+        const hit = controller.pickSurface(near, far.minus(near), root.pickOptions(forNavigation))
         if (!hit.partId)
             return null
         const eye = modelSpace.mapPositionFromScene(view.camera.scenePosition)
@@ -121,7 +126,8 @@ Item {
     /// Scene position under view position (x, y) for zooming and orbiting: the model
     /// surface, else (unless onModelOnly) the point at the camera pivot's depth; or null.
     function scenePointUnder(x, y, onModelOnly) {
-        const hit = pickPart(x, y)
+        // Navigation anchors on the visible geometry, regardless of the dialog's pick kind.
+        const hit = pickPart(x, y, true)
         if (hit)
             return modelSpace.mapPositionToScene(hit.point)
         if (onModelOnly)
@@ -149,7 +155,7 @@ Item {
             const h = view.height / orthoCamera.verticalMagnification
             from = near.minus(dir.times(h / 2 / Math.tan(camera.fieldOfView * Math.PI / 360)))
         }
-        const hit = controller.pickNearSurface(from, far.minus(from), 4)
+        const hit = controller.pickNearSurface(from, far.minus(from), 4, root.pickOptions(false))
         if (!hit.partId)
             return null
         return { partId: hit.partId, point: hit.point, distance: hit.point.minus(eye).length(), snapped: true }
@@ -159,7 +165,7 @@ Item {
     function pickSketchLine(x, y) {
         const near = modelSpace.mapPositionFromScene(view.mapTo3DScene(Qt.vector3d(x, y, 0)))
         const far = modelSpace.mapPositionFromScene(view.mapTo3DScene(Qt.vector3d(x, y, 100)))
-        const hit = controller.pickSketchLine(near, far.minus(near), root.pickTolerance())
+        const hit = controller.pickSketchLine(near, far.minus(near), root.pickTolerance(), root.pickOptions(false))
         if (!hit.partId)
             return null
         const eye = modelSpace.mapPositionFromScene(view.camera.scenePosition)
