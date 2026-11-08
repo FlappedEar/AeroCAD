@@ -27,6 +27,10 @@ use the same operations, and every change is one undo step.
   rounds every edge that continues it smoothly. When the radius or distance does not fit,
   the error names the largest one that does ("a 30 mm radius does not fit these edges; the
   largest that works is about 9.5 mm"); the dialog shows it while you type.
+- **Shell** with no face picked makes a closed hollow body (Fusion's closed shell): the
+  outer walls stay and a cavity of the given wall thickness is cut inside. When the walls
+  cannot be made on a shape (for example on some filleted bodies), the error says so and
+  suggests a thinner wall; the body is never replaced by an empty or broken result.
 - **Exact solids outside the timeline** (fins, fitted solids, STEP imports) can be filleted,
   chamfered, shelled and drilled directly in the UI: the dialog makes them editable
   (`feature.base_body`) on the way.

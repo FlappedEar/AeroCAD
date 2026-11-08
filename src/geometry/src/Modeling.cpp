@@ -607,7 +607,25 @@ Shape shell(const Shape& shape, const std::vector<std::size_t>& faceIndices, dou
         mk.MakeThickSolidByJoin(s, removed, -thickness, 1e-3);
         if (!mk.IsDone())
             throw ModelingError("Shell failed (thickness too large?)");
-        return wrapShape(mk.Shape());
+        TopoDS_Shape result = mk.Shape();
+        if (removed.IsEmpty()) {
+            // With no open face OCCT returns only the inner offset: the hollow part (Fusion's
+            // closed shell) is the solid minus that cavity.
+            BRepAlgoAPI_Cut cut(s, result);
+            if (!cut.IsDone())
+                throw ModelingError("Shell failed (thickness too large?)");
+            result = cut.Shape();
+        }
+        // OCCT can report success with an empty or broken result (seen on filleted boxes):
+        // never hand that on as a body.
+        GProp_GProps before, after;
+        BRepGProp::VolumeProperties(s, before);
+        BRepGProp::VolumeProperties(result, after);
+        if (result.IsNull() || !BRepCheck_Analyzer(result).IsValid() || !(after.Mass() > 1e-9)
+            || after.Mass() >= before.Mass())
+            throw ModelingError("Shell failed: walls of this thickness could not be made on this shape "
+                                "(try a thinner wall)");
+        return wrapShape(result);
     });
 }
 
