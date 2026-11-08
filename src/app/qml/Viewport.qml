@@ -446,14 +446,36 @@ Item {
 
     function updateClipping() {
         let r = Math.max(controller.sceneRadius, 1)
+        let c = controller.sceneCenter
         // A part being moved or scaled can reach past the document's bounds: keep all of
         // its preview between the clipping planes. (transformTarget itself, not
         // transformActive: this also runs while the target changes, before bindings update.)
         const p = previewSphere()
-        if (p)
-            r = Math.max(r, p.center.minus(cameraInput.pivot.position).length() + p.radius)
-        camera.clipFar = cameraInput.distance + r * 4
-        camera.clipNear = Math.max(cameraInput.distance - r * 2, cameraInput.distance * 0.001, 0.001)
+        if (p) {
+            // Smallest sphere around both, as in fitAll().
+            const d = p.center.minus(c).length()
+            if (d + r <= p.radius) {
+                c = p.center
+                r = p.radius
+            } else if (d + p.radius > r) {
+                const outer = (d + r + p.radius) / 2
+                c = c.plus(p.center.minus(c).times((outer - r) / d))
+                r = outer
+            }
+        }
+        // The planes hug the scene as the camera sees it now (after a pan or an orbit
+        // around the pointer the pivot is no longer the scene centre). The near plane stays
+        // at least 2 % of the pivot distance and 1e-5 of the far one: a near plane much
+        // closer than what is looked at leaves no depth precision, and the surfaces of a
+        // large scan and of a part laid on it flicker through each other when zoomed in.
+        const fwd = Qt.vector3d(-Math.cos(cameraInput.pitch * Math.PI / 180) * Math.sin(cameraInput.yaw * Math.PI / 180),
+                                Math.sin(cameraInput.pitch * Math.PI / 180),
+                                -Math.cos(cameraInput.pitch * Math.PI / 180) * Math.cos(cameraInput.yaw * Math.PI / 180))
+        const eye = cameraInput.pivot.position.minus(fwd.times(cameraInput.distance))
+        const depth = c.minus(eye).dotProduct(fwd)
+        const far = Math.max(depth + r, cameraInput.distance) * 1.02 + 1e-3
+        camera.clipFar = far
+        camera.clipNear = Math.max((depth - r) * 0.98, cameraInput.distance * 0.02, far * 1e-5, 1e-3)
     }
 
     /// Near and far clipping distances (for tests).
@@ -487,6 +509,7 @@ Item {
 
         Node {
             id: pivot
+            onPositionChanged: root.updateClipping()
             PerspectiveCamera {
                 id: camera
                 fieldOfView: 40
@@ -750,6 +773,7 @@ Item {
         anchors.fill: parent
         pivot: pivot
         camera: camera
+        orthographic: root.orthographic
         pointUnder: (x, y, onModelOnly) => root.scenePointUnder(x, y, onModelOnly)
         // Right-click: select the part under the cursor and open its context menu; in a
         // sketch, the sketch menu (end the curve, tools, Look At, Finish Sketch).
@@ -766,6 +790,8 @@ Item {
             root.partContextRequested(id, x, y)
         }
         onDistanceChanged: root.updateClipping()
+        onPitchChanged: root.updateClipping()
+        onYawChanged: root.updateClipping()
     }
 
     // Move / Rotate / Scale handles; above the navigation, below the view's own controls.
@@ -1138,6 +1164,15 @@ Item {
         return view.mapFrom3DScene(modelSpace.mapPositionToScene(p))
     }
 
+    /// Whether a model-space point is in front of the eye (an overlay drawn over the view
+    /// can show it even nearer than the near clipping plane, which hugs the parts).
+    function inFrontOfEye(p) {
+        if (root.orthographic)
+            return true
+        const s = modelSpace.mapPositionToScene(p)
+        return s.minus(camera.scenePosition).dotProduct(camera.forward) > 1e-6
+    }
+
     // --- Move / Rotate / Scale tool (Fusion: Move/Copy, M) --------------------------------
     // The part follows the manipulator (TransformGizmo) and the panel live, as a transform of
     // its 3D node; finishTransform(true) applies it as one command (one undo step):
@@ -1418,7 +1453,12 @@ Item {
         property var arrows: []
         readonly property var key: [root.viewKey, root.cfdPreview]
         onKeyChanged: requestPaint()
-        function pt(x, y, z) { return root.viewPoint(Qt.vector3d(x, y, z)) }
+        function pt(x, y, z) {
+            const m = Qt.vector3d(x, y, z)
+            const v = root.viewPoint(m)
+            // z > 0: in front of the eye (the near plane only bounds the parts).
+            return Qt.vector3d(v.x, v.y, root.inFrontOfEye(m) ? 1 : -1)
+        }
         onPaint: {
             const ctx = getContext("2d")
             ctx.reset()
