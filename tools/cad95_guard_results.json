@@ -1,0 +1,68 @@
+[
+  {
+    "fixture": "fin-0-fillet",
+    "seconds": 8.3906860079951,
+    "has_errors": false,
+    "faults": 0
+  },
+  {
+    "fixture": "fin-0-result",
+    "seconds": 3.1996490780002205,
+    "has_errors": false,
+    "faults": 2
+  },
+  {
+    "fixture": "fin-1-fillet",
+    "seconds": 5.793693321000319,
+    "has_errors": false,
+    "faults": 0
+  },
+  {
+    "fixture": "fin-1-result",
+    "seconds": 4.3527285489981296,
+    "has_errors": false,
+    "faults": 4
+  },
+  {
+    "fixture": "fin-2-fillet",
+    "seconds": 4.993753856004332,
+    "has_errors": false,
+    "faults": 0
+  },
+  {
+    "fixture": "fin-2-result",
+    "seconds": 3.0175133869997808,
+    "has_errors": false,
+    "faults": 2
+  },
+  {
+    "fixture": "fin-3-fillet",
+    "seconds": 5.547569745998771,
+    "has_errors": false,
+    "faults": 0
+  },
+  {
+    "fixture": "fin-3-result",
+    "seconds": 3.5261789169962867,
+    "has_errors": false,
+    "faults": 2
+  },
+  {
+    "fixture": "box",
+    "seconds": 0.0009256230041501112,
+    "has_errors": false,
+    "faults": 0
+  },
+  {
+    "fixture": "sphere",
+    "seconds": 0.00018300499505130574,
+    "has_errors": false,
+    "faults": 0
+  },
+  {
+    "fixture": "fused-box-sphere",
+    "seconds": 0.003128356001980137,
+    "has_errors": false,
+    "faults": 0
+  }
+]

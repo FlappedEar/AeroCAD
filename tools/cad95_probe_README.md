@@ -1,0 +1,3 @@
+# CAD-95 diagnostic checkpoint
+
+Diagnostic only; not a production fix. Scripts expect absolute paths to the original local stage evidence and Python OCP; see Jira CAD-95 attachment 10047 for the captured BREP files. Fuzzy cut tolerances 0 through 0.001 mm each retained 2 self-interference records on the mirrored fin. Guard probe uses BOPAlgo_ArgumentAnalyzer self-interference mode (not direct CheckerSI). Four pre-cut fillets and basic synthetic controls returned zero faults; the four post-cut results returned 2,4,2,2. Timings are wall clock Linux OCP timings and are not production latency. Positive detection is evidence, zero faults is not proof of valid mesh. Do not merge this branch.

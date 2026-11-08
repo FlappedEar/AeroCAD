@@ -1,0 +1,242 @@
+[
+  {
+    "fuzzy_mm": 0.0,
+    "done": true,
+    "volume_mm3": 9215.876962316066,
+    "analysis": {
+      "file": "fuzzy-0.0.brep",
+      "valid_brepcheck": true,
+      "volume_mm3": 9215.876962316066,
+      "faces": 17,
+      "checker_errors": false,
+      "faults": [
+        {
+          "status": "BOPAlgo_CheckStatus.BOPAlgo_SelfIntersect",
+          "shapes": [
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "index": 7
+            },
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "index": 11
+            }
+          ]
+        },
+        {
+          "status": "BOPAlgo_CheckStatus.BOPAlgo_SelfIntersect",
+          "shapes": [
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "index": 3
+            },
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "index": 11
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "fuzzy_mm": 1e-07,
+    "done": true,
+    "volume_mm3": 9215.876962316066,
+    "analysis": {
+      "file": "fuzzy-1e-07.brep",
+      "valid_brepcheck": true,
+      "volume_mm3": 9215.876962316066,
+      "faces": 17,
+      "checker_errors": false,
+      "faults": [
+        {
+          "status": "BOPAlgo_CheckStatus.BOPAlgo_SelfIntersect",
+          "shapes": [
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "index": 7
+            },
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "index": 11
+            }
+          ]
+        },
+        {
+          "status": "BOPAlgo_CheckStatus.BOPAlgo_SelfIntersect",
+          "shapes": [
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "index": 3
+            },
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "index": 11
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "fuzzy_mm": 1e-06,
+    "done": true,
+    "volume_mm3": 9215.876962316066,
+    "analysis": {
+      "file": "fuzzy-1e-06.brep",
+      "valid_brepcheck": true,
+      "volume_mm3": 9215.876962316066,
+      "faces": 17,
+      "checker_errors": false,
+      "faults": [
+        {
+          "status": "BOPAlgo_CheckStatus.BOPAlgo_SelfIntersect",
+          "shapes": [
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "index": 7
+            },
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "index": 11
+            }
+          ]
+        },
+        {
+          "status": "BOPAlgo_CheckStatus.BOPAlgo_SelfIntersect",
+          "shapes": [
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "index": 3
+            },
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "index": 11
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "fuzzy_mm": 1e-05,
+    "done": true,
+    "volume_mm3": 9215.876962316066,
+    "analysis": {
+      "file": "fuzzy-1e-05.brep",
+      "valid_brepcheck": true,
+      "volume_mm3": 9215.876962316066,
+      "faces": 17,
+      "checker_errors": false,
+      "faults": [
+        {
+          "status": "BOPAlgo_CheckStatus.BOPAlgo_SelfIntersect",
+          "shapes": [
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "index": 7
+            },
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "index": 11
+            }
+          ]
+        },
+        {
+          "status": "BOPAlgo_CheckStatus.BOPAlgo_SelfIntersect",
+          "shapes": [
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "index": 3
+            },
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "index": 11
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "fuzzy_mm": 0.0001,
+    "done": true,
+    "volume_mm3": 9215.876962316066,
+    "analysis": {
+      "file": "fuzzy-0.0001.brep",
+      "valid_brepcheck": true,
+      "volume_mm3": 9215.876962316066,
+      "faces": 17,
+      "checker_errors": false,
+      "faults": [
+        {
+          "status": "BOPAlgo_CheckStatus.BOPAlgo_SelfIntersect",
+          "shapes": [
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "index": 7
+            },
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "index": 11
+            }
+          ]
+        },
+        {
+          "status": "BOPAlgo_CheckStatus.BOPAlgo_SelfIntersect",
+          "shapes": [
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "index": 3
+            },
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "index": 11
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "fuzzy_mm": 0.001,
+    "done": true,
+    "volume_mm3": 9215.876962316066,
+    "analysis": {
+      "file": "fuzzy-0.001.brep",
+      "valid_brepcheck": true,
+      "volume_mm3": 9215.876962316066,
+      "faces": 17,
+      "checker_errors": false,
+      "faults": [
+        {
+          "status": "BOPAlgo_CheckStatus.BOPAlgo_SelfIntersect",
+          "shapes": [
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "index": 7
+            },
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "index": 11
+            }
+          ]
+        },
+        {
+          "status": "BOPAlgo_CheckStatus.BOPAlgo_SelfIntersect",
+          "shapes": [
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "index": 3
+            },
+            {
+              "type": "TopAbs_ShapeEnum.TopAbs_FACE",
+              "index": 11
+            }
+          ]
+        }
+      ]
+    }
+  }
+]
