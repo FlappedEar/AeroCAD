@@ -267,6 +267,10 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/feature_size_arrows.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_feature_size_arrows_test PROPERTIES LABELS gui TIMEOUT 60)
+    add_test(NAME app_fillet_arrow_cone_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/fillet_arrow_cone.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_fillet_arrow_cone_test PROPERTIES LABELS gui TIMEOUT 60)
     # CAD-126: Project body edges into a sketch.
     add_test(NAME app_sketch_project_test
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_project.ui

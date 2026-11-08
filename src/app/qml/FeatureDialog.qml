@@ -129,7 +129,10 @@ Pane {
         const r = controller.execute("body.edges", bodyQuery({ point: point }))
         if (!r.ok || !r.result.nearest)
             return null
-        const edge = r.result.edges[r.result.nearest.index]
+        // By its index: degenerate edges (a cone's apex) are not listed, so it is not the position.
+        const edge = r.result.edges.find(e => e.index === r.result.nearest.index)
+        if (!edge)
+            return null
         const mid = v3(edge.middle)
         const along = v3(edge.end).minus(v3(edge.start))
         const dirAlong = along.length() > 1e-9 ? along.normalized() : Qt.vector3d(0, 0, 0)
