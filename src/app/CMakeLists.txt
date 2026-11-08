@@ -268,6 +268,10 @@ if(AEROCAD_BUILD_TESTS)
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(app_large_scale_preview_test PROPERTIES LABELS gui TIMEOUT 60
                          FAIL_REGULAR_EXPRESSION "TypeError|ReferenceError")
+    add_test(NAME app_shell_closed_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/shell_closed.ui
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(app_shell_closed_test PROPERTIES LABELS gui TIMEOUT 60)
     add_test(NAME app_orient_scan_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/orient_scan.ui

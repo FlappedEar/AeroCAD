@@ -247,6 +247,32 @@ TEST_CASE("Shell a box", "[geometry][modeling]")
     CHECK(s.volume() == Approx(1000 - 8 * 8 * 9).epsilon(1e-6));
 }
 
+TEST_CASE("Shell with no open face hollows the solid", "[geometry][modeling]")
+{
+    // Fusion's closed shell: the outside stays, a cavity of 1 mm walls is inside.
+    const auto box = makeBox(10, 10, 10);
+    const auto s = shell(box, {}, 1.0);
+    CHECK(s.volume() == Approx(1000 - 8 * 8 * 8).epsilon(1e-6));
+    CHECK(isValid(s));
+}
+
+TEST_CASE("Shell never returns an empty or grown body", "[geometry][modeling]")
+{
+    // A filleted box gave OCCT an empty result that was kept as an invisible body.
+    const auto box = makeBox(40, 30, 6);
+    const auto rounded = fillet(box, {0, 1, 2, 3}, 1.0);
+    for (const std::vector<std::size_t>& open : {std::vector<std::size_t>{}, std::vector<std::size_t>{0}}) {
+        try {
+            const auto s = shell(rounded, open, 1.0);
+            CHECK(s.volume() > 0.0);
+            CHECK(s.volume() < rounded.volume());
+            CHECK(isValid(s));
+        } catch (const ModelingError&) {
+            SUCCEED("reported as a failure");
+        }
+    }
+}
+
 TEST_CASE("Faces, edges and face planes", "[geometry][modeling]")
 {
     const auto box = makeBox(10, 20, 30);
