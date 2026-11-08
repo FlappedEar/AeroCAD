@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CAD-114: on a surface fitted to a scan, an empty sketch does not count as the outline
+# (the guide still asks for it and Cut out stays off), and a rectangle drawn by dragging
+# from corner to corner is created, after which Cut out is offered.
+ui.wait(1200)
+(() => { const p = controller.execute("document.parts").result.parts[0]; window.selectPart(p.id); controller.execute("selection.invert", { id: p.id }) })()
+ui.wait(400)
+(() => { const act = window.selectionActions.find(a => a.id === "fitSurface"); if (!act || !act.enabled) { ui.fail("Fit smooth surface not offered"); return } actionPopup.request(act, window.selectionInfo, null) })()
+ui.wait(400)
+ui.key("Return")
+ui.wait(3000)
+(() => { if (!window.activeSketch) ui.fail("Fit smooth surface does not open the outline sketch") })()
+# Finish without drawing anything.
+(() => { window.finishSketch(false) })()
+ui.wait(500)
+(() => { const parts = controller.execute("document.parts").result.parts; const s = parts.find(p => p.kind !== "sketch" && p.name.endsWith("surface")); window.selectPart(s.id) })()
+ui.wait(400)
+(() => { const g = contextActions.guide(window.selectionInfo); const step = g.sections[0].steps[0]; ui.log("EMPTY outline step done=" + step.done); if (step.done) ui.fail("an empty sketch marks the outline as drawn"); const trim = window.selectionActions.find(a => a.id === "trim"); if (!trim || trim.enabled) ui.fail("Cut out offered for an empty sketch") })()
+ui.shot("surface-outline-empty.png")
+# Sketch the outline again and drag a rectangle over the middle of the dome.
+(() => { contextActions.run("sketchOnSurface", window.selectionInfo, {}) })()
+ui.wait(800)
+ui.key("R")
+ui.wait(300)
+(() => { const v = viewport.viewPoint(Qt.vector3d(0, 0, 45)); const c = viewport.mapToItem(null, v.x, v.y); ui.drag(c.x - 70, c.y - 50, c.x + 70, c.y + 50, "left", "", 12) })()
+ui.wait(600)
+(() => { const r = controller.execute("sketch.profiles", { sketch: window.activeSketch.id }); ui.log("DRAGGED profiles=" + (r.ok ? r.result.profiles.length : r.error)); if (!r.ok || r.result.profiles.length !== 1) ui.fail("dragging a rectangle did not draw it") })()
+ui.shot("surface-outline-dragged.png")
+(() => { window.finishSketch(false) })()
+ui.wait(500)
+(() => { const parts = controller.execute("document.parts").result.parts; const s = parts.find(p => p.kind !== "sketch" && p.name.endsWith("surface")); window.selectPart(s.id) })()
+ui.wait(400)
+(() => { const g = contextActions.guide(window.selectionInfo); if (!g.sections[0].steps[0].done) ui.fail("the drawn outline is not recognised"); const trim = window.selectionActions.find(a => a.id === "trim"); if (!trim || !trim.enabled || !trim.primary) ui.fail("Cut out is not the next step"); const opts = trim.params[0].options; ui.log("CUT options " + JSON.stringify(opts)); if (opts.length !== 1) ui.fail("the empty sketch is offered to cut with") })()
+ui.log("surface outline drag done")

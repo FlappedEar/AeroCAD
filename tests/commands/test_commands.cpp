@@ -1398,6 +1398,39 @@ TEST_CASE("A part edit that throws leaves the part untouched (CAD-88)", "[comman
     CHECK(notifications == 0);
 }
 
+TEST_CASE("A fit reports the deviation its tolerance verdict is based on (CAD-110)", "[commands][fit]")
+{
+    // The whole dome scan: the mesh lies within 0.25 mm of the surface, but the surface strays
+    // further from the mesh at the jagged rim and the hole. The verdict uses both directions,
+    // so the reported maxDeviation must too.
+    commands::Session session;
+    auto scan =
+        session.execute("document.import", {{"path", std::string(AEROCAD_TEST_DATA_DIR) + "/models/dome_scan.stl"}});
+    REQUIRE(scan.ok);
+    const auto id = scan.data.at("id").get<model::PartId>();
+    REQUIRE(session.execute("selection.invert", {{"id", id}}).ok); // everything
+    auto r = session.execute("surface.fit_selection", {{"id", id}, {"tolerance", 0.25}});
+    INFO(r.toJson().dump());
+    REQUIRE(r.ok);
+    const auto& fit = r.data.at("fit");
+    const double both = std::max(fit.at("meshToSurfaceMax").get<double>(), fit.at("surfaceToMeshMax").get<double>());
+    CHECK(fit.at("maxDeviation").get<double>() == Approx(both));
+    CHECK(fit.at("withinTolerance").get<bool>() == (fit.at("maxDeviation").get<double>() <= 0.25));
+    CHECK(fit.at("withinTolerance") == false);
+    CHECK(fit.at("meshToSurfaceMax").get<double>() < 0.25); // the number the GUI used to show
+
+    // Scan to solid: the same rule over all patches.
+    REQUIRE(session.execute("selection.clear", {{"id", id}}).ok);
+    auto whole = session.execute("surface.fit_regions", {{"id", id}, {"tolerance", 0.25}});
+    INFO(whole.toJson().dump());
+    REQUIRE(whole.ok);
+    double worst = 0.0;
+    for (const auto& p : whole.data.at("fit").at("patches"))
+        if (p.contains("meshToSurfaceMax"))
+            worst = std::max({worst, p.at("meshToSurfaceMax").get<double>(), p.at("surfaceToMeshMax").get<double>()});
+    CHECK(whole.data.at("fit").at("maxDeviation").get<double>() == Approx(worst));
+}
+
 TEST_CASE("A part whose fit misses the tolerance is kept as a marked approximation (CAD-85)", "[commands][surface]")
 {
     commands::Session session;

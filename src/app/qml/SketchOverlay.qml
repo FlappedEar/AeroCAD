@@ -260,15 +260,48 @@ Item {
         // as everywhere else in the view.
         acceptedButtons: Qt.LeftButton
         cursorShape: root.active ? Qt.CrossCursor : Qt.ArrowCursor
+        // Rectangle, circle and polygon also draw with press-drag-release (CAD-114); two
+        // clicks keep working. A drag starts past a few pixels so a shaky click stays a click.
+        property point pressAt
+        property bool dragging: false
+        property bool dragEnded: false
+        readonly property bool dragTool: root.tool === "rectangle" || root.tool === "circle" || root.tool === "polygon"
+        onPressed: mouse => {
+            pressAt = Qt.point(mouse.x, mouse.y)
+            dragging = false
+            dragEnded = false
+        }
         onPositionChanged: mouse => {
             if (root.constraintTool) {
                 constraintLayer.hoverAt(mouse.x, mouse.y)
                 return
             }
+            if (pressed && !dragging && dragTool && root.points.length === 0
+                    && Math.hypot(mouse.x - pressAt.x, mouse.y - pressAt.y) > 8) {
+                const first = root.snap(pressAt.x, pressAt.y)
+                if (first !== null) {
+                    root.points = [first]
+                    dragging = true
+                }
+            }
             root.hover = root.snap(mouse.x, mouse.y)
             canvas.requestPaint()
         }
+        onReleased: mouse => {
+            if (!dragging)
+                return
+            dragging = false
+            dragEnded = true // the click that follows this release is the drag's end, not a corner
+            const p = root.snap(mouse.x, mouse.y)
+            if (p !== null)
+                root.click(p)
+        }
         onClicked: mouse => {
+            if (dragEnded) {
+                dragEnded = false
+                root.forceActiveFocus()
+                return
+            }
             if (root.constraintTool) {
                 constraintLayer.click(mouse.x, mouse.y)
                 return
@@ -434,7 +467,7 @@ Item {
                 text: root.constraintTool ? constraintLayer.hint()
                     : root.tool === "" ? qsTr("Sketch: pick a tool (L line, R rectangle, C circle, D dimension)")
                     : root.tool === "line" ? qsTr("Line: click points; Esc (or right-click › End Curve) ends the chain")
-                    : root.tool === "rectangle" ? qsTr("Rectangle: click two corners; type width, height")
+                    : root.tool === "rectangle" ? qsTr("Rectangle: drag or click two corners; type width, height")
                     : root.tool === "circle" ? qsTr("Circle: click centre and a point; type the diameter")
                     : root.tool === "arc" ? qsTr("Arc: click start, end, then a point on the arc")
                     : root.tool === "polygon" ? qsTr("Polygon: click centre and a corner; type the radius")
