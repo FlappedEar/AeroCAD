@@ -2,6 +2,7 @@
 #  - A with a body selected opens the swatches; a click colours the body (one undo step):
 #    the view draws it in that colour once it is not selected, the Browser icon too;
 #  - Appearance in the scan's right-click menu (under More) colours the scan; Ctrl+Z takes it back;
+#  - Esc closes the swatches right after A;
 #  - "Default" goes back to the grey of the part's kind.
 # Run: AeroCAD tests/data/box_200x80x60.stl --ui-script <this file>
 Qt.createQmlObject('import QtQuick; Item { objectName: "apTest"; visible: false; property var s: ({}); function find(i, name) { if (!i) return null; if (i.objectName === name) return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = find(ch[k], name); if (r) return r } return null } function clickItem(i) { const p = i.mapToItem(null, i.width / 2, i.height / 2); ui.click(p.x, p.y) } function iconColor(id) { const r = browser.rowItem(id); return r ? String(find(r, "partIcon").color) : "" } }', window.contentItem)
@@ -12,6 +13,13 @@ ui.key("A")
 ui.wait(300)
 (() => { ui.log("A: swatches open " + appearancePopup.visible); if (!appearancePopup.visible) ui.fail("A did not open Appearance") })()
 ui.shot("build/appearance-popup.png")
+# Esc closes the swatches right after A, without a click into them first.
+ui.key("Escape")
+ui.wait(300)
+(() => { ui.log("Esc: swatches open " + appearancePopup.visible); if (appearancePopup.visible) ui.fail("Esc did not close Appearance") })()
+ui.key("A")
+ui.wait(300)
+(() => { if (!appearancePopup.visible) ui.fail("A did not open Appearance again") })()
 (() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "apTest"); t.clickItem(t.find(appearancePopup.contentItem, "swatch#5aa65a")) })()
 ui.wait(300)
 (() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "apTest"); const i = controller.partInfo(t.s.body); ui.log("swatch: body colour " + i.color + ", popup open " + appearancePopup.visible + ", undo '" + controller.undoText + "'"); if (i.color !== "#5aa65a") ui.fail("the swatch did not colour the body"); if (appearancePopup.visible) ui.fail("the popup stayed open"); window.selectPart(0) })()

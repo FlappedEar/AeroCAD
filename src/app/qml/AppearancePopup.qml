@@ -19,6 +19,8 @@ Popup {
                                     "#7e5fcf", "#d7609f", "#8d6e5a", "#4a5560", "#eceff1"]
 
     padding: Theme.space2
+    // Takes the keyboard on open, so Esc closes it right away (CloseOnEscape needs focus).
+    focus: true
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
     /// Opens the swatches for part `id` at x, y (parent coordinates), kept inside the parent.
