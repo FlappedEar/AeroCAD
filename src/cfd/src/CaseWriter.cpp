@@ -454,6 +454,12 @@ std::string controlDict(const Settings& s, const CaseInfo& info)
       << ";\n            }\n        }\n        satisfiedAction end;\n    }\n"
       << "    solverInfo\n    {\n        type solverInfo;\n        libs (utilityFunctionObjects);\n"
       << "        fields (U p k omega);\n        writeResidualFields no;\n    }\n"
+      // Total pressure (CAD-165) for the wake isosurface. p is kinematic and zero far
+      // upstream, so total(p) = 0 is where the flow has lost all of its dynamic pressure:
+      // the "Cp0 = 0" surface of motorsport CFD, independent of the speed.
+      << "    totalPressure\n    {\n        type pressure;\n        libs (fieldFunctionObjects);\n"
+      << "        mode total;\n        result totalP;\n        rho rhoInf;\n        rhoInf 1;\n"
+      << "        writeControl none;\n    }\n"
       // Fields for the result view: pressure on the part, two velocity sections through
       // the part centre, streamlines from a grid of seeds upstream.
       << "    surfaces\n    {\n        type surfaces;\n        libs (sampling);\n"
@@ -482,6 +488,8 @@ std::string controlDict(const Settings& s, const CaseInfo& info)
               << region.max << "; }\n";
         }
     }
+    t << "            wake { type isoSurface; isoField totalP; isoValue 0; interpolate true; regularise true; bounds "
+      << region.min << ' ' << region.max << "; }\n";
     t << "        }\n    }\n";
     // Streamlines (CAD-135): a dense 16 x 10 rake just ahead of the part, a little wider
     // and taller than it, so the lines wrap the body closely; and an 8 x 5 rake just behind

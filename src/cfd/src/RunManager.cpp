@@ -1308,7 +1308,7 @@ Json RunManager::results(const std::string& id, int maxPoints)
     j["quality"] = assessQuality(run.caseDir).toJson();
 
     Json fields = Json::object();
-    for (const char* kind : {"surface", "sectionHorizontal", "sectionVertical", "streamlines"}) {
+    for (const char* kind : {"surface", "sectionHorizontal", "sectionVertical", "wake", "streamlines"}) {
         const bool streamlines = std::string_view(kind) == "streamlines";
         const fs::path base = streamlines ? run.caseDir / "postProcessing" / "sets" / "streamLines"
                                           : run.caseDir / "postProcessing" / "surfaces";
@@ -1387,7 +1387,7 @@ PolyData RunManager::field(const std::string& id, std::string_view kind)
             PolyData lines = readVtk(dirs.back() / "track0.vtk");
             appendPolyData(d, region.isEmpty() ? lines : cropLines(lines, region));
         }
-    } else if (kind == "surface" || kind == "sectionHorizontal" || kind == "sectionVertical" ||
+    } else if (kind == "surface" || kind == "sectionHorizontal" || kind == "sectionVertical" || kind == "wake" ||
                isStackSection(kind)) {
         const auto dirs = timeDirectories(run->caseDir / "postProcessing" / "surfaces");
         const std::string file = kind == "surface" ? "part.vtk" : std::string(kind) + ".vtk";
@@ -1398,7 +1398,7 @@ PolyData RunManager::field(const std::string& id, std::string_view kind)
             d = cropPolygons(d, region);
     } else {
         throw std::runtime_error("Unknown field '" + std::string(kind) +
-                                 "' (surface, sectionHorizontal, sectionVertical, sectionX_<i>, sectionY_<i>, "
+                                 "' (surface, sectionHorizontal, sectionVertical, wake, sectionX_<i>, sectionY_<i>, "
                                  "sectionZ_<i>, streamlines)");
     }
     if (d.empty())

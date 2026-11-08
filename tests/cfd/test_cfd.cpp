@@ -1137,8 +1137,20 @@ TEST_CASE("OpenFOAM: box in a wind tunnel", "[.openfoam]")
           Approx(cd * 0.5 * s.density * s.speed * s.speed * r.at("conditions").at("referenceArea").get<double>())
               .epsilon(0.05));
     CHECK(r.at("quality").at("meshOk") == true);
-    for (const char* kind : {"surface", "sectionHorizontal", "sectionVertical", "streamlines"})
+    for (const char* kind : {"surface", "sectionHorizontal", "sectionVertical", "wake", "streamlines"}) {
+        INFO(kind);
+        CHECK(r.at("fields").at(kind) == true);
         CHECK_FALSE(runs.field(id, kind).empty());
+    }
+    {
+        // The total-pressure loss (CAD-165) lies along and behind the box, with its speed.
+        const auto wake = runs.field(id, "wake");
+        double y = 0;
+        for (const auto& q : wake.points)
+            y += q.y;
+        CHECK(y / static_cast<double>(wake.points.size()) > 100.0);
+        CHECK(wake.scalars.count("speed") == 1);
+    }
     // Every plane of the section stacks (CAD-148) is listed and readable; a plane across
     // the flow lies at its listed distance behind the part's front.
     const auto& sections = r.at("fields").at("sections");

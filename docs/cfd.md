@@ -360,8 +360,15 @@ synthetic case's `unknown` verdict and the reasons displayed in the real Results
 p, Cp and Pa), `sectionHorizontal` / `sectionVertical` (planes through the part centre,
 speed in m/s and Cp), a plane of a section stack (`sectionX_<i>` across the flow,
 `sectionY_<i>` vertical along it, `sectionZ_<i>` horizontal; `simulation.results` lists
-the run's planes in `fields.sections` with their fraction of the part and position in mm)
-and `streamlines` (a rake ahead of the part and one in the wake).
+the run's planes in `fields.sections` with their fraction of the part and position in mm),
+`wake` and `streamlines` (a rake ahead of the part and one in the wake).
+
+The wake surface (CAD-165) is the isosurface of zero total pressure, Cp0 = 0, as in
+motorsport CFD: the air inside it has lost all of its dynamic pressure, so it outlines the
+wake, the separated regions and the vortex cores from wheels and wings. The case computes
+the total pressure (`pressure` function object, `mode total`) and samples the isosurface
+with the other surfaces, cropped to the region around the part. "Show in 3D" draws it
+see-through and coloured by speed. Runs made before it say so and need a new run.
 Each scalar has `min`, `max`, `mean` and the 2nd/98th percentiles `p02`/`p98`, which the
 app uses for the pressure colour range.
 
