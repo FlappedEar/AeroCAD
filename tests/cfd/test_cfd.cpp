@@ -1392,3 +1392,13 @@ TEST_CASE("A failed run says why: fatal mesh defects or a diverged solve (CAD-10
     st = runs.status(id);
     CHECK(st->message == "Step 'check' failed (log.checkMesh): End");
 }
+
+TEST_CASE("Part sizes outside a wind tunnel's range are flagged (CAD-109)", "[cfd]")
+{
+    CHECK(cfd::partSizeWarning(0.2).empty());
+    CHECK(cfd::partSizeWarning(cfd::kMinPlausiblePartLength).empty());
+    CHECK(cfd::partSizeWarning(cfd::kMaxPlausiblePartLength).empty());
+    CHECK(cfd::partSizeWarning(0.0).empty());
+    CHECK(cfd::partSizeWarning(0.00112).find("only 1.12 mm long") != std::string::npos);
+    CHECK(cfd::partSizeWarning(4600.0).find("4600 m long") != std::string::npos);
+}

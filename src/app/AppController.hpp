@@ -195,6 +195,9 @@ public:
     Q_INVOKABLE QVariantMap inspectInfo() const;
     /// True when the section analysis cuts this part.
     Q_INVOKABLE bool sectionCuts(quint64 id) const;
+    /// Warning shown in the Wind tunnel panel when the part's size is implausible for a run
+    /// (most likely the wrong unit, CAD-109); empty when it is fine.
+    Q_INVOKABLE QString partSizeWarning(quint64 id) const;
     /// True when the heat map is shown on this part (and still matches its mesh).
     Q_INVOKABLE bool showsHeatMap(quint64 id) const;
     /// Heat map colour for t in [0, 1], for the legend.

@@ -77,7 +77,17 @@ Pane {
 
     readonly property bool anyRunning: runs.some(r => r.state === "running")
     readonly property var activeStatus: runs.find(r => r.id === activeRun) ?? null
-    readonly property var partInfo: selectedPartId ? controller.partInfo(selectedPartId) : ({})
+    // Re-read after any change of the parts (a Scale changes the size shown, CAD-109).
+    property int partRevision: 0
+    readonly property Connections _partWatch: Connections {
+        target: root.controller
+        function onPartChanged() { root.partRevision++ }
+        function onHistoryChanged() { root.partRevision++ }
+    }
+    readonly property var partInfo: {
+        void partRevision
+        return selectedPartId ? controller.partInfo(selectedPartId) : ({})
+    }
 
     function num(v, digits) {
         return v === null || v === undefined || !isFinite(v) ? "–" : Number(v).toFixed(digits)
@@ -458,6 +468,26 @@ Pane {
                         elide: Text.ElideRight
                         text: root.partInfo.id ? root.partInfo.name : qsTr("select a part in the browser")
                         font.italic: !root.partInfo.id
+                    }
+                    Label { text: qsTr("Size"); opacity: 0.7; visible: !!root.partInfo.id && root.partInfo.kind !== "sketch" }
+                    Label {
+                        Layout.fillWidth: true
+                        visible: !!root.partInfo.id && root.partInfo.kind !== "sketch"
+                        text: visible ? [root.partInfo.sizeX, root.partInfo.sizeY, root.partInfo.sizeZ]
+                                        .map(v => Number(v).toLocaleString(Qt.locale(), "f", v < 10 ? 2 : 0)).join(" × ") + " mm"
+                                      : ""
+                    }
+                    // A part far too small or large for a wind tunnel is most likely in the wrong unit (CAD-109).
+                    Label {
+                        id: sizeWarning
+                        objectName: "cfdSizeWarning"
+                        Layout.columnSpan: 2
+                        Layout.fillWidth: true
+                        text: root.partInfo.id ? controller.partSizeWarning(root.partInfo.id) : ""
+                        visible: text.length > 0
+                        color: Theme.warning
+                        wrapMode: Text.WordWrap
+                        font.pixelSize: 11
                     }
                     Label { text: qsTr("Speed (m/s)"); opacity: 0.7 }
                     TextField {

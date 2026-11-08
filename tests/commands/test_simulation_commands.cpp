@@ -521,3 +521,30 @@ TEST_CASE("simulation.set_engine tests the remote engine before saving it", "[co
     CHECK(cfd::engineHost().empty());
     CHECK(r.data.at("remoteHost") == "");
 }
+
+TEST_CASE("A run warns about a part at an implausible size (CAD-109)", "[commands][simulation]")
+{
+    RunsDir dir;
+    commands::Session session;
+    const auto id = importBox(session);
+
+    // 200 mm: plausible, no warning.
+    auto r = session.execute("simulation.propose_run", {{"id", id}});
+    REQUIRE(r.ok);
+    CHECK(r.data.at("warnings").empty());
+
+    // The same box read from a file in metres as millimetres: 0.2 mm long.
+    REQUIRE(session.execute("part.convert_units", {{"id", id}, {"from", "mm"}, {"to", "m"}}).ok);
+    r = session.execute("simulation.propose_run", {{"id", id}});
+    REQUIRE(r.ok);
+    REQUIRE(r.data.at("warnings").size() == 1);
+    const std::string warning = r.data.at("warnings")[0];
+    CHECK(warning.find("only 0.2 mm long") != std::string::npos);
+    CHECK(warning.find("Scan Tools") != std::string::npos);
+
+    // simulation.run reports it too and still prepares the case.
+    r = session.execute("simulation.run", {{"id", id}, {"prepareOnly", true}});
+    REQUIRE(r.ok);
+    REQUIRE(r.data.at("warnings").size() == 1);
+    CHECK(r.data.at("warnings")[0] == warning);
+}

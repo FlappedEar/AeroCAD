@@ -16,7 +16,10 @@ panel in place of Properties:
 
 - **Run**: the engine status (green = ready), settings for a new run of the part
   selected in the browser (speed, flow direction, mesh, moving floor, other visible
-  parts as surroundings, label) and **Run CFD**. Below, all runs with state, progress,
+  parts as surroundings, label) and **Run CFD**. The part's size is shown above the
+  settings; a part under 20 mm or over 50 m gets a warning to check its units first (a
+  model in metres read as millimetres is 1000 times too small). `simulation.propose_run`
+  and `simulation.run` return the same text in `warnings`. Below, all runs with state, progress,
   Cd and drag; Cancel / delete; click a run to make it **A**, press **B** on another to
   compare.
 - **Results**: progress while it runs, then drag/lift/side force in N, Cd/Cl/Cs,

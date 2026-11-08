@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <stdexcept>
 #include <thread>
 
@@ -29,6 +30,21 @@ int Settings::effectiveProcesses() const
     // Half of the logical cores (leave room for the UI), at least 1, at most 8: beyond
     // that the coarse meshes are too small to scale.
     return static_cast<int>(std::clamp(hw / 2U, 1U, 8U));
+}
+
+std::string partSizeWarning(double length)
+{
+    if (!(length > 0.0) || (length >= kMinPlausiblePartLength && length <= kMaxPlausiblePartLength))
+        return {};
+    char size[32];
+    if (length < kMinPlausiblePartLength)
+        std::snprintf(size, sizeof size, "only %.3g mm", length * 1000.0);
+    else
+        std::snprintf(size, sizeof size, "%.0f m", length);
+    const std::string what = std::string(size) + " long";
+    return "The part is " + what +
+           ". Check its units: a model saved in metres or inches comes in at the wrong size. Convert it first "
+           "(MESH > Scan Tools > \"This part is in\" > Convert); the simulation runs at the size shown.";
 }
 
 std::string_view meshLevelName(MeshLevel level)

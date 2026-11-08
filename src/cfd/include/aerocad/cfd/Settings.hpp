@@ -26,6 +26,15 @@ inline constexpr std::string_view kFatalMeshChecks =
 /// Official multi-arch (amd64 + arm64) image of that release, from OpenCFD on Docker Hub.
 inline constexpr std::string_view kDockerImage = "opencfd/openfoam-default:2506";
 
+/// Largest part dimensions (m) a wind tunnel run treats as plausible (CAD-109). A part outside
+/// is most likely in the wrong unit, such as an STL in metres read as millimetres.
+inline constexpr double kMinPlausiblePartLength = 0.02;
+inline constexpr double kMaxPlausiblePartLength = 50.0;
+
+/// A warning when a part whose largest dimension is `length` metres is implausibly small or
+/// large for a wind tunnel run, else empty.
+[[nodiscard]] std::string partSizeWarning(double length);
+
 /// Identifier of the only preset so far: steady incompressible external flow around the
 /// selected part (simpleFoam, k-omega SST, snappyHexMesh). Bump the suffix when the
 /// generated case changes in a way that changes results, so runs stay comparable.

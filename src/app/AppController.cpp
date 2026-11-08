@@ -6,6 +6,7 @@
 #include "JsonBridge.hpp"
 
 #include "aerocad/BuildInfo.hpp"
+#include "aerocad/cfd/Settings.hpp"
 #include "aerocad/core/Path.hpp"
 
 #include <cmath>
@@ -137,6 +138,16 @@ bool AppController::sectionCuts(quint64 id) const
 {
     const model::Part* p = part(id);
     return p != nullptr && p->kind != model::PartKind::Sketch && m_session.inspect().section().cuts(id);
+}
+
+QString AppController::partSizeWarning(quint64 id) const
+{
+    const model::Part* p = part(id);
+    if (p == nullptr || !p->mesh || p->mesh->isEmpty())
+        return {};
+    const core::Vec3 size = p->mesh->bounds().size();
+    // Model millimetres to metres, as the case writer converts them.
+    return QString::fromStdString(cfd::partSizeWarning(std::max({size.x, size.y, size.z}) / 1000.0));
 }
 
 bool AppController::showsHeatMap(quint64 id) const
