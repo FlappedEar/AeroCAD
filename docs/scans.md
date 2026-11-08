@@ -13,6 +13,10 @@ command, available to scripts and to an AI agent over MCP (`commands.list`).
 | `part.convert_units {"id", "from", "to"}` | Fix a part imported in the wrong unit: `from: "m"` scales by 1000 (about the world origin). `to` defaults to `mm`. |
 | `part.calibrate {"id", "a", "b", "distance", "units"}` | Scale so that the distance between two points (picked on the model) equals a known dimension. Point `a` stays fixed. Returns the applied `factor`. |
 
+In the app, a scan whose longest side is under 20 mm or over 50 m starts its guide with
+"Check the size": it names the unit the file was most likely saved in (the one that makes it
+0.1 to 10 m long) and converts it in one click (CAD-140).
+
 ## Orientation
 
 | Command | What it does |
