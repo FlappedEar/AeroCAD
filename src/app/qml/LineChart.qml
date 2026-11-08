@@ -16,7 +16,7 @@ Item {
     property bool logY: false
     implicitHeight: 170
 
-    /// What the hover shows: {x, px, values: [{name, color, value, py}]}, or null.
+    /// What the hover shows: {x, px, values: [{name, color, value, ownX, px, py}]}, or null.
     property var readout: null
 
     onSeriesChanged: refresh()
@@ -69,29 +69,46 @@ Item {
         return logY ? v.toExponential(2) : fmt(v)
     }
 
-    /// The values of every series at the recorded x nearest to the pixel column px.
+    /// The values of every series at the recorded x nearest to the pixel column px. Series may
+    /// be sampled at different x or end at different x (A/B histories, CAD-179): the readout is
+    /// at the nearest x of any series; a series without a point there gives its nearest point
+    /// with its own x (ownX), and one whose range does not reach that x gives no value.
     function readoutAt(px) {
         const p = layoutPlot(canvas.width, canvas.height)
         if (!p || p.empty || px < p.left - 4 || px > p.left + p.w + 4)
             return null
         const xv = p.xmin + (px - p.left) / p.w * (p.xmax - p.xmin)
-        let at = null
-        const values = []
-        for (const s of series) {
+        const nearest = s => {
             let best = -1
             for (let i = 0; i < s.x.length; ++i)
                 if (best < 0 || Math.abs(s.x[i] - xv) < Math.abs(s.x[best] - xv))
                     best = i
-            if (best < 0)
-                continue
-            if (at === null)
-                at = s.x[best]
-            const y = s.y[best]
-            const t = y === null || y === undefined ? NaN : p.tr(y)
-            values.push({ name: s.name, color: s.color, value: y, py: isFinite(t) ? p.py(t) : NaN })
+            return best
+        }
+        let at = null
+        for (const s of series) {
+            const i = nearest(s)
+            if (i >= 0 && (at === null || Math.abs(s.x[i] - xv) < Math.abs(at - xv)))
+                at = s.x[i]
         }
         if (at === null)
             return null
+        const values = []
+        for (const s of series) {
+            const lo = s.x.length ? Math.min(s.x[0], s.x[s.x.length - 1]) : NaN
+            const hi = s.x.length ? Math.max(s.x[0], s.x[s.x.length - 1]) : NaN
+            if (!(at >= lo && at <= hi)) {
+                values.push({ name: s.name, color: s.color, value: null, ownX: null, px: NaN, py: NaN })
+                continue
+            }
+            let i = s.x.indexOf(at)
+            if (i < 0)
+                i = nearest(s)
+            const y = s.y[i]
+            const t = y === null || y === undefined ? NaN : p.tr(y)
+            values.push({ name: s.name, color: s.color, value: y, ownX: s.x[i] === at ? null : s.x[i],
+                          px: p.px(s.x[i]), py: isFinite(t) ? p.py(t) : NaN })
+        }
         return { x: at, px: p.px(at), values: values }
     }
 
@@ -186,7 +203,7 @@ Item {
                     if (!isFinite(v.py))
                         continue
                     ctx.fillStyle = v.color
-                    ctx.beginPath(); ctx.arc(r.px, v.py, 3, 0, 2 * Math.PI); ctx.fill()
+                    ctx.beginPath(); ctx.arc(v.px, v.py, 3, 0, 2 * Math.PI); ctx.fill()
                 }
             }
         }
@@ -232,7 +249,8 @@ Item {
                     required property var modelData
                     font.pixelSize: 11
                     textFormat: Text.StyledText
-                    text: "<font color=\"" + modelData.color + "\">■</font> " + modelData.name + "  " + chart.valueText(modelData.value)
+                    text: "<font color=\"" + modelData.color + "\">■</font> " + modelData.name + "  " + chart.valueText(modelData.value) +
+                          (modelData.ownX !== null && modelData.ownX !== undefined ? " (" + chart.xLabel.toLowerCase() + " " + modelData.ownX + ")" : "")
                 }
             }
         }
