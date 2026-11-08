@@ -1348,30 +1348,39 @@ Json RunManager::meshSensitivity(const std::string& a, const std::string& b)
     };
     std::vector<Pair> pairs{{own, a, b}};
     bool pending = false;
-    auto newestFinished = [](const std::vector<RunStatus>& runs) -> std::optional<std::string> {
+    // The newest finished run, other than `exclude`: when A and B are the same case (a repeat
+    // run), both see the same runs on the other level and must not share one of them (CAD-120).
+    auto newestFinished = [](const std::vector<RunStatus>& runs,
+                             const std::optional<std::string>& exclude = std::nullopt) -> std::optional<std::string> {
         std::optional<std::string> best;
         for (const RunStatus& r : runs) // Run ids start with the creation time.
-            if (r.state == RunState::Finished && (!best || r.id > *best))
+            if (r.state == RunState::Finished && r.id != exclude && (!best || r.id > *best))
                 best = r.id;
         return best;
+    };
+    // Runs of the mesh check still running, so the comparison can show their progress.
+    std::set<std::string> runningIds;
+    auto collectRunning = [&](const std::vector<RunStatus>& runs) {
+        for (const RunStatus& r : runs)
+            if (r.state == RunState::Running)
+                runningIds.insert(r.id);
     };
     for (const auto& [mesh, runsA] : othersA) {
         const auto itB = othersB.find(mesh);
         const auto fa = newestFinished(runsA);
-        const auto fb = itB != othersB.end() ? newestFinished(itB->second) : std::nullopt;
+        const auto fb = itB != othersB.end() ? newestFinished(itB->second, fa) : std::nullopt;
         if (fa && fb) {
             pairs.push_back({mesh, *fa, *fb});
             continue;
         }
-        auto running = [](const std::vector<RunStatus>& runs) {
-            return std::any_of(runs.begin(), runs.end(), [](const RunStatus& r) { return r.state == RunState::Running; });
-        };
-        pending = pending || running(runsA) || (itB != othersB.end() && running(itB->second));
+        collectRunning(runsA);
+        if (itB != othersB.end())
+            collectRunning(itB->second);
     }
     for (const auto& [mesh, runsB] : othersB)
         if (othersA.count(mesh) == 0)
-            pending = pending || std::any_of(runsB.begin(), runsB.end(),
-                                             [](const RunStatus& r) { return r.state == RunState::Running; });
+            collectRunning(runsB);
+    pending = !runningIds.empty();
     std::sort(pairs.begin(), pairs.end(), [](const Pair& x, const Pair& y) { return meshRank(x.mesh) < meshRank(y.mesh); });
 
     Json levels = Json::array();
@@ -1399,6 +1408,8 @@ Json RunManager::meshSensitivity(const std::string& a, const std::string& b)
     const bool complete = differences["dragN"].size() == pairs.size() && differences["liftN"].size() == pairs.size();
     if (pairs.size() < 2 || !complete) {
         j["status"] = pending ? "pending" : "not assessed";
+        if (pending)
+            j["runningRuns"] = runningIds;
         const int rank = meshRank(own);
         const std::string next = rank < 2 ? std::string(meshLevelName(static_cast<MeshLevel>(rank + 1)))
                                           : std::string(meshLevelName(static_cast<MeshLevel>(rank - 1)));

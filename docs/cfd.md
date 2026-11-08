@@ -293,7 +293,10 @@ larger difference, and the message also names the other force when its differenc
 not hold. When a run on one of those two levels has quality warnings the status is
 **check quality** (verdict `check quality`). `simulation.refine` refuses a run whose part or
 other parts in the flow have changed since it ran. Runs count as the same case when the geometry hash and all
-conditions except the mesh level are equal.
+conditions except the mesh level are equal. When A and B are the same case (a repeat
+run), each level pairs two different runs: A's newest finished run and B's newest other
+one. While runs of the check are still solving the status is **pending** and
+`runningRuns` lists them; the A/B tab shows their progress.
 
 ## Tests
 
