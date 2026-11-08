@@ -109,6 +109,9 @@ struct RunStatus {
     int maxIterations = 0;
     std::string message;  ///< Failure reason or hint.
     std::string created;  ///< ISO 8601 UTC.
+    /// While a run started by this app runs: seconds since its engine started, and, while
+    /// solving, at most how many seconds are left (the solver may converge sooner).
+    std::optional<int> elapsedSeconds, remainingSeconds;
     RunSource source;
     Backend backend = Backend::Docker;
     std::filesystem::path caseDir;

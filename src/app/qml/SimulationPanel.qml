@@ -227,6 +227,28 @@ Pane {
     function num(v, digits) {
         return v === null || v === undefined || !isFinite(v) ? "–" : Number(v).toFixed(digits)
     }
+    /// "45 s", "12 min", "1 h 05 min" (CAD-149).
+    function duration(seconds) {
+        const s = Math.max(0, Math.round(seconds))
+        if (s < 60)
+            return qsTr("%1 s").arg(s)
+        const min = Math.round(s / 60)
+        if (min < 60)
+            return qsTr("%1 min").arg(min)
+        return qsTr("%1 h %2 min").arg(Math.floor(min / 60)).arg(String(min % 60).padStart(2, "0"))
+    }
+    /// Time so far and at most how long is left, of a running run; "" when unknown.
+    function timeText(m) {
+        if (!m || m.state !== "running")
+            return ""
+        const known = v => v !== null && v !== undefined
+        const parts = []
+        if (known(m.elapsedSeconds))
+            parts.push(qsTr("%1 so far").arg(duration(m.elapsedSeconds)))
+        if (known(m.remainingSeconds))
+            parts.push(qsTr("at most %1 left").arg(duration(m.remainingSeconds)))
+        return parts.join(", ")
+    }
 
     function checkEnvironment() {
         const r = controller.execute("simulation.environment")
@@ -932,6 +954,8 @@ Pane {
                                 let s = m.state
                                 if (m.state === "running")
                                     s += " · " + m.stage + (m.stage === "solve" ? " " + m.iteration + "/" + m.maxIterations : "")
+                                        + (m.remainingSeconds !== null && m.remainingSeconds !== undefined
+                                           ? " · " + qsTr("≤ %1 left").arg(root.duration(m.remainingSeconds)) : "")
                                 if (l.cd !== null && l.cd !== undefined)
                                     s += (m.state === "finished" ? " · latest Cd " : " · provisional Cd ")
                                         + root.num(l.cd, 3) + " · drag " + root.num(l.dragN, 3) + " N"
@@ -997,7 +1021,9 @@ Pane {
                                 return ""
                             const step = m.stage === "solve" ? qsTr("solving, iteration %1 of max %2").arg(m.iteration).arg(m.maxIterations)
                                        : m.stage === "mesh" ? qsTr("meshing") : m.stage
-                            return m.state === "running" ? qsTr("Running: %1").arg(step) : m.state + (m.message ? ": " + m.message : "")
+                            const time = root.timeText(m)
+                            return m.state === "running" ? qsTr("Running: %1").arg(step) + (time ? " · " + time : "")
+                                                         : m.state + (m.message ? ": " + m.message : "")
                         }
                     }
                     RowLayout {
