@@ -278,10 +278,66 @@ Item {
         }
         fitPending = false
         // An empty scene (e.g. a new sketch) gets a 100 mm view.
-        const r = controller.sceneRadius > 1e-6 ? Math.max(controller.sceneRadius, 1) : 50
-        cameraInput.pivot.position = controller.sceneCenter
+        let r = controller.sceneRadius > 1e-6 ? Math.max(controller.sceneRadius, 1) : 50
+        let c = controller.sceneCenter
+        const p = previewSphere()
+        if (p) {
+            // Move / Rotate / Scale running: everything as it is shown, the preview included.
+            // Smallest sphere around both spheres.
+            const d = p.center.minus(c).length()
+            if (d + r <= p.radius) {
+                c = p.center
+                r = Math.max(p.radius, 1)
+            } else if (d + p.radius > r) {
+                const outer = (d + r + p.radius) / 2
+                c = c.plus(p.center.minus(c).times((outer - r) / d))
+                r = outer
+            }
+        }
+        cameraInput.pivot.position = c
         cameraInput.distance = frameDistance(r)
         updateClipping()
+    }
+
+    /// Bounding sphere of the Move / Rotate / Scale preview in scene coordinates
+    /// ({ center, radius }), or null when the tool is not running.
+    function previewSphere() {
+        const target = transformTarget
+        if (!target)
+            return null
+        const m = previewPoint(target.partId, target.center)
+        return { center: Qt.vector3d(m.x, m.z, -m.y), radius: (target.radius ?? 0) * transformScale }
+    }
+
+    /// After a typed Move or Scale value: when the preview no longer fits the view (the
+    /// camera ends up inside a part scaled up, the part reaches past an edge, shrinks to a
+    /// dot or moves off screen), frame it, so the whole part stays visible while it is placed.
+    function keepPreviewInView() {
+        const t = transformTarget
+        const p = previewSphere()
+        if (!p)
+            return
+        // The corners of the part's box as previewed (moved, turned, scaled), projected: a
+        // perspective-correct test of what is on screen. A corner behind the camera means
+        // the camera is inside or right next to the preview.
+        const h = (t.size ?? Qt.vector3d(0, 0, 0)).times(0.5)
+        let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, behind = false
+        for (let i = 0; i < 8; ++i) {
+            const c = t.center.plus(Qt.vector3d(i & 1 ? h.x : -h.x, i & 2 ? h.y : -h.y, i & 4 ? h.z : -h.z))
+            const m = previewPoint(t.partId, c)
+            const v = view.mapFrom3DScene(modelSpace.mapPositionToScene(m))
+            if (!(v.z > 0) || !isFinite(v.x) || !isFinite(v.y))
+                behind = true
+            x0 = Math.min(x0, v.x); x1 = Math.max(x1, v.x)
+            y0 = Math.min(y0, v.y); y1 = Math.max(y1, v.y)
+        }
+        const fits = !behind && x0 >= 0 && y0 >= 0 && x1 <= width && y1 <= height
+                     && Math.max(x1 - x0, y1 - y0) >= Math.min(width, height) / 20
+        if (!fits) {
+            const m = previewPoint(t.partId, t.center)
+            // No 1 mm floor here: a part scaled down to a speck is still shown large enough.
+            frameAround([m.x, m.y, m.z], Math.max(p.radius, 1e-6), 1e-3)
+        }
     }
 
     /// Zoom In / Zoom Out (keyboard): towards the view centre by `factor` (< 1 = closer).
@@ -300,10 +356,11 @@ Item {
 
     /// Frames the area of `radius` (mm) around a model point (a place being worked on), as
     /// fitAll() does: the whole sphere fits also in a narrow window.
-    function frameAround(point, radius) {
+    /// `minRadius` (default 1 mm) keeps a click on a tiny feature from zooming in too far.
+    function frameAround(point, radius, minRadius) {
         // Model (x, y, z) is (x, z, -y) in the Y-up scene.
         cameraInput.pivot.position = Qt.vector3d(point[0], point[2], -point[1])
-        cameraInput.distance = frameDistance(Math.max(radius, 1))
+        cameraInput.distance = frameDistance(Math.max(radius, minRadius ?? 1))
         updateClipping()
     }
 
@@ -364,14 +421,12 @@ Item {
 
     function updateClipping() {
         let r = Math.max(controller.sceneRadius, 1)
-        if (transformActive) {
-            // A part being moved or scaled can reach past the document's bounds: keep all of
-            // its preview between the clipping planes.
-            const c = previewPoint(transformTarget.partId, transformTarget.center)
-            const reach = Qt.vector3d(c.x, c.z, -c.y).minus(cameraInput.pivot.position).length()
-                          + (transformTarget.radius ?? 0) * transformScale
-            r = Math.max(r, reach)
-        }
+        // A part being moved or scaled can reach past the document's bounds: keep all of
+        // its preview between the clipping planes. (transformTarget itself, not
+        // transformActive: this also runs while the target changes, before bindings update.)
+        const p = previewSphere()
+        if (p)
+            r = Math.max(r, p.center.minus(cameraInput.pivot.position).length() + p.radius)
         camera.clipFar = cameraInput.distance + r * 4
         camera.clipNear = Math.max(cameraInput.distance - r * 2, cameraInput.distance * 0.001, 0.001)
     }
@@ -1024,7 +1079,8 @@ Item {
         transformPickMode = ""
         transformTarget = { partId: info.id, kind: info.kind, featureId: info.featureId,
                       center: Qt.vector3d(info.center[0], info.center[1], info.center[2]),
-                      name: info.name || "", canScale: true, radius: (info.diagonal ?? 0) / 2 }
+                      name: info.name || "", canScale: true, radius: (info.diagonal ?? 0) / 2,
+                      size: Qt.vector3d(info.sizeX ?? 0, info.sizeY ?? 0, info.sizeZ ?? 0) }
         return true
     }
 

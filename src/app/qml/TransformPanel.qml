@@ -102,17 +102,17 @@ Pane {
             ValueField {
                 objectName: "moveX"
                 value: root.viewport.transformMove.x
-                onEdited: v => root.viewport.transformMove = Qt.vector3d(v, root.viewport.transformMove.y, root.viewport.transformMove.z)
+                onEdited: v => { root.viewport.transformMove = Qt.vector3d(v, root.viewport.transformMove.y, root.viewport.transformMove.z); root.viewport.keepPreviewInView() }
             }
             ValueField {
                 objectName: "moveY"
                 value: root.viewport.transformMove.y
-                onEdited: v => root.viewport.transformMove = Qt.vector3d(root.viewport.transformMove.x, v, root.viewport.transformMove.z)
+                onEdited: v => { root.viewport.transformMove = Qt.vector3d(root.viewport.transformMove.x, v, root.viewport.transformMove.z); root.viewport.keepPreviewInView() }
             }
             ValueField {
                 objectName: "moveZ"
                 value: root.viewport.transformMove.z
-                onEdited: v => root.viewport.transformMove = Qt.vector3d(root.viewport.transformMove.x, root.viewport.transformMove.y, v)
+                onEdited: v => { root.viewport.transformMove = Qt.vector3d(root.viewport.transformMove.x, root.viewport.transformMove.y, v); root.viewport.keepPreviewInView() }
             }
 
             Label { text: qsTr("Rotate (°)") }
@@ -141,7 +141,7 @@ Pane {
                 visible: root.t ? root.t.canScale : false
                 decimals: 1
                 value: root.viewport.transformScale * 100
-                onEdited: v => { if (v > 0) root.viewport.transformScale = v / 100 }
+                onEdited: v => { if (v > 0) { root.viewport.transformScale = v / 100; root.viewport.keepPreviewInView() } }
             }
         }
 
