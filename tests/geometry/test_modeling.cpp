@@ -274,6 +274,39 @@ TEST_CASE("Shell never returns an empty or grown body", "[geometry][modeling]")
     }
 }
 
+TEST_CASE("Shell a box with a filleted edge (Fusion shells it)", "[geometry][modeling]")
+{
+    // OCCT cannot open a face tangent to a fillet (it failed for the top and the front of
+    // this box) nor make the closed shell of it.
+    const auto box = makeBox(40, 30, 20);
+    std::size_t frontTop = 0;
+    for (const auto& e : edges(box))
+        if (std::abs(e.middle.y) < 1e-9 && std::abs(e.middle.z - 20) < 1e-9)
+            frontTop = e.index;
+    const double r = 6;
+    const auto rounded = fillet(box, {frontTop}, r);
+    const double corner = 1 - std::numbers::pi / 4; // a square less a quarter disc, per r^2
+    REQUIRE(rounded.volume() == Approx(40 * 30 * 20 - 40 * r * r * corner).epsilon(1e-9));
+    std::size_t top = 0;
+    for (const auto& f : faces(rounded))
+        if (f.type == "plane" && f.normal.z > 0.9)
+            top = f.index;
+    for (const double t : {1.0, 4.0}) {
+        // Open at the top: in the section across the fillet, the cavity is the (30-2t) x
+        // (20-t) rectangle less the part above the inner fillet (radius r-t), which ends at
+        // y = r, z = 20-t; from there a wall face goes straight up to the top.
+        const auto open = shell(rounded, {top}, t);
+        CHECK(isValid(open));
+        const double section = (30 - 2 * t) * (20 - t) - ((r - t) * r - std::numbers::pi * (r - t) * (r - t) / 4);
+        CHECK(open.volume() == Approx(rounded.volume() - (40 - 2 * t) * section).epsilon(1e-6));
+        // Closed: the cavity is the box shrunk by t with a fillet of radius r-t.
+        const auto closed = shell(rounded, {}, t);
+        CHECK(isValid(closed));
+        const double cavity = (40 - 2 * t) * (30 - 2 * t) * (20 - 2 * t) - (40 - 2 * t) * (r - t) * (r - t) * corner;
+        CHECK(closed.volume() == Approx(rounded.volume() - cavity).epsilon(1e-6));
+    }
+}
+
 TEST_CASE("Faces, edges and face planes", "[geometry][modeling]")
 {
     const auto box = makeBox(10, 20, 30);

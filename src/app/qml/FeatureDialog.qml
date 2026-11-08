@@ -45,6 +45,8 @@ Pane {
     /// Extrude: the distance arrow on the profile, along the sketch normal (Viewport
     /// distanceArrow), or null. The distance is signed: negative means Flip.
     readonly property var distanceArrow: {
+        if (type === "fillet" || type === "chamfer" || type === "shell")
+            return sizeArrow()
         if (type !== "extrude" || values.sketch === undefined || values.extent === "to_object")
             return null
         const d = Number(values.distance)
@@ -73,8 +75,102 @@ Pane {
         return { base: base, direction: pl.normal, distance: values.flip ? -d : d }
     }
 
+    /// The value the size arrow of Fillet / Chamfer / Shell drags.
+    readonly property string sizeKey: type === "fillet" ? "radius" : type === "shell" ? "thickness"
+                                     : type === "chamfer" && (values.type === undefined || values.type === "equal_distance") ? "distance" : ""
+
+    /// Fillet / Chamfer: an arrow on the first picked edge, into the corner between its faces;
+    /// Shell: on the first removed face, into the body (Fusion's drag handles). Null without
+    /// a pick or when the size is an expression.
+    function sizeArrow() {
+        if (sizeKey === "" || values.body === undefined)
+            return null
+        const size = Number(values[sizeKey])
+        if (!isFinite(size))
+            return null
+        const pick = ((type === "shell" ? values.faces : values.edges) || [])[0]
+        if (!pick || !pick.point)
+            return null
+        // Where the arrow sits is found once per pick, on the body without the preview (with
+        // it, the body already has the fillet or shell and its edges are not the picked ones).
+        // The values just changed, so the preview is run again right after.
+        const key = JSON.stringify([type, values.body, pick.point])
+        if (sizeArrowPlace.key !== key) {
+            sizeArrowPlace.key = key
+            undoPreview()
+            sizeArrowPlace.place = sizeArrowAt(pick.point)
+        }
+        const place = sizeArrowPlace.place
+        return place ? { base: place.base, direction: place.direction, distance: size } : null
+    }
+    /// Cache of sizeArrow(): {key, place}. Mutated in place, not a binding dependency.
+    readonly property var sizeArrowPlace: ({ key: "", place: null })
+
+    /// Params of body.edges / body.faces for the picked body: when editing a feature, the
+    /// body as it was before it (the picks were made there; Fusion rolls back the same way).
+    function bodyQuery(extra) {
+        const q = Object.assign({ body: values.body }, extra)
+        if (editId)
+            q.before = editId
+        return q
+    }
+
+    /// {base, direction} of the size arrow for the pick at `point`, or null.
+    function sizeArrowAt(point) {
+        const v3 = a => Qt.vector3d(a[0], a[1], a[2])
+        const arr = q => [q.x, q.y, q.z]
+        if (type === "shell") {
+            // The removed face nearest the pick, with its normal at the pick (curved faces too).
+            const r = controller.execute("body.faces", bodyQuery({ point: point }))
+            if (!r.ok || !r.result.nearest || !r.result.nearest.normal)
+                return null
+            return { base: point, direction: arr(v3(r.result.nearest.normal).times(-1).normalized()) }
+        }
+        const r = controller.execute("body.edges", bodyQuery({ point: point }))
+        if (!r.ok || !r.result.nearest)
+            return null
+        // By its index: degenerate edges (a cone's apex) are not listed, so it is not the position.
+        const edge = r.result.edges.find(e => e.index === r.result.nearest.index)
+        if (!edge)
+            return null
+        const mid = v3(edge.middle)
+        const along = v3(edge.end).minus(v3(edge.start))
+        const dirAlong = along.length() > 1e-9 ? along.normalized() : Qt.vector3d(0, 0, 0)
+        // The two faces whose planes hold the edge (nearest first): the arrow goes against
+        // the sum of their normals, into the corner.
+        const fr = controller.execute("body.faces", bodyQuery({}))
+        const faces = fr.ok ? fr.result.faces : []
+        const scale = Math.max(1e-3, along.length())
+        const holding = faces.filter(f => {
+            const n = v3(f.normal)
+            return Math.abs(n.dotProduct(mid.minus(v3(f.center)))) < 1e-4 * Math.max(1, scale) && Math.abs(n.dotProduct(dirAlong)) < 1e-4
+        }).sort((a, b) => v3(a.center).minus(mid).length() - v3(b.center).minus(mid).length())
+        let dir = null
+        if (holding.length >= 2) {
+            const s = v3(holding[0].normal).plus(v3(holding[1].normal))
+            if (s.length() > 1e-6)
+                dir = s.times(-1).normalized()
+        }
+        if (!dir) {
+            // Towards the middle of the body.
+            let c = Qt.vector3d(0, 0, 0), a = 0
+            for (const f of faces) { c = c.plus(v3(f.center).times(f.area)); a += f.area }
+            const toC = a > 0 ? c.times(1 / a).minus(mid) : Qt.vector3d(0, 0, 1)
+            dir = toC.minus(dirAlong.times(toC.dotProduct(dirAlong)))
+            dir = dir.length() > 1e-9 ? dir.normalized() : Qt.vector3d(0, 0, 1)
+        }
+        return { base: edge.middle, direction: arr(dir) }
+    }
+
     /// The distance arrow was dragged to signed distance `t` (mm): set Distance and Flip.
     function dragDistance(t) {
+        if (sizeKey !== "") {
+            // A size is never negative or zero: the smallest drag step stays.
+            const v = Object.assign({}, values)
+            v[sizeKey] = Math.max(0.01, Math.round(Math.abs(t) * 1e4) / 1e4)
+            values = v
+            return
+        }
         if (type !== "extrude")
             return
         const v = Object.assign({}, values)
@@ -239,6 +335,9 @@ Pane {
     /// `featureId`, to edit an existing one with its current params.
     function open(featureType, initial, featureId) {
         refreshTimeline()
+        // Earlier features may have changed the body since the arrow was last placed.
+        sizeArrowPlace.key = ""
+        sizeArrowPlace.place = null
         const s = specs[featureType]
         if (!s)
             return false

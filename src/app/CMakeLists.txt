@@ -269,6 +269,15 @@ if(AEROCAD_BUILD_TESTS)
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/scan_units_check.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_scan_units_check_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-152: drag arrows of Fillet, Chamfer and Shell; Shell of a filleted body.
+    add_test(NAME app_feature_size_arrows_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/feature_size_arrows.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_feature_size_arrows_test PROPERTIES LABELS gui TIMEOUT 60)
+    add_test(NAME app_fillet_arrow_cone_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/fillet_arrow_cone.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_fillet_arrow_cone_test PROPERTIES LABELS gui TIMEOUT 60)
     # CAD-126: Project body edges into a sketch.
     add_test(NAME app_sketch_project_test
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_project.ui

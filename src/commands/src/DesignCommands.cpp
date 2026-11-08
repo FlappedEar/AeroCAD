@@ -1495,14 +1495,38 @@ void registerTimelineCommands(CommandRegistry& r)
           });
 }
 
+/// The design as it is just before feature `params.before` (Fusion rolls the timeline back to
+/// the feature being edited), or null without `before`. Evaluated on a copy; the design and
+/// its undo history are unchanged.
+std::optional<cad::Design> rolledBack(const cad::Design& d, const Json& params)
+{
+    if (!params.contains("before"))
+        return std::nullopt;
+    const auto id = d.owningFeature(params.at("before").get<cad::FeatureId>());
+    const auto& fs = d.features();
+    const auto it = std::find_if(fs.begin(), fs.end(), [&](const cad::Feature& f) { return f.id == id; });
+    if (it == fs.end())
+        throw CommandError("Unknown feature " + std::to_string(id));
+    const auto index = static_cast<std::size_t>(it - fs.begin());
+    if (index >= d.marker())
+        return std::nullopt;
+    std::optional<cad::Design> copy(d);
+    copy->setMarker(index);
+    return copy;
+}
+
 void registerBodyCommands(CommandRegistry& r)
 {
     r.add({"body.faces", "Body faces",
            "Lists the faces of a body: index, surface type, area, centre and outward normal. Use the index or "
-           "the centre as {point} in sketch.create face, feature.shell faces.",
-           objectSchema({{"body", bodyRefSchema("Body.")}}, {"body"})},
+           "the centre as {point} in sketch.create face, feature.shell faces. With {point}, also gives "
+           "nearest: the face closest to it and the outward normal there (curved faces too).",
+           objectSchema({{"body", bodyRefSchema("Body.")}, {"point", point3("Point on or near the body.")},
+                         {"before", {{"type", "integer"}, {"minimum", 1}, {"description", "Feature id: the body as it is just before this feature (when editing it)."}}}},
+                        {"body"})},
           [](CommandContext& ctx, const Json& params) {
-              const cad::Body& b = requireBody(design(ctx), params.at("body"));
+              const auto rolled = rolledBack(design(ctx), params);
+              const cad::Body& b = requireBody(rolled ? *rolled : design(ctx), params.at("body"));
               Json out = Json::array();
               for (const auto& f : geometry::faces(b.shape)) {
                   out.push_back({{"index", f.index},
@@ -1511,15 +1535,30 @@ void registerBodyCommands(CommandRegistry& r)
                                  {"center", vec(f.center)},
                                  {"normal", vec(f.normal)}});
               }
-              return Json{{"body", b.id}, {"name", b.name}, {"faces", out}};
+              Json result{{"body", b.id}, {"name", b.name}, {"faces", out}};
+              if (params.contains("point")) {
+                  const auto& pt = params.at("point");
+                  const core::Vec3 p{pt.at(0).get<double>(), pt.at(1).get<double>(), pt.at(2).get<double>()};
+                  if (const auto idx = geometry::nearestFace(b.shape, p)) {
+                      Json nearest{{"index", *idx}};
+                      if (const auto n = geometry::faceNormalNear(b.shape, *idx, p))
+                          nearest["normal"] = vec(*n);
+                      result["nearest"] = nearest;
+                  }
+              }
+              return result;
           });
 
     r.add({"body.edges", "Body edges",
            "Lists the edges of a body: index, curve type, length, start, middle and end points. Use the index "
-           "or the middle as {point} in feature.fillet / feature.chamfer edges.",
-           objectSchema({{"body", bodyRefSchema("Body.")}}, {"body"})},
+           "or the middle as {point} in feature.fillet / feature.chamfer edges. With {point}, also gives "
+           "nearest: the index of the edge closest to it.",
+           objectSchema({{"body", bodyRefSchema("Body.")}, {"point", point3("Point on or near the body.")},
+                         {"before", {{"type", "integer"}, {"minimum", 1}, {"description", "Feature id: the body as it is just before this feature (when editing it)."}}}},
+                        {"body"})},
           [](CommandContext& ctx, const Json& params) {
-              const cad::Body& b = requireBody(design(ctx), params.at("body"));
+              const auto rolled = rolledBack(design(ctx), params);
+              const cad::Body& b = requireBody(rolled ? *rolled : design(ctx), params.at("body"));
               Json out = Json::array();
               for (const auto& e : geometry::edges(b.shape)) {
                   out.push_back({{"index", e.index},
@@ -1529,7 +1568,14 @@ void registerBodyCommands(CommandRegistry& r)
                                  {"middle", vec(e.middle)},
                                  {"end", vec(e.end)}});
               }
-              return Json{{"body", b.id}, {"name", b.name}, {"edges", out}};
+              Json result{{"body", b.id}, {"name", b.name}, {"edges", out}};
+              if (params.contains("point")) {
+                  const auto& pt = params.at("point");
+                  const core::Vec3 p{pt.at(0).get<double>(), pt.at(1).get<double>(), pt.at(2).get<double>()};
+                  if (const auto idx = geometry::nearestEdge(b.shape, p))
+                      result["nearest"] = Json{{"index", *idx}};
+              }
+              return result;
           });
 }
 

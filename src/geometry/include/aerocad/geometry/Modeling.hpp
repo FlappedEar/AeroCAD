@@ -134,6 +134,10 @@ struct EdgeInfo {
 /// Used to keep references stable when earlier features change the topology.
 [[nodiscard]] std::optional<std::size_t> nearestEdge(const Shape& shape, const core::Vec3& point);
 [[nodiscard]] std::optional<std::size_t> nearestFace(const Shape& shape, const core::Vec3& point);
+/// Outward normal of face `faceIndex` at the surface point nearest to `point` (curved faces
+/// too), or std::nullopt for invalid indices and undefined normals.
+[[nodiscard]] std::optional<core::Vec3> faceNormalNear(const Shape& shape, std::size_t faceIndex,
+                                                       const core::Vec3& point);
 /// Distance from a point to every edge / face (same order as edges() / faces();
 /// infinity for degenerate edges).
 [[nodiscard]] std::vector<double> edgeDistances(const Shape& shape, const core::Vec3& point);

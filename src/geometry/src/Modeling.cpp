@@ -29,6 +29,7 @@
 #include <BRepLProp_SLProps.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepOffsetAPI_MakePipe.hxx>
+#include <BRepOffsetAPI_MakeOffsetShape.hxx>
 #include <BRepOffsetAPI_MakeThickSolid.hxx>
 #include <BRepOffsetAPI_ThruSections.hxx>
 #include <BRepTools.hxx>
@@ -39,6 +40,7 @@
 #include <BRep_Tool.hxx>
 #include <Bnd_Box.hxx>
 #include <GCPnts_AbscissaPoint.hxx>
+#include <GeomAPI_ProjectPointOnSurf.hxx>
 #include <GProp_GProps.hxx>
 #include <Standard_Failure.hxx>
 #include <ShapeUpgrade_UnifySameDomain.hxx>
@@ -677,6 +679,66 @@ Shape chamfer(const Shape& shape, const std::vector<std::size_t>& edgeIndices, d
     return chamfer(shape, edgeIndices, options);
 }
 
+namespace {
+
+/// Shell fallback: the solid minus its inner offset, opened through the removed faces (flat
+/// only) by the prism from each one's inner offset face up to it. A null shape on failure.
+TopoDS_Shape shellByInnerOffset(const TopoDS_Shape& s, const TopTools_ListOfShape& removed, double thickness)
+{
+    try {
+        BRepOffsetAPI_MakeOffsetShape inner;
+        inner.PerformByJoin(s, -thickness, 1e-3);
+        if (!inner.IsDone() || inner.Shape().IsNull())
+            return {};
+        // A solid offset comes back as a closed shell: make it a solid again.
+        TopoDS_Shape tool = inner.Shape();
+        if (tool.ShapeType() == TopAbs_SHELL) {
+            BRepBuilderAPI_MakeSolid solid(TopoDS::Shell(tool));
+            if (!solid.IsDone())
+                return {};
+            ShapeFix_Solid fix(solid.Solid());
+            fix.Perform();
+            tool = fix.Solid();
+        }
+        for (const TopoDS_Shape& removedFace : removed) {
+            const TopoDS_Face face = TopoDS::Face(removedFace);
+            BRepAdaptor_Surface surface(face);
+            if (surface.GetType() != GeomAbs_Plane)
+                return {};
+            gp_Dir normal = surface.Plane().Axis().Direction();
+            if (face.Orientation() == TopAbs_REVERSED)
+                normal.Reverse();
+            // OCCT lists the offset image of a face as generated from it (copied: the next
+            // history call reuses the list).
+            TopTools_ListOfShape offsetFaces = inner.Generated(face);
+            if (offsetFaces.IsEmpty())
+                offsetFaces = inner.Modified(face);
+            if (offsetFaces.IsEmpty())
+                return {};
+            for (const TopoDS_Shape& offsetFace : offsetFaces) {
+                // A little past the face, so that no skin is left.
+                BRepPrimAPI_MakePrism prism(offsetFace, gp_Vec(normal) * (thickness * 1.05));
+                if (!prism.IsDone())
+                    return {};
+                BRepAlgoAPI_Fuse fuse(tool, prism.Shape());
+                if (!fuse.IsDone())
+                    return {};
+                tool = fuse.Shape();
+            }
+        }
+        BRepAlgoAPI_Cut cut(s, tool);
+        if (!cut.IsDone())
+            return {};
+        ShapeUpgrade_UnifySameDomain unify(cut.Shape());
+        unify.Build();
+        return unify.Shape();
+    } catch (const Standard_Failure&) {
+        return {};
+    }
+}
+
+} // namespace
+
 Shape shell(const Shape& shape, const std::vector<std::size_t>& faceIndices, double thickness)
 {
     const TopoDS_Shape& s = occ(shape, "Shell");
@@ -690,29 +752,45 @@ Shape shell(const Shape& shape, const std::vector<std::size_t>& faceIndices, dou
                 throw ModelingError("Shell: no face " + std::to_string(i));
             removed.Append(map(static_cast<int>(i) + 1));
         }
-        BRepOffsetAPI_MakeThickSolid mk;
-        mk.MakeThickSolidByJoin(s, removed, -thickness, 1e-3);
-        if (!mk.IsDone())
-            throw ModelingError("Shell failed (thickness too large?)");
-        TopoDS_Shape result = mk.Shape();
-        if (removed.IsEmpty()) {
-            // With no open face OCCT returns only the inner offset: the hollow part (Fusion's
-            // closed shell) is the solid minus that cavity.
-            BRepAlgoAPI_Cut cut(s, result);
-            if (!cut.IsDone())
-                throw ModelingError("Shell failed (thickness too large?)");
-            result = cut.Shape();
-        }
+        GProp_GProps before;
+        BRepGProp::VolumeProperties(s, before);
         // OCCT can report success with an empty or broken result (seen on filleted boxes):
         // never hand that on as a body.
-        GProp_GProps before, after;
-        BRepGProp::VolumeProperties(s, before);
-        BRepGProp::VolumeProperties(result, after);
-        if (result.IsNull() || !BRepCheck_Analyzer(result).IsValid() || !(after.Mass() > 1e-9)
-            || after.Mass() >= before.Mass())
-            throw ModelingError("Shell failed: walls of this thickness could not be made on this shape "
-                                "(try a thinner wall)");
-        return wrapShape(result);
+        auto sound = [&](const TopoDS_Shape& r) {
+            if (r.IsNull() || !BRepCheck_Analyzer(r).IsValid())
+                return false;
+            GProp_GProps after;
+            BRepGProp::VolumeProperties(r, after);
+            return after.Mass() > 1e-9 && after.Mass() < before.Mass();
+        };
+        bool built = false;
+        try {
+            BRepOffsetAPI_MakeThickSolid mk;
+            mk.MakeThickSolidByJoin(s, removed, -thickness, 1e-3);
+            if (mk.IsDone()) {
+                built = true;
+                TopoDS_Shape result = mk.Shape();
+                if (removed.IsEmpty()) {
+                    // With no open face OCCT returns only the inner offset: the hollow part
+                    // (Fusion's closed shell) is the solid minus that cavity.
+                    BRepAlgoAPI_Cut cut(s, result);
+                    result = cut.IsDone() ? cut.Shape() : TopoDS_Shape();
+                }
+                if (sound(result))
+                    return wrapShape(result);
+            }
+        } catch (const Standard_Failure&) {
+        }
+        // OCCT cannot open a face that is tangent to a neighbour (the top of a box next to a
+        // filleted edge; Fusion shells it). Instead: cut the inner offset of the whole solid
+        // out of it, and open each removed flat face by also cutting the prism from its inner
+        // offset face up to the face.
+        if (const auto result = shellByInnerOffset(s, removed, thickness); sound(result))
+            return wrapShape(result);
+        if (!built)
+            throw ModelingError("Shell failed (thickness too large?)");
+        throw ModelingError("Shell failed: walls of this thickness could not be made on this shape "
+                            "(try a thinner wall)");
     });
 }
 
@@ -844,6 +922,38 @@ std::optional<std::size_t> nearestEdge(const Shape& shape, const core::Vec3& poi
 std::optional<std::size_t> nearestFace(const Shape& shape, const core::Vec3& point)
 {
     return guarded("Face lookup", [&] { return nearest(shape, point, TopAbs_FACE); });
+}
+
+std::optional<core::Vec3> faceNormalNear(const Shape& shape, std::size_t faceIndex, const core::Vec3& point)
+{
+    if (shape.isNull())
+        return std::nullopt;
+    return guarded("Face normal", [&]() -> std::optional<core::Vec3> {
+        const auto map = mapOf(shape.impl()->shape, TopAbs_FACE);
+        if (faceIndex >= static_cast<std::size_t>(map.Extent()))
+            return std::nullopt;
+        const TopoDS_Face& f = TopoDS::Face(map(static_cast<int>(faceIndex) + 1));
+        BRepExtrema_DistShapeShape dist(BRepBuilderAPI_MakeVertex(toPnt(point)).Vertex(), f);
+        if (!dist.IsDone() || dist.NbSolution() < 1)
+            return std::nullopt;
+        double u = 0, v = 0;
+        BRepAdaptor_Surface surf(f);
+        if (dist.SupportTypeShape2(1) == BRepExtrema_IsInFace) {
+            dist.ParOnFaceS2(1, u, v);
+        } else {
+            GeomAPI_ProjectPointOnSurf proj(dist.PointOnShape2(1), BRep_Tool::Surface(f));
+            if (proj.NbPoints() < 1)
+                return std::nullopt;
+            proj.LowerDistanceParameters(u, v);
+        }
+        BRepLProp_SLProps lp(surf, u, v, 1, 1e-6);
+        if (!lp.IsNormalDefined())
+            return std::nullopt;
+        gp_Dir n = lp.Normal();
+        if (f.Orientation() == TopAbs_REVERSED)
+            n.Reverse();
+        return core::Vec3{n.X(), n.Y(), n.Z()};
+    });
 }
 
 std::vector<double> edgeDistances(const Shape& shape, const core::Vec3& point)

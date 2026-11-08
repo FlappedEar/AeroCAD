@@ -1,0 +1,12 @@
+# CAD-152 (Codex on PR #125): the fillet arrow on a body with degenerate edges (a revolved
+# cone on a cylinder: its apex edge is degenerate and not listed by body.edges) sits on the
+# picked edge.
+# Run: AeroCAD --ui-script <this file>
+ui.wait(800)
+(() => { const s = controller.execute("sketch.create", { plane: "XZ", curves: [{ type: "line", start: [0, 20], end: [10, 10] }, { type: "line", start: [10, 10], end: [10, 0] }, { type: "line", start: [10, 0], end: [0, 0] }, { type: "line", start: [0, 0], end: [0, 20] }] }); if (!s.ok) ui.fail("sketch: " + s.error); const r = controller.execute("feature.revolve", { sketch: s.result.id, axis: { line: 3 } }); if (!r.ok) ui.fail("revolve: " + r.error) })()
+ui.wait(500)
+(() => { const tl = controller.execute("timeline.list").result; const body = tl.bodies[0]; const all = controller.execute("body.edges", { body: body.id }).result.edges; ui.log("edges " + JSON.stringify(all.map(e => [e.index, e.type, e.middle.map(x => +x.toFixed(2))]))); const base = all.find(e => e.type === "circle" && Math.abs(e.middle[2]) < 1e-6 || e.type === "circle" && Math.abs(e.middle[1]) < 1e-6 && Math.abs(e.start[2]) < 1e-6); if (!base) ui.fail("no base circle"); const p = base.middle; featureDialog.open("fillet", { body: body.id, edges: [{ point: p }], radius: 1 }, 0) })()
+ui.wait(800)
+(() => { const a = viewport.distanceArrow; ui.log("cone fillet arrow " + JSON.stringify(a)); if (!a) ui.fail("no fillet arrow on the cone's base edge"); if (Math.abs(Math.hypot(a.base[0], a.base[1]) - 10) > 1e-3 || Math.abs(a.base[2]) > 1e-3) ui.fail("the arrow is not on the base circle: " + JSON.stringify(a.base)) })()
+ui.shot("fillet-arrow-cone.png")
+(() => { featureDialog.close() })()
