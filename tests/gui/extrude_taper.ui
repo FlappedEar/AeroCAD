@@ -1,0 +1,27 @@
+# CAD-169: the Extrude dialog has a Taper Angle (Fusion: Extrude > Taper Angle). Typing 5
+# degrees drafts the side faces, so the far end of a 40 x 20 rectangle extruded 10 mm is
+# smaller and the body has the volume of the frustum. Before, Extrude had no taper.
+# Run: AeroCAD --ui-script <this file>
+ui.wait(800)
+(() => { const r = controller.execute("sketch.create", { plane: "XY", curves: [{ type: "center_rectangle", center: [0, 0], width: 40, height: 20 }] }); if (!r.ok) ui.fail("sketch: " + r.error) })()
+ui.wait(300)
+(() => { viewport.restoreCameraState({ pivot: [0, 0, 5], pitch: -25, yaw: 30, distance: 160, orthographic: false }) })()
+ui.wait(300)
+(() => { if (!ui.clickText("SOLID")) ui.fail("no SOLID tab") })()
+ui.wait(300)
+(() => { if (!ui.clickText("Extrude")) ui.fail("no Extrude button") })()
+ui.wait(800)
+(() => { if (!ui.clickText("Taper Angle (deg)")) ui.fail("no Taper Angle field in the Extrude dialog") })()
+# Click into the taper text field (the editor of the field with key "taper") and type 5.
+(() => { const find = (item) => { if (!item) return null; if (item.field && item.field.key === "taper" && item.selectAll) return item; const kids = item.children || []; for (let i = 0; i < kids.length; ++i) { const r = find(kids[i]); if (r) return r } if (item.contentItem && item.contentItem !== item) return find(item.contentItem); return null }; const f = find(featureDialog.contentItem) || find(featureDialog); if (!f) { ui.fail("no taper text field"); return } const p = f.mapToItem(null, f.width / 2, f.height / 2); ui.click(p.x, p.y) })()
+ui.wait(200)
+ui.key("A", "ctrl")
+ui.type("5")
+ui.key("Tab")
+ui.wait(800)
+(() => { const v = featureDialog.values; ui.log("taper " + v.taper + ", distance " + v.distance); if (Number(v.taper) !== 5) ui.fail("the typed taper is not in the dialog values: " + v.taper) })()
+ui.shot("extrude-taper-preview.png")
+(() => { if (!ui.clickText("OK")) ui.fail("no OK button") })()
+ui.wait(800)
+(() => { const tl = controller.execute("timeline.list").result; const b = tl.bodies[0]; const t = Math.tan(5 * Math.PI / 180); const a2 = 40 - 20 * t, b2 = 20 - 20 * t; const expected = 10 / 3 * (800 + a2 * b2 + Math.sqrt(800 * a2 * b2)); ui.log("tapered body volume " + (b && b.volume.toFixed(1)) + ", frustum " + expected.toFixed(1)); if (!b || Math.abs(b.volume - expected) > expected * 2e-3) ui.fail("the body is not the tapered frustum"); const ex = tl.features.find(f => f.type === "extrude"); if (!ex || Number(ex.params.taper) !== 5) ui.fail("the extrude does not store taper 5") })()
+ui.shot("extrude-taper-body.png")

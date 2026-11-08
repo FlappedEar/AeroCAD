@@ -121,6 +121,82 @@ TEST_CASE("Extrude: one side, symmetric and negative", "[geometry][modeling]")
     CHECK(isValid(n));
 }
 
+namespace {
+
+/// Volume of a drafted rectangle a x b extruded by h with taper t (degrees, positive narrows).
+double frustum(double a, double b, double h, double t)
+{
+    const double k = 2.0 * h * std::tan(t * std::numbers::pi / 180.0);
+    const double a2 = a - k;
+    const double b2 = b - k;
+    return h / 3.0 * (a * b + a2 * b2 + std::sqrt(a * b * a2 * b2));
+}
+
+} // namespace
+
+TEST_CASE("Extrude with a taper angle", "[geometry][modeling]")
+{
+    const auto g = buildSketch(Plane::xy(), rectangle({0, 0}, {20, 10}));
+    SECTION("positive narrows, negative widens")
+    {
+        const auto in = extrude(g.profiles[0], {0, 0, 1}, 10, 0, 5);
+        CHECK(isValid(in));
+        CHECK(in.volume() == Approx(frustum(20, 10, 10, 5)).epsilon(2e-3));
+        CHECK(in.bounds().max.z == Approx(10.0).margin(1e-3));
+        CHECK(in.bounds().max.x == Approx(20.0).margin(1e-3));
+        const auto out = extrude(g.profiles[0], {0, 0, 1}, 10, 0, -5);
+        CHECK(out.volume() == Approx(frustum(20, 10, 10, -5)).epsilon(2e-3));
+        CHECK(out.bounds().max.x == Approx(20.0 + 10 * std::tan(5 * std::numbers::pi / 180)).margin(1e-2));
+    }
+    SECTION("negative distance and the back side taper away from the plane")
+    {
+        const auto down = extrude(g.profiles[0], {0, 0, 1}, -4, 0, 5);
+        CHECK(down.bounds().min.z == Approx(-4.0).margin(1e-3));
+        CHECK(down.volume() == Approx(frustum(20, 10, 4, 5)).epsilon(2e-3));
+        const auto both = extrude(g.profiles[0], {0, 0, 1}, 10, 5, 5);
+        CHECK(isValid(both));
+        CHECK(both.bounds().min.z == Approx(-5.0).margin(1e-3));
+        CHECK(both.volume() == Approx(frustum(20, 10, 10, 5) + frustum(20, 10, 5, 5)).epsilon(2e-3));
+    }
+    SECTION("against a flipped direction")
+    {
+        const auto flipped = extrude(g.profiles[0], {0, 0, -1}, 6, 0, 3);
+        CHECK(flipped.bounds().min.z == Approx(-6.0).margin(1e-3));
+        CHECK(flipped.volume() == Approx(frustum(20, 10, 6, 3)).epsilon(2e-3));
+    }
+    SECTION("a profile with a hole")
+    {
+        auto curves = rectangle({0, 0}, {20, 20});
+        curves.push_back(circle({10, 10}, 4));
+        const auto ring = buildSketch(Plane::xy(), curves);
+        REQUIRE(ring.profiles.size() >= 1);
+        const auto it = std::find_if(ring.profiles.begin(), ring.profiles.end(),
+                                     [](const Shape& f) { return area(f) < 399.0 && area(f) > 300.0; });
+        REQUIRE(it != ring.profiles.end());
+        const auto solid = extrude(*it, {0, 0, 1}, 5, 0, 2);
+        CHECK(isValid(solid));
+        // The outside shrinks and the hole grows: about perimeter * h^2 * tan(t) / 2 less each.
+        const double t = std::tan(2 * std::numbers::pi / 180);
+        const double expected = 5 * area(*it) - (80.0 + 2 * std::numbers::pi * 4) * 25 * t / 2;
+        CHECK(solid.volume() == Approx(expected).epsilon(5e-3));
+    }
+    SECTION("errors")
+    {
+        CHECK_THROWS_AS(extrude(g.profiles[0], {0, 0, 1}, 10, 0, 89), ModelingError);
+        // 10 x 20 closes up after 5 / tan(30) = 8.7 mm.
+        CHECK_THROWS_AS(extrude(g.profiles[0], {0, 0, 1}, 20, 0, 30), ModelingError);
+    }
+    SECTION("closing up is detected on a tilted sketch plane (Codex on PR #142)")
+    {
+        // 100 x 10 on a plane with normal (1, 0, 1): its world box reaches far along the normal.
+        const Plane tilted{{0, 0, 0}, core::Vec3{1, 0, 1}.normalized(), core::Vec3{1, 0, -1}.normalized()};
+        const auto t = buildSketch(tilted, rectangle({-50, -5}, {50, 5}));
+        CHECK_THROWS_AS(extrude(t.profiles[0], tilted.normal, 20, 0, 30), ModelingError);
+        const auto ok = extrude(t.profiles[0], tilted.normal, 5, 0, 30);
+        CHECK(isValid(ok));
+    }
+}
+
 TEST_CASE("Revolve a rectangle into a tube", "[geometry][modeling]")
 {
     const auto g = buildSketch(Plane::xz(), rectangle({5, 0}, {10, 10}));

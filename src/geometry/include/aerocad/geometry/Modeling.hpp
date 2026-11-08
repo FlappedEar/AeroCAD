@@ -42,7 +42,13 @@ namespace aerocad::geometry {
 /// `backDistance` > 0 the faces are first moved back by it, so the solid spans
 /// [-backDistance, distance] (symmetric extent: backDistance == distance). Negative
 /// `distance` extrudes in the opposite direction.
-[[nodiscard]] Shape extrude(const Shape& faces, const core::Vec3& direction, double distance, double backDistance = 0.0);
+/// `taperDegrees` (Fusion: Taper Angle) drafts the side faces: positive narrows the profile
+/// away from the sketch plane, negative widens it; holes change the other way. With a taper
+/// the two sides are separate pieces, each drafted away from the sketch plane: one from the
+/// plane to `distance` and, when `backDistance` != 0, one from the plane to -backDistance.
+/// Throws ModelingError when |taper| >= 89 degrees or the profile closes up before the end.
+[[nodiscard]] Shape extrude(const Shape& faces, const core::Vec3& direction, double distance, double backDistance = 0.0,
+                            double taperDegrees = 0.0);
 
 /// Extrudes planar faces along `direction` until they reach `target` (Fusion: Extrude,
 /// Extent "To Object"): a solid body (up to its first face reached), a surface, or the

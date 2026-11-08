@@ -1145,6 +1145,10 @@ void registerFeatureCommands(CommandRegistry& r)
                                         "targets are followed."}}},
                 {"distance2", numberOrExpr("Backward distance for two_sides (mm).")},
                 {"flip", {{"type", "boolean"}, {"description", "Extrude against the sketch normal."}}},
+                {"taper", numberOrExpr("Taper angle in degrees (Fusion: Taper Angle), default 0: positive narrows "
+                                       "the profile away from the sketch plane, negative widens it; with symmetric "
+                                       "or two_sides each side tapers away from the plane. |taper| < 89; not with "
+                                       "to_object.")},
                 {"operation", operationSchema()},
                 {"bodies", bodiesSchema()}}),
         {"sketch"});
