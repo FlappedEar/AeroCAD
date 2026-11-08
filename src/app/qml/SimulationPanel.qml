@@ -329,7 +329,7 @@ Pane {
             const parts = controller.execute("document.parts")
             if (parts.ok)
                 params.context = parts.result.parts
-                    .filter(p => p.id !== partInfo.id && p.visible && p.kind !== "sketch").map(p => p.id)
+                    .filter(p => p.id !== partInfo.id && p.visible && p.kind !== "sketch" && p.kind !== "plane").map(p => p.id)
         }
         const r = controller.execute("simulation.run", params)
         if (!r.ok) {
@@ -604,7 +604,7 @@ Pane {
                         Layout.fillWidth: true
                         text: qsTr("Run CFD")
                         highlighted: true
-                        enabled: !!root.partInfo.id && root.partInfo.kind !== "sketch"
+                        enabled: !!root.partInfo.id && root.partInfo.kind !== "sketch" && root.partInfo.kind !== "plane"
                         onClicked: root.startRun()
                     }
                     Label {

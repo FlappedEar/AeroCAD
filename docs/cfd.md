@@ -173,7 +173,9 @@ plane normal to the flow, rasterised), lRef to its length along the flow. Both c
 set. Forces in N do not depend on them.
 
 **Other parts in the flow** (`context`): e.g. the body section a part is mounted on.
-They are walls in the simulation but not part of the reported forces.
+They are walls in the simulation but not part of the reported forces. Sketches and
+construction planes are drawing aids: they are never put into the flow, and cannot be the
+simulated part either.
 
 ## Running
 

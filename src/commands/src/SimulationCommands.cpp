@@ -95,6 +95,8 @@ RunInput collectInput(CommandContext& ctx, const Json& params)
         throw CommandError("Part '" + part->name + "' has no surface to simulate");
     if (part->kind == model::PartKind::Sketch)
         throw CommandError("'" + part->name + "' is a sketch; simulate a body or an imported part");
+    if (part->kind == model::PartKind::Plane)
+        throw CommandError("'" + part->name + "' is a construction plane; simulate a body or an imported part");
     in.geometry.part = *part->mesh;
     in.source.partId = part->id;
     in.source.partName = part->name;
@@ -107,7 +109,8 @@ RunInput collectInput(CommandContext& ctx, const Json& params)
         const model::Part* cp = ctx.document.part(cid);
         if (cp == nullptr)
             throw CommandError("No part with id " + std::to_string(cid) + " (context)");
-        if (cp->mesh && cp->kind != model::PartKind::Sketch)
+        // Sketches and construction planes are drawing aids, not walls in the flow (CAD-130).
+        if (cp->mesh && cp->kind != model::PartKind::Sketch && cp->kind != model::PartKind::Plane)
             in.geometry.context.append(*cp->mesh);
         in.source.contextPartIds.push_back(cid);
     }
