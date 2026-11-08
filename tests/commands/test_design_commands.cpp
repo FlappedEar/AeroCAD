@@ -770,6 +770,8 @@ TEST_CASE("Design commands: dragging keeps expressions and regular polygons (CAD
         const auto& p = c.at("curves")[i].at("points")[0];
         CHECK(std::hypot(p[0].get<double>() - cx, p[1].get<double>() - cy) == Approx(r0).epsilon(1e-6));
     }
+}
+
 TEST_CASE("Design commands: extrude to object (CAD-125)", "[commands][cad]")
 {
     commands::Session s;
