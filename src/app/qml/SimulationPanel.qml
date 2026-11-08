@@ -50,6 +50,12 @@ Pane {
 
     property var environment: null
     property var runs: []
+    /// Runs made from a part in the open document, and the others (CAD-136).
+    readonly property var ownRuns: runs.filter(r => r.sourceInDocument).reverse()
+    readonly property var otherRuns: runs.filter(r => !r.sourceInDocument).reverse()
+    readonly property var shownOtherRuns: showOtherRuns ? otherRuns
+                                                        : otherRuns.filter(r => r.id === activeRun || r.id === compareRun)
+    property bool showOtherRuns: false
     property string activeRun: ""
     /// Selects the newest run on first show; off after a new or opened project.
     property bool autoSelect: true
@@ -220,8 +226,10 @@ Pane {
         const signature = list => list.map(x => x.id + ":" + x.state).join(",")
         const beforeAll = signature(runs)
         runs = r.result.runs
-        if (!activeRun && autoSelect && runs.length > 0) {
-            selectRun(runs[runs.length - 1].id)
+        // On first show, the newest run of this design (never one of another design) (CAD-136).
+        const own = runs.filter(x => x.sourceInDocument)
+        if (!activeRun && autoSelect && own.length > 0) {
+            selectRun(own[own.length - 1].id)
             return
         }
         const nowA = stateOf(activeRun), nowB = stateOf(compareRun)
@@ -626,9 +634,31 @@ Pane {
                 opacity: 0.6
                 font.pixelSize: 11
             }
+            // This design's runs first (newest first); runs of other designs (their part is
+            // not in the open document) are folded away unless they are A or B (CAD-136).
             Repeater {
-                model: root.runs.slice().reverse()
-                delegate: Rectangle {
+                model: root.ownRuns
+                delegate: runRowDelegate
+            }
+            Label {
+                visible: root.tab === 0 && root.otherRuns.length > 0
+                Layout.topMargin: 4
+                text: (root.showOtherRuns ? "▾ " : "▸ ") + qsTr("Runs from other designs (%1)").arg(root.otherRuns.length)
+                color: Theme.textMuted
+                font.pixelSize: 11
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.showOtherRuns = !root.showOtherRuns
+                }
+            }
+            Repeater {
+                model: root.shownOtherRuns
+                delegate: runRowDelegate
+            }
+            Component {
+                id: runRowDelegate
+                Rectangle {
                     id: runRow
                     required property var modelData
                     visible: root.tab === 0
