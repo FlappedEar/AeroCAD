@@ -154,8 +154,7 @@ void McpAccess::apply(bool enabled, const QString& reason)
 
 void McpAccess::disconnectClients()
 {
-    m_server.revokeAll(tr("disconnected by the user"));
-    recordAccessEvent(tr("Connected agents disconnected; new agents may connect to this project"), projectTarget());
+    apply(false, tr("Agents disconnected. Allow access again to reconnect to this project."));
 }
 
 void McpAccess::recordAccessEvent(const QString& message, const QString& target, bool ok)

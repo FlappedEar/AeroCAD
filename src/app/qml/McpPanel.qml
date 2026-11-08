@@ -40,7 +40,7 @@ Dialog {
             wrapMode: Text.WordWrap
             opacity: 0.8
             text: !root.access.enabled
-                  ? qsTr("Off. Agents cannot read or change the project.")
+                  ? qsTr("Off. Agents cannot read or change the project. Turn access on to reconnect them; no MCP server restart is needed.")
                   : root.access.listening
                     ? qsTr("On for this project until New, Open, recovery or app exit. Agents can edit the project, read/write files and run programs. Undo applies only to undoable project edits.")
                     : qsTr("Could not start: %1").arg(root.access.errorString)
@@ -60,6 +60,8 @@ Dialog {
             Button {
                 text: qsTr("Disconnect")
                 enabled: root.access.clients.length > 0
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Disconnect all agents and turn access off until you enable it again.")
                 onClicked: root.access.disconnectClients()
             }
         }

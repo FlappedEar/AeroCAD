@@ -28,13 +28,16 @@ Access starts **off on every launch**; the old remembered global setting is disc
 invocation. A subsequent recovery or project replacement still requires fresh consent.
 
 The panel shows the connected agents, every operation they perform (tool, outcome,
-duration; hover for the project, declared effects and parameters) and a **Disconnect** button. A disconnected agent's
-MCP server refuses further calls until the MCP client restarts it. Switching access off
-also disconnects all agents. Access events remain in the activity log with the original
-project name. **Disconnect** ends existing clients' sessions while leaving this project's
-listener available for newly started clients. Buffered requests from disconnected clients
-are discarded immediately. An old MCP process cannot reconnect to a new access session,
-even if it missed the disconnect notification; restart it after granting access again.
+duration; hover for the project, declared effects and parameters) and a **Disconnect** button.
+**Disconnect** turns access off and disconnects every agent, just like switching access off.
+Access events remain in the activity log with the original project name. Buffered requests
+from disconnected clients are discarded immediately and interrupted calls are never replayed.
+
+After New, Open, recovery or Disconnect, switch **Allow AI agents to use this project** on
+again when you want to grant access to the displayed project. The same running MCP server
+can then connect with a fresh grant on the next tool call; **no MCP server restart is needed**.
+While access is off, calls fail with instructions to ask you to enable it. A previous grant
+cannot authorize a command in the new project, even if the agent missed the disconnect event.
 
 The panel also shows the exact configuration for your installation (path of
 `aerocad-mcp`) with copy buttons.
@@ -117,8 +120,9 @@ only undoable document changes promise `edit_undo`.
   the location for both the app and `aerocad-mcp`.
 - Access is scoped to the current project and application session, starts off, and is never
   saved as a preference. Only one AeroCAD window serves agents at a time. Local IPC protocol
-  2 binds the bundled MCP process to its first access session; update/restart the bundled
-  app and MCP server together.
+  2 binds every connection and command to the explicitly enabled access session. Reconnection
+  uses a fresh handshake and never replays commands from a previous connection. Update the
+  bundled app and MCP server together when changing protocol versions.
 - Consent permits the exposed commands, including filesystem and process effects; it is
   not a filesystem sandbox or an approval prompt for every operation. Undo reverses only
   commands marked as undoable project edits.
