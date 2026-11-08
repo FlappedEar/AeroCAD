@@ -676,6 +676,10 @@ Pane {
             return
         }
         if (field.type === "planePick") {
+            // The body the preview made (Split Body's front piece) is gone when the step is
+            // recomputed, so a face of it cannot hold the plane.
+            if (part.kind === "body" && part.featureId === previewFeatureId)
+                return
             if (part.kind === "plane")
                 setValue(pickKey, { plane: part.featureId })
             else if ((part = asBody(part)))

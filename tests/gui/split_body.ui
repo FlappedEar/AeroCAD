@@ -19,6 +19,11 @@ ui.wait(400)
 ui.wait(800)
 (() => { const s = Array.from(window.contentItem.children).find(c => c.objectName === "sbTest").sizes(); ui.log("preview: " + JSON.stringify(s)); if (JSON.stringify(s) !== JSON.stringify(["15x20x10", "25x20x10"])) ui.fail("the preview does not show two pieces: " + JSON.stringify(s)) })()
 ui.shot("build/split-body-preview.png")
+# A click on the preview's front piece must not become the splitting plane (that body is
+# remade on every preview, so OK would fail).
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "sbTest").clickAt(30, 10, 10) })()
+ui.wait(800)
+(() => { ui.log("after clicking the preview piece: plane " + JSON.stringify(featureDialog.values.plane) + ", error '" + featureDialog.error + "'"); if (featureDialog.values.plane !== "YZ") ui.fail("a face of the preview piece became the splitting plane: " + JSON.stringify(featureDialog.values.plane)) })()
 (() => { if (!ui.clickText("OK")) ui.fail("no OK button") })()
 ui.wait(800)
 (() => { const s = Array.from(window.contentItem.children).find(c => c.objectName === "sbTest").sizes(); ui.log("split: " + JSON.stringify(s) + ", undo '" + controller.undoText + "', browser rows " + controller.parts.rowCount()); if (JSON.stringify(s) !== JSON.stringify(["15x20x10", "25x20x10"])) ui.fail("expected two bodies 15 and 25 mm long, got " + JSON.stringify(s)) })()
