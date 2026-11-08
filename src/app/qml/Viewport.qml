@@ -120,14 +120,16 @@ Item {
             const hit = controller.pickSurface(near, far.minus(near))
             if (!hit.partId)
                 return null
-            return { partId: hit.partId, point: hit.point, distance: hit.point.minus(eye).length() }
+            return { partId: hit.partId, point: hit.point, distance: hit.point.minus(eye).length(),
+                     triangle: hit.triangle, localPoint: hit.point }
         }
         // Move / Rotate / Scale running: pick the moved part where it is shown (the ray taken
         // back into its own, unmoved coordinates), the other parts as they are.
         let best = null
         const others = controller.pickSurface(near, far.minus(near), transformTarget.partId, 0)
         if (others.partId)
-            best = { partId: others.partId, point: others.point, distance: others.point.minus(eye).length() }
+            best = { partId: others.partId, point: others.point, distance: others.point.minus(eye).length(),
+                     triangle: others.triangle, localPoint: others.point }
         const localNear = node.mapPositionFromScene(sceneNear)
         const localFar = node.mapPositionFromScene(sceneFar)
         const own = controller.pickSurface(localNear, localFar.minus(localNear), 0, transformTarget.partId)
@@ -135,7 +137,7 @@ Item {
             const p = modelSpace.mapPositionFromScene(node.mapPositionToScene(own.point))
             const d = p.minus(eye).length()
             if (!best || d < best.distance)
-                best = { partId: own.partId, point: p, distance: d }
+                best = { partId: own.partId, point: p, distance: d, triangle: own.triangle, localPoint: own.point }
         }
         return best
     }
@@ -680,6 +682,14 @@ Item {
         onTapped: eventPoint => {
             // Mesh ray cast: Qt Quick 3D picks custom geometry by its bounding volume only.
             let hit = root.pickPart(eventPoint.position.x, eventPoint.position.y)
+            if (root.transformPickMode) {
+                // Lay on face / Face front: the click picks a face of the part being moved.
+                if (hit && hit.partId === root.transformTarget.partId)
+                    root.orientToFace(hit)
+                else
+                    root.controller.showStatus(qsTr("Click a face of %1.").arg(root.transformTarget.name))
+                return
+            }
             if (root.pickSketchLines) {
                 // Sketch lines have no surface: take one within the pick radius unless a
                 // surface is clearly in front of it.
@@ -890,6 +900,8 @@ Item {
     property real transformScale: 1
     readonly property bool transformActive: !!transformTarget
     /// After the tool applied (committed) or was cancelled.
+    /// "lay" or "front" while the next click picks a face to orient the part by.
+    property string transformPickMode: ""
     signal transformFinished(bool committed)
 
     /// Starts the tool on a part (partInfo). Returns false for parts that cannot be moved.
@@ -902,6 +914,7 @@ Item {
         transformMove = Qt.vector3d(0, 0, 0)
         transformRotation = Qt.quaternion(1, 0, 0, 0)
         transformScale = 1
+        transformPickMode = ""
         transformTarget = { partId: info.id, kind: info.kind, featureId: info.featureId,
                       center: Qt.vector3d(info.center[0], info.center[1], info.center[2]),
                       name: info.name || "", canScale: true }
@@ -963,7 +976,7 @@ Item {
     readonly property var transformKeepsFor: ["document.parts", "document.bounds", "timeline.list", "sketch.profiles",
         "sketch.curves", "mesh.stats", "simulation.list", "simulation.results", "simulation.field",
         "simulation.environment", "simulation.status", "project.info", "project.get_context", "edit.history",
-        "inspect.state", "inspect.dimensions", "selection.get", "parameter.list"]
+        "inspect.state", "inspect.dimensions", "selection.get", "parameter.list", "part.face_orientation"]
     Connections {
         target: root.controller
         enabled: root.transformActive
@@ -980,11 +993,43 @@ Item {
         if (!transformTarget)
             return null
         const c = commit ? transformCommand() : null
+        transformPickMode = ""
         transformTarget = null
         resetTransform()
         const r = c ? controller.execute(c.command, c.params) : null
         transformFinished(!!commit)
         return r
+    }
+
+    /// Lay on Face / Face Front: the part.face_orientation command works out the whole
+    /// transform from the picked face and the pending one; the preview shows it.
+    function orientToFace(hit) {
+        const t = transformTarget
+        const mode = transformPickMode
+        const q = transformRotation
+        const w = Math.max(-1, Math.min(1, q.scalar))
+        const sinHalf = Math.sqrt(Math.max(0, 1 - w * w))
+        const params = { id: t.partId, point: [hit.localPoint.x, hit.localPoint.y, hit.localPoint.z],
+                         mode: mode === "lay" ? "down" : "front", center: [t.center.x, t.center.y, t.center.z],
+                         scale: transformScale, translate: [transformMove.x, transformMove.y, transformMove.z] }
+        if (hit.triangle !== undefined)
+            params.triangle = hit.triangle
+        if (sinHalf > 1e-9) {
+            params.axis = [q.x / sinHalf, q.y / sinHalf, q.z / sinHalf]
+            params.angle = 2 * Math.acos(w) * 180 / Math.PI
+        }
+        const r = controller.execute("part.face_orientation", params)
+        transformPickMode = ""
+        if (!r.ok) {
+            controller.showStatus(r.error)
+            return false
+        }
+        const o = r.result
+        transformRotation = axisAngleQuaternion(Qt.vector3d(o.axis[0], o.axis[1], o.axis[2]), o.angle)
+        transformMove = Qt.vector3d(o.translate[0], o.translate[1], o.translate[2])
+        controller.showStatus(mode === "lay" ? qsTr("Laid on the picked face, on the ground. Enter applies.")
+                                             : qsTr("The picked face looks to the front (where the wind tunnel air comes from). Enter applies."))
+        return true
     }
 
     function quaternionMultiply(a, b) {

@@ -148,6 +148,36 @@ Pane {
         RowLayout {
             Layout.fillWidth: true
             Button {
+                objectName: "layOnFace"
+                text: qsTr("Lay on Face")
+                checkable: true
+                checked: root.viewport.transformPickMode === "lay"
+                onClicked: root.viewport.transformPickMode = checked ? "lay" : ""
+                ToolTip.visible: hovered
+                ToolTip.delay: 500
+                ToolTip.text: qsTr("Click a face of the part: it is laid down on that face, on the ground")
+            }
+            Button {
+                objectName: "faceFront"
+                text: qsTr("Face Front")
+                checkable: true
+                checked: root.viewport.transformPickMode === "front"
+                onClicked: root.viewport.transformPickMode = checked ? "front" : ""
+                ToolTip.visible: hovered
+                ToolTip.delay: 500
+                ToolTip.text: qsTr("Click a face of the part: it turns to the front, where the wind tunnel air comes from (+Y flow)")
+            }
+        }
+        Label {
+            visible: root.viewport.transformPickMode !== ""
+            text: qsTr("Click a face of the part (Esc: back).")
+            color: Theme.accent
+            font.pixelSize: Theme.fontSmall
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            Button {
                 text: qsTr("Reset")
                 flat: true
                 onClicked: root.viewport.resetTransform()

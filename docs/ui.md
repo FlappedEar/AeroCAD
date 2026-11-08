@@ -107,13 +107,23 @@ key M as in Fusion's Move/Copy) works directly in the view, with no dialog to co
 change:
 
 - **Arrows** (red X, green Y, blue Z) move the part along that axis; **rings** turn it about
-  that axis through its centre; the **white square** in the middle scales it evenly. Hold
+  that axis through its centre (the point of the ring you grab follows the pointer, also on
+  a ring seen at a slant, and a drag round the ring keeps turning); the **white square** in the middle scales it evenly. Hold
   **Shift** while dragging to snap (1 mm, 15°, 5 %). The value shows next to the pointer.
 - The part follows live. A small panel (top left of the view) shows the exact Move (mm),
   Rotate (° about X, then Y, then Z) and Scale (%); typing a value previews it at once.
 - **Enter** or **Done** applies everything as one undo step; **Esc** or **Cancel** puts the
   part back; **Reset** clears the values. Clicking another part or empty space, or starting
   another command, applies it too. Ctrl+Z / Cmd+Z during the tool drops the preview.
+- **Lay on Face**, then a click on a face of the part: the part turns so that face points
+  down and drops onto the ground (Z = 0), like "lay on face" in a slicer.
+- **Face Front**, then a click on a face: the part turns about the vertical axis so that face
+  looks at the Front view, which is where the air comes from in a wind tunnel run with the
+  default flow (+Y); its height stays. A face pointing up or down is turned onto the front
+  directly. Together they set a part up for CFD in two clicks.
+  On a scan the face direction is taken from the surface patch around the click (3 % of
+  the part size), so scanner noise does not tilt the part. Esc leaves the face pick. The
+  geometry comes from the `part.face_orientation` command, which AI agents can use too.
 
 On a body the result is a timeline step (`feature.move`, editable later); on a scan,
 surface or imported solid it changes the part directly (`part.transform`). Sketches and

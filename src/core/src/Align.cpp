@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "aerocad/core/Align.hpp"
+#include "aerocad/core/Measure.hpp"
 
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 #include <utility>
 
 namespace aerocad::core {
@@ -239,6 +241,77 @@ Mat3 rotationBetween(const Vec3& from, const Vec3& to)
         axis = std::abs(f.x) < 0.9 ? f.cross(Vec3{1, 0, 0}) : f.cross(Vec3{0, 1, 0});
     }
     return Mat3::rotation(axis, std::acos(c));
+}
+
+AxisAngle axisAngle(const Mat3& r)
+{
+    const double c = std::clamp(((r(0, 0) + r(1, 1) + r(2, 2)) - 1.0) / 2.0, -1.0, 1.0);
+    const double angle = std::acos(c);
+    if (angle < 1e-12)
+        return {};
+    Vec3 axis{r(2, 1) - r(1, 2), r(0, 2) - r(2, 0), r(1, 0) - r(0, 1)};
+    if (angle > std::numbers::pi - 1e-6 || axis.length() < 1e-9) {
+        // Near half a turn: R = 2 a a^T - I, take the largest diagonal entry.
+        const double xx = std::max(0.0, (r(0, 0) + 1.0) / 2.0);
+        const double yy = std::max(0.0, (r(1, 1) + 1.0) / 2.0);
+        const double zz = std::max(0.0, (r(2, 2) + 1.0) / 2.0);
+        if (xx >= yy && xx >= zz) {
+            const double x = std::sqrt(xx);
+            axis = {x, (r(0, 1) + r(1, 0)) / (4.0 * x), (r(0, 2) + r(2, 0)) / (4.0 * x)};
+        } else if (yy >= zz) {
+            const double y = std::sqrt(yy);
+            axis = {(r(0, 1) + r(1, 0)) / (4.0 * y), y, (r(1, 2) + r(2, 1)) / (4.0 * y)};
+        } else {
+            const double z = std::sqrt(zz);
+            axis = {(r(0, 2) + r(2, 0)) / (4.0 * z), (r(1, 2) + r(2, 1)) / (4.0 * z), z};
+        }
+    }
+    return {axis.normalized(), angle};
+}
+
+Vec3 patchNormal(const TriangleMesh& mesh, const Vec3& point, std::size_t triangle, double radius)
+{
+    if (triangle >= mesh.triangleCount())
+        return {};
+    const Vec3 hit = mesh.faceNormal(triangle);
+    const double reach = 2.0 * radius;
+    const double disc = std::numbers::pi * radius * radius;
+    const auto& v = mesh.vertices();
+    Vec3 sum{};
+    for (std::size_t t = 0; t < mesh.triangleCount(); ++t) {
+        const auto& tri = mesh.triangles()[t];
+        const Vec3 a = v[tri[0]], b = v[tri[1]], c = v[tri[2]];
+        const Vec3 n2 = (b - a).cross(c - a); // 2 * area * normal
+        const double area = n2.length() / 2.0;
+        if (!(area > 0.0))
+            continue;
+        const Vec3 n = n2.normalized();
+        const double facing = n.dot(hit);
+        if (facing <= 0.0)
+            continue;
+        if (t != triangle && (closestPointOnTriangle(point, a, b, c) - point).length() > radius)
+            continue;
+        // Roughly the part of the triangle inside the sampling disc: a long or tall
+        // triangle only reaches in with a strip of its size.
+        const double longest = std::max({(b - a).length(), (c - b).length(), (a - c).length()});
+        const double height = 2.0 * area / longest;
+        const double inside =
+            std::min(disc, area * std::min(1.0, reach / longest) * std::min(1.0, reach / height));
+        // Surfaces turned away from the clicked one (a bevel, the next face of an edge)
+        // count far less than scan noise around it (cos^8: 15 deg -> 0.76, 45 deg -> 0.06).
+        sum = sum + n * (inside * std::pow(facing, 8));
+    }
+    return sum.length() > 0.0 ? sum.normalized() : hit;
+}
+
+Mat3 faceTurn(const Vec3& normal, FaceTarget target)
+{
+    const Vec3 n = normal.normalized();
+    if (target == FaceTarget::Down)
+        return rotationBetween(n, Vec3{0, 0, -1});
+    if (std::hypot(n.x, n.y) > 0.2)
+        return Mat3::rotation(Vec3{0, 0, 1}, std::atan2(-n.x, -n.y));
+    return rotationBetween(n, Vec3{0, -1, 0});
 }
 
 std::optional<Affine> frameToWorld(const Vec3& origin, const Vec3& zAxis, const std::optional<Vec3>& xHint)

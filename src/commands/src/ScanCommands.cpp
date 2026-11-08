@@ -4,12 +4,15 @@
 #include "aerocad/commands/Session.hpp"
 
 #include "aerocad/core/Align.hpp"
+#include "aerocad/core/Measure.hpp"
 #include "aerocad/core/MeshRepair.hpp"
 #include "aerocad/core/MeshSimplify.hpp"
 #include "aerocad/core/Units.hpp"
 #include "aerocad/geometry/Transform.hpp"
 
+#include <algorithm>
 #include <cmath>
+#include <limits>
 #include <memory>
 #include <numbers>
 #include <optional>
@@ -318,6 +321,79 @@ void registerPlacementCommands(CommandRegistry& r)
               out["factor"] = factor;
               out["measured"] = measured;
               out["distance"] = wanted;
+              return out;
+          });
+
+    r.add({"part.face_orientation", "Orient part by a face",
+           "Works out how to turn a part by one of its faces, e.g. to set it up for a wind tunnel run: "
+           "`down` lays it on the face, on the ground (lowest point at Z 0); `front` turns it about Z so the face "
+           "looks at the Front view (-Y, where the air comes from with the default +Y flow), keeping its height. "
+           "The face direction is the normal of the surface patch around `point` (`radius`, default 3 % of the "
+           "part size), so scan noise does not tilt it. Changes nothing: the result is the whole transform "
+           "(on top of an optional pending one given in the same parameters) for part.transform or, on a body, "
+           "feature.move.",
+           objectSchema(
+               {{"id", idParam()},
+                {"point", pointParam("Point on the face [x, y, z] in mm, in the part's current coordinates.")},
+                {"mode", {{"type", "string"}, {"enum", {"down", "front"}}, {"description", "down or front."}}},
+                {"triangle",
+                 {{"type", "integer"}, {"minimum", 0}, {"description", "Triangle hit at `point`, if known."}}},
+                {"radius", {{"type", "number"}, {"exclusiveMinimum", 0}, {"description", "Patch radius in mm."}}},
+                {"center", pointParam("Rotation and scale centre in mm (default the bounding box centre).")},
+                {"axis", pointParam("Pending rotation axis.")},
+                {"angle", {{"type", "number"}, {"description", "Pending rotation angle in degrees."}}},
+                {"scale", {{"type", "number"}, {"exclusiveMinimum", 0}, {"description", "Pending uniform scale."}}},
+                {"translate", pointParam("Pending offset [dx, dy, dz] in mm.")}},
+               {"id", "point", "mode"}),
+           false},
+          [](CommandContext& ctx, const Json& params) {
+              const auto id = params.at("id").get<model::PartId>();
+              const model::Part* found = ctx.document.part(id);
+              if (found == nullptr)
+                  throw CommandError("No part with id " + std::to_string(id));
+              const model::Part& part = *found;
+              if (!part.mesh || part.mesh->isEmpty())
+                  throw CommandError("Part '" + part.name + "' has no surface");
+              const core::TriangleMesh& mesh = *part.mesh;
+              const core::Vec3 point = toVec(params.at("point"));
+              std::size_t triangle = 0;
+              if (params.contains("triangle") && params.at("triangle").get<std::size_t>() < mesh.triangleCount()) {
+                  triangle = params.at("triangle").get<std::size_t>();
+              } else {
+                  triangle = core::closestPointOnMesh(mesh, point)->triangle;
+              }
+              const core::BoundingBox box = mesh.bounds();
+              const double radius = params.value("radius", std::max(1.0, 0.03 * (box.max - box.min).length()));
+              const core::Vec3 c = params.contains("center") ? toVec(params.at("center")) : box.center();
+              const double scale = params.value("scale", 1.0);
+              const core::Vec3 t = params.contains("translate") ? toVec(params.at("translate")) : core::Vec3{};
+              core::Mat3 rot;
+              if (params.contains("angle") != params.contains("axis"))
+                  throw CommandError("`axis` and `angle` must be given together");
+              if (params.contains("angle"))
+                  rot = core::Mat3::rotation(toVec(params.at("axis")),
+                                             params.at("angle").get<double>() * std::numbers::pi / 180.0);
+              const std::string mode = params.at("mode").get<std::string>();
+              const core::Vec3 normal = core::patchNormal(mesh, point, triangle, radius);
+              const core::Mat3 turned =
+                  core::faceTurn(rot * normal, mode == "down" ? core::FaceTarget::Down : core::FaceTarget::Front) *
+                  rot;
+              auto lowest = [&](const core::Mat3& m) {
+                  double z = std::numeric_limits<double>::infinity();
+                  for (const core::Vec3& v : mesh.vertices())
+                      z = std::min(z, (m * (v - c)).z * scale + c.z + t.z);
+                  return z;
+              };
+              const double ground = mode == "down" ? 0.0 : lowest(rot);
+              const core::Vec3 translate = t + core::Vec3{0, 0, ground - lowest(turned)};
+              const core::AxisAngle aa = core::axisAngle(turned);
+              Json out = Json::object();
+              out["normal"] = vecToJson(normal);
+              out["center"] = vecToJson(c);
+              out["axis"] = vecToJson(aa.axis);
+              out["angle"] = aa.angle * 180.0 / std::numbers::pi;
+              out["scale"] = scale;
+              out["translate"] = vecToJson(translate);
               return out;
           });
 

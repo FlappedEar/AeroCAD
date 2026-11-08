@@ -19,6 +19,7 @@ command, available to scripts and to an AI agent over MCP (`commands.list`).
 | --- | --- |
 | `part.align {"id", "points" \| "triangles" \| "normal"+"origin", "target", "origin", "xDirection", "flip", "keepPosition"}` | Fit a plane to 3+ picked points or to a triangle region (e.g. a selection), turn it onto a world plane (`xy` default: normal to +Z; `xz`: +Y; `yz`: +X) and move its origin to the world origin. `xDirection` fixes the in-plane rotation. Returns the 4x4 `transform` and the fit `fitRms`. |
 | `part.transform {"id", "axis", "angle", "scale", "center", "translate"}` | Move, rotation (degrees, right-hand rule) and uniform scale; scale and rotation about `center` (default the box centre) first, then the move. |
+| `part.face_orientation {"id", "point", "mode", "triangle", "radius", + a pending transform}` | Read-only: how to turn the part by the face at `point`. `down` lays it on that face on the ground (lowest point Z 0), `front` turns it about Z so the face looks at the Front view (-Y), keeping its height. The face direction is the normal of the patch around the point (cos^8-weighted, so bevels and noise do not tilt it). Returns `center`, `axis`, `angle`, `scale`, `translate` for `part.transform` / `feature.move`. Lay on Face and Face Front in the Move / Rotate / Scale tool use it. |
 | `part.place {"id", "onFloor"}` | Centre the bounding box on the origin in X/Y and rest it on Z = 0 (or centre it in Z). |
 
 To put a picked face of a scan on the floor, align with that face's triangles and
