@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CAD-132: once an outline is drawn on a scan, the scan's guide marks step 1 done and offers
+# Part on surface (for that sketch) as the next step. CAD-131: the part made on the scan
+# offers Export for printing as its next step, and it writes the part.
+ui.wait(1200)
+(() => { const p = controller.execute("document.parts").result.parts[0]; window.selectPart(p.id) })()
+ui.wait(300)
+(() => { const g = contextActions.guide(window.selectionInfo); const s = g.sections[0].steps; if (s[0].done) ui.fail("outline step done before drawing"); if (s[1].actions[0].id !== "partOnSurface" || s[1].actions[0].enabled) ui.fail("Part on surface should be shown but off before drawing"); if (contextActions.nextAction(window.selectionInfo).id !== "sketchOnScan") ui.fail("next step is not Sketch on the scan") })()
+ui.clickText("Sketch on the scan")
+ui.wait(500)
+(() => { const b = window.selectionInfo; const top = Qt.vector3d(b.center[0], b.center[1], b.center[2] + b.sizeZ / 2); const v = viewport.viewPoint(top); const c = viewport.mapToItem(null, v.x, v.y); ui.click(c.x, c.y) })()
+ui.wait(1500)
+(() => { if (!window.activeSketch || !window.activeSketch.surfacePart) ui.fail("no sketch on the scan") })()
+ui.key("R")
+ui.wait(300)
+(() => { const v = viewport.viewPoint(Qt.vector3d(window.activeSketch.origin[0], window.activeSketch.origin[1], window.activeSketch.origin[2])); const c = viewport.mapToItem(null, v.x, v.y); ui.drag(c.x - 60, c.y - 40, c.x + 60, c.y + 40, "left", "", 12) })()
+ui.wait(600)
+ui.clickText("Finish Sketch")
+ui.wait(800)
+ui.clickText("Not now")
+ui.wait(500)
+(() => { const info = window.selectionInfo; if (info.kind !== "imported") { ui.fail("the scan is not selected after Finish Sketch: " + info.kind); return } const g = contextActions.guide(info); const s = g.sections[0].steps; ui.log("STEPS " + JSON.stringify(s.map(t => [t.title, t.done, t.actions.map(a => a.id + (a.enabled ? "" : "-off"))]))); if (!s[0].done) ui.fail("outline step not done after drawing"); const p = s[1].actions[0]; if (!p.enabled || !p.primary) ui.fail("Part on surface is not the enabled next step"); if (contextActions.nextAction(info).id !== "partOnSurface") ui.fail("context bar does not suggest Part on surface"); if (p.params[0].key !== "sketch" || p.params[0].options.length !== 1) ui.fail("the drawn sketch is not offered") })()
+ui.shot("scan-guide-after-outline.png")
+(() => { const act = window.selectionActions.find(a => a.id === "partOnSurface"); actionPopup.request(act, window.selectionInfo, null) })()
+ui.wait(400)
+ui.key("Return")
+ui.wait(4000)
+(() => { const info = window.selectionInfo; if (info.kind !== "body") { ui.fail("the new part is not selected: " + info.kind); return } const n = contextActions.nextAction(info); ui.log("NEXT " + (n ? n.id : "none")); if (!n || n.id !== "exportForPrint") ui.fail("Export for printing is not the next step of the part") })()
+ui.shot("part-on-scan-next-print.png")
+# The guide's button opens the print folder picker; accept it with a folder (/tmp: Linux and macOS CI).
+ui.clickText("Export for printing…")
+ui.wait(500)
+(() => { if (!printFolderDialog.visible) ui.fail("Export for printing did not open the folder picker") })()
+printFolderDialog.selectedFolder = "file:///tmp/aerocad-scan-to-part-print"
+printFolderDialog.accept()
+ui.wait(1500)
+(() => { const m = controller.statusMessage; ui.log("PRINT " + m); if (!/^1 part\(s\) written/.test(m)) ui.fail("the part was not exported for printing: " + m) })()
+ui.log("scan to part next steps done")
