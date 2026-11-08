@@ -1436,6 +1436,23 @@ void registerFeatureCommands(CommandRegistry& r)
               return addedFeature(design(ctx), ctx.document, id);
           });
 
+    r.add({"timeline.move_feature", "Move Feature",
+           "Moves a feature to another place in the timeline (Fusion: drag a feature in the timeline); position is "
+           "its new index in timeline.list features. Refused, with the design unchanged, when a feature would then "
+           "fail (moved before something it uses, or after a feature that uses it).",
+           objectSchema({{"id", featureIdSchema("Feature id.")},
+                         {"position", {{"type", "integer"}, {"minimum", 0}, {"description", "New index in the timeline."}}}},
+                        {"id", "position"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              const auto id = design(ctx).owningFeature(params.at("id").get<cad::FeatureId>());
+              designChange(ctx, "Move Feature", [&](cad::Design& d) {
+                  d.moveFeature(id, params.at("position").get<std::size_t>());
+                  return Json{};
+              });
+              return timelineToJson(design(ctx), ctx.document);
+          });
+
     r.add({"feature.delete", "Delete Feature",
            "Deletes a feature from the timeline. Features that depended on it report errors (see timeline.list).",
            objectSchema({{"id", featureIdSchema("Feature id.")}}, {"id"}), true},

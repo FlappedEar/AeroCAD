@@ -167,6 +167,11 @@ public:
     void editFeature(FeatureId id, const Json& patch);
     void renameFeature(FeatureId id, std::string name);
     void setSuppressed(FeatureId id, bool suppressed);
+    /// Moves a feature to index `position` of the timeline (Fusion: drag a feature in the
+    /// timeline) and regenerates. A feature dragged across the marker becomes rolled back or
+    /// active. Throws DesignError (and leaves the design unchanged) when a feature that worked
+    /// fails in the new order, i.e. the move would put a feature before something it uses.
+    void moveFeature(FeatureId id, std::size_t position);
     /// Removes a feature. Later features that depended on it will report errors.
     void removeFeature(FeatureId id);
     /// Removes curves from a sketch (Fusion: select sketch curves, Delete). `curves` are

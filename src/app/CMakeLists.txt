@@ -245,6 +245,16 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_drag_point.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_sketch_drag_point_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-160: dragging timeline chips reorders features, dragging the marker rolls back.
+    add_test(NAME app_timeline_reorder_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/timeline_reorder.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_timeline_reorder_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-161: Edit Profile Sketch in the timeline menu opens the extrude's sketch.
+    add_test(NAME app_timeline_profile_sketch_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/timeline_profile_sketch.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_timeline_profile_sketch_test PROPERTIES LABELS gui TIMEOUT 60)
     # CAD-131, CAD-132: the guide leads from an outline drawn on a scan to the part and to printing.
     add_test(NAME app_scan_to_part_next_steps_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl
