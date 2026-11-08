@@ -53,6 +53,9 @@ ui.wait(500)
 ui.wait(1500)
 (() => { const l = cfdOverlay.legends; ui.log("LEGENDS " + JSON.stringify(l)); if (l.length !== 2) ui.fail("expected a Cp and a speed legend, got " + l.length); const sp = l.find(x => x.scalar === "speed"); if (!sp || sp.kinds.length !== 3) ui.fail("sections and streamlines should share one speed scale") })()
 (() => { if (contextBar.visible) ui.fail("the guide bar covers the results") })()
+# CAD-173: wrapped lines of the Results tab (conditions, quality) get their full height, so a
+# warning that wraps to two lines does not overlap the next one.
+(() => { const low = []; function walk(it) { for (let i = 0; i < it.children.length; ++i) { const c = it.children[i]; if (c.visible && c.wrapMode !== undefined && c.lineCount > 0 && c.height < c.implicitHeight - 1) low.push(c.height + " < " + c.implicitHeight + " " + String(c.text).slice(0, 40)); walk(c) } } walk(simulationPanel); ui.log("LOW LABELS " + low.length); if (low.length) ui.fail("labels lower than their text: " + low.join("; ")) })()
 (() => { const s = simulationPanel.results.summary; ui.log("DRAG " + s.dragN); if (!(s.dragN > 0)) ui.fail("no drag on the card") })()
 ui.clickText("Pressure coefficient Cp")
 ui.clickText("results 3d (" + new Date(simulationPanel.activeStatus.created).toLocaleTimeString(Qt.locale(), "HH:mm") + ")")
