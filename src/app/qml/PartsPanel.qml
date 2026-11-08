@@ -12,6 +12,7 @@ Pane {
 
     required property AppController controller
     property var selectedPartId: 0
+    property var selectedPartIds: []
     signal partSelected(var id)
     /// Right-click on a row: open the part's context menu at x, y in `item`.
     signal partContextRequested(var id, Item item, real x, real y)
@@ -112,7 +113,7 @@ Pane {
                 required property string shapeKind
                 required property string partColor
 
-                readonly property bool selected: row.partId === root.selectedPartId
+                readonly property bool selected: root.selectedPartIds.indexOf(row.partId) >= 0
 
                 width: ListView.view.width
                 height: 36

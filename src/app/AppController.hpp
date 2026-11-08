@@ -111,6 +111,9 @@ public:
     /// the last applied steps (see UndoStack::mergeIds).
     Q_INVOKABLE bool mergeHistoryIds(const QVariantList& ids, const QString& label);
     Q_INVOKABLE bool previewActive() const { return m_session.previewActive(); }
+    /// Whether Ctrl (Cmd on macOS) or Shift is held, as of the last input event: a click
+    /// with it adds a part to the selection or takes it out (Fusion).
+    Q_INVOKABLE bool addToSelectionHeld() const;
     /// Convenience wrapper around document.import for file dialogs and drag & drop.
     Q_INVOKABLE bool importFile(const QUrl& url);
     /// Convenience wrapper around document.export for the save dialog. `ids` empty means
