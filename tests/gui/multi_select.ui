@@ -4,7 +4,7 @@
 #    empty space clears the selection, Ctrl + click on empty space keeps it;
 #  - Ctrl + click in the Browser does the same;
 #  - V hides all selected parts and Ctrl+Z shows them all again (one undo step);
-#  - a right-click on a selected part in the view keeps the selection;
+#  - a right-click on a selected part, in the view or the Browser, keeps the selection;
 #  - Ctrl+A selects every visible part; Delete removes them all (timeline bodies and a
 #    copied solid) and one Ctrl+Z brings them all back.
 # Run: AeroCAD --ui-script <this file>
@@ -56,6 +56,12 @@ ui.wait(300)
 ui.key("Escape")
 ui.wait(200)
 (() => { Array.from(window.contentItem.children).find(c => c.objectName === "msTest").check("right-click on a selected part", [0, 2]) })()
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "msTest").clickRow(0, "", "right") })()
+ui.wait(300)
+(() => { if (!partMenu.visible) ui.fail("right-click on a Browser row opened no menu") })()
+ui.key("Escape")
+ui.wait(200)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "msTest").check("right-click on a selected Browser row", [2, 0]) })()
 # Ctrl+A, Delete, one Ctrl+Z.
 (() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "msTest"); controller.execute("part.set_visible", { id: t.s.copy, visible: true }); t.s.ids.push(t.s.copy); t.clickPart(1) })()
 ui.wait(300)

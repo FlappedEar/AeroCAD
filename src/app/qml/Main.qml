@@ -123,17 +123,27 @@ ApplicationWindow {
     }
 
     /// Runs `step(id)` for every selected part and joins what they did into one undo step.
+    /// The steps are joined every 50 parts on the way, so a large selection never pushes
+    /// its first steps out of the 200-step history before they are joined.
     function forEachSelected(label, step) {
-        const tokens = []
+        let tokens = []
+        let done = 0
+        const join = () => {
+            if (tokens.length > 1 && controller.mergeHistoryIds(tokens, label.arg(done)))
+                tokens = [controller.historyTopId()]
+        }
         for (const id of selectedExisting()) {
             const before = controller.historyTopId()
             step(id)
             const after = controller.historyTopId()
-            if (after && after !== before)
+            if (after && after !== before) {
                 tokens.push(after)
+                ++done
+            }
+            if (tokens.length >= 50)
+                join()
         }
-        if (tokens.length > 1)
-            controller.mergeHistoryIds(tokens, label.arg(tokens.length))
+        join()
     }
 
     /// A tool that picks in the view or edits the design: opening one applies a running

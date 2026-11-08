@@ -399,6 +399,10 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/multi_select.ui
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(app_multi_select_test PROPERTIES LABELS gui TIMEOUT 60)
+    add_test(NAME app_multi_select_many_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/multi_select_many.ui
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(app_multi_select_many_test PROPERTIES LABELS gui TIMEOUT 120)
     add_test(NAME app_isolate_scan_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/isolate_scan.ui

@@ -126,9 +126,13 @@ Pane {
                     root.partSelected(row.partId)
                     root.startRename(row.partId)
                 }
-                TapHandler {
+                // Right-click: the part's menu. A MouseArea takes the right button for itself,
+                // so the row's own click (which selects only this part) never sees it and a
+                // multi-selection the part is in is kept for the menu.
+                MouseArea {
+                    anchors.fill: parent
                     acceptedButtons: Qt.RightButton
-                    onTapped: eventPoint => root.partContextRequested(row.partId, row, eventPoint.position.x, eventPoint.position.y)
+                    onClicked: mouse => root.partContextRequested(row.partId, row, mouse.x, mouse.y)
                 }
 
                 background: Rectangle {
