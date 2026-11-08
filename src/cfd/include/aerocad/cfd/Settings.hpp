@@ -16,6 +16,13 @@ using Json = nlohmann::json;
 /// only (CAD-50): dictionaries differ between releases and between the openfoam.com and
 /// openfoam.org lines, so supporting more than one would mean testing more than one.
 inline constexpr std::string_view kOpenFoamVersion = "v2506";
+/// checkMesh failures (the text after its "***" marker, as printed by OpenFOAM v2506's
+/// primitiveMeshCheck) that make the solver diverge or crash. Allrun stops before the solve
+/// when log.checkMesh reports one (CAD-103); every other "***" report is a warning. An
+/// extended regular expression alternation, also matched literally by RunManager.
+inline constexpr std::string_view kFatalMeshChecks =
+    "Zero or negative cell volume|Error in face pyramids|Zero or negative face area|Open cells found|"
+    "Cells with invalid face labels";
 /// Official multi-arch (amd64 + arm64) image of that release, from OpenCFD on Docker Hub.
 inline constexpr std::string_view kDockerImage = "opencfd/openfoam-default:2506";
 

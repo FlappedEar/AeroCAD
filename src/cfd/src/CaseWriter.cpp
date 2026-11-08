@@ -515,13 +515,20 @@ std::string allrun(int processes)
          "# application whose log exists, so reused results keep the engine that produced them.\n"
          "engine() { [ -f log.simpleFoam ] || printf '%s\\n' \"${WM_PROJECT_VERSION:-}\" > aerocad.engine; }\n"
          "step() { echo \"$1\" > aerocad.stage; }\n"
-         "fail() { echo \"failed $1\" > aerocad.status; exit 1; }\n\n"
+         "fail() { echo \"failed $1\" > aerocad.status; exit 1; }\n"
+         "# checkMesh marks failed checks with \"***\". These defects make the solver diverge or\n"
+         "# crash, so the run stops before it; other reports (non-orthogonality, skewness, aspect\n"
+         "# ratio, face tets, ...) are warnings.\n"
+         "meshok() { ! grep -qE '[*]{3}("
+      << kFatalMeshChecks
+      << ")' log.checkMesh 2>/dev/null; }\n\n"
          "step features;   runApplication surfaceFeatureExtract || fail features\n"
          "step background; runApplication blockMesh || fail background\n";
     if (processes > 1) {
         t << "step decompose;  runApplication decomposePar -force || fail decompose\n"
              "step mesh;       runParallel snappyHexMesh -overwrite || fail mesh\n"
              "step check;      runParallel checkMesh -constant\n"
+             "meshok || fail check\n"
              "restore0Dir -processor\n"
              "step initialise; runParallel potentialFoam -writephi || fail initialise\n"
              "engine\n"
@@ -532,6 +539,7 @@ std::string allrun(int processes)
     } else {
         t << "step mesh;       runApplication snappyHexMesh -overwrite || fail mesh\n"
              "step check;      runApplication checkMesh -constant\n"
+             "meshok || fail check\n"
              "restore0Dir\n"
              "step initialise; runApplication potentialFoam -writephi || fail initialise\n"
              "engine\n"

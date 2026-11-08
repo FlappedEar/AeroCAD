@@ -188,6 +188,17 @@ records everything needed to repeat it: `case.json` (settings, frame, reference 
 geometry hash), `run.json` (source part, its revision and geometry fingerprint, engine command) and the complete
 OpenFOAM case, which can be opened in ParaView through `case.foam`.
 
+`Allrun` stops before `potentialFoam` and `simpleFoam` when `checkMesh` reports a defect
+the solver cannot run on: zero or negative cell volume, incorrectly oriented faces (face
+pyramids), zero or negative face area, open cells, or cells with invalid face labels. The
+run then fails at step `check` with these reports in its message, and `log.checkMesh`
+stays in the case. Other `checkMesh` reports (non-orthogonality, skewness, aspect ratio,
+face tets) are warnings: the solve runs and the quality report flags them. The patterns are
+the `***` reports of OpenFOAM v2506's `primitiveMeshCheck` (`kFatalMeshChecks` in
+`Settings.hpp`). A failed solve shows the first line of an OpenFOAM fatal error, or for a
+floating-point exception (a diverged solution) the iteration it reached, instead of the
+last log line, which is often an MPI separator.
+
 Runs are stored per user, not per project. `sourceInDocument` in the status tells whether
 the open document still has the run's part (same id and same geometry).
 

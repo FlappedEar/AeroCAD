@@ -521,35 +521,91 @@ std::string stageLog(const std::string& stage)
     if (stage == "background") return "log.blockMesh";
     if (stage == "decompose") return "log.decomposePar";
     if (stage == "mesh") return "log.snappyHexMesh";
+    if (stage == "check") return "log.checkMesh";
     if (stage == "initialise") return "log.potentialFoam";
     if (stage == "solve") return "log.simpleFoam";
     if (stage == "reconstruct") return "log.reconstructPar";
     return "log.aerocad";
 }
 
-/// First line of an OpenFOAM fatal error message in a log, or the last non-empty line.
+/// A log line without an MPI rank prefix such as "[1] ".
+std::string stripRank(std::string line)
+{
+    if (line.size() > 2 && line[0] == '[') {
+        const auto close = line.find("] ");
+        if (close != std::string::npos && close < 8)
+            line = line.substr(close + 2);
+    }
+    return line;
+}
+
+std::string trimmed(const std::string& s)
+{
+    const auto b = s.find_first_not_of(" \t\r");
+    if (b == std::string::npos)
+        return {};
+    return s.substr(b, s.find_last_not_of(" \t\r") - b + 1);
+}
+
+/// The fatal checkMesh reports in a log (kFatalMeshChecks), "; "-separated, or empty.
+std::string meshDefects(const fs::path& log)
+{
+    std::vector<std::string> fatal;
+    for (std::string_view rest = kFatalMeshChecks; !rest.empty();) {
+        const auto bar = rest.find('|');
+        fatal.emplace_back(rest.substr(0, bar));
+        rest = bar == std::string_view::npos ? std::string_view{} : rest.substr(bar + 1);
+    }
+    std::ifstream in(log);
+    std::string line, found;
+    while (std::getline(in, line)) {
+        const auto mark = line.find("***");
+        if (mark == std::string::npos)
+            continue;
+        std::string report = trimmed(line.substr(mark + 3));
+        while (!report.empty() && report.back() == '.')
+            report.pop_back();
+        const bool isFatal =
+            std::any_of(fatal.begin(), fatal.end(), [&](const std::string& f) { return report.rfind(f, 0) == 0; });
+        if (isFatal)
+            found += (found.empty() ? "" : "; ") + report;
+    }
+    return found;
+}
+
+/// Why an application stopped, from its log: the first line of an OpenFOAM fatal error, a
+/// floating-point exception (the solution diverged) with the last iteration reached, or the
+/// last line that carries text. Separator lines ("-----") and stack frames are not reasons.
 std::string errorSummary(const fs::path& log)
 {
     std::ifstream in(log);
-    std::string line, last, fatal;
-    bool next = false;
+    std::string line, last, fatal, time;
+    bool next = false, fpe = false;
     while (std::getline(in, line)) {
-        // Strip MPI rank prefixes such as "[1] ".
-        if (line.size() > 2 && line[0] == '[') {
-            const auto close = line.find("] ");
-            if (close != std::string::npos && close < 8)
-                line = line.substr(close + 2);
-        }
-        if (next && fatal.empty() && line.find_first_not_of(' ') != std::string::npos) {
-            fatal = line;
+        line = stripRank(line);
+        const std::string text = trimmed(line);
+        if (next && fatal.empty() && !text.empty()) {
+            fatal = text;
             next = false;
         }
         if (line.find("FOAM FATAL") != std::string::npos)
             next = true;
-        if (line.find_first_not_of(" \t") != std::string::npos)
-            last = line;
+        if (line.find("sigFpe") != std::string::npos || line.find("Floating point exception") != std::string::npos)
+            fpe = true;
+        if (line.rfind("Time = ", 0) == 0)
+            time = trimmed(line.substr(7));
+        const bool frame = text.size() > 1 && text[0] == '#' && std::isdigit(static_cast<unsigned char>(text[1]));
+        const bool hasText = std::any_of(text.begin(), text.end(), [](unsigned char c) { return std::isalnum(c); });
+        if (hasText && !frame)
+            last = text;
     }
-    return fatal.empty() ? last : fatal;
+    if (!fatal.empty())
+        return fatal;
+    if (fpe)
+        return "floating-point exception: the solution diverged" +
+               (time.empty() ? std::string() : " at iteration " + time) +
+               ". Check the mesh (log.checkMesh) and the model scale.";
+    return last;
 }
 
 /// Newest write time of the logs, or nullopt when there are none.
@@ -854,7 +910,11 @@ void RunManager::refresh(Run& run)
         s.state = RunState::Failed;
         const std::string step = status.size() > 7 ? status.substr(7) : std::string("unknown");
         const std::string log = stageLog(step);
-        s.message = "Step '" + step + "' failed (" + log + "): " + errorSummary(run.caseDir / log);
+        const std::string defects = step == "check" ? meshDefects(run.caseDir / log) : std::string();
+        s.message = !defects.empty()
+                        ? "The mesh has defects the solver cannot run on, so the solve was not started: " + defects +
+                              ". Check the model scale and the mesh refinement (" + log + ")."
+                        : "Step '" + step + "' failed (" + log + "): " + errorSummary(run.caseDir / log);
     } else if (cancelled) {
         s.state = processRunning ? RunState::Running : RunState::Cancelled;
         s.message = processRunning ? "Stopping..." : "Cancelled";
