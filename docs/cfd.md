@@ -19,9 +19,11 @@ panel in place of Properties:
   parts as surroundings, label) and **Run CFD**. The part's size is shown above the
   settings; a part under 20 mm or over 50 m gets a warning to check its units first (a
   model in metres read as millimetres is 1000 times too small). `simulation.propose_run`
-  and `simulation.run` return the same text in `warnings`. Below, all runs with state, progress,
-  Cd and drag; Cancel / delete; click a run to make it **A**, press **B** on another to
-  compare.
+  and `simulation.run` return the same text in `warnings`. Below, the runs of this design
+  (newest first) with state, progress, Cd and drag; Cancel / delete; click a run to make it
+  **A**, press **B** on another to compare. Runs whose part is not in the open design are
+  folded under *Runs from other designs (N)* (a run of another design that is A or B stays
+  shown); on first show A is the newest run of this design, never one of another design.
   While a new run is set up, the view shows the planned **wind tunnel** (dashed outline of
   the domain) and **arrows of the air** flowing onto the part, so a wrong flow direction is
   seen before the run; they follow the *Air flows* choice and the part.
