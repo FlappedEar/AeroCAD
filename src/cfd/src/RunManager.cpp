@@ -1268,6 +1268,16 @@ Json RunManager::results(const std::string& id, int maxPoints)
     const bool finalAvailable = reasons.empty();
     j["finalResults"] = {{"available", finalAvailable}, {"reasons", reasons}};
     j["provisional"] = !finalAvailable;
+    // While a run is still running, the same tail means over the iterations recorded so far
+    // (CAD-158), kept apart from `summary` so they never pass for final results or feed A/B.
+    j["current"] = nullptr;
+    if (!finalAvailable && st->state == RunState::Running && !coeffs.empty()) {
+        Json current = Json::object();
+        for (const char* key : resultKeys)
+            current[key] = j.at("summary").at(key);
+        current["iterations"] = coeffs.time.size();
+        j["current"] = current;
+    }
     if (!finalAvailable)
         for (const char* key : resultKeys)
             j["summary"][key] = nullptr;

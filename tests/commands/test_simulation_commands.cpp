@@ -303,6 +303,13 @@ TEST_CASE("simulation results require successful completion independently of out
     CHECK(result.data.at("history").at("iteration").size() == 20);
     CHECK(result.data.at("history").at("cd")[0] == 0.8);
     CHECK(result.data.at("provisional") == !finished);
+    // CAD-158: only a running run reports its current tail means, apart from the summary.
+    REQUIRE(result.data.at("current").is_object() == (state == "running"));
+    if (state == "running") {
+        CHECK(result.data.at("current").at("cd") == 0.8);
+        CHECK(result.data.at("current").at("dragN").is_number());
+        CHECK(result.data.at("current").at("iterations") == 20);
+    }
     // A partial run is excluded on either side, and two partial runs cannot validate each other.
     for (const auto& pair : {std::pair{a, b}, std::pair{b, a}, std::pair{a, a}}) {
         const auto comparison = session.execute("simulation.compare", {{"a", pair.first}, {"b", pair.second}});
