@@ -239,16 +239,38 @@ tunnel:
 | Turbulence | RANS k-omega SST, wall functions |
 | Mesh | `blockMesh` background (cubic cells) + `snappyHexMesh` on the part |
 | Domain | 3 L upstream, 8 L downstream, 2.5 L to the sides, above and below (L = largest part dimension) |
-| Boundaries | fixed velocity inlet, fixed pressure outlet, slip far field; optional floor, moving with the air (`groundMoving`, default) or fixed, just below the geometry or at `groundHeight` (mm, model Z) |
+| Boundaries | fixed velocity inlet, fixed pressure outlet, slip far field; optional floor, moving with the air (`groundMoving`, default) or fixed, just below the geometry or at `groundHeight` (mm, model Z); optional rotating wheels on the moving floor (`rotatingWheels`) |
 | Fluid | air: nu = 1.5e-5 m^2/s, rho = 1.205 kg/m^3 |
 | Inflow turbulence | intensity 1 %, nu_t/nu = 10: k = 1.5 (U I)^2, omega = k / (nu * 10) |
-| Stop | residuals p < 1e-4, U, k, omega < 1e-5, or the iteration limit |
+| Stop | residuals p < 1e-4, U, k, omega < 1e-5; or forces settled: after 100 iterations, the mean of Cd and Cl over the last 50 iterations stays within 5e-4 of its own 50-iteration mean (then residuals need only be below 1e-3); or the iteration limit |
 
 Mesh levels (cells per L in the background mesh / surface refinement levels /
-wake box level / prism layers): coarse 2 / 3-4 / 2 / 0, medium 3 / 4-5 / 3 / 2,
-fine 4 / 5-6 / 4 / 3. Default iteration limits 300 / 500 / 800. Coarse is meant for
+near box level / wake box level / prism layers): coarse 2 / 3-4 / 2 / 1 / 0,
+medium 3 / 4-5 / 3 / 2 / 2, fine 4 / 6-7 / 4 / 3 / 3. The near box holds the part with
+0.1 L around it, 0.15 L ahead and 0.75 L of wake; the wake box reaches 0.5 L around it
+and 3 L behind. Each level halves the cell size: on the fine mesh of a 1.1 m car the
+surface cells are 2.2 to 4.4 mm (CAD-153). Default iteration limits 300 / 500 / 800. Coarse is meant for
 quick A/B checks. The preset is checked against the Ahmed body experiments in
 [cfd-validation.md](cfd-validation.md).
+
+**Rotating wheels** (`rotatingWheels`, CAD-154). For a car on a moving floor, tick
+*Rotating wheels (on the floor)*. The wheels are found on the part itself:
+- Every place where the part rests on its lowest point (a tyre's contact patch) is a
+  candidate.
+- It is a wheel when the surface around it, in the same band across the car, lies on a
+  circle that stands on that point and goes most of the way round it (the tread).
+- The tyre's width is how far along the axle that tread continues.
+- Everything within the tyre's radius and width (tread, rim, hub) turns with it. One
+  patch is written per axle (`wheels0` at the front, `wheels1`, ...), each with a
+  `rotatingWallVelocity` about the axle at speed / radius, so the bottom of each tyre
+  moves with the floor.
+
+The floor is put 1.5 % of the tyre radius above the bottom of the tyres, so each tyre
+meets it in a small contact patch rather than along a line of degenerate cells. A floor
+height cannot be set together with rotating wheels. The forces and the pressure map
+include the wheels. Without the option, the floor lies 2 % of the part's length below
+its lowest point, so the air passes under the tyres. On Arek's F1 model all four wheels
+(radius 76 mm) are found, with their rims; the suspension stays still.
 
 **Units and axes.** The model is in millimetres, the case in metres (converted when the
 case is written). The flow direction is one of `+X`, `-X`, `+Y`, `-Y` in model axes

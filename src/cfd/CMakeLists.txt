@@ -7,6 +7,7 @@ add_library(aerocad_cfd STATIC
     src/Results.cpp
     src/Process.cpp
     src/RunManager.cpp
+    src/Wheels.cpp
 )
 add_library(AeroCAD::cfd ALIAS aerocad_cfd)
 target_include_directories(aerocad_cfd PUBLIC include)

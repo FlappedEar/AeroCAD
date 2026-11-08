@@ -1160,3 +1160,55 @@ TEST_CASE("Design commands: body.edges / body.faces before a feature see the rol
     CHECK(s.design().bodies().begin()->second.shape.volume() == Approx(24000 - 40 * 36 * (1 - pi / 4)).epsilon(1e-6));
     CHECK(s.design().marker() == s.design().features().size());
 }
+
+TEST_CASE("Design commands: timeline.move_feature reorders the timeline, refuses broken orders", "[commands][cad]")
+{
+    // CAD-160 (Fusion: drag a feature in the timeline).
+    commands::Session s;
+    const auto box = run(s, "feature.box", {{"corner", {0, 0, 0}}, {"size", {40, 30, 20}}}).at("id").get<std::uint64_t>();
+    const auto fillet = run(s, "feature.fillet",
+                            {{"body", box}, {"edges", Json::array({{{"point", {28, 0, 20}}}})}, {"radius", 4}})
+                            .at("id")
+                            .get<std::uint64_t>();
+    const auto other = run(s, "feature.box", {{"corner", {100, 0, 0}}, {"size", {10, 10, 10}}}).at("id").get<std::uint64_t>();
+    const auto order = [&] {
+        std::vector<std::uint64_t> ids;
+        const Json tl = run(s, "timeline.list");
+        for (const auto& f : tl.at("features"))
+            ids.push_back(f.at("id").get<std::uint64_t>());
+        return ids;
+    };
+    REQUIRE(order() == std::vector<std::uint64_t>{box, fillet, other});
+
+    // An independent body can go first; everything still works.
+    const Json moved = run(s, "timeline.move_feature", {{"id", other}, {"position", 0}});
+    CHECK(order() == std::vector<std::uint64_t>{other, box, fillet});
+    for (const auto& f : moved.at("features"))
+        CHECK(f.at("status").get<std::string>() == "ok");
+    CHECK(s.design().bodies().size() == 2);
+
+    // The fillet cannot go before the box it rounds: refused, nothing changes.
+    const commands::CommandResult bad = s.execute("timeline.move_feature", {{"id", fillet}, {"position", 0}});
+    CHECK_FALSE(bad.ok);
+    CHECK(bad.error.find("Cannot move it there") != std::string::npos);
+    CHECK(order() == std::vector<std::uint64_t>{other, box, fillet});
+    const double pi = std::numbers::pi;
+    CHECK(s.design().bodies().at(box).shape.volume() == Approx(24000 - 40 * 16 * (1 - pi / 4)).epsilon(1e-6));
+
+    // Across the marker: rolled back features stay rolled back, the moved one follows its side.
+    run(s, "timeline.set_marker", {{"position", 2}}); // other, box active; fillet rolled back
+    run(s, "timeline.move_feature", {{"id", other}, {"position", 2}});
+    CHECK(order() == std::vector<std::uint64_t>{box, fillet, other});
+    const Json tl = run(s, "timeline.list");
+    CHECK(tl.at("marker").get<std::size_t>() == 1);
+    CHECK(tl.at("features")[1].at("status").get<std::string>() == "rolled_back");
+    CHECK(tl.at("features")[2].at("status").get<std::string>() == "rolled_back");
+
+    // One undo step each.
+    run(s, "edit.undo");
+    CHECK(order() == std::vector<std::uint64_t>{other, box, fillet});
+    CHECK(run(s, "timeline.list").at("marker").get<std::size_t>() == 2);
+    run(s, "edit.undo"); // marker
+    run(s, "edit.undo"); // first move
+    CHECK(order() == std::vector<std::uint64_t>{box, fillet, other});
+}

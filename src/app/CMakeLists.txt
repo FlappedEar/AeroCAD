@@ -252,6 +252,16 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_drag_point.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_sketch_drag_point_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-160: dragging timeline chips reorders features, dragging the marker rolls back.
+    add_test(NAME app_timeline_reorder_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/timeline_reorder.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_timeline_reorder_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-161: Edit Profile Sketch in the timeline menu opens the extrude's sketch.
+    add_test(NAME app_timeline_profile_sketch_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/timeline_profile_sketch.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_timeline_profile_sketch_test PROPERTIES LABELS gui TIMEOUT 60)
     # CAD-131, CAD-132: the guide leads from an outline drawn on a scan to the part and to printing.
     add_test(NAME app_scan_to_part_next_steps_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl
@@ -471,6 +481,14 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/shell_closed.ui
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(app_shell_closed_test PROPERTIES LABELS gui TIMEOUT 60)
+    add_test(NAME app_press_pull_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/press_pull.ui
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(app_press_pull_test PROPERTIES LABELS gui TIMEOUT 60)
+    add_test(NAME app_transform_status_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/transform_status.ui
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(app_transform_status_test PROPERTIES LABELS gui TIMEOUT 60)
     add_test(NAME app_cfd_setup_preview_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/cfd_setup_preview.ui

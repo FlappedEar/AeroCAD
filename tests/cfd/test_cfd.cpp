@@ -4,12 +4,14 @@
 #include "aerocad/cfd/Results.hpp"
 #include "aerocad/cfd/RunManager.hpp"
 #include "aerocad/cfd/Settings.hpp"
+#include "aerocad/cfd/Wheels.hpp"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -71,6 +73,48 @@ core::TriangleMesh box(core::Vec3 origin, core::Vec3 size)
     for (const auto& t : f)
         m.addTriangle(static_cast<std::uint32_t>(t[0]), static_cast<std::uint32_t>(t[1]),
                       static_cast<std::uint32_t>(t[2]));
+    return m;
+}
+
+/// Tyre with its axle along Y and outward normals: the tread, plus side disks when closed.
+/// Each tread triangle spans the whole width, as in a coarse CAD export.
+core::TriangleMesh tyre(core::Vec3 centre, double radius, double width, bool closed = false, int segments = 64)
+{
+    core::TriangleMesh m;
+    const double pi = 3.14159265358979323846;
+    for (int i = 0; i < segments; ++i) {
+        const double a = 2 * pi * i / segments;
+        for (const double side : {-0.5, 0.5})
+            m.addVertex({centre.x + radius * std::cos(a), centre.y + side * width, centre.z + radius * std::sin(a)});
+    }
+    for (int i = 0; i < segments; ++i) {
+        const auto a0 = static_cast<std::uint32_t>(2 * i), b0 = a0 + 1;
+        const auto a1 = static_cast<std::uint32_t>(2 * ((i + 1) % segments)), b1 = a1 + 1;
+        m.addTriangle(a0, b0, b1);
+        m.addTriangle(a0, b1, a1);
+    }
+    if (closed) {
+        const auto lo = m.addVertex({centre.x, centre.y - 0.5 * width, centre.z});
+        const auto hi = m.addVertex({centre.x, centre.y + 0.5 * width, centre.z});
+        for (int i = 0; i < segments; ++i) {
+            const auto a0 = static_cast<std::uint32_t>(2 * i), a1 = static_cast<std::uint32_t>(2 * ((i + 1) % segments));
+            m.addTriangle(lo, a0, a1);
+            m.addTriangle(hi, a1 + 1, a0 + 1);
+        }
+    }
+    return m;
+}
+
+/// A 1000 mm car body on four tyres standing on Z = 0: front r 150 at X 200, rear r 160 at
+/// X 800, tyres 60 wide at Y = +-190, 10 off the body (mm, or metres with scale 0.001).
+core::TriangleMesh car(double scale = 1.0, bool closedTyres = false)
+{
+    core::TriangleMesh m = box({0, -150, 100}, {1000, 300, 200});
+    for (const double y : {-190.0, 190.0}) {
+        m.append(tyre({200, y, 150}, 150, 60, closedTyres));
+        m.append(tyre({800, y, 160}, 160, 60, closedTyres));
+    }
+    m.scale(scale, {0, 0, 0});
     return m;
 }
 
@@ -199,6 +243,89 @@ TEST_CASE("Frontal area of a box is its cross-section", "[cfd]")
     CHECK(cfd::frontalArea(mesh) == Approx(0.08 * 0.06).epsilon(0.01));
 }
 
+TEST_CASE("detectWheels finds the tyres a car stands on", "[cfd][wheels]")
+{
+    // CAD-154, case frame in metres.
+    const auto wheels = cfd::detectWheels(car(0.001), 1.0);
+    REQUIRE(wheels.size() == 4);
+    CHECK(wheels[0].axle == 0);
+    CHECK(wheels[1].axle == 0);
+    CHECK(wheels[2].axle == 1);
+    CHECK(wheels[3].axle == 1);
+    for (int i = 0; i < 4; ++i) {
+        INFO(i);
+        const double r = i < 2 ? 0.150 : 0.160;
+        CHECK(wheels[i].radius == Approx(r).margin(0.003));
+        CHECK(wheels[i].centre.x == Approx(i < 2 ? 0.2 : 0.8).margin(0.002));
+        CHECK(wheels[i].centre.z == Approx(r).margin(0.003));
+        CHECK(wheels[i].centre.y == Approx(i % 2 == 0 ? -0.19 : 0.19).margin(0.002));
+        CHECK(wheels[i].yMax - wheels[i].yMin == Approx(0.06).margin(0.004));
+    }
+    // A box has no wheels.
+    CHECK(cfd::detectWheels(box({0, 0, 0}, {1, 0.4, 0.3}), 1.0).empty());
+
+    const auto split = cfd::splitWheels(car(0.001), wheels);
+    REQUIRE(split.axles.size() == 2);
+    CHECK(split.body.triangleCount() == 12);
+    CHECK(split.axles[0].triangleCount() == 2 * 128);
+    CHECK(split.axles[1].triangleCount() == 2 * 128);
+
+    // Closed tyres: the side disks turn with the tread.
+    const auto closed = cfd::detectWheels(car(0.001, true), 1.0);
+    REQUIRE(closed.size() == 4);
+    for (const auto& w : closed)
+        CHECK(w.yMax - w.yMin == Approx(0.06).margin(0.004));
+    const auto closedSplit = cfd::splitWheels(car(0.001, true), closed);
+    REQUIRE(closedSplit.axles.size() == 2);
+    CHECK(closedSplit.body.triangleCount() == 12);
+    CHECK(closedSplit.axles[0].triangleCount() == 2 * 256);
+    CHECK(closedSplit.axles[1].triangleCount() == 2 * 256);
+}
+
+TEST_CASE("writeCase turns the wheels with the moving floor", "[cfd][wheels]")
+{
+    TempDir tmp;
+    cfd::CaseGeometry g;
+    g.part = car();
+    cfd::Settings s;
+    s.flowDirection = "+X";
+    s.speed = 30;
+    s.ground = true;
+    s.rotatingWheels = true;
+    const auto info = cfd::writeCase(tmp.path(), g, s);
+    REQUIRE(info.wheels.size() == 4);
+    // The floor cuts the tyres 1.5 % of the smaller radius above their bottom.
+    CHECK(info.domain.min.z == Approx(info.partBounds.min.z + 0.015 * info.wheels[0].radius).margin(1e-4));
+    CHECK(fs::is_regular_file(tmp.path() / "constant/triSurface/wheels0.stl"));
+    CHECK(fs::is_regular_file(tmp.path() / "constant/triSurface/wheels1.stl"));
+    const std::string u = slurp(tmp.path() / "0.orig/U");
+    CHECK(u.find("wheels0 { type rotatingWallVelocity; origin (") != std::string::npos);
+    CHECK(u.find("axis (0 -1 0); omega " + std::to_string(30 / info.wheels[0].radius).substr(0, 5)) !=
+          std::string::npos);
+    CHECK(u.find("wheels1 { type rotatingWallVelocity;") != std::string::npos);
+    const std::string control = slurp(tmp.path() / "system/controlDict");
+    CHECK(control.find("patches (part wheels0 wheels1);") != std::string::npos);
+    const std::string snappy = slurp(tmp.path() / "system/snappyHexMeshDict");
+    CHECK(snappy.find("wheels1.stl { type triSurfaceMesh; name wheels1; }") != std::string::npos);
+    CHECK(snappy.find("\"(part|wheels0|wheels1)\" { nSurfaceLayers") != std::string::npos);
+    CHECK(slurp(tmp.path() / "system/surfaceFeatureExtractDict").find("wheels0.stl") != std::string::npos);
+    const auto rt = cfd::CaseInfo::fromJson(nlohmann::json::parse(slurp(tmp.path() / "case.json")));
+    REQUIRE(rt.wheels.size() == 4);
+    CHECK(rt.wheels[3].radius == Approx(info.wheels[3].radius));
+
+    // Without a moving floor, a floor height, or wheels, it says what is wrong.
+    TempDir other;
+    cfd::Settings fixed = s;
+    fixed.groundMoving = false;
+    CHECK_THROWS_WITH(cfd::writeCase(other.path(), g, fixed), Catch::Matchers::ContainsSubstring("moving floor"));
+    cfd::Settings height = s;
+    height.groundHeight = -5.0;
+    CHECK_THROWS_WITH(cfd::writeCase(other.path(), g, height), Catch::Matchers::ContainsSubstring("floor height"));
+    cfd::CaseGeometry plain;
+    plain.part = box({0, 0, 0}, {1000, 400, 300});
+    CHECK_THROWS_WITH(cfd::writeCase(other.path(), plain, s), Catch::Matchers::ContainsSubstring("No wheels"));
+}
+
 TEST_CASE("writeCase writes a complete OpenFOAM case in SI units", "[cfd]")
 {
     TempDir tmp;
@@ -234,6 +361,9 @@ TEST_CASE("writeCase writes a complete OpenFOAM case in SI units", "[cfd]")
     CHECK(control.find("Aref " + std::to_string(info.referenceArea).substr(0, 5)) != std::string::npos);
     CHECK(control.find("magUInf $aerocadUInf") != std::string::npos);
     CHECK(control.find("patches (part)") != std::string::npos);
+    CHECK(control.find("type runTimeControl;") != std::string::npos); // CAD-155
+    CHECK(control.find("fields (CdMean ClMean);") != std::string::npos);
+    CHECK(control.find("satisfiedAction end;") != std::string::npos);
     // Section stacks for the result view (CAD-148): every plane, cropped to the region
     // around the part.
     for (const auto& stack : cfd::sectionStacks())
@@ -253,6 +383,24 @@ TEST_CASE("writeCase writes a complete OpenFOAM case in SI units", "[cfd]")
         CHECK(region.min.x == Approx(info.partBounds.min.x - 0.4 * L));
         CHECK(region.max.x == Approx(info.partBounds.max.x + 1.5 * L));
         CHECK(region.min.z == Approx(info.partBounds.min.z - 0.4 * L)); // No floor here.
+    }
+    {
+        // CAD-153: a near box around the part at the wake's old level, the far wake one
+        // level coarser; medium surface levels unchanged (default coarse mesh).
+        const std::string snappy = slurp(tmp.path() / "system/snappyHexMeshDict");
+        CHECK(snappy.find("near { type box; min (") != std::string::npos);
+        CHECK(snappy.find("near { mode inside; levels ((1e15 2)); }") != std::string::npos);
+        CHECK(snappy.find("wake { mode inside; levels ((1e15 1)); }") != std::string::npos);
+        CHECK(snappy.find("part { level (3 4);") != std::string::npos);
+        TempDir fineDir;
+        cfd::Settings fine = s;
+        fine.mesh = cfd::MeshLevel::Fine;
+        cfd::writeCase(fineDir.path(), g, fine);
+        const std::string fineSnappy = slurp(fineDir.path() / "system/snappyHexMeshDict");
+        CHECK(fineSnappy.find("part { level (6 7);") != std::string::npos);
+        CHECK(fineSnappy.find("{ file \"part.eMesh\"; level 7; }") != std::string::npos);
+        CHECK(fineSnappy.find("near { mode inside; levels ((1e15 4)); }") != std::string::npos);
+        CHECK(fineSnappy.find("wake { mode inside; levels ((1e15 3)); }") != std::string::npos);
     }
     CHECK(slurp(tmp.path() / "Allrun").find("runParallel simpleFoam") != std::string::npos);
     CHECK(slurp(tmp.path() / "Allrun").find("\"${WM_PROJECT_VERSION:-}\" > aerocad.engine") != std::string::npos); // CAD-84
@@ -684,6 +832,46 @@ TEST_CASE("Quality report accepts complete current evidence", "[cfd][quality]")
         CHECK(state == "passed");
     }
     CHECK(q.toJson().at("checks").at("convergence") == "passed");
+}
+
+TEST_CASE("Quality report accepts a run stopped because its forces settled", "[cfd][quality]")
+{
+    // CAD-155: runTimeControl forcesSettled ended the run; residuals then need only 1e-3.
+    TempDir tmp;
+    fakeFinishedRun(tmp.path(), 0.8, 1.0);
+    const auto residuals = tmp.path() / "postProcessing" / "solverInfo" / "0" / "solverInfo.dat";
+    write(tmp.path() / "log.simpleFoam",
+          "Exec   : simpleFoam\nDate   : fixture\nCreate time\n\nTime = 100\n"
+          "time step continuity errors : sum local = 1e-5, global = 1e-7\n"
+          "runTimeControl forcesSettled output:\n    runTimeControl: forces averages:\n"
+          "        CdMeanMean: 0.8, delta: 1e-05\n\n    average: forces condition satisfied\n"
+          "    Stopping calculation\n    Writing fields\nExecutionTime = 1 s  ClockTime = 1 s\nEnd\n");
+    SECTION("residuals below 1e-3")
+    {
+        write(residuals, "# Time Ux_initial Uy_initial Uz_initial p_initial k_initial omega_initial\n"
+                         "100 1e-5 1.2e-4 1e-4 2e-5 4e-6 2e-7\n");
+        const auto q = cfd::assessQuality(tmp.path());
+        CHECK(q.forcesSettled);
+        CHECK_FALSE(q.solverConverged);
+        CHECK(q.iterations == 100);
+        CHECK(q.status == "ok");
+        CHECK(q.checks.at("convergence") == "passed");
+        CHECK(q.checks.at("residual.Uy") == "passed");
+        CHECK(q.toJson().at("forcesSettled") == true);
+        CHECK(q.toJson().at("iterations") == 100);
+    }
+    SECTION("a residual above 1e-3")
+    {
+        write(residuals, "# Time Ux_initial Uy_initial Uz_initial p_initial k_initial omega_initial\n"
+                         "100 2e-4 3e-3 1e-4 2e-3 4e-6 2e-7\n");
+        const auto q = cfd::assessQuality(tmp.path());
+        CHECK(q.forcesSettled);
+        CHECK(q.status == "warning");
+        CHECK(q.checks.at("convergence") == "passed");
+        CHECK(q.checks.at("residual.Uy") == "failed");
+        CHECK(q.checks.at("residual.p") == "failed");
+        CHECK(q.checks.at("residual.Ux") == "passed");
+    }
 }
 
 TEST_CASE("Quality report requires complete current evidence", "[cfd][quality]")

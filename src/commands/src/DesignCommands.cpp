@@ -567,7 +567,7 @@ Json describeTopologyRefs(const cad::Design& d, const std::string& type, Json pa
 {
     if ((type == "fillet" || type == "chamfer") && params.contains("edges") && params.contains("body"))
         addTopologyHints(d, params["body"], params["edges"], true);
-    else if (type == "shell" && params.contains("faces") && params.contains("body"))
+    else if ((type == "shell" || type == "press_pull") && params.contains("faces") && params.contains("body"))
         addTopologyHints(d, params["body"], params["faces"], false);
     else if (type == "extrude" && params.contains("to") && params["to"].is_object() &&
              params["to"].contains("faces") && params["to"].contains("body"))
@@ -1283,6 +1283,14 @@ void registerFeatureCommands(CommandRegistry& r)
                        {"thickness", numberOrExpr("Wall thickness (mm).")}},
                       {"body", "thickness"});
 
+    addFeatureCommand(r, "press_pull", "Press Pull",
+                      "Moves flat faces of a body along their outward normal (Fusion: Press Pull, shortcut Q): a "
+                      "positive distance adds material, a negative one removes it. Curved faces are not supported.",
+                      {{"body", bodyRefSchema("Body.")},
+                       {"faces", topologyListSchema("face")},
+                       {"distance", numberOrExpr("Distance (mm) along the outward normal; negative pushes in.")}},
+                      {"body", "faces", "distance"});
+
     addFeatureCommand(
         r, "combine", "Combine",
         "Boolean between bodies (Fusion: Combine): joins, cuts or intersects the target with the tool bodies. A tool "
@@ -1426,6 +1434,23 @@ void registerFeatureCommands(CommandRegistry& r)
                   return Json{};
               });
               return addedFeature(design(ctx), ctx.document, id);
+          });
+
+    r.add({"timeline.move_feature", "Move Feature",
+           "Moves a feature to another place in the timeline (Fusion: drag a feature in the timeline); position is "
+           "its new index in timeline.list features. Refused, with the design unchanged, when a feature would then "
+           "fail (moved before something it uses, or after a feature that uses it).",
+           objectSchema({{"id", featureIdSchema("Feature id.")},
+                         {"position", {{"type", "integer"}, {"minimum", 0}, {"description", "New index in the timeline."}}}},
+                        {"id", "position"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              const auto id = design(ctx).owningFeature(params.at("id").get<cad::FeatureId>());
+              designChange(ctx, "Move Feature", [&](cad::Design& d) {
+                  d.moveFeature(id, params.at("position").get<std::size_t>());
+                  return Json{};
+              });
+              return timelineToJson(design(ctx), ctx.document);
           });
 
     r.add({"feature.delete", "Delete Feature",

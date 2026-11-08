@@ -18,7 +18,7 @@ use the same operations, and every change is one undo step.
 - **Operation** (extrude, revolve, box, cylinder): `new_body` (default), `join`, `cut`,
   `intersect`. join/cut/intersect act on `bodies`, or on every body the result touches.
 - **Edges and faces** are referenced by index (`body.edges`, `body.faces`) or, more robustly,
-  by a point: `{"point": [x, y, z]}`. Fillet, chamfer and shell store point references
+  by a point: `{"point": [x, y, z]}`. Fillet, chamfer, shell and press pull store point references
   with matching hints: the point relative to the body's bounding box (`relative`), the edge
   `direction` or face `normal`, and the `kind` (line, circle, plane, ...). Regeneration
   picks the edge/face that best matches them, so a picked corner edge follows the body
@@ -47,6 +47,9 @@ use the same operations, and every change is one undo step.
   In the UI: Combine, click the target, then click the tools (bodies, solids, a surface or
   the scan); with a scan or surface selected, "Cut a part to this shape" presets it as the tool.
 - **Marker**: `timeline.set_marker` rolls the model back; new features are inserted at it.
+- **Reorder**: `timeline.move_feature` (`id`, `position`) moves a feature in the timeline and
+  regenerates; it is refused, with nothing changed, when a feature that worked would fail in
+  the new order. A feature moved across the marker becomes rolled back or active.
 - **Steps built on a scan** (Part on surface, Fin on surface) are timeline features too: they
   read the scan or fitted surface from the document, so editing their thickness, or the sketch
   before them, rebuilds the part on the same scan; delete, suppress and roll back work as for
@@ -103,6 +106,7 @@ rebuilding, AeroCAD reports the problem; Undo restores the previous source.
 | `feature.fillet` | Fillet (F) | `edges`, `radius`; tangent chains are rounded with the picked edge |
 | `feature.chamfer` | Chamfer | `edges`, `type` equal_distance (default) / two_distances (`distance`, `distance2`) / distance_angle (`distance`, `angle`), `flip` swaps the first face |
 | `feature.shell` | Shell | `faces` to remove, `thickness` |
+| `feature.press_pull` | Press Pull (Q) | flat `faces`, `distance` along the outward normal (negative pushes in); curved faces are not supported yet |
 | `feature.hole` | Hole (H) | `point` on a planar face, `diameter`, `depth` or through all |
 | `feature.combine` | Combine, Split Body | `target`, `tools` (bodies, or imported parts `{part: id}`), join / cut / intersect, `keepTools`, `flip` |
 | `feature.box`, `feature.cylinder` | Box, Cylinder | primitives with an operation |
@@ -110,7 +114,7 @@ rebuilding, AeroCAD reports the problem; Undo restores the previous source.
 | `surface.part_from_sketch` → `part_on_surface` | (AeroCAD) Part on surface | timeline step built on a scan or fitted surface: `sketch`, `thickness`, `side`, `profiles`, `tolerance`, `id` (surface part, default: the one the sketch was drawn on) |
 | `surface.fin_from_sketch` → `fin_on_surface` | (AeroCAD) Fin on surface | timeline step: `sketch` (drawn across the surface), `thickness`, `rootFillet`, `count`, `spacing`, `mirror`, `mirrorPlane`; one body per fin |
 | `feature.edit` / `rename` / `suppress` / `delete` | timeline context menu | edit = JSON merge patch of params |
-| `timeline.list`, `timeline.set_marker` | timeline | |
+| `timeline.list`, `timeline.set_marker`, `timeline.move_feature` | timeline | |
 | `parameter.set` / `remove` | Change Parameters | |
 | `body.faces`, `body.edges` | | for picking by index or point; `point` adds the nearest edge / face (and the face normal there), `before` lists the body as it is before a feature (rolled back, as when editing it) |
 

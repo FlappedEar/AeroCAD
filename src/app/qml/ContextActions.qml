@@ -417,6 +417,10 @@ QtObject {
             return { id: id, text: qsTr("Bevel edges"), icon: "chamfer", enabled: editableSolid(info),
                      reason: qsTr("Only solids have edges to bevel."),
                      tip: qsTr("Chamfer: cuts the edges you click, at 45° or with two distances or an angle.") }
+        case "pressPull":
+            return { id: id, text: qsTr("Move faces"), icon: "extrude", enabled: editableSolid(info),
+                     reason: qsTr("Only solids have faces to move."),
+                     tip: qsTr("Press Pull: moves the flat faces you click in or out by a distance. Shortcut Q.") }
         case "shell":
             return { id: id, text: qsTr("Hollow out"), icon: "shell", enabled: editableSolid(info),
                      reason: qsTr("Only solids can be hollowed out."),
@@ -647,7 +651,7 @@ QtObject {
                               text: qsTr("Every visible solid gets its own STL for the printer and STEP for CAD, in a folder you choose. Hide what you do not want printed."),
                               actions: [a("exportForPrint")] }] }
         const change = { title: qsTr("Change the shape"), steps: [],
-                         actions: [a("editStep"), a("sketchOnFace"), a("fillet"), a("chamfer"), a("shell"), a("hole"), a("combine")] }
+                         actions: [a("editStep"), a("sketchOnFace"), a("pressPull"), a("fillet"), a("chamfer"), a("shell"), a("hole"), a("combine")] }
         return { title: roleName(r),
                  intro: onSurface ? qsTr("A solid made on the scan, as a step in the design timeline. Export it for printing, or keep shaping it; Edit step changes its outline or thickness.")
                       : editable ? qsTr("A solid in the design timeline. Add features to it; every step can be edited later in the timeline at the bottom.")
@@ -864,6 +868,7 @@ QtObject {
         case "fillet": return host.openFeature("fillet")
         case "chamfer": return host.openFeature("chamfer")
         case "shell": return host.openFeature("shell")
+        case "pressPull": return host.openFeature("press_pull")
         case "hole": return host.openFeature("hole")
         case "combine": return host.openFeature("combine")
         case "cutWithThis": return host.openFeature("combine")

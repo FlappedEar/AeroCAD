@@ -182,9 +182,15 @@ Pane {
         if (residuals.length > 0) {
             const fr = q.finalResiduals || {}
             const values = residuals.map(f => fr[f] !== undefined ? f + " " + Number(fr[f]).toExponential(1) : f)
-            lines.unshift({ text: qsTr("Not converged to the preset targets (1e-5, p 1e-4); final residuals %1").arg(values.join(", ")),
+            lines.unshift({ text: q.forcesSettled
+                                  ? qsTr("Forces settled, but residuals are above 1e-3: %1").arg(values.join(", "))
+                                  : qsTr("Not converged to the preset targets (1e-5, p 1e-4); final residuals %1").arg(values.join(", ")),
                             ok: false })
         }
+        // CAD-155: the solver stopped early because Cd and Cl no longer changed.
+        if (q.forcesSettled)
+            lines.push({ text: q.iterations ? qsTr("Stopped after %1 iterations: Cd and Cl have settled").arg(q.iterations)
+                                            : qsTr("Stopped early: Cd and Cl have settled"), ok: true })
         if (q.checks && q.checks.forceStability === "passed" && q.cdFluctuation !== undefined)
             lines.push({ text: qsTr("Cd is steady: it changes %1 % over the last 20 % of the iterations")
                                    .arg(root.num(100 * q.cdFluctuation, 2)), ok: true })
@@ -547,6 +553,7 @@ Pane {
             meshBox.currentIndex = mesh
         groundBox.checked = !!st.ground
         groundFixed = !!st.ground && st.groundMoving === false
+        wheelsBox.checked = !!st.ground && !!st.rotatingWheels
         floorField.text = st.ground && st.groundHeight !== null && st.groundHeight !== undefined ? String(st.groundHeight) : ""
         const extra = {}
         for (const key of ["preset", "density", "kinematicViscosity", "turbulenceIntensity", "viscosityRatio",
@@ -576,8 +583,11 @@ Pane {
         })
         if (groundBox.checked && groundFixed)
             params.groundMoving = false
+        // CAD-154: the tyres stand on the moving floor and turn with it.
+        if (groundBox.checked && wheelsBox.checked)
+            params.rotatingWheels = true
         // The road under a part mounted on a car (CAD-147); empty = just below the parts.
-        if (groundBox.checked && floorField.text.trim().length > 0)
+        if (groundBox.checked && !wheelsBox.checked && floorField.text.trim().length > 0)
             params.groundHeight = Number(floorField.text.replace(",", "."))
         if (contextBox.checked && copiedContext) {
             // The copied run's own surroundings, not whatever is visible now (CAD-162).
@@ -999,13 +1009,25 @@ Pane {
                                                : qsTr("Moving floor under the geometry")
                         onToggled: { root.groundFixed = false; proposalTimer.restart() }
                     }
+                    // A car (CAD-154): its wheels found on the part's bottom stand on the floor and turn.
+                    CheckBox {
+                        id: wheelsBox
+                        objectName: "cfdRotatingWheels"
+                        Layout.columnSpan: 2
+                        Layout.leftMargin: 24
+                        visible: groundBox.checked
+                        text: qsTr("Rotating wheels (on the floor)")
+                        onToggled: proposalTimer.restart()
+                        ToolTip.visible: hovered
+                        ToolTip.text: qsTr("For a car: the wheels standing on its bottom are found, the floor touches the tyres and they turn with it.")
+                    }
                     // Where the road is (CAD-147): a part mounted on a car sits well above it.
-                    Label { text: qsTr("Floor at Z (mm)"); opacity: 0.7; visible: groundBox.checked }
+                    Label { text: qsTr("Floor at Z (mm)"); opacity: 0.7; visible: groundBox.checked && !wheelsBox.checked }
                     TextField {
                         id: floorField
                         objectName: "cfdFloorField"
                         Layout.fillWidth: true
-                        visible: groundBox.checked
+                        visible: groundBox.checked && !wheelsBox.checked
                         placeholderText: qsTr("just below the parts")
                         validator: RegularExpressionValidator { regularExpression: /^-?\d*([.,]\d*)?$/ }
                         onTextEdited: proposalTimer.restart()
@@ -1013,7 +1035,7 @@ Pane {
                     Label {
                         Layout.columnSpan: 2
                         Layout.fillWidth: true
-                        visible: groundBox.checked
+                        visible: groundBox.checked && !wheelsBox.checked
                         text: qsTr("Where the road is. Empty puts it just below the parts; for a part on a car, give the road's Z so the gap is as on the car.")
                         color: Theme.textMuted
                         wrapMode: Text.WordWrap
@@ -1316,7 +1338,9 @@ Pane {
                             return ""
                         const conditions = qsTr("%1 m/s, flow %2, %3 mesh%4 · Aref %5 cm² · OpenFOAM %6")
                             .arg(c.settings.speed).arg(c.settings.flowDirection).arg(c.settings.mesh)
-                            .arg(!c.settings.ground ? "" : c.settings.groundMoving === false ? qsTr(", fixed floor") : qsTr(", moving floor"))
+                            .arg(!c.settings.ground ? "" : c.settings.groundMoving === false ? qsTr(", fixed floor")
+                                 : c.settings.rotatingWheels ? qsTr(", moving floor, %n rotating wheel(s)", "", (c.wheels || []).length)
+                                 : qsTr(", moving floor"))
                             .arg(root.num(c.referenceArea * 1e4, 1)).arg(c.openfoam)
                         return conditions + (root.results.provisional
                             ? qsTr(" · %1 recorded iterations; provisional data")

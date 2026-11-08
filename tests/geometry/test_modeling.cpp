@@ -248,6 +248,35 @@ TEST_CASE("Shell a box", "[geometry][modeling]")
     CHECK(s.volume() == Approx(1000 - 8 * 8 * 9).epsilon(1e-6));
 }
 
+TEST_CASE("Press Pull moves flat faces in and out", "[geometry][modeling]")
+{
+    const auto box = makeBox(10, 10, 10);
+    std::size_t top = 0, side = 0;
+    for (const auto& f : faces(box)) {
+        if (f.normal.z > 0.9)
+            top = f.index;
+        if (f.normal.x > 0.9)
+            side = f.index;
+    }
+    const auto pulled = pressPull(box, {top}, 5.0);
+    CHECK(isValid(pulled));
+    CHECK(pulled.volume() == Approx(1500).epsilon(1e-6));
+    CHECK(faces(pulled).size() == 6); // still a box: the new sides merge with the old ones
+    const auto pushed = pressPull(box, {top}, -3.0);
+    CHECK(pushed.volume() == Approx(700).epsilon(1e-6));
+    const auto both = pressPull(box, {top, side}, 2.0);
+    CHECK(both.volume() == Approx(1000 + 200 + 200).epsilon(1e-6));
+    CHECK_THROWS_AS(pressPull(box, {top}, -10.0), ModelingError);
+    CHECK_THROWS_AS(pressPull(box, {top}, 0.0), ModelingError);
+    CHECK_THROWS_AS(pressPull(box, {}, 1.0), ModelingError);
+    const auto cyl = makeCylinder(5, 10);
+    std::size_t round = 0;
+    for (const auto& f : faces(cyl))
+        if (f.type != "plane")
+            round = f.index;
+    CHECK_THROWS_AS(pressPull(cyl, {round}, 1.0), ModelingError);
+}
+
 TEST_CASE("Shell with no open face hollows the solid", "[geometry][modeling]")
 {
     // Fusion's closed shell: the outside stays, a cavity of 1 mm walls is inside.

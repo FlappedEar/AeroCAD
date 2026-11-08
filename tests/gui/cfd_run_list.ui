@@ -25,4 +25,6 @@ ui.clickText("other design · " + simulationPanel.otherRuns[0].source.partName)
 ui.shot("cfd-run-list.png")
 # CAD-149: a running run says how long it has run and at most how long is left.
 (() => { const t = simulationPanel.timeText({ state: "running", elapsedSeconds: 380, remainingSeconds: 6861 }); ui.log("time: " + t); if (t !== "6 min so far, at most 1 h 54 min left") ui.fail("time text: " + t); if (simulationPanel.timeText({ state: "running", elapsedSeconds: 45, remainingSeconds: null }) !== "45 s so far") ui.fail("elapsed only"); if (simulationPanel.timeText({ state: "finished", elapsedSeconds: 45 }) !== "") ui.fail("a finished run has no running time") })()
+# CAD-155: a run stopped because its forces settled says so; residuals above 1e-3 are named.
+(() => { const l = simulationPanel.qualityLines({ forcesSettled: true, iterations: 179, warnings: ["Uy: residual has not reached the preset target 1e-3"], finalResiduals: { Uy: 3e-3 }, checks: {} }); ui.log("SETTLED " + JSON.stringify(l)); if (!l.some(x => x.ok && x.text === "Stopped after 179 iterations: Cd and Cl have settled")) ui.fail("settled line"); if (!l.some(x => !x.ok && x.text.indexOf("Forces settled, but residuals are above 1e-3: Uy 3.0e-3") === 0)) ui.fail("residual line of a settled run") })()
 ui.log("cfd run list done")
