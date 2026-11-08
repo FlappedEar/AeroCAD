@@ -3,7 +3,9 @@
 #    "Isolated: ..."; a part hidden by hand before stays hidden after Unisolate;
 #  - Exit in the Browser bar shows the other parts again;
 #  - the right-click menu of the isolated part offers Unisolate; Ctrl+Z after Isolate ends
-#    isolation (the bar goes away).
+#    isolation (the bar goes away), Ctrl+Y brings it back with its Exit button, and Ctrl+Z
+#    after Unisolate does too;
+#  - hiding the isolated part (V) keeps the bar, so Exit can still show the parts it hid.
 # Run: AeroCAD --ui-script <this file>
 Qt.createQmlObject('import QtQuick; Item { objectName: "isoTest"; visible: false; property var s: ({}); function find(i, name) { if (!i) return null; if (i.objectName === name) return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = find(ch[k], name); if (r) return r } return null } function vis() { return s.ids.map(id => controller.partInfo(id).visible) } function rightClickRow(id) { const r = browser.rowItem(id); const p = r.mapToItem(null, r.width / 3, r.height / 2); ui.click(p.x, p.y, "right") } function check(label, want, bar) { const v = vis(); const b = find(browser, "isolationBar"); ui.log(label + ": visible " + v.join(",") + ", bar " + b.visible); if (v.join() !== want.join()) ui.fail(label + ": visible " + v.join() + ", expected " + want.join()); if (b.visible !== bar) ui.fail(label + ": isolation bar shown " + b.visible) } }', window.contentItem)
 ui.wait(800)
@@ -36,3 +38,27 @@ ui.wait(300)
 ui.key("Z", "ctrl")
 ui.wait(300)
 (() => { Array.from(window.contentItem.children).find(c => c.objectName === "isoTest").check("Ctrl+Z", [true, true, true, false], false) })()
+ui.key("Y", "ctrl")
+ui.wait(300)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "isoTest").check("Ctrl+Y redoes Isolate", [false, false, true, false], true) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "isoTest"); const b = t.find(browser, "exitIsolation"); const p = b.mapToItem(null, b.width / 2, b.height / 2); ui.click(p.x, p.y) })()
+ui.wait(300)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "isoTest").check("Exit after redo", [true, true, true, false], false) })()
+ui.key("Z", "ctrl")
+ui.wait(300)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "isoTest").check("Ctrl+Z after Unisolate", [false, false, true, false], true) })()
+(() => { if (!unisolateAction.enabled) ui.fail("View > Unisolate disabled after undoing Unisolate"); unisolateAction.trigger() })()
+ui.wait(300)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "isoTest").check("View > Unisolate", [true, true, true, false], false) })()
+# Hiding the isolated part keeps a way back to the parts Isolate hid.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "isoTest"); window.selectPart(t.s.ids[1]); isolateAction.trigger() })()
+ui.wait(300)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "isoTest").check("Isolate again", [false, true, false, false], true) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "isoTest"); const r = browser.rowItem(t.s.ids[1]); const p = r.mapToItem(null, r.width / 3, r.height / 2); ui.click(p.x, p.y) })()
+ui.wait(200)
+ui.key("V")
+ui.wait(300)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "isoTest").check("V on the isolated part", [false, false, false, false], true) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "isoTest"); const b = t.find(browser, "exitIsolation"); const p = b.mapToItem(null, b.width / 2, b.height / 2); ui.click(p.x, p.y) })()
+ui.wait(300)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "isoTest").check("Exit after hiding it", [true, false, true, false], false) })()
