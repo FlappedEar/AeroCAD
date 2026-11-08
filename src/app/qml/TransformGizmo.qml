@@ -33,6 +33,7 @@ Item {
     // grabbed; pointer motion along it turns the ring, so the grabbed point follows.
     property point _tangent
     property real _pxPerRadian: 0
+    property real _grabT: 0 // where on the ring the grabbed point is now (radians)
 
     visible: active
     opacity: viewport.transformPickMode !== "" ? 0.3 : 1
@@ -133,14 +134,46 @@ Item {
         }
         if (best < 0)
             best = Math.atan2(p.y - g.c.y, p.x - g.c.x) // not on the ring: any tangent will do
+        ringTangent(i, best)
+    }
+
+    /// Ring angle near t (within half a radian) closest to the pointer at p when p is on the
+    /// ring, else t: on a ring seen at a slant the grabbed point can fall behind the pointer
+    /// where the ring is seen edge-on, and its tangent there would point the wrong way.
+    function followRing(i, t, p) {
+        const c3 = center()
+        const r = layout().len * 0.72
+        const u = axes[(i + 1) % 3], v = axes[(i + 2) % 3]
+        let best = t, bestD = 12
+        for (let k = -16; k <= 16; ++k) {
+            const a = t + k / 32
+            const q = viewport.modelToScreen(c3.plus(u.times(Math.cos(a) * r)).plus(v.times(Math.sin(a) * r)))
+            const d = Math.hypot(q.x - p.x, q.y - p.y)
+            if (d < bestD) {
+                best = a
+                bestD = d
+            }
+        }
+        return best
+    }
+
+    /// The ring's screen tangent at ring angle t (sets _grabT, _tangent, _pxPerRadian).
+    function ringTangent(i, t) {
+        const c3 = center()
+        const g = layout()
+        const r = g.len * 0.72
+        const u = axes[(i + 1) % 3], v = axes[(i + 2) % 3]
+        const at = a => c3.plus(u.times(Math.cos(a) * r)).plus(v.times(Math.sin(a) * r))
+        _grabT = t
         // d(screen)/d(angle), right-hand about axis i (u x v = axis i).
         const e = 1e-3
-        const q0 = viewport.modelToScreen(at(best - e)), q1 = viewport.modelToScreen(at(best + e))
+        const q0 = viewport.modelToScreen(at(t - e)), q1 = viewport.modelToScreen(at(t + e))
         const tx = (q1.x - q0.x) / (2 * e), ty = (q1.y - q0.y) / (2 * e)
         const len = Math.hypot(tx, ty)
         const screenR = Math.max(1, arrowLength * 0.72)
         if (len < 1e-6) {
-            _pxPerRadian = 0
+            if (!dragging) // mid-drag: keep the last tangent
+                _pxPerRadian = 0
             return
         }
         _tangent = Qt.point(tx / len, ty / len)
@@ -181,8 +214,12 @@ Item {
             if (_pxPerRadian > 0) {
                 // Pointer motion along the ring where it was grabbed (Fusion: the grabbed
                 // point follows the pointer, whatever the angle the ring is seen at).
+                // The grabbed point moves round the ring with the turn, so its tangent is
+                // taken again each step: a drag round the ring keeps turning the same way.
                 const along = (p.x - _last.x) * _tangent.x + (p.y - _last.y) * _tangent.y
-                _accum += along / _pxPerRadian * 180 / Math.PI
+                const d = along / _pxPerRadian
+                _accum += d * 180 / Math.PI
+                ringTangent(i, followRing(i, _grabT + d, p))
             } else {
                 // Ring seen exactly edge-on where grabbed: turn with the angle about the centre.
                 const a0 = Math.atan2(_last.y - g.c.y, _last.x - g.c.x)
