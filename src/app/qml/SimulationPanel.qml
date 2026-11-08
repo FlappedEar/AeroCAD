@@ -506,6 +506,32 @@ Pane {
     }
 
     /// Settings of a new run as they stand in the panel (simulation.run / propose_run).
+    /// A floor copied from a run with a fixed (not moving) floor (CAD-162); the form has no
+    /// control for it, so it is kept until the floor box is changed.
+    property bool groundFixed: false
+    /// Fill the New run form with the conditions of run `id` (CAD-162), so a variant B is
+    /// run exactly as A was. Returns false when the run's conditions are not known.
+    function useSettingsOf(id) {
+        const r = controller.execute("simulation.results", { run: id, maxPoints: 2 })
+        if (!r.ok || !r.result.conditions)
+            return false
+        const st = r.result.conditions.settings
+        speedField.text = String(st.speed)
+        const flow = flowBox.indexOfValue(st.flowDirection)
+        if (flow >= 0)
+            flowBox.currentIndex = flow
+        const mesh = meshBox.indexOfValue(st.mesh)
+        if (mesh >= 0)
+            meshBox.currentIndex = mesh
+        groundBox.checked = !!st.ground
+        groundFixed = !!st.ground && st.groundMoving === false
+        floorField.text = st.ground && st.groundHeight !== null && st.groundHeight !== undefined ? String(st.groundHeight) : ""
+        const run = runs.find(x => x.id === id)
+        contextBox.checked = !!run && !!run.source && (run.source.contextPartIds || []).length > 0
+        proposalTimer.restart()
+        return true
+    }
+
     function runParams() {
         const params = {
             id: partInfo.id,
@@ -514,6 +540,8 @@ Pane {
             mesh: meshBox.currentValue,
             ground: groundBox.checked
         }
+        if (groundBox.checked && groundFixed)
+            params.groundMoving = false
         // The road under a part mounted on a car (CAD-147); empty = just below the parts.
         if (groundBox.checked && floorField.text.trim().length > 0)
             params.groundHeight = Number(floorField.text.replace(",", "."))
@@ -832,6 +860,17 @@ Pane {
                     anchors.fill: parent
                     columns: 2
                     columnSpacing: 8
+                    // A variant B runs under A's conditions with one click (CAD-162).
+                    Button {
+                        objectName: "cfdUseSettingsOfA"
+                        Layout.columnSpan: 2
+                        Layout.fillWidth: true
+                        visible: !!root.activeRun
+                        text: qsTr("Use the settings of %1").arg(root.activeRun ? root.runTitle(root.activeRun, "") : "A")
+                        ToolTip.visible: hovered
+                        ToolTip.text: qsTr("Speed, flow direction, mesh, floor and surroundings of the selected run (A), so a variant can be compared with it")
+                        onClicked: root.useSettingsOf(root.activeRun)
+                    }
                     Label { text: qsTr("Part"); opacity: 0.7 }
                     Label {
                         Layout.fillWidth: true
@@ -911,9 +950,11 @@ Pane {
                     TextField { id: labelField; Layout.fillWidth: true; placeholderText: qsTr("e.g. v2, long splitter") }
                     CheckBox {
                         id: groundBox
+                        objectName: "cfdGroundBox"
                         Layout.columnSpan: 2
-                        text: qsTr("Moving floor under the geometry")
-                        onToggled: proposalTimer.restart()
+                        text: root.groundFixed ? qsTr("Fixed floor under the geometry (as in A)")
+                                               : qsTr("Moving floor under the geometry")
+                        onToggled: { root.groundFixed = false; proposalTimer.restart() }
                     }
                     // Where the road is (CAD-147): a part mounted on a car sits well above it.
                     Label { text: qsTr("Floor at Z (mm)"); opacity: 0.7; visible: groundBox.checked }
