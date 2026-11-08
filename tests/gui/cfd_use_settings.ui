@@ -17,6 +17,12 @@ ui.wait(600)
 (() => { const p = simulationPanel.runParams(); ui.log("PARAMS " + JSON.stringify(p)); if (p.speed !== 35 || p.flowDirection !== "+X" || p.mesh !== "medium" || p.ground !== true || p.groundHeight !== -40 || p.groundMoving !== false || p.density !== 1.1 || p.turbulenceIntensity !== 0.05) ui.fail("settings of A not copied: " + JSON.stringify(p)); if (!p.context || p.context.length !== 1) ui.fail("A's surroundings (one part), not every visible part: " + JSON.stringify(p.context)) })()
 (() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const g = t.find(simulationPanel, "cfdGroundBox"); if (g.text !== "Fixed floor under the geometry (as in A)") ui.fail("floor box text: " + g.text) })()
 ui.shot("cfd-use-settings.png")
+# Rotating wheels need a moving floor: ticking them drops the copied fixed floor.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const w = t.find(simulationPanel, "cfdRotatingWheels"); const p = w.mapToItem(null, 12, w.height / 2); ui.click(p.x, p.y) })()
+ui.wait(300)
+(() => { const p = simulationPanel.runParams(); if (p.rotatingWheels !== true || p.groundMoving !== undefined) ui.fail("wheels with the copied fixed floor: " + JSON.stringify(p)) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const w = t.find(simulationPanel, "cfdRotatingWheels"); const p = w.mapToItem(null, 12, w.height / 2); ui.click(p.x, p.y) })()
+ui.wait(300)
 # A's support removed from the design: said, not silently replaced by the visible parts.
 (() => { const r = simulationPanel.runs.find(x => x.source.label === "A run"); controller.execute("part.remove", { id: r.source.contextPartIds[0] }) })()
 ui.wait(300)

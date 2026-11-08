@@ -1017,7 +1017,8 @@ Pane {
                         Layout.leftMargin: 24
                         visible: groundBox.checked
                         text: qsTr("Rotating wheels (on the floor)")
-                        onToggled: proposalTimer.restart()
+                        // Rotating wheels need a moving floor: a fixed floor copied from A is dropped.
+                        onToggled: { if (checked) root.groundFixed = false; proposalTimer.restart() }
                         ToolTip.visible: hovered
                         ToolTip.text: qsTr("For a car: the wheels standing on its bottom are found, the floor touches the tyres and they turn with it.")
                     }
