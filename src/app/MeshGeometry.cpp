@@ -2,6 +2,7 @@
 #include "MeshGeometry.hpp"
 
 #include "AppController.hpp"
+#include "aerocad/core/MeshSimplify.hpp"
 #include "ScanController.hpp"
 
 #include <QByteArray>
@@ -89,7 +90,22 @@ void MeshGeometry::rebuild()
         *out++ = static_cast<float>(n.z);
     };
 
-    if (part->shape) {
+    // A scan drawn simplified (display level of detail) is drawn smooth, see below.
+    const bool simplified = !part->shape && display != part->mesh;
+    if (simplified) {
+        // Its vertices are averages over the cells of a grid, so flat normals show bands
+        // where the surface crosses a grid plane (lines that are not on the scan); averaged
+        // normals draw it as the full scan looks (core::smoothCornerNormals).
+        const std::vector<core::Vec3> normals = core::smoothCornerNormals(mesh);
+        const qsizetype vertexCount = static_cast<qsizetype>(mesh.triangleCount()) * 3;
+        QByteArray buffer(vertexCount * floatsPerVertex * static_cast<qsizetype>(sizeof(float)), Qt::Uninitialized);
+        auto* out = reinterpret_cast<float*>(buffer.data());
+        std::size_t corner = 0;
+        for (const auto& tri : mesh.triangles())
+            for (const std::uint32_t vi : tri)
+                put(out, vertices[vi], normals[corner++]);
+        setVertexData(buffer);
+    } else if (part->shape) {
         // Tessellated B-rep: vertices are shared only within a face, so averaged vertex
         // normals give smooth curved faces and keep edges between faces sharp.
         std::vector<core::Vec3> normals(vertices.size());

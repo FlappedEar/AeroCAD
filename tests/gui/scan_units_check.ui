@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CAD-140: a scan saved in metres comes in a thousand times too small. Its guide starts with
+# "Check the size", whose button converts it from metres; a scan of plausible size has no
+# such step.
+ui.wait(1200)
+(() => { const p = controller.execute("document.parts").result.parts[0]; window.selectPart(p.id); if (contextActions.guide(window.selectionInfo).sections[0].title === "Check the size") ui.fail("size check on a plausible scan") })()
+# Make it the size it has when the file was saved in metres.
+(() => { const p = controller.execute("document.parts").result.parts[0]; const r = controller.execute("part.convert_units", { id: p.id, from: "mm", to: "m" }); if (!r.ok) ui.fail(r.error) })()
+ui.wait(500)
+(() => { const g = contextActions.guide(window.selectionInfo); ui.log("SECTION " + g.sections[0].title + ": " + g.sections[0].steps[0].title); if (g.sections[0].title !== "Check the size") ui.fail("no size check for a scan in metres"); const n = contextActions.nextAction(window.selectionInfo); if (!n || n.id !== "convertUnits" || n.text.indexOf("metres") < 0) ui.fail("converting from metres is not the next step") })()
+ui.shot("scan-units-check.png")
+ui.clickText("It is in metres (×1000)")
+ui.wait(800)
+(() => { const info = window.selectionInfo; ui.log("SIZE " + info.sizeX); if (Math.abs(info.sizeX - 234) > 1) ui.fail("not converted back to millimetres: " + info.sizeX); if (contextActions.guide(info).sections[0].title === "Check the size") ui.fail("size check still shown after converting") })()
+ui.log("scan units check done")

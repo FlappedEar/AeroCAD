@@ -159,6 +159,31 @@ QtObject {
         return r.ok ? (r.result.features.find(f => f.id === featureId) ?? null) : null
     }
 
+    /// The plausible longest side of a scan in mm, as for the wind tunnel (cfd::partSizeWarning).
+    readonly property real minPlausibleSize: 20
+    readonly property real maxPlausibleSize: 50000
+
+    /// The unit a scan of implausible size (`length`, its longest side in mm) was most likely
+    /// saved in: { unit, factor, label }, or null when its size is plausible (CAD-140).
+    function likelyUnit(length) {
+        if (!(length > 0) || (length >= minPlausibleSize && length <= maxPlausibleSize))
+            return null
+        const units = [{ unit: "m", factor: 1000, label: qsTr("metres") },
+                       { unit: "in", factor: 25.4, label: qsTr("inches") },
+                       { unit: "cm", factor: 10, label: qsTr("centimetres") },
+                       { unit: "um", factor: 0.001, label: qsTr("micrometres") }]
+        // The unit that makes it 0.1 to 10 m long, the size of car parts; metres first.
+        return units.find(u => length * u.factor >= 100 && length * u.factor <= 10000) ?? null
+    }
+
+    function _longest(info) {
+        return Math.max(info.sizeX ?? 0, info.sizeY ?? 0, info.sizeZ ?? 0)
+    }
+
+    function _mm(v) {
+        return Number(v).toLocaleString(Qt.locale(), "f", v < 10 ? 3 : 0)
+    }
+
     /// True for a surface piece made by "Cut out by sketch" (its next step is Thicken).
     function isCutOut(info) {
         return String(info.source ?? "").startsWith("surface.trim_by_sketch")
@@ -266,6 +291,16 @@ QtObject {
         case "scale":
             return { id: id, text: qsTr("Scale"), icon: "scale", enabled: true,
                      tip: qsTr("Makes the part bigger or smaller, e.g. when a scan came in the wrong unit: drag the middle square or type a percentage (1000 % turns cm into mm).") }
+
+        case "convertUnits": {
+            const u = likelyUnit(_longest(info))
+            return { id: id, text: u ? qsTr("It is in %1 (×%2)").arg(u.label).arg(u.factor) : qsTr("Convert units"),
+                     icon: "scale", enabled: !!u, primary: !!u,
+                     reason: qsTr("The size looks right."),
+                     tip: u ? qsTr("Scales the scan from %1 to millimetres: it becomes %2 mm long. Undo puts it back.")
+                                  .arg(u.label).arg(_mm(_longest(info) * u.factor))
+                            : "" }
+        }
 
         // Surface
         case "sketchOnSurface":
@@ -480,9 +515,21 @@ QtObject {
             // Outlines already drawn on this scan finish step 1 and give step 2 its button (CAD-132).
             const partSketch = scanSketches(info, false).length > 0
             const finSketch = scanSketches(info, true).length > 0
+            // A scan of implausible size was saved in another unit: fix that first (CAD-140).
+            const length = _longest(info)
+            const unit = likelyUnit(length)
+            const units = length > 0 && (length < minPlausibleSize || length > maxPlausibleSize)
+                ? [{ title: qsTr("Check the size"), steps: [
+                         { title: length < minPlausibleSize ? qsTr("The scan is only %1 mm long").arg(_mm(length))
+                                                            : qsTr("The scan is %1 m long").arg(_mm(length / 1000)),
+                           done: false,
+                           text: unit ? qsTr("STL, OBJ and PLY files carry no unit. This one was most likely saved in %1: convert it before designing, or parts and thicknesses come out at the wrong scale.").arg(unit.label)
+                                      : qsTr("STL, OBJ and PLY files carry no unit. Scale it to its real size before designing (Scale, or Scan Tools > This part is in)."),
+                           actions: unit ? [a("convertUnits"), a("scale")] : [a("scale")] }] }]
+                : []
             return { title: roleName(r),
                      intro: qsTr("A scan is made of many small triangles. To design on it, draw the outline of the new part on the scan, or turn an area into a smooth surface first."),
-                     sections: [
+                     sections: [...units,
                          { title: qsTr("Part on the scan (e.g. an aileron)"), steps: [
                                { title: qsTr("Draw the outline on the scan"), done: partSketch,
                                  text: partSketch ? qsTr("An outline is drawn on the scan. Draw another one for a second part.")
@@ -741,6 +788,18 @@ QtObject {
         case "repair": return controller.execute("mesh.repair", { id: pid })
         case "simplify": return controller.execute("mesh.decimate", { id: pid, targetTriangles: Math.max(4, Math.round(v.targetTriangles)) })
         case "scale": return host.startTransform(pid)
+        case "convertUnits": {
+            const u = likelyUnit(_longest(info))
+            if (!u)
+                return null
+            const r = controller.execute("part.convert_units", { id: pid, from: u.unit, to: "mm" })
+            if (r.ok) {
+                host.zoomToPart(pid)
+                controller.showStatus(qsTr("\"%1\" converted from %2 to millimetres: now %3 mm long.")
+                                      .arg(info.name).arg(u.label).arg(_mm(_longest(controller.partInfo(pid)))))
+            }
+            return r
+        }
         case "trim": {
             const r = controller.execute("surface.trim_by_sketch", { id: pid, sketch: v.sketch, keep: v.keep || "inside" })
             _hideSource(r, pid)
