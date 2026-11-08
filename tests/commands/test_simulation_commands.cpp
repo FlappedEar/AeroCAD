@@ -629,9 +629,14 @@ TEST_CASE("A run warns about a part that is not closed (CAD-145)", "[commands][s
                 .execute("feature.fillet",
                          {{"body", bodyId}, {"edges", Json::array({{{"point", {30, 20, 15}}}})}, {"radius", 5}})
                 .ok);
-    for (const auto& b : session.execute("document.parts").data.at("parts"))
-        if (b.at("kind") == "body")
-            CHECK(warningsOf(b.at("id").get<std::uint64_t>()).empty());
+    const auto parts = session.execute("document.parts"); // Keeps the result alive while iterating.
+    int bodies = 0;
+    for (const auto& p : parts.data.at("parts"))
+        if (p.at("kind") == "body") {
+            ++bodies;
+            CHECK(warningsOf(p.at("id").get<std::uint64_t>()).empty());
+        }
+    CHECK(bodies > 0);
 
     // A raw scan shell, open underneath: warned, with the number of open edges and the fix.
     r = session.execute("document.import", {{"path", AEROCAD_TEST_DATA_DIR "/models/dome_scan.stl"}});
