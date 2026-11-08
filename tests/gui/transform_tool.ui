@@ -1,0 +1,70 @@
+# Move / Rotate / Scale as a live tool (Fusion: Move/Copy, M), with real input events:
+#  - M starts it without a dialog; dragging an arrow or a ring moves the part on screen at
+#    once (the document only changes when it is applied);
+#  - a value typed in the panel previews too; Enter applies everything as one undo step;
+#  - Esc puts the part back, clicking empty space applies;
+#  - a timeline body scales and moves through feature.move;
+#  - the view orbits past Top: ViewCube arrows and a right drag keep going over the pole.
+# Run: AeroCAD tests/data/box_200x80x60.stl --ui-script <this file>
+Qt.createQmlObject('import QtQuick; Item { objectName: "tfTest"; visible: false; property var s: ({}); function win(p) { const q = viewport.mapToItem(null, p.x, p.y); return Qt.point(q.x, q.y) } function lerp(a, b, t) { return Qt.point(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t) } function part() { return controller.execute("document.parts").result.parts.find(p => p.kind === "imported") } function centre(b) { return [0, 1, 2].map(i => (b.min[i] + b.max[i]) / 2) } function find(i, name) { if (!i) return null; if (i.objectName === name) return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = find(ch[k], name); if (r) return r } return null } }', window.contentItem)
+ui.wait(800)
+(() => { const parts = controller.execute("document.parts").result.parts; if (parts.length !== 1) ui.fail("expected the box, got " + parts.length + " parts"); viewport.restoreCameraState({ pivot: [0, 0, 0], pitch: -30, yaw: 45, distance: 1, orthographic: false }); viewport.fitAll(); window.selectPart(parts[0].id) })()
+ui.wait(300)
+# 1. M starts the tool: handles and panel, no dialog.
+ui.key("M")
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "tfTest"); if (actionPopup.visible || featureDialog.visible) ui.fail("M opened a dialog"); if (!viewport.transformActive || !transformPanel.visible) ui.fail("M did not start Move / Rotate / Scale"); t.s.bounds = t.part().bounds; t.s.undo = controller.undoText })()
+ui.shot("build/transform-tool-1-start.png")
+# 2. Drag the X arrow: the part follows live along X only, the document is untouched.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "tfTest"); const g = viewport.transformGizmo.layout(); const a = t.win(t.lerp(g.c, g.ends[0], 0.7)); const dir = Qt.point(g.ends[0].x - g.c.x, g.ends[0].y - g.c.y); const l = Math.hypot(dir.x, dir.y); if (viewport.transformGizmo.handleAt(t.lerp(g.c, g.ends[0], 0.7)) !== "move0") ui.fail("X arrow not found under its own position"); ui.drag(a.x, a.y, a.x + dir.x / l * 60, a.y + dir.y / l * 60, "left", "", 12) })()
+ui.wait(200)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "tfTest"); const m = viewport.transformMove; ui.log("arrow drag: move " + m.x.toFixed(2) + ", " + m.y.toFixed(2) + ", " + m.z.toFixed(2)); if (!(m.x > 5)) ui.fail("dragging the X arrow did not move along +X"); if (Math.abs(m.y) > 1e-9 || Math.abs(m.z) > 1e-9) ui.fail("the X arrow moved off its axis"); const b = t.part().bounds; if (Math.abs(b.min[0] - t.s.bounds.min[0]) > 1e-9) ui.fail("the document changed before the move was applied"); const c = viewport.transformTarget.center; const p = viewport.previewPoint(viewport.transformTarget.partId, c); if (p.minus(c.plus(m)).length() > 1e-3) ui.fail("preview is not where the move puts it: " + p) })()
+# 3. Drag the Z ring a quarter of the way round: the part turns about Z, the preview follows
+#    p' = R(p - C) + C + T.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "tfTest"); const g = viewport.transformGizmo.layout(); const pts = g.rings[2]; const k0 = 8; const p0 = pts[k0]; if (viewport.transformGizmo.handleAt(p0) !== "rotate2") ui.fail("Z ring not found under its own position: " + viewport.transformGizmo.handleAt(p0)); const a = t.win(p0); ui.move(a.x, a.y); ui.press(a.x, a.y); for (let k = k0 + 1; k <= k0 + 10; ++k) { const q = t.win(pts[k]); ui.move(q.x, q.y) } const e = t.win(pts[k0 + 10]); ui.release(e.x, e.y) })()
+ui.wait(200)
+(() => { const e = viewport.quaternionToEuler(viewport.transformRotation); ui.log("ring drag: rotation " + e.x.toFixed(1) + ", " + e.y.toFixed(1) + ", " + e.z.toFixed(1)); if (Math.abs(e.z) < 20 || Math.abs(e.x) > 1e-6 || Math.abs(e.y) > 1e-6) ui.fail("the Z ring did not turn about Z only"); const c = viewport.transformTarget.center; const corner = Qt.vector3d(c.x + 100, c.y + 40, c.z + 30); const p = viewport.previewPoint(viewport.transformTarget.partId, corner); const r = e.z * Math.PI / 180; const want = Qt.vector3d(c.x + 100 * Math.cos(r) - 40 * Math.sin(r), c.y + 100 * Math.sin(r) + 40 * Math.cos(r), c.z + 30).plus(viewport.transformMove); ui.log("preview corner off by " + p.minus(want).length().toFixed(4) + " mm"); if (p.minus(want).length() > 1e-2) ui.fail("rotation preview does not match the formula") })()
+ui.shot("build/transform-tool-2-dragged.png")
+# 4. Typing in the panel previews at once: Move Z = 10, Rotate Z = 90.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "tfTest"); const z = t.find(transformPanel.contentItem, "moveZ"); const rz = t.find(transformPanel.contentItem, "rotateZ"); if (!z || !rz) { ui.fail("panel fields missing"); return } z.text = "10"; z.apply(); rz.text = "90"; rz.apply(); const m = viewport.transformMove; const e = viewport.quaternionToEuler(viewport.transformRotation); ui.log("panel: move z " + m.z + ", rotate z " + e.z.toFixed(3)); if (Math.abs(m.z - 10) > 1e-9) ui.fail("Move Z field did not move"); if (Math.abs(e.z - 90) > 1e-6) ui.fail("Rotate Z field did not rotate") })()
+# 5. Enter applies it as one undo step: X and Y size swapped, centre moved.
+ui.key("Return")
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "tfTest"); if (viewport.transformActive || transformPanel.visible) ui.fail("Enter did not finish the tool"); const b = t.part().bounds; const s = b.size; ui.log("applied: size " + JSON.stringify(s.map(v => v.toFixed(2))) + ", undo: " + controller.undoText); if (Math.abs(s[0] - 80) > 1e-3 || Math.abs(s[1] - 200) > 1e-3) ui.fail("90 degrees about Z did not swap X and Y"); const c0 = t.centre(t.s.bounds), c1 = t.centre(b); if (!(c1[0] - c0[0] > 5) || Math.abs(c1[2] - c0[2] - 10) > 1e-3) ui.fail("the move was not applied: " + JSON.stringify(c1)); controller.execute("edit.undo"); const back = t.part().bounds; if (Math.abs(back.size[0] - 200) > 1e-3 || Math.abs(t.centre(back)[2] - c0[2]) > 1e-3) ui.fail("one undo did not restore the part") })()
+# 6. Esc cancels: the part goes back, nothing is added to the history.
+ui.key("M")
+ui.wait(200)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "tfTest"); t.s.undo = controller.undoText; const g = viewport.transformGizmo.layout(); const a = t.win(t.lerp(g.c, g.ends[1], 0.7)); const b = t.win(g.ends[1]); ui.drag(a.x, a.y, b.x + (b.x - a.x), b.y + (b.y - a.y), "left", "", 8); if (!(viewport.transformMove.y > 1)) ui.fail("Y arrow did not move along +Y") })()
+ui.key("Escape")
+ui.wait(200)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "tfTest"); if (viewport.transformActive) ui.fail("Esc did not end the tool"); const b = t.part().bounds; if (Math.abs(b.min[1] - t.s.bounds.min[1]) > 1e-9) ui.fail("Esc applied the move"); if (controller.undoText !== t.s.undo) ui.fail("Esc added an undo step: " + controller.undoText) })()
+# 7. Clicking empty space applies (as starting another command does).
+ui.key("M")
+ui.wait(200)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "tfTest"); const g = viewport.transformGizmo.layout(); const a = t.win(t.lerp(g.c, g.ends[2], 0.7)); const b = t.win(g.ends[2]); ui.drag(a.x, a.y, b.x + (b.x - a.x), b.y + (b.y - a.y), "left", "", 8); t.s.dz = viewport.transformMove.z; if (!(t.s.dz > 1)) ui.fail("Z arrow did not move along +Z"); const empty = [[0.5, 0.06], [0.3, 0.9], [0.7, 0.9], [0.9, 0.5]].map(f => Qt.point(viewport.width * f[0], viewport.height * f[1])).find(q => !viewport.pickPart(q.x, q.y) && !viewport.transformGizmo.handleAt(q)); if (!empty) { ui.fail("no empty spot to click"); return } const e = t.win(empty); ui.click(e.x, e.y) })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "tfTest"); if (viewport.transformActive) ui.fail("clicking away did not end the tool"); const dz = t.centre(t.part().bounds)[2] - t.centre(t.s.bounds)[2]; ui.log("click away applied dz " + dz.toFixed(2)); if (Math.abs(dz - t.s.dz) > 1e-3) ui.fail("clicking away did not apply the move"); controller.execute("edit.undo") })()
+# 8. A timeline body: scale to 150 % in the panel and move it, Done -> one feature.move step.
+(() => { const r = controller.execute("feature.box", { size: [20, 20, 20], corner: [300, 0, 0] }); if (!r.ok) ui.fail("box: " + r.error); const body = controller.execute("document.parts").result.parts.find(p => p.kind === "body"); window.selectPart(body.id); window.startTransform(body.id) })()
+ui.wait(200)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "tfTest"); const sc = t.find(transformPanel.contentItem, "scale"); const mx = t.find(transformPanel.contentItem, "moveX"); if (!sc || !sc.visible) { ui.fail("no Scale field for a body"); return } sc.text = "150"; sc.apply(); mx.text = "-50"; mx.apply() })()
+ui.clickText("Done")
+ui.wait(300)
+(() => { const body = controller.execute("document.parts").result.parts.find(p => p.kind === "body"); const s = body.bounds.size; const t = Array.from(window.contentItem.children).find(c => c.objectName === "tfTest"); const c = t.centre(body.bounds); ui.log("body: size " + JSON.stringify(s.map(v => v.toFixed(3))) + ", centre " + JSON.stringify(c.map(v => v.toFixed(3)))); if (Math.abs(s[0] - 30) > 1e-3) ui.fail("body did not scale to 150 %"); if (Math.abs(c[0] - 260) > 1e-3 || Math.abs(c[2] - 10) > 1e-3) ui.fail("body did not scale about its centre and move -50 in X"); const f = controller.execute("timeline.list").result.features.filter(x => x.type === "move"); if (f.length !== 1) ui.fail("expected one move step in the timeline, got " + f.length) })()
+# 9. Free orbit: from Top the ViewCube up arrow keeps turning over the pole.
+(() => { viewport.restoreCameraState({ pivot: [0, 0, 0], pitch: -90, yaw: 0, distance: 600, orthographic: false }) })()
+ui.wait(200)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "tfTest"); const up = t.find(window.contentItem, "viewCubeUp"); if (!up) { ui.fail("no ViewCube up arrow"); return } const p = up.mapToItem(null, up.width / 2, up.height / 2); ui.move(p.x, p.y + 30); ui.move(p.x, p.y); t.s.p = p })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "tfTest"); ui.click(t.s.p.x, t.s.p.y) })()
+ui.wait(700)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "tfTest"); t.s.pitch1 = viewport.pitch; ui.log("up arrow from Top: pitch " + viewport.pitch.toFixed(1) + ", yaw " + viewport.yaw.toFixed(1)); if (Math.abs(Math.abs(viewport.pitch) - 180) > 1) ui.fail("up arrow at Top did not go over the pole (pitch " + viewport.pitch + ")"); ui.click(t.s.p.x, t.s.p.y) })()
+ui.wait(700)
+(() => { ui.log("up arrow again: pitch " + viewport.pitch.toFixed(1)); if (Math.abs(viewport.pitch - 90) > 1) ui.fail("second up arrow did not reach the bottom (pitch " + viewport.pitch + ")") })()
+ui.shot("build/transform-tool-3-over-the-pole.png")
+# 10. A right drag past Top keeps orbiting (no stop at -90).
+(() => { viewport.restoreCameraState({ pivot: [0, 0, 0], pitch: -80, yaw: 30, distance: 600, orthographic: false }) })()
+ui.wait(200)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "tfTest"); const p = t.win(Qt.point(40, viewport.height / 2)); ui.drag(p.x, p.y, p.x, p.y + 200, "right", "", 20) })()
+ui.wait(300)
+(() => { const p = viewport.pitch; ui.log("right drag over the top: pitch -80 -> " + p.toFixed(1)); if (!(p < -95 || p > 90)) ui.fail("orbit stopped at the pole: pitch " + p) })()

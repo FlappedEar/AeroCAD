@@ -76,7 +76,29 @@ ApplicationWindow {
     property var afterUnsavedCheck: null
 
     function selectPart(id) {
+        // Picking another part (or empty space) applies a running Move / Rotate / Scale.
+        if (viewport.transformActive && id !== viewport.transformTarget.partId)
+            viewport.finishTransform(true)
         selectedPartId = id
+    }
+
+    /// Move / Rotate / Scale (Fusion: Move/Copy, M): handles in the view and a small panel,
+    /// live preview, one undo step when done.
+    function startTransform(id) {
+        const info = controller.partInfo(id || selectedPartId)
+        if (activeSketch || !info.id)
+            return null
+        closeToolPanels()
+        featureDialog.close()
+        pickingSketchPlane = false
+        if (selectedPartId !== info.id)
+            selectPart(info.id)
+        if (!viewport.startTransform(info)) {
+            controller.showStatus(qsTr("Sketches and planes move with the body they belong to."))
+            return null
+        }
+        controller.showStatus(qsTr("Drag an arrow to move, a ring to rotate, the square to scale (Shift snaps). Enter applies, Esc cancels."))
+        return null
     }
 
     // --- Guided actions (ContextActions.qml) --------------------------------------------
@@ -165,6 +187,7 @@ ApplicationWindow {
     /// Create Sketch: pick a plane, face or surface. `across` (optional) presets "Fin
     /// across the surface".
     function startCreateSketch(across) {
+        viewport.finishTransform(true)
         if (across !== undefined)
             sketchAcross.checked = across
         partOnSurfaceSketch = null
@@ -651,7 +674,13 @@ ApplicationWindow {
         text: window.controller.canUndo ? qsTr("&Undo %1").arg(window.controller.undoText) : qsTr("&Undo")
         enabled: window.controller.canUndo
         shortcut: StandardKey.Undo // Fusion: Ctrl+Z / Cmd+Z
-        onTriggered: window.controller.execute("edit.undo")
+        onTriggered: {
+            // Undo inside Move / Rotate / Scale drops the preview first (as Fusion's Esc).
+            if (viewport.transformActive)
+                viewport.finishTransform(false)
+            else
+                window.controller.execute("edit.undo")
+        }
     }
     Action {
         id: redoAction
@@ -677,11 +706,10 @@ ApplicationWindow {
     }
     Action {
         id: moveAction
-        text: qsTr("&Move/Rotate...")
+        text: qsTr("&Move / Rotate / Scale")
         enabled: !!window.selectedPartId && !window.activeSketch
         shortcut: "M" // Fusion: Move/Copy, M
-        onTriggered: actionPopup.request(contextActions.action("moveRotate", window.selectedInfo()),
-                                         window.selectedInfo(), null)
+        onTriggered: window.startTransform(window.selectedPartId)
     }
     Action {
         id: fitAction
@@ -828,6 +856,7 @@ ApplicationWindow {
     /// sections, measurements, heat maps, scan picks, simulation results, dialogs holding
     /// ids). The command layer clears the document, undo history and analyses itself.
     function resetWorkspace() {
+        viewport.finishTransform(false) // the preview belongs to the previous document
         featureDialog.close() // may hold a feature id of the previous project
         parametersDialog.close()
         exportCheckDialog.close()
@@ -846,6 +875,7 @@ ApplicationWindow {
     // Inspect (Fusion: I = Measure).
     /// Closes the panels that share the top-left corner of the view (Measure, heat maps, Scan Tools).
     function closeToolPanels() {
+        viewport.finishTransform(true)
         measurePanel.close()
         heatMapPanel.close()
         scanPanel.close()
@@ -914,6 +944,10 @@ ApplicationWindow {
     Shortcut {
         sequence: "Esc"
         onActivated: {
+            if (viewport.transformActive) {
+                viewport.finishTransform(false)
+                return
+            }
             if (viewport.leaveSelectionTool())
                 return
             if (measurePanel.active)
@@ -933,6 +967,13 @@ ApplicationWindow {
             else if (window.partOnSurfaceSketch)
                 window.partOnSurfaceSketch = null
         }
+    }
+
+    // Enter applies Move / Rotate / Scale; in one of its fields Enter only takes the value.
+    Shortcut {
+        sequences: ["Return", "Enter"]
+        enabled: viewport.transformActive && !(window.activeFocusItem instanceof TextInput)
+        onActivated: viewport.finishTransform(true)
     }
 
     // macOS keyboards label Backspace "delete".
@@ -1644,6 +1685,14 @@ ApplicationWindow {
                 controller: window.controller
             }
 
+            TransformPanel {
+                id: transformPanel
+                objectName: "transformPanel"
+                anchors.left: parent.left
+                anchors.top: parent.top
+                anchors.margins: 8
+                viewport: viewport
+            }
             MeasurePanel {
                 id: measurePanel
                 anchors.left: parent.left

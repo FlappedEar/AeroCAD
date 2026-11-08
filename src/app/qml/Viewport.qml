@@ -60,6 +60,7 @@ Item {
     /// Model-space points to mark (selections of the open feature dialog).
     property var markers: []
     readonly property alias sketchOverlay: sketchOverlay
+    readonly property alias transformGizmo: transformGizmo
     /// Simulation result fields to draw: [{run, kind, scalar, min, max}] (SimulationPanel).
     property var simulationFields: []
     /// Parts not drawn (e.g. while their pressure map is shown in their place).
@@ -419,6 +420,7 @@ Item {
             }
 
             Repeater3D {
+                id: partRepeater
                 model: root.controller.parts
                 delegate: Model {
                     id: partModel
@@ -435,6 +437,13 @@ Item {
                     readonly property bool heatMapped: root.controller.inspectRevision >= 0
                                                        && root.controller.showsHeatMap(partId) && !heatGeometry.empty
                     readonly property color capColor: kind === "body" ? "#d2584a" : "#3b82c4"
+                    // Live preview of the Move / Rotate / Scale tool: p' = s·R(p − C) + C + T.
+                    readonly property bool transforming: !!root.transformTarget && root.transformTarget.partId === partId
+                    pivot: transforming ? root.transformTarget.center : Qt.vector3d(0, 0, 0)
+                    position: transforming ? root.transformTarget.center.plus(root.transformMove) : Qt.vector3d(0, 0, 0)
+                    rotation: transforming ? root.transformRotation : Qt.quaternion(1, 0, 0, 0)
+                    scale: transforming ? Qt.vector3d(root.transformScale, root.transformScale, root.transformScale)
+                                        : Qt.vector3d(1, 1, 1)
 
                     readonly property MeshGeometry plainGeometry: MeshGeometry {
                         controller: root.controller
@@ -605,6 +614,14 @@ Item {
         onDistanceChanged: root.updateClipping()
     }
 
+    // Move / Rotate / Scale handles; above the navigation, below the view's own controls.
+    TransformGizmo {
+        id: transformGizmo
+        objectName: "transformGizmo"
+        anchors.fill: parent
+        viewport: root
+    }
+
     ViewCube {
         anchors.top: parent.top
         anchors.right: parent.right
@@ -616,6 +633,7 @@ Item {
         onViewRequested: direction => root.setViewDirection(direction)
         onHomeRequested: root.goHome()
         onOrbitRequested: (dx, dy) => cameraInput.orbit(dx, dy)
+        onStepRequested: (dPitch, dYaw) => cameraInput.stepView(dPitch, dYaw)
         onSetHomeRequested: root.setCurrentViewAsHome()
         onResetHomeRequested: root.resetHome()
         onProjectionRequested: ortho => root.orthographic = ortho
@@ -836,6 +854,166 @@ Item {
     /// View position of a model-space point.
     function viewPoint(p) {
         return view.mapFrom3DScene(modelSpace.mapPositionToScene(p))
+    }
+
+    // --- Move / Rotate / Scale tool (Fusion: Move/Copy, M) --------------------------------
+    // The part follows the manipulator (TransformGizmo) and the panel live, as a transform of
+    // its 3D node; finishTransform(true) applies it as one command (one undo step):
+    // feature.move for a timeline body, part.transform for everything else.
+
+    /// Part being moved: {partId, kind, featureId, center (model mm), name, canScale} while the
+    /// tool is on, or null. (Not "transform": that is Item.transform.)
+    property var transformTarget: null
+    property vector3d transformMove: Qt.vector3d(0, 0, 0)
+    property quaternion transformRotation: Qt.quaternion(1, 0, 0, 0)
+    property real transformScale: 1
+    readonly property bool transformActive: !!transformTarget
+    /// After the tool applied (committed) or was cancelled.
+    signal transformFinished(bool committed)
+
+    /// Starts the tool on a part (partInfo). Returns false for parts that cannot be moved.
+    function startTransform(info) {
+        if (transformTarget)
+            finishTransform(true)
+        if (!info || !info.id || info.kind === "sketch" || info.kind === "plane"
+                || !info.center || info.center.length !== 3)
+            return false
+        transformMove = Qt.vector3d(0, 0, 0)
+        transformRotation = Qt.quaternion(1, 0, 0, 0)
+        transformScale = 1
+        transformTarget = { partId: info.id, kind: info.kind, featureId: info.featureId,
+                      center: Qt.vector3d(info.center[0], info.center[1], info.center[2]),
+                      name: info.name || "", canScale: true }
+        return true
+    }
+
+    function resetTransform() {
+        transformMove = Qt.vector3d(0, 0, 0)
+        transformRotation = Qt.quaternion(1, 0, 0, 0)
+        transformScale = 1
+    }
+
+    /// Command and parameters that apply the current preview, or null when nothing changed.
+    function transformCommand() {
+        const t = transformTarget
+        if (!t)
+            return null
+        const q = transformRotation
+        const w = Math.max(-1, Math.min(1, q.scalar))
+        const sinHalf = Math.sqrt(Math.max(0, 1 - w * w))
+        let angle = 2 * Math.acos(Math.abs(w)) * 180 / Math.PI
+        const sign = w < 0 ? -1 : 1
+        const axis = sinHalf > 1e-9 ? [sign * q.x / sinHalf, sign * q.y / sinHalf, sign * q.z / sinHalf] : [0, 0, 1]
+        if (angle < 1e-7)
+            angle = 0
+        const m = transformMove
+        const moved = m.length() > 1e-9
+        const scaled = Math.abs(transformScale - 1) > 1e-9
+        if (!moved && !angle && !scaled)
+            return null
+        const params = { center: [t.center.x, t.center.y, t.center.z] }
+        if (angle) {
+            params.axis = axis
+            params.angle = angle
+        }
+        if (scaled)
+            params.scale = transformScale
+        if (moved)
+            params.translate = [m.x, m.y, m.z]
+        if (t.kind === "body") {
+            params.body = t.featureId
+            return { command: "feature.move", params: params }
+        }
+        params.id = t.partId
+        return { command: "part.transform", params: params }
+    }
+
+    /// Ends the tool: commit applies the preview as one command, otherwise the part goes back.
+    function finishTransform(commit) {
+        if (!transformTarget)
+            return null
+        const c = commit ? transformCommand() : null
+        transformTarget = null
+        resetTransform()
+        const r = c ? controller.execute(c.command, c.params) : null
+        transformFinished(!!commit)
+        return r
+    }
+
+    function quaternionMultiply(a, b) {
+        return Qt.quaternion(a.scalar * b.scalar - a.x * b.x - a.y * b.y - a.z * b.z,
+                             a.scalar * b.x + a.x * b.scalar + a.y * b.z - a.z * b.y,
+                             a.scalar * b.y - a.x * b.z + a.y * b.scalar + a.z * b.x,
+                             a.scalar * b.z + a.x * b.y - a.y * b.x + a.z * b.scalar)
+    }
+
+    function axisAngleQuaternion(axis, degrees) {
+        const a = axis.normalized()
+        const h = degrees * Math.PI / 360
+        return Qt.quaternion(Math.cos(h), a.x * Math.sin(h), a.y * Math.sin(h), a.z * Math.sin(h))
+    }
+
+    /// Turns the preview further about a model axis through the part centre.
+    function rotateTransform(axis, degrees) {
+        if (Math.abs(degrees) < 1e-12)
+            return
+        const q = quaternionMultiply(axisAngleQuaternion(axis, degrees), transformRotation)
+        const n = Math.hypot(q.scalar, q.x, q.y, q.z)
+        transformRotation = Qt.quaternion(q.scalar / n, q.x / n, q.y / n, q.z / n)
+    }
+
+    /// Angles (degrees) about the X, then Y, then Z model axis: R = Rz·Ry·Rx.
+    function quaternionToEuler(q) {
+        const w = q.scalar, x = q.x, y = q.y, z = q.z
+        const r20 = 2 * (x * z - w * y)
+        const deg = 180 / Math.PI
+        if (Math.abs(r20) > 1 - 1e-9) {
+            const r01 = 2 * (x * y - w * z), r11 = 1 - 2 * (x * x + z * z)
+            return Qt.vector3d(0, (r20 < 0 ? 90 : -90), Math.atan2(-r01, r11) * deg)
+        }
+        const r21 = 2 * (y * z + w * x), r22 = 1 - 2 * (x * x + y * y)
+        const r10 = 2 * (x * y + w * z), r00 = 1 - 2 * (y * y + z * z)
+        return Qt.vector3d(Math.atan2(r21, r22) * deg, Math.asin(-r20) * deg, Math.atan2(r10, r00) * deg)
+    }
+
+    function eulerToQuaternion(e) {
+        return quaternionMultiply(axisAngleQuaternion(Qt.vector3d(0, 0, 1), e.z),
+                                  quaternionMultiply(axisAngleQuaternion(Qt.vector3d(0, 1, 0), e.y),
+                                                     axisAngleQuaternion(Qt.vector3d(1, 0, 0), e.x)))
+    }
+
+    /// View position (x, y) of a model-space point.
+    function modelToScreen(p) {
+        const v = view.mapFrom3DScene(modelSpace.mapPositionToScene(p))
+        return Qt.point(v.x, v.y)
+    }
+
+    /// Model millimetres per screen pixel at a model-space point.
+    function worldPerPixelAt(p) {
+        if (root.orthographic)
+            return 1 / orthoCamera.horizontalMagnification
+        const s = modelSpace.mapPositionToScene(p)
+        const depth = s.minus(camera.scenePosition).dotProduct(camera.forward)
+        const w = 2 * Math.max(depth, camera.clipNear) * Math.tan(camera.fieldOfView * Math.PI / 360) / Math.max(1, view.height)
+        return isFinite(w) && w > 0 ? w : 1
+    }
+
+    /// Whether a model axis at point p points towards the viewer.
+    function axisTowardsViewer(axis, p) {
+        const a = modelSpace.mapDirectionToScene(axis)
+        const s = modelSpace.mapPositionToScene(p)
+        const toEye = root.orthographic ? view.camera.forward.times(-1) : view.camera.scenePosition.minus(s)
+        return a.dotProduct(toEye) > 0
+    }
+
+    /// Where the preview puts a model point of the part being moved (for tests): model mm.
+    function previewPoint(partId, p) {
+        for (let i = 0; i < partRepeater.count; ++i) {
+            const node = partRepeater.objectAt(i)
+            if (node && node.partId === partId)
+                return modelSpace.mapPositionFromScene(node.mapPositionToScene(p))
+        }
+        return p
     }
 
     // Selection markers, re-projected whenever the camera moves.

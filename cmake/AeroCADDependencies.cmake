@@ -89,6 +89,7 @@ endif()
 
 # --- Qt 6 (application only) ---------------------------------------------------
 if(AEROCAD_BUILD_APP)
-    find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Network Qml Quick QuickControls2 Quick3D)
+    # Test: real key presses (through shortcuts) for the --ui-script GUI tests.
+    find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Network Qml Quick QuickControls2 Quick3D Test)
     message(STATUS "Qt ${Qt6_VERSION}")
 endif()

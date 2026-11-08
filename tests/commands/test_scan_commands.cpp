@@ -162,6 +162,27 @@ TEST_CASE("part.convert_units and part.calibrate rescale", "[commands][scan]")
     CHECK_FALSE(s.execute("part.calibrate", {{"id", id}, {"a", {1, 1, 1}}, {"b", {1, 1, 1}}, {"distance", 5}}).ok);
 }
 
+TEST_CASE("part.transform scales, rotates and moves in one undo step", "[commands][scan]")
+{
+    const TempMesh file(box(10, 20, 30));
+    commands::Session s;
+    const auto id = importBox(s, file);
+    // 200 % about the centre (5, 10, 15), 90 degrees about Z, then 10 mm up.
+    const auto r = run(s, "part.transform",
+                       {{"id", id}, {"scale", 2.0}, {"axis", {0, 0, 1}}, {"angle", 90}, {"translate", {0, 0, 10}}});
+    const auto& b = r["bounds"];
+    CHECK(b["size"][0].get<double>() == Approx(40));
+    CHECK(b["size"][1].get<double>() == Approx(20));
+    CHECK(b["size"][2].get<double>() == Approx(60));
+    CHECK(b["min"][0].get<double>() == Approx(5 - 20));
+    CHECK(b["min"][2].get<double>() == Approx(15 - 30 + 10));
+    CHECK_FALSE(s.execute("part.transform", {{"id", id}, {"scale", -1}}).ok);
+    run(s, "edit.undo", Json::object());
+    const auto back = run(s, "document.parts", Json::object())["parts"][0]["bounds"];
+    CHECK(back["size"][0].get<double>() == Approx(10));
+    CHECK(back["min"][2].get<double>() == Approx(0));
+}
+
 TEST_CASE("part.align puts a tilted face on the XY plane", "[commands][scan]")
 {
     const TempMesh file(box(10, 20, 30));

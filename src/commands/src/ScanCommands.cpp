@@ -321,16 +321,21 @@ void registerPlacementCommands(CommandRegistry& r)
               return out;
           });
 
-    r.add({"part.transform", "Move/rotate part",
-           "Moves and/or rotates a part rigidly: rotation first (about `center`, default the bounding box centre), "
-           "then translation.",
+    r.add({"part.transform", "Move/rotate/scale part",
+           "Moves, rotates and/or uniformly scales a part: scale and rotation about `center` (default the "
+           "bounding box centre) first, then translation.",
            objectSchema(
                {{"id", idParam()},
                 {"translate", pointParam("Offset [dx, dy, dz] in mm.")},
                 {"axis", pointParam("Rotation axis direction.")},
                 {"angle",
                  {{"type", "number"}, {"description", "Rotation angle in degrees (right-hand rule about axis)."}}},
-                {"center", pointParam("Rotation centre in mm.")}},
+                {"scale",
+                 {{"type", "number"},
+                  {"minimum", geometry::kMinScaleFactor},
+                  {"maximum", geometry::kMaxScaleFactor},
+                  {"description", "Uniform scale factor about `center` (default 1)."}}},
+                {"center", pointParam("Rotation and scale centre in mm.")}},
                {"id"}),
            true},
           [](CommandContext& ctx, const Json& params) {
@@ -338,19 +343,33 @@ void registerPlacementCommands(CommandRegistry& r)
               core::Affine tf;
               if (params.contains("angle") != params.contains("axis"))
                   throw CommandError("`axis` and `angle` must be given together");
+              const core::Vec3 c = params.contains("center") ? toVec(params.at("center")) : part.mesh->bounds().center();
               if (params.contains("angle")) {
                   const core::Vec3 axis = toVec(params.at("axis"));
                   if (axis.length() < 1e-12)
                       throw CommandError("Rotation axis is zero");
-                  const core::Vec3 c =
-                      params.contains("center") ? toVec(params.at("center")) : part.mesh->bounds().center();
                   const core::Mat3 rot =
                       core::Mat3::rotation(axis, params.at("angle").get<double>() * std::numbers::pi / 180.0);
                   tf = core::Affine{rot, c - rot * c};
               }
               if (params.contains("translate"))
                   tf = core::Affine::translationBy(toVec(params.at("translate"))).after(tf);
-              applyTransform(ctx, part, "Move " + part.name, tf);
+              const double factor = params.value("scale", 1.0);
+              if (!std::isfinite(factor) || factor < geometry::kMinScaleFactor || factor > geometry::kMaxScaleFactor)
+                  throw CommandError("`scale` must be between 0.000001 and 1000000");
+              if (factor == 1.0) {
+                  applyTransform(ctx, part, "Move " + part.name, tf);
+              } else {
+                  // Scale first (exact geometry: geometry::scaled), then the rigid motion.
+                  const core::Affine s = scaleAbout(factor, c);
+                  auto mesh = std::make_shared<core::TriangleMesh>(*part.mesh);
+                  core::transformMesh(*mesh, tf.after(s));
+                  std::optional<geometry::Shape> shape = part.shape;
+                  if (shape)
+                      shape = geometry::transformed(geometry::scaled(*shape, factor, c), tf);
+                  replaceGeometry(ctx, part, "Move " + part.name, std::move(mesh), std::move(shape));
+                  tf = tf.after(s);
+              }
               Json out = partSummary(*ctx.document.part(part.id));
               out["transform"] = affineToJson(tf);
               return out;
