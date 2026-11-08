@@ -227,23 +227,24 @@ PolyData readVtk(const fs::path& path)
     return data;
 }
 
-PolyData cropPolygons(const PolyData& data, const core::BoundingBox& box)
+namespace {
+
+/// The polygons of `data` whose centre passes `keep`, with only the points they use
+/// (scalars and vectors follow). Lines are dropped.
+template <typename Keep>
+PolyData keepPolygons(const PolyData& data, Keep keep)
 {
     PolyData out;
     constexpr auto unused = std::numeric_limits<std::uint32_t>::max();
     std::vector<std::uint32_t> remap(data.points.size(), unused);
     std::vector<std::uint32_t> kept; // Old indices of the kept points, in new order.
-    auto inside = [&](const core::Vec3& p) {
-        return p.x >= box.min.x && p.x <= box.max.x && p.y >= box.min.y && p.y <= box.max.y &&
-               p.z >= box.min.z && p.z <= box.max.z;
-    };
     for (const auto& poly : data.polygons) {
         if (poly.empty())
             continue;
         core::Vec3 c;
         for (const auto i : poly)
             c = c + data.points[i];
-        if (!inside(c * (1.0 / static_cast<double>(poly.size()))))
+        if (!keep(c * (1.0 / static_cast<double>(poly.size()))))
             continue;
         std::vector<std::uint32_t> mapped;
         mapped.reserve(poly.size());
@@ -272,6 +273,49 @@ PolyData cropPolygons(const PolyData& data, const core::BoundingBox& box)
             v.push_back(i < values.size() ? values[i] : core::Vec3{});
     }
     return out;
+}
+
+} // namespace
+
+PolyData cropPolygons(const PolyData& data, const core::BoundingBox& box)
+{
+    return keepPolygons(data, [&](const core::Vec3& p) {
+        return p.x >= box.min.x && p.x <= box.max.x && p.y >= box.min.y && p.y <= box.max.y &&
+               p.z >= box.min.z && p.z <= box.max.z;
+    });
+}
+
+PolyData dropNearPoints(const PolyData& data, const std::vector<core::Vec3>& points, double distance)
+{
+    if (points.empty() || !(distance > 0.0))
+        return data;
+    // Points hashed on a grid of `distance` cells: a closer point lies in one of the 27
+    // cells around the query.
+    const auto cellOf = [&](const core::Vec3& p) {
+        return std::array<long, 3>{static_cast<long>(std::floor(p.x / distance)),
+                                   static_cast<long>(std::floor(p.y / distance)),
+                                   static_cast<long>(std::floor(p.z / distance))};
+    };
+    std::map<std::array<long, 3>, std::vector<core::Vec3>> grid;
+    for (const auto& p : points)
+        grid[cellOf(p)].push_back(p);
+    const double d2 = distance * distance;
+    return keepPolygons(data, [&](const core::Vec3& p) {
+        const auto c = cellOf(p);
+        for (long dx = -1; dx <= 1; ++dx)
+            for (long dy = -1; dy <= 1; ++dy)
+                for (long dz = -1; dz <= 1; ++dz) {
+                    const auto it = grid.find({c[0] + dx, c[1] + dy, c[2] + dz});
+                    if (it == grid.end())
+                        continue;
+                    for (const auto& q : it->second) {
+                        const core::Vec3 v = q - p;
+                        if (v.dot(v) < d2)
+                            return false;
+                    }
+                }
+        return true;
+    });
 }
 
 PolyData cropLines(const PolyData& data, const core::BoundingBox& box)

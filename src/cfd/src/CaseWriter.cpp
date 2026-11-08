@@ -204,6 +204,16 @@ MeshPlan meshPlan(MeshLevel level)
     return {2.0, 3, 4, 2, 1, 0};
 }
 
+} // namespace
+
+double surfaceCellSize(const CaseInfo& info)
+{
+    const MeshPlan plan = meshPlan(info.settings.mesh);
+    return info.characteristicLength / plan.cellsPerLength / std::pow(2.0, plan.surfaceMin);
+}
+
+namespace {
+
 /// Number formatting independent of the global locale.
 class Text {
 public:

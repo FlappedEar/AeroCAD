@@ -71,6 +71,10 @@ struct CaseInfo {
 /// to the floor when the case has one (CAD-129, CAD-135). Empty when the part bounds are.
 [[nodiscard]] core::BoundingBox resultRegion(const CaseInfo& info, double wake = 1.5);
 
+/// Size of the coarsest cells on the part surface for the run's mesh level, in the case
+/// frame (m): the background cell halved per surface refinement level.
+[[nodiscard]] double surfaceCellSize(const CaseInfo& info);
+
 /// Velocity sections written by each run for the result view (CAD-148): stacks of planes
 /// normal to an axis of the case frame, at fractions of the part's size along that axis
 /// (0 = the part's minimum, 1 = its maximum), cropped to resultRegion(). Axis 'x' gives
