@@ -28,6 +28,7 @@
 #include <BRepGProp_Face.hxx>
 #include <BRepLProp_SLProps.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
+#include <BRepOffset_MakeOffset.hxx>
 #include <BRepOffsetAPI_MakePipe.hxx>
 #include <BRepOffsetAPI_MakeOffsetShape.hxx>
 #include <BRepOffsetAPI_MakeThickSolid.hxx>
@@ -803,15 +804,81 @@ Shape pressPull(const Shape& shape, const std::vector<std::size_t>& faceIndices,
         throw ModelingError("Press Pull: distance must not be zero");
     return guarded("Press Pull", [&] {
         const auto map = mapOf(s, TopAbs_FACE);
+        for (const std::size_t i : faceIndices)
+            if (i >= static_cast<std::size_t>(map.Extent()))
+                throw ModelingError("Press Pull: no face " + std::to_string(i));
+        // A curved face (Fusion's Offset Face): the picked faces move along their normals
+        // by the distance, the other faces stay and are extended or trimmed to meet them.
+        bool curved = false;
+        for (const std::size_t i : faceIndices)
+            curved = curved || !facePlane(shape, i);
+        if (curved) {
+            // A rounded face that blends smoothly into a face that stays (a fillet) cannot
+            // just move: the blend would break. Fusion changes the fillet's radius instead.
+            TopTools_IndexedDataMapOfShapeListOfShape edgeFaces;
+            TopExp::MapShapesAndAncestors(s, TopAbs_EDGE, TopAbs_FACE, edgeFaces);
+            for (const std::size_t i : faceIndices) {
+                const TopoDS_Face& f = TopoDS::Face(map(static_cast<int>(i) + 1));
+                for (TopExp_Explorer e(f, TopAbs_EDGE); e.More(); e.Next()) {
+                    const TopoDS_Edge& edge = TopoDS::Edge(e.Current());
+                    if (BRep_Tool::Degenerated(edge) || !edgeFaces.Contains(edge))
+                        continue;
+                    BRepAdaptor_Curve c(edge);
+                    const core::Vec3 mid = toVec(c.Value((c.FirstParameter() + c.LastParameter()) / 2));
+                    const auto a = faceNormalNear(shape, i, mid);
+                    for (const TopoDS_Shape& other : edgeFaces.FindFromKey(edge)) {
+                        const auto k = static_cast<std::size_t>(map.FindIndex(other) - 1);
+                        if (other.IsSame(f) || std::find(faceIndices.begin(), faceIndices.end(), k) != faceIndices.end())
+                            continue;
+                        const auto b = faceNormalNear(shape, k, mid);
+                        if (a && b && a->x * b->x + a->y * b->y + a->z * b->z > 0.999)
+                            throw ModelingError("Press Pull: face " + std::to_string(i)
+                                                + " blends smoothly into the next face (a fillet?); change the fillet's radius instead");
+                    }
+                }
+            }
+            BRepOffset_MakeOffset offset;
+            offset.Initialize(s, 0.0, 1e-6, BRepOffset_Skin, false, false, GeomAbs_Intersection, false);
+            for (const std::size_t i : faceIndices)
+                offset.SetOffsetOnFace(TopoDS::Face(map(static_cast<int>(i) + 1)), distance);
+            offset.MakeOffsetShape();
+            if (!offset.IsDone())
+                throw ModelingError("Press Pull failed: the faces could not be offset by " + std::to_string(distance) + " mm");
+            TopoDS_Shape result = offset.Shape();
+            if (result.IsNull() || !hasSubShapes(result, TopAbs_SOLID))
+                throw ModelingError("Press Pull: nothing left of the body (distance too large?)");
+            result = unify(result);
+            if (!BRepCheck_Analyzer(result).IsValid())
+                throw ModelingError("Press Pull failed: the result is not a valid solid");
+            // A push deeper than a face's curvature turns the face inside out (a 5 mm
+            // cylinder pushed 6 mm becomes a 1 mm one facing the other way): a point of each
+            // picked face, moved by the distance, must sit on a face that still faces the same
+            // way.
+            const Shape out = wrapShape(result);
+            for (const std::size_t i : faceIndices) {
+                const TopoDS_Face& f = TopoDS::Face(map(static_cast<int>(i) + 1));
+                BRepAdaptor_Surface surf(f);
+                BRepLProp_SLProps lp(surf, (surf.FirstUParameter() + surf.LastUParameter()) / 2,
+                                     (surf.FirstVParameter() + surf.LastVParameter()) / 2, 1, 1e-6);
+                if (!lp.IsNormalDefined())
+                    continue;
+                gp_Dir n = lp.Normal();
+                if (f.Orientation() == TopAbs_REVERSED)
+                    n.Reverse();
+                const gp_Pnt p = lp.Value().Translated(gp_Vec(n) * distance);
+                const core::Vec3 q = toVec(p);
+                const auto j = nearestFace(out, q);
+                const auto m = j ? faceNormalNear(out, *j, q) : std::nullopt;
+                if (!m || m->x * n.X() + m->y * n.Y() + m->z * n.Z() < 0.5)
+                    throw ModelingError("Press Pull: the distance is larger than the face's curve allows; try a smaller one");
+            }
+            return out;
+        }
         // Every slab is made from the faces of the original shape, then all are joined to
         // it (pull) or cut from it (push) at once.
         TopTools_ListOfShape slabs;
         for (const std::size_t i : faceIndices) {
-            if (i >= static_cast<std::size_t>(map.Extent()))
-                throw ModelingError("Press Pull: no face " + std::to_string(i));
             const auto plane = facePlane(shape, i);
-            if (!plane)
-                throw ModelingError("Press Pull works on flat faces: face " + std::to_string(i) + " is curved");
             const core::Vec3 v = plane->normal * distance;
             BRepPrimAPI_MakePrism prism(map(static_cast<int>(i) + 1), gp_Vec(v.x, v.y, v.z));
             if (!prism.IsDone())

@@ -6,6 +6,7 @@
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
 #include <numbers>
@@ -274,7 +275,29 @@ TEST_CASE("Press Pull moves flat faces in and out", "[geometry][modeling]")
     for (const auto& f : faces(cyl))
         if (f.type != "plane")
             round = f.index;
-    CHECK_THROWS_AS(pressPull(cyl, {round}, 1.0), ModelingError);
+    // A curved face is offset (Fusion's Offset Face): the cylinder grows or shrinks.
+    const auto grown = pressPull(cyl, {round}, 1.0);
+    CHECK(isValid(grown));
+    CHECK(grown.volume() == Approx(std::numbers::pi * 36 * 10).epsilon(1e-4));
+    const auto shrunk = pressPull(cyl, {round}, -2.0);
+    CHECK(isValid(shrunk));
+    CHECK(shrunk.volume() == Approx(std::numbers::pi * 9 * 10).epsilon(1e-4));
+    // A curved face picked with a flat one: both move.
+    std::size_t lid = 0;
+    for (const auto& f : faces(cyl))
+        if (f.type == "plane" && f.normal.z > 0.9)
+            lid = f.index;
+    const auto both2 = pressPull(cyl, {round, lid}, 1.0);
+    CHECK(isValid(both2));
+    CHECK(both2.volume() == Approx(std::numbers::pi * 36 * 11).epsilon(1e-4));
+    CHECK_THROWS_AS(pressPull(cyl, {round}, -6.0), ModelingError); // would turn it inside out
+    // A fillet face blends into faces that stay: moving it alone would break the blend.
+    const auto rounded = fillet(makeBox(20, 20, 20), {0}, 4.0);
+    std::size_t blend = 0;
+    for (const auto& f : faces(rounded))
+        if (f.type != "plane")
+            blend = f.index;
+    CHECK_THROWS_WITH(pressPull(rounded, {blend}, 1.0), Catch::Matchers::ContainsSubstring("fillet"));
 }
 
 TEST_CASE("Shell with no open face hollows the solid", "[geometry][modeling]")

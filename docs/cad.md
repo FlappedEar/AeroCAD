@@ -106,7 +106,7 @@ rebuilding, AeroCAD reports the problem; Undo restores the previous source.
 | `feature.fillet` | Fillet (F) | `edges`, `radius`; tangent chains are rounded with the picked edge |
 | `feature.chamfer` | Chamfer | `edges`, `type` equal_distance (default) / two_distances (`distance`, `distance2`) / distance_angle (`distance`, `angle`), `flip` swaps the first face |
 | `feature.shell` | Shell | `faces` to remove, `thickness` |
-| `feature.press_pull` | Press Pull (Q) | flat `faces`, `distance` along the outward normal (negative pushes in); curved faces are not supported yet |
+| `feature.press_pull` | Press Pull (Q) | `faces` (flat or curved: a curved face is offset, like Fusion's Offset Face; a fillet face is refused, change its radius instead), `distance` along the outward normal (negative pushes in) |
 | `feature.hole` | Hole (H) | `point` on a planar face, `diameter`, `depth` or through all |
 | `feature.combine` | Combine, Split Body | `target`, `tools` (bodies, or imported parts `{part: id}`), join / cut / intersect, `keepTools`, `flip` |
 | `feature.box`, `feature.cylinder` | Box, Cylinder | primitives with an operation |

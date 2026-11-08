@@ -3,7 +3,7 @@
 #    OK pulls the face out by 5 mm (one timeline step, one undo step);
 #  - the distance arrow on the face drags the distance out and in;
 #  - a negative distance pushes the face in; the timeline step can be edited;
-#  - a curved face gives a clear error and leaves the body as it was.
+#  - a curved face is offset (CAD-166); a fillet face gives a clear error.
 # Run: AeroCAD --ui-script <this file>
 Qt.createQmlObject('import QtQuick; Item { objectName: "ppTest"; visible: false; property var s: ({}); function clickAt(x, y, z) { const v = viewport.viewPoint(Qt.vector3d(x, y, z)); const p = viewport.mapToItem(null, v.x, v.y); ui.click(p.x, p.y) } function size() { const p = controller.execute("document.parts").result.parts.find(x => x.kind === "body"); const i = controller.partInfo(p.id); return [i.sizeX, i.sizeY, i.sizeZ].map(v => Math.round(v * 1000) / 1000) } }', window.contentItem)
 ui.wait(800)
@@ -47,6 +47,22 @@ ui.wait(400)
 (() => { if (!ui.clickText("OK")) ui.fail("no OK button") })()
 ui.wait(800)
 (() => { const s = Array.from(window.contentItem.children).find(c => c.objectName === "ppTest").size(); ui.log("pushed: " + s.join(" x ")); if (s.join() !== "40,30,15") ui.fail("expected 40 x 30 x 15, got " + s.join(" x ")) })()
-# A curved face: clear error, body unchanged.
-(() => { const r = controller.execute("feature.cylinder", { center: [100, 0, 0], diameter: 20, height: 20 }); if (!r.ok) ui.fail("cylinder: " + r.error); const pp = controller.execute("feature.press_pull", { body: r.result.featureId ?? r.result.id, faces: [{ point: [110, 0, 10] }], distance: 2 }); ui.log("curved face: " + pp.ok + " " + pp.error); if (pp.ok) ui.fail("Press Pull on a curved face did not fail"); if (!/flat faces/.test(pp.error || "")) ui.fail("unclear error: " + pp.error) })()
+# CAD-166: a curved face (Fusion's Offset Face): Q on the side of a cylinder, a click on the
+# side picks it, 2 mm grows the diameter from 20 to 24; a fillet face gives a clear error.
+(() => { const r = controller.execute("feature.cylinder", { center: [100, 0, 0], diameter: 20, height: 20 }); if (!r.ok) ui.fail("cylinder: " + r.error); viewport.fitAll() })()
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "ppTest"); t.clickAt(100 + 7.07, 7.07, 10) })()
+ui.wait(300)
+ui.key("Q")
+ui.wait(400)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "ppTest").clickAt(100 + 7.07, 7.07, 10) })()
+ui.wait(400)
+(() => { const f = featureDialog.values.faces || []; ui.log("curved: picked faces " + JSON.stringify(f) + " body " + featureDialog.values.body); if (f.length !== 1) ui.fail("the click did not pick the side of the cylinder"); featureDialog.setValue("distance", 2) })()
+ui.wait(400)
+ui.shot("build/press-pull-curved-preview.png")
+(() => { if (!ui.clickText("OK")) ui.fail("no OK button") })()
+ui.wait(800)
+(() => { const parts = controller.execute("document.parts").result.parts.filter(x => x.kind === "body"); const sizes = parts.map(p => { const i = controller.partInfo(p.id); return [i.sizeX, i.sizeY, i.sizeZ].map(v => Math.round(v * 1000) / 1000) }); ui.log("curved: bodies " + JSON.stringify(sizes) + ", undo '" + controller.undoText + "'"); /* sizes of the display mesh: a round side is a few hundredths short */ if (!sizes.some(s => Math.abs(s[0] - 24) < 0.1 && Math.abs(s[1] - 24) < 0.1 && Math.abs(s[2] - 20) < 1e-3)) ui.fail("the cylinder did not grow to 24 x 24 x 20: " + JSON.stringify(sizes)) })()
+ui.shot("build/press-pull-curved.png")
+(() => { const r = controller.execute("feature.box", { corner: [200, 0, 0], size: [20, 20, 20] }); if (!r.ok) ui.fail("box: " + r.error); const b = r.result.featureId ?? r.result.id; const fl = controller.execute("feature.fillet", { body: b, edges: [{ point: [220, 0, 10] }], radius: 4 }); if (!fl.ok) ui.fail("fillet: " + fl.error); const pp = controller.execute("feature.press_pull", { body: b, faces: [{ point: [220 - 4 + 4 * Math.SQRT1_2, 4 - 4 * Math.SQRT1_2, 10] }], distance: 1 }); ui.log("fillet face: " + pp.ok + " " + pp.error); if (pp.ok) ui.fail("Press Pull on a fillet face did not fail"); if (!/fillet/.test(pp.error || "")) ui.fail("unclear error: " + pp.error) })()
 ui.log("press pull OK")
