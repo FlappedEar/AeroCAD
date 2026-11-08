@@ -1707,12 +1707,22 @@ Json RunManager::compare(const std::string& a, const std::string& b)
             auto near = [](const core::Vec3& p, const core::Vec3& q, double tol) {
                 return std::abs(p.x - q.x) <= tol && std::abs(p.y - q.y) <= tol && std::abs(p.z - q.z) <= tol;
             };
-            const bool partDiffers = !infoA || !infoB || !near(infoA->partBounds.min, infoB->partBounds.min, 1e-6) ||
-                                     !near(infoA->partBounds.max, infoB->partBounds.max, 1e-6) ||
-                                     !near(infoA->frame.origin, infoB->frame.origin, 1e-3) ||
-                                     infoA->frame.quarterTurns != infoB->frame.quarterTurns;
+            // In model coordinates (mm): the case frame turns with the flow direction.
+            auto modelBox = [](const CaseInfo& info) {
+                const core::Vec3 p = info.frame.toModel(info.partBounds.min);
+                const core::Vec3 q = info.frame.toModel(info.partBounds.max);
+                return std::pair{core::Vec3{std::min(p.x, q.x), std::min(p.y, q.y), std::min(p.z, q.z)},
+                                 core::Vec3{std::max(p.x, q.x), std::max(p.y, q.y), std::max(p.z, q.z)}};
+            };
+            bool partDiffers = !infoA || !infoB;
+            if (!partDiffers) {
+                const auto boxA = modelBox(*infoA), boxB = modelBox(*infoB);
+                partDiffers = !near(boxA.first, boxB.first, 1e-3) || !near(boxA.second, boxB.second, 1e-3);
+            }
             if (partDiffers)
                 causes.emplace_back("the part differs in size or position");
+            if (std::find(diff.begin(), diff.end(), "flowDirection") != diff.end())
+                causes.emplace_back("the flow direction differs");
             if (ctxA != ctxB)
                 causes.emplace_back("the surroundings differ");
             if (std::any_of(diff.begin(), diff.end(),

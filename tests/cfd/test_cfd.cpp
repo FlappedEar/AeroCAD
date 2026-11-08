@@ -1688,6 +1688,33 @@ TEST_CASE("A target-part variant of another size is compared on a different doma
     CHECK(noted);
 }
 
+TEST_CASE("A/B blames a domain change from another flow direction on the flow, not the part (CAD-159)", "[cfd]")
+{
+    TempDir tmp;
+    cfd::RunManager runs(tmp.path());
+    cfd::Settings s;
+    cfd::CaseGeometry g;
+    g.part = box({0, 0, 0}, {200, 80, 60});
+    s.flowDirection = "+X";
+    const std::string a = runs.prepare(g, s, {});
+    s.flowDirection = "+Y";
+    const std::string b = runs.prepare(g, s, {});
+    for (const auto& id : {a, b})
+        fakeFinishedRun(tmp.path() / id, 0.8, 1.0);
+    const auto cmp = runs.compare(a, b);
+    INFO(cmp.dump());
+    REQUIRE(contains(cmp.at("differingConditions"), "domain"));
+    CHECK(contains(cmp.at("conditionChanges"), "Flow direction: A +X, B +Y"));
+    bool flowNamed = false, partBlamed = false;
+    for (const auto& n : cmp.at("notes")) {
+        const auto text = n.get<std::string>();
+        flowNamed = flowNamed || text.find("because the flow direction differs;") != std::string::npos;
+        partBlamed = partBlamed || text.find("part differs") != std::string::npos;
+    }
+    CHECK(flowNamed);
+    CHECK_FALSE(partBlamed);
+}
+
 TEST_CASE("A/B names a floor-height difference with both heights and as the domain's cause (CAD-159)", "[cfd]")
 {
     TempDir tmp;
