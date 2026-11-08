@@ -632,7 +632,7 @@ ApplicationWindow {
         // editable first, so its edges can be rounded or bevelled in one step. The dialog
         // owns the conversion: Cancel undoes it, OK makes it one undo step with the feature.
         const convert = info.kind !== "body" && info.kind !== "sketch" && info.hasBrep && (info.solids ?? 0) > 0
-                        && ["fillet", "chamfer", "shell", "hole", "combine"].includes(type)
+                        && ["fillet", "chamfer", "shell", "press_pull", "hole", "combine"].includes(type)
         if (convert) {
             const b = featureDialog.convertToBody(info.id)
             if (b) {
@@ -649,7 +649,7 @@ ApplicationWindow {
         if (info.kind === "body") {
             if (type === "combine")
                 initial.target = info.featureId
-            else if (["fillet", "chamfer", "shell", "hole", "move", "mirror", "rectangular_pattern",
+            else if (["fillet", "chamfer", "shell", "press_pull", "hole", "move", "mirror", "rectangular_pattern",
                       "circular_pattern"].includes(type))
                 initial.body = info.featureId
         }
@@ -1201,6 +1201,8 @@ ApplicationWindow {
     Action { id: revolveAction; text: qsTr("Re&volve"); onTriggered: window.openFeature("revolve") }
     Action { id: boxAction; text: qsTr("&Box"); onTriggered: window.openFeature("box") }
     Action { id: cylinderAction; text: qsTr("C&ylinder"); onTriggered: window.openFeature("cylinder") }
+    // Fusion: Press Pull, Q (here on flat faces: moves them in or out).
+    Action { id: pressPullAction; text: qsTr("&Press Pull"); shortcut: "Q"; enabled: !window.activeSketch; onTriggered: window.openFeature("press_pull") }
     Action { id: filletAction; text: qsTr("&Fillet"); shortcut: "F"; enabled: !window.activeSketch; onTriggered: window.openFeature("fillet") }
     Action { id: holeAction; text: qsTr("H&ole"); shortcut: "H"; enabled: !window.activeSketch; onTriggered: window.openFeature("hole") }
     Action { id: chamferAction; text: qsTr("C&hamfer"); onTriggered: window.openFeature("chamfer") }
@@ -1537,6 +1539,7 @@ ApplicationWindow {
         }
         Menu {
             title: qsTr("&Modify")
+            MenuItem { action: pressPullAction }
             MenuItem { action: filletAction }
             MenuItem { action: chamferAction }
             MenuItem { action: shellAction }
@@ -1820,6 +1823,7 @@ ApplicationWindow {
                 caption: qsTr("MODIFY")
                 maxVisible: 6
                 ToolCommand { action: moveAction; text: qsTr("Move/Rotate"); iconName: "move" }
+                ToolCommand { action: pressPullAction; text: qsTr("Press Pull"); iconName: "extrude" }
                 ToolCommand { action: filletAction; text: qsTr("Fillet"); iconName: "fillet" }
                 ToolCommand { action: chamferAction; text: qsTr("Chamfer"); iconName: "chamfer" }
                 ToolCommand { action: shellAction; text: qsTr("Shell"); iconName: "shell" }

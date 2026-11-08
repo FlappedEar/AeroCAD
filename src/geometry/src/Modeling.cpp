@@ -716,6 +716,55 @@ Shape shell(const Shape& shape, const std::vector<std::size_t>& faceIndices, dou
     });
 }
 
+Shape pressPull(const Shape& shape, const std::vector<std::size_t>& faceIndices, double distance)
+{
+    const TopoDS_Shape& s = occ(shape, "Press Pull");
+    if (faceIndices.empty())
+        throw ModelingError("Press Pull: pick a face");
+    if (!std::isfinite(distance) || std::abs(distance) < 1e-6)
+        throw ModelingError("Press Pull: distance must not be zero");
+    return guarded("Press Pull", [&] {
+        const auto map = mapOf(s, TopAbs_FACE);
+        // Every slab is made from the faces of the original shape, then all are joined to
+        // it (pull) or cut from it (push) at once.
+        TopTools_ListOfShape slabs;
+        for (const std::size_t i : faceIndices) {
+            if (i >= static_cast<std::size_t>(map.Extent()))
+                throw ModelingError("Press Pull: no face " + std::to_string(i));
+            const auto plane = facePlane(shape, i);
+            if (!plane)
+                throw ModelingError("Press Pull works on flat faces: face " + std::to_string(i) + " is curved");
+            const core::Vec3 v = plane->normal * distance;
+            BRepPrimAPI_MakePrism prism(map(static_cast<int>(i) + 1), gp_Vec(v.x, v.y, v.z));
+            if (!prism.IsDone())
+                throw ModelingError("Press Pull failed on face " + std::to_string(i));
+            slabs.Append(prism.Shape());
+        }
+        TopTools_ListOfShape args;
+        args.Append(s);
+        TopoDS_Shape result;
+        auto run = [&](auto&& algo) {
+            algo.SetArguments(args);
+            algo.SetTools(slabs);
+            algo.SetRunParallel(false);
+            algo.Build();
+            if (!algo.IsDone() || algo.HasErrors())
+                throw ModelingError("Press Pull failed");
+            result = algo.Shape();
+        };
+        if (distance > 0)
+            run(BRepAlgoAPI_Fuse());
+        else
+            run(BRepAlgoAPI_Cut());
+        if (result.IsNull() || !hasSubShapes(result, TopAbs_SOLID))
+            throw ModelingError("Press Pull: nothing left of the body (distance too large?)");
+        result = unify(result);
+        if (!BRepCheck_Analyzer(result).IsValid())
+            throw ModelingError("Press Pull failed: the result is not a valid solid");
+        return wrapShape(result);
+    });
+}
+
 bool isValid(const Shape& shape)
 {
     if (shape.isNull())

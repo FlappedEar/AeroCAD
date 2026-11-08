@@ -567,7 +567,7 @@ Json describeTopologyRefs(const cad::Design& d, const std::string& type, Json pa
 {
     if ((type == "fillet" || type == "chamfer") && params.contains("edges") && params.contains("body"))
         addTopologyHints(d, params["body"], params["edges"], true);
-    else if (type == "shell" && params.contains("faces") && params.contains("body"))
+    else if ((type == "shell" || type == "press_pull") && params.contains("faces") && params.contains("body"))
         addTopologyHints(d, params["body"], params["faces"], false);
     else if (type == "extrude" && params.contains("to") && params["to"].is_object() &&
              params["to"].contains("faces") && params["to"].contains("body"))
@@ -1282,6 +1282,14 @@ void registerFeatureCommands(CommandRegistry& r)
                        {"faces", topologyListSchema("face")},
                        {"thickness", numberOrExpr("Wall thickness (mm).")}},
                       {"body", "thickness"});
+
+    addFeatureCommand(r, "press_pull", "Press Pull",
+                      "Moves flat faces of a body along their outward normal (Fusion: Press Pull, shortcut Q): a "
+                      "positive distance adds material, a negative one removes it. Curved faces are not supported.",
+                      {{"body", bodyRefSchema("Body.")},
+                       {"faces", topologyListSchema("face")},
+                       {"distance", numberOrExpr("Distance (mm) along the outward normal; negative pushes in.")}},
+                      {"body", "faces", "distance"});
 
     addFeatureCommand(
         r, "combine", "Combine",

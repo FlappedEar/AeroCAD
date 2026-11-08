@@ -131,7 +131,7 @@ const std::vector<std::string>& Design::featureTypes()
     static const std::vector<std::string> types{"sketch", "extrude", "revolve", "fillet", "chamfer",
                                                 "shell",  "combine", "box",     "cylinder", "base_body", "hole",
                                                 "mirror",  "rectangular_pattern", "circular_pattern", "loft", "sweep", "plane",
-                                                "part_on_surface", "fin_on_surface", "move"};
+                                                "part_on_surface", "fin_on_surface", "move", "press_pull"};
     return types;
 }
 
@@ -220,7 +220,9 @@ std::size_t Design::indexOf(FeatureId id) const
 
 std::string Design::defaultName(const std::string& type) const
 {
-    std::string base = type == "part_on_surface" ? "PartOnSurface" : type == "fin_on_surface" ? "Fin" : type;
+    std::string base = type == "part_on_surface" ? "PartOnSurface" : type == "fin_on_surface" ? "Fin"
+                       : type == "press_pull"     ? "PressPull"
+                                                  : type;
     base[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(base[0])));
     for (int n = 1;; ++n) {
         const std::string candidate = base + std::to_string(n);
@@ -1979,6 +1981,11 @@ void Design::evaluateFeature(const Feature& f)
         Body& b = bodyRef(required(p, "body"));
         const auto idx = has(p, "faces") ? resolveIndices(b.shape, p.at("faces"), false) : std::vector<std::size_t>{};
         b.shape = geometry::shell(b.shape, idx, ev.num(p, "thickness"));
+    } else if (f.type == "press_pull") {
+        // Fusion: Press Pull (Q) on flat faces of a body.
+        Body& b = bodyRef(required(p, "body"));
+        const auto idx = resolveIndices(b.shape, required(p, "faces"), false);
+        b.shape = geometry::pressPull(b.shape, idx, ev.num(p, "distance"));
     } else if (f.type == "combine") {
         Body& target = bodyRef(required(p, "target"));
         const std::string op = lower(p.value("operation", std::string("join")));

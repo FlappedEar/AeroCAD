@@ -1,0 +1,39 @@
+# CAD-157: Press Pull (Fusion, Q) on flat faces, with real keys and clicks:
+#  - Q with a body selected opens Press Pull on that body; a click on its top face picks it;
+#    OK pulls the face out by 5 mm (one timeline step, one undo step);
+#  - a negative distance pushes the face in; the timeline step can be edited;
+#  - a curved face gives a clear error and leaves the body as it was.
+# Run: AeroCAD --ui-script <this file>
+Qt.createQmlObject('import QtQuick; Item { objectName: "ppTest"; visible: false; property var s: ({}); function clickAt(x, y, z) { const v = viewport.viewPoint(Qt.vector3d(x, y, z)); const p = viewport.mapToItem(null, v.x, v.y); ui.click(p.x, p.y) } function size() { const p = controller.execute("document.parts").result.parts.find(x => x.kind === "body"); const i = controller.partInfo(p.id); return [i.sizeX, i.sizeY, i.sizeZ].map(v => Math.round(v * 1000) / 1000) } }', window.contentItem)
+ui.wait(800)
+(() => { const r = controller.execute("feature.box", { size: [40, 30, 20] }); if (!r.ok) ui.fail("box: " + r.error); viewport.fitAll() })()
+ui.wait(400)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "ppTest").clickAt(20, 15, 20) })()
+ui.wait(300)
+ui.key("Q")
+ui.wait(400)
+(() => { ui.log("Q: dialog " + featureDialog.visible + " type " + featureDialog.type + " body " + featureDialog.values.body); if (!featureDialog.visible || featureDialog.type !== "press_pull") ui.fail("Q did not open Press Pull"); if (featureDialog.values.body === undefined) ui.fail("Press Pull did not take the selected body") })()
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "ppTest").clickAt(20, 15, 20) })()
+ui.wait(400)
+(() => { const f = featureDialog.values.faces || []; ui.log("picked faces " + JSON.stringify(f)); if (f.length !== 1) ui.fail("the click did not pick the top face") })()
+ui.shot("build/press-pull-preview.png")
+(() => { if (!ui.clickText("OK")) ui.fail("no OK button") })()
+ui.wait(800)
+(() => { const s = Array.from(window.contentItem.children).find(c => c.objectName === "ppTest").size(); ui.log("pulled: " + s.join(" x ") + ", undo '" + controller.undoText + "'"); if (s.join() !== "40,30,25") ui.fail("expected 40 x 30 x 25, got " + s.join(" x ")) })()
+ui.shot("build/press-pull.png")
+(() => { undoAction.trigger() })()
+ui.wait(500)
+(() => { const s = Array.from(window.contentItem.children).find(c => c.objectName === "ppTest").size(); ui.log("Ctrl+Z: " + s.join(" x ")); if (s.join() !== "40,30,20") ui.fail("one undo did not take Press Pull back: " + s.join(" x ")) })()
+# Push in: distance -5.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "ppTest"); t.clickAt(20, 15, 20) })()
+ui.wait(300)
+(() => { window.openFeature("press_pull") })()
+ui.wait(300)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "ppTest").clickAt(20, 15, 20); featureDialog.setValue("distance", -5) })()
+ui.wait(400)
+(() => { if (!ui.clickText("OK")) ui.fail("no OK button") })()
+ui.wait(800)
+(() => { const s = Array.from(window.contentItem.children).find(c => c.objectName === "ppTest").size(); ui.log("pushed: " + s.join(" x ")); if (s.join() !== "40,30,15") ui.fail("expected 40 x 30 x 15, got " + s.join(" x ")) })()
+# A curved face: clear error, body unchanged.
+(() => { const r = controller.execute("feature.cylinder", { center: [100, 0, 0], diameter: 20, height: 20 }); if (!r.ok) ui.fail("cylinder: " + r.error); const pp = controller.execute("feature.press_pull", { body: r.result.featureId ?? r.result.id, faces: [{ point: [110, 0, 10] }], distance: 2 }); ui.log("curved face: " + pp.ok + " " + pp.error); if (pp.ok) ui.fail("Press Pull on a curved face did not fail"); if (!/flat faces/.test(pp.error || "")) ui.fail("unclear error: " + pp.error) })()
+ui.log("press pull OK")

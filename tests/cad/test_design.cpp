@@ -190,6 +190,18 @@ TEST_CASE("Revolve, shell, chamfer, combine", "[cad][design]")
     CHECK(bodyVolume(d, tube) == Approx(pi * (100 - 49) * 10).epsilon(1e-6));
 }
 
+TEST_CASE("Press Pull in the timeline follows an edited box", "[cad][design]")
+{
+    Design d;
+    const auto block = d.addFeature("box", {{"size", {10, 10, 10}}});
+    const auto pp = d.addFeature("press_pull", {{"body", block},
+                                               {"faces", Json::array({{{"point", {5, 5, 10}}}})},
+                                               {"distance", 4}});
+    CHECK(bodyVolume(d, block) == Approx(1400).epsilon(1e-6));
+    d.editFeature(pp, {{"body", block}, {"faces", Json::array({{{"point", {5, 5, 10}}}})}, {"distance", -2}});
+    CHECK(bodyVolume(d, block) == Approx(800).epsilon(1e-6));
+}
+
 TEST_CASE("Chamfer types in the timeline", "[cad][design]")
 {
     Design d;

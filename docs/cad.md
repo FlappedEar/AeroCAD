@@ -18,7 +18,7 @@ use the same operations, and every change is one undo step.
 - **Operation** (extrude, revolve, box, cylinder): `new_body` (default), `join`, `cut`,
   `intersect`. join/cut/intersect act on `bodies`, or on every body the result touches.
 - **Edges and faces** are referenced by index (`body.edges`, `body.faces`) or, more robustly,
-  by a point: `{"point": [x, y, z]}`. Fillet, chamfer and shell store point references
+  by a point: `{"point": [x, y, z]}`. Fillet, chamfer, shell and press pull store point references
   with matching hints: the point relative to the body's bounding box (`relative`), the edge
   `direction` or face `normal`, and the `kind` (line, circle, plane, ...). Regeneration
   picks the edge/face that best matches them, so a picked corner edge follows the body
@@ -100,6 +100,7 @@ rebuilding, AeroCAD reports the problem; Undo restores the previous source.
 | `feature.fillet` | Fillet (F) | `edges`, `radius`; tangent chains are rounded with the picked edge |
 | `feature.chamfer` | Chamfer | `edges`, `type` equal_distance (default) / two_distances (`distance`, `distance2`) / distance_angle (`distance`, `angle`), `flip` swaps the first face |
 | `feature.shell` | Shell | `faces` to remove, `thickness` |
+| `feature.press_pull` | Press Pull (Q) | flat `faces`, `distance` along the outward normal (negative pushes in); curved faces are not supported yet |
 | `feature.hole` | Hole (H) | `point` on a planar face, `diameter`, `depth` or through all |
 | `feature.combine` | Combine, Split Body | `target`, `tools` (bodies, or imported parts `{part: id}`), join / cut / intersect, `keepTools`, `flip` |
 | `feature.box`, `feature.cylinder` | Box, Cylinder | primitives with an operation |
