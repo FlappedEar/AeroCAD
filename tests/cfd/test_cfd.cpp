@@ -723,6 +723,23 @@ TEST_CASE("cropPolygons keeps the polygons around a region", "[cfd]")
     CHECK(cfd::cropPolygons(d, core::BoundingBox{}).empty());
 }
 
+TEST_CASE("dropNearPoints removes the wake's skin on the part", "[cfd]")
+{
+    // CAD-165: a triangle hugging a surface point and one well away from it.
+    cfd::PolyData d;
+    d.points = {{0, 0, 0.01}, {0.1, 0, 0.01}, {0, 0.1, 0.01}, {2, 0, 0}, {2.1, 0, 0}, {2, 0.1, 0}};
+    d.polygons = {{0, 1, 2}, {3, 4, 5}};
+    d.scalars["speed"] = {1, 2, 3, 4, 5, 6};
+    const std::vector<core::Vec3> surface{{0.03, 0.03, 0}, {5, 5, 5}};
+    const auto kept = cfd::dropNearPoints(d, surface, 0.05);
+    REQUIRE(kept.polygons.size() == 1);
+    CHECK(kept.points.size() == 3);
+    CHECK(kept.scalars.at("speed") == std::vector<double>{4, 5, 6});
+    // Closer than a small gap: kept.
+    CHECK(cfd::dropNearPoints(d, surface, 0.01).polygons.size() == 2);
+    CHECK(cfd::dropNearPoints(d, {}, 0.05).polygons.size() == 2);
+}
+
 TEST_CASE("cropLines splits lines at the region and appendPolyData merges sets", "[cfd]")
 {
     cfd::PolyData d;

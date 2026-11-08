@@ -1396,6 +1396,11 @@ PolyData RunManager::field(const std::string& id, std::string_view kind)
         d = readVtk(dirs.back() / file);
         if (kind != "surface" && !region.isEmpty())
             d = cropPolygons(d, region);
+        // The total pressure is also lost in the boundary layer, so the isosurface wraps
+        // the whole part in a skin about a cell off its surface that would hide the
+        // pressure map; only what lies further away is the wake (CAD-165).
+        if (kind == "wake" && !d.empty() && fs::is_regular_file(dirs.back() / "part.vtk", ec))
+            d = dropNearPoints(d, readVtk(dirs.back() / "part.vtk").points, surfaceCellSize(*info));
     } else {
         throw std::runtime_error("Unknown field '" + std::string(kind) +
                                  "' (surface, sectionHorizontal, sectionVertical, wake, sectionX_<i>, sectionY_<i>, "

@@ -374,7 +374,10 @@ The wake surface (CAD-165) is the isosurface of zero total pressure, Cp0 = 0, as
 motorsport CFD: the air inside it has lost all of its dynamic pressure, so it outlines the
 wake, the separated regions and the vortex cores from wheels and wings. The case computes
 the total pressure (`pressure` function object, `mode total`) and samples the isosurface
-with the other surfaces, cropped to the region around the part. "Show in 3D" draws it
+with the other surfaces, cropped to the region around the part. Total pressure is also
+lost in the boundary layer, so the isosurface wraps the whole part in a skin about a cell
+off its surface that would hide the pressure map; the result view drops the parts of it
+closer to the part than one surface cell of the run's mesh, which leaves the wake. "Show in 3D" draws it
 see-through and coloured by speed. Runs made before it say so and need a new run.
 Each scalar has `min`, `max`, `mean` and the 2nd/98th percentiles `p02`/`p98`, which the
 app uses for the pressure colour range.

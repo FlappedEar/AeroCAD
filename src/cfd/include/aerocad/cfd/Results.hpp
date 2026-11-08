@@ -53,6 +53,12 @@ struct PolyData {
 /// the whole wind tunnel to the region around the part.
 [[nodiscard]] PolyData cropPolygons(const PolyData& data, const core::BoundingBox& box);
 
+/// The polygons of `data` whose centre is at least `distance` from every one of `points`,
+/// with only the points they use (CAD-165: the wake surface without the skin it forms in
+/// the boundary layer on the part).
+[[nodiscard]] PolyData dropNearPoints(const PolyData& data, const std::vector<core::Vec3>& points,
+                                      double distance);
+
 /// The parts of the lines of `data` inside `box` (a line that leaves the box and comes
 /// back becomes two lines), with only the points they use. Polygons are dropped.
 [[nodiscard]] PolyData cropLines(const PolyData& data, const core::BoundingBox& box);

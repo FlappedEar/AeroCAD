@@ -777,7 +777,7 @@ Item {
                         // Dense streamlines and the wake surface are see-through, so the part
                         // shows behind them.
                         opacity: fieldModel.modelData.kind === "streamlines" ? 0.55
-                               : fieldModel.modelData.kind === "wake" ? 0.45 : 1.0
+                               : fieldModel.modelData.kind === "wake" ? 0.8 : 1.0
                     }
                 }
             }
