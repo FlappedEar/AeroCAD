@@ -18,7 +18,7 @@ command, available to scripts and to an AI agent over MCP (`commands.list`).
 | Command | What it does |
 | --- | --- |
 | `part.align {"id", "points" \| "triangles" \| "normal"+"origin", "target", "origin", "xDirection", "flip", "keepPosition"}` | Fit a plane to 3+ picked points or to a triangle region (e.g. a selection), turn it onto a world plane (`xy` default: normal to +Z; `xz`: +Y; `yz`: +X) and move its origin to the world origin. `xDirection` fixes the in-plane rotation. Returns the 4x4 `transform` and the fit `fitRms`. |
-| `part.transform {"id", "axis", "angle", "center", "translate"}` | Rigid move/rotation (degrees, right-hand rule; rotation first). |
+| `part.transform {"id", "axis", "angle", "scale", "center", "translate"}` | Move, rotation (degrees, right-hand rule) and uniform scale; scale and rotation about `center` (default the box centre) first, then the move. |
 | `part.place {"id", "onFloor"}` | Centre the bounding box on the origin in X/Y and rest it on Z = 0 (or centre it in Z). |
 
 To put a picked face of a scan on the floor, align with that face's triangles and
