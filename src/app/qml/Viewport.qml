@@ -976,7 +976,7 @@ Item {
     readonly property var transformKeepsFor: ["document.parts", "document.bounds", "timeline.list", "sketch.profiles",
         "sketch.curves", "mesh.stats", "simulation.list", "simulation.results", "simulation.field",
         "simulation.environment", "simulation.status", "project.info", "project.get_context", "edit.history",
-        "inspect.state", "inspect.dimensions", "selection.get", "parameter.list"]
+        "inspect.state", "inspect.dimensions", "selection.get", "parameter.list", "part.face_orientation"]
     Connections {
         target: root.controller
         enabled: root.transformActive
@@ -1001,63 +1001,32 @@ Item {
         return r
     }
 
-    /// v turned by unit quaternion q.
-    function rotateVector(q, v) {
-        const p = quaternionMultiply(quaternionMultiply(q, Qt.quaternion(0, v.x, v.y, v.z)),
-                                     Qt.quaternion(q.scalar, -q.x, -q.y, -q.z))
-        return Qt.vector3d(p.x, p.y, p.z)
-    }
-
-    /// Shortest rotation turning unit vector a onto unit vector b.
-    function rotationBetween(a, b) {
-        const d = a.dotProduct(b)
-        if (d < -0.999999) {
-            // Opposite: half a turn about any axis perpendicular to a.
-            let axis = Qt.vector3d(1, 0, 0).crossProduct(a)
-            if (axis.length() < 1e-6)
-                axis = Qt.vector3d(0, 1, 0).crossProduct(a)
-            return axisAngleQuaternion(axis, 180)
-        }
-        const c = a.crossProduct(b)
-        const q = Qt.quaternion(1 + d, c.x, c.y, c.z)
-        const n = Math.hypot(q.scalar, q.x, q.y, q.z)
-        return Qt.quaternion(q.scalar / n, q.x / n, q.y / n, q.z / n)
-    }
-
-    function previewBounds() {
-        const t = transformTarget
-        return controller.transformedBounds(t.partId, t.center, transformRotation, transformScale,
-                                            transformMove)
-    }
-
-    /// Lay on face: the picked face down on the ground (Z = 0). Face front: the part turned
-    /// about Z so the picked face looks at the Front view, which is where the air comes
-    /// from in a wind tunnel run with the default flow (+Y); a face pointing up or down is
-    /// turned onto the front directly. The height above the ground is kept.
+    /// Lay on Face / Face Front: the part.face_orientation command works out the whole
+    /// transform from the picked face and the pending one; the preview shows it.
     function orientToFace(hit) {
         const t = transformTarget
         const mode = transformPickMode
-        const b0 = previewBounds()
-        const size = Qt.vector3d(b0.max[0] - b0.min[0], b0.max[1] - b0.min[1], b0.max[2] - b0.min[2]).length()
-        const n0 = controller.surfaceNormalAt(t.partId, hit.localPoint, hit.triangle, Math.max(1, size * 0.03))
-        if (n0.length() < 1e-9)
-            return false
-        const n = rotateVector(transformRotation, n0.normalized())
-        let q
-        if (mode === "lay") {
-            q = rotationBetween(n, Qt.vector3d(0, 0, -1))
-        } else {
-            const h = Qt.vector2d(n.x, n.y)
-            q = h.length() > 0.2 ? axisAngleQuaternion(Qt.vector3d(0, 0, 1), Math.atan2(-n.x, -n.y) * 180 / Math.PI)
-                                 : rotationBetween(n, Qt.vector3d(0, -1, 0))
+        const q = transformRotation
+        const w = Math.max(-1, Math.min(1, q.scalar))
+        const sinHalf = Math.sqrt(Math.max(0, 1 - w * w))
+        const params = { id: t.partId, point: [hit.localPoint.x, hit.localPoint.y, hit.localPoint.z],
+                         mode: mode === "lay" ? "down" : "front", center: [t.center.x, t.center.y, t.center.z],
+                         scale: transformScale, translate: [transformMove.x, transformMove.y, transformMove.z] }
+        if (hit.triangle !== undefined)
+            params.triangle = hit.triangle
+        if (sinHalf > 1e-9) {
+            params.axis = [q.x / sinHalf, q.y / sinHalf, q.z / sinHalf]
+            params.angle = 2 * Math.acos(w) * 180 / Math.PI
         }
-        const r = quaternionMultiply(q, transformRotation)
-        const len = Math.hypot(r.scalar, r.x, r.y, r.z)
-        transformRotation = Qt.quaternion(r.scalar / len, r.x / len, r.y / len, r.z / len)
-        const b1 = previewBounds()
-        const ground = mode === "lay" ? 0 : b0.min[2]
-        transformMove = transformMove.plus(Qt.vector3d(0, 0, ground - b1.min[2]))
+        const r = controller.execute("part.face_orientation", params)
         transformPickMode = ""
+        if (!r.ok) {
+            controller.showStatus(r.error)
+            return false
+        }
+        const o = r.result
+        transformRotation = axisAngleQuaternion(Qt.vector3d(o.axis[0], o.axis[1], o.axis[2]), o.angle)
+        transformMove = Qt.vector3d(o.translate[0], o.translate[1], o.translate[2])
         controller.showStatus(mode === "lay" ? qsTr("Laid on the picked face, on the ground. Enter applies.")
                                              : qsTr("The picked face looks to the front (where the wind tunnel air comes from). Enter applies."))
         return true

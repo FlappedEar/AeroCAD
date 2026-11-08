@@ -870,53 +870,6 @@ QVector3D AppController::dropOntoPart(quint64 id, const QVector3D& point, const 
     return point;
 }
 
-QVector3D AppController::surfaceNormalAt(quint64 id, const QVector3D& point, quint32 triangle, double radius) const
-{
-    const model::Part* p = part(id);
-    if (p == nullptr || !p->mesh || triangle >= p->mesh->triangleCount())
-        return {};
-    const core::TriangleMesh& mesh = *p->mesh;
-    const core::Vec3 hitNormal = mesh.faceNormal(triangle);
-    const core::Vec3 c{point.x(), point.y(), point.z()};
-    const double r2 = radius * radius;
-    core::Vec3 sum{0.0, 0.0, 0.0};
-    const auto& v = mesh.vertices();
-    for (std::size_t t = 0; t < mesh.triangleCount(); ++t) {
-        const auto& tri = mesh.triangles()[t];
-        const core::Vec3 centroid = (v[tri[0]] + v[tri[1]] + v[tri[2]]) * (1.0 / 3.0);
-        if ((centroid - c).dot(centroid - c) > r2)
-            continue;
-        const core::Vec3 n = (v[tri[1]] - v[tri[0]]).cross(v[tri[2]] - v[tri[0]]); // 2 * area * normal
-        if (n.dot(hitNormal) > 0.0)
-            sum = sum + n;
-    }
-    const core::Vec3 n = sum.dot(sum) > 0.0 ? sum.normalized() : hitNormal;
-    return {static_cast<float>(n.x), static_cast<float>(n.y), static_cast<float>(n.z)};
-}
-
-QVariantMap AppController::transformedBounds(quint64 id, const QVector3D& center, const QQuaternion& rotation,
-                                             double scale, const QVector3D& translate) const
-{
-    const model::Part* p = part(id);
-    if (p == nullptr || !p->mesh || p->mesh->vertexCount() == 0)
-        return {};
-    QVector3D lo(1e30F, 1e30F, 1e30F);
-    QVector3D hi(-1e30F, -1e30F, -1e30F);
-    for (const core::Vec3& v : p->mesh->vertices()) {
-        const QVector3D q = rotation.rotatedVector(QVector3D(static_cast<float>(v.x), static_cast<float>(v.y),
-                                                             static_cast<float>(v.z)) -
-                                                   center) *
-                                static_cast<float>(scale) +
-                            center + translate;
-        for (int k = 0; k < 3; ++k) {
-            lo[k] = std::min(lo[k], q[k]);
-            hi[k] = std::max(hi[k], q[k]);
-        }
-    }
-    return {{QStringLiteral("min"), QVariantList{lo.x(), lo.y(), lo.z()}},
-            {QStringLiteral("max"), QVariantList{hi.x(), hi.y(), hi.z()}}};
-}
-
 QVariantMap AppController::pickPartSurface(quint64 id, const QVector3D& origin, const QVector3D& direction) const
 {
     const core::Vec3 o{origin.x(), origin.y(), origin.z()};

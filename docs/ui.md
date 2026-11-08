@@ -121,7 +121,8 @@ change:
   default flow (+Y); its height stays. A face pointing up or down is turned onto the front
   directly. Together they set a part up for CFD in two clicks.
   On a scan the face direction is taken from the surface patch around the click (3 % of
-  the part size), so scanner noise does not tilt the part. Esc leaves the face pick.
+  the part size), so scanner noise does not tilt the part. Esc leaves the face pick. The
+  geometry comes from the `part.face_orientation` command, which AI agents can use too.
 
 On a body the result is a timeline step (`feature.move`, editable later); on a scan,
 surface or imported solid it changes the part directly (`part.transform`). Sketches and

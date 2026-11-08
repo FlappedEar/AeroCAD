@@ -8,7 +8,10 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <utility>
 #include <numbers>
 #include <vector>
 
@@ -342,3 +345,68 @@ TEST_CASE("decimateToTarget never collapses a mesh to nothing", "[core][scan]")
     const TriangleMesh d = decimateToTarget(m, 1000);
     CHECK_FALSE(d.isEmpty());
 }
+
+TEST_CASE("axisAngle gives back the rotation, also half turns", "[core][align]")
+{
+    for (const auto& [axis, angle] : std::vector<std::pair<Vec3, double>>{
+             {{0, 0, 1}, 0.3}, {{1, 2, 3}, 2.0}, {{1, 0, 0}, std::numbers::pi}, {{0.3, -1, 0.2}, std::numbers::pi}}) {
+        const Mat3 r = Mat3::rotation(axis, angle);
+        const AxisAngle aa = axisAngle(r);
+        const Mat3 back = Mat3::rotation(aa.axis, aa.angle);
+        for (int i = 0; i < 9; ++i)
+            CHECK(back.m[static_cast<std::size_t>(i)] == Approx(r.m[static_cast<std::size_t>(i)]).margin(1e-9));
+    }
+    CHECK(axisAngle(Mat3{}).angle == 0.0);
+}
+
+TEST_CASE("patchNormal: a face, a face next to a bevel, a noisy tilted scan", "[core][align]")
+{
+    const TriangleMesh box = cube();
+    const Vec3 top = patchNormal(box, {0.5, 0.5, 1}, 2, 0.2);
+    CHECK(top.z == Approx(1).margin(1e-9));
+
+    // 100 mm square face (two triangles) with a 1 mm 45 degree bevel along x = 100; click
+    // 1 mm from the bevel.
+    std::vector<Vec3> v{{0, 0, 0}, {100, 0, 0}, {100, 100, 0}, {0, 100, 0}, {101, 0, -1}, {101, 100, -1}};
+    std::vector<TriangleMesh::Triangle> t{{0, 1, 2}, {0, 2, 3}, {1, 4, 5}, {1, 5, 2}};
+    const TriangleMesh bevel(std::move(v), std::move(t));
+    REQUIRE(bevel.faceNormal(2).x > 0.5);
+    const Vec3 n = patchNormal(bevel, {99, 50, 0}, 0, 3.0);
+    CHECK(std::acos(std::clamp(n.z, -1.0, 1.0)) * 180 / std::numbers::pi < 3.0);
+
+    // 60 x 60 mm grid, 3 mm spacing, tilted 10 degrees about X, +-0.05 mm noise.
+    const Mat3 tilt = Mat3::rotation({1, 0, 0}, 10 * std::numbers::pi / 180);
+    std::vector<Vec3> gv;
+    std::vector<TriangleMesh::Triangle> gt;
+    const int n1 = 21;
+    for (int j = 0; j < n1; ++j)
+        for (int i = 0; i < n1; ++i) {
+            const double noise = 0.05 * std::sin(i * 12.9898 + j * 78.233) * std::cos(i * 4.1 + j * 1.7);
+            gv.push_back(tilt * Vec3{i * 3.0, j * 3.0, noise});
+        }
+    for (int j = 0; j + 1 < n1; ++j)
+        for (int i = 0; i + 1 < n1; ++i) {
+            const auto k = static_cast<std::uint32_t>(j * n1 + i);
+            gt.push_back({k, k + 1, k + n1 + 1});
+            gt.push_back({k, k + n1 + 1, k + n1});
+        }
+    const TriangleMesh scan(std::move(gv), std::move(gt));
+    const Vec3 want = tilt * Vec3{0, 0, 1};
+    const Vec3 got = patchNormal(scan, tilt * Vec3{30, 30, 0}, 2 * (10 * 20 + 10), 6.0);
+    CHECK(std::acos(std::clamp(got.dot(want), -1.0, 1.0)) * 180 / std::numbers::pi < 1.0);
+}
+
+TEST_CASE("faceTurn lays a face down or turns it about Z to the front", "[core][align]")
+{
+    const Vec3 n = Vec3{1, 2, 0.5}.normalized();
+    const Vec3 down = faceTurn(n, FaceTarget::Down) * n;
+    CHECK(down.z == Approx(-1).margin(1e-9));
+    const Mat3 front = faceTurn(n, FaceTarget::Front);
+    const Vec3 f = front * n;
+    CHECK(f.x == Approx(0).margin(1e-9));
+    CHECK(f.y < 0);
+    CHECK(f.z == Approx(n.z).margin(1e-9)); // about Z only
+    const Vec3 up{0, 0.1, 1};
+    CHECK((faceTurn(up, FaceTarget::Front) * up.normalized()).y == Approx(-1).margin(1e-9));
+}
+
