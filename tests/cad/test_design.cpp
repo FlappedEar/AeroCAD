@@ -222,6 +222,26 @@ TEST_CASE("Press Pull in the timeline follows an edited box", "[cad][design]")
     CHECK(bodyVolume(d, block) == Approx(800).epsilon(1e-6));
 }
 
+TEST_CASE("Split Body in the timeline makes a second body and follows an edited box", "[cad][design]")
+{
+    Design d;
+    const auto block = d.addFeature("box", {{"size", {40, 20, 10}}});
+    const auto split = d.addFeature("split", {{"body", block}, {"plane", "YZ"}, {"offset", 15}});
+    CHECK(d.bodies().size() == 2);
+    CHECK(bodyVolume(d, block) == Approx(15 * 200).epsilon(1e-6));
+    CHECK(bodyVolume(d, split) == Approx(25 * 200).epsilon(1e-6));
+    d.editFeature(block, {{"size", {60, 20, 10}}});
+    CHECK(bodyVolume(d, block) == Approx(15 * 200).epsilon(1e-6));
+    CHECK(bodyVolume(d, split) == Approx(45 * 200).epsilon(1e-6));
+    d.editFeature(split, {{"offset", 30}});
+    CHECK(bodyVolume(d, block) == Approx(30 * 200).epsilon(1e-6));
+    CHECK(bodyVolume(d, split) == Approx(30 * 200).epsilon(1e-6));
+    // The new body takes features like any other.
+    d.addFeature("press_pull", {{"body", split}, {"faces", Json::array({{{"point", {60, 10, 5}}}})}, {"distance", 5}});
+    CHECK(bodyVolume(d, split) == Approx(35 * 200).epsilon(1e-6));
+    CHECK_THROWS_AS(d.addFeature("split", {{"body", block}, {"plane", "YZ"}, {"offset", 100}}), cad::DesignError);
+}
+
 TEST_CASE("Chamfer types in the timeline", "[cad][design]")
 {
     Design d;

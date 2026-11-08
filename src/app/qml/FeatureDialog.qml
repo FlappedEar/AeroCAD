@@ -297,6 +297,10 @@ Pane {
             { key: "angle", type: "expr", label: qsTr("Angle (deg)"), init: 90 },
             { key: "translate", type: "vec3", label: qsTr("Move by"), init: [0, 0, 0] },
             { key: "scale", type: "expr", label: qsTr("Scale (factor)"), init: 1 }] },
+        split: { title: qsTr("Split Body"), command: "feature.split", fields: [
+            { key: "body", type: "body", label: qsTr("Body to split") },
+            { key: "plane", type: "planePick", label: qsTr("Splitting plane"), init: "YZ", hint: qsTr("Origin plane, construction plane, or click a planar face") },
+            { key: "offset", type: "expr", label: qsTr("Offset"), init: 0 }] },
         mirror: { title: qsTr("Mirror"), command: "feature.mirror", fields: [
             { key: "body", type: "body", label: qsTr("Body") },
             { key: "plane", type: "choice", label: qsTr("Mirror plane"), init: "YZ", options: planes },
@@ -673,6 +677,10 @@ Pane {
             return
         }
         if (field.type === "planePick") {
+            // The body the preview made (Split Body's front piece) is gone when the step is
+            // recomputed, so a face of it cannot hold the plane.
+            if (part.kind === "body" && part.featureId === previewFeatureId)
+                return
             if (part.kind === "plane")
                 setValue(pickKey, { plane: part.featureId })
             else if ((part = asBody(part)))

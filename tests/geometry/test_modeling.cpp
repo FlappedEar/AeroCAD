@@ -605,3 +605,22 @@ TEST_CASE("Offset side: outwards for closed chains, left of open ones", "[geomet
         CHECK(bounds(offsetCurves(square, -2)).first == Approx(2));
     }
 }
+
+TEST_CASE("Split Body cuts a body by a plane into two sides", "[geometry][modeling]")
+{
+    const auto box = makeBox(40, 20, 10);
+    const auto [back, front] = splitByPlane(box, {15, 0, 0}, {1, 0, 0});
+    CHECK(isValid(back));
+    CHECK(isValid(front));
+    CHECK(back.volume() == Approx(15 * 20 * 10).epsilon(1e-9));
+    CHECK(front.volume() == Approx(25 * 20 * 10).epsilon(1e-9));
+    CHECK(back.bounds().max.x == Approx(15));
+    CHECK(front.bounds().min.x == Approx(15));
+    // A U shape cut across both legs: the front side is two separate pieces.
+    const auto u = boolean(box, translated(makeBox(30, 20, 6), {5, 0, 4}), BooleanOp::Cut);
+    const auto [base, legs] = splitByPlane(u, {0, 0, 4}, {0, 0, 1});
+    CHECK(base.volume() == Approx(40 * 20 * 4).epsilon(1e-9));
+    CHECK(legs.volume() == Approx(2 * 5 * 20 * 6).epsilon(1e-9));
+    CHECK_THROWS_AS(splitByPlane(box, {50, 0, 0}, {1, 0, 0}), ModelingError);
+    CHECK_THROWS_AS(splitByPlane(box, {40, 0, 0}, {1, 0, 0}), ModelingError); // touches a face only
+}

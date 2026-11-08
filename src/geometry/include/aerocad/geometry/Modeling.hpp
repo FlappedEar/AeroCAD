@@ -101,10 +101,21 @@ struct ChamferOptions {
 
 /// Hollows a solid: removes the given faces and keeps walls of `thickness` (inwards).
 [[nodiscard]] Shape shell(const Shape& shape, const std::vector<std::size_t>& faceIndices, double thickness);
-/// Press Pull (Fusion, Q) on flat faces: moves each face `distance` along its outward
-/// normal, adding material (positive) or removing it (negative). The sides follow the
-/// face's outline straight along the normal. Throws ModelingError for curved faces.
+/// Press Pull (Fusion, Q): moves each face `distance` along its outward normal, adding
+/// material (positive) or removing it (negative). Flat faces are pulled straight; curved
+/// faces are offset (Fusion's Offset Face). Throws ModelingError for a fillet face or a push
+/// deeper than the face's curvature.
 [[nodiscard]] Shape pressPull(const Shape& shape, const std::vector<std::size_t>& faceIndices, double distance);
+
+/// The two sides of a body cut by a plane (Fusion: Split Body). Each side is a solid, or a
+/// compound when that side has several separate pieces.
+struct SplitResult {
+    Shape back;  ///< behind the plane (against its normal)
+    Shape front; ///< in front of the plane (along its normal)
+};
+/// Cuts `shape` with the infinite plane through `origin` with `normal`. Throws
+/// ModelingError when the plane does not cut through the body.
+[[nodiscard]] SplitResult splitByPlane(const Shape& shape, const core::Vec3& origin, const core::Vec3& normal);
 
 /// True when the shape passes the B-rep validity check.
 [[nodiscard]] bool isValid(const Shape& shape);

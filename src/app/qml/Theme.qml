@@ -147,7 +147,7 @@ QtObject {
         "box": "box", "cylinder": "cylinder", "hole": "hole", "line": "line", "rectangle": "rectangle",
         "circle": "circle", "arc": "arc", "polygon": "polygon", "slot": "slot", "dimension": "dimension",
         "finish sketch": "finish-sketch", "press pull": "extrude", "fillet": "fillet", "chamfer": "chamfer", "shell": "shell",
-        "combine": "combine", "parameters": "parameters", "show/hide": "visible", "delete": "delete",
+        "combine": "combine", "split body": "section", "parameters": "parameters", "show/hide": "visible", "delete": "delete",
         "selected": "export", "all": "export", "export": "export", "fit": "fit", "home": "home",
         "ortho": "ortho", "sweep": "sweep", "loft": "loft", "mirror": "mirror", "pattern": "pattern",
         "circular pattern": "circular-pattern", "plane": "plane", "measure": "measure",
@@ -175,6 +175,7 @@ QtObject {
         "shell": qsTr("Hollow out a body, leaving walls of the thickness you type."),
         "move/rotate": qsTr("Turn the selected part about an axis and move it by a distance (Fusion: Move/Copy, M)."),
         "combine": qsTr("Join, cut or intersect two bodies."),
+        "split body": qsTr("Cut a body with a plane into two bodies, e.g. to print a part larger than the printer bed (Fusion: Split Body)."),
         "parameters": qsTr("Named values (e.g. wall = 2 mm) that dimensions can use; change one to update the design."),
         "delete": qsTr("Delete the selected part. Undo brings it back."),
         "import": qsTr("Open a scan or model: STL, OBJ, PLY, 3MF or STEP."),
@@ -210,7 +211,7 @@ QtObject {
             hole: "hole", base_body: "mesh-to-body", sweep: "sweep", loft: "loft", mirror: "mirror",
             pattern: "pattern", rectangular_pattern: "pattern", circular_pattern: "circular-pattern",
             plane: "plane", body: "body", imported: "mesh", mesh: "mesh",
-            part_on_surface: "surface", fin_on_surface: "surface", move: "move", press_pull: "extrude"
+            part_on_surface: "surface", fin_on_surface: "surface", move: "move", press_pull: "extrude", split: "section"
         }
         return map[type] || "tool"
     }
