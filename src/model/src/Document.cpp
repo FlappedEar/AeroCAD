@@ -13,11 +13,18 @@ PartId Document::addPart(Part part)
     m_nextId = std::max(m_nextId, part.id + 1);
     const PartId id = part.id;
     notify(Change::AboutToAdd, id);
-    m_parts.push_back(std::move(part));
-    if (m_parts.back().kind == PartKind::Imported)
+    const auto at = m_parts.insert(m_parts.begin() + static_cast<std::ptrdiff_t>(indexFor(id)), std::move(part));
+    if (at->kind == PartKind::Imported)
         ++m_importedGeometryRevision;
     notify(Change::Added, id);
     return id;
+}
+
+std::size_t Document::indexFor(PartId id) const
+{
+    const auto it = std::upper_bound(m_parts.begin(), m_parts.end(), id,
+                                     [](PartId value, const Part& p) { return value < p.id; });
+    return static_cast<std::size_t>(it - m_parts.begin());
 }
 
 std::optional<Part> Document::removePart(PartId id)

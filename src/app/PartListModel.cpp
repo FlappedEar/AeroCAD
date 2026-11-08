@@ -88,7 +88,8 @@ void PartListModel::onDocumentChanged(model::Document::Change change, model::Par
     using Change = model::Document::Change;
     switch (change) {
     case Change::AboutToAdd: {
-        const int row = rowCount(); // new parts are appended
+        // In id order: new parts at the end, parts put back by undo where they were.
+        const int row = static_cast<int>(m_document.indexFor(id));
         beginInsertRows({}, row, row);
         break;
     }

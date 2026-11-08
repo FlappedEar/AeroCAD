@@ -17,7 +17,8 @@ class Document {
 public:
     /// AboutToAdd / AboutToRemove are sent before the part list changes (so list models
     /// can call beginInsertRows / beginRemoveRows), Added / Removed / Modified after.
-    /// New parts are always appended at the end.
+    /// Parts are kept in id order, which is the order they were made in: a new part goes
+    /// at the end, a part put back by undo (or a regenerated timeline part) where it was.
     enum class Change { AboutToAdd, Added, AboutToRemove, Removed, Modified };
     using Observer = std::function<void(Change, PartId)>;
     using ObserverId = std::size_t;
@@ -25,6 +26,10 @@ public:
     /// Adds a part. If part.id is 0 a new id is assigned; otherwise the id is kept
     /// (used by undo to restore a removed part). Returns the part id.
     PartId addPart(Part part);
+
+    /// Index at which a part with id `id` is (or would be) in parts(): the first part with
+    /// a larger id. Valid during AboutToAdd for the part being added.
+    [[nodiscard]] std::size_t indexFor(PartId id) const;
 
     /// Removes a part and returns it, or std::nullopt when the id is unknown.
     std::optional<Part> removePart(PartId id);

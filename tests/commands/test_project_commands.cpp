@@ -389,6 +389,34 @@ TEST_CASE("A renamed timeline body keeps its name through edits, undo and saving
     CHECK(named == 1);
 }
 
+TEST_CASE("Undoing a delete puts the part back where it was in the Browser", "[commands][project]")
+{
+    commands::Session s;
+    run(s, "feature.box", {{"size", {40, 30, 6}}});
+    run(s, "feature.plane", {{"offset", 10}});
+    run(s, "feature.cylinder", {{"radius", 5}, {"height", 10}, {"center", {100, 0, 0}}});
+    const auto order = [&] {
+        std::vector<model::PartId> ids;
+        for (const auto& p : s.document().parts())
+            ids.push_back(p.id);
+        return ids;
+    };
+    const auto before = order();
+    REQUIRE(before.size() == 3);
+    const auto first = s.document().parts().front();
+    // Deleting the first feature, suppressing it or rolling the timeline back and undoing
+    // each brings its part back first in the list.
+    run(s, "feature.delete", {{"id", first.featureId}});
+    run(s, "edit.undo");
+    CHECK(order() == before);
+    run(s, "feature.suppress", {{"id", first.featureId}, {"suppressed", true}});
+    run(s, "edit.undo");
+    CHECK(order() == before);
+    run(s, "timeline.set_marker", {{"position", 0}});
+    run(s, "edit.undo");
+    CHECK(order() == before);
+}
+
 TEST_CASE("Kept dimensions follow edits and are saved with the project", "[commands][project][inspect]")
 {
     TempDir dir;
