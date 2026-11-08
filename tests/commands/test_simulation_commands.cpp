@@ -164,7 +164,10 @@ TEST_CASE("simulation.propose_run and a prepared run", "[commands][simulation]")
 
     r = session.execute("simulation.compare", {{"a", run}, {"b", run}});
     REQUIRE(r.ok);
-    CHECK(r.data.at("sameConditions") == true);
+    // A prepared run never started, so the engine that would run it is unknown (CAD-84).
+    CHECK(r.data.at("differingConditions").empty());
+    CHECK(r.data.at("unknownConditions") == Json::array({"engine"}));
+    CHECK(r.data.at("sameConditions") == false);
     CHECK(r.data.at("forces").empty()); // No results yet.
 
     // The same run on the medium mesh: same case, so the comparison can check the mesh.
@@ -221,8 +224,10 @@ TEST_CASE("simulation results require successful completion independently of out
     const auto a = prepareRun(session, part), b = prepareRun(session, part);
     const fs::path caseA = dir.path() / a;
     writeResultFixture(caseA);
+    writeOutput(caseA / "aerocad.engine", "v2506\n"); // Allrun records it when it starts.
     writeResultFixture(dir.path() / b);
     writeOutput(dir.path() / b / "aerocad.status", "finished\n");
+    writeOutput(dir.path() / b / "aerocad.engine", "v2506\n");
     if (state == "cancelled") {
         fs::remove(caseA / "aerocad.status");
         writeOutput(caseA / "aerocad.cancelled", "cancelled\n");
@@ -290,7 +295,9 @@ TEST_CASE("finished simulation requires complete finite force and coefficient re
     writeResultFixture(caseA);
     writeResultFixture(dir.path() / b);
     writeOutput(caseA / "aerocad.status", "finished\n");
+    writeOutput(caseA / "aerocad.engine", "v2506\n");
     writeOutput(dir.path() / b / "aerocad.status", "finished\n");
+    writeOutput(dir.path() / b / "aerocad.engine", "v2506\n");
     const auto forces = caseA / "postProcessing/forces/0/force.dat";
     if (missing == "coefficients")
         fs::remove(caseA / "postProcessing/forceCoeffs/0/coefficient.dat");
@@ -349,7 +356,9 @@ TEST_CASE("simulation final results reject nonfinite samples before the averagin
     writeResultFixture(caseA);
     writeResultFixture(dir.path() / b);
     writeOutput(caseA / "aerocad.status", "finished\n");
+    writeOutput(caseA / "aerocad.engine", "v2506\n");
     writeOutput(dir.path() / b / "aerocad.status", "finished\n");
+    writeOutput(dir.path() / b / "aerocad.engine", "v2506\n");
 
     const bool coefficient = column[0] == 'C';
     const std::vector<std::string> columns = coefficient ? std::vector<std::string>{"Cd", "Cl", "Cs"}
@@ -407,7 +416,9 @@ TEST_CASE("simulation histories retain malformed middle rows until explicitly re
     writeResultFixture(caseA, false, repair == "sparse" ? 2 : 1, 100);
     writeResultFixture(dir.path() / b, false, repair == "sparse" ? 2 : 1, 100);
     writeOutput(caseA / "aerocad.status", "finished\n");
+    writeOutput(caseA / "aerocad.engine", "v2506\n");
     writeOutput(dir.path() / b / "aerocad.status", "finished\n");
+    writeOutput(dir.path() / b / "aerocad.engine", "v2506\n");
     if (repair != "sparse") {
         for (const bool coefficient : {true, false}) {
             std::ostringstream history;
@@ -442,6 +453,7 @@ TEST_CASE("simulation progress survives an uncommitted timestamp prefix", "[comm
     const auto caseDir = dir.path() / run;
     writeResultFixture(caseDir, false, 1, 120);
     writeOutput(caseDir / "aerocad.status", "finished\n");
+    writeOutput(caseDir / "aerocad.engine", "v2506\n");
     const auto coefficients = caseDir / "postProcessing/forceCoeffs/0/coefficient.dat";
     {
         std::ofstream append(coefficients, std::ios::app);

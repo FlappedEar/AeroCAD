@@ -45,6 +45,7 @@ def fixture(case, complete=False, pressure=20):
           f"POINT_DATA 3\nFIELD FieldData 1\np 1 3 float\n{pressure} {-pressure} 0\n")
     write(case, "aerocad.stage", "done\n")
     write(case, "aerocad.status", "finished\n")
+    write(case, "aerocad.engine", "v2506\n")
 
 
 def main():

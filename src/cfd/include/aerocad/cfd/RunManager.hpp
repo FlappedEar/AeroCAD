@@ -148,7 +148,9 @@ public:
     /// has case.json). Returns the run id.
     std::string importCase(const std::filesystem::path& caseDir, const std::string& label = {});
 
-    /// Re-reads the run directories (new runs from other processes, deleted runs).
+    /// Re-reads the run directories (new runs from other processes, deleted runs). Only
+    /// reads: a remote run found here is not followed (no process is started, no log is
+    /// written); the session that started it follows it, or the next session at start-up.
     void rescan();
 
     [[nodiscard]] std::vector<RunStatus> list();
@@ -201,7 +203,9 @@ public:
 private:
     struct Run;
     Run* find(const std::string& id);
-    void loadRun(const std::filesystem::path& dir);
+    /// `follow`: resume following an unfinished remote run (starts the remote fetch process).
+    void loadRun(const std::filesystem::path& dir, bool follow = false);
+    void scan(bool follow);
     void refresh(Run& run);
     std::string newRunId(const std::string& partName);
     std::string create(const CaseGeometry& geometry, const Settings& settings, const RunSource& source,

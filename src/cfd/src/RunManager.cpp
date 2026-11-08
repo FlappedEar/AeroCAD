@@ -455,7 +455,7 @@ set -o pipefail
 DK="$1"; H="$2"; N="$3"; IMG="$4"
 d() { "$DK" -H "$H" "$@"; }
 fetch() {
-    d exec "$N" bash -c 'cd /case && tar -cf - aerocad.stage aerocad.status log.* postProcessing 2>/dev/null' |
+    d exec "$N" bash -c 'cd /case && tar -cf - aerocad.stage aerocad.status aerocad.engine log.* postProcessing 2>/dev/null' |
         tar -xf - 2>/dev/null
 }
 if ! d container inspect "$N" >/dev/null 2>&1; then
@@ -616,7 +616,8 @@ fs::path RunManager::defaultRoot()
     return (h.empty() ? fs::temp_directory_path() : h) / ".aerocad" / "cfd";
 }
 
-RunManager::RunManager(fs::path root) : m_root(std::move(root)) { rescan(); }
+// At start-up the session takes over the remote runs that continue on their host.
+RunManager::RunManager(fs::path root) : m_root(std::move(root)) { scan(true); }
 
 RunManager::~RunManager() = default;
 
@@ -626,7 +627,9 @@ RunManager::Run* RunManager::find(const std::string& id)
     return it == m_runs.end() ? nullptr : it->second.get();
 }
 
-void RunManager::rescan()
+void RunManager::rescan() { scan(false); }
+
+void RunManager::scan(bool follow)
 {
     std::error_code ec;
     std::vector<std::string> seen;
@@ -636,7 +639,7 @@ void RunManager::rescan()
         const std::string id = e.path().filename().string();
         seen.push_back(id);
         if (!m_runs.count(id))
-            loadRun(e.path());
+            loadRun(e.path(), follow);
     }
     for (auto it = m_runs.begin(); it != m_runs.end();) {
         const bool owned = it->second->process.has_value();
@@ -647,7 +650,7 @@ void RunManager::rescan()
     }
 }
 
-void RunManager::loadRun(const fs::path& dir)
+void RunManager::loadRun(const fs::path& dir, bool follow)
 {
     std::ifstream in(dir / "run.json");
     Json j;
@@ -669,7 +672,7 @@ void RunManager::loadRun(const fs::path& dir)
     Run& r = *run;
     m_runs[r.id] = std::move(run);
     // A remote run continues on its host while the app is closed: follow it again.
-    if (!r.dockerHost.empty() && !r.docker.empty()) {
+    if (follow && !r.dockerHost.empty() && !r.docker.empty()) {
         std::error_code ec;
         const std::string status = readFirstLine(r.caseDir / "aerocad.status");
         if (status.empty() && !fs::exists(r.caseDir / "aerocad.cancelled", ec)) {
@@ -868,7 +871,12 @@ void RunManager::refresh(Run& run)
         const bool recent = newest && fs::file_time_type::clock::now() - *newest < std::chrono::minutes(3);
         s.state = recent ? RunState::Running : RunState::Interrupted;
         if (s.state == RunState::Interrupted)
-            s.message = "The run stopped without finishing (the app or the engine was closed).";
+            s.message = run.dockerHost.empty()
+                            ? "The run stopped without finishing (the app or the engine was closed)."
+                            // Found by a rescan: the session that started it follows it.
+                            : "Started on the remote engine " + run.dockerHost +
+                                  " and not followed by this session; it may still be running there. "
+                                  "Restart AeroCAD to follow it here.";
     }
 
     double p = stageProgress(s.stage);
@@ -1046,6 +1054,17 @@ Json RunManager::results(const std::string& id, int maxPoints)
                            {"characteristicLength", info->characteristicLength},
                            {"baseCellSize", info->baseCellSize},
                            {"geometryHash", std::to_string(info->geometryHash)},
+                           // The resolved setup (CAD-84): domain with the ground, surroundings, engine.
+                           {"domain", {{"min", {info->domain.min.x, info->domain.min.y, info->domain.min.z}},
+                                       {"max", {info->domain.max.x, info->domain.max.y, info->domain.max.z}}}},
+                           {"contextHash", info->contextHash ? Json(std::to_string(*info->contextHash)) : Json(nullptr)},
+                           // The engine that actually ran the case (Allrun records WM_PROJECT_VERSION in
+                           // aerocad.engine); null when not recorded. engineTarget: what it was written for.
+                           {"engine", [&] {
+                                const std::string v = readFirstLine(run.caseDir / "aerocad.engine");
+                                return v.empty() ? Json(nullptr) : Json(v);
+                            }()},
+                           {"engineTarget", info->openfoam.empty() ? Json(nullptr) : Json(info->openfoam)},
                            {"axes", "drag = along the flow, lift = +Z (model up), side = 90 degrees left of the flow"}};
     }
     j["summary"] = {{"cd", opt(tailMean(coeffs.column("Cd")))},
@@ -1391,10 +1410,58 @@ Json RunManager::compare(const std::string& a, const std::string& b)
 
     const Json ca = ra.value("conditions", Json::object());
     const Json cb = rb.value("conditions", Json::object());
-    const auto diff = differingConditions(ca.value("settings", Json::object()), cb.value("settings", Json::object()));
-    j["sameConditions"] = diff.empty();
-    j["differingConditions"] = diff;
+    auto diff = differingConditions(ca.value("settings", Json::object()), cb.value("settings", Json::object()));
     std::vector<std::string> notes;
+    // The resolved setup, not only the requested settings (CAD-84): surroundings, domain
+    // (with the ground) and engine. Missing evidence is unknown, never equal.
+    std::vector<std::string> unknown;
+    const Json ctxA = ca.value("contextHash", Json()), ctxB = cb.value("contextHash", Json());
+    if (ctxA.is_null() || ctxB.is_null())
+        unknown.emplace_back("context");
+    else if (ctxA != ctxB)
+        diff.emplace_back("context");
+    // The domain is sized from the target part and the surroundings, so a target-part variant
+    // of another size gets its own domain. That is reported as a differing condition; when it
+    // is the only one, the forces are still compared and the verdict says so.
+    bool sameDomain = false;
+    if (!ca.contains("domain") || !cb.contains("domain")) {
+        unknown.emplace_back("domain");
+    } else {
+        double worst = 0.0;
+        for (const char* side : {"min", "max"})
+            for (std::size_t k = 0; k < 3; ++k)
+                worst = std::max(worst, std::abs(ca["domain"][side][k].get<double>() - cb["domain"][side][k].get<double>()));
+        sameDomain = worst <= 1e-6; // 1 µm: the same domain up to rounding
+        if (!sameDomain) {
+            diff.emplace_back("domain");
+            const double cell = std::max(ca.value("baseCellSize", 0.0), cb.value("baseCellSize", 0.0));
+            notes.emplace_back("The flow domains differ by up to " + std::to_string(std::lround(worst * 1000.0)) +
+                               " mm (" + (worst <= cell ? "within" : "more than") +
+                               " one background cell), because the geometry differs in size or position; forces "
+                               "are compared on different domains.");
+        }
+    }
+    j["sameDomain"] = sameDomain;
+    const Json engineA = ca.value("engine", Json()), engineB = cb.value("engine", Json());
+    if (engineA.is_null() || engineB.is_null())
+        unknown.emplace_back("engine");
+    else if (engineA != engineB)
+        diff.emplace_back("engine");
+    for (const auto& u : unknown)
+        notes.emplace_back("The " + std::string(u == "context" ? "surroundings (context geometry)" : u) + " of " +
+                           ((u == "context" ? ctxA.is_null() && ctxB.is_null()
+                             : u == "engine" ? engineA.is_null() && engineB.is_null()
+                                             : !ca.contains("domain") && !cb.contains("domain"))
+                                ? std::string("both runs")
+                                : std::string("one run")) +
+                           " was not recorded (older case), so it could not be compared.");
+    j["sameConditions"] = diff.empty() && unknown.empty();
+    j["differingConditions"] = diff;
+    j["unknownConditions"] = unknown;
+    // Only a domain difference still allows comparing the forces (a target-part variant).
+    const bool blocking = !unknown.empty() || std::any_of(diff.begin(), diff.end(), [](const std::string& c) {
+                              return c != "domain";
+                          });
     const double areaA = ca.value("referenceArea", 0.0), areaB = cb.value("referenceArea", 0.0);
     const double lenA = ca.value("characteristicLength", 0.0), lenB = cb.value("characteristicLength", 0.0);
     if (lenA > 0 && lenB > 0 && std::abs(lenA - lenB) > 0.1 * std::max(lenA, lenB))
@@ -1425,15 +1492,16 @@ Json RunManager::compare(const std::string& a, const std::string& b)
         notes.emplace_back("Reference areas differ (" + std::to_string(areaA) + " vs " + std::to_string(areaB) +
                            " m^2); coefficients of B are rescaled to the area of A.");
     j["quality"] = {{"a", ra.at("quality")}, {"b", rb.at("quality")}};
-    const Json sensitivity = finalAvailable && diff.empty()
+    const Json sensitivity = finalAvailable && !blocking
                                  ? meshSensitivity(a, b)
                                  : Json{{"status", "not assessed"}, {"levels", Json::array()}};
     j["meshSensitivity"] = sensitivity;
-    j["verdict"] = !finalAvailable || !diff.empty() ? "not comparable"
+    j["verdict"] = !finalAvailable || blocking ? "not comparable"
                    : !(ra.at("quality").at("status") == "ok" && rb.at("quality").at("status") == "ok")
                        ? "check quality"
                    : sensitivity.at("status") == "check quality" ? "check quality"
                    : sensitivity.at("status") == "inconclusive" ? "difference inconclusive"
+                   : !sameDomain                                ? "different domains"
                                                                  : "comparable";
 
     // Shared colour scales for the field views.
@@ -1443,7 +1511,14 @@ Json RunManager::compare(const std::string& a, const std::string& b)
         double lo = std::numeric_limits<double>::max(), hi = std::numeric_limits<double>::lowest();
         if (finalAvailable) {
             for (const auto& id : {a, b}) {
-                const PolyData d = field(id, kind);
+                // A run whose setup cannot be read has no field view; the comparison above
+                // already says why (unknownConditions), so do not discard it here.
+                PolyData d;
+                try {
+                    d = field(id, kind);
+                } catch (const std::exception&) {
+                    continue;
+                }
                 if (auto it = d.scalars.find(scalar); it != d.scalars.end()) {
                     const auto [l, h] = range(it->second);
                     lo = std::min(lo, l);

@@ -48,7 +48,7 @@ ui.wait(600)
 (() => { if (featureDialog.visible || controller.previewActive() || controller.execute("document.parts").result.parts.length || controller.projectDirty) ui.fail("script New inherited an editor"); ui.log("script New cleared the editor") })()
 # A is a 20 mm box, B is 40 mm. Open the real timeline context-menu editor in A.
 (() => { controller.execute("feature.box", {size:[20,20,20]}); controller.execute("variant.create", {name:"B"}); controller.execute("feature.edit", {id:1, params:{size:[40,40,40]}}); controller.execute("variant.activate", {variant:"A"}); viewport.fitAll() })()
-(() => { function find(i) { if (i.visible && i.text==="Box1") return i; for (const c of i.children||[]) { const f=find(c); if(f) return f } return null } const chip=find(window.contentItem); if (!chip) { ui.fail("no Box timeline chip"); return } const p=chip.mapToItem(null,chip.width/2,chip.height/2); ui.click(p.x,p.y,"right") })()
+(() => { function find(i) { if (i.visible && i.text==="Box1") return i; const children=i.children||[]; for (let n=0; n<children.length; ++n) { const f=find(children[n]); if(f) return f } return null } const chip=find(window.contentItem); if (!chip) { ui.fail("no Box timeline chip"); return } const p=chip.mapToItem(null,chip.width/2,chip.height/2); ui.click(p.x,p.y,"right") })()
 ui.wait(150)
 ui.clickText("Edit Feature")
 ui.wait(500)
