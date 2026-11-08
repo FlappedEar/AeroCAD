@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <optional>
 #include <random>
 #include <sstream>
 #include <thread>
@@ -1192,6 +1193,141 @@ TEST_CASE("Listing runs only reads; a remote run is followed again at start-up (
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     CHECK(fs::exists(calls));
     CHECK(fs::exists(dir / "log.aerocad"));
+}
+#endif
+
+#ifndef _WIN32
+TEST_CASE("Local runs beyond the processor limit wait in a queue (CAD-144)", "[cfd]")
+{
+    // A stand-in docker: reports a running engine with the image, and "solves" by sleeping
+    // until it is stopped.
+    TempDir root;
+    TempDir bin;
+    const fs::path docker = bin.path() / "docker";
+    write(docker, "#!/bin/sh\ncase \"$1\" in\n  info) echo 4 ;;\n  image) echo sha256:0 ;;\n"
+                  "  run) exec sleep 30 ;;\nesac\nexit 0\n");
+    fs::permissions(docker, fs::perms::owner_all, fs::perm_options::add);
+    const auto keep = [](const char* name) {
+        const char* v = std::getenv(name);
+        return v != nullptr ? std::optional<std::string>(v) : std::nullopt;
+    };
+    const auto oldDocker = keep("AEROCAD_DOCKER"), oldHost = keep("AEROCAD_ENGINE_HOST"),
+               oldDir = keep("AEROCAD_CFD_DIR");
+    ::setenv("AEROCAD_DOCKER", docker.c_str(), 1);
+    ::setenv("AEROCAD_CFD_DIR", root.path().c_str(), 1); // No engine.json of this machine.
+    ::unsetenv("AEROCAD_ENGINE_HOST");
+
+    cfd::RunManager runs(root.path());
+    runs.setProcessorLimit(4);
+    cfd::CaseGeometry g;
+    g.part = box({0, 0, 0}, {200, 80, 60});
+    cfd::Settings s;
+    s.processes = 2;
+    const std::string a = runs.start(g, s, {}, cfd::Backend::Docker);
+    const std::string b = runs.start(g, s, {}, cfd::Backend::Docker);
+    const std::string c = runs.start(g, s, {}, cfd::Backend::Docker);
+    // A and B fill the 4 processors; C waits and says why.
+    CHECK(runs.status(a)->stage != "queued");
+    CHECK(runs.status(b)->stage != "queued");
+    auto sc = runs.status(c);
+    CHECK(sc->state == cfd::RunState::Running);
+    CHECK(sc->stage == "queued");
+    CHECK(sc->message.find("Waiting for the other runs") != std::string::npos);
+
+    // When A ends, C starts by itself.
+    REQUIRE(runs.cancel(a));
+    for (int i = 0; i < 50 && runs.status(a)->state == cfd::RunState::Running; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    CHECK(runs.status(a)->state == cfd::RunState::Cancelled);
+    CHECK(runs.status(c)->stage != "queued");
+
+    // A queued run can be cancelled before it starts.
+    const std::string d = runs.start(g, s, {}, cfd::Backend::Docker);
+    CHECK(runs.status(d)->stage == "queued");
+    REQUIRE(runs.cancel(d));
+    CHECK(runs.status(d)->state == cfd::RunState::Cancelled);
+
+    for (const auto& id : {b, c})
+        runs.cancel(id);
+    for (int i = 0;
+         i < 50 && (runs.status(b)->state == cfd::RunState::Running || runs.status(c)->state == cfd::RunState::Running);
+         ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    const auto restore = [](const char* name, const std::optional<std::string>& v) {
+        if (v)
+            ::setenv(name, v->c_str(), 1);
+        else
+            ::unsetenv(name);
+    };
+    restore("AEROCAD_DOCKER", oldDocker);
+    restore("AEROCAD_ENGINE_HOST", oldHost);
+    restore("AEROCAD_CFD_DIR", oldDir);
+}
+
+TEST_CASE("Queued runs start in submission order, and one that cannot start does not block the rest (CAD-144)", "[cfd]")
+{
+    TempDir root;
+    TempDir bin;
+    const fs::path docker = bin.path() / "docker";
+    write(docker, "#!/bin/sh\ncase \"$1\" in\n  info) echo 4 ;;\n  image) echo sha256:0 ;;\n"
+                  "  run) exec sleep 1 ;;\nesac\nexit 0\n");
+    fs::permissions(docker, fs::perms::owner_all, fs::perm_options::add);
+    const auto keep = [](const char* name) {
+        const char* v = std::getenv(name);
+        return v != nullptr ? std::optional<std::string>(v) : std::nullopt;
+    };
+    const auto oldDocker = keep("AEROCAD_DOCKER"), oldHost = keep("AEROCAD_ENGINE_HOST"),
+               oldDir = keep("AEROCAD_CFD_DIR");
+    ::setenv("AEROCAD_DOCKER", docker.c_str(), 1);
+    ::setenv("AEROCAD_CFD_DIR", root.path().c_str(), 1);
+    ::unsetenv("AEROCAD_ENGINE_HOST");
+
+    cfd::RunManager runs(root.path());
+    runs.setProcessorLimit(2);
+    cfd::CaseGeometry g;
+    g.part = box({0, 0, 0}, {200, 80, 60});
+    cfd::Settings s;
+    s.processes = 2;
+    const auto named = [](const char* name) {
+        cfd::RunSource src;
+        src.partName = name;
+        return src;
+    };
+    const auto waitWhileRunning = [&](const std::string& id) {
+        for (int i = 0;
+             i < 50 && runs.status(id)->state == cfd::RunState::Running && runs.status(id)->stage != "queued"; ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    };
+    const std::string first = runs.start(g, s, named("first"), cfd::Backend::Docker);
+    // Submitted in this order within one second: the id of "aaa" sorts before "zzz".
+    const std::string z = runs.start(g, s, named("zzz"), cfd::Backend::Docker);
+    const std::string a = runs.start(g, s, named("aaa"), cfd::Backend::Docker);
+    REQUIRE(runs.status(z)->stage == "queued");
+    REQUIRE(runs.status(a)->stage == "queued");
+
+    waitWhileRunning(first);
+    CHECK(runs.status(z)->stage != "queued"); // The earlier submission goes first.
+    CHECK(runs.status(a)->stage == "queued");
+
+    // The engine disappears while "aaa" waits: it fails alone, and the list still works.
+    fs::remove(docker);
+    waitWhileRunning(z);
+    std::vector<cfd::RunStatus> all;
+    REQUIRE_NOTHROW(all = runs.list());
+    CHECK(all.size() == 3);
+    const auto sa = runs.status(a);
+    CHECK(sa->state == cfd::RunState::Failed);
+    CHECK(sa->message.find("could not start") != std::string::npos);
+
+    const auto restore = [](const char* name, const std::optional<std::string>& v) {
+        if (v)
+            ::setenv(name, v->c_str(), 1);
+        else
+            ::unsetenv(name);
+    };
+    restore("AEROCAD_DOCKER", oldDocker);
+    restore("AEROCAD_ENGINE_HOST", oldHost);
+    restore("AEROCAD_CFD_DIR", oldDir);
 }
 #endif
 

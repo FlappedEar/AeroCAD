@@ -58,6 +58,15 @@ panel in place of Properties:
 
 Runs continue when the panel or the app is closed.
 
+Runs on this computer share its processors: a run starts at once while its solver processes
+fit next to the runs already solving (up to the number of logical cores; each run uses half
+of them by default, so A and B run side by side). Further runs wait in a queue (state
+*running*, stage *queued*) and start by themselves, oldest first, when processors free up:
+oversubscribed OpenFOAM runs are many times slower than the same runs one after the other
+(measured on 4 cores: 4 coarse runs started together had none finished after 200 s; 3
+runs through the queue all finished within about 95 s). A queued run can be cancelled; it does not survive closing the app (it is then
+reported as stopped). Runs on a remote engine are not queued here.
+
 ## Engine: OpenFOAM v2506 in Docker
 
 One OpenFOAM version is supported: **OpenFOAM v2506** (openfoam.com / OpenCFD). Cases
