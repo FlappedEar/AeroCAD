@@ -72,6 +72,26 @@ TEST_CASE("Sketch and extrude a new body", "[cad][design]")
     CHECK(d.sketches().at(sk).consumed);
 }
 
+TEST_CASE("Extrude taper angle", "[cad][design]")
+{
+    Design d;
+    d.setParameter("draft", "3");
+    const auto sk = d.addFeature("sketch", rectSketch(40, 20));
+    const auto ex = d.addFeature("extrude", {{"sketch", sk}, {"distance", 10}, {"taper", "draft"}});
+    CHECK(bodyVolume(d, ex) < 8000);
+    CHECK(bodyVolume(d, ex) > 7000);
+    const auto sym = d.addFeature("extrude", {{"sketch", sk}, {"distance", 5}, {"extent", "symmetric"}, {"taper", 3},
+                                              {"operation", "new_body"}});
+    // Each 5 mm half narrows from the full profile, so less is drafted away than over 10 mm.
+    CHECK(bodyVolume(d, sym) > bodyVolume(d, ex));
+    CHECK(bodyVolume(d, sym) < 8000);
+    CHECK_THROWS_AS(d.editFeature(ex, {{"taper", 60}}), cad::DesignError); // closes up
+    CHECK(d.evaluate(d.feature(ex)->params.at("taper")) == Approx(3));
+    CHECK_THROWS_AS(d.addFeature("extrude", {{"sketch", sk}, {"extent", "to_object"}, {"to", {{"body", ex}}},
+                                             {"taper", 2}}),
+                    cad::DesignError);
+}
+
 TEST_CASE("Failing features are rejected and leave the design unchanged", "[cad][design]")
 {
     Design d;

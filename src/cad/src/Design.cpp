@@ -1981,6 +1981,9 @@ void Design::evaluateFeature(const Feature& f)
         core::Vec3 dir = sk->plane.normal;
         if (p.value("flip", false))
             dir = dir * -1.0;
+        const double taper = ev.num(p, "taper", 0.0);
+        if (extent == "to_object" && taper != 0.0)
+            throw DesignError("Taper angle is not available with extent To Object");
         if (extent == "to_object") {
             // Fusion: Extent "To Object": up to a body, some of its faces, or an imported
             // surface, solid or scan.
@@ -2038,7 +2041,7 @@ void Design::evaluateFeature(const Feature& f)
             throw DesignError("Unknown extent '" + extent + "' (one_side, symmetric, two_sides, to_object)");
         std::vector<geometry::Shape> solids;
         for (const auto& face : faces)
-            solids.push_back(geometry::extrude(face, dir, d1, d2));
+            solids.push_back(geometry::extrude(face, dir, d1, d2, taper));
         applyOperation(unionAll(solids));
     } else if (f.type == "revolve") {
         SketchResult* sk = nullptr;

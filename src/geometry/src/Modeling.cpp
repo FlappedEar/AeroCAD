@@ -35,6 +35,8 @@
 #include <BRepTools.hxx>
 #include <gp_Ax2.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
+#include <LocOpe_DPrism.hxx>
+#include <gp_Pln.hxx>
 #include <BRepPrimAPI_MakeRevol.hxx>
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
@@ -355,7 +357,81 @@ Shape makeCompound(const std::vector<Shape>& shapes)
     return any ? wrapShape(comp) : Shape{};
 }
 
-Shape extrude(const Shape& faces, const core::Vec3& direction, double distance, double backDistance)
+namespace {
+
+/// One drafted side of a tapered extrusion: `face` from its plane to `height` along `dir`
+/// (negative goes the other way), side faces at `taper` radians (positive narrows).
+TopoDS_Shape taperedPiece(const TopoDS_Face& face, const core::Vec3& dir, double height, double taper)
+{
+    const BRepAdaptor_Surface surface(face);
+    if (surface.GetType() != GeomAbs_Plane)
+        throw ModelingError("Extrude: a tapered profile must be planar");
+    const gp_Pln plane = surface.Plane();
+    gp_Dir n = plane.Axis().Direction();
+    gp_Dir want(dir.x, dir.y, dir.z);
+    if (height < 0)
+        want.Reverse();
+    const double along = n.Dot(want);
+    if (std::abs(along) < 1e-6)
+        throw ModelingError("Extrude: the direction lies in the profile plane");
+    // LocOpe_DPrism goes along the plane's normal: mirror the face in its own plane (same
+    // points, opposite normal) to go the other way.
+    TopoDS_Face f = face;
+    if (along < 0) {
+        gp_Trsf m;
+        m.SetMirror(gp_Ax2(plane.Location(), n));
+        f = TopoDS::Face(BRepBuilderAPI_Transform(face, m, true).Shape());
+        n.Reverse();
+    }
+    const double h = std::abs(height);
+    const gp_Pln pln(plane.Location(), n);
+    // LocOpe_DPrism drafts the outer wire only: holes are cut with their own prisms, drafted
+    // the other way (a hole grows where the outside shrinks).
+    const auto drafted = [&](const TopoDS_Wire& wire, double angle) {
+        BRepBuilderAPI_MakeFace make(pln, wire, Standard_True);
+        if (!make.IsDone())
+            throw ModelingError("Extrude with taper failed");
+        TopoDS_Face face1 = make.Face();
+        GProp_GProps props;
+        BRepGProp::SurfaceProperties(face1, props);
+        if (props.Mass() < 0)
+            face1 = BRepBuilderAPI_MakeFace(pln, TopoDS::Wire(wire.Reversed()), Standard_True).Face();
+        // The prism height runs along the drafted side faces.
+        LocOpe_DPrism prism(face1, h / std::cos(angle), angle);
+        if (!prism.IsDone())
+            throw ModelingError("Extrude with taper failed");
+        return prism.Shape();
+    };
+    const TopoDS_Wire outer = BRepTools::OuterWire(f);
+    TopoDS_Shape piece = drafted(outer, taper);
+    for (TopExp_Explorer w(f, TopAbs_WIRE); w.More(); w.Next()) {
+        if (w.Current().IsSame(outer))
+            continue;
+        BRepAlgoAPI_Cut cut(piece, drafted(TopoDS::Wire(w.Current()), -taper));
+        if (!cut.IsDone())
+            throw ModelingError("Extrude with taper failed");
+        piece = cut.Shape();
+    }
+    // A profile that closes up before the end gives a shorter solid.
+    Bnd_Box box;
+    BRepBndLib::Add(piece, box);
+    double x0 = 0, y0 = 0, z0 = 0, x1 = 0, y1 = 0, z1 = 0;
+    box.Get(x0, y0, z0, x1, y1, z1);
+    double reach = 0.0;
+    for (const double x : {x0, x1})
+        for (const double y : {y0, y1})
+            for (const double z : {z0, z1})
+                reach = std::max(reach, gp_Vec(plane.Location(), gp_Pnt(x, y, z)).Dot(gp_Vec(n)));
+    // The box is loose (tolerance-enlarged); a closed-up profile stops well short.
+    if (reach < h * (1.0 - 1e-3) - 1e-4 || BRepCheck_Analyzer(piece).IsValid() == Standard_False)
+        throw ModelingError("Extrude: the taper closes the profile before the end; use a smaller taper angle "
+                            "or distance");
+    return piece;
+}
+
+} // namespace
+
+Shape extrude(const Shape& faces, const core::Vec3& direction, double distance, double backDistance, double taperDegrees)
 {
     const TopoDS_Shape& s = occ(faces, "Extrude");
     if (!hasSubShapes(s, TopAbs_FACE))
@@ -366,6 +442,34 @@ Shape extrude(const Shape& faces, const core::Vec3& direction, double distance, 
     const double total = distance + backDistance;
     if (std::abs(total) < 1e-9)
         throw ModelingError("Extrude: zero distance");
+    if (taperDegrees != 0.0) {
+        if (!(std::abs(taperDegrees) < 89.0))
+            throw ModelingError("Extrude: the taper angle must be between -89 and 89 degrees");
+        const double taper = taperDegrees * std::numbers::pi / 180.0;
+        return guarded("Extrude", [&] {
+            std::vector<TopoDS_Shape> pieces;
+            for (TopExp_Explorer e(s, TopAbs_FACE); e.More(); e.Next()) {
+                const TopoDS_Face& face = TopoDS::Face(e.Current());
+                if (std::abs(distance) > 1e-9)
+                    pieces.push_back(taperedPiece(face, dir, distance, taper));
+                if (std::abs(backDistance) > 1e-9)
+                    pieces.push_back(taperedPiece(face, dir, -backDistance, taper));
+            }
+            TopoDS_Shape result = pieces.front();
+            for (std::size_t i = 1; i < pieces.size(); ++i) {
+                BRepAlgoAPI_Fuse fuse(result, pieces[i]);
+                if (!fuse.IsDone())
+                    throw ModelingError("Extrude with taper failed");
+                result = fuse.Shape();
+            }
+            if (pieces.size() > 1) {
+                ShapeUpgrade_UnifySameDomain unify(result, true, true, true);
+                unify.Build();
+                result = unify.Shape();
+            }
+            return wrapShape(result);
+        });
+    }
     return guarded("Extrude", [&] {
         TopoDS_Shape base = s;
         if (backDistance != 0.0) {

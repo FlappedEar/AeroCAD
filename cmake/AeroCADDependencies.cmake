@@ -17,7 +17,7 @@ message(STATUS "Open CASCADE ${OpenCASCADE_VERSION} (${OpenCASCADE_DIR})")
 
 # Toolkit names changed in OCCT 7.8 (TKSTEP -> TKDESTEP, TKIGES -> TKDEIGES).
 set(AEROCAD_OCCT_LIBS TKernel TKMath TKG2d TKG3d TKGeomBase TKBRep TKGeomAlgo
-    TKTopAlgo TKPrim TKShHealing TKMesh TKBO TKBool TKFillet TKOffset TKXSBase)
+    TKTopAlgo TKPrim TKShHealing TKMesh TKBO TKBool TKFeat TKFillet TKOffset TKXSBase)
 if(TARGET TKDESTEP)
     list(APPEND AEROCAD_OCCT_LIBS TKDESTEP TKDEIGES)
 else()

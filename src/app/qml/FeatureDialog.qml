@@ -223,6 +223,7 @@ Pane {
             { key: "to", type: "objectPick", label: qsTr("Object"), hint: qsTr("Click the face, body, surface or scan to extrude up to"),
               showIf: v => v.extent === "to_object" },
             { key: "distance2", type: "expr", label: qsTr("Distance 2"), showIf: v => v.extent === "two_sides" },
+            { key: "taper", type: "expr", label: qsTr("Taper Angle (deg)"), init: 0, showIf: v => v.extent !== "to_object" },
             { key: "flip", type: "bool", label: qsTr("Flip") },
             { key: "operation", type: "choice", label: qsTr("Operation"), init: "new_body", options: operations }] },
         revolve: { title: qsTr("Revolve"), command: "feature.revolve", fields: [
