@@ -1178,7 +1178,10 @@ void Design::offsetSketchCurves(FeatureId sketchId, const std::vector<std::size_
             Json p = Json::array();
             for (const auto& q : c.points)
                 p.push_back(pt(q));
-            items.push_back({{"type", "spline"}, {"points", p}});
+            Json item{{"type", "spline"}, {"points", p}};
+            if (c.closed)
+                item["closed"] = true;
+            items.push_back(item);
         } else {
             items.push_back(curveItem(c));
         }

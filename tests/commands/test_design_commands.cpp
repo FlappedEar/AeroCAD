@@ -1055,6 +1055,27 @@ TEST_CASE("Design commands: sketch offset (CAD-126)", "[commands][cad]")
     CHECK(c.at("curves").back().at("radius").get<double>() == Approx(4).margin(1e-6));
     // Too far inwards collapses: refused.
     CHECK_FALSE(s.execute("sketch.offset", {{"sketch", id}, {"curves", {4}}, {"distance", -6}}).ok);
+
+    // A closed spline gives a closed (periodic) spline: smooth at the seam, its end point
+    // not repeated.
+    Json oval = Json::array();
+    for (int i = 0; i < 8; ++i) {
+        const double a = 2 * std::numbers::pi * i / 8;
+        oval.push_back({200 + 20 * std::cos(a), 10 * std::sin(a)});
+    }
+    const auto sp = run(s, "sketch.create",
+                        {{"plane", "XY"}, {"curves", Json::array({{{"type", "spline"}, {"points", oval}, {"closed", true}}})}})
+                        .at("id")
+                        .get<std::uint64_t>();
+    run(s, "sketch.offset", {{"sketch", sp}, {"curves", {0}}, {"distance", 2}});
+    c = run(s, "sketch.curves", {{"sketch", sp}});
+    REQUIRE(c.at("curves").size() == 2);
+    const auto& outer = c.at("curves")[1];
+    CHECK(outer.at("kind") == "spline");
+    CHECK(outer.at("closed") == true);
+    const auto& pts = outer.at("points");
+    CHECK(std::hypot(pts.front()[0].get<double>() - pts.back()[0].get<double>(),
+                     pts.front()[1].get<double>() - pts.back()[1].get<double>()) > 1.0);
 }
 
 TEST_CASE("Design commands: project body edges into a sketch (CAD-126)", "[commands][cad]")

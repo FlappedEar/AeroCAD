@@ -341,3 +341,30 @@ TEST_CASE("Mesh to B-rep: standalone faces next to a closed component are kept",
     CHECK(brep.faceCount() == 7);
     CHECK(brep.bounds().max.x == Approx(60.0));
 }
+TEST_CASE("Offset of a closed spline is one smooth closed spline", "[geometry][sketch]")
+{
+    // OCCT returns several free-form pieces; interpolated one by one they would kink where
+    // they meet.
+    SketchCurve oval;
+    oval.kind = SketchCurve::Kind::Spline;
+    oval.closed = true;
+    for (int i = 0; i < 8; ++i) {
+        const double a = 2 * std::numbers::pi * i / 8;
+        oval.points.push_back({20 * std::cos(a), 15 * std::sin(a)});
+    }
+    const Plane plane;
+    double perimeter = 0;
+    for (const auto& e : edges(curveEdges(plane, {oval})))
+        perimeter += e.length;
+    const double ovalArea = area(buildSketch(plane, {oval}).profiles.at(0));
+    for (const double d : {2.0, -2.0}) {
+        const auto out = offsetCurves({oval}, d);
+        REQUIRE(out.size() == 1);
+        CHECK(out[0].kind == SketchCurve::Kind::Spline);
+        CHECK(out[0].closed);
+        // A convex curve offset by d encloses perimeter * d + pi * d^2 more (Steiner), also
+        // for d < 0 while the curvature radius stays above |d|.
+        const double offsetArea = area(buildSketch(plane, {out[0]}).profiles.at(0));
+        CHECK(offsetArea - ovalArea == Approx(perimeter * d + std::numbers::pi * d * d).epsilon(2e-3));
+    }
+}

@@ -8,6 +8,8 @@
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepGProp_Face.hxx>
 #include <BRepOffsetAPI_MakeOffset.hxx>
+#include <BRepTools_WireExplorer.hxx>
+#include <GCPnts_AbscissaPoint.hxx>
 #include <TopoDS_Wire.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <BRepAlgoAPI_Splitter.hxx>
@@ -374,31 +376,118 @@ std::vector<SketchCurve> offsetCurves(const std::vector<SketchCurve>& curves, do
             throw ModelingError("The offset could not be made (too large for these curves?)");
         std::vector<SketchCurve> out;
         auto uv = [](const gp_Pnt& p) { return Vec2{p.X(), p.Y()}; };
-        for (TopExp_Explorer e(offset.Shape(), TopAbs_EDGE); e.More(); e.Next()) {
-            const TopoDS_Edge edge = TopoDS::Edge(e.Current());
-            BRepAdaptor_Curve ac(edge);
-            const double t0 = ac.FirstParameter(), t1 = ac.LastParameter();
-            SketchCurve c;
-            if (ac.GetType() == GeomAbs_Line) {
-                c.kind = SketchCurve::Kind::Line;
-                c.points = {uv(ac.Value(t0)), uv(ac.Value(t1))};
-                if (distance2d(c.points[0], c.points[1]) < kTol)
-                    continue;
-            } else if (ac.GetType() == GeomAbs_Circle && std::abs(t1 - t0 - 2 * M_PI) < 1e-9) {
-                c.kind = SketchCurve::Kind::Circle;
-                c.points = {uv(ac.Circle().Location())};
-                c.radius = ac.Circle().Radius();
-            } else if (ac.GetType() == GeomAbs_Circle) {
-                c.kind = SketchCurve::Kind::Arc;
-                c.points = {uv(ac.Value(t0)), uv(ac.Value((t0 + t1) / 2)), uv(ac.Value(t1))};
-                if (distance2d(c.points[0], c.points[2]) < kTol)
-                    continue;
-            } else {
-                c.kind = SketchCurve::Kind::Spline;
-                for (int i = 0; i <= 24; ++i)
-                    c.points.push_back(uv(ac.Value(t0 + (t1 - t0) * i / 24.0)));
+        // OCCT gives the offset of a spline as several free-form pieces. Consecutive pieces
+        // that continue each other smoothly become one spline (separately interpolated
+        // pieces would kink where they meet); a closed run of them becomes one closed spline.
+        for (TopExp_Explorer we(offset.Shape(), TopAbs_WIRE); we.More(); we.Next()) {
+            struct Piece {
+                TopoDS_Edge edge;
+                bool freeForm;
+                double length;
+            };
+            std::vector<Piece> pieces;
+            for (BRepTools_WireExplorer e(TopoDS::Wire(we.Current())); e.More(); e.Next()) {
+                const TopoDS_Edge edge = e.Current();
+                BRepAdaptor_Curve ac(edge);
+                const bool freeForm = ac.GetType() != GeomAbs_Line && ac.GetType() != GeomAbs_Circle;
+                pieces.push_back({edge, freeForm, GCPnts_AbscissaPoint::Length(ac)});
             }
-            out.push_back(c);
+            // Point and unit tangent at the start (s = 0) or end (s = 1) of a piece, in the
+            // direction the wire runs.
+            auto at = [&](const Piece& piece, double s, gp_Vec* tangent) {
+                BRepAdaptor_Curve ac(piece.edge);
+                const bool reversed = piece.edge.Orientation() == TopAbs_REVERSED;
+                const double t0 = ac.FirstParameter(), t1 = ac.LastParameter();
+                const double t = reversed ? t1 + (t0 - t1) * s : t0 + (t1 - t0) * s;
+                gp_Pnt p;
+                gp_Vec d;
+                ac.D1(t, p, d);
+                if (tangent != nullptr && d.Magnitude() > 1e-12)
+                    *tangent = (reversed ? -d : d).Normalized();
+                return p;
+            };
+            auto smooth = [&](const Piece& a, const Piece& b) {
+                gp_Vec ta, tb;
+                at(a, 1.0, &ta);
+                at(b, 0.0, &tb);
+                return ta.Angle(tb) < 1e-2;
+            };
+            const std::size_t n = pieces.size();
+            std::vector<bool> taken(n, false);
+            // A run of free-form pieces may wrap past the end of a closed wire: start each
+            // run at a piece whose predecessor does not continue into it.
+            const bool closedWire = BRep_Tool::IsClosed(TopoDS::Wire(we.Current()));
+            for (std::size_t i = 0; i < n; ++i) {
+                if (taken[i])
+                    continue;
+                const Piece& piece = pieces[i];
+                if (!piece.freeForm) {
+                    taken[i] = true;
+                    BRepAdaptor_Curve ac(piece.edge);
+                    const double t0 = ac.FirstParameter(), t1 = ac.LastParameter();
+                    SketchCurve c;
+                    if (ac.GetType() == GeomAbs_Line) {
+                        c.kind = SketchCurve::Kind::Line;
+                        c.points = {uv(ac.Value(t0)), uv(ac.Value(t1))};
+                        if (distance2d(c.points[0], c.points[1]) < kTol)
+                            continue;
+                    } else if (std::abs(t1 - t0 - 2 * M_PI) < 1e-9) {
+                        c.kind = SketchCurve::Kind::Circle;
+                        c.points = {uv(ac.Circle().Location())};
+                        c.radius = ac.Circle().Radius();
+                    } else {
+                        c.kind = SketchCurve::Kind::Arc;
+                        c.points = {uv(ac.Value(t0)), uv(ac.Value((t0 + t1) / 2)), uv(ac.Value(t1))};
+                        if (distance2d(c.points[0], c.points[2]) < kTol)
+                            continue;
+                    }
+                    out.push_back(c);
+                    continue;
+                }
+                // Back up to the start of this smooth run (in a closed wire).
+                std::size_t first = i;
+                if (closedWire) {
+                    for (std::size_t k = 0; k < n; ++k) {
+                        const std::size_t prev = (first + n - 1) % n;
+                        if (prev == i || taken[prev] || !pieces[prev].freeForm || !smooth(pieces[prev], pieces[first]))
+                            break;
+                        first = prev;
+                    }
+                }
+                std::vector<std::size_t> run{first};
+                taken[first] = true;
+                for (std::size_t k = 1; k < n; ++k) {
+                    const std::size_t next = (first + k) % n;
+                    if (!closedWire && next < first)
+                        break;
+                    if (taken[next] || !pieces[next].freeForm || !smooth(pieces[run.back()], pieces[next]))
+                        break;
+                    run.push_back(next);
+                    taken[next] = true;
+                }
+                double runLength = 0;
+                for (const std::size_t k : run)
+                    runLength += pieces[k].length;
+                SketchCurve c;
+                c.kind = SketchCurve::Kind::Spline;
+                for (const std::size_t k : run) {
+                    // About 48 points over the run, at least 3 per piece.
+                    const int steps = std::max(3, static_cast<int>(std::lround(48 * pieces[k].length / std::max(runLength, 1e-12))));
+                    for (int j = 0; j <= steps; ++j) {
+                        const Vec2 p = uv(at(pieces[k], static_cast<double>(j) / steps, nullptr));
+                        if (c.points.empty() || distance2d(c.points.back(), p) > kTol)
+                            c.points.push_back(p);
+                    }
+                }
+                if (c.points.size() < 2)
+                    continue;
+                // A run that comes back to its start smoothly is one closed (periodic) spline.
+                c.closed = run.size() == n && closedWire && smooth(pieces[run.back()], pieces[run.front()])
+                           && distance2d(c.points.front(), c.points.back()) < kTol;
+                if (c.closed)
+                    c.points.pop_back();
+                out.push_back(c);
+            }
         }
         if (out.empty())
             throw ModelingError("The offset is empty (too large for these curves?)");

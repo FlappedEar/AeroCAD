@@ -1093,6 +1093,8 @@ void registerSketchCommands(CommandRegistry& r)
                           {"construction", c.construction}};
                   if (c.kind == geometry::SketchCurve::Kind::Circle)
                       cj["radius"] = c.radius;
+                  if (c.kind == geometry::SketchCurve::Kind::Spline)
+                      cj["closed"] = c.closed;
                   if (const auto ctr = arcCenter(c))
                       cj["center"] = Json::array({ctr->x, ctr->y});
                   curves.push_back(cj);
