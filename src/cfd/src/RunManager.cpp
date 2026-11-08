@@ -1282,8 +1282,12 @@ std::size_t RunManager::exportResultsCsv(const std::string& id, const fs::path& 
         row("Turbulence intensity (%)", ti.is_number() ? csvNumber(100.0 * ti.get<double>()) : std::string());
         row("Reference area (m2)", csvJson(c.value("referenceArea", Json())));
         row("Reference length (m)", csvJson(c.value("referenceLength", Json())));
-        row("OpenFOAM", csvJson(c.value("engine", Json())).empty() ? csvJson(c.value("openfoam", Json()))
-                                                                   : csvJson(c.at("engine")));
+        // Only the engine recorded by the run itself; the case target is listed apart.
+        const std::string engine = csvJson(c.value("engine", Json()));
+        row("OpenFOAM (ran)", engine.empty() ? "not recorded" : engine);
+        const std::string target = csvJson(c.value("engineTarget", Json()));
+        if (!target.empty())
+            row("OpenFOAM (case written for)", target);
         row("Axes", csvJson(c.value("axes", Json())));
     }
     const bool isFinal = r.at("finalResults").at("available").get<bool>();

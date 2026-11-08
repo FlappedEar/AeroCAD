@@ -384,7 +384,7 @@ app uses for the pressure colour range.
 **Results > Export CSV…** writes the selected run to a CSV file for a spreadsheet or a report
 (CAD-167, [panel](images/audit/cad-167-export-csv.png)). The default file name is the run's
 label and id. The file has a `Quantity,Value` block with the run, part, state, conditions
-(speed, flow, mesh, floor, air, reference area and length, OpenFOAM) and the final values
+(speed, flow, mesh, floor, air, reference area and length, the OpenFOAM version the run recorded, or "not recorded") and the final values
 (Cd, Cl, Cs; drag, lift, side, pressure and viscous drag in N). A run that has not finished
 says so in the `Results` row and gives the current means marked "(provisional)". After a blank
 line comes the full, unsampled history: iteration, Cd, Cl, Cs and the forces in N.

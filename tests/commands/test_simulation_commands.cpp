@@ -358,10 +358,15 @@ TEST_CASE("simulation.export_results writes conditions, final values and the ful
     CHECK(csv.find("\r\nCd,0.8\r\n") != std::string::npos);
     CHECK(csv.find("\r\nDrag (N),1\r\n") != std::string::npos);
     CHECK(csv.find("\r\nPressure drag (N),0.9\r\n") != std::string::npos);
-    CHECK(csv.find("\r\nOpenFOAM,v2506\r\n") != std::string::npos);
+    CHECK(csv.find("\r\nOpenFOAM (ran),v2506\r\n") != std::string::npos);
     CHECK(csv.find("\r\n\r\nIteration,Cd,Cl,Cs,Drag (N),Lift (N),Side force (N),Pressure drag (N),Viscous drag (N)\r\n"
                    "1,0.8,0.1,0.01,1,0.2,0.01,0.9,0.1\r\n") != std::string::npos);
     CHECK(csv.find("\r\n450,0.8,0.1,0.01,1,0.2,0.01,0.9,0.1\r\n") != std::string::npos);
+
+    // A run that never recorded its engine does not claim one.
+    fs::remove(dir.path() / a / "aerocad.engine");
+    REQUIRE(session.execute("simulation.export_results", {{"run", a}, {"path", file.string()}}).ok);
+    CHECK(read(file).find("\r\nOpenFOAM (ran),not recorded\r\n") != std::string::npos);
 
     CHECK_FALSE(session.execute("simulation.export_results", {{"run", "nope"}, {"path", file.string()}}).ok);
     CHECK_FALSE(session.execute("simulation.export_results", {{"run", a}, {"path", ""}}).ok);
