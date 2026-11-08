@@ -234,6 +234,9 @@ TEST_CASE("writeCase writes a complete OpenFOAM case in SI units", "[cfd]")
     CHECK(control.find("Aref " + std::to_string(info.referenceArea).substr(0, 5)) != std::string::npos);
     CHECK(control.find("magUInf $aerocadUInf") != std::string::npos);
     CHECK(control.find("patches (part)") != std::string::npos);
+    CHECK(control.find("type runTimeControl;") != std::string::npos); // CAD-155
+    CHECK(control.find("fields (CdMean ClMean);") != std::string::npos);
+    CHECK(control.find("satisfiedAction end;") != std::string::npos);
     // Section stacks for the result view (CAD-148): every plane, cropped to the region
     // around the part.
     for (const auto& stack : cfd::sectionStacks())
@@ -702,6 +705,46 @@ TEST_CASE("Quality report accepts complete current evidence", "[cfd][quality]")
         CHECK(state == "passed");
     }
     CHECK(q.toJson().at("checks").at("convergence") == "passed");
+}
+
+TEST_CASE("Quality report accepts a run stopped because its forces settled", "[cfd][quality]")
+{
+    // CAD-155: runTimeControl forcesSettled ended the run; residuals then need only 1e-3.
+    TempDir tmp;
+    fakeFinishedRun(tmp.path(), 0.8, 1.0);
+    const auto residuals = tmp.path() / "postProcessing" / "solverInfo" / "0" / "solverInfo.dat";
+    write(tmp.path() / "log.simpleFoam",
+          "Exec   : simpleFoam\nDate   : fixture\nCreate time\n\nTime = 100\n"
+          "time step continuity errors : sum local = 1e-5, global = 1e-7\n"
+          "runTimeControl forcesSettled output:\n    runTimeControl: forces averages:\n"
+          "        CdMeanMean: 0.8, delta: 1e-05\n\n    average: forces condition satisfied\n"
+          "    Stopping calculation\n    Writing fields\nExecutionTime = 1 s  ClockTime = 1 s\nEnd\n");
+    SECTION("residuals below 1e-3")
+    {
+        write(residuals, "# Time Ux_initial Uy_initial Uz_initial p_initial k_initial omega_initial\n"
+                         "100 1e-5 1.2e-4 1e-4 2e-5 4e-6 2e-7\n");
+        const auto q = cfd::assessQuality(tmp.path());
+        CHECK(q.forcesSettled);
+        CHECK_FALSE(q.solverConverged);
+        CHECK(q.iterations == 100);
+        CHECK(q.status == "ok");
+        CHECK(q.checks.at("convergence") == "passed");
+        CHECK(q.checks.at("residual.Uy") == "passed");
+        CHECK(q.toJson().at("forcesSettled") == true);
+        CHECK(q.toJson().at("iterations") == 100);
+    }
+    SECTION("a residual above 1e-3")
+    {
+        write(residuals, "# Time Ux_initial Uy_initial Uz_initial p_initial k_initial omega_initial\n"
+                         "100 2e-4 3e-3 1e-4 2e-3 4e-6 2e-7\n");
+        const auto q = cfd::assessQuality(tmp.path());
+        CHECK(q.forcesSettled);
+        CHECK(q.status == "warning");
+        CHECK(q.checks.at("convergence") == "passed");
+        CHECK(q.checks.at("residual.Uy") == "failed");
+        CHECK(q.checks.at("residual.p") == "failed");
+        CHECK(q.checks.at("residual.Ux") == "passed");
+    }
 }
 
 TEST_CASE("Quality report requires complete current evidence", "[cfd][quality]")

@@ -82,6 +82,10 @@ gave Cd 0.461 / 0.315 / 0.268 and Cl 0.294 / 0.256 / 0.303 (48 min on the fine m
 the coarser far wake saves 55 % of the medium cells and 43 % of the fine cells for a
 change in Cd of 2 % or less.
 
+With the forces-settled stop (CAD-155) the same coarse and medium runs end after 120
+and 179 iterations instead of 211 and 277, at Cd 0.462 and 0.321 (Cl 0.294 and 0.261),
+quality `ok`.
+
 Medium mesh against the criteria:
 
 1. Cd 0.321 is within 0.251 to 0.339: **pass**.

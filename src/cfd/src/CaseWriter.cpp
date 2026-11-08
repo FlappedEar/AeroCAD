@@ -360,6 +360,11 @@ std::string surfaceFeatureExtractDict(bool hasContext)
     return t.str();
 }
 
+/// Iterations over which Cd and Cl are averaged to tell that the forces have settled, and
+/// how far that mean may still move (CAD-155).
+constexpr int kSettleWindow = 50;
+constexpr double kSettleTolerance = 5e-4;
+
 std::string controlDict(const Settings& s, const CaseInfo& info)
 {
     const core::BoundingBox region = resultRegion(info);
@@ -384,6 +389,21 @@ std::string controlDict(const Settings& s, const CaseInfo& info)
       << "        lRef " << info.referenceLength << ";\n        Aref " << info.referenceArea << ";\n"
       << "        CofR " << c << ";\n        dragDir (1 0 0);\n        liftDir (0 0 1);\n"
       << "        pitchAxis (0 1 0);\n    }\n"
+      // Stop once the forces have settled (CAD-155): the mean of Cd and Cl over the last
+      // 50 iterations stays within 5e-4 of its own mean over the 50 before. Residuals of a
+      // bluff body often never reach the targets while the forces only wobble around a
+      // settled mean, so the run would otherwise go on to the iteration limit. On the F1
+      // fine run this stops at iteration 319 of 800 with Cd and Cl within 0.6 % of the
+      // full run's means.
+      << "    coeffsMean\n    {\n        type valueAverage;\n        libs (fieldFunctionObjects);\n"
+      << "        functionObject forceCoeffs;\n        fields (Cd Cl);\n        window " << kSettleWindow
+      << ";\n        windowType exact;\n        log no;\n    }\n"
+      << "    forcesSettled\n    {\n        type runTimeControl;\n        libs (utilityFunctionObjects);\n"
+      << "        conditions\n        {\n            forces\n            {\n                type average;\n"
+      << "                functionObject coeffsMean;\n                fields (CdMean ClMean);\n"
+      << "                tolerance " << kSettleTolerance << ";\n                window " << kSettleWindow
+      << ";\n                windowType exact;\n                nIterStartUp " << 2 * kSettleWindow
+      << ";\n            }\n        }\n        satisfiedAction end;\n    }\n"
       << "    solverInfo\n    {\n        type solverInfo;\n        libs (utilityFunctionObjects);\n"
       << "        fields (U p k omega);\n        writeResidualFields no;\n    }\n"
       // Fields for the result view: pressure on the part, two velocity sections through

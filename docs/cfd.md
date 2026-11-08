@@ -235,7 +235,7 @@ tunnel:
 | Boundaries | fixed velocity inlet, fixed pressure outlet, slip far field; optional floor, moving with the air (`groundMoving`, default) or fixed, just below the geometry or at `groundHeight` (mm, model Z) |
 | Fluid | air: nu = 1.5e-5 m^2/s, rho = 1.205 kg/m^3 |
 | Inflow turbulence | intensity 1 %, nu_t/nu = 10: k = 1.5 (U I)^2, omega = k / (nu * 10) |
-| Stop | residuals p < 1e-4, U, k, omega < 1e-5, or the iteration limit |
+| Stop | residuals p < 1e-4, U, k, omega < 1e-5; or forces settled: after 100 iterations, the mean of Cd and Cl over the last 50 iterations stays within 5e-4 of its own 50-iteration mean (then residuals need only be below 1e-3); or the iteration limit |
 
 Mesh levels (cells per L in the background mesh / surface refinement levels /
 near box level / wake box level / prism layers): coarse 2 / 3-4 / 2 / 1 / 0,

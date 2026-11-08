@@ -437,12 +437,14 @@ Json QualityReport::toJson() const
 {
     Json j{{"status", status},
            {"solverConverged", solverConverged},
+           {"forcesSettled", forcesSettled},
            {"failedMeshChecks", failedMeshChecks},
            {"finalResiduals", finalResiduals},
            {"checks", checks},
            {"warnings", warnings}};
     j["meshOk"] = meshOk ? Json(*meshOk) : Json(nullptr);
     j["cells"] = cells ? Json(*cells) : Json(nullptr);
+    j["iterations"] = iterations ? Json(*iterations) : Json(nullptr);
     j["continuityError"] = continuityError ? Json(*continuityError) : Json(nullptr);
     j["cdFluctuation"] = cdFluctuation ? Json(*cdFluctuation) : Json(nullptr);
     return j;
@@ -535,13 +537,18 @@ QualityReport assessQuality(const fs::path& caseDir)
     if (lastStep.starts_with("Time = "))
         iteration = numberAfter(lastStep, "Time = ");
     q.solverConverged = lastStep.find("SIMPLE solution converged") != std::string_view::npos;
+    // runTimeControl forcesSettled (CaseWriter) ends the run once the forces have settled.
+    q.forcesSettled = !q.solverConverged && lastStep.find("forces condition satisfied") != std::string_view::npos &&
+                      lastStep.find("Stopping calculation") != std::string_view::npos;
+    if (iteration && std::isfinite(*iteration))
+        q.iterations = static_cast<int>(*iteration);
     const bool ended = lastStep.find("\nEnd\n") != std::string_view::npos || lastStep.ends_with("\nEnd");
     if (lastStep.find("FOAM FATAL") != std::string_view::npos) {
         q.solverConverged = false;
         record("convergence", "failed", "solver: fatal error in the final solver step");
     } else if (!ended || !iteration || !std::isfinite(*iteration)) {
         record("convergence", "missing", "solver: missing or incomplete final solver log");
-    } else if (!q.solverConverged) {
+    } else if (!q.solverConverged && !q.forcesSettled) {
         record("convergence", "failed", "solver: finished without reaching the preset convergence targets");
     } else {
         record("convergence", "passed");
@@ -572,7 +579,10 @@ QualityReport assessQuality(const fs::path& caseDir)
             record(name, "failed", std::string(field) + ": invalid residual data");
         } else if (!col || col->empty() || residuals.incomplete || !iteration || residuals.time.back() != *iteration) {
             record(name, "missing", std::string(field) + ": no complete residual for the final solver step");
-        } else if (const double target = std::string_view(field) == "p" ? 1e-4 : 1e-5; col->back() >= target) {
+        } else if (q.forcesSettled && col->back() >= 1e-3) {
+            record(name, "failed", std::string(field) + ": residual has not reached the preset target 1e-3");
+        } else if (const double target = std::string_view(field) == "p" ? 1e-4 : 1e-5;
+                   !q.forcesSettled && col->back() >= target) {
             // Match external-flow-v1 residualControl in CaseWriter, including velocity and turbulence.
             record(name, "failed", std::string(field) + ": residual has not reached the preset target " +
                                       (std::string_view(field) == "p" ? "1e-4" : "1e-5"));
