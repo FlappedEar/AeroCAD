@@ -935,15 +935,22 @@ Item {
         return { command: "part.transform", params: params }
     }
 
-    // Any other change to the document (a command from the UI or the AI agent) applies the
-    // preview first, so it never lands on geometry it was not made for; undo, redo and a
-    // new or opened project drop it instead.
+    // Any other command that changes, saves, exports or analyses the document (from the UI or
+    // the AI agent) applies the preview first, so it never works on geometry other than what
+    // is shown; undo, redo and a new or opened project drop it instead. Listing queries the
+    // panels make while the tool runs leave it alone.
+    readonly property var transformKeepsFor: ["document.parts", "document.bounds", "timeline.list", "sketch.profiles",
+        "sketch.curves", "mesh.stats", "simulation.list", "simulation.results", "simulation.field",
+        "simulation.environment", "simulation.status", "project.info", "project.get_context", "edit.history",
+        "inspect.state", "inspect.dimensions", "selection.get", "parameter.list"]
     Connections {
         target: root.controller
         enabled: root.transformActive
-        function onDocumentAboutToChange(command) {
-            const drop = ["edit.undo", "edit.redo", "project.new", "project.open", "project.recover"].includes(command)
-            root.finishTransform(!drop)
+        function onCommandAboutToRun(command, modifiesDocument) {
+            if (["edit.undo", "edit.redo", "project.new", "project.open", "project.recover"].includes(command))
+                root.finishTransform(false)
+            else if (modifiesDocument || !root.transformKeepsFor.includes(command))
+                root.finishTransform(true)
         }
     }
 

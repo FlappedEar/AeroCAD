@@ -255,8 +255,7 @@ QVariantMap AppController::execute(const QString& name, const QVariantMap& param
 commands::CommandResult AppController::executeCommand(const std::string& name, const commands::Json& params)
 {
     const auto* info = m_session.registry().info(name);
-    if (info != nullptr && info->modifiesDocument)
-        emit documentAboutToChange(QString::fromStdString(name));
+    emit commandAboutToRun(QString::fromStdString(name), info != nullptr && info->modifiesDocument);
     const bool hadPreview = m_session.previewActive();
     const commands::CommandResult result = m_session.execute(name, params);
     // A command that ended a live preview (e.g. project.save) also changed the document

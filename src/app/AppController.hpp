@@ -206,9 +206,10 @@ signals:
     void partChanged(quint64 id);
     void boundsChanged();
     void historyChanged();
-    /// Before a command that changes the document runs (from the UI or the AI agent), so
-    /// a live preview of the view (Move / Rotate / Scale) can be applied or dropped first.
-    void documentAboutToChange(const QString& command);
+    /// Before any command runs (from the UI or the AI agent), so a live preview of the view
+    /// (Move / Rotate / Scale) can be applied or dropped first when the command changes,
+    /// saves, exports or analyses the document.
+    void commandAboutToRun(const QString& command, bool modifiesDocument);
     void statusMessageChanged();
     /// Emitted after a successful import so the view can frame the new model.
     void partImported(quint64 id);
