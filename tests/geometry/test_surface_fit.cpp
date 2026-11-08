@@ -588,7 +588,8 @@ TEST_CASE("A part on a noisy scan runs through the noise and is not called an ap
     CHECK(part.report.uPoles < 40);
     double squares = 0.0;
     std::size_t count = 0;
-    for (const auto& p : geometry::tessellate(part.solid).vertices()) {
+    const auto skin = geometry::tessellate(part.solid);
+    for (const auto& p : skin.vertices()) {
         const double d = p.z - gentle(p.x, p.y);
         if (std::abs(d) < 1.0 && p.x > 25 && p.x < 135 && p.y > 25 && p.y < 135) {
             squares += d * d;
