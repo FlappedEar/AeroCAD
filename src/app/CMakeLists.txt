@@ -204,6 +204,12 @@ if(AEROCAD_BUILD_TESTS)
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/scan_to_part_next_steps.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_scan_to_part_next_steps_test PROPERTIES LABELS gui TIMEOUT 90)
+    # CAD-133: a construction plane has its own guide (not the scan's).
+    add_test(NAME app_construction_plane_guide_test
+        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl
+                --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/construction_plane_guide.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_construction_plane_guide_test PROPERTIES LABELS gui TIMEOUT 60)
     # CAD-115: Export suggests a file name.
     add_test(NAME app_export_file_name_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl

@@ -356,7 +356,7 @@ All of this comes from one registry, **`src/app/qml/ContextActions.qml`**:
   is disabled, `primary` marks the recommended next step, `params` lists the values the
   popup asks for (`_num(...)`, `_choice(...)`).
 - `guide(info)` groups actions into sections and numbered steps per part role
-  (`role(info)`: `empty`, `mesh`, `surface`, `sketch`, `body`, `solid`).
+  (`role(info)`: `empty`, `mesh`, `surface`, `sketch`, `body`, `solid`, `plane`).
 - `run(id, info, values)` executes it (a command through `controller.execute` or a
   function of the main window).
 

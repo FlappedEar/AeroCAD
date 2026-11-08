@@ -35,11 +35,11 @@ QtObject {
     // --- Classification ----------------------------------------------------------------
 
     /// "mesh" (scan), "surface" (fitted NURBS surface), "solid" (imported exact solid),
-    /// "body" (timeline body), "sketch", or "" (nothing selected).
+    /// "body" (timeline body), "sketch", "plane" (construction plane), or "" (nothing selected).
     function role(info) {
         if (!info || !info.id)
             return ""
-        if (info.kind === "sketch" || info.kind === "body")
+        if (info.kind === "sketch" || info.kind === "body" || info.kind === "plane")
             return info.kind
         if (info.hasBrep && (info.solids ?? 0) > 0)
             return "solid"
@@ -56,11 +56,11 @@ QtObject {
 
     function roleName(r) {
         return ({ mesh: qsTr("Scan (mesh)"), surface: qsTr("Surface"), solid: qsTr("Solid"),
-                  body: qsTr("Body"), sketch: qsTr("Sketch") })[r] || ""
+                  body: qsTr("Body"), sketch: qsTr("Sketch"), plane: qsTr("Construction plane") })[r] || ""
     }
 
     function roleIcon(r) {
-        return ({ mesh: "mesh", surface: "surface", solid: "body", body: "body", sketch: "sketch" })[r] || "tool"
+        return ({ mesh: "mesh", surface: "surface", solid: "body", body: "body", sketch: "sketch", plane: "plane" })[r] || "tool"
     }
 
     /// Sketches of the document, newest first: [{ name, featureId, partId }].
@@ -147,6 +147,13 @@ QtObject {
         const r = controller.execute("timeline.list")
         const id = info.featureId % 1099511627776 // 2^40: see cad::featureOfBody
         return r.ok ? (r.result.features.find(f => f.id === id) ?? null) : null
+    }
+
+    /// The timeline feature with id `featureId` ({ id, type, params }), or null.
+    function timelineFeature(featureId) {
+        void revision
+        const r = controller.execute("timeline.list")
+        return r.ok ? (r.result.features.find(f => f.id === featureId) ?? null) : null
     }
 
     /// True for a surface piece made by "Cut out by sketch" (its next step is Thicken).
@@ -308,6 +315,16 @@ QtObject {
             return { id: id, text: qsTr("Edit step"), icon: f ? Theme.featureIcon(f.type) : "tool", enabled: !!f,
                      reason: qsTr("This body has no step of its own in the timeline."),
                      tip: qsTr("Changes the settings of the timeline step that made this body; the model is rebuilt.") }
+        }
+        // Construction plane (CAD-133)
+        case "sketchOnPlane":
+            return { id: id, text: qsTr("Sketch on this plane"), icon: "sketch", enabled: true, primary: true,
+                     tip: qsTr("Starts a sketch on this plane. Draw an outline, then extrude or revolve it, or cut a part with it.") }
+        case "editPlane": {
+            const f = timelineFeature(info.featureId)
+            return { id: id, text: qsTr("Edit plane"), icon: "plane", enabled: !!f,
+                     reason: qsTr("This plane has no step in the timeline."),
+                     tip: qsTr("Changes the plane's base, offset or angle; sketches on it follow.") }
         }
         case "editSketch":
             return { id: id, text: qsTr("Edit sketch"), icon: "sketch", enabled: true,
@@ -506,6 +523,15 @@ QtObject {
                                  text: qsTr("Turns the piece into a solid with the thickness you type."),
                                  actions: [a("thicken")] }] },
                          { title: qsTr("More"), steps: [], actions: [...fitted, a("sketchFin"), a("offset"), a("cutWithThis"), a("scale"), a("export"), a("hide"), a("rename"), a("delete")] }] }
+        }
+        if (r === "plane") {
+            return { title: roleName(r),
+                     intro: qsTr("A flat reference plane for sketches. It is not part of the model and is not exported."),
+                     sections: [{ title: qsTr("Next step"), steps: [
+                                      { title: qsTr("Sketch on this plane"), done: false,
+                                        text: qsTr("Draw a closed outline on the plane and click Finish Sketch."),
+                                        actions: [a("sketchOnPlane")] }] },
+                                { title: qsTr("More"), steps: [], actions: [a("editPlane"), a("hide"), a("rename"), a("delete")] }] }
         }
         if (r === "sketch") {
             const onSurface = sketchSurface(info.featureId) > 0
@@ -726,6 +752,11 @@ QtObject {
         }
         case "finishSketch": return host.finishSketch(true)
         case "editSketch": return host.editFeature({ type: "sketch", id: info.featureId })
+        case "sketchOnPlane": return host.createSketch({ plane: { plane: info.featureId } })
+        case "editPlane": {
+            const f = timelineFeature(info.featureId)
+            return f ? host.editFeature(f) : null
+        }
         case "editStep": {
             const f = ownFeature(info)
             return f ? host.editFeature(f) : null
