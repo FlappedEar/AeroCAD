@@ -6,6 +6,7 @@
 #include "aerocad/commands/Session.hpp"
 
 #include "aerocad/cfd/RunManager.hpp"
+#include "aerocad/core/MeshCheck.hpp"
 #include "aerocad/core/Path.hpp"
 
 #include <algorithm>
@@ -19,12 +20,14 @@ namespace aerocad::commands {
 
 namespace {
 
-/// Warnings about the part to show before a run starts (CAD-109).
-Json sizeWarnings(double characteristicLength)
+/// Warnings about the part to show before a run starts: size (CAD-109), open mesh (CAD-145).
+Json partWarnings(double characteristicLength, const core::TriangleMesh& part)
 {
     Json w = Json::array();
     if (const std::string size = cfd::partSizeWarning(characteristicLength); !size.empty())
         w.push_back(size);
+    if (const std::string open = cfd::openPartWarning(core::checkMesh(part).boundaryEdges); !open.empty())
+        w.push_back(open);
     return w;
 }
 
@@ -311,7 +314,7 @@ void registerSimulationCommands(CommandRegistry& r)
                      {"partModel", modelBox(plan.frame, plan.partBounds)},
                      {"flowModel", flowVector(plan.frame)},
                      {"environment", checkEngine ? cfd::detectEnvironment().toJson() : Json()},
-                     {"warnings", sizeWarnings(plan.characteristicLength)},
+                     {"warnings", partWarnings(plan.characteristicLength, in.geometry.part)},
                      {"next", "Call simulation.run with the same parameters to start it."}};
               return j;
           });
@@ -348,7 +351,7 @@ void registerSimulationCommands(CommandRegistry& r)
               }
               Json j = statusJson(ctx, *runs(ctx).status(id));
               const auto info = runs(ctx).caseInfo(id);
-              j["warnings"] = sizeWarnings(info ? info->characteristicLength : 0.0);
+              j["warnings"] = partWarnings(info ? info->characteristicLength : 0.0, in.geometry.part);
               return j;
           });
 

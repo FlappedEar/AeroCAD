@@ -7,6 +7,7 @@
 
 #include "aerocad/BuildInfo.hpp"
 #include "aerocad/cfd/Settings.hpp"
+#include "aerocad/core/MeshCheck.hpp"
 #include "aerocad/core/Path.hpp"
 
 #include <cmath>
@@ -148,6 +149,20 @@ QString AppController::partSizeWarning(quint64 id) const
     const core::Vec3 size = p->mesh->bounds().size();
     // Model millimetres to metres, as the case writer converts them.
     return QString::fromStdString(cfd::partSizeWarning(std::max({size.x, size.y, size.z}) / 1000.0));
+}
+
+QString AppController::partOpenWarning(quint64 id) const
+{
+    const model::Part* p = part(id);
+    if (p == nullptr || !p->mesh || p->mesh->isEmpty() || p->kind == model::PartKind::Sketch ||
+        p->kind == model::PartKind::Plane)
+        return {};
+    // A scan can have millions of triangles: check each mesh once.
+    if (m_openEdgesMesh.lock() != p->mesh) {
+        m_openEdgesMesh = p->mesh;
+        m_openEdges = core::checkMesh(*p->mesh).boundaryEdges;
+    }
+    return QString::fromStdString(cfd::openPartWarning(m_openEdges));
 }
 
 bool AppController::showsHeatMap(quint64 id) const

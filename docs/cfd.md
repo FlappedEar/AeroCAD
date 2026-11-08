@@ -19,7 +19,13 @@ panel in place of Properties:
   parts as surroundings, label) and **Run CFD**. The part's size is shown above the
   settings; a part under 20 mm or over 50 m gets a warning to check its units first (a
   model in metres read as millimetres is 1000 times too small). `simulation.propose_run`
-  and `simulation.run` return the same text in `warnings`. Below, the runs of this design
+  and `simulation.run` return the same text in `warnings`. A part whose mesh is not closed (a raw scan
+  shell, a surface, holes) is warned about too, with the number of open edges: the mesher
+  cannot tell inside from outside and wraps an open shell in a layer about one cell thick,
+  so its forces depend on the mesh (measured on `dome_scan.stl`, 329 open edges: drag
+  1.83 N open, 0.82 N after *Repair* filled the holes;
+  [warning](images/audit/cad-145-open-part-warning.png)). Close it first with MESH > Scan
+  Tools > Repair (*Fill holes up to* at least that many edges). Below, the runs of this design
   (newest first) with state, progress, Cd and drag; Cancel / delete; click a run to make it
   **A**, press **B** on another to compare. Runs whose part is not in the open design are
   folded under *Runs from other designs (N)* (a run of another design that is A or B stays

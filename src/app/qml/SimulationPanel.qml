@@ -654,6 +654,17 @@ Pane {
                         wrapMode: Text.WordWrap
                         font.pixelSize: 11
                     }
+                    // An open shell (raw scan, surface) has no inside to put in the flow (CAD-145).
+                    Label {
+                        objectName: "cfdOpenWarning"
+                        Layout.columnSpan: 2
+                        Layout.fillWidth: true
+                        text: root.partInfo.id ? controller.partOpenWarning(root.partInfo.id) : ""
+                        visible: text.length > 0
+                        color: Theme.warning
+                        wrapMode: Text.WordWrap
+                        font.pixelSize: 11
+                    }
                     Label { text: qsTr("Speed (m/s)"); opacity: 0.7 }
                     TextField {
                         id: speedField
