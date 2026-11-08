@@ -509,6 +509,19 @@ Pane {
     /// A floor copied from a run with a fixed (not moving) floor (CAD-162); the form has no
     /// control for it, so it is kept until the floor box is changed.
     property bool groundFixed: false
+    /// Conditions of the copied run that the form has no controls for (air properties,
+    /// turbulence, reference area and length, preset), sent with the run unchanged (CAD-162).
+    property var copiedSettings: ({})
+    /// The surroundings of the copied run, by part id; null = use the visible parts.
+    property var copiedContext: null
+    /// Parts of the copied surroundings that are no longer in the document.
+    readonly property int copiedContextMissing: {
+        if (!copiedContext || !contextBox.checked)
+            return 0
+        const parts = controller.execute("document.parts")
+        const ids = parts.ok ? parts.result.parts.map(p => p.id) : []
+        return copiedContext.filter(id => ids.indexOf(id) < 0).length
+    }
     /// Fill the New run form with the conditions of run `id` (CAD-162), so a variant B is
     /// run exactly as A was. Returns false when the run's conditions are not known.
     function useSettingsOf(id) {
@@ -526,26 +539,39 @@ Pane {
         groundBox.checked = !!st.ground
         groundFixed = !!st.ground && st.groundMoving === false
         floorField.text = st.ground && st.groundHeight !== null && st.groundHeight !== undefined ? String(st.groundHeight) : ""
+        const extra = {}
+        for (const key of ["preset", "density", "kinematicViscosity", "turbulenceIntensity", "viscosityRatio",
+                           "referenceArea", "referenceLength", "iterations"])
+            if (st[key] !== null && st[key] !== undefined)
+                extra[key] = st[key]
+        copiedSettings = extra
         const run = runs.find(x => x.id === id)
-        contextBox.checked = !!run && !!run.source && (run.source.contextPartIds || []).length > 0
+        const context = run && run.source ? (run.source.contextPartIds || []) : []
+        contextBox.checked = context.length > 0
+        copiedContext = context.length > 0 ? context.slice() : null
         proposalTimer.restart()
         return true
     }
 
     function runParams() {
-        const params = {
+        const params = Object.assign({}, copiedSettings, {
             id: partInfo.id,
             speed: Number(speedField.text),
             flowDirection: flowBox.currentValue,
             mesh: meshBox.currentValue,
             ground: groundBox.checked
-        }
+        })
         if (groundBox.checked && groundFixed)
             params.groundMoving = false
         // The road under a part mounted on a car (CAD-147); empty = just below the parts.
         if (groundBox.checked && floorField.text.trim().length > 0)
             params.groundHeight = Number(floorField.text.replace(",", "."))
-        if (contextBox.checked) {
+        if (contextBox.checked && copiedContext) {
+            // The copied run's own surroundings, not whatever is visible now (CAD-162).
+            const parts = controller.execute("document.parts")
+            const ids = parts.ok ? parts.result.parts.map(p => p.id) : []
+            params.context = copiedContext.filter(id => id !== partInfo.id && ids.indexOf(id) >= 0)
+        } else if (contextBox.checked) {
             const parts = controller.execute("document.parts")
             if (parts.ok)
                 params.context = parts.result.parts
@@ -983,8 +1009,22 @@ Pane {
                     CheckBox {
                         id: contextBox
                         Layout.columnSpan: 2
-                        onToggled: proposalTimer.restart()
-                        text: qsTr("Other visible parts in the flow (not in the forces)")
+                        onToggled: { root.copiedContext = null; proposalTimer.restart() }
+                        text: root.copiedContext
+                              ? qsTr("Surroundings of A in the flow: %n part(s) (not in the forces)", "", root.copiedContext.length)
+                              : qsTr("Other visible parts in the flow (not in the forces)")
+                    }
+                    Label {
+                        objectName: "cfdCopiedNote"
+                        Layout.columnSpan: 2
+                        Layout.fillWidth: true
+                        visible: text.length > 0
+                        text: root.copiedContextMissing > 0
+                              ? qsTr("%n part(s) of A's surroundings are no longer in the design, so B's flow differs from A's.", "", root.copiedContextMissing)
+                              : ""
+                        color: Theme.warning
+                        wrapMode: Text.WordWrap
+                        font.pixelSize: 11
                     }
                     Button {
                         Layout.columnSpan: 2

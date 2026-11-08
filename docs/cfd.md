@@ -24,7 +24,9 @@ panel in place of Properties:
   [panel](images/audit/cad-147-floor-height.png)). A floor above the part is refused with
   both heights, shown under **Run CFD** before the run. With a run selected (A), *Use the
   settings of A* fills in its speed, flow direction, mesh, floor (also a fixed one), floor
-  height and the surroundings option, so a variant B runs under the same conditions and the
+  height and surroundings (A's own context parts, not whatever is visible now; parts since
+  removed are named in a warning), and sends A's air, turbulence and reference settings
+  that the form has no fields for, so a variant B runs under the same conditions and the
   A/B comparison stays comparable (CAD-162, [form](images/audit/cad-162-use-settings.png)).
   The part's size is shown above the
   settings; a part under 20 mm or over 50 m gets a warning to check its units first (a
