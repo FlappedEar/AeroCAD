@@ -56,7 +56,7 @@ Pane {
         differenceStats = null
         // Read comparison itself: this runs from onComparisonChanged, before the
         // finalComparisonAvailable binding has been updated.
-        if (!comparison || comparison.reasons.length > 0)
+        if (!comparison || comparison.reasons.length > 0 || !activeRun || !compareRun)
             return
         const r = controller.execute("simulation.field", { run: activeRun, kind: "surface", compare: compareRun })
         differenceStats = r.ok && r.result.available && r.result.scalars.dCp ? r.result.scalars.dCp : null
@@ -279,12 +279,25 @@ Pane {
 
     /// A force too small next to the run's largest force for a percentage to mean anything
     /// (e.g. a side force of 0.002 N on a 3 N drag: +316 % is noise) (CAD-117).
-    function noiseLevel(a) {
-        const f = comparison ? comparison.forces : null
+    function noiseLevel(a, coefficient) {
+        // Forces against the largest force, coefficients against the largest coefficient (CAD-171).
+        const f = !comparison ? null : coefficient ? comparison.coefficientsOnReferenceAreaOfA : comparison.forces
         if (!f)
             return false
-        const largest = Math.max(...["dragN", "liftN", "sideN"].map(k => f[k] ? Math.abs(f[k].a) : 0))
+        const keys = coefficient ? ["cd", "cl", "cs"] : ["dragN", "liftN", "sideN"]
+        const largest = Math.max(...keys.map(k => f[k] ? Math.abs(f[k].a) : 0))
         return Math.abs(a) < 0.02 * largest
+    }
+    /// One A/B table row: A, B, B − A and the change in % (null at noise level or for A = 0).
+    function abRow(key) {
+        const coefficient = ["cd", "cl", "cs"].indexOf(key) >= 0
+        const src = !comparison ? null : coefficient ? comparison.coefficientsOnReferenceAreaOfA : comparison.forces
+        const d = src && src[key] ? src[key] : null
+        if (!d)
+            return null
+        const percent = d.percent !== undefined ? d.percent : Math.abs(d.a) > 1e-12 ? 100 * d.difference / Math.abs(d.a) : null
+        return { a: d.a, b: d.b, difference: d.difference,
+                 percent: percent === null || noiseLevel(d.a, coefficient) ? null : percent }
     }
 
     function num(v, digits) {
@@ -1622,25 +1635,39 @@ Pane {
                     Label { text: "B − A"; opacity: 0.7 }
                     Label { text: "%"; opacity: 0.7 }
                     Repeater {
-                        model: [["dragN", qsTr("Drag N")], ["liftN", qsTr("Lift N")], ["sideN", qsTr("Side N")]]
+                        objectName: "cfdAbRows"
+                        // Forces, the drag split and the coefficients (B on A's reference area, CAD-171).
+                        model: [["dragN", qsTr("Drag N")], ["liftN", qsTr("Lift N")], ["sideN", qsTr("Side N")],
+                                ["pressureDragN", qsTr("Pressure drag N")], ["viscousDragN", qsTr("Friction drag N")],
+                                ["cd", "Cd"], ["cl", "Cl"], ["cs", "Cs"]]
                         delegate: Repeater {
                             id: rowRep
                             required property var modelData
-                            readonly property var d: root.comparison && root.comparison.forces[modelData[0]] ? root.comparison.forces[modelData[0]] : null
+                            readonly property var d: root.abRow(modelData[0])
                             model: 5
+                            // Coefficients to 4 decimals, so a change of a few drag counts shows.
+                            readonly property int digits: modelData[0].endsWith("N") ? 3 : 4
                             delegate: Label {
                                 required property int index
                                 font.bold: index === 3
                                 text: index === 0 ? rowRep.modelData[1]
                                     : !rowRep.d ? "–"
-                                    : index === 1 ? root.num(rowRep.d.a, 3)
-                                    : index === 2 ? root.num(rowRep.d.b, 3)
-                                    : index === 3 ? (rowRep.d.difference >= 0 ? "+" : "") + root.num(rowRep.d.difference, 3)
-                                    : rowRep.d.percent === null || rowRep.d.percent === undefined || root.noiseLevel(rowRep.d.a) ? "–"
+                                    : index === 1 ? root.num(rowRep.d.a, rowRep.digits)
+                                    : index === 2 ? root.num(rowRep.d.b, rowRep.digits)
+                                    : index === 3 ? (rowRep.d.difference >= 0 ? "+" : "") + root.num(rowRep.d.difference, rowRep.digits)
+                                    : rowRep.d.percent === null ? "–"
                                     : Math.abs(rowRep.d.percent) < 0.05 ? "0.0" // not "-0.0"
                                     : (rowRep.d.percent >= 0 ? "+" : "") + root.num(rowRep.d.percent, 1)
                             }
                         }
+                    }
+                    Label {
+                        Layout.columnSpan: 5
+                        visible: !!root.comparison && !!root.comparison.coefficientsOnReferenceAreaOfA
+                                 && Object.keys(root.comparison.coefficientsOnReferenceAreaOfA).length > 0
+                        text: qsTr("Coefficients on the reference area of A")
+                        font.pixelSize: 11
+                        opacity: 0.7
                     }
                 }
                 Repeater {
