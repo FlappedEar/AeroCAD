@@ -314,7 +314,7 @@ Pane {
     function runParams() {
         const params = {
             id: partInfo.id,
-            speed: Number(speedField.text) > 0 ? Number(speedField.text) : 20,
+            speed: Number(speedField.text),
             flowDirection: flowBox.currentValue,
             mesh: meshBox.currentValue,
             ground: groundBox.checked
@@ -338,6 +338,10 @@ Pane {
             return
         }
         const params = runParams()
+        // Preview only: a cleared or zero speed still shows the tunnel. A run with such a
+        // speed is refused by simulation.run, never started at another speed.
+        if (!(params.speed > 0))
+            params.speed = 20
         params.checkEngine = false
         const r = controller.execute("simulation.propose_run", params)
         proposal = r.ok ? r.result : null
@@ -601,6 +605,7 @@ Pane {
                     Label { text: qsTr("Speed (m/s)"); opacity: 0.7 }
                     TextField {
                         id: speedField
+                        objectName: "cfdSpeedField"
                         Layout.fillWidth: true
                         text: "20"
                         validator: DoubleValidator { bottom: 0.1; top: 150; locale: "C" }
