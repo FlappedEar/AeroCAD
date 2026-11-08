@@ -12,19 +12,22 @@ share code with AeroCAD's writers:
 - gmsh: STEP import (gmsh's own build of Open CASCADE), solid count, volume, bounds.
 - A plain-text check that the STEP file declares millimetres.
 
-Missing Python packages are reported and skipped, so the script runs with whatever is
-installed:  python3 -m pip install lib3mf trimesh numpy networkx lxml gmsh
+All independent readers are required for complete validation. Install them with:
+  python3 -m pip install lib3mf trimesh numpy networkx lxml gmsh
+Available checks still run when a reader is missing or cannot load, but the result is
+incomplete and nonzero. The final coverage table reports what ran for each format.
 
 Usage:
   tools/validate_exports.py --cmd build/release/bin/aerocad-cmd [--keep DIR]
 
-Exit code 0 when every available check passes, 1 otherwise. Not part of CI (it needs
+Exit code 0 only when every required check runs and passes, 1 otherwise. Not part of CI (it needs
 packages CI does not install); run it locally after touching the exporters.
 """
 
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import math
 import re
@@ -33,9 +36,56 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Callable
 
 REPO = Path(__file__).resolve().parent.parent
 FAILURES: list[str] = []
+COVERAGE: list[dict] = []
+
+
+def run_validation(path: Path, reader: str, validate: Callable[[], None], module: str | None = None) -> None:
+    """Record required coverage even when a reader cannot load or stops before checking a file."""
+    result = {"format": path.suffix[1:], "reader": reader, "executed": False, "status": "failed"}
+    COVERAGE.append(result)
+    try:
+        if module is not None:
+            importlib.import_module(module)
+    except ImportError as error:
+        result["status"] = "missing"
+        print(f"  MISSING {reader} for {path.name}: {type(error).__name__}: {error}")
+        return
+    except (Exception, SystemExit) as error:
+        message = f"{reader} cannot load for {path.name}: {type(error).__name__}: {error}"
+        check(False, message)
+        return
+
+    result["executed"] = True
+    failures_before = len(FAILURES)
+    try:
+        validate()
+    except ImportError as error:
+        result["status"] = "missing"
+        print(f"  MISSING dependency of {reader} for {path.name}: {type(error).__name__}: {error}")
+        return
+    except (Exception, SystemExit) as error:
+        check(False, f"{reader} stopped for {path.name}: {type(error).__name__}: {error}")
+    result["status"] = "passed" if len(FAILURES) == failures_before else "failed"
+
+
+def print_coverage() -> int:
+    """Summarize invocations, not package presence: a failed read is never a passed check."""
+    print("\nRequired validation coverage (executed = reader/check invocation started):")
+    missing = 0
+    for fmt, reader in sorted({(r["format"], r["reader"]) for r in COVERAGE}):
+        rows = [r for r in COVERAGE if (r["format"], r["reader"]) == (fmt, reader)]
+        executed = sum(r["executed"] for r in rows)
+        passed = sum(r["status"] == "passed" for r in rows)
+        failed = sum(r["status"] == "failed" for r in rows)
+        unavailable = sum(r["status"] == "missing" for r in rows)
+        missing += unavailable
+        print(f"  {fmt.upper():4} {reader}: required {len(rows)}, executed {executed}, "
+              f"passed {passed}, failed {failed}, missing {unavailable}")
+    return missing
 
 
 def check(condition: bool, message: str) -> None:
@@ -101,11 +151,7 @@ def models() -> list[dict]:
 # --- Validators -------------------------------------------------------------------------
 
 def validate_3mf_lib3mf(path: Path, model: dict) -> None:
-    try:
-        import lib3mf  # type: ignore
-    except ImportError:
-        print("  skip  lib3mf not installed")
-        return
+    import lib3mf  # type: ignore
     wrapper = lib3mf.get_wrapper()
     m = wrapper.CreateModel()
     reader = m.QueryReader("3mf")
@@ -131,11 +177,7 @@ def validate_3mf_lib3mf(path: Path, model: dict) -> None:
 
 
 def validate_mesh_trimesh(path: Path, model: dict) -> None:
-    try:
-        import trimesh  # type: ignore
-    except ImportError:
-        print("  skip  trimesh not installed")
-        return
+    import trimesh  # type: ignore
     loaded = trimesh.load(str(path), force="scene")
     meshes = list(loaded.geometry.values()) if hasattr(loaded, "geometry") else [loaded]
     mesh = trimesh.util.concatenate(meshes) if len(meshes) > 1 else meshes[0]
@@ -165,11 +207,7 @@ def validate_step_text(path: Path) -> None:
 
 
 def validate_step_gmsh(path: Path, model: dict) -> None:
-    try:
-        import gmsh  # type: ignore
-    except ImportError:
-        print("  skip  gmsh not installed")
-        return
+    import gmsh  # type: ignore
     gmsh.initialize(["-noenv"], readConfigFiles=False)
     try:
         gmsh.option.setNumber("General.Terminal", 0)
@@ -192,12 +230,14 @@ def validate_step_gmsh(path: Path, model: dict) -> None:
 
 # --- Main -------------------------------------------------------------------------------
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    FAILURES.clear()
+    COVERAGE.clear()
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--cmd", type=Path, default=REPO / "build" / "release" / "bin" / "aerocad-cmd",
                         help="path to the aerocad-cmd executable")
     parser.add_argument("--keep", type=Path, help="write the exported files to this folder and keep them")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if not args.cmd.exists():
         print(f"aerocad-cmd not found at {args.cmd}; build target aerocad_cmd first", file=sys.stderr)
         return 2
@@ -240,24 +280,31 @@ def main() -> int:
                 path = out / f"{model['name']}.{fmt}"
                 print(f"-- {path.name}")
                 if fmt == "3mf":
-                    validate_3mf_lib3mf(path, model)
-                    validate_mesh_trimesh(path, model)
+                    run_validation(path, "lib3mf", lambda: validate_3mf_lib3mf(path, model), "lib3mf")
+                    run_validation(path, "trimesh", lambda: validate_mesh_trimesh(path, model), "trimesh")
                 elif fmt == "stl":
-                    validate_mesh_trimesh(path, model)
+                    run_validation(path, "trimesh", lambda: validate_mesh_trimesh(path, model), "trimesh")
                 elif fmt == "step":
-                    validate_step_text(path)
-                    validate_step_gmsh(path, model)
+                    run_validation(path, "STEP text", lambda: validate_step_text(path))
+                    run_validation(path, "gmsh", lambda: validate_step_gmsh(path, model), "gmsh")
+    except Exception as error:
+        check(False, f"Export fixture preparation failed: {type(error).__name__}: {error}")
     finally:
         if not args.keep:
             shutil.rmtree(out, ignore_errors=True)
 
-    print()
+    missing = print_coverage()
+    if missing:
+        print(f"\nValidation INCOMPLETE: {missing} required reader invocation(s) missing.")
+        print("Install the readers and their native libraries, then rerun validation.")
     if FAILURES:
         print(f"{len(FAILURES)} check(s) failed:")
         for f in FAILURES:
             print(f"  - {f}")
         return 1
-    print("All checks passed.")
+    if missing:
+        return 1
+    print("All required checks executed and passed.")
     return 0
 
 
