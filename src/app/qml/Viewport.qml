@@ -313,22 +313,30 @@ Item {
     /// camera ends up inside a part scaled up, the part reaches past an edge, shrinks to a
     /// dot or moves off screen), frame it, so the whole part stays visible while it is placed.
     function keepPreviewInView() {
+        const t = transformTarget
         const p = previewSphere()
         if (!p)
             return
-        const r = Math.max(p.radius, 1e-6)
-        // The preview's bounding sphere on screen: its centre and its radius in pixels (the
-        // same in both projections: a point one radius to the right of the centre).
-        const s = view.mapFrom3DScene(p.center)
-        const e = view.mapFrom3DScene(p.center.plus(view.camera.right.times(r)))
-        const px = Math.hypot(e.x - s.x, e.y - s.y)
-        const inside = !orthographic && p.center.minus(view.camera.scenePosition).length() < r * 1.1
-        const fits = !inside && s.z > 0 && px >= Math.min(width, height) / 40
-                     && s.x - px >= 0 && s.x + px <= width && s.y - px >= 0 && s.y + px <= height
+        // The corners of the part's box as previewed (moved, turned, scaled), projected: a
+        // perspective-correct test of what is on screen. A corner behind the camera means
+        // the camera is inside or right next to the preview.
+        const h = (t.size ?? Qt.vector3d(0, 0, 0)).times(0.5)
+        let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, behind = false
+        for (let i = 0; i < 8; ++i) {
+            const c = t.center.plus(Qt.vector3d(i & 1 ? h.x : -h.x, i & 2 ? h.y : -h.y, i & 4 ? h.z : -h.z))
+            const m = previewPoint(t.partId, c)
+            const v = view.mapFrom3DScene(modelSpace.mapPositionToScene(m))
+            if (!(v.z > 0) || !isFinite(v.x) || !isFinite(v.y))
+                behind = true
+            x0 = Math.min(x0, v.x); x1 = Math.max(x1, v.x)
+            y0 = Math.min(y0, v.y); y1 = Math.max(y1, v.y)
+        }
+        const fits = !behind && x0 >= 0 && y0 >= 0 && x1 <= width && y1 <= height
+                     && Math.max(x1 - x0, y1 - y0) >= Math.min(width, height) / 20
         if (!fits) {
-            const m = previewPoint(transformTarget.partId, transformTarget.center)
+            const m = previewPoint(t.partId, t.center)
             // No 1 mm floor here: a part scaled down to a speck is still shown large enough.
-            frameAround([m.x, m.y, m.z], r, 1e-3)
+            frameAround([m.x, m.y, m.z], Math.max(p.radius, 1e-6), 1e-3)
         }
     }
 
@@ -1071,7 +1079,8 @@ Item {
         transformPickMode = ""
         transformTarget = { partId: info.id, kind: info.kind, featureId: info.featureId,
                       center: Qt.vector3d(info.center[0], info.center[1], info.center[2]),
-                      name: info.name || "", canScale: true, radius: (info.diagonal ?? 0) / 2 }
+                      name: info.name || "", canScale: true, radius: (info.diagonal ?? 0) / 2,
+                      size: Qt.vector3d(info.sizeX ?? 0, info.sizeY ?? 0, info.sizeZ ?? 0) }
         return true
     }
 

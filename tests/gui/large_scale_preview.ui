@@ -5,7 +5,9 @@
 #  - Cancel after a typed scale puts the part back; a command that ends the tool while a
 #    large scale is shown raises no QML error (the ctest fails on any "TypeError");
 #  - in the orthographic view a typed 3000 %, 2 %, 0.1 % of a 2 mm part (under the 1 mm
-#    framing floor) and a Move that puts half the part past the edge are framed too.
+#    framing floor) and a Move that puts half the part past the edge are framed too;
+#  - perspective: 115 % of a fitted 1 x 7 x 20 mm body (corners nearer the camera reach
+#    further out than the bounding sphere suggests) stays all in view.
 # Run: AeroCAD tests/data/box_200x80x60.stl --ui-script <this file>
 Qt.createQmlObject('import QtQuick; Item { objectName: "lsTest"; visible: false; property var s: ({}); function find(i, name) { if (!i) return null; if (i.objectName === name) return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = find(ch[k], name); if (r) return r } return null } function part() { return controller.execute("document.parts").result.parts.find(p => p.id === s.id) } function onScreen(b, f, label) { const c = [0, 1, 2].map(i => (b.min[i] + b.max[i]) / 2); let ok = true; for (let i = 0; i < 8; ++i) { const p = [i & 1 ? b.max[0] : b.min[0], i & 2 ? b.max[1] : b.min[1], i & 4 ? b.max[2] : b.min[2]].map((v, k) => c[k] + (v - c[k]) * f); const q = viewport.modelToScreen(Qt.vector3d(p[0], p[1], p[2])); if (!(q.x >= 0 && q.y >= 0 && q.x <= viewport.width && q.y <= viewport.height)) ok = false } ui.log(label + ": whole part on screen " + ok + ", camera distance " + viewport.cameraState().distance.toFixed(1)); if (!ok) ui.fail(label + ": the part is not all in view") } function typeScale(v) { const f = find(window.contentItem, "scale"); const p = f.mapToItem(null, f.width / 2, f.height / 2); ui.click(p.x, p.y); f.selectAll(); ui.type(v); ui.key("Return") } }', window.contentItem)
 ui.wait(800)
@@ -59,3 +61,11 @@ ui.wait(300)
 (() => { Array.from(window.contentItem.children).find(c => c.objectName === "lsTest").typeScale("0.1") })()
 ui.wait(300)
 (() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "lsTest"); t.onScreen(t.s.b, 0.001, "orthographic 0.1 %"); const b = t.s.b, c = [0, 1, 2].map(i => (b.min[i] + b.max[i]) / 2), d = Math.hypot(b.size[0], b.size[1], b.size[2]) * 0.001 / 2; const q0 = viewport.modelToScreen(Qt.vector3d(c[0] - d, c[1], c[2])), q1 = viewport.modelToScreen(Qt.vector3d(c[0] + d, c[1], c[2])); const px = Math.hypot(q1.x - q0.x, q1.y - q0.y); ui.log("orthographic 0.1 % of " + b.size[0].toFixed(2) + " mm: preview " + px.toFixed(0) + " px across"); if (px < Math.min(viewport.width, viewport.height) / 40) ui.fail("the 0.1 % preview is a dot"); viewport.cancelTransform() })()
+# Perspective Front view, a 1 x 7 x 20 mm body fitted, then 115 %: the corners nearer the camera
+# project further out than the bounding sphere at the centre's depth; the whole box stays in view.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "lsTest"); const r = controller.execute("feature.box", { size: [1, 7, 20], corner: [500, 0, 0] }); if (!r.ok) ui.fail("box: " + r.error); t.s.id = controller.execute("document.parts").result.parts.find(p => p.kind === "body").id; t.s.b = t.part().bounds; viewport.restoreCameraState({ pivot: [0, 0, 0], pitch: 0, yaw: 0, distance: 100, orthographic: false }); window.selectPart(t.s.id); window.zoomToPart(t.s.id); window.startTransform(t.s.id) })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "lsTest"); t.onScreen(t.s.b, 1, "thin box fitted") })()
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "lsTest").typeScale("115") })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "lsTest"); t.onScreen(t.s.b, 1.15, "perspective 115 % of the thin box"); viewport.cancelTransform() })()
