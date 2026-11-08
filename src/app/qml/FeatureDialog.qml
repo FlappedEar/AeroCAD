@@ -236,6 +236,10 @@ Pane {
             { key: "distance2", type: "expr", label: qsTr("Distance 2"), init: 1, showIf: v => v.type === "two_distances" },
             { key: "angle", type: "expr", label: qsTr("Angle (deg)"), init: 45, showIf: v => v.type === "distance_angle" },
             { key: "flip", type: "bool", label: qsTr("Flip"), showIf: v => v.type !== undefined && v.type !== "equal_distance" }] },
+        press_pull: { title: qsTr("Press Pull"), command: "feature.press_pull", fields: [
+            { key: "body", type: "body", label: qsTr("Body") },
+            { key: "faces", type: "facePicks", label: qsTr("Faces"), hint: qsTr("Click flat faces to move") },
+            { key: "distance", type: "expr", label: qsTr("Distance (negative: push in)"), init: 5 }] },
         shell: { title: qsTr("Shell"), command: "feature.shell", fields: [
             { key: "body", type: "body", label: qsTr("Body") },
             { key: "faces", type: "facePicks", label: qsTr("Faces to remove"), hint: qsTr("Click faces (none: closed hollow)") },

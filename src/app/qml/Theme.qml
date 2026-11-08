@@ -146,7 +146,7 @@ QtObject {
         "to body": "mesh-to-body", "sketch": "sketch", "extrude": "extrude", "revolve": "revolve",
         "box": "box", "cylinder": "cylinder", "hole": "hole", "line": "line", "rectangle": "rectangle",
         "circle": "circle", "arc": "arc", "polygon": "polygon", "slot": "slot", "dimension": "dimension",
-        "finish sketch": "finish-sketch", "fillet": "fillet", "chamfer": "chamfer", "shell": "shell",
+        "finish sketch": "finish-sketch", "press pull": "extrude", "fillet": "fillet", "chamfer": "chamfer", "shell": "shell",
         "combine": "combine", "parameters": "parameters", "show/hide": "visible", "delete": "delete",
         "selected": "export", "all": "export", "export": "export", "fit": "fit", "home": "home",
         "ortho": "ortho", "sweep": "sweep", "loft": "loft", "mirror": "mirror", "pattern": "pattern",
@@ -169,6 +169,7 @@ QtObject {
         "hole": qsTr("Drill a round hole into a body at a point on a face."),
         "box": qsTr("Add a block whose size you type in."),
         "cylinder": qsTr("Add a cylinder whose size you type in."),
+        "press pull": qsTr("Move flat faces of a body in or out by a distance (Fusion: Press Pull, Q)."),
         "fillet": qsTr("Round the selected edges of a body."),
         "chamfer": qsTr("Bevel (cut off at an angle) the selected edges of a body."),
         "shell": qsTr("Hollow out a body, leaving walls of the thickness you type."),
@@ -209,7 +210,7 @@ QtObject {
             hole: "hole", base_body: "mesh-to-body", sweep: "sweep", loft: "loft", mirror: "mirror",
             pattern: "pattern", rectangular_pattern: "pattern", circular_pattern: "circular-pattern",
             plane: "plane", body: "body", imported: "mesh", mesh: "mesh",
-            part_on_surface: "surface", fin_on_surface: "surface", move: "move"
+            part_on_surface: "surface", fin_on_surface: "surface", move: "move", press_pull: "extrude"
         }
         return map[type] || "tool"
     }

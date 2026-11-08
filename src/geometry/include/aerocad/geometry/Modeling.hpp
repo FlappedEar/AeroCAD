@@ -95,6 +95,10 @@ struct ChamferOptions {
 
 /// Hollows a solid: removes the given faces and keeps walls of `thickness` (inwards).
 [[nodiscard]] Shape shell(const Shape& shape, const std::vector<std::size_t>& faceIndices, double thickness);
+/// Press Pull (Fusion, Q) on flat faces: moves each face `distance` along its outward
+/// normal, adding material (positive) or removing it (negative). The sides follow the
+/// face's outline straight along the normal. Throws ModelingError for curved faces.
+[[nodiscard]] Shape pressPull(const Shape& shape, const std::vector<std::size_t>& faceIndices, double distance);
 
 /// True when the shape passes the B-rep validity check.
 [[nodiscard]] bool isValid(const Shape& shape);
