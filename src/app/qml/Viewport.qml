@@ -66,6 +66,7 @@ Item {
     signal constraintRemoved(int index)
     signal sketchCurvesDeleted(var indices)
     signal sketchPointDragged(var point, var to, bool done)
+    signal sketchPointDragCancelled()
     signal sketchToolRequested(string tool)
     /// Model-space points to mark (selections of the open feature dialog).
     property var markers: []
@@ -1735,6 +1736,7 @@ Item {
         onConstraintRemoved: i => root.constraintRemoved(i)
         onCurvesDeleted: list => root.sketchCurvesDeleted(list)
         onPointDragged: (point, to, done) => root.sketchPointDragged(point, to, done)
+        onPointDragCancelled: root.sketchPointDragCancelled()
         onToolRequested: t => root.sketchToolRequested(t)
     }
 

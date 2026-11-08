@@ -20,3 +20,12 @@ ui.wait(500)
 (() => { const r = controller.execute("sketch.curves", { sketch: activeSketch.id }).result; const bottom = r.curves[0].points; ui.log("bottom " + JSON.stringify(bottom)); if (Math.abs(bottom[1][0] - 50) > 0.01 || Math.abs(bottom[1][0] - bottom[0][0] - 40) > 1e-4) ui.fail("sideways drag: expected the rectangle at x 10..50, got " + JSON.stringify(bottom)); if (r.constraints.length !== 1) ui.fail("the drag left constraints: " + r.constraints.length) })()
 # One undo step per drag.
 (() => { controller.execute("edit.undo"); const r = controller.execute("sketch.curves", { sketch: activeSketch.id }).result; if (Math.abs(r.curves[0].points[1][0] - 40) > 0.01) ui.fail("undo did not take back one drag: " + JSON.stringify(r.curves[0].points)) })()
+# Esc during a drag cancels it: the point goes back, the release keeps nothing.
+(() => { const r = controller.execute("sketch.curves", { sketch: activeSketch.id }).result; const p = r.curves[1].points[1]; const o = viewport.sketchOverlay; const a = o.mapToItem(null, o.toScreen(p).x, o.toScreen(p).y); const b = o.mapToItem(null, o.toScreen([p[0], p[1] + 15]).x, o.toScreen([p[0], p[1] + 15]).y); ui.press(a.x, a.y); ui.move(a.x, a.y + (b.y - a.y) / 2); ui.move(b.x, b.y) })()
+ui.wait(400)
+(() => { if (!viewport.sketchOverlay.pointDragging) ui.fail("the press and move did not start a point drag") })()
+ui.key("Esc")
+ui.wait(300)
+(() => { const r = controller.execute("sketch.curves", { sketch: activeSketch.id }).result; const p = r.curves[1].points[1]; const o = viewport.sketchOverlay; const b = o.mapToItem(null, o.toScreen([p[0], p[1] + 15]).x, o.toScreen([p[0], p[1] + 15]).y); ui.release(b.x, b.y) })()
+ui.wait(400)
+(() => { if (!activeSketch) ui.fail("Esc during the drag left the sketch"); const r = controller.execute("sketch.curves", { sketch: activeSketch.id }).result; ui.log("after Esc: " + JSON.stringify(r.curves[1].points)); if (Math.abs(r.curves[1].points[1][1] - 30) > 0.01) ui.fail("Esc did not cancel the drag: " + JSON.stringify(r.curves[1].points)) })()

@@ -1222,6 +1222,8 @@ ApplicationWindow {
                 window.pickingSketchPlane = false
             // In a sketch, as in Fusion: Esc ends what is being drawn, then the tool, then
             // clears the curve selection; only then does it leave the sketch.
+            else if (window.activeSketch && viewport.sketchOverlay.pointDragging)
+                viewport.sketchOverlay.cancelPointDrag() // the drag is dropped, the point goes back
             else if (window.activeSketch && viewport.sketchOverlay.drawing)
                 viewport.sketchOverlay.endCurrent()
             else if (window.activeSketch && window.sketchTool !== "")
@@ -1944,6 +1946,10 @@ ApplicationWindow {
             }
             // Dragging a sketch point (CAD-123): a live preview while moving, one undo step
             // on release; the solver keeps the constraints and dimensions.
+            onSketchPointDragCancelled: {
+                window.controller.cancelPreview()
+                window.refreshSketchSnaps()
+            }
             onSketchPointDragged: (point, to, done) => {
                 if (!window.activeSketch)
                     return

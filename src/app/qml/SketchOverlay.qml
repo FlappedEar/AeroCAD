@@ -31,6 +31,10 @@ Item {
     /// A point is being dragged in select mode (CAD-123): `point` is a constraint point
     /// reference, `to` where it is now (sketch coordinates); `done` on release.
     signal pointDragged(var point, var to, bool done)
+    /// The point drag was cancelled (Esc): its live preview is to be undone.
+    signal pointDragCancelled()
+    /// A point is being dragged in select mode.
+    readonly property bool pointDragging: input.pointDragging
     /// A palette button asks for another sketch tool.
     signal toolRequested(string tool)
 
@@ -70,6 +74,19 @@ Item {
 
     /// A curve or constraint pick is under way (the sketch menu offers to end it).
     readonly property bool drawing: points.length > 0 || constraintLayer.picks.length > 0 || constraintLayer.pending !== null
+
+    /// Cancels a point drag (Esc): nothing is kept, and the release that follows does
+    /// nothing either.
+    function cancelPointDrag() {
+        if (!input.pointDragging && input.dragPoint === null)
+            return false
+        const was = input.pointDragging
+        input.pointDragging = false
+        input.dragPoint = null
+        if (was)
+            pointDragCancelled()
+        return true
+    }
 
     /// Ends the curve being drawn (a line chain) or the constraint pick, as Esc does.
     function endCurrent() {
@@ -387,6 +404,7 @@ Item {
     // --- Input ----------------------------------------------------------------------------
 
     MouseArea {
+        id: input
         anchors.fill: parent
         enabled: root.active || root.selecting
         hoverEnabled: true
@@ -497,6 +515,7 @@ Item {
     // Typing a number starts the dimension input, as in Fusion.
     Keys.onPressed: event => {
         if (event.key === Qt.Key_Escape) {
+            cancelPointDrag()
             reset()
             constraintLayer.reset()
             event.accepted = true
