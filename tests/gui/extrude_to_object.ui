@@ -3,7 +3,7 @@
 # distance existed.
 # Run: AeroCAD --ui-script <this file>
 ui.wait(800)
-(() => { let r = controller.execute("sketch.create", { plane: "YZ", curves: [{ type: "circle", center: [0, 30], radius: 10 }] }); if (!r.ok) ui.fail("bar sketch: " + r.error); r = controller.execute("feature.extrude", { sketch: r.result.id, distance: 20, extent: "symmetric" }); if (!r.ok) ui.fail("bar: " + r.error); r = controller.execute("sketch.create", { plane: "XY", curves: [{ type: "center_rectangle", center: [0, 0], width: 10, height: 10 }] }); if (!r.ok) ui.fail("square: " + r.error) })()
+(() => { let r = controller.execute("sketch.create", { plane: "YZ", curves: [{ type: "circle", center: [0, 30], radius: 10 }] }); if (!r.ok) ui.fail("bar sketch: " + r.error); r = controller.execute("feature.extrude", { sketch: r.result.id, distance: 20, extent: "symmetric" }); if (!r.ok) ui.fail("bar: " + r.error); r = controller.execute("sketch.create", { plane: "XY", curves: [{ type: "center_rectangle", center: [0, 0], width: 10, height: 10 }] }); if (!r.ok) ui.fail("square: " + r.error); r = controller.execute("feature.plane", { base: "XY", offset: 45 }); if (!r.ok) ui.fail("plane: " + r.error) })()
 ui.wait(300)
 (() => { viewport.restoreCameraState({ pivot: [-25, 0, 20], pitch: -25, yaw: 30, distance: 220, orthographic: false }) })()
 ui.wait(300)
@@ -13,7 +13,7 @@ ui.wait(300)
 ui.wait(800)
 (() => { featureDialog.setValue("extent", "to_object"); if (featureDialog.pickKey !== "to") ui.fail("To Object did not start picking the object: " + featureDialog.pickKey); if (viewport.distanceArrow) ui.fail("the distance arrow stays with To Object") })()
 ui.wait(300)
-# Click the top of the bar.
+# Click the top of the bar, through a construction plane above it.
 (() => { const p = viewport.viewPoint(Qt.vector3d(12, 0, 40)); const w = viewport.mapToItem(null, p.x, p.y); ui.click(w.x, w.y) })()
 ui.wait(1000)
 (() => { const v = featureDialog.values; ui.log("to " + JSON.stringify(v.to) + " error '" + featureDialog.error + "'"); if (!v.to || v.to.body === undefined) ui.fail("clicking the bar did not pick it") })()

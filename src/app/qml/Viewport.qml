@@ -833,6 +833,14 @@ Item {
                     root.controller.showStatus(qsTr("Click a face of %1.").arg(root.transformTarget.name))
                 return
             }
+            // Extrude To Object: only bodies (not the preview), surfaces, solids and scans
+            // take the click; planes and sketches in front are clicked through.
+            if (root.pickKind === "object") {
+                const parts = root.controller.execute("document.parts")
+                const ids = parts.ok ? parts.result.parts.filter(p => p.kind === "imported"
+                                                                  || (p.kind === "body" && p.featureId != root.unpickableBody)).map(p => p.id) : []
+                hit = root.pickPartAmong(eventPoint.position.x, eventPoint.position.y, ids)
+            }
             // Revolve axis (Fusion: Axis selection): the dialog resolves the click itself, as
             // a sketch line or a body edge behind its own preview.
             if (root.pickKind === "axis") {
