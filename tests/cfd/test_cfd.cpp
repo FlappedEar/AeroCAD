@@ -254,6 +254,24 @@ TEST_CASE("writeCase writes a complete OpenFOAM case in SI units", "[cfd]")
         CHECK(region.max.x == Approx(info.partBounds.max.x + 1.5 * L));
         CHECK(region.min.z == Approx(info.partBounds.min.z - 0.4 * L)); // No floor here.
     }
+    {
+        // CAD-153: a near box around the part at the wake's old level, the far wake one
+        // level coarser; medium surface levels unchanged (default coarse mesh).
+        const std::string snappy = slurp(tmp.path() / "system/snappyHexMeshDict");
+        CHECK(snappy.find("near { type box; min (") != std::string::npos);
+        CHECK(snappy.find("near { mode inside; levels ((1e15 2)); }") != std::string::npos);
+        CHECK(snappy.find("wake { mode inside; levels ((1e15 1)); }") != std::string::npos);
+        CHECK(snappy.find("part { level (3 4);") != std::string::npos);
+        TempDir fineDir;
+        cfd::Settings fine = s;
+        fine.mesh = cfd::MeshLevel::Fine;
+        cfd::writeCase(fineDir.path(), g, fine);
+        const std::string fineSnappy = slurp(fineDir.path() / "system/snappyHexMeshDict");
+        CHECK(fineSnappy.find("part { level (6 7);") != std::string::npos);
+        CHECK(fineSnappy.find("{ file \"part.eMesh\"; level 7; }") != std::string::npos);
+        CHECK(fineSnappy.find("near { mode inside; levels ((1e15 4)); }") != std::string::npos);
+        CHECK(fineSnappy.find("wake { mode inside; levels ((1e15 3)); }") != std::string::npos);
+    }
     CHECK(slurp(tmp.path() / "Allrun").find("runParallel simpleFoam") != std::string::npos);
     CHECK(slurp(tmp.path() / "Allrun").find("\"${WM_PROJECT_VERSION:-}\" > aerocad.engine") != std::string::npos); // CAD-84
     CHECK(slurp(tmp.path() / "system/blockMeshDict").find("ground") == std::string::npos);
