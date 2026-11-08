@@ -98,6 +98,7 @@ Json toJson(const Settings& s)
         {"iterations", s.effectiveIterations()},
         {"ground", s.ground},
         {"groundMoving", s.groundMoving},
+        {"rotatingWheels", s.rotatingWheels},
         {"processes", s.effectiveProcesses()},
     };
     j["groundHeight"] = s.groundHeight ? Json(*s.groundHeight) : Json(nullptr);
@@ -155,6 +156,8 @@ Settings settingsFromJson(const Json& j)
         s.ground = j.at("ground").get<bool>();
     if (j.contains("groundMoving"))
         s.groundMoving = j.at("groundMoving").get<bool>();
+    if (j.contains("rotatingWheels"))
+        s.rotatingWheels = j.at("rotatingWheels").get<bool>();
     if (j.contains("groundHeight") && !j.at("groundHeight").is_null()) {
         const double z = j.at("groundHeight").get<double>();
         if (!std::isfinite(z))
@@ -197,6 +200,11 @@ Json settingsSchema()
         {"groundHeight",
          num("Floor height in model Z, mm (default: just below the lowest point). Not above the part; context "
              "parts such as supports may reach below it.")},
+        {"rotatingWheels",
+         {{"type", "boolean"},
+          {"description", "Turn the wheels with the moving floor: wheels standing on the part's bottom are found, "
+                          "the floor touches the tyres and their surfaces move with it (default false; needs "
+                          "ground and groundMoving)."}}},
         {"referenceArea", num("Reference area for Cd/Cl in m^2 (default: frontal area of the part).")},
         {"referenceLength", num("Reference length in m (default: part length along the flow).")},
         {"kinematicViscosity", num("Kinematic viscosity in m^2/s (default 1.5e-5, air).")},
@@ -261,10 +269,10 @@ std::vector<std::string> differingConditions(const Json& a, const Json& b)
     // a converged result, so they are not compared.
     static constexpr std::array keys{"preset",  "speed",         "flowDirection", "kinematicViscosity",
                                      "density", "turbulenceIntensity", "viscosityRatio", "mesh",
-                                     "ground",  "groundMoving", "groundHeight", "referenceArea",
-                                     "referenceLength"};
+                                     "ground",  "groundMoving", "groundHeight", "rotatingWheels",
+                                     "referenceArea", "referenceLength"};
     // Runs written before a setting existed used what is now its default.
-    static const Json defaults{{"groundMoving", true}, {"groundHeight", nullptr}};
+    static const Json defaults{{"groundMoving", true}, {"groundHeight", nullptr}, {"rotatingWheels", false}};
     std::vector<std::string> diff;
     for (const char* key : keys) {
         const Json fallback = defaults.value(key, Json());

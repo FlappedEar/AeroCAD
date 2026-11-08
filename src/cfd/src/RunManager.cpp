@@ -1221,6 +1221,13 @@ Json RunManager::results(const std::string& id, int maxPoints)
                            {"openfoam", kOpenFoamVersion},
                            {"referenceArea", info->referenceArea},
                            {"referenceLength", info->referenceLength},
+                           {"wheels", [&] {
+                                // Turning wheels (CAD-154): axle and tyre radius in mm.
+                                Json list = Json::array();
+                                for (const Wheel& w : info->wheels)
+                                    list.push_back({{"axle", w.axle}, {"radiusMm", 1000.0 * w.radius}});
+                                return list;
+                            }()},
                            {"characteristicLength", info->characteristicLength},
                            {"baseCellSize", info->baseCellSize},
                            {"geometryHash", std::to_string(info->geometryHash)},

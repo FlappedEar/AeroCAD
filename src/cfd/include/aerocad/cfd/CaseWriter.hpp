@@ -2,6 +2,7 @@
 #pragma once
 
 #include "aerocad/cfd/Settings.hpp"
+#include "aerocad/cfd/Wheels.hpp"
 #include "aerocad/core/Mesh.hpp"
 
 #include <cstdint>
@@ -58,6 +59,8 @@ struct CaseInfo {
     /// was recorded.
     std::optional<std::uint64_t> contextHash;
     std::string openfoam; ///< Engine version the case was written for (case.json "openfoam").
+    /// Wheels turning with the floor (settings.rotatingWheels, CAD-154), case frame.
+    std::vector<Wheel> wheels;
 
     [[nodiscard]] Json toJson() const;
     static CaseInfo fromJson(const Json& json);

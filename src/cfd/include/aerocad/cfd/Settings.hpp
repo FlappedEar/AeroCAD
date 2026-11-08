@@ -78,6 +78,10 @@ struct Settings {
     /// Height of the floor in model Z (mm); empty = just below the lowest point of the
     /// geometry. Must not be above the part; context parts (e.g. supports) may reach below it.
     std::optional<double> groundHeight;
+    /// The wheels turn with the moving floor (CAD-154): wheels standing on the bottom of the
+    /// part are found, the floor is put just above the bottom of the tyres so they touch it,
+    /// and their surfaces move at the floor's speed where they touch it. Needs a moving floor.
+    bool rotatingWheels = false;
     /// Reference area for Cd/Cl in m^2; empty = frontal area of the part (computed).
     std::optional<double> referenceArea;
     /// Reference length for moment coefficients in m; empty = part length along the flow.
