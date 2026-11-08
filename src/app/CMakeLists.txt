@@ -180,6 +180,12 @@ if(AEROCAD_BUILD_TESTS)
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/cfd_size_warning.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_cfd_size_warning_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-105: Simplify a scan, then Ctrl+Z restores the full mesh (also with a reduced display).
+    add_test(NAME app_simplify_undo_test
+        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl
+                --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/simplify_undo.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_simplify_undo_test PROPERTIES LABELS gui TIMEOUT 60)
     # Live Move / Rotate / Scale (handles, panel, Enter / Esc / click away) and free orbit.
     add_test(NAME app_transform_tool_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl
