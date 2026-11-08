@@ -147,6 +147,9 @@ public:
 
     /// Colour map stops (low to high) used for a result scalar, for legends.
     Q_INVOKABLE QVariantList colormap(const QString& scalar) const;
+    /// Where `value` sits on a result colour scale [lo, hi], 0 (bottom) to 1 (top); pressure
+    /// scales keep zero in the middle (FieldGeometry::scalePosition).
+    Q_INVOKABLE double fieldScalePosition(const QString& scalar, double value, double lo, double hi) const;
     /// Part details for the properties panel ({} for unknown ids).
     Q_INVOKABLE QVariantMap partInfo(quint64 id) const;
 
