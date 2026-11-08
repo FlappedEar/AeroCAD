@@ -14,8 +14,13 @@ ui.wait(1500)
 (() => { const own = simulationPanel.ownRuns.map(r => r.source.label), other = simulationPanel.otherRuns.map(r => r.source.label); ui.log("OWN " + own + " OTHER " + other); if (own.join() !== "this design" || other.join() !== "other design") ui.fail("run split") })()
 (() => { const a = simulationPanel.runs.find(r => r.id === simulationPanel.activeRun); ui.log("A " + (a ? a.source.label : "none")); if (!a || a.source.label !== "this design") ui.fail("first-show A must be this design's run") })()
 ui.clickText("[A] this design · " + simulationPanel.ownRuns[0].source.partName)
+# The run list may reach below the window: scroll the panel to its end.
+(() => { const find = (i, n) => { if (!i) return null; if (i.objectName === n) return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = find(ch[k], n); if (r) return r } return null }; const f = find(simulationPanel, "cfdPanelScroll").contentItem; f.contentY = Math.max(0, f.contentHeight - f.height) })()
+ui.wait(300)
 ui.clickText("▸ Runs from other designs (1)")
 ui.wait(400)
+(() => { const find = (i, n) => { if (!i) return null; if (i.objectName === n) return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = find(ch[k], n); if (r) return r } return null }; const f = find(simulationPanel, "cfdPanelScroll").contentItem; f.contentY = Math.max(0, f.contentHeight - f.height) })()
+ui.wait(300)
 ui.clickText("other design · " + simulationPanel.otherRuns[0].source.partName)
 ui.shot("cfd-run-list.png")
 # CAD-149: a running run says how long it has run and at most how long is left.

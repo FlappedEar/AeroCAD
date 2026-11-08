@@ -389,6 +389,11 @@ Pane {
 
     /// New or opened project: nothing selected, nothing drawn, until a run is picked.
     function clearSelection() {
+        // Copied run settings refer to the closed document's parts (CAD-162).
+        copiedContext = null
+        copiedContextForeign = 0
+        copiedSettings = ({})
+        groundFixed = false
         autoSelect = false
         activeRun = ""
         compareRun = ""
@@ -514,21 +519,84 @@ Pane {
     }
 
     /// Settings of a new run as they stand in the panel (simulation.run / propose_run).
+    /// A floor copied from a run with a fixed (not moving) floor (CAD-162); the form has no
+    /// control for it, so it is kept until the floor box is changed.
+    property bool groundFixed: false
+    /// Conditions of the copied run that the form has no controls for (air properties,
+    /// turbulence, reference area and length, preset), sent with the run unchanged (CAD-162).
+    property var copiedSettings: ({})
+    /// The surroundings of the copied run, by part id; null = use the visible parts.
+    property var copiedContext: null
+    /// Surrounding parts of a copied run from another design: part ids are per document,
+    /// so they cannot be restored here; the count is shown as a warning instead.
+    property int copiedContextForeign: 0
+    /// Parts of the copied surroundings that are no longer in the document.
+    readonly property int copiedContextMissing: {
+        void partRevision // re-checked when parts are removed, undone or redone
+        if (!copiedContext || !contextBox.checked)
+            return 0
+        const parts = controller.execute("document.parts")
+        const ids = parts.ok ? parts.result.parts.map(p => p.id) : []
+        return copiedContext.filter(id => ids.indexOf(id) < 0).length
+    }
+    /// Fill the New run form with the conditions of run `id` (CAD-162), so a variant B is
+    /// run exactly as A was. Returns false when the run's conditions are not known.
+    function useSettingsOf(id) {
+        const r = controller.execute("simulation.results", { run: id, maxPoints: 2 })
+        if (!r.ok || !r.result.conditions)
+            return false
+        const st = r.result.conditions.settings
+        speedField.text = String(st.speed)
+        const flow = flowBox.indexOfValue(st.flowDirection)
+        if (flow >= 0)
+            flowBox.currentIndex = flow
+        const mesh = meshBox.indexOfValue(st.mesh)
+        if (mesh >= 0)
+            meshBox.currentIndex = mesh
+        groundBox.checked = !!st.ground
+        groundFixed = !!st.ground && st.groundMoving === false
+        wheelsBox.checked = !!st.ground && !!st.rotatingWheels
+        floorField.text = st.ground && st.groundHeight !== null && st.groundHeight !== undefined ? String(st.groundHeight) : ""
+        const extra = {}
+        for (const key of ["preset", "density", "kinematicViscosity", "turbulenceIntensity", "viscosityRatio",
+                           "referenceArea", "referenceLength", "iterations"])
+            if (st[key] !== null && st[key] !== undefined)
+                extra[key] = st[key]
+        copiedSettings = extra
+        const run = runs.find(x => x.id === id)
+        const context = run && run.source ? (run.source.contextPartIds || []) : []
+        // Only a run of this design names its surroundings by ids of this document; the same
+        // ids in another design may be unrelated parts.
+        const own = !!run && run.sourceInDocument
+        contextBox.checked = own && context.length > 0
+        copiedContext = own && context.length > 0 ? context.slice() : null
+        copiedContextForeign = own ? 0 : context.length
+        proposalTimer.restart()
+        return true
+    }
+
     function runParams() {
-        const params = {
+        const params = Object.assign({}, copiedSettings, {
             id: partInfo.id,
             speed: Number(speedField.text),
             flowDirection: flowBox.currentValue,
             mesh: meshBox.currentValue,
             ground: groundBox.checked
-        }
+        })
+        if (groundBox.checked && groundFixed)
+            params.groundMoving = false
         // CAD-154: the tyres stand on the moving floor and turn with it.
         if (groundBox.checked && wheelsBox.checked)
             params.rotatingWheels = true
         // The road under a part mounted on a car (CAD-147); empty = just below the parts.
         if (groundBox.checked && !wheelsBox.checked && floorField.text.trim().length > 0)
             params.groundHeight = Number(floorField.text.replace(",", "."))
-        if (contextBox.checked) {
+        if (contextBox.checked && copiedContext) {
+            // The copied run's own surroundings, not whatever is visible now (CAD-162).
+            const parts = controller.execute("document.parts")
+            const ids = parts.ok ? parts.result.parts.map(p => p.id) : []
+            params.context = copiedContext.filter(id => id !== partInfo.id && ids.indexOf(id) >= 0)
+        } else if (contextBox.checked) {
             const parts = controller.execute("document.parts")
             if (parts.ok)
                 params.context = parts.result.parts
@@ -705,9 +773,13 @@ Pane {
 
     ScrollView {
         id: scroll
+        objectName: "cfdPanelScroll"
         anchors.fill: parent
         contentWidth: availableWidth
         clip: true
+        // Nothing scrolls sideways; a horizontal bar would only cover the last row (the
+        // "Runs from other designs" toggle could not be clicked once the panel scrolls).
+        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
         ColumnLayout {
             width: scroll.availableWidth
@@ -843,6 +915,17 @@ Pane {
                     anchors.fill: parent
                     columns: 2
                     columnSpacing: 8
+                    // A variant B runs under A's conditions with one click (CAD-162).
+                    Button {
+                        objectName: "cfdUseSettingsOfA"
+                        Layout.columnSpan: 2
+                        Layout.fillWidth: true
+                        visible: !!root.activeRun
+                        text: qsTr("Use the settings of %1").arg(root.activeRun ? root.runTitle(root.activeRun, "") : "A")
+                        ToolTip.visible: hovered
+                        ToolTip.text: qsTr("Speed, flow direction, mesh, floor and surroundings of the selected run (A), so a variant can be compared with it")
+                        onClicked: root.useSettingsOf(root.activeRun)
+                    }
                     Label { text: qsTr("Part"); opacity: 0.7 }
                     Label {
                         Layout.fillWidth: true
@@ -922,9 +1005,11 @@ Pane {
                     TextField { id: labelField; Layout.fillWidth: true; placeholderText: qsTr("e.g. v2, long splitter") }
                     CheckBox {
                         id: groundBox
+                        objectName: "cfdGroundBox"
                         Layout.columnSpan: 2
-                        text: qsTr("Moving floor under the geometry")
-                        onToggled: proposalTimer.restart()
+                        text: root.groundFixed ? qsTr("Fixed floor under the geometry (as in A)")
+                                               : qsTr("Moving floor under the geometry")
+                        onToggled: { root.groundFixed = false; proposalTimer.restart() }
                     }
                     // A car (CAD-154): its wheels found on the part's bottom stand on the floor and turn.
                     CheckBox {
@@ -934,7 +1019,8 @@ Pane {
                         Layout.leftMargin: 24
                         visible: groundBox.checked
                         text: qsTr("Rotating wheels (on the floor)")
-                        onToggled: proposalTimer.restart()
+                        // Rotating wheels need a moving floor: a fixed floor copied from A is dropped.
+                        onToggled: { if (checked) root.groundFixed = false; proposalTimer.restart() }
                         ToolTip.visible: hovered
                         ToolTip.text: qsTr("For a car: the wheels standing on its bottom are found, the floor touches the tyres and they turn with it.")
                     }
@@ -961,8 +1047,24 @@ Pane {
                     CheckBox {
                         id: contextBox
                         Layout.columnSpan: 2
-                        onToggled: proposalTimer.restart()
-                        text: qsTr("Other visible parts in the flow (not in the forces)")
+                        onToggled: { root.copiedContext = null; root.copiedContextForeign = 0; proposalTimer.restart() }
+                        text: root.copiedContext
+                              ? qsTr("Surroundings of A in the flow: %n part(s) (not in the forces)", "", root.copiedContext.length)
+                              : qsTr("Other visible parts in the flow (not in the forces)")
+                    }
+                    Label {
+                        objectName: "cfdCopiedNote"
+                        Layout.columnSpan: 2
+                        Layout.fillWidth: true
+                        visible: text.length > 0
+                        text: root.copiedContextForeign > 0
+                              ? qsTr("A ran with %n surrounding part(s) of another design; they cannot be restored here, so B's flow differs from A's.", "", root.copiedContextForeign)
+                              : root.copiedContextMissing > 0
+                              ? qsTr("%n part(s) of A's surroundings are no longer in the design, so B's flow differs from A's.", "", root.copiedContextMissing)
+                              : ""
+                        color: Theme.warning
+                        wrapMode: Text.WordWrap
+                        font.pixelSize: 11
                     }
                     Button {
                         Layout.columnSpan: 2
