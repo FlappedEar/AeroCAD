@@ -22,7 +22,7 @@ Pane {
         if (!run || !displayedSourcePresent)
             return out
         for (const f of fieldChoices) {
-            const kind = fieldKind(f)
+            const kind = fieldKind(f, run)
             if (!f.on || !kind || !fieldStats[run + "/" + kind])
                 continue
             if (f.kind === "surface" && differenceShown) {
@@ -314,6 +314,7 @@ Pane {
         results = null
         comparison = null
         fieldStats = ({})
+        runSections = ({})
         rangeOverrides = ({})
         showDifference = false
         differenceStats = null
@@ -341,6 +342,19 @@ Pane {
 
     function loadFieldStats() {
         const stats = {}
+        // Section stacks of each run (CAD-148): B may be a run made before them.
+        const sections = {}
+        for (const id of [activeRun, compareRun]) {
+            if (!id)
+                continue
+            if (id === activeRun) {
+                sections[id] = results && results.fields ? results.fields.sections ?? [] : []
+            } else {
+                const r = controller.execute("simulation.results", { run: id, maxPoints: 2 })
+                sections[id] = r.ok && r.result.fields ? r.result.fields.sections ?? [] : []
+            }
+        }
+        runSections = sections
         for (const id of [activeRun, compareRun]) {
             if (!id)
                 continue
@@ -348,7 +362,7 @@ Pane {
             if (!status || status.state !== "finished")
                 continue // Fields are written at the end of a run.
             for (const f of fieldChoices) {
-                const kind = fieldKind(f)
+                const kind = fieldKind(f, id)
                 if (!kind || stats[id + "/" + kind])
                     continue
                 const r = controller.execute("simulation.field", { run: id, kind: kind })
@@ -387,7 +401,7 @@ Pane {
             for (const f of fieldChoices) {
                 if (f.scalar !== scalar)
                     continue
-                const s = fieldStats[id + "/" + fieldKind(f)]
+                const s = fieldStats[id + "/" + fieldKind(f, id)]
                 if (s && s[scalar]) {
                     lo = Math.min(lo, robust && s[scalar].p02 !== undefined ? s[scalar].p02 : s[scalar].min)
                     hi = Math.max(hi, robust && s[scalar].p98 !== undefined ? s[scalar].p98 : s[scalar].max)
@@ -512,16 +526,19 @@ Pane {
     }
 
     // --- Section positions (CAD-148) -------------------------------------------------------
-    /// The run's stack of sections normal to `axis` ("x" across the flow, "y" vertical,
-    /// "z" horizontal) from simulation.results: {axis, defaultIndex, lengthMm, positions:
-    /// [{kind, index, fraction, mm}]}, or null for runs made before the stacks.
-    function sectionStack(axis) {
-        const stacks = results && results.fields ? results.fields.sections : null
+    /// Section stacks of the loaded runs: {runId: fields.sections of simulation.results}.
+    property var runSections: ({})
+    /// A run's stack of sections normal to `axis` ("x" across the flow, "y" vertical,
+    /// "z" horizontal), by default of the run drawn in 3D: {axis, defaultIndex, lengthMm,
+    /// positions: [{kind, index, fraction, mm}]}, or null for runs made before the stacks.
+    function sectionStack(axis, run) {
+        const id = run ?? displayedRun
+        const stacks = id ? runSections[id] : null
         return axis && stacks ? stacks.find(st => st.axis === axis) ?? null : null
     }
     /// Position of a choice in its stack: the slider value, or the stack's default.
-    function sectionPosition(f) {
-        const st = sectionStack(f.axis)
+    function sectionPosition(f, run) {
+        const st = sectionStack(f.axis, run)
         if (!st)
             return null
         const want = f.pos ?? st.defaultIndex
@@ -533,8 +550,8 @@ Pane {
     }
     /// Field kind drawn for a choice: a plane of the run's section stack when it has one,
     /// else the fixed section through the part centre ("sectionCross" has none: null).
-    function fieldKind(f) {
-        const p = f.axis ? sectionPosition(f) : null
+    function fieldKind(f, run) {
+        const p = f.axis ? sectionPosition(f, run) : null
         if (p)
             return p.kind
         return f.kind === "sectionCross" ? null : f.kind
