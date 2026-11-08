@@ -1101,4 +1101,16 @@ TEST_CASE("Design commands: project body edges into a sketch (CAD-126)", "[comma
     CHECK(c.at("degreesOfFreedom") == 0); // fixed
     // The projected circle bounds a profile to extrude.
     CHECK(run(s, "sketch.profiles", {{"sketch", id}}).at("profiles").size() == 1);
+
+    // Seen edge-on from a side plane, the rim is its diameter: a line, not a spline that
+    // runs there and back.
+    const auto side = run(s, "sketch.create", {{"plane", "XZ"}, {"offset", 30}}).at("id").get<std::uint64_t>();
+    run(s, "sketch.project", {{"sketch", side}, {"body", "Body1"}, {"edges", Json::array({{{"point", {30, 10, 15}}}})}});
+    c = run(s, "sketch.curves", {{"sketch", side}});
+    REQUIRE(c.at("curves").size() == 1);
+    CHECK(c.at("curves")[0].at("kind") == "line");
+    const auto& ends = c.at("curves")[0].at("points");
+    CHECK(std::hypot(ends[0][0].get<double>() - ends[1][0].get<double>(), ends[0][1].get<double>() - ends[1][1].get<double>()) ==
+          Approx(20).margin(1e-6));
+    CHECK(c.at("degreesOfFreedom") == 0);
 }

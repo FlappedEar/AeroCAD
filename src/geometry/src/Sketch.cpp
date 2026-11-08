@@ -530,6 +530,33 @@ std::vector<SketchCurve> projectEdges(const Shape& shape, const std::vector<std:
                     c.points = {uv(ac.Value(t0)), uv(ac.Value((t0 + t1) / 2)), uv(ac.Value(t1))};
                 }
             } else {
+                // A curve in a plane square to the sketch (a circle seen edge-on) projects onto
+                // a straight segment: give its extent as a line, not a spline that runs there
+                // and back.
+                std::vector<Vec2> dense;
+                for (int k = 0; k <= 96; ++k)
+                    dense.push_back(uv(ac.Value(t0 + (t1 - t0) * k / 96.0)));
+                auto farthestFrom = [&](const Vec2& q) {
+                    Vec2 best = q;
+                    for (const Vec2& p : dense)
+                        if (distance2d(p, q) > distance2d(best, q))
+                            best = p;
+                    return best;
+                };
+                const Vec2 a = farthestFrom(dense.front());
+                const Vec2 b = farthestFrom(a);
+                const double len = distance2d(a, b);
+                if (len < kTol)
+                    continue; // seen end-on: a point
+                double off = 0;
+                for (const Vec2& p : dense)
+                    off = std::max(off, std::abs((b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x)) / len);
+                if (off < 1e-6 * std::max(1.0, len)) {
+                    c.kind = SketchCurve::Kind::Line;
+                    c.points = {a, b};
+                    out.push_back(c);
+                    continue;
+                }
                 c.kind = SketchCurve::Kind::Spline;
                 for (int k = 0; k <= 24; ++k) {
                     const Vec2 p = uv(ac.Value(t0 + (t1 - t0) * k / 24.0));
