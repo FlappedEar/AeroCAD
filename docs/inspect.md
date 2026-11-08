@@ -110,13 +110,17 @@ Every export (File > Export Selected / All Visible / For Printing) first runs
 `document.export_check`. When everything passes, the file is written straight away. Otherwise a
 dialog lists each part with what is wrong, in plain words:
 
-| Check | STL / 3MF / print | STEP |
-|---|---|---|
-| Closed solid (no open edges, every edge shared by two faces) | error | warning |
-| Consistent, outward normals; no degenerate triangles | error | warning |
-| Exact geometry (B-rep) present | print: warning (STL only) | error |
-| B-rep passes the validity check | warning | warning |
-| Walls thinner than the limit (thinnest wall, where, share of the surface) | warning | warning |
+| Check | For Printing | STL / 3MF | STEP |
+|---|---|---|---|
+| Closed solid (no open edges, every edge shared by two faces) | error | warning | warning |
+| Consistent, outward normals; no degenerate triangles | error | warning | warning |
+| Exact geometry (B-rep) present | warning (STL only) | — | error |
+| B-rep passes the validity check | warning | warning | warning |
+| Walls thinner than the limit (thinnest wall, where, share of the surface) | warning | warning | warning |
+
+An open mesh, such as a scan, can still be exported as STL or 3MF (e.g. to use it in another
+program) after **Export Anyway**; only For Printing refuses it. The file dialog suggests the
+part's name (or the project's name for all visible parts) as the file name.
 
 Errors leave only **Cancel**; warnings allow **Export Anyway**. **Show Thin Walls** colours the
 part with the thinnest wall by thickness: red is thinner than the limit, blue twice the limit

@@ -198,6 +198,12 @@ if(AEROCAD_BUILD_TESTS)
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/surface_outline_drag.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_surface_outline_drag_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-115: Export suggests a file name.
+    add_test(NAME app_export_file_name_test
+        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl
+                --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/export_file_name.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_export_file_name_test PROPERTIES LABELS gui TIMEOUT 60)
     # Live Move / Rotate / Scale (handles, panel, Enter / Esc / click away) and free orbit.
     add_test(NAME app_transform_tool_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl

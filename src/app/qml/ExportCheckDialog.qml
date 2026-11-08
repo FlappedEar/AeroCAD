@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Check before export: shown when document.export_check finds problems in the parts about
 // to be written. One row per part with what is wrong in plain words. Errors (not a closed
-// solid, STEP without exact geometry) leave only Cancel; warnings (thin walls, B-rep
-// defects) can be exported anyway. "Show Thin Walls" colours the thinnest part by wall
+// solid for printing, STEP without exact geometry) leave only Cancel; warnings (an open mesh
+// in a plain STL export, thin walls, B-rep defects) can be exported anyway. "Show Thin Walls" colours the thinnest part by wall
 // thickness: red is thinner than the limit, blue twice the limit or more.
 import QtQuick
 import QtQuick.Controls
