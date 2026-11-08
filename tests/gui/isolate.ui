@@ -1,0 +1,38 @@
+# CAD-118: Isolate / Unisolate (Fusion), with real clicks:
+#  - right-click a part in the Browser > Isolate: only that part is shown, the Browser says
+#    "Isolated: ..."; a part hidden by hand before stays hidden after Unisolate;
+#  - Exit in the Browser bar shows the other parts again;
+#  - the right-click menu of the isolated part offers Unisolate; Ctrl+Z after Isolate ends
+#    isolation (the bar goes away).
+# Run: AeroCAD --ui-script <this file>
+Qt.createQmlObject('import QtQuick; Item { objectName: "isoTest"; visible: false; property var s: ({}); function find(i, name) { if (!i) return null; if (i.objectName === name) return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = find(ch[k], name); if (r) return r } return null } function vis() { return s.ids.map(id => controller.partInfo(id).visible) } function rightClickRow(id) { const r = browser.rowItem(id); const p = r.mapToItem(null, r.width / 3, r.height / 2); ui.click(p.x, p.y, "right") } function check(label, want, bar) { const v = vis(); const b = find(browser, "isolationBar"); ui.log(label + ": visible " + v.join(",") + ", bar " + b.visible); if (v.join() !== want.join()) ui.fail(label + ": visible " + v.join() + ", expected " + want.join()); if (b.visible !== bar) ui.fail(label + ": isolation bar shown " + b.visible) } }', window.contentItem)
+ui.wait(800)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "isoTest"); for (let i = 0; i < 4; ++i) { const r = controller.execute("feature.box", { size: [20, 20, 20], corner: [30 * i, 0, 0] }); if (!r.ok) ui.fail("box: " + r.error) } t.s.ids = controller.execute("document.parts").result.parts.map(p => p.id); controller.execute("part.set_visible", { id: t.s.ids[3], visible: false }); viewport.fitAll() })()
+ui.wait(300)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "isoTest").rightClickRow(Array.from(window.contentItem.children).find(c => c.objectName === "isoTest").s.ids[1]) })()
+ui.wait(300)
+(() => { if (!ui.clickText("Isolate")) ui.fail("no Isolate in the right-click menu") })()
+ui.wait(300)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "isoTest").check("Isolate", [false, true, false, false], true) })()
+ui.shot("build/isolate.png")
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "isoTest"); const b = t.find(browser, "exitIsolation"); const p = b.mapToItem(null, b.width / 2, b.height / 2); ui.click(p.x, p.y) })()
+ui.wait(300)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "isoTest").check("Exit", [true, true, true, false], false) })()
+# The isolated part's menu offers Unisolate.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "isoTest"); t.rightClickRow(t.s.ids[0]) })()
+ui.wait(300)
+(() => { if (!ui.clickText("Isolate")) ui.fail("no Isolate in the right-click menu") })()
+ui.wait(300)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "isoTest").check("Isolate first", [true, false, false, false], true) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "isoTest"); t.rightClickRow(t.s.ids[0]) })()
+ui.wait(300)
+(() => { if (!ui.clickText("Unisolate")) ui.fail("no Unisolate in the isolated part's menu") })()
+ui.wait(300)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "isoTest").check("Unisolate from the menu", [true, true, true, false], false) })()
+# Undo of Isolate ends isolation.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "isoTest"); window.selectPart(t.s.ids[2]); isolateAction.trigger() })()
+ui.wait(300)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "isoTest").check("View > Isolate", [false, false, true, false], true) })()
+ui.key("Z", "ctrl")
+ui.wait(300)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "isoTest").check("Ctrl+Z", [true, true, true, false], false) })()

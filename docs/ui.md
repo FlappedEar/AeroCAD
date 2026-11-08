@@ -129,6 +129,10 @@ the keys go to the text only (V, M, Delete do not act on the part). A renamed ti
 keeps its name when the timeline is edited and in the saved project. The rows are in the order
 the parts were made: a part brought back by Undo (a delete undone, a feature unsuppressed
 or the timeline rolled forward) returns to its own row, not to the end of the list.
+**Isolate** (right-click menu, or View › Isolate) shows only that part and hides the
+others, as in Fusion; the Browser shows "Isolated: …" with an **Exit** button. Exit, View ›
+Unisolate or Unisolate in the isolated part's menu shows again exactly the parts it hid (a
+part hidden before stays hidden). Undo of Isolate also ends it.
 
 ## Copy and paste
 

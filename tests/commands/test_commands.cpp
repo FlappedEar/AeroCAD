@@ -171,6 +171,50 @@ TEST_CASE("Import, modify, undo and redo through commands", "[commands]")
     CHECK(session.document().part(id) != nullptr);
 }
 
+TEST_CASE("Isolate shows one part only and Unisolate brings back what was visible", "[commands]")
+{
+    commands::Session session;
+    for (int i = 0; i < 4; ++i)
+        REQUIRE(session.execute("feature.box", {{"size", {5, 5, 5}}, {"corner", {10.0 * i, 0, 0}}}).ok);
+    std::vector<model::PartId> ids;
+    for (const auto& p : session.document().parts())
+        ids.push_back(p.id);
+    REQUIRE(ids.size() == 4);
+    const auto visible = [&] {
+        std::vector<bool> v;
+        for (const auto id : ids)
+            v.push_back(session.document().part(id)->visible);
+        return v;
+    };
+    // The last box was hidden by hand before: it stays hidden after Unisolate.
+    REQUIRE(session.execute("part.set_visible", {{"id", ids[3]}, {"visible", false}}).ok);
+    // Isolating a hidden part shows it.
+    auto r = session.execute("part.isolate", {{"id", ids[3]}});
+    REQUIRE(r.ok);
+    CHECK(visible() == std::vector<bool>{false, false, false, true});
+    CHECK(r.data.at("hidden") == Json({ids[0], ids[1], ids[2]}));
+    REQUIRE(session.execute("edit.undo").ok); // one step
+    CHECK(visible() == std::vector<bool>{true, true, true, false});
+    REQUIRE(session.execute("edit.redo").ok);
+    CHECK(visible() == std::vector<bool>{false, false, false, true});
+    REQUIRE(session.execute("edit.undo").ok);
+
+    r = session.execute("part.isolate", {{"id", ids[1]}});
+    REQUIRE(r.ok);
+    CHECK(visible() == std::vector<bool>{false, true, false, false});
+    const Json hidden = r.data.at("hidden");
+    CHECK(hidden == Json({ids[0], ids[2]}));
+    r = session.execute("part.unisolate", {{"ids", hidden}});
+    REQUIRE(r.ok);
+    CHECK(visible() == std::vector<bool>{true, true, true, false});
+    REQUIRE(session.execute("edit.undo").ok);
+    CHECK(visible() == std::vector<bool>{false, true, false, false});
+    // Unknown or deleted ids are skipped.
+    CHECK(session.execute("part.unisolate", {{"ids", {ids[0], 9999}}}).ok);
+    CHECK(visible() == std::vector<bool>{true, true, false, false});
+    CHECK_FALSE(session.execute("part.isolate", {{"id", 9999}}).ok);
+}
+
 TEST_CASE("Import of a missing file reports an error", "[commands]")
 {
     commands::Session session;

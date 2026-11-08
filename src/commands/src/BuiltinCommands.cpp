@@ -15,6 +15,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace aerocad::commands {
 
@@ -180,6 +181,50 @@ void registerPartCommands(CommandRegistry& r)
               pushPartStateUndo(ctx, after.visible ? "Show " + before.name : "Hide " + before.name, before.id, before,
                                 *ctx.document.part(before.id));
               return partToJson(*ctx.document.part(before.id));
+          });
+
+    r.add({"part.isolate", "Isolate part",
+           "Shows only this part and hides all the others (Fusion's Isolate), as one undo step. Returns the ids "
+           "it hid in 'hidden': pass them to part.unisolate to bring back what was visible before.",
+           objectSchema({{"id", idParam()}}, {"id"}), true},
+          [](CommandContext& ctx, const Json& params) {
+              const model::Part target = requirePart(ctx.document, params);
+              std::vector<model::PartId> hidden;
+              for (const auto& p : ctx.document.parts())
+                  if (p.id != target.id && p.visible)
+                      hidden.push_back(p.id);
+              const bool shown = !target.visible;
+              auto apply = [&doc = ctx.document, id = target.id, hidden, shown](bool isolate) {
+                  if (shown)
+                      doc.modifyPart(id, [&](model::Part& p) { p.visible = isolate; });
+                  for (const auto h : hidden)
+                      doc.modifyPart(h, [&](model::Part& p) { p.visible = !isolate; });
+              };
+              apply(true);
+              ctx.undoStack.push({"Isolate " + target.name, [apply]() { apply(false); }, [apply]() { apply(true); }});
+              return Json{{"id", target.id}, {"hidden", hidden}};
+          });
+
+    r.add({"part.unisolate", "Unisolate",
+           "Shows the given parts again (the 'hidden' list of part.isolate), as one undo step. Ids of parts that "
+           "no longer exist are skipped.",
+           objectSchema({{"ids", {{"type", "array"}, {"items", idParam()}}}}, {"ids"}), true},
+          [](CommandContext& ctx, const Json& params) {
+              std::vector<model::PartId> shown;
+              for (const auto& j : params.at("ids")) {
+                  const auto id = j.get<model::PartId>();
+                  const model::Part* p = ctx.document.part(id);
+                  if (p != nullptr && !p->visible)
+                      shown.push_back(id);
+              }
+              auto apply = [&doc = ctx.document, shown](bool visible) {
+                  for (const auto id : shown)
+                      doc.modifyPart(id, [&](model::Part& p) { p.visible = visible; });
+              };
+              apply(true);
+              if (!shown.empty())
+                  ctx.undoStack.push({"Unisolate", [apply]() { apply(false); }, [apply]() { apply(true); }});
+              return Json{{"shown", shown}};
           });
 
     r.add({"part.rename", "Rename part", "Renames a part.",
