@@ -19,13 +19,12 @@ Pane {
     /// Part whose name is being edited in place (0 = none).
     property var renamingId: 0
     function startRename(id) {
-        for (let i = 0; i < list.count; ++i) {
-            const r = list.itemAtIndex(i)
-            if (r && r.partId === id) {
-                list.positionViewAtIndex(i, ListView.Contain)
-                break
-            }
-        }
+        // The row may be scrolled out of view (no delegate yet): scroll to it by its model
+        // row, which creates the delegate, then open its editor.
+        const i = controller.parts.rowOf(id)
+        if (i < 0)
+            return
+        list.positionViewAtIndex(i, ListView.Contain)
         renamingId = id
     }
     /// The row of part `id` (null when it is not created), e.g. for tests.
@@ -129,14 +128,18 @@ Pane {
                             font.pixelSize: Theme.fontBody
                             selectByMouse: true
                             property bool done: false
-                            onVisibleChanged: {
-                                if (!visible)
-                                    return
+                            function begin() {
                                 done = false
                                 text = row.name
                                 selectAll()
                                 forceActiveFocus()
                             }
+                            onVisibleChanged: if (visible) begin()
+                            // A row created already renaming (scrolled to by startRename).
+                            Component.onCompleted: if (visible) Qt.callLater(begin)
+                            // A row scrolled away while renaming: keep the old name, so the
+                            // Browser does not stay in a renaming state with no field.
+                            Component.onDestruction: if (row.renaming && !done) root.renamingId = 0
                             function finish(apply) {
                                 if (done || !row.renaming)
                                     return

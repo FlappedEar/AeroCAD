@@ -51,3 +51,13 @@ ui.wait(300)
 ui.key("Escape")
 # A timeline edit keeps the name; so does the saved project.
 (() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "brTest"); const fid = t.part().featureId; const e = controller.execute("feature.edit", { id: fid, params: { size: [50, 30, 6] } }); if (!e.ok) ui.log("feature.edit: " + e.error); ui.log("after a timeline edit: name " + t.part().name + ", size x " + t.part().bounds.size[0]); if (t.part().name !== "Fin left") ui.fail("a timeline edit lost the name") })()
+# F2 on a part whose Browser row is scrolled out of view: the Browser scrolls to it and edits it.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "brTest"); for (let i = 0; i < 40; ++i) controller.execute("part.duplicate", { id: t.s.id }); const ps = controller.execute("document.parts").result.parts; t.s.last = ps[ps.length - 1].id; ui.log("parts: " + ps.length + ", last row created: " + !!browser.rowItem(t.s.last)); window.selectPart(t.s.last); viewport.forceActiveFocus() })()
+ui.wait(300)
+ui.key("F2")
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "brTest"); const r = browser.rowItem(t.s.last); ui.log("F2 on the last part: row " + !!r + ", editing " + !!(r && r.nameField.visible && r.nameField.activeFocus)); if (!r || !r.nameField.visible || !r.nameField.activeFocus) ui.fail("F2 does not edit a part whose row was scrolled out of view") })()
+ui.type("Far")
+ui.key("Return")
+ui.wait(200)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "brTest"); const p = controller.execute("document.parts").result.parts.find(x => x.id === t.s.last); ui.log("renamed far part: " + p.name + ", renaming " + browser.renamingId); if (p.name !== "Far") ui.fail("the far part was not renamed"); if (browser.renamingId) ui.fail("the Browser stayed in renaming") })()
