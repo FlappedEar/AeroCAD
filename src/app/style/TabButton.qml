@@ -16,7 +16,7 @@ T.TabButton {
     font.pixelSize: Theme.fontBody
     icon.width: Theme.iconSmall
     icon.height: Theme.iconSmall
-    icon.color: control.checked ? Theme.accent : Theme.icon
+    icon.color: !control.enabled ? Theme.textFaint : control.checked ? Theme.accent : Theme.icon
 
     contentItem: IconLabel {
         spacing: control.spacing
@@ -25,7 +25,9 @@ T.TabButton {
         icon: control.icon
         text: control.text
         font: control.font
-        color: control.checked ? Theme.accent : control.hovered ? Theme.text : Theme.textMuted
+        // A disabled tab (e.g. Results before any run) is dimmed, as other disabled controls.
+        color: !control.enabled ? Theme.textFaint
+             : control.checked ? Theme.accent : control.hovered ? Theme.text : Theme.textMuted
     }
 
     background: Item {

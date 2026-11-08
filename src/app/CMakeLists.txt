@@ -204,6 +204,14 @@ if(AEROCAD_BUILD_TESTS)
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/export_file_name.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_export_file_name_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-116: the Wind Tunnel panel's quality lines and dimmed tabs.
+    add_test(NAME app_cfd_quality_lines_test
+        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl
+                --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/cfd_quality_lines.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    # An empty run folder: no earlier runs, so Results and A/B start disabled.
+    set_tests_properties(app_cfd_quality_lines_test PROPERTIES LABELS gui TIMEOUT 60
+        ENVIRONMENT "AEROCAD_CFD_DIR=${CMAKE_CURRENT_BINARY_DIR}/cfd-quality-lines-runs")
     # Live Move / Rotate / Scale (handles, panel, Enter / Esc / click away) and free orbit.
     add_test(NAME app_transform_tool_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl

@@ -257,7 +257,11 @@ Environment detectEnvironment(const std::string& remoteHost)
         e.recommended = Backend::Local;
         e.message = "Using the local OpenFOAM installation " + e.openfoamBashrc.string() + ".";
     } else if (!e.docker.empty()) {
-        e.message = "Docker is installed but not running. Start its engine (Colima: colima start) and try again.";
+        // Say how to start it on this system: Colima on macOS, the system service on Linux.
+        e.message = currentPlatform() == Platform::MacOS
+                        ? "Docker is installed but not running. Start its engine (Colima: colima start) and try again."
+                        : "Docker is installed but not running. Start it (sudo systemctl start docker) and try "
+                          "again.";
     } else {
         e.message = "No simulation engine found. Install Docker (on macOS: brew install docker colima, then "
                     "colima start); AeroCAD runs OpenFOAM " +
@@ -350,7 +354,7 @@ SetupStep planEngineSetup(const Environment& env, Platform platform, const Setup
                 "docker command line tool and Colima."};
     }
     if (!env.docker.empty())
-        return {"manual", {}, "Docker is installed but not running: start it (sudo systemctl start docker)."};
+        return {"manual", {}, env.message}; // the engine line already says how to start it
     return {"browser", {"xdg-open", linuxInstall},
             "Opening the Docker Engine install page: install it, start it, then press Install for me again."};
 }

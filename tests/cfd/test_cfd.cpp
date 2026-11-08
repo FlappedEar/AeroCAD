@@ -881,7 +881,11 @@ TEST_CASE("Install for me: the next setup step", "[cfd]")
 
     cfd::Environment installed;
     installed.docker = "/usr/local/bin/docker";
-    CHECK(cfd::planEngineSetup(installed, Platform::Linux, {}).action == "manual");
+    installed.message = "Docker is installed but not running. Start it (sudo systemctl start docker) and try again.";
+    step = cfd::planEngineSetup(installed, Platform::Linux, {});
+    CHECK(step.action == "manual");
+    // The panel shows the engine message once; a manual step only repeats it (CAD-116).
+    CHECK(step.message == installed.message);
 
     installed.dockerRunning = true;
     step = cfd::planEngineSetup(installed, Platform::MacOS, {});
