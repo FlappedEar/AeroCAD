@@ -251,6 +251,11 @@ Pane {
             { key: "body", type: "body", label: qsTr("Body") },
             { key: "faces", type: "facePicks", label: qsTr("Faces"), hint: qsTr("Click faces to move") },
             { key: "distance", type: "expr", label: qsTr("Distance (negative: push in)"), init: 5 }] },
+        draft: { title: qsTr("Draft"), command: "feature.draft", fields: [
+            { key: "body", type: "body", label: qsTr("Body") },
+            { key: "faces", type: "facePicks", label: qsTr("Faces to tilt"), hint: qsTr("Click the side faces") },
+            { key: "plane", type: "choice", label: qsTr("Fixed plane"), init: "XY", options: planes },
+            { key: "angle", type: "expr", label: qsTr("Angle (deg, negative: outwards)"), init: 3 }] },
         delete_faces: { title: qsTr("Delete Face"), command: "feature.delete_faces", fields: [
             { key: "body", type: "body", label: qsTr("Body") },
             { key: "faces", type: "facePicks", label: qsTr("Faces to delete"), hint: qsTr("Click every face of the hole, fillet or boss") }] },

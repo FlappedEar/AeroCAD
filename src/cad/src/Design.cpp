@@ -131,7 +131,7 @@ const std::vector<std::string>& Design::featureTypes()
     static const std::vector<std::string> types{"sketch", "extrude", "revolve", "fillet", "chamfer",
                                                 "shell",  "combine", "box",     "cylinder", "base_body", "hole",
                                                 "mirror",  "rectangular_pattern", "circular_pattern", "loft", "sweep", "plane",
-                                                "part_on_surface", "fin_on_surface", "move", "press_pull", "split", "delete_faces"};
+                                                "part_on_surface", "fin_on_surface", "move", "press_pull", "split", "delete_faces", "draft"};
     return types;
 }
 
@@ -2109,6 +2109,13 @@ void Design::evaluateFeature(const Feature& f)
         Body& b = bodyRef(required(p, "body"));
         const auto idx = resolveIndices(b.shape, required(p, "faces"), false);
         b.shape = geometry::pressPull(b.shape, idx, ev.num(p, "distance"));
+    } else if (f.type == "draft") {
+        // Fusion: Modify > Draft. The fixed plane is the hinge and its normal the pull
+        // direction; a positive angle leans the faces in going along it.
+        Body& b = bodyRef(required(p, "body"));
+        const auto idx = resolveIndices(b.shape, required(p, "faces"), false);
+        const Plane pl = resolvePlane(p.value("plane", Json("XY"))).normalized();
+        b.shape = geometry::draft(b.shape, idx, pl.origin, pl.normal, ev.num(p, "angle"));
     } else if (f.type == "delete_faces") {
         // Fusion: Modify > Delete on faces: the gap closes from the neighbouring faces.
         Body& b = bodyRef(required(p, "body"));

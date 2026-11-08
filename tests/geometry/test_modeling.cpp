@@ -656,3 +656,29 @@ TEST_CASE("Delete Face removes a hole and a fillet and heals the body", "[geomet
     CHECK_THROWS_AS(deleteFaces(box, {}), ModelingError);
     CHECK_THROWS_AS(deleteFaces(box, {99}), ModelingError);
 }
+
+TEST_CASE("Draft tilts side faces from the fixed plane", "[geometry][modeling]")
+{
+    // A 20 x 20 x 10 box, the +X side drafted 10 degrees from the bottom (XY) plane, pull +Z:
+    // the side leans in, the top loses a 10 * tan(10 deg) wide sliver, the bottom stays.
+    const auto box = makeBox(20, 20, 10);
+    std::size_t side = 0, top = 0;
+    for (const auto& f : faces(box)) {
+        if (f.normal.x > 0.9)
+            side = f.index;
+        if (f.normal.z > 0.9)
+            top = f.index;
+    }
+    const double t = std::tan(10 * std::numbers::pi / 180);
+    const auto in = draft(box, {side}, {0, 0, 0}, {0, 0, 1}, 10);
+    CHECK(isValid(in));
+    CHECK(in.volume() == Approx(4000 - 0.5 * 10 * 10 * t * 20).epsilon(1e-6));
+    CHECK(in.bounds().max.x == Approx(20));
+    // Outwards: negative angle.
+    const auto out = draft(box, {side}, {0, 0, 0}, {0, 0, 1}, -10);
+    CHECK(out.volume() == Approx(4000 + 0.5 * 10 * 10 * t * 20).epsilon(1e-6));
+    CHECK(out.bounds().max.x == Approx(20 + 10 * t));
+    CHECK_THROWS_AS(draft(box, {side}, {0, 0, 0}, {0, 0, 1}, 0), ModelingError);
+    CHECK_THROWS_AS(draft(box, {top}, {0, 0, 0}, {0, 0, 1}, 10), ModelingError); // parallel to the plane
+    CHECK_THROWS_AS(draft(box, {}, {0, 0, 0}, {0, 0, 1}, 10), ModelingError);
+}
