@@ -356,10 +356,27 @@ Item {
     }
 
     function updateClipping() {
-        const r = Math.max(controller.sceneRadius, 1)
+        let r = Math.max(controller.sceneRadius, 1)
+        if (transformActive) {
+            // A part being moved or scaled can reach past the document's bounds: keep all of
+            // its preview between the clipping planes.
+            const c = previewPoint(transformTarget.partId, transformTarget.center)
+            const reach = Qt.vector3d(c.x, c.z, -c.y).minus(cameraInput.pivot.position).length()
+                          + (transformTarget.radius ?? 0) * transformScale
+            r = Math.max(r, reach)
+        }
         camera.clipFar = cameraInput.distance + r * 4
         camera.clipNear = Math.max(cameraInput.distance - r * 2, cameraInput.distance * 0.001, 0.001)
     }
+
+    /// Near and far clipping distances (for tests).
+    function clipRange() {
+        return { near: camera.clipNear, far: camera.clipFar }
+    }
+
+    onTransformScaleChanged: updateClipping()
+    onTransformMoveChanged: updateClipping()
+    onTransformTargetChanged: updateClipping()
 
     Rectangle {
         anchors.fill: parent
@@ -941,7 +958,7 @@ Item {
         transformPickMode = ""
         transformTarget = { partId: info.id, kind: info.kind, featureId: info.featureId,
                       center: Qt.vector3d(info.center[0], info.center[1], info.center[2]),
-                      name: info.name || "", canScale: true }
+                      name: info.name || "", canScale: true, radius: (info.diagonal ?? 0) / 2 }
         return true
     }
 
