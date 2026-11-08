@@ -14,6 +14,8 @@ Item {
     signal zoomToPartRequested(var id)
     /// Right-click on a part (id 0: on empty space), at x, y in this item.
     signal partContextRequested(var id, real x, real y)
+    /// Right click while a sketch is being edited.
+    signal sketchContextRequested(real x, real y)
     /// Left click on a part: its id and the hit point in model coordinates (mm, Z up).
     signal pointPicked(var id, vector3d point)
     /// A left click went into a hole (or just past an edge) and was moved to the nearest
@@ -650,10 +652,14 @@ Item {
         pivot: pivot
         camera: camera
         pointUnder: (x, y, onModelOnly) => root.scenePointUnder(x, y, onModelOnly)
-        // Right-click: select the part under the cursor and open its context menu.
-        contextMenuEnabled: !root.sketch
+        // Right-click: select the part under the cursor and open its context menu; in a
+        // sketch, the sketch menu (end the curve, tools, Look At, Finish Sketch).
         onFitAllRequested: root.fitAll()
         onContextClicked: (x, y) => {
+            if (root.sketch) {
+                root.sketchContextRequested(x, y)
+                return
+            }
             const hit = root.pickPart(x, y)
             const id = hit ? hit.partId : 0
             if (id)
@@ -1323,6 +1329,13 @@ Item {
     Connections {
         target: sectionHandle
         function onMoved(delta) { root.sectionDragged(delta) }
+    }
+
+    /// A curve or a constraint pick is under way in the sketch.
+    readonly property bool sketchDrawing: sketchOverlay.drawing
+    /// Ends it, as Esc does.
+    function endSketchCurve() {
+        sketchOverlay.endCurrent()
     }
 
     SketchOverlay {

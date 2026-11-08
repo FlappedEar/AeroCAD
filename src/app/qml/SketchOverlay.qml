@@ -50,6 +50,15 @@ Item {
         function onViewKeyChanged() { canvas.requestPaint() }
     }
 
+    /// A curve or constraint pick is under way (the sketch menu offers to end it).
+    readonly property bool drawing: points.length > 0 || constraintLayer.picks.length > 0 || constraintLayer.pending !== null
+
+    /// Ends the curve being drawn (a line chain) or the constraint pick, as Esc does.
+    function endCurrent() {
+        reset()
+        constraintLayer.reset()
+    }
+
     function reset() {
         points = []
         hover = null
@@ -247,7 +256,9 @@ Item {
         anchors.fill: parent
         enabled: root.active
         hoverEnabled: true
-        acceptedButtons: Qt.LeftButton | Qt.RightButton
+        // Left only: right drag orbits and a right click opens the sketch menu (Viewport),
+        // as everywhere else in the view.
+        acceptedButtons: Qt.LeftButton
         cursorShape: root.active ? Qt.CrossCursor : Qt.ArrowCursor
         onPositionChanged: mouse => {
             if (root.constraintTool) {
@@ -258,11 +269,6 @@ Item {
             canvas.requestPaint()
         }
         onClicked: mouse => {
-            if (mouse.button === Qt.RightButton) {
-                root.reset()
-                constraintLayer.reset()
-                return
-            }
             if (root.constraintTool) {
                 constraintLayer.click(mouse.x, mouse.y)
                 return
@@ -427,7 +433,7 @@ Item {
             Label {
                 text: root.constraintTool ? constraintLayer.hint()
                     : root.tool === "" ? qsTr("Sketch: pick a tool (L line, R rectangle, C circle, D dimension)")
-                    : root.tool === "line" ? qsTr("Line: click points; right-click or Esc ends the chain")
+                    : root.tool === "line" ? qsTr("Line: click points; Esc (or right-click › End Curve) ends the chain")
                     : root.tool === "rectangle" ? qsTr("Rectangle: click two corners; type width, height")
                     : root.tool === "circle" ? qsTr("Circle: click centre and a point; type the diameter")
                     : root.tool === "arc" ? qsTr("Arc: click start, end, then a point on the arc")
