@@ -218,6 +218,56 @@ Pane {
         return name + (time ? " (" + time + ")" : "") + (state && state !== "finished" ? ", " + state : "")
     }
 
+    /// Deleting a run removes its files and stopping one cannot be undone: both are asked first
+    /// (CAD-151). A run may take hours of computing.
+    function confirmRunAction(action, id) {
+        confirmRun.action = action
+        confirmRun.runId = id
+        confirmRun.open()
+    }
+    function doRunAction(action, id) {
+        if (action === "cancel") {
+            controller.execute("simulation.cancel", { run: id })
+            refreshRuns()
+            return
+        }
+        controller.execute("simulation.delete", { run: id })
+        if (activeRun === id) activeRun = ""
+        if (compareRun === id) compareRun = ""
+        refreshRuns()
+        loadResults()
+        loadComparison()
+    }
+    Dialog {
+        id: confirmRun
+        objectName: "cfdConfirmRun"
+        property string action: "delete"
+        property string runId: ""
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        modal: true
+        width: 420
+        title: action === "delete" ? qsTr("Delete this run?") : qsTr("Stop this run?")
+        Label {
+            width: confirmRun.availableWidth
+            wrapMode: Text.WordWrap
+            text: confirmRun.action === "delete"
+                  ? qsTr("%1 and its results are removed from this computer. This cannot be undone.").arg(root.runTitle(confirmRun.runId))
+                  : qsTr("%1 stops now and cannot be resumed. What it computed so far stays visible.").arg(root.runTitle(confirmRun.runId))
+        }
+        footer: DialogButtonBox {
+            Button {
+                text: confirmRun.action === "delete" ? qsTr("Delete") : qsTr("Stop run")
+                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
+            }
+            Button {
+                text: qsTr("Keep")
+                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
+            }
+        }
+        onAccepted: root.doRunAction(action, runId)
+    }
+
     /// A force too small next to the run's largest force for a percentage to mean anything
     /// (e.g. a side force of 0.002 N on a 3 N drag: +316 % is noise) (CAD-117).
     function noiseLevel(a) {
@@ -1004,22 +1054,14 @@ Pane {
                             ToolButton {
                                 visible: runRow.modelData.state === "running"
                                 text: qsTr("Cancel")
-                                onClicked: { root.controller.execute("simulation.cancel", { run: runRow.modelData.id }); root.refreshRuns() }
+                                onClicked: root.confirmRunAction("cancel", runRow.modelData.id)
                             }
                             ToolButton {
                                 visible: runRow.modelData.state !== "running"
                                 text: "✕"
                                 ToolTip.visible: hovered
                                 ToolTip.text: qsTr("Delete run")
-                                onClicked: {
-                                    const id = runRow.modelData.id
-                                    root.controller.execute("simulation.delete", { run: id })
-                                    if (root.activeRun === id) root.activeRun = ""
-                                    if (root.compareRun === id) root.compareRun = ""
-                                    root.refreshRuns()
-                                    root.loadResults()
-                                    root.loadComparison()
-                                }
+                                onClicked: root.confirmRunAction("delete", runRow.modelData.id)
                             }
                         }
                         Label {
@@ -1112,7 +1154,7 @@ Pane {
                         ProgressBar { Layout.fillWidth: true; value: root.activeStatus ? root.activeStatus.progress : 0 }
                         Button {
                             text: qsTr("Cancel")
-                            onClicked: { root.controller.execute("simulation.cancel", { run: root.activeRun }); root.refreshRuns() }
+                            onClicked: root.confirmRunAction("cancel", root.activeRun)
                         }
                     }
                 }
