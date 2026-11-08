@@ -45,6 +45,12 @@ public:
     [[nodiscard]] std::vector<std::uint64_t> topIds(std::size_t count) const;
     /// Whether the entry with token `id` is applied (in the history and not undone).
     [[nodiscard]] bool isApplied(std::uint64_t id) const;
+    /// Whether the entry with token `id` left the history while applied: dropped as the
+    /// oldest one past the limit, or by clear(). Its change stays done for good, unlike an
+    /// entry that was undone (and maybe discarded by a later push). Tokens are compared by
+    /// age, so an undone, discarded entry also reads as expired once every entry older than
+    /// it has been dropped; callers that care check the state the entry changed as well.
+    [[nodiscard]] bool isExpired(std::uint64_t id) const { return id != 0 && id < m_firstKept; }
 
     /// Joins the last `count` applied entries into one step called `label` (a dialog that
     /// ran a helper command on the way, such as making a solid editable before a fillet).
@@ -76,6 +82,7 @@ private:
     std::size_t m_index = 0; // entries [0, m_index) are applied
     std::size_t m_limit;
     std::uint64_t m_nextId = 1;
+    std::uint64_t m_firstKept = 1; // tokens below this one expired (see isExpired)
 };
 
 } // namespace aerocad::model

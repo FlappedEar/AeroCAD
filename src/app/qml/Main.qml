@@ -210,7 +210,8 @@ ApplicationWindow {
     /// `isolationRecords` lists the Isolates still in the history, oldest first, each
     /// { id, name, hidden: [ids], step, exitStep }: step / exitStep are the history tokens of
     /// the Isolate and of the Unisolate that ended it. `isolation` ({ id, name, hidden, step }
-    /// or null) is the newest record whose Isolate is applied and whose Unisolate is not, so
+    /// or null) is the newest record whose Isolate is done (applied, or aged out of the
+    /// history) and whose Unisolate is not, so
     /// Undo / Redo bring the Exit controls back with the hidden parts, also across several
     /// Isolates. Hiding or deleting the isolated part keeps it on, so the parts it hid can
     /// still be brought back.
@@ -224,9 +225,10 @@ ApplicationWindow {
         const r = controller.execute("part.isolate", { id: id })
         if (!r.ok)
             return
-        // Undone Isolates past the last step can never be redone again: forget them. Keep the
-        // list short; an Isolate that old is out of reach of Undo in practice.
-        const kept = isolationRecords.filter(rec => controller.historyApplied(rec.step)).slice(-19)
+        // Undone Isolates past the last step can never be redone again: forget them, and keep
+        // the list short.
+        const kept = isolationRecords.filter(rec => controller.historyApplied(rec.step)
+                                                    || controller.historyExpired(rec.step)).slice(-19)
         kept.push({ id: id, name: controller.partInfo(id).name, hidden: r.result.hidden,
                     step: controller.historyTopId(), exitStep: 0 })
         isolationRecords = kept
@@ -248,10 +250,13 @@ ApplicationWindow {
     /// An isolation is on while its Isolate is applied, its Unisolate is not, and a part it
     /// hid is still hidden (it ends when they have all been shown again or deleted by hand).
     function checkIsolation() {
+        // A step is done while applied, and also once it has aged out of the history (its
+        // change is kept for good: an Isolate 200 edits ago still hides the other parts).
+        const done = step => controller.historyApplied(step) || controller.historyExpired(step)
         let found = null
         for (let i = isolationRecords.length - 1; i >= 0 && !found; --i) {
             const rec = isolationRecords[i]
-            if (!controller.historyApplied(rec.step) || controller.historyApplied(rec.exitStep))
+            if (!done(rec.step) || done(rec.exitStep))
                 continue
             if (rec.hidden.length === 0
                     || rec.hidden.some(h => { const info = controller.partInfo(h); return info.id && !info.visible }))

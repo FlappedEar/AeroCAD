@@ -13,8 +13,10 @@ void UndoStack::push(UndoEntry entry)
     m_entries.resize(m_index);
     entry.id = m_nextId++;
     m_entries.push_back(std::move(entry));
-    if (m_limit > 0 && m_entries.size() > m_limit)
+    if (m_limit > 0 && m_entries.size() > m_limit) {
+        m_firstKept = m_entries.front().id + 1;
         m_entries.erase(m_entries.begin());
+    }
     m_index = m_entries.size();
 }
 
@@ -102,6 +104,7 @@ void UndoStack::clear()
 {
     m_entries.clear();
     m_index = 0;
+    m_firstKept = m_nextId;
 }
 
 } // namespace aerocad::model

@@ -490,7 +490,8 @@ QtObject {
                                  text: qsTr("Creates a new surface part from the selected area. It is selected for the next steps."),
                                  actions: [a("fitSurface")] }] },
                          { title: qsTr("More"), steps: [],
-                           actions: [a("fitWhole"), a("cutWithThis"), a("toBody"), a("repair"), a("simplify"), a("scale"), a("export")] }] }
+                           actions: [a("fitWhole"), a("cutWithThis"), a("toBody"), a("repair"), a("simplify"), a("scale"), a("export"),
+                                     a("isolate")] }] }
         }
         if (r === "surface") {
             const cut = isCutOut(info)
