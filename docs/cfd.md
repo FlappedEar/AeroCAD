@@ -32,7 +32,8 @@ panel in place of Properties:
   1.83 N open, 0.82 N after *Repair* filled the holes;
   [warning](images/audit/cad-145-open-part-warning.png)). Close it first with MESH > Scan
   Tools > Repair (*Fill holes up to* at least that many edges). Below, the runs of this design
-  (newest first) with state, progress, Cd and drag; Cancel / delete; click a run to make it
+  (newest first) with state, progress, Cd and drag; Cancel / delete (both asked first: deleting removes the run's files, a stopped run cannot
+  be resumed; [confirmation](images/audit/cad-151-confirm-delete.png)); click a run to make it
   **A**, press **B** on another to compare. Runs whose part is not in the open design are
   folded under *Runs from other designs (N)* (a run of another design that is A or B stays
   shown); on first show A is the newest run of this design, never one of another design.
