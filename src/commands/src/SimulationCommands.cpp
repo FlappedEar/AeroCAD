@@ -8,6 +8,7 @@
 #include "aerocad/cfd/RunManager.hpp"
 #include "aerocad/core/Path.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <limits>
@@ -178,8 +179,19 @@ Json polyDataSummary(const cfd::PolyData& d)
                 sum += v;
                 ++n;
             }
-        if (n > 0)
-            scalars[name] = {{"min", lo}, {"max", hi}, {"mean", sum / static_cast<double>(n)}};
+        if (n > 0) {
+            // Robust range for colour scales (CAD-135): a few extreme points at the stagnation
+            // point or a sharp edge should not wash out the rest of the map.
+            std::vector<double> sorted;
+            sorted.reserve(n);
+            for (const double v : values)
+                if (std::isfinite(v))
+                    sorted.push_back(v);
+            std::sort(sorted.begin(), sorted.end());
+            auto at = [&](double q) { return sorted[static_cast<std::size_t>(q * static_cast<double>(n - 1) + 0.5)]; };
+            scalars[name] = {{"min", lo}, {"max", hi}, {"mean", sum / static_cast<double>(n)},
+                             {"p02", at(0.02)}, {"p98", at(0.98)}};
+        }
     }
     core::BoundingBox box;
     for (const auto& p : d.points)

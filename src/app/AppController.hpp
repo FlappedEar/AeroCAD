@@ -146,7 +146,7 @@ public:
     Q_INVOKABLE void setStatus(const QString& message) { setStatusMessage(message); }
 
     /// Colour map stops (low to high) used for a result scalar, for legends.
-    Q_INVOKABLE QVariantList colormap(const QString& scalar) const;
+    Q_INVOKABLE QVariantList colormap(const QString& scalar, const QString& palette = {}) const;
     /// Where `value` sits on a result colour scale [lo, hi], 0 (bottom) to 1 (top); pressure
     /// scales keep zero in the middle (FieldGeometry::scalePosition).
     Q_INVOKABLE double fieldScalePosition(const QString& scalar, double value, double lo, double hi) const;

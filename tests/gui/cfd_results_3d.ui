@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# CAD-127..129 on a real coarse OpenFOAM v2506 run made in the app (about a minute): the
-# results in 3D have one colour bar per quantity and the forces card, the guide bar steps
-# aside, and the velocity sections are cropped to the region around the part.
+# CAD-127..129, CAD-134, CAD-135 on a real coarse OpenFOAM v2506 run made in the app (about a
+# minute): the results in 3D have one colour bar per quantity and the forces card, the guide
+# bar steps aside, the sections and streamlines are cropped to the region around the part,
+# the dense rakes give many streamlines, the pointer reads the value under it, and the
+# pressure colours and Cp range can be changed.
 # Run: AEROCAD_CFD_DIR=<empty dir> AeroCAD tests/data/box_200x80x60.stl --ui-script <this file>
 ui.wait(800)
 (() => { const p = controller.execute("document.parts").result.parts[0]; window.selectPart(p.id) })()
@@ -54,5 +56,17 @@ ui.wait(1500)
 ui.clickText("Pressure coefficient Cp")
 ui.clickText("results 3d (" + new Date(simulationPanel.activeStatus.created).toLocaleTimeString(Qt.locale(), "HH:mm") + ")")
 (() => { const id = simulationPanel.activeRun; const c = simulationPanel.results.conditions; const L = c.characteristicLength * 1000; for (const kind of ["sectionHorizontal", "sectionVertical"]) { const r = controller.execute("simulation.field", { run: id, kind: kind }).result; const b = r.bounds; const size = [0, 1, 2].map(i => b.max[i] - b.min[i]); ui.log("SECTION " + kind + " size " + JSON.stringify(size) + " L " + L); if (Math.max(...size) > 3.5 * L) ui.fail(kind + " is not cropped around the part: " + JSON.stringify(size)) } })()
+(() => { const r = controller.execute("simulation.field", { run: simulationPanel.activeRun, kind: "streamlines" }).result; ui.log("STREAMLINES " + r.lines + " lines"); if (r.lines < 100) ui.fail("expected the dense rakes, got " + r.lines + " streamlines") })()
+# The value under the pointer, on the top of the part (sections off: the vertical one passes
+# through the same point).
+(() => { simulationPanel.setField(1, false); simulationPanel.setField(2, false) })()
+ui.wait(500)
+(() => { const b = controller.execute("simulation.field", { run: simulationPanel.activeRun, kind: "surface" }).result.bounds; const v = viewport.viewPoint(Qt.vector3d((b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2, b.max[2])); const w = viewport.mapToItem(null, v.x, v.y); ui.move(w.x, w.y) })()
+ui.wait(400)
+(() => { const p = viewport.fieldProbe; ui.log("PROBE " + JSON.stringify(p)); if (!p || p.kind !== "surface" || p.values.Cp === undefined) ui.fail("no pressure value under the pointer on the part") })()
+ui.clickText(viewport.probeText(viewport.fieldProbe))
 ui.shot("cfd-results-3d.png")
+(() => { simulationPanel.pressurePalette = "coolwarm"; simulationPanel.setRangeOverride("Cp", -1, 1) })()
+ui.wait(500)
+(() => { const l = cfdOverlay.legends.find(x => x.scalar === "Cp"); ui.log("CP LEGEND " + JSON.stringify(l)); if (!l || l.palette !== "coolwarm" || l.min !== -1 || l.max !== 1) ui.fail("pressure colours or Cp range not applied") })()
 ui.log("cfd results 3d done")

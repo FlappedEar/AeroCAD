@@ -53,6 +53,13 @@ struct PolyData {
 /// the whole wind tunnel to the region around the part.
 [[nodiscard]] PolyData cropPolygons(const PolyData& data, const core::BoundingBox& box);
 
+/// The parts of the lines of `data` inside `box` (a line that leaves the box and comes
+/// back becomes two lines), with only the points they use. Polygons are dropped.
+[[nodiscard]] PolyData cropLines(const PolyData& data, const core::BoundingBox& box);
+
+/// Appends `other` to `data` (points, polygons, lines; per-point fields present in both).
+void appendPolyData(PolyData& data, const PolyData& other);
+
 /// Directories that OpenFOAM writes a function object's output into, sorted by time.
 [[nodiscard]] std::vector<std::filesystem::path> timeDirectories(const std::filesystem::path& functionObjectDir);
 

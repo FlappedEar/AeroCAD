@@ -273,6 +273,96 @@ PolyData cropPolygons(const PolyData& data, const core::BoundingBox& box)
     return out;
 }
 
+PolyData cropLines(const PolyData& data, const core::BoundingBox& box)
+{
+    PolyData out;
+    constexpr auto unused = std::numeric_limits<std::uint32_t>::max();
+    std::vector<std::uint32_t> remap(data.points.size(), unused);
+    std::vector<std::uint32_t> kept;
+    auto inside = [&](const core::Vec3& p) {
+        return p.x >= box.min.x && p.x <= box.max.x && p.y >= box.min.y && p.y <= box.max.y &&
+               p.z >= box.min.z && p.z <= box.max.z;
+    };
+    for (const auto& line : data.lines) {
+        std::vector<std::uint32_t> piece;
+        auto flush = [&] {
+            if (piece.size() >= 2)
+                out.lines.push_back(piece);
+            piece.clear();
+        };
+        for (const auto i : line) {
+            if (i >= data.points.size() || !inside(data.points[i])) {
+                flush();
+                continue;
+            }
+            if (remap[i] == unused) {
+                remap[i] = static_cast<std::uint32_t>(kept.size());
+                kept.push_back(i);
+            }
+            piece.push_back(remap[i]);
+        }
+        flush();
+    }
+    out.points.reserve(kept.size());
+    for (const auto i : kept)
+        out.points.push_back(data.points[i]);
+    for (const auto& [name, values] : data.scalars) {
+        auto& v = out.scalars[name];
+        for (const auto i : kept)
+            v.push_back(i < values.size() ? values[i] : std::nan(""));
+    }
+    for (const auto& [name, values] : data.vectors) {
+        auto& v = out.vectors[name];
+        for (const auto i : kept)
+            v.push_back(i < values.size() ? values[i] : core::Vec3{});
+    }
+    return out;
+}
+
+void appendPolyData(PolyData& data, const PolyData& other)
+{
+    if (other.empty())
+        return;
+    if (data.empty()) {
+        data = other;
+        return;
+    }
+    const auto offset = static_cast<std::uint32_t>(data.points.size());
+    const std::size_t before = data.points.size();
+    data.points.insert(data.points.end(), other.points.begin(), other.points.end());
+    auto shifted = [offset](std::vector<std::uint32_t> v) {
+        for (auto& i : v)
+            i += offset;
+        return v;
+    };
+    for (const auto& p : other.polygons)
+        data.polygons.push_back(shifted(p));
+    for (const auto& l : other.lines)
+        data.lines.push_back(shifted(l));
+    for (auto it = data.scalars.begin(); it != data.scalars.end();) {
+        auto o = other.scalars.find(it->first);
+        if (o == other.scalars.end()) {
+            it = data.scalars.erase(it);
+            continue;
+        }
+        it->second.resize(before, std::nan(""));
+        it->second.insert(it->second.end(), o->second.begin(), o->second.end());
+        it->second.resize(data.points.size(), std::nan(""));
+        ++it;
+    }
+    for (auto it = data.vectors.begin(); it != data.vectors.end();) {
+        auto o = other.vectors.find(it->first);
+        if (o == other.vectors.end()) {
+            it = data.vectors.erase(it);
+            continue;
+        }
+        it->second.resize(before);
+        it->second.insert(it->second.end(), o->second.begin(), o->second.end());
+        it->second.resize(data.points.size());
+        ++it;
+    }
+}
+
 std::vector<fs::path> timeDirectories(const fs::path& dir)
 {
     std::vector<std::pair<double, fs::path>> found;

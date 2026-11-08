@@ -388,22 +388,29 @@ std::string controlDict(const Settings& s, const CaseInfo& info)
       << "; normal (0 0 1); interpolate true; }\n"
       << "            sectionVertical { type cuttingPlane; point " << c
       << "; normal (0 1 0); interpolate true; }\n        }\n    }\n";
-    // Streamline seeds: 7 x 5 grid on a plane half a length upstream, inset from the
-    // part outline so the lines pass over, under and beside it.
-    t << "    streamLines\n    {\n        type streamLine;\n        libs (fieldFunctionObjects);\n"
-      << "        writeControl writeTime;\n        setFormat vtk;\n        formatOptions { vtk { format ascii; legacy true; } }\n"
-      << "        direction forward;\n        fields (p U);\n        lifeTime 10000;\n        nSubCycle 5;\n"
-      << "        cloud particleTracks;\n        seedSampleSet\n        {\n            type cloud;\n"
-      << "            axis xyz;\n            points\n            (\n";
-    const double x = pb.min.x - 0.5 * L;
+    // Streamlines (CAD-135): a dense 16 x 10 rake just ahead of the part, a little wider
+    // and taller than it, so the lines wrap the body closely; and an 8 x 5 rake just behind
+    // it traced both ways, which shows the recirculation of the wake that lines from
+    // upstream never enter.
     const Vec3 size = pb.size();
-    for (int iz = 0; iz < 5; ++iz)
-        for (int iy = 0; iy < 7; ++iy)
-            t << "                "
-              << Vec3{x, pb.min.y - 0.1 * size.y + 1.2 * size.y * (iy + 0.5) / 7.0,
-                      pb.min.z - 0.1 * size.z + 1.2 * size.z * (iz + 0.5) / 5.0}
-              << '\n';
-    t << "            );\n        }\n    }\n}\n";
+    auto streamLineObject = [&](const char* name, const char* direction, double x, int ny, int nz, double y0,
+                                double y1, double z0, double z1) {
+        t << "    " << name << "\n    {\n        type streamLine;\n        libs (fieldFunctionObjects);\n"
+          << "        writeControl writeTime;\n        setFormat vtk;\n        formatOptions { vtk { format ascii; legacy true; } }\n"
+          << "        direction " << direction << ";\n        fields (p U);\n        lifeTime 10000;\n        nSubCycle 5;\n"
+          << "        cloud " << name << "Tracks;\n        seedSampleSet\n        {\n            type cloud;\n"
+          << "            axis xyz;\n            points\n            (\n";
+        for (int iz = 0; iz < nz; ++iz)
+            for (int iy = 0; iy < ny; ++iy)
+                t << "                "
+                  << Vec3{x, pb.min.y + size.y * (y0 + (y1 - y0) * (iy + 0.5) / ny),
+                          pb.min.z + size.z * (z0 + (z1 - z0) * (iz + 0.5) / nz)}
+                  << '\n';
+        t << "            );\n        }\n    }\n";
+    };
+    streamLineObject("streamLines", "forward", pb.min.x - 0.05 * L, 16, 10, -0.15, 1.15, -0.1, 1.25);
+    streamLineObject("wakeLines", "bidirectional", pb.max.x + 0.1 * L, 8, 5, 0.05, 0.95, 0.05, 0.95);
+    t << "}\n";
     return t.str();
 }
 
