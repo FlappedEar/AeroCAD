@@ -88,6 +88,9 @@ struct QualityReport {
     std::map<std::string, double> finalResiduals; ///< Initial residual of the last iteration.
     /// Relative band (max - min) / |mean| of Cd over the last 20 % of the iterations.
     std::optional<double> cdFluctuation;
+    /// Change of the mean of Cd between the halves of that window, relative to its mean
+    /// (CAD-168): small while Cd only oscillates around a steady mean.
+    std::optional<double> cdDrift;
     std::vector<std::string> warnings;
     /// Required evidence: "passed", "failed" or "missing" for each check.
     std::map<std::string, std::string> checks;
