@@ -15,6 +15,7 @@
 #include <QVariantList>
 #include <QUrl>
 #include <QVariantList>
+#include <QQuaternion>
 #include <QVariantMap>
 #include <QVector3D>
 #include <QVector>
@@ -169,6 +170,16 @@ public:
     /// fitted from) seen from outside, for drawing sketch previews where the draped sketch
     /// is shown; `point` itself on a miss.
     Q_INVOKABLE QVector3D dropOntoPart(quint64 id, const QVector3D& point, const QVector3D& normal) const;
+    /// Surface normal of part `id` around `point` (model mm) on triangle `triangle` (as
+    /// pickSurface gives it): the area-weighted normal of the triangles within `radius` that
+    /// face the same way, so a noisy scan gives the normal of the patch, not of one
+    /// triangle. Zero vector for unknown parts.
+    Q_INVOKABLE QVector3D surfaceNormalAt(quint64 id, const QVector3D& point, quint32 triangle,
+                                          double radius) const;
+    /// Bounds {min, max} (model mm, as [x, y, z]) of part `id` moved as the Move / Rotate /
+    /// Scale preview shows it: p' = scale * rotation (p - center) + center + translate.
+    Q_INVOKABLE QVariantMap transformedBounds(quint64 id, const QVector3D& center, const QQuaternion& rotation,
+                                              double scale, const QVector3D& translate) const;
     /// Like pickSurface, on one part only (and the scan it was fitted from, which reaches
     /// further); {} on a miss.
     Q_INVOKABLE QVariantMap pickPartSurface(quint64 id, const QVector3D& origin, const QVector3D& direction) const;

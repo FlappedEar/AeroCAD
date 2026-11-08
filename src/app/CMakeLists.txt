@@ -175,6 +175,17 @@ if(AEROCAD_BUILD_TESTS)
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/transform_tool.ui
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(app_transform_tool_test PROPERTIES LABELS gui TIMEOUT 90)
+    # Lay on Face / Face Front: orienting a part for a wind tunnel run (box and a real scan).
+    add_test(NAME app_orient_for_cfd_test
+        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl
+                --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/orient_for_cfd.ui
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(app_orient_for_cfd_test PROPERTIES LABELS gui TIMEOUT 60)
+    add_test(NAME app_orient_scan_test
+        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl
+                --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/orient_scan.ui
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(app_orient_scan_test PROPERTIES LABELS gui TIMEOUT 60)
     # Touchpad gestures from a fresh start (sideways first, diagonal applied once).
     add_test(NAME app_touchpad_gestures_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl

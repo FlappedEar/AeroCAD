@@ -1,0 +1,43 @@
+# Orienting a part for a wind tunnel run in the Move / Rotate / Scale tool, with real clicks:
+#  - Lay on Face, then a click on a side face: the part lies on that face, on the ground (Z 0);
+#  - Face Front, then a click on a face: the part turns about Z so that face looks at the
+#    Front view (where the air comes from with the default +Y flow); its height is kept;
+#  - Esc leaves the face pick, not the tool.
+# Run: AeroCAD tests/data/box_200x80x60.stl --ui-script <this file>
+Qt.createQmlObject('import QtQuick; Item { objectName: "tfTest"; visible: false; property var s: ({}); function win(p) { const q = viewport.mapToItem(null, p.x, p.y); return Qt.point(q.x, q.y) } function lerp(a, b, t) { return Qt.point(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t) } function part() { return controller.execute("document.parts").result.parts.find(p => p.kind === "imported") } function centre(b) { return [0, 1, 2].map(i => (b.min[i] + b.max[i]) / 2) } function find(i, name) { if (!i) return null; if (i.objectName === name) return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = find(ch[k], name); if (r) return r } return null } }', window.contentItem)
+ui.wait(800)
+(() => { const parts = controller.execute("document.parts").result.parts; viewport.restoreCameraState({ pivot: [0, 0, 0], pitch: -30, yaw: 45, distance: 1, orthographic: false }); viewport.fitAll(); window.selectPart(parts[0].id) })()
+ui.wait(300)
+ui.key("M")
+ui.wait(200)
+# 1. Lay on Face: button, then a click on the +X face (centre 200, 40, 30).
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "tfTest"); t.s.b0 = t.part().bounds; const b = t.find(transformPanel.contentItem, "layOnFace"); const p = b.mapToItem(null, b.width / 2, b.height / 2); ui.click(p.x, p.y) })()
+ui.wait(100)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "tfTest"); if (viewport.transformPickMode !== "lay") ui.fail("Lay on Face did not wait for a face"); const s = viewport.modelToScreen(Qt.vector3d(200, 40, 30)); const hit = viewport.pickPart(s.x, s.y); if (!hit || Math.abs(hit.point.x - 200) > 1e-3) { ui.fail("+X face not visible: " + JSON.stringify(hit)); return } const w = t.win(s); ui.click(w.x, w.y) })()
+ui.wait(200)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "tfTest"); if (viewport.transformPickMode !== "") ui.fail("still picking after the click"); if (!viewport.transformActive) ui.fail("the click ended the tool"); const pb = viewport.previewBounds(); ui.log("lay preview: min " + JSON.stringify(pb.min.map(v => +v.toFixed(3))) + " max " + JSON.stringify(pb.max.map(v => +v.toFixed(3)))) })()
+ui.shot("build/orient-1-laid.png")
+ui.key("Return")
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "tfTest"); const b = t.part().bounds; ui.log("laid: size " + JSON.stringify(b.size.map(v => +v.toFixed(3))) + ", min z " + b.min[2].toFixed(4)); if (Math.abs(b.size[0] - 60) > 1e-3 || Math.abs(b.size[1] - 80) > 1e-3 || Math.abs(b.size[2] - 200) > 1e-3) ui.fail("not lying on the +X face"); if (Math.abs(b.min[2]) > 1e-3) ui.fail("not on the ground"); t.s.laid = b })()
+# 2. Face Front: the face now pointing +X (x max) turns to the front (-Y); height kept.
+ui.key("M")
+ui.wait(200)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "tfTest"); const b = t.find(transformPanel.contentItem, "faceFront"); const p = b.mapToItem(null, b.width / 2, b.height / 2); ui.click(p.x, p.y) })()
+ui.wait(100)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "tfTest"); if (viewport.transformPickMode !== "front") ui.fail("Face Front did not wait for a face"); const L = t.s.laid; const P = Qt.vector3d(L.max[0], (L.min[1] + L.max[1]) / 2, L.min[2] + 0.7 * L.size[2]); const s = viewport.modelToScreen(P); const hit = viewport.pickPart(s.x, s.y); if (!hit || Math.abs(hit.point.x - L.max[0]) > 1e-3) { ui.fail("+X face not visible after laying: " + JSON.stringify(hit)); return } t.s.local = hit.localPoint; const w = t.win(s); ui.click(w.x, w.y) })()
+ui.wait(200)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "tfTest"); const pb = viewport.previewBounds(); const p = viewport.previewPoint(viewport.transformTarget.partId, t.s.local); ui.log("front: picked point now at y " + p.y.toFixed(3) + " (front side " + pb.min[1].toFixed(3) + ")"); if (Math.abs(p.y - pb.min[1]) > 1e-2) ui.fail("the picked face does not look to the front") })()
+ui.key("Return")
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "tfTest"); const b = t.part().bounds; ui.log("faced front: size " + JSON.stringify(b.size.map(v => +v.toFixed(3))) + ", min z " + b.min[2].toFixed(4)); if (Math.abs(b.size[0] - 80) > 1e-3 || Math.abs(b.size[1] - 60) > 1e-3 || Math.abs(b.size[2] - 200) > 1e-3) ui.fail("not turned a quarter about Z"); if (Math.abs(b.min[2] - t.s.laid.min[2]) > 1e-3) ui.fail("Face Front changed the height") })()
+# 3. Esc in the face pick leaves the pick only; a click on empty space during the pick
+#    does not end the tool either.
+ui.key("M")
+ui.wait(200)
+(() => { viewport.transformPickMode = "lay" })()
+ui.key("Escape")
+ui.wait(100)
+(() => { if (viewport.transformPickMode !== "" || !viewport.transformActive) ui.fail("Esc in the face pick: mode " + viewport.transformPickMode + ", tool " + viewport.transformActive); viewport.transformPickMode = "front"; const t = Array.from(window.contentItem.children).find(c => c.objectName === "tfTest"); const empty = [[0.5, 0.06], [0.3, 0.9], [0.7, 0.9], [0.9, 0.5]].map(f => Qt.point(viewport.width * f[0], viewport.height * f[1])).find(q => !viewport.pickPart(q.x, q.y) && !viewport.transformGizmo.handleAt(q)); const e = t.win(empty); ui.click(e.x, e.y) })()
+ui.wait(100)
+(() => { if (!viewport.transformActive || viewport.transformPickMode !== "front") ui.fail("a miss during the face pick ended it"); viewport.finishTransform(false) })()

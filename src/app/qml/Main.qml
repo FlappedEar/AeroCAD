@@ -964,6 +964,10 @@ ApplicationWindow {
     Shortcut {
         sequence: "Esc"
         onActivated: {
+            if (viewport.transformPickMode) {
+                viewport.transformPickMode = ""
+                return
+            }
             if (viewport.transformActive) {
                 viewport.finishTransform(false)
                 return

@@ -114,6 +114,14 @@ change:
 - **Enter** or **Done** applies everything as one undo step; **Esc** or **Cancel** puts the
   part back; **Reset** clears the values. Clicking another part or empty space, or starting
   another command, applies it too. Ctrl+Z / Cmd+Z during the tool drops the preview.
+- **Lay on Face**, then a click on a face of the part: the part turns so that face points
+  down and drops onto the ground (Z = 0), like "lay on face" in a slicer.
+- **Face Front**, then a click on a face: the part turns about the vertical axis so that face
+  looks at the Front view, which is where the air comes from in a wind tunnel run with the
+  default flow (+Y); its height stays. A face pointing up or down is turned onto the front
+  directly. Together they set a part up for CFD in two clicks.
+  On a scan the face direction is taken from the surface patch around the click (3 % of
+  the part size), so scanner noise does not tilt the part. Esc leaves the face pick.
 
 On a body the result is a timeline step (`feature.move`, editable later); on a scan,
 surface or imported solid it changes the part directly (`part.transform`). Sketches and

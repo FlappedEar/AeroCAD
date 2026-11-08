@@ -158,7 +158,9 @@ quick A/B checks. The preset is checked against the Ahmed body experiments in
 
 **Units and axes.** The model is in millimetres, the case in metres (converted when the
 case is written). The flow direction is one of `+X`, `-X`, `+Y`, `-Y` in model axes
-(default `+Y`: the air hits the side you see in the Front view); Z is up. The case is
+(default `+Y`: the air hits the side you see in the Front view); Z is up. To set a part
+up, use Move / Rotate / Scale (M): **Lay on Face** puts the face you click on the ground,
+**Face Front** turns the face you click towards the oncoming air ([ui.md](ui.md#move--rotate--scale)). The case is
 rotated so the air flows along its +X axis. Results are reported as **drag** (along the
 flow), **lift** (+Z) and **side** force, and field data is converted back to model
 coordinates.
