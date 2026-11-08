@@ -126,7 +126,9 @@ and the part's commands). **Rename** a part in place: double-click its name, pre
 with the part selected, or choose Rename in its right-click menu. Enter or clicking
 elsewhere applies the name (one undo step); Esc keeps the old one. While a name is typed,
 the keys go to the text only (V, M, Delete do not act on the part). A renamed timeline body
-keeps its name when the timeline is edited and in the saved project.
+keeps its name when the timeline is edited and in the saved project. The rows are in the order
+the parts were made: a part brought back by Undo (a delete undone, a feature unsuppressed
+or the timeline rolled forward) returns to its own row, not to the end of the list.
 
 ## Copy and paste
 

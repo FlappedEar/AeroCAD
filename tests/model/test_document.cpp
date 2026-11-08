@@ -9,6 +9,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace aerocad;
@@ -85,6 +86,31 @@ TEST_CASE("Document keeps explicit ids when re-adding", "[model]")
     // A conflicting id gets a fresh one.
     auto copy = *doc.part(a);
     CHECK(doc.addPart(copy) != a);
+}
+
+TEST_CASE("A part put back keeps its place in the list", "[model]")
+{
+    Document doc;
+    const auto a = doc.addPart(makePart("a"));
+    const auto b = doc.addPart(makePart("b"));
+    const auto c = doc.addPart(makePart("c"));
+    std::vector<std::pair<Document::Change, std::size_t>> rows;
+    doc.addObserver([&](Document::Change change, model::PartId id) {
+        if (change == Document::Change::AboutToAdd)
+            rows.emplace_back(change, doc.indexFor(id));
+    });
+    auto removed = doc.removePart(b);
+    REQUIRE(removed);
+    CHECK(doc.addPart(*removed) == b);
+    REQUIRE(rows.size() == 1);
+    CHECK(rows[0].second == 1); // announced at the row it lands on
+    REQUIRE(doc.partCount() == 3);
+    CHECK(doc.parts()[0].id == a);
+    CHECK(doc.parts()[1].id == b);
+    CHECK(doc.parts()[2].id == c);
+    // New parts still go at the end.
+    const auto d = doc.addPart(makePart("d"));
+    CHECK(doc.parts().back().id == d);
 }
 
 TEST_CASE("Restoring an older snapshot still bumps the revision", "[model]")
