@@ -195,6 +195,10 @@ if(AEROCAD_BUILD_TESTS)
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/shortcuts_fusion.ui
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(app_shortcuts_fusion_test PROPERTIES LABELS gui TIMEOUT 60)
+    add_test(NAME app_copy_paste_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/copy_paste.ui
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(app_copy_paste_test PROPERTIES LABELS gui TIMEOUT 60)
     add_test(NAME app_orient_scan_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/orient_scan.ui

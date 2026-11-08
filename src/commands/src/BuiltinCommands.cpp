@@ -138,18 +138,29 @@ void registerPartCommands(CommandRegistry& r)
           });
 
     r.add({"part.duplicate", "Duplicate part",
-           "Copies an imported part (mesh and exact geometry) as a new part, e.g. to keep the original next to "
-           "a modified copy. Bodies and sketches are duplicated with variant.create instead.",
+           "Copies a part (mesh and exact geometry) as a new part, e.g. to keep the original next to a modified "
+           "copy (Copy / Paste). A body of the timeline is copied as a fixed solid outside the timeline: it keeps "
+           "its shape but not its features. Sketches and planes cannot be copied.",
            objectSchema({{"id", idParam()}, {"name", {{"type", "string"}, {"minLength", 1}}}}, {"id"}), true},
           [](CommandContext& ctx, const Json& params) {
               model::Document& doc = ctx.document;
               const model::Part& source = requirePart(doc, params);
-              requireImported(source, "duplicate");
+              if (source.kind == model::PartKind::Sketch || source.kind == model::PartKind::Plane)
+                  throw CommandError("Cannot duplicate a sketch or plane: copy the body made from it");
+              if (!source.mesh)
+                  throw CommandError("Part has no geometry to copy");
               // `source` dangles once addPart() reallocates the part list.
               const std::string label = "Duplicate " + source.name;
               model::Part copy = source;
               copy.id = 0;
               copy.revision = 0;
+              copy.selection = nullptr;
+              if (copy.kind == model::PartKind::Body) {
+                  // A fixed copy: the timeline does not rebuild or remove it.
+                  copy.kind = model::PartKind::Imported;
+                  copy.featureId = 0;
+                  copy.source = "copy of " + source.name;
+              }
               copy.name = params.contains("name") ? params["name"].get<std::string>() : source.name + " (copy)";
               const model::PartId id = doc.addPart(copy);
               copy.id = id;

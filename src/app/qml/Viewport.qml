@@ -1041,10 +1041,23 @@ Item {
     }
 
     /// Ends the tool: commit applies the preview as one command, otherwise the part goes back.
+    /// The part being moved was just pasted (Copy / Paste): cancelling removes it again.
+    property bool transformPasted: false
+
+    /// Esc / Cancel / Undo in the tool: drops the preview; a part pasted for this move is
+    /// removed again (Fusion: cancelling Paste pastes nothing).
+    function cancelTransform() {
+        const pasted = transformPasted && transformTarget
+        finishTransform(false)
+        if (pasted && controller.undoText.startsWith("Duplicate"))
+            controller.execute("edit.undo")
+    }
+
     function finishTransform(commit) {
         if (!transformTarget)
             return null
         const c = commit ? transformCommand() : null
+        transformPasted = false
         transformPickMode = ""
         transformTarget = null
         resetTransform()

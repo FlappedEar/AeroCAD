@@ -76,7 +76,7 @@ file untouched; a failed save removes the temporary file.
 | `variant.compare {a?, b?}` | Parameter and feature differences (JSON patch per feature). |
 | `variant.rename`, `variant.delete` | Delete works on inactive variants. |
 | `frame.set {name, origin?, normal?, xDir?}`, `frame.list`, `frame.remove` | Reference frames (work planes); `sketch.create {"plane": "<frame name>"}` sketches on one. |
-| `part.duplicate {id, name?}` | Copies an imported part. |
+| `part.duplicate {id, name?}` | Copies a part; a timeline body becomes a fixed solid (kind imported). Not for sketches or planes. |
 
 All modifying commands are undoable, including variant switches (undo walks back through
 switches and the edits made in each variant).
