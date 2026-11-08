@@ -23,6 +23,9 @@ QtObject {
     /// openExport, editFeature, setSelectionTool.
     required property var host
 
+    /// The largest selection surface.fit_selection fits (SurfaceCommands.cpp, maxTriangles).
+    readonly property int maxFitTriangles: 200000
+
     /// Changes whenever the document changes, so bindings that call guide() / actions()
     /// re-evaluate.
     property int revision: 0
@@ -214,12 +217,19 @@ QtObject {
         case "clearSelection":
             return { id: id, text: qsTr("Clear"), icon: "close", enabled: selected,
                      reason: qsTr("Nothing is selected."), tip: qsTr("Deselects the area.") }
-        case "fitSurface":
-            return { id: id, text: qsTr("Fit smooth surface"), icon: "surface", enabled: selected, primary: true,
-                     reason: qsTr("Select an area of the scan first (step 1)."),
+        case "fitSurface": {
+            // surface.fit_selection refuses more (CAD-138): say so before the popup.
+            const tooLarge = (info.selectedTriangles ?? 0) > maxFitTriangles
+            return { id: id, text: qsTr("Fit smooth surface"), icon: "surface", enabled: selected && !tooLarge, primary: true,
+                     reason: tooLarge
+                             ? qsTr("The selected area is too large for one surface (%1 triangles, at most %2). Select a smaller area with Draw around or Paint (or set Max total for Click an area), or draw the part straight on the scan with Sketch on the scan.")
+                                   .arg(Number(info.selectedTriangles).toLocaleString(Qt.locale(), "f", 0))
+                                   .arg(Number(maxFitTriangles).toLocaleString(Qt.locale(), "f", 0))
+                             : qsTr("Select an area of the scan first (step 1)."),
                      tip: qsTr("Turns the selected area into one smooth, exact (NURBS) surface you can design on. Holes in the area are cut out. The result is a new part; the scan is kept."),
                      params: [_num("tolerance", qsTr("Tolerance"), 0.25, "mm",
                                    qsTr("How far the surface may deviate from the scan. Smaller follows the scan more closely but may be bumpier."))] }
+        }
         case "fitWhole":
             return { id: id, text: selected ? qsTr("Fit patches to selection") : qsTr("Whole scan to solid"),
                      icon: "body", enabled: true,
@@ -265,7 +275,8 @@ QtObject {
         case "trim": {
             const sk = outlineSketches(info)
             return { id: id, text: qsTr("Cut out by sketch"), icon: "section", enabled: sk.length > 0,
-                     primary: sk.length > 0 && !isCutOut(info),
+                     // Part on surface does both steps at once when the outline is on this surface (CAD-137).
+                     primary: sk.length > 0 && !isCutOut(info) && scanSketches(info, false).length === 0,
                      reason: qsTr("Draw a closed outline in a sketch first (step 1)."),
                      tip: qsTr("Projects the sketch outline onto this curved surface and keeps the piece inside it, as a new surface that follows the curvature exactly."),
                      params: [{ key: "sketch", label: qsTr("Sketch"), type: "sketch", value: sk.length ? sk[0].featureId : 0,
@@ -337,7 +348,7 @@ QtObject {
             const newest = onScan ? sketchesOn(info)[0] : null
             return { id: id, text: qsTr("Part on surface"), icon: "thickness", enabled: ok,
                      primary: onScan ? ok && !newest.across : true,
-                     reason: onScan ? qsTr("Draw the outline on the scan first (step 1).") : qsTr("The sketch needs a closed outline."),
+                     reason: onScan ? qsTr("Draw the outline first (step 1).") : qsTr("The sketch needs a closed outline."),
                      tip: qsTr("In one step: cuts the outline out of the surface it was drawn on and thickens it into a solid that follows the curvature."),
                      params: [...(onScan ? [_sketchParam(sk)] : []),
                               _num("thickness", qsTr("Thickness"), 2, "mm"),
@@ -507,6 +518,23 @@ QtObject {
             const cut = isCutOut(info)
             // Done only for a sketch with a closed outline: an empty one is nothing to cut out (CAD-114).
             const hasSketch = cut || outlineSketches(info).length > 0
+            // An outline drawn on this surface: one step, as the pane after Finish Sketch (CAD-137).
+            const own = !cut && scanSketches(info, false).length > 0
+            if (own)
+                return { title: roleName(r),
+                         intro: qsTr("A smooth, exact surface fitted to the scan. Cut the part you need out of it and give it a thickness."),
+                         sections: [
+                             { title: qsTr("Make a part from this surface"), steps: [
+                                   { title: qsTr("Draw the outline"), done: true,
+                                     text: qsTr("A sketch exists. Draw another one if you need a different outline."),
+                                     actions: [a("sketchOnSurface")] },
+                                   { title: qsTr("Create the part"), done: false,
+                                     text: qsTr("Cuts the outline out of this surface and thickens it into a solid, in one step."),
+                                     actions: [a("partOnSurface")] },
+                                   { title: qsTr("Or step by step"), done: false,
+                                     text: qsTr("Cut out first (also keeps the outside of the outline), then thicken the piece."),
+                                     actions: [a("trim"), a("thicken")] }] },
+                             { title: qsTr("More"), steps: [], actions: [...fitted, a("sketchFin"), a("offset"), a("cutWithThis"), a("scale"), a("export"), a("hide"), a("rename"), a("delete")] }] }
             return { title: roleName(r),
                      intro: qsTr("A smooth, exact surface fitted to the scan. Cut the part you need out of it and give it a thickness."),
                      sections: [

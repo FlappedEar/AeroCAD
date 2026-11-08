@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # CAD-114: on a surface fitted to a scan, an empty sketch does not count as the outline
 # (the guide still asks for it and Cut out stays off), and a rectangle drawn by dragging
-# from corner to corner is created, after which Cut out is offered.
+# from corner to corner is created, after which Part on surface (CAD-137) and Cut out are offered.
 ui.wait(1200)
 (() => { const p = controller.execute("document.parts").result.parts[0]; window.selectPart(p.id); controller.execute("selection.invert", { id: p.id }) })()
 ui.wait(400)
@@ -30,5 +30,13 @@ ui.shot("surface-outline-dragged.png")
 ui.wait(500)
 (() => { const parts = controller.execute("document.parts").result.parts; const s = parts.find(p => p.kind !== "sketch" && p.name.endsWith("surface")); window.selectPart(s.id) })()
 ui.wait(400)
-(() => { const g = contextActions.guide(window.selectionInfo); if (!g.sections[0].steps[0].done) ui.fail("the drawn outline is not recognised"); const trim = window.selectionActions.find(a => a.id === "trim"); if (!trim || !trim.enabled || !trim.primary) ui.fail("Cut out is not the next step"); const opts = trim.params[0].options; ui.log("CUT options " + JSON.stringify(opts)); if (opts.length !== 1) ui.fail("the empty sketch is offered to cut with") })()
+(() => { const g = contextActions.guide(window.selectionInfo); if (!g.sections[0].steps[0].done) ui.fail("the drawn outline is not recognised"); const trim = window.selectionActions.find(a => a.id === "trim"); if (!trim || !trim.enabled) ui.fail("Cut out is not offered"); const next = contextActions.nextAction(window.selectionInfo); if (!next || next.id !== "partOnSurface") ui.fail("Part on surface (CAD-137) is not the next step"); const opts = trim.params[0].options; ui.log("CUT options " + JSON.stringify(opts)); if (opts.length !== 1) ui.fail("the empty sketch is offered to cut with") })()
+# CAD-137: the guide's one step makes the part from this outline.
+(() => { const act = window.selectionActions.find(a => a.id === "partOnSurface"); actionPopup.request(act, window.selectionInfo, null) })()
+ui.wait(400)
+ui.key("Return")
+ui.wait(3000)
+(() => { const info = window.selectionInfo; ui.log("PART " + info.kind + " " + info.name); if (info.kind !== "body") ui.fail("Part on surface from the surface's guide made no part") })()
+# CAD-138: a selection over the fit limit disables Fit smooth surface and says why.
+(() => { const scan = controller.execute("document.parts").result.parts.find(p => p.kind === "imported" && !p.hasBrep); const info = Object.assign({}, controller.partInfo(scan.id), { selectedTriangles: 250000 }); const f = contextActions.action("fitSurface", info); ui.log("FIT " + f.enabled + " " + f.reason); if (f.enabled || f.reason.indexOf("too large") < 0) ui.fail("Fit smooth surface offered for a selection it refuses") })()
 ui.log("surface outline drag done")
