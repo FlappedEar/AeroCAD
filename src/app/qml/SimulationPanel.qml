@@ -722,9 +722,13 @@ Pane {
 
     ScrollView {
         id: scroll
+        objectName: "cfdPanelScroll"
         anchors.fill: parent
         contentWidth: availableWidth
         clip: true
+        // Nothing scrolls sideways; a horizontal bar would only cover the last row (the
+        // "Runs from other designs" toggle could not be clicked once the panel scrolls).
+        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
         ColumnLayout {
             width: scroll.availableWidth
