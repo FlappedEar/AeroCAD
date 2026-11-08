@@ -89,4 +89,16 @@ python3 -m venv .venv && .venv/bin/pip install lib3mf trimesh numpy networkx lxm
 .venv/bin/python tools/validate_exports.py --cmd build/release/bin/aerocad-cmd
 ```
 
-Missing packages are skipped with a notice. `--keep DIR` keeps the exported files.
+All three independent readers are required. The summary reports required, executed,
+passed, failed and missing reader invocations per format (plus STEP text checks).
+Missing packages, unavailable native libraries, reader exceptions and invalid files
+produce a nonzero result; available checks still run, but partial coverage is never
+reported as complete success. Install the reported dependencies and rerun the validator.
+`--keep DIR` keeps the exported files for inspection. The script remains a local check;
+do not add its external readers or slow validation runs to blocking CI.
+
+The validator's failure/coverage logic has a dependency-free regression suite:
+
+```sh
+python3 -m unittest discover -s tests/tools -p 'test_validate_exports.py' -v
+```

@@ -1195,11 +1195,11 @@ void Design::evaluateFeature(const Feature& f)
             shape = *part->shape;
         } else if (part->mesh) {
             auto cached = m_convertedParts.find(partId);
-            if (cached != m_convertedParts.end() && cached->second.revision == part->revision) {
+            if (cached != m_convertedParts.end() && cached->second.mesh.lock() == part->mesh) {
                 shape = cached->second.shape;
             } else {
                 shape = geometry::meshToBrep(*part->mesh);
-                m_convertedParts[partId] = {part->revision, shape};
+                m_convertedParts[partId] = {part->mesh, shape};
             }
         } else {
             throw DesignError("Part '" + part->name + "' has no geometry");
