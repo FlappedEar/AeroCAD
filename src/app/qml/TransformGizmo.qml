@@ -35,6 +35,7 @@ Item {
     property real _pxPerRadian: 0
 
     visible: active
+    opacity: viewport.transformPickMode !== "" ? 0.3 : 1
 
     function center() {
         const t = viewport.transformTarget
@@ -71,7 +72,8 @@ Item {
 
     /// Handle under view position p, or "".
     function handleAt(p) {
-        if (!active)
+        // While Lay on Face / Face Front waits for a face, clicks go through to the part.
+        if (!active || viewport.transformPickMode !== "")
             return ""
         const g = layout()
         if (viewport.transformTarget.canScale && Math.abs(p.x - g.c.x) <= 9 && Math.abs(p.y - g.c.y) <= 9)

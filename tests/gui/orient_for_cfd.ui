@@ -31,6 +31,11 @@ ui.wait(200)
 ui.key("Return")
 ui.wait(300)
 (() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "tfTest"); const b = t.part().bounds; ui.log("front: picked point now at y " + t.s.pickedY.toFixed(3) + " (front side " + b.min[1].toFixed(3) + ")"); if (Math.abs(t.s.pickedY - b.min[1]) > 1e-2) ui.fail("the picked face does not look to the front"); ui.log("faced front: size " + JSON.stringify(b.size.map(v => +v.toFixed(3))) + ", min z " + b.min[2].toFixed(4)); if (Math.abs(b.size[0] - 80) > 1e-3 || Math.abs(b.size[1] - 60) > 1e-3 || Math.abs(b.size[2] - 200) > 1e-3) ui.fail("not turned a quarter about Z"); if (Math.abs(b.min[2] - t.s.laid.min[2]) > 1e-3) ui.fail("Face Front changed the height") })()
+# 2b. A face under the handles: the click at the gizmo centre (the scale square) during the
+#     face pick picks the face behind it, it does not scale the part.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "tfTest"); window.startTransform(t.part().id); viewport.transformPickMode = "lay"; const g = viewport.transformGizmo.layout(); const hit = viewport.pickPart(g.c.x, g.c.y); if (!hit) { ui.fail("no face behind the gizmo centre"); return } if (viewport.transformGizmo.handleAt(g.c) !== "") ui.fail("handles still active during the face pick"); const w = t.win(g.c); ui.click(w.x, w.y) })()
+ui.wait(200)
+(() => { ui.log("click on the gizmo centre during the face pick: mode " + JSON.stringify(viewport.transformPickMode) + ", scale " + viewport.transformScale); if (viewport.transformPickMode !== "" || Math.abs(viewport.transformScale - 1) > 1e-9) ui.fail("the gizmo took the face pick click"); viewport.finishTransform(false) })()
 # 3. Esc in the face pick leaves the pick only; a click on empty space during the pick
 #    does not end the tool either.
 ui.key("M")
