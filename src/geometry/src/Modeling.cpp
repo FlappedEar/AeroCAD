@@ -32,6 +32,7 @@
 #include <BRepLProp_SLProps.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepOffset_MakeOffset.hxx>
+#include <BRepOffsetAPI_DraftAngle.hxx>
 #include <BRepOffsetAPI_MakePipe.hxx>
 #include <BRepOffsetAPI_MakeOffsetShape.hxx>
 #include <BRepOffsetAPI_MakeThickSolid.hxx>
@@ -1085,6 +1086,44 @@ Shape deleteFaces(const Shape& shape, const std::vector<std::size_t>& faceIndice
         result = unify(result);
         if (!BRepCheck_Analyzer(result).IsValid())
             throw ModelingError("Delete Face failed: the result is not a valid solid");
+        return wrapShape(result);
+    });
+}
+
+Shape draft(const Shape& shape, const std::vector<std::size_t>& faceIndices, const core::Vec3& planeOrigin,
+            const core::Vec3& pullDirection, double angleDegrees)
+{
+    const TopoDS_Shape& s = occ(shape, "Draft");
+    if (faceIndices.empty())
+        throw ModelingError("Draft: pick a face");
+    if (!std::isfinite(angleDegrees) || std::abs(angleDegrees) < 1e-6)
+        throw ModelingError("Draft: the angle must not be zero");
+    if (std::abs(angleDegrees) >= 89.0)
+        throw ModelingError("Draft: the angle must be less than 89 degrees");
+    const gp_Dir dir = dirOf(pullDirection, "Draft");
+    return guarded("Draft", [&] {
+        const auto map = mapOf(s, TopAbs_FACE);
+        const gp_Pln neutral(toPnt(planeOrigin), dir);
+        BRepOffsetAPI_DraftAngle algo(s);
+        const double angle = angleDegrees * std::numbers::pi / 180.0;
+        for (const std::size_t i : faceIndices) {
+            if (i >= static_cast<std::size_t>(map.Extent()))
+                throw ModelingError("Draft: no face " + std::to_string(i));
+            const TopoDS_Face& f = TopoDS::Face(map(static_cast<int>(i) + 1));
+            algo.Add(f, dir, angle, neutral);
+            if (!algo.AddDone())
+                throw ModelingError("Draft: face " + std::to_string(i)
+                                    + " cannot be drafted from this plane (a face parallel to it, or one that does not cross it?)");
+        }
+        algo.Build();
+        if (!algo.IsDone())
+            throw ModelingError("Draft failed: the tilted faces do not meet their neighbours; try a smaller angle");
+        TopoDS_Shape result = algo.Shape();
+        if (result.IsNull() || !hasSubShapes(result, TopAbs_SOLID))
+            throw ModelingError("Draft: nothing left of the body");
+        result = unify(result);
+        if (!BRepCheck_Analyzer(result).IsValid())
+            throw ModelingError("Draft failed: the result is not a valid solid");
         return wrapShape(result);
     });
 }

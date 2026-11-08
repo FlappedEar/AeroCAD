@@ -112,6 +112,14 @@ struct ChamferOptions {
 /// ModelingError when the gap cannot be closed (e.g. a face whose neighbours never meet).
 [[nodiscard]] Shape deleteFaces(const Shape& shape, const std::vector<std::size_t>& faceIndices);
 
+/// Draft (Fusion: Modify > Draft): tilts each face by `angleDegrees` about the line where it
+/// meets the fixed (neutral) plane through `planeOrigin` with `pullDirection` as its normal.
+/// A positive angle tilts the faces inwards along the pull direction (the part narrows away
+/// from the plane, like a mould wall); negative tilts them outwards. Throws ModelingError for
+/// a face that cannot be drafted (e.g. one parallel to the plane).
+[[nodiscard]] Shape draft(const Shape& shape, const std::vector<std::size_t>& faceIndices,
+                          const core::Vec3& planeOrigin, const core::Vec3& pullDirection, double angleDegrees);
+
 /// The two sides of a body cut by a plane (Fusion: Split Body). Each side is a solid, or a
 /// compound when that side has several separate pieces.
 struct SplitResult {

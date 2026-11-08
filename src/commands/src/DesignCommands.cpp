@@ -573,7 +573,7 @@ Json describeTopologyRefs(const cad::Design& d, const std::string& type, Json pa
 {
     if ((type == "fillet" || type == "chamfer") && params.contains("edges") && params.contains("body"))
         addTopologyHints(d, params["body"], params["edges"], true);
-    else if ((type == "shell" || type == "press_pull" || type == "delete_faces") && params.contains("faces") &&
+    else if ((type == "shell" || type == "press_pull" || type == "delete_faces" || type == "draft") && params.contains("faces") &&
              params.contains("body"))
         addTopologyHints(d, params["body"], params["faces"], false);
     else if (type == "extrude" && params.contains("to") && params["to"].is_object() &&
@@ -1183,6 +1183,19 @@ void registerFeatureCommands(CommandRegistry& r)
                        {"offset", numberOrExpr("Offset of the mirror plane along its normal (mm).")},
                        {"operation", patternOperation}},
                       {"body"});
+
+    addFeatureCommand(r, "draft", "Draft",
+                      "Tilts faces of a body by an angle (Fusion: Modify > Draft), e.g. the walls of a part that "
+                      "must come out of a mould. Each face pivots about the line where it meets the fixed plane; "
+                      "the plane's normal is the pull direction. A positive angle leans the faces in going along "
+                      "the pull direction (the part narrows away from the plane), a negative one leans them out.",
+                      {{"body", bodyRefSchema("Body.")},
+                       {"faces", topologyListSchema("face")},
+                       {"plane", {{"type", Json::array({"string", "object"})},
+                                  {"description", "Fixed plane: \"XY\" (default), \"XZ\", \"YZ\", {plane: construction "
+                                                  "plane id or name}, {origin, normal}, or a planar face {body, index | point}."}}},
+                       {"angle", numberOrExpr("Draft angle in degrees (negative leans the faces out).")}},
+                      {"body", "faces", "angle"});
 
     addFeatureCommand(r, "delete_faces", "Delete Face",
                       "Removes faces of a body and heals the gap from the neighbouring faces (Fusion: Modify > "

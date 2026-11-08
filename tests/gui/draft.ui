@@ -1,0 +1,29 @@
+# CAD-178: Draft (Fusion: Modify > Draft) with real clicks:
+#  - a click selects the box; Modify > Draft opens the dialog on it with the XY fixed plane and 3 deg;
+#  - a click on the +X side picks it; the preview and OK tilt it in (one undo step);
+#  - picking the top face (parallel to the fixed plane) gives a clear error.
+# Run: AeroCAD --ui-script <this file>
+Qt.createQmlObject('import QtQuick; Item { objectName: "drTest"; visible: false; function clickAt(x, y, z) { const v = viewport.viewPoint(Qt.vector3d(x, y, z)); const p = viewport.mapToItem(null, v.x, v.y); ui.click(p.x, p.y) } function volume() { return controller.execute("timeline.list").result.bodies[0].volume } }', window.contentItem)
+ui.wait(800)
+(() => { const b = controller.execute("feature.box", { size: [20, 20, 10] }); if (!b.ok) ui.fail("setup"); viewport.fitAll() })()
+ui.wait(500)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "drTest").clickAt(10, 10, 10) })()
+ui.wait(300)
+(() => { if (!ui.clickText("Modify")) ui.fail("no Modify menu") })()
+ui.wait(400)
+(() => { if (!ui.clickText("Draft")) ui.fail("no Draft in the Modify menu") })()
+ui.wait(400)
+(() => { ui.log("dialog " + featureDialog.visible + " type " + featureDialog.type + " body " + featureDialog.values.body + " plane " + featureDialog.values.plane + " angle " + featureDialog.values.angle); if (!featureDialog.visible || featureDialog.type !== "draft") ui.fail("Draft did not open"); if (featureDialog.values.body === undefined) ui.fail("Draft did not take the selected body") })()
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "drTest").clickAt(20, 10, 5) })()
+ui.wait(800)
+(() => { const f = featureDialog.values.faces || []; ui.log("picked " + JSON.stringify(f) + ", preview volume " + Array.from(window.contentItem.children).find(c => c.objectName === "drTest").volume()); if (f.length !== 1) ui.fail("the click did not pick the side") })()
+ui.shot("build/draft-preview.png")
+(() => { if (!ui.clickText("OK")) ui.fail("no OK button") })()
+ui.wait(800)
+(() => { const v = Array.from(window.contentItem.children).find(c => c.objectName === "drTest").volume(); const want = 4000 - 0.5 * 10 * 10 * Math.tan(3 * Math.PI / 180) * 20; ui.log("after OK: volume " + v + " (want " + want + "), undo '" + controller.undoText + "'"); if (Math.abs(v - want) > 0.5) ui.fail("the side did not tilt: volume " + v) })()
+ui.shot("build/draft.png")
+(() => { undoAction.trigger() })()
+ui.wait(500)
+(() => { const v = Array.from(window.contentItem.children).find(c => c.objectName === "drTest").volume(); ui.log("Ctrl+Z: volume " + v); if (Math.abs(v - 4000) > 0.5) ui.fail("one undo did not bring the box back: " + v) })()
+(() => { const b = controller.execute("document.parts").result.parts.find(x => x.kind === "body"); const r = controller.execute("feature.draft", { body: b.featureId, faces: [{ point: [10, 10, 10] }], angle: 5 }); ui.log("top: " + r.ok + " " + r.error); if (r.ok) ui.fail("drafting the top face did not fail") })()
+ui.log("draft OK")

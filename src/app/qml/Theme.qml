@@ -147,7 +147,7 @@ QtObject {
         "box": "box", "cylinder": "cylinder", "hole": "hole", "line": "line", "rectangle": "rectangle",
         "circle": "circle", "arc": "arc", "polygon": "polygon", "slot": "slot", "dimension": "dimension",
         "finish sketch": "finish-sketch", "press pull": "extrude", "fillet": "fillet", "chamfer": "chamfer", "shell": "shell",
-        "combine": "combine", "split body": "section", "delete face": "delete", "parameters": "parameters", "show/hide": "visible", "delete": "delete",
+        "combine": "combine", "split body": "section", "delete face": "delete", "draft": "shell", "parameters": "parameters", "show/hide": "visible", "delete": "delete",
         "selected": "export", "all": "export", "export": "export", "fit": "fit", "home": "home",
         "ortho": "ortho", "sweep": "sweep", "loft": "loft", "mirror": "mirror", "pattern": "pattern",
         "circular pattern": "circular-pattern", "plane": "plane", "measure": "measure",
@@ -175,6 +175,7 @@ QtObject {
         "shell": qsTr("Hollow out a body, leaving walls of the thickness you type."),
         "move/rotate": qsTr("Turn the selected part about an axis and move it by a distance (Fusion: Move/Copy, M)."),
         "combine": qsTr("Join, cut or intersect two bodies."),
+        "draft": qsTr("Tilt faces of a body by an angle from a fixed plane, e.g. mould walls (Fusion: Draft)."),
         "delete face": qsTr("Remove faces of a body (a hole, a fillet, a boss) and close the gap from the faces around them (Fusion: Delete)."),
         "split body": qsTr("Cut a body with a plane into two bodies, e.g. to print a part larger than the printer bed (Fusion: Split Body)."),
         "parameters": qsTr("Named values (e.g. wall = 2 mm) that dimensions can use; change one to update the design."),
@@ -212,7 +213,7 @@ QtObject {
             hole: "hole", base_body: "mesh-to-body", sweep: "sweep", loft: "loft", mirror: "mirror",
             pattern: "pattern", rectangular_pattern: "pattern", circular_pattern: "circular-pattern",
             plane: "plane", body: "body", imported: "mesh", mesh: "mesh",
-            part_on_surface: "surface", fin_on_surface: "surface", move: "move", press_pull: "extrude", split: "section", delete_faces: "delete"
+            part_on_surface: "surface", fin_on_surface: "surface", move: "move", press_pull: "extrude", split: "section", delete_faces: "delete", draft: "shell"
         }
         return map[type] || "tool"
     }
