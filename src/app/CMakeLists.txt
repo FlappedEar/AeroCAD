@@ -394,7 +394,9 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/cfd_results_3d.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    # A layout polish loop leaves rows of the results panel unplaced (CAD-173).
     set_tests_properties(app_cfd_results_3d_test PROPERTIES LABELS "gui;openfoam" TIMEOUT 300
+        FAIL_REGULAR_EXPRESSION "Polish loop detected"
         ENVIRONMENT "AEROCAD_CFD_DIR=${CMAKE_CURRENT_BINARY_DIR}/cfd-results-3d-runs")
     # CAD-141: the A/B pressure difference on two real coarse runs (not in CI: label openfoam).
     add_test(NAME app_cfd_difference_3d_test
