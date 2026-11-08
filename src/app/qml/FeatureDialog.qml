@@ -467,12 +467,11 @@ Pane {
             }
         }
         if (!axis) {
-            let hit = view.pickPart(x, y)
-            if (hit) {
-                const info = controller.partInfo(hit.partId)
-                if (info.kind === "body" && info.featureId === previewFeatureId)
-                    hit = view.pickPartSkipping(x, y, hit.partId)
-            }
+            // Only bodies (not the preview) take the click: planes, sketches and scans in
+            // front are clicked through.
+            const parts = controller.execute("document.parts")
+            const ids = parts.ok ? parts.result.parts.filter(p => p.kind === "body" && p.featureId !== previewFeatureId).map(p => p.id) : []
+            const hit = view.pickPartAmong(x, y, ids)
             const info = hit ? controller.partInfo(hit.partId) : null
             if (info && info.kind === "body")
                 axis = edgeAxis(info.featureId, hit.point)

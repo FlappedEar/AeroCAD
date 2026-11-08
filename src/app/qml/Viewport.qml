@@ -189,19 +189,25 @@ Item {
         return { partId: hit.partId, point: hit.point, distance: hit.point.minus(eye).length(), snapped: true }
     }
 
-    /// Sketch line within the pick radius of view position (x, y), like pickPart, or null.
-    /// Like pickPart without part `skipId` (and without the Move / Rotate / Scale preview).
-    function pickPartSkipping(x, y, skipId) {
+    /// Nearest hit under (x, y) on one of the parts `ids` (a click that goes through
+    /// everything else, such as planes or sketches in front), or null.
+    function pickPartAmong(x, y, ids) {
         const near = modelSpace.mapPositionFromScene(view.mapTo3DScene(Qt.vector3d(x, y, 0)))
         const far = modelSpace.mapPositionFromScene(view.mapTo3DScene(Qt.vector3d(x, y, 100)))
         const eye = modelSpace.mapPositionFromScene(view.camera.scenePosition)
-        const hit = controller.pickSurface(near, far.minus(near), skipId, 0)
-        if (!hit.partId)
-            return null
-        return { partId: hit.partId, point: hit.point, distance: hit.point.minus(eye).length(),
-                 triangle: hit.triangle, localPoint: hit.point }
+        let best = null
+        for (const id of ids) {
+            const hit = controller.pickSurface(near, far.minus(near), 0, id)
+            if (!hit.partId)
+                continue
+            const d = hit.point.minus(eye).length()
+            if (!best || d < best.distance)
+                best = { partId: hit.partId, point: hit.point, distance: d, triangle: hit.triangle, localPoint: hit.point }
+        }
+        return best
     }
 
+    /// Sketch line within the pick radius of view position (x, y), like pickPart, or null.
     function pickSketchLine(x, y) {
         const near = modelSpace.mapPositionFromScene(view.mapTo3DScene(Qt.vector3d(x, y, 0)))
         const far = modelSpace.mapPositionFromScene(view.mapTo3DScene(Qt.vector3d(x, y, 100)))
