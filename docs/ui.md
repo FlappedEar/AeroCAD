@@ -344,6 +344,9 @@ See [cad.md](cad.md) for the timeline and the commands behind the tools.
   **Extrude** shows a distance arrow on the profile (dashed, with the distance next to its
   head): drag the head to set the distance, below the sketch to flip it; the value field
   and the preview follow. A distance typed as an expression is not dragged.
+  **Fillet**, **Chamfer** (equal distance) and **Shell** show the same arrow once an edge or
+  face is picked: on the middle of the first edge, into the corner (Radius / Distance), or on
+  the first removed face, into the body (Thickness). Drag it to set the size.
   Extent **To Object** (Fusion): click the face of a body, a surface, a solid or a scan to
   stop at; the solid follows its shape (a curved face gives a curved end). Clicking a body
   stops at the clicked face. An extrusion that does not reach the object says so (try Flip).
