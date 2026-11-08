@@ -143,6 +143,8 @@ Pane {
 
     readonly property bool anyRunning: runs.some(r => r.state === "running")
     readonly property var activeStatus: runs.find(r => r.id === activeRun) ?? null
+    /// The shown run is still running: its checks and final numbers come after the run (CAD-150).
+    readonly property bool activeRunning: !!activeStatus && activeStatus.state === "running"
     // Re-read after any change of the parts (a Scale changes the size shown, CAD-109).
     property int partRevision: 0
     readonly property Connections _partWatch: Connections {
@@ -994,7 +996,10 @@ Pane {
                                                   (root.activeStatus.source.partName || root.activeStatus.id) : ""
                     }
                     Rectangle {
-                        readonly property string status: root.results ? root.results.quality.status : "unknown"
+                        // While the run runs every check is still missing: judged after the run (CAD-150).
+                        readonly property bool running: root.activeRunning
+                        readonly property string status: running ? "running"
+                                                         : root.results ? root.results.quality.status : "unknown"
                         radius: 3
                         implicitWidth: qualityLabel.implicitWidth + 10
                         implicitHeight: qualityLabel.implicitHeight + 4
@@ -1004,7 +1009,7 @@ Pane {
                             anchors.centerIn: parent
                             color: "white"
                             font.pixelSize: 11
-                            text: qsTr("checks: %1").arg(parent.status)
+                            text: parent.running ? qsTr("checks: after the run") : qsTr("checks: %1").arg(parent.status)
                         }
                     }
                 }
@@ -1038,12 +1043,13 @@ Pane {
                 }
 
                 Label {
-                    text: root.results && root.results.finalResults.available
-                        ? qsTr("Final results") : qsTr("Final results unavailable")
+                    text: root.results && root.results.finalResults.available ? qsTr("Final results")
+                          : root.activeRunning ? qsTr("Final results when the run has finished")
+                          : qsTr("Final results unavailable")
                     font.bold: true
                 }
                 Repeater {
-                    model: root.results ? root.results.finalResults.reasons : []
+                    model: root.results && !root.activeRunning ? root.results.finalResults.reasons : []
                     delegate: Label {
                         required property var modelData
                         Layout.fillWidth: true
@@ -1094,7 +1100,7 @@ Pane {
                     }
                 }
                 Repeater {
-                    model: root.results ? root.qualityLines(root.results.quality) : []
+                    model: root.results && !root.activeRunning ? root.qualityLines(root.results.quality) : []
                     delegate: Label {
                         required property var modelData
                         Layout.fillWidth: true
