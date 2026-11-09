@@ -2079,6 +2079,17 @@ TEST_CASE("Aero balance: front and rear axle lift of a car with wheels (CAD-194)
         CHECK(summary.at("rearLiftN").get<double>() == Approx(-100.0 - expectedFront).epsilon(1e-6));
         CHECK(summary.at("frontShare").get<double>() == Approx(100.0 * expectedFront / -100.0).epsilon(1e-6));
         CHECK(summary.at("spread").at("frontLiftN").get<double>() == Approx(0.0).margin(1e-9));
+        {
+            // A run that did not finish has no final balance and no swing, even with complete
+            // force and moment histories (Codex review on #166).
+            write(tmp.path() / id / "aerocad.status", "failed: solve\n");
+            const auto failed = runs.results(id).at("summary");
+            CHECK(failed.at("frontLiftN").is_null());
+            CHECK(failed.at("rearLiftN").is_null());
+            CHECK(failed.at("frontShare").is_null());
+            CHECK(failed.at("spread").is_null());
+            write(tmp.path() / id / "aerocad.status", "finished\n");
+        }
 
         // A/B: the axle loads compare like the other forces.
         const std::string b = runs.prepare(g, s, {});

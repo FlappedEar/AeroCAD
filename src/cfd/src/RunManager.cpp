@@ -1647,9 +1647,15 @@ Json RunManager::results(const std::string& id, int maxPoints)
         current["iterations"] = coeffs.time.size();
         j["current"] = current;
     }
-    if (!finalAvailable)
+    if (!finalAvailable) {
         for (const char* key : resultKeys)
             j["summary"][key] = nullptr;
+        // The optional final values too: the aero balance (CAD-194) and the swing (CAD-191)
+        // of a run that did not finish are no final results either.
+        for (const char* key : {"frontLiftN", "rearLiftN", "frontShare"})
+            j["summary"][key] = nullptr;
+        j["summary"]["spread"] = nullptr;
+    }
 
     const auto ci = sampleIndices(coeffs.time.size(), maxPoints);
     const auto fi = sampleIndices(forces.time.size(), maxPoints);
@@ -2159,8 +2165,12 @@ Json RunManager::compare(const std::string& a, const std::string& b)
     // CAD-191: a difference no larger than the swing of A plus the swing of B over the
     // averaging window is inside the iteration noise. scaleB puts B's swing on A's area.
     auto addNoise = [&](Json& d, const char* key, double scaleB) {
-        const Json pa = sa.value("spread", Json::object()).value(key, Json());
-        const Json pb = sb.value("spread", Json::object()).value(key, Json());
+        // The spread is null for a run without final results.
+        auto spread = [&](const Json& summary) {
+            const Json p = summary.value("spread", Json());
+            return p.is_object() ? p.value(key, Json()) : Json();
+        };
+        const Json pa = spread(sa), pb = spread(sb);
         if (!pa.is_number() || !pb.is_number())
             return;
         const double noise = pa.get<double>() + pb.get<double>() * scaleB;
