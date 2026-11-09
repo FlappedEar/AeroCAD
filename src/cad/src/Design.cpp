@@ -1571,9 +1571,11 @@ void Design::moveSketchCurves(FeatureId sketchId, const std::vector<std::size_t>
         for (std::size_t i = 0; i < curves.size(); ++i)
             if (sel[i])
                 self[i] = i;
+        // Only dimensions wholly among them: one to the sketch origin positions the curves
+        // and stays.
         for (auto& c : constraints) {
             Json probe = c;
-            if (remapConstraint(probe, self))
+            if (c.dump().find("\"origin\"") == std::string::npos && remapConstraint(probe, self))
                 scaleDimension(c, place.scale);
         }
     }

@@ -2616,6 +2616,20 @@ TEST_CASE("Design commands: Sketch Scale (CAD-253)", "[commands][cad][solver]")
         run(s, "edit.undo");
         CHECK(std::abs(curves().at("curves")[4].at("radius").get<double>() - 5) < 1e-6);
     }
+    SECTION("a dimension to the sketch origin positions the curve: it is not scaled")
+    {
+        run(s, "sketch.add_constraints",
+            {{"sketch", id},
+             {"constraints", Json::array({{{"type", "horizontal_distance"},
+                                           {"points", Json::array({"origin", {{"curve", 4}, {"point", "center"}}})},
+                                           {"value", 60}}})}});
+        run(s, "sketch.scale_curves", {{"sketch", id}, {"curves", {4}}, {"factor", 2}});
+        const Json c = curves();
+        CHECK(near(c.at("curves")[4].at("points")[0], 60, 10));
+        CHECK(std::abs(c.at("curves")[4].at("radius").get<double>() - 10) < 1e-6);
+        CHECK(std::abs(c.at("constraints")[0].at("value").get<double>() - 20) < 1e-9); // the diameter
+        CHECK(std::abs(c.at("constraints")[1].at("value").get<double>() - 60) < 1e-9); // the origin distance
+    }
     SECTION("the whole rectangle about a corner")
     {
         run(s, "sketch.scale_curves", {{"sketch", id}, {"curves", {0, 1, 2, 3}}, {"factor", 0.5}, {"point", {0, 0}}});
