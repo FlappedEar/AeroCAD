@@ -7,6 +7,7 @@
 #include "aerocad/core/MeshSelection.hpp"
 #include "aerocad/core/Symmetry.hpp"
 #include "aerocad/geometry/DrapeFit.hpp"
+#include "aerocad/geometry/Inspect.hpp"
 #include "aerocad/geometry/Modeling.hpp"
 #include "aerocad/geometry/Offset.hpp"
 #include "aerocad/geometry/RegionFit.hpp"
@@ -482,10 +483,33 @@ cad::FeatureEvaluator::Output finOnSurface(const model::Document& doc, const cad
         mirrorReport["point"] = {point.x, point.y, point.z};
         mirrorReport["normal"] = {normal.x, normal.y, normal.z};
         const std::size_t one = placements.size();
+        const std::string planeName = plane == "auto" ? "centre plane" : "mirror plane";
         for (std::size_t k = 0; k < one; ++k) {
             const Placement& p = placements[k];
             if (std::abs((p.plane.origin - point).dot(normal)) < 1.0)
                 throw CommandError("The fin stands on the mirror plane; a mirrored copy would fall on it");
+            // A fin drawn across the centre plane would overlap its own mirrored copy
+            // (two bodies in one place, printed twice). Each closed profile on its own:
+            // separate profiles may lie on both sides of the plane (CAD-246).
+            const double half = 0.5 * thickness * std::abs(p.plane.normal.dot(normal));
+            for (const auto& o : p.outlines) {
+                double lo = std::numeric_limits<double>::max(), hi = -lo;
+                const auto t = geometry::tessellate(o);
+                for (const auto& v : t.vertices()) {
+                    const double s = (v - point).dot(normal);
+                    lo = std::min(lo, s - half);
+                    hi = std::max(hi, s + half);
+                }
+                const double across = std::min(-lo, hi);
+                if (across > 0.5) {
+                    char mm[32];
+                    std::snprintf(mm, sizeof mm, "%.1f", across);
+                    throw CommandError((one > 1 ? "Fin " + std::to_string(k + 1) : std::string("The fin")) +
+                                       " reaches " + mm + " mm across the " + planeName +
+                                       ", so it would overlap its mirrored copy. Draw it on one side of the " +
+                                       planeName + ", or make it on this side only");
+                }
+            }
             Placement q;
             q.plane.origin = core::mirrorPoint(p.plane.origin, point, normal);
             q.plane.xDir = core::mirrorDirection(p.plane.xDir, normal);
@@ -494,6 +518,32 @@ cad::FeatureEvaluator::Output finOnSurface(const model::Document& doc, const cad
                 q.outlines.push_back(geometry::mirrored(o, point, normal));
             placements.push_back(onSkin(q, "Mirrored fin " + std::to_string(k + 1)));
         }
+        // One profile may still run into the mirrored copy of another (both on one side,
+        // or a stacked fin reaching over): compare the fins' slabs (outline x thickness).
+        auto slabs = [&](const Placement& p) {
+            std::vector<geometry::Shape> out;
+            for (const auto& o : p.outlines)
+                out.push_back(geometry::extrude(o, p.plane.normal, 0.5 * thickness, 0.5 * thickness));
+            return out;
+        };
+        std::vector<std::vector<geometry::Shape>> originals, copies;
+        for (std::size_t k = 0; k < one; ++k) {
+            originals.push_back(slabs(placements[k]));
+            copies.push_back(slabs(placements[one + k]));
+        }
+        // (A profile and its own copy: the plane check above.)
+        for (std::size_t k = 0; k < one; ++k)
+            for (std::size_t i = 0; i < originals[k].size(); ++i)
+                for (std::size_t m = 0; m < one; ++m)
+                    for (std::size_t j = 0; j < copies[m].size(); ++j)
+                        if ((k != m || i != j) && geometry::boundsOverlap(originals[k][i], copies[m][j]) &&
+                            geometry::interferenceVolume(originals[k][i], copies[m][j]) > 1.0)
+                            throw CommandError(
+                                (one > 1 ? "Fin " + std::to_string(k + 1) : std::string("The fin")) +
+                                " overlaps the mirrored copy of " +
+                                (one > 1 ? "fin " + std::to_string(m + 1) : std::string("another of its outlines")) +
+                                ". Move the outlines apart from their mirror images across the " + planeName +
+                                ", or make the fins on this side only");
     }
 
     // The worst fit of all fins made: one fin out of tolerance marks the feature.

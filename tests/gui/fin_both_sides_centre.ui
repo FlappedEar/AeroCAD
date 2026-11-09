@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CAD-246: Fin on surface with Both sides refuses a fin drawn across the mirror plane (it
+# would overlap its own mirrored copy), says how far it reaches across, and keeps the pane
+# open. The selection toolbar is hidden while the pane covers its place (CAD-247).
+ui.wait(1200)
+(() => { const p = controller.execute("document.parts").result.parts[0]; window.selectPart(p.id) })()
+ui.wait(300)
+# A fin standing on top of the dome, its 80 mm chord along Y, centred 10 mm off the XZ plane.
+(() => { const b = window.selectionInfo; const line = (a, c) => ({ type: "line", start: a, end: c }); window.createSketch({ surface: { part: window.selectedPartId, point: [b.center[0], b.center[1] + 10, b.center[2] + b.sizeZ / 2], across: true, angle: 0 }, curves: [line([-4, -40], [30, -20]), line([30, -20], [30, 20]), line([30, 20], [-4, 40]), line([-4, 40], [-4, -40])] }) })()
+ui.wait(1000)
+(() => { if (!window.activeSketch) ui.fail("no fin sketch") })()
+ui.clickText("Finish Sketch")
+ui.wait(800)
+(() => { const pane = ((g) => g(g, window.contentItem))((g, it) => it.objectName === "partOnSurfacePane" ? it : Array.from(it.children).reduce((a, c) => a || g(g, c), null)); if (!pane || !pane.visible) ui.fail("Fin on surface pane not shown"); if (viewport.selectionToolsAvailable) ui.fail("the selection toolbar is shown under the Fin on surface pane") })()
+ui.clickText("Both sides")
+ui.wait(200)
+# Mirror in the XZ plane (the dome is round, so its own centre plane is not unique).
+(() => { const find = (name) => ((g) => g(g, window.contentItem))((g, it) => it.objectName === name ? it : Array.from(it.children).reduce((a, c) => a || g(g, c), null)); const m = find("finMirror"); if (!m || !m.checked) ui.fail("Both sides is not checked"); find("finMirrorPlane").currentIndex = 2 })()
+ui.clickText("Create")
+ui.wait(4000)
+(() => { const bodies = controller.execute("document.parts").result.parts.filter(p => p.kind === "body"); ui.log("BODIES " + bodies.length + " | " + controller.statusMessage); if (bodies.length !== 0) ui.fail("overlapping mirrored fins were made: " + bodies.length); if (!/reaches \d+(\.\d)? mm across the mirror plane/.test(controller.statusMessage)) ui.fail("status does not say the fin crosses the mirror plane: " + controller.statusMessage) })()
+(() => { const pane = ((g) => g(g, window.contentItem))((g, it) => it.objectName === "partOnSurfacePane" ? it : Array.from(it.children).reduce((a, c) => a || g(g, c), null)); if (!pane.visible) ui.fail("the pane closed after the refusal") })()
+ui.shot("fin-both-sides-centre.png")
+# This side only: one fin is made and the selection toolbar comes back.
+ui.clickText("Both sides")
+ui.wait(200)
+ui.clickText("Create")
+ui.wait(6000)
+(() => { const bodies = controller.execute("document.parts").result.parts.filter(p => p.kind === "body"); ui.log("ONE " + bodies.length + " | " + controller.statusMessage); if (bodies.length !== 1) ui.fail("this side only did not make one fin: " + bodies.length); if (!viewport.selectionToolsAvailable) ui.fail("the selection toolbar did not come back") })()
+(() => { Qt.quit() })()
