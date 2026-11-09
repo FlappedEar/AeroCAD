@@ -24,7 +24,8 @@ Pane {
         // Bodies and exact solids are cheap to measure; a big scan mesh is left to Measure.
         const measurable = info.kind === "body" || (info.kind === "imported" && (info.hasBrep ? (info.solids ?? 0) > 0
                                                                                     : (info.triangles ?? 0) <= 200000))
-        if (!partId || !measurable)
+        // Measured only while the panel is shown (it runs on the GUI thread).
+        if (!partId || !measurable || !visible)
             return
         const r = controller.execute("geometry.measure", { kind: "part", id: partId })
         if (r.ok && r.result.closed && r.result.volume > 0)
@@ -33,6 +34,7 @@ Pane {
     function fixed(v, d) { return Number(v).toLocaleString(Qt.locale(), "f", d) }
 
     onPartIdChanged: refresh()
+    onVisibleChanged: if (visible) refresh()
     Connections {
         target: root.controller
         function onPartChanged(id) {

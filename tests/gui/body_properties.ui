@@ -10,6 +10,13 @@ ui.wait(500)
 (() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "bpTest"); t.clickAt(15, 5, 10) })()
 ui.wait(500)
 (() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "bpTest"); const v = t.text("propVolume"), a = t.text("propArea"), c = t.text("propCentre"), m = t.text("propMass"); ui.log("volume '" + v + "', area '" + a + "', centre '" + c + "', mass '" + m + "'"); if (!/^3[.,]000 cm³$/.test(v)) ui.fail("no volume 3 cm³"); if (!/^14[.,]00 cm²$/.test(a)) ui.fail("no area 14 cm²"); if (!/8[.,]33.*5[.,]00.*8[.,]33/.test(c)) ui.fail("wrong centre of mass"); if (!/^3[.,]7 g/.test(m)) ui.fail("no PLA mass 3.7 g") })()
+# Hidden (View > Show Properties off), the panel measures nothing; shown again, it does.
+(() => { window.propertiesVisible = false })()
+ui.wait(200)
+(() => { properties.refresh(); if (properties.physical !== null) ui.fail("the hidden panel still measured the body") })()
+(() => { window.propertiesVisible = true })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "bpTest"); if (!/^3[.,]000 cm³$/.test(t.text("propVolume"))) ui.fail("shown again, the panel has no volume: '" + t.text("propVolume") + "'") })()
 # Scroll the panel down to the details, as a user would.
 (() => { const p = properties.mapToItem(null, properties.width / 2, properties.height / 2); ui.mouseWheel(p.x, p.y, -3) })()
 ui.wait(150)

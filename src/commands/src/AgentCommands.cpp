@@ -86,11 +86,12 @@ Json measurePart(const model::Document& doc, const Json& params)
     const core::TriangleMesh& mesh = *p.mesh;
     Json warnings = Json::array();
 
-    const std::size_t openEdges = core::openEdgeCount(mesh);
     double volume = 0.0;
     std::string volumeMethod;
-    // Closedness of exact geometry comes from its topology (solids), not from the mesh.
+    // Closedness of exact geometry comes from its topology (solids), not from the mesh, so
+    // the mesh edge scan (slow on a big display mesh) is left out for solids.
     const bool hasSolid = p.shape && p.shape->solidCount() > 0;
+    const std::size_t openEdges = hasSolid ? 0 : core::openEdgeCount(mesh);
     const bool closed = hasSolid || openEdges == 0;
     if (hasSolid) {
         volume = p.shape->volume();
@@ -118,7 +119,7 @@ Json measurePart(const model::Document& doc, const Json& params)
              {"surfaceArea", exactArea ? p.shape->surfaceArea() : mesh.surfaceArea()},
              {"volume", volume},
              {"closed", closed},
-             {"openEdges", hasSolid ? std::size_t{0} : openEdges},
+             {"openEdges", openEdges},
              {"triangles", mesh.triangleCount()},
              {"units", {{"length", "mm"}, {"area", "mm^2"}, {"volume", "mm^3"}}},
              {"method", std::string(exactArea ? "Bounds from the display mesh, surface area exact from the B-rep faces. "
