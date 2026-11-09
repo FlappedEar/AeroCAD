@@ -159,6 +159,46 @@ TEST_CASE("3MF export with unit, names and welded B-rep tessellation", "[io][exp
     CHECK(check.shells == 2);
     CHECK(check.signedVolume == Approx(1000.0 / 6.0 + 1000.0).epsilon(1e-9));
     CHECK(back.mesh.bounds().max.x == Approx(110.0));
+
+    // CAD-228: one body per build item, named after its object.
+    REQUIRE(back.bodies.size() == 2);
+    CHECK(back.bodies[0].name == "tet <1> & \"x\"");
+    CHECK(back.bodies[1].name == "box");
+    CHECK(back.bodies[1].mesh.triangleCount() == box.triangleCount());
+    CHECK_FALSE(back.bodies[0].shape.has_value());
+}
+
+TEST_CASE("3MF export and import keep Appearance colours (CAD-228)", "[io][export][3mf]")
+{
+    TempDir dir;
+    const core::TriangleMesh a = tetrahedron(10.0, 0.0);
+    const core::TriangleMesh b = tetrahedron(10.0, 50.0);
+    const core::TriangleMesh c = tetrahedron(10.0, 100.0);
+    const fs::path path = dir.file("colours.3mf");
+    io::exportFile(path, {{"red", &a, nullptr, "#cc3333"}, {"plain", &b, nullptr, ""}, {"red too", &c, nullptr, "#cc3333"}});
+
+    // One material per distinct colour, declared before the objects that use it.
+    const std::string model = zipEntry(path, "3D/3dmodel.model");
+    CHECK_THAT(model, ContainsSubstring(R"(<basematerials id="4">)"));
+    CHECK_THAT(model, ContainsSubstring(R"(displaycolor="#CC3333FF")"));
+    CHECK(model.find("<base ") == model.rfind("<base "));
+    CHECK(model.find("<basematerials") < model.find("<object"));
+    CHECK_THAT(model, ContainsSubstring(R"(name="red" pid="4" pindex="0")"));
+    CHECK_THAT(model, ContainsSubstring(R"(name="plain">)"));
+
+    const io::ImportResult back = io::importFile(path);
+    REQUIRE(back.bodies.size() == 3);
+    CHECK(back.bodies[0].color == "#cc3333");
+    CHECK(back.bodies[1].color.empty());
+    CHECK(back.bodies[2].name == "red too");
+    CHECK(back.bodies[2].color == "#cc3333");
+
+    // A single object is one result, with its colour.
+    const fs::path one = dir.file("one.3mf");
+    io::exportFile(one, {{"green", &a, nullptr, "#5aa65a"}});
+    const io::ImportResult single = io::importFile(one);
+    CHECK(single.bodies.empty());
+    CHECK(single.color == "#5aa65a");
 }
 
 TEST_CASE("STEP export round trip keeps exact geometry in mm", "[io][export][step]")

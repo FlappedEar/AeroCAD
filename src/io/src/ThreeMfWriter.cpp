@@ -8,7 +8,10 @@
 
 #include <miniz.h>
 
+#include <algorithm>
+#include <cctype>
 #include <string>
+#include <vector>
 
 namespace aerocad::io {
 
@@ -29,6 +32,12 @@ constexpr const char* kRels =
     R"(<Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/>)"
     "</Relationships>\n";
 
+bool isHexColor(const std::string& c)
+{
+    return c.size() == 7 && c[0] == '#' &&
+           std::all_of(c.begin() + 1, c.end(), [](char ch) { return std::isxdigit(static_cast<unsigned char>(ch)) != 0; });
+}
+
 std::string buildModel(const std::vector<ExportItem>& items)
 {
     std::string xml;
@@ -45,12 +54,39 @@ std::string buildModel(const std::vector<ExportItem>& items)
         R"(<metadata name="Application">AeroCAD</metadata>)"
         "\n<resources>\n";
 
+    // Appearance colours as a core-spec material group (CAD-228), declared before the
+    // objects that use it. Its id follows the object ids.
+    std::vector<std::string> colors;
+    std::vector<int> colorIndex(items.size(), -1);
+    for (std::size_t i = 0; i < items.size(); ++i) {
+        if (!isHexColor(items[i].color))
+            continue;
+        auto it = std::find(colors.begin(), colors.end(), items[i].color);
+        if (it == colors.end())
+            it = colors.insert(colors.end(), items[i].color);
+        colorIndex[i] = static_cast<int>(it - colors.begin());
+    }
+    const std::string materialsId = std::to_string(items.size() + 1);
+    if (!colors.empty()) {
+        xml += R"(<basematerials id=")" + materialsId + "\">\n";
+        for (const std::string& c : colors) {
+            xml += R"(<base name=")" + c + R"(" displaycolor=")";
+            for (const char ch : c)
+                xml += static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+            xml += "FF\"/>\n";
+        }
+        xml += "</basematerials>\n";
+    }
+
     for (std::size_t i = 0; i < items.size(); ++i) {
         // 3MF requires shared vertices (B-rep tessellations have one vertex set per face).
         const core::TriangleMesh mesh = core::weldVertices(*items[i].mesh);
         xml += R"(<object id=")" + std::to_string(i + 1) + R"(" type="model" name=")";
         detail::appendXmlEscaped(xml, items[i].name);
-        xml += "\">\n<mesh>\n<vertices>\n";
+        xml += "\"";
+        if (colorIndex[i] >= 0)
+            xml += R"( pid=")" + materialsId + R"(" pindex=")" + std::to_string(colorIndex[i]) + "\"";
+        xml += ">\n<mesh>\n<vertices>\n";
         for (const core::Vec3& v : mesh.vertices()) {
             xml += R"(<vertex x=")";
             detail::appendNumber(xml, v.x);

@@ -55,8 +55,8 @@ void registerDocumentCommands(CommandRegistry& r)
 {
 
     r.add({"document.import", "Import 3D file",
-           "Imports a 3D file (STL, OBJ, PLY, 3MF, STEP, IGES, BREP) as a new part. A STEP file with several "
-           "bodies gives one part per body, with the file's names and colours; the result is the first part "
+           "Imports a 3D file (STL, OBJ, PLY, 3MF, STEP, IGES, BREP) as a new part. A STEP or 3MF file with "
+           "several bodies gives one part per body, with the file's names and colours; the result is the first part "
            "and `parts` lists all of them. The document works in "
            "millimetres. STEP, IGES and 3MF use their file units automatically. For unitless STL, OBJ, PLY "
            "and BREP files, `units` selects the source unit to convert to millimetres.",

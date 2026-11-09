@@ -24,13 +24,15 @@ enum class FileFormat { Unknown, Stl, Obj, Ply, ThreeMf, Step, Iges, Brep };
 /// File extensions (without dot, lower case) accepted by importFile().
 [[nodiscard]] std::vector<std::string> supportedImportExtensions();
 
-/// One body of a file that holds several (STEP products, CAD-227), in millimetres.
+/// One body of a file that holds several (STEP products, CAD-227; 3MF build items, CAD-228),
+/// in millimetres.
 struct ImportBody {
     /// Name from the file; empty when the file has none (the caller names it).
     std::string name;
     /// Colour from the file, "#rrggbb", or empty.
     std::string color;
     core::TriangleMesh mesh;
+    /// Exact geometry (STEP only).
     std::optional<geometry::Shape> shape;
 };
 

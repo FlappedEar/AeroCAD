@@ -14,6 +14,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace aerocad::io {
@@ -69,7 +70,31 @@ struct Component {
 struct Object {
     std::unique_ptr<MeshObject> mesh;
     std::vector<Component> components;
+    std::string name;
+    /// Display colour from the object's pid/pindex (core basematerials), "#rrggbb" or empty.
+    std::string color;
 };
+
+/// "#RRGGBB" or "#RRGGBBAA" (3MF displaycolor) as "#rrggbb"; empty for anything else.
+std::string parseDisplayColor(std::string_view text)
+{
+    text = detail::trim(text);
+    if ((text.size() != 7 && text.size() != 9) || text[0] != '#')
+        return {};
+    std::string out = "#";
+    for (std::size_t i = 1; i < 7; ++i) {
+        const char c = text[i];
+        if (c >= '0' && c <= '9')
+            out += c;
+        else if (c >= 'a' && c <= 'f')
+            out += c;
+        else if (c >= 'A' && c <= 'F')
+            out += static_cast<char>(c - 'A' + 'a');
+        else
+            return {};
+    }
+    return out;
+}
 
 std::string_view localName(std::string_view qualified)
 {
@@ -243,6 +268,8 @@ public:
     }
 
     core::MeshBuilder& builder() { return m_builder; }
+    /// The triangles emitted since the last call.
+    core::TriangleMesh take() { return std::exchange(m_builder, core::MeshBuilder{}).take(); }
 
 private:
     void emitMesh(const MeshObject& mesh, const Affine& transform)
@@ -340,6 +367,15 @@ ImportResult read3mf(const std::filesystem::path& path)
         detail::WarningSink warnings(result.warnings);
         const double scale = unitScale(attribute(model, "unit").value(), warnings);
 
+        // Core spec material groups: <basematerials id><base displaycolor/></basematerials>.
+        std::unordered_map<std::string, std::vector<std::string>> materials;
+        forEachChild(child(model, "resources"), "basematerials", [&](const pugi::xml_node& group) {
+            std::vector<std::string>& colors = materials[std::string(detail::trim(attribute(group, "id").value()))];
+            forEachChild(group, "base", [&](const pugi::xml_node& base) {
+                colors.push_back(parseDisplayColor(attribute(base, "displaycolor").value()));
+            });
+        });
+
         std::unordered_map<std::string, Object> objects;
         std::vector<std::string> objectOrder;
         forEachChild(child(model, "resources"), "object", [&](const pugi::xml_node& o) {
@@ -349,6 +385,16 @@ ImportResult read3mf(const std::filesystem::path& path)
                 return;
             }
             Object object;
+            object.name = attribute(o, "name").value();
+            if (const auto group = materials.find(std::string(detail::trim(attribute(o, "pid").value())));
+                group != materials.end()) {
+                long long index = 0;
+                const pugi::xml_attribute pindex = attribute(o, "pindex");
+                if (pindex && !detail::parseInt(detail::trim(pindex.value()), index))
+                    index = -1;
+                if (index >= 0 && static_cast<std::size_t>(index) < group->second.size())
+                    object.color = group->second[static_cast<std::size_t>(index)];
+            }
             if (const pugi::xml_node meshNode = child(o, "mesh"))
                 object.mesh = parseMesh(meshNode, id, warnings);
             forEachChild(child(o, "components"), "component", [&](const pugi::xml_node& c) {
@@ -371,7 +417,21 @@ ImportResult read3mf(const std::filesystem::path& path)
             objects[id] = std::move(object);
         });
 
+        // One body per build item (CAD-228): a file with several objects gives one part each.
         ModelBuilder builder(objects, warnings, scale);
+        std::vector<ImportBody> bodies;
+        const auto finishBody = [&](const std::string& id) {
+            core::TriangleMesh mesh = builder.take();
+            if (mesh.isEmpty())
+                return;
+            ImportBody body;
+            if (const auto it = objects.find(id); it != objects.end()) {
+                body.name = it->second.name;
+                body.color = it->second.color;
+            }
+            body.mesh = std::move(mesh);
+            bodies.push_back(std::move(body));
+        };
         bool anyItem = false;
         forEachChild(child(model, "build"), "item", [&](const pugi::xml_node& item) {
             anyItem = true;
@@ -383,16 +443,27 @@ ImportResult read3mf(const std::filesystem::path& path)
             const pugi::xml_attribute tr = attribute(item, "transform");
             if (tr && !parseTransform(tr.value(), transform))
                 warnings.add("Invalid build item transform, using identity");
-            builder.emit(std::string(detail::trim(attribute(item, "objectid").value())), transform);
+            const std::string id(detail::trim(attribute(item, "objectid").value()));
+            builder.emit(id, transform);
+            finishBody(id);
         });
         if (!anyItem) {
             warnings.add("3MF file has no build items; importing all mesh objects");
             for (const std::string& id : objectOrder) {
-                if (objects[id].mesh)
+                if (objects[id].mesh) {
                     builder.emit(id, Affine{});
+                    finishBody(id);
+                }
             }
         }
-        result.mesh = builder.builder().take();
+        if (bodies.size() == 1) {
+            result.mesh = std::move(bodies.front().mesh);
+            result.color = bodies.front().color;
+        } else {
+            for (const ImportBody& body : bodies)
+                result.mesh.append(body.mesh);
+            result.bodies = std::move(bodies);
+        }
     }
 
     if (result.mesh.isEmpty())
