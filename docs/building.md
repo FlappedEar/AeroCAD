@@ -64,7 +64,10 @@ ctest --preset dev
 - `ctest -L gui` runs the application smoke test: it starts AeroCAD with
   `--smoke-test <file>`, imports the file through the command layer, renders a few frames
   and checks that the model is visible in the viewport. Add `--screenshot out.png` when
-  running it by hand to save the frame.
+  running it by hand to save the frame. The GUI tests run one at a time even under
+  `ctest -j`: they share the desktop, and a window opening in one test would take the
+  focus from a drag in another. On Linux without a display, run them under
+  `xvfb-run -a -s "-screen 0 1600x1000x24" ctest -L gui`.
 
 To check a workflow on a real file, `--ui-script <file>` drives the running application:
 each line is a JavaScript statement evaluated in `Main.qml`, with a `ui` object for real

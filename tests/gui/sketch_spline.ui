@@ -46,6 +46,16 @@ ui.shot("sketch-spline-drag.png")
 (() => { controller.execute("edit.undo") })()
 ui.wait(400)
 (() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "spTest"); const s = t.curves()[1]; const want = [[10, 0], [30, 20], [50, 0]]; if (s.points.some((p, i) => Math.hypot(p[0] - want[i][0], p[1] - want[i][1]) > 1e-6)) ui.fail("undo did not take back the fit point drag: " + JSON.stringify(s.points)); if (t.curves().length !== 5) ui.fail("undo took back more than the drag") })()
+# CAD-201: another window takes focus in the middle of a drag (the press is cancelled). The
+# drag is dropped as with Esc: the point goes back, nothing is recorded, nothing stays stuck.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "spTest"); t.s.top = controller.historyTopId(); const a = t.at(30, 20), b = t.at(30, 10); ui.move(a.x, a.y); ui.press(a.x, a.y); for (let i = 1; i <= 5; ++i) ui.move(a.x, a.y + (b.y - a.y) * i / 10) })()
+ui.wait(200)
+(() => { if (!viewport.sketchOverlay.pointDragging) ui.fail("the drag did not start") ; const t = Array.from(window.contentItem.children).find(c => c.objectName === "spTest"); t.s.other = Qt.createQmlObject('import QtQuick; Window { width: 200; height: 200; visible: true }', window); t.s.other.requestActivate() })()
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "spTest"); const b = t.at(30, 10); ui.move(b.x, b.y); ui.release(b.x, b.y) })()
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "spTest"); const s = t.curves()[1]; ui.log("after focus loss " + JSON.stringify(s.points)); if (viewport.sketchOverlay.pointDragging) ui.fail("the point drag is stuck after focus loss"); if (Math.hypot(s.points[1][0] - 30, s.points[1][1] - 20) > 1e-6) ui.fail("the cancelled drag moved the point: " + JSON.stringify(s.points)); if (controller.historyTopId() !== t.s.top) ui.fail("the cancelled drag was recorded"); t.s.other.close(); t.s.other.destroy(); window.requestActivate() })()
+ui.wait(500)
 # A Fix on the whole spline holds its inner fit points: dragging one changes nothing.
 (() => { const r = controller.execute("sketch.add_constraints", { sketch: activeSketch.id, constraints: [{ type: "fix", curve: 1 }] }); if (!r.ok) ui.fail("fix spline: " + r.error) })()
 ui.wait(400)

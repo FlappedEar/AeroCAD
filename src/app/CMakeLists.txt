@@ -651,4 +651,15 @@ if(AEROCAD_BUILD_TESTS)
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/new_project_reset.ui)
     set_tests_properties(app_new_project_reset_test PROPERTIES LABELS "gui;openfoam" TIMEOUT 300
         ENVIRONMENT "AEROCAD_CFD_DIR=${CMAKE_CURRENT_BINARY_DIR}/gui-test-runs")
+
+    # GUI tests share one desktop (or one Xvfb display): a window that opens in another test
+    # takes the focus and cancels the mouse grab of a drag under way (CAD-201). They run one
+    # at a time, also under `ctest -j`; the unit tests still run in parallel next to them.
+    get_property(_app_tests DIRECTORY PROPERTY TESTS)
+    foreach(_test IN LISTS _app_tests)
+        get_test_property(${_test} LABELS _labels)
+        if("gui" IN_LIST _labels)
+            set_tests_properties(${_test} PROPERTIES RUN_SERIAL TRUE)
+        endif()
+    endforeach()
 endif()

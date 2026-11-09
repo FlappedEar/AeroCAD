@@ -726,6 +726,15 @@ Item {
             root.hover = root.snap(mouse.x, mouse.y)
             canvas.requestPaint()
         }
+        // The press was taken away before the release: another window took focus, a menu or
+        // dialog opened, or the window system cancelled the grab. A point drag is dropped as
+        // with Esc (its preview would otherwise stay uncommitted and the drag stuck), and a
+        // drawing drag stops.
+        onCanceled: {
+            root.cancelPointDrag()
+            dragging = false
+            dragEnded = false
+        }
         onReleased: mouse => {
             if (root.selecting) {
                 if (pointDragging) {
