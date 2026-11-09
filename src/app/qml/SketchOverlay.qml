@@ -1461,7 +1461,9 @@ Item {
                 }
             }
             Label {
-                visible: root.degreesOfFreedom >= 0
+                objectName: "sketchDofStatus"
+                // An empty sketch has nothing to constrain: no status, as in Fusion (CAD-249).
+                visible: root.degreesOfFreedom >= 0 && root.sketchCurves.length > 0
                 text: root.degreesOfFreedom === 0 ? qsTr("Fully constrained")
                     : qsTr("%n degree(s) of freedom", "", root.degreesOfFreedom)
                 color: root.degreesOfFreedom === 0 ? Theme.success : Theme.textMuted
