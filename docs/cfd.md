@@ -365,6 +365,12 @@ Each run in the run list has a line with its conditions, for example "55.56 m/s 
 flow +X · medium mesh · fixed floor at Z -40 mm" (CAD-181,
 [run list](images/audit/cad-181-run-conditions.png)); `simulation.list` and
 `simulation.status` return them as `settings` (null when the run has no `case.json`).
+A finished run's row shows its final result, "finished · Cd 0.850 · drag 1.600 N": the mean
+over the last 20 % of the iterations, the same numbers as Results (CAD-205,
+[run list](images/audit/cad-205-run-list-final.png)). `simulation.status` and
+`simulation.list` return it as `final` {cd, cl, dragN, liftN} (null while running, after a
+failure or with cut-off outputs); `latest` stays the last iteration, which a running run's
+row shows as "provisional Cd".
 
 `simulation.run` returns at once with a run id; the run continues in the background,
 also when the app is closed (it is picked up again on the next start). Progress is

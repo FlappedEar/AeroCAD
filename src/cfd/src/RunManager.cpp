@@ -649,6 +649,22 @@ std::optional<fs::file_time_type> newestLogTime(const fs::path& dir)
     return any ? std::optional(newest) : std::nullopt;
 }
 
+/// Mean over the last 20 % of the iterations (at least the last one). Every retained
+/// sample must be finite, including those before the averaging window.
+std::optional<double> tailMean(const std::vector<double>* v)
+{
+    if (v == nullptr || v->empty() || !std::all_of(v->begin(), v->end(), [](double x) { return std::isfinite(x); }))
+        return std::nullopt;
+    const std::size_t start = v->size() - std::max<std::size_t>(1, v->size() / 5);
+    double sum = 0;
+    for (std::size_t i = start; i < v->size(); ++i) {
+        sum += (*v)[i];
+        if (!std::isfinite(sum))
+            return std::nullopt;
+    }
+    return sum / static_cast<double>(v->size() - start);
+}
+
 std::optional<double> lastOf(const Table& t, std::string_view column)
 {
     const auto* c = t.column(column);
@@ -662,26 +678,33 @@ std::optional<double> lastOf(const Table& t, std::string_view column)
 Json RunStatus::toJson() const
 {
     auto opt = [](const std::optional<double>& v) { return v ? Json(*v) : Json(nullptr); };
-    return Json{{"id", id},
-                {"state", runStateName(state)},
-                {"stage", stage},
-                {"progress", std::round(progress * 1000.0) / 1000.0},
-                {"iteration", iteration},
-                {"maxIterations", maxIterations},
-                {"message", message},
-                {"created", created},
-                {"elapsedSeconds", elapsedSeconds ? Json(*elapsedSeconds) : Json(nullptr)},
-                {"remainingSeconds", remainingSeconds ? Json(*remainingSeconds) : Json(nullptr)},
-                {"backend", backendName(backend)},
-                {"caseDir", caseDir.string()},
-                {"source", sourceJson(source)},
-                {"latest",
-                 {{"cd", opt(cd)},
-                  {"cl", opt(cl)},
-                  {"cs", opt(cs)},
-                  {"dragN", opt(dragN)},
-                  {"liftN", opt(liftN)},
-                  {"sideN", opt(sideN)}}}};
+    return Json{
+        {"id", id},
+        {"state", runStateName(state)},
+        {"stage", stage},
+        {"progress", std::round(progress * 1000.0) / 1000.0},
+        {"iteration", iteration},
+        {"maxIterations", maxIterations},
+        {"message", message},
+        {"created", created},
+        {"elapsedSeconds", elapsedSeconds ? Json(*elapsedSeconds) : Json(nullptr)},
+        {"remainingSeconds", remainingSeconds ? Json(*remainingSeconds) : Json(nullptr)},
+        {"backend", backendName(backend)},
+        {"caseDir", caseDir.string()},
+        {"source", sourceJson(source)},
+        {"latest",
+         {{"cd", opt(cd)},
+          {"cl", opt(cl)},
+          {"cs", opt(cs)},
+          {"dragN", opt(dragN)},
+          {"liftN", opt(liftN)},
+          {"sideN", opt(sideN)}}},
+        // The final result of a finished run (CAD-205): the same means as the summary
+        // of simulation.results, so the run list and Results show the same numbers.
+        {"final",
+         finalCd
+             ? Json{{"cd", opt(finalCd)}, {"cl", opt(finalCl)}, {"dragN", opt(finalDragN)}, {"liftN", opt(finalLiftN)}}
+             : Json(nullptr)}};
 }
 
 // --- RunManager -------------------------------------------------------------------------
@@ -953,6 +976,7 @@ void RunManager::refresh(Run& run)
     s.caseDir = run.caseDir;
     s.message.clear();
     s.elapsedSeconds = s.remainingSeconds = std::nullopt;
+    s.finalCd = s.finalCl = s.finalDragN = s.finalLiftN = std::nullopt;
 
     if (run.stopper)
         run.stopper->running();
@@ -993,6 +1017,22 @@ void RunManager::refresh(Run& run)
 
     if (status == "finished") {
         s.state = RunState::Finished;
+        // The same gate as results(): complete outputs over the same iterations and every
+        // final value (all eight of its result keys) finite (Codex review on #177).
+        if (!coeffs.incomplete && !forces.incomplete && !coeffs.invalidTime && !forces.invalidTime && !coeffs.empty() &&
+            coeffs.time == forces.time) {
+            const auto cd = tailMean(coeffs.column("Cd")), cl = tailMean(coeffs.column("Cl"));
+            const auto drag = tailMean(forces.column("total_x")), lift = tailMean(forces.column("total_z"));
+            const bool all = cd && cl && drag && lift && tailMean(coeffs.column("Cs")) &&
+                             tailMean(forces.column("total_y")) && tailMean(forces.column("pressure_x")) &&
+                             tailMean(forces.column("viscous_x"));
+            if (all) {
+                s.finalCd = cd;
+                s.finalCl = cl;
+                s.finalDragN = drag;
+                s.finalLiftN = lift;
+            }
+        }
     } else if (status == "prepared") {
         s.state = RunState::Interrupted;
         s.message = "Case written only; run ./Allrun in an OpenFOAM " + std::string(kOpenFoamVersion) +
@@ -1217,22 +1257,6 @@ Json sampled(const std::vector<double>* values, const std::vector<std::size_t>& 
         out.push_back(std::isfinite(v) ? Json(v) : Json(nullptr));
     }
     return out;
-}
-
-/// Mean over the last 20 % of the iterations (at least the last one). Every retained
-/// sample must be finite, including those before the averaging window.
-std::optional<double> tailMean(const std::vector<double>* v)
-{
-    if (v == nullptr || v->empty() || !std::all_of(v->begin(), v->end(), [](double x) { return std::isfinite(x); }))
-        return std::nullopt;
-    const std::size_t start = v->size() - std::max<std::size_t>(1, v->size() / 5);
-    double sum = 0;
-    for (std::size_t i = start; i < v->size(); ++i) {
-        sum += (*v)[i];
-        if (!std::isfinite(sum))
-            return std::nullopt;
-    }
-    return sum / static_cast<double>(v->size() - start);
 }
 
 /// Half of max − min over the same window as tailMean: how far the value still swings

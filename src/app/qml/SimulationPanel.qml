@@ -1571,6 +1571,7 @@ Pane {
                             }
                         }
                         Label {
+                            objectName: "runSummary_" + runRow.modelData.id
                             font.pixelSize: 11
                             opacity: 0.75
                             text: {
@@ -1581,9 +1582,12 @@ Pane {
                                     s += " · " + m.stage + (m.stage === "solve" ? " " + m.iteration + "/" + m.maxIterations : "")
                                         + (m.remainingSeconds !== null && m.remainingSeconds !== undefined
                                            ? " · " + qsTr("≤ %1 left").arg(root.duration(m.remainingSeconds)) : "")
-                                if (l.cd !== null && l.cd !== undefined)
-                                    s += (m.state === "finished" ? " · latest Cd " : " · provisional Cd ")
-                                        + root.num(l.cd, 3) + " · drag " + root.num(l.dragN, 3) + " N"
+                                // A finished run shows its final result, the same numbers as
+                                // Results (CAD-205); a running one its latest iteration.
+                                if (m.final)
+                                    s += " · Cd " + root.num(m.final.cd, 3) + " · drag " + root.num(m.final.dragN, 3) + " N"
+                                else if (l.cd !== null && l.cd !== undefined && m.state !== "finished")
+                                    s += " · provisional Cd " + root.num(l.cd, 3) + " · drag " + root.num(l.dragN, 3) + " N"
                                 return s
                             }
                         }

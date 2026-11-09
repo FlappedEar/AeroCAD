@@ -426,7 +426,8 @@ void registerSimulationCommands(CommandRegistry& r)
 
     r.add({"simulation.status", "Simulation status",
            "State (running, finished, failed, cancelled, interrupted), step, progress 0..1, iteration and the latest "
-           "Cd/Cl and forces in N of a run.",
+           "Cd/Cl and forces in N of a run (last iteration); final: the finished run's final cd, cl, dragN, liftN "
+           "(mean of the last 20 %, as in simulation.results), null otherwise.",
            objectSchema({{"run", runIdParam()}}, {"run"})},
           [](CommandContext& ctx, const Json& params) {
               return statusJson(ctx, *runs(ctx).status(requireRun(ctx, params)));

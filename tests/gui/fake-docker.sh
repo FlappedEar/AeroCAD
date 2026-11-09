@@ -28,6 +28,26 @@ case "$1" in
           echo "# Time total_x total_y total_z pressure_x viscous_x"
           i=1; while [ $i -le 20 ]; do echo "$i 1.5 0.01 0.2 1.4 0.1"; i=$((i + 1)); done
         } > "$case_dir/postProcessing/forces/0/force.dat"
+        # FAKE_DOCKER_FINISH=1 (CAD-205): a finished run whose last iteration differs from
+        # the mean of the last 20 % (Cd 0.8 / 0.9, drag 1.5 / 1.7 N in turn).
+        if [ -n "$FAKE_DOCKER_FINISH" ]; then
+          {
+            echo "# Time Cd Cl Cs"
+            i=1; while [ $i -le 20 ]; do
+              if [ $((i % 2)) -eq 0 ]; then echo "$i 0.9 0.1 0.01"; else echo "$i 0.8 0.1 0.01"; fi
+              i=$((i + 1))
+            done
+          } > "$case_dir/postProcessing/forceCoeffs/0/coefficient.dat"
+          {
+            echo "# Time total_x total_y total_z pressure_x viscous_x"
+            i=1; while [ $i -le 20 ]; do
+              if [ $((i % 2)) -eq 0 ]; then echo "$i 1.7 0.01 0.2 1.6 0.1"; else echo "$i 1.5 0.01 0.2 1.4 0.1"; fi
+              i=$((i + 1))
+            done
+          } > "$case_dir/postProcessing/forces/0/force.dat"
+          echo finished > "$case_dir/aerocad.status"
+          exit 0
+        fi
       fi
     fi
     exec sleep 20 ;;
