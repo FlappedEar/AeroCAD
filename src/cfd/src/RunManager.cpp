@@ -5,6 +5,7 @@
 #include <cctype>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <ctime>
 #include <fstream>
@@ -1997,9 +1998,16 @@ Json RunManager::compare(const std::string& a, const std::string& b)
         }
     }
     j["coefficientsOnReferenceAreaOfA"] = std::move(coeffs);
-    if (areaA > 0 && areaB > 0 && std::abs(areaA - areaB) > 1e-9 * std::max(areaA, areaB))
-        notes.emplace_back("Reference areas differ (" + std::to_string(areaA) + " vs " + std::to_string(areaB) +
-                           " m^2); coefficients of B are rescaled to the area of A.");
+    if (areaA > 0 && areaB > 0 && std::abs(areaA - areaB) > 1e-9 * std::max(areaA, areaB)) {
+        // Not a differing condition (CAD-186): it only scales the coefficients.
+        auto cm2 = [](double m2) {
+            char text[32];
+            std::snprintf(text, sizeof text, "%.4g", m2 * 1e4);
+            return std::string(text) + " cm²";
+        };
+        notes.emplace_back("Reference areas differ (A " + cm2(areaA) + ", B " + cm2(areaB) +
+                           "): Cd/Cl/Cs of B are rescaled to the area of A; forces in N do not depend on it.");
+    }
     j["quality"] = {{"a", ra.at("quality")}, {"b", rb.at("quality")}};
     const Json sensitivity = finalAvailable && !blocking
                                  ? meshSensitivity(a, b)

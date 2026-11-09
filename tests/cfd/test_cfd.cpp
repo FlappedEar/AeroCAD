@@ -1817,6 +1817,36 @@ TEST_CASE("Different surroundings or domains are not identical conditions (CAD-8
     CHECK_FALSE(cond.at("contextHash").is_null());
 }
 
+TEST_CASE("A different reference area does not make runs incomparable (CAD-186)", "[cfd]")
+{
+    TempDir tmp;
+    cfd::RunManager runs(tmp.path());
+    cfd::Settings s;
+    s.flowDirection = "+X";
+    cfd::CaseGeometry g;
+    g.part = box({0, 0, 0}, {200, 80, 60}); // Frontal area 48 cm².
+    const std::string a = runs.prepare(g, s, {});
+    s.referenceArea = 0.024; // E.g. a wing's planform area.
+    const std::string b = runs.prepare(g, s, {});
+    for (const auto& id : {a, b})
+        fakeFinishedRun(tmp.path() / id, 0.8, 1.0);
+
+    const auto cmp = runs.compare(a, b);
+    INFO(cmp.dump());
+    CHECK(cmp.at("sameConditions") == true);
+    CHECK(cmp.at("differingConditions").empty());
+    CHECK(cmp.at("verdict") == "comparable");
+    CHECK(cmp.at("meshSensitivity").at("status") == "same case");
+    bool noted = false;
+    for (const auto& n : cmp.at("notes"))
+        noted = noted || n.get<std::string>().find("Reference areas differ (A 48 cm², B 240 cm²): Cd/Cl/Cs of B are "
+                                                   "rescaled to the area of A") != std::string::npos;
+    CHECK(noted);
+    // B's coefficients are rescaled to A's area.
+    CHECK(cmp.at("coefficientsOnReferenceAreaOfA").at("cd").at("b").get<double>() ==
+          Approx(0.8 * 0.024 / 0.0048).epsilon(0.02));
+}
+
 namespace {
 
 void editCaseJson(const fs::path& runDir, const std::function<void(nlohmann::json&)>& edit)
