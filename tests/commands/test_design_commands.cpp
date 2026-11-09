@@ -1991,4 +1991,26 @@ TEST_CASE("Design commands: sketch edits start from the solved geometry (CAD-216
     run(s, "parameter.set", {{"name", "x"}, {"expression", "8 mm"}});
     CHECK(run(s, "sketch.curves", {{"sketch", hid}}).at("curves")[0].at("points")[0][0].get<double>() ==
           Approx(8).margin(1e-6));
+
+    // Codex (#190): a rectangle whose corner keeps an expression while its size changes.
+    const Json r = run(s, "sketch.create",
+                       {{"plane", "XY"},
+                        {"curves", Json::array({{{"type", "rectangle"}, {"corner", {"x", 0}}, {"width", 10}, {"height", 10}}})},
+                        {"constraints", Json::array({{{"type", "fix"}, {"points", Json::array({{{"curve", 0}, {"point", "start"}}})}},
+                                                     {{"type", "length"}, {"curve", 0}, {"value", 20}}})}});
+    const auto rid = r.at("id").get<std::uint64_t>();
+    run(s, "sketch.add_curves",
+        {{"sketch", rid}, {"curves", Json::array({{{"type", "line"}, {"start", {80, 0}}, {"end", {90, 0}}}})}});
+    {
+        const Json tl = run(s, "timeline.list");
+        Json item;
+        for (const auto& feat : tl.at("features"))
+            if (feat.at("id") == rid)
+                item = feat.at("params").at("curves")[0];
+        INFO(item.dump());
+        CHECK(item.at("type") == "rectangle");
+        CHECK(item.at("corner")[0] == "x");
+        const Json bottom = run(s, "sketch.curves", {{"sketch", rid}}).at("curves")[0].at("points");
+        CHECK(bottom[1][0].get<double>() - bottom[0][0].get<double>() == Approx(20).margin(1e-6));
+    }
 }

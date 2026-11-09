@@ -1096,8 +1096,9 @@ Json keepExpressions(const Eval& ev, const Json& item, Json out)
     if (has(item, "width") && has(item, "height") && out.contains("opposite") && out.contains("corner")) {
         const auto& a = out.at("corner");
         const auto& b = out.at("opposite");
-        if (equal(ev.num(item.at("width")), b[0].get<double>() - a[0].get<double>()) &&
-            equal(ev.num(item.at("height")), b[1].get<double>() - a[1].get<double>())) {
+        // The corner may hold restored expressions: evaluate, do not read numbers.
+        if (equal(ev.num(item.at("width")), ev.num(b[0]) - ev.num(a[0])) &&
+            equal(ev.num(item.at("height")), ev.num(b[1]) - ev.num(a[1]))) {
             out.erase("opposite");
             out["width"] = item.at("width");
             out["height"] = item.at("height");
