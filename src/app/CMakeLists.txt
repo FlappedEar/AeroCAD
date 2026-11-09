@@ -381,6 +381,11 @@ if(AEROCAD_BUILD_TESTS)
     # recovery question and take the keyboard (Ctrl+Z) away from the window.
     set_tests_properties(app_project_isolation_test PROPERTIES LABELS gui TIMEOUT 60
         ENVIRONMENT "XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/project-isolation-data;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/project-isolation-data")
+    # CAD-226: crash recovery: the question names the design, the copy keeps the view.
+    add_test(NAME app_project_recovery_test
+        COMMAND sh ${PROJECT_SOURCE_DIR}/tests/gui/project_recovery.sh $<TARGET_FILE:aerocad> ${PROJECT_SOURCE_DIR}
+                ${CMAKE_CURRENT_BINARY_DIR}/project-recovery)
+    set_tests_properties(app_project_recovery_test PROPERTIES LABELS gui TIMEOUT 120)
     # CAD-105: Simplify a scan, then Ctrl+Z restores the full mesh (also with a reduced display).
     add_test(NAME app_simplify_undo_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl

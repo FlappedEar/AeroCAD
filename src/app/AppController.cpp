@@ -20,6 +20,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QRegularExpression>
 #include <QGuiApplication>
 #include <QLocale>
 #include <QSettings>
@@ -601,8 +602,13 @@ bool AppController::autosaveNow()
             return false;
         }
     }
-    const commands::CommandResult r = m_session.execute(
-        "project.save", {{"path", target.toStdString()}, {"copy", true}});
+    commands::Json params{{"path", target.toStdString()}, {"copy", true}};
+    if (m_viewProvider.isCallable()) {
+        const QJSValue view = m_viewProvider.call();
+        if (view.isObject() && !view.isError())
+            params["view"] = toJson(view.toVariant());
+    }
+    const commands::CommandResult r = m_session.execute("project.save", params);
     if (!r.ok) {
         setStatusMessage(tr("Autosave failed: %1").arg(QString::fromStdString(r.error)));
         return false;
@@ -636,6 +642,21 @@ QStringList AppController::autosaveFiles() const
 bool AppController::recoverAutosave(const QString& path)
 {
     return openProject(path, true);
+}
+
+QVariantMap AppController::autosaveInfo(const QString& path) const
+{
+    // Copies are named <project>-<8 hex digits of the path hash> or Untitled-<pid> (autosavePath()).
+    const QFileInfo info(path);
+    QString name = info.completeBaseName();
+    static const QRegularExpression untitled(QStringLiteral("^Untitled-\\d+$"));
+    static const QRegularExpression hashed(QStringLiteral("-[0-9a-f]{8}$"));
+    if (untitled.match(name).hasMatch())
+        name.clear();
+    else
+        name.remove(hashed);
+    return {{QStringLiteral("name"), name},
+            {QStringLiteral("saved"), QLocale().toString(info.lastModified(), QStringLiteral("d MMM yyyy HH:mm"))}};
 }
 
 void AppController::discardAutosaves(bool currentOnly)

@@ -63,7 +63,11 @@ ApplicationWindow {
 
     font.pixelSize: Theme.fontBody
     color: Theme.chrome
-    Component.onCompleted: applyTheme()
+    Component.onCompleted: {
+        applyTheme()
+        // Autosave copies store the view too: a recovered project opens as it was on screen (CAD-226).
+        controller.viewProvider = () => window.projectView()
+    }
     Connections {
         target: Theme
         function onDarkChanged() { window.applyTheme() }
@@ -831,9 +835,12 @@ ApplicationWindow {
     MessageDialog {
         id: recoveryDialog
         property string file
+        // The design and the time of the copy, not the path of the copy (CAD-226).
+        readonly property var info: file ? window.controller.autosaveInfo(file) : ({ name: "", saved: "" })
         title: qsTr("Recover unsaved changes")
-        text: qsTr("AeroCAD did not close properly. Recover the unsaved changes?")
-        informativeText: file
+        text: info.name ? qsTr("AeroCAD did not close properly. Recover the unsaved changes to “%1”?").arg(info.name)
+                        : qsTr("AeroCAD did not close properly. Recover the unsaved untitled design?")
+        informativeText: qsTr("Recovery copy from %1. No deletes it.").arg(info.saved)
         buttons: MessageDialog.Yes | MessageDialog.No
         onButtonClicked: (button, role) => {
             if (button === MessageDialog.Yes) {

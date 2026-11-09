@@ -107,7 +107,9 @@ While there are unsaved changes, the app writes a copy every 120 s (QSettings
 `~/Library/Application Support/FlappedEar/AeroCAD/autosave`). Ctrl+Shift+S (Fusion's
 Recovery Save) writes it immediately. A lock file marks copies owned by a running
 instance. Saving, opening, New Design and a normal exit remove the copy; after a crash the
-next start offers to recover it.
+next start offers to recover it, naming the design and the time of the copy ("Recover the
+unsaved changes to “wing”? Recovery copy from 9 Nov 2026 12:00."). Copies store the current
+view (camera, isolation), so a recovered project opens as it was on screen (CAD-226).
 
 Recent projects: File > Open Recent (last 10, QSettings `project/recent`).
 

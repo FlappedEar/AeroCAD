@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# First half of tests/gui/project_recovery.sh: is killed after the recovery copy is written.
+ui.wait(800)
+(() => { const sk = controller.execute("sketch.create", { plane: "XY", curves: [{ type: "center_rectangle", center: [0, 150], width: 40, height: 20 }] }); controller.execute("feature.extrude", { sketch: sk.result.id, distance: 10 }) })()
+# Saved with the body isolated, then the box isolated before the recovery copy (Codex on
+# #196): the copy must hold the current isolation, not the one saved last.
+(() => { window.isolatePart(controller.execute("document.parts").result.parts.find(p => p.kind === "body").id) })()
+ui.wait(300)
+(() => { if (!controller.saveProjectAs("wing.aerocad", window.projectView())) ui.fail("save failed") })()
+(() => { controller.execute("part.set_color", { id: 1, color: "#00ff00" }); window.isolatePart(1) })()
+ui.wait(300)
+(() => { ui.log("AUTOSAVED " + controller.autosaveNow()) })()
+ui.wait(60000)
