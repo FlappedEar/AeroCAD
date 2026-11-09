@@ -2,6 +2,8 @@
 #include "aerocad/geometry/Modeling.hpp"
 
 #include "aerocad/geometry/OcctShape.hpp"
+#include "aerocad/geometry/Tessellation.hpp"
+#include "aerocad/core/MeshCheck.hpp"
 
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
@@ -651,7 +653,13 @@ bool usableBlend(const TopoDS_Shape& result)
         return false;
     GProp_GProps props;
     BRepGProp::VolumeProperties(result, props);
-    return std::abs(props.Mass()) > 1e-9;
+    if (std::abs(props.Mass()) <= 1e-9)
+        return false;
+    // It must also mesh into a closed solid at the export resolution. A fillet that runs
+    // into a curved face at a shallow angle (a fin edge down to the scan root) can leave
+    // end faces too small to mesh: valid B-rep, but an open STL that cannot be printed.
+    const core::MeshCheck mesh = core::checkMesh(core::weldVertices(tessellate(wrapShape(result), {0.0002, 0.15})));
+    return mesh.closed();
 }
 
 /// "2.4 mm" style: two significant digits, rounded down so the size really works.
@@ -688,7 +696,9 @@ TopoDS_Shape blendWithHint(const char* what, const char* sizeName, const char* e
     double hi = size;
     if (attempt(lo).IsNull())
         throw ModelingError(std::string(what) + " failed on " + edgesName + " (even a very small " + sizeName +
-                            " does not work; try fewer edges or pick them one chain at a time)");
+                            (std::string(edgesName) == "this edge"
+                                 ? " does not work)"
+                                 : " does not work; try fewer edges or pick them one chain at a time)"));
     for (int i = 0; i < 6; ++i) {
         const double mid = 0.5 * (lo + hi);
         if (attempt(mid).IsNull())

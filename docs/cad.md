@@ -26,7 +26,10 @@ use the same operations, and every change is one undo step.
 - **Fillet and chamfer** follow tangent chains (Fusion's "Tangent chain"): one picked edge
   rounds every edge that continues it smoothly. When the radius or distance does not fit,
   the error names the largest one that does ("a 30 mm radius does not fit these edges; the
-  largest that works is about 9.5 mm"); the dialog shows it while you type.
+  largest that works is about 9.5 mm"); the dialog shows it while you type. A result must
+  also mesh into a closed solid at the export resolution; a fillet that would leave
+  unmeshable slivers (a fin edge running into the scan root at a shallow angle) is refused
+  instead of giving an open STL (CAD-257).
 - **Shell** with no face picked makes a closed hollow body (Fusion's closed shell): the
   outer walls stay and a cavity of the given wall thickness is cut inside. Bodies with
   fillets shell too, also when the removed face is tangent to a fillet (OCCT's own shell
