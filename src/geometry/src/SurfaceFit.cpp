@@ -1603,6 +1603,17 @@ SurfaceFitResult fitSurface(const core::TriangleMesh& mesh, const core::Triangle
         ++count;
     }
     report.meshToSurfaceRms = count > 0 ? std::sqrt(sum / static_cast<double>(count)) : 0.0;
+    // Most of the selection must lie on the face. When the trim outline went wrong (an
+    // area folded over itself, e.g. a whole car body seen from above), the face is a
+    // sliver and nothing was measured on it: deviation 0 "within the tolerance" (CAD-255).
+    const std::size_t sampled = (measured.size() + stride - 1) / stride;
+    if (sampled > 0 && count * 2 < sampled) {
+        char pct[32];
+        std::snprintf(pct, sizeof pct, "%.0f", 100.0 * static_cast<double>(count) / static_cast<double>(sampled));
+        throw SurfaceFitError(std::string("The surface covers only ") + pct +
+                              " % of the selected area (its outline could not follow the selection). Select a "
+                              "smaller area that does not fold over itself");
+    }
 
     // Surface -> mesh, sampled on the face's own triangulation (so only inside the trim).
     // Measured against the selection grown by two rings: the smoothed trim outline may

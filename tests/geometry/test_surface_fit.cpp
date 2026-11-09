@@ -361,6 +361,41 @@ TEST_CASE("Unfold needs an open sheet; auto falls back to the plane", "[geometry
     CHECK_FALSE(fit.report.warnings.empty());
 }
 
+TEST_CASE("Fit refuses a surface that covers little of the selection (CAD-255)", "[geometry][fit]")
+{
+    // A torus with a small patch cut out: one short border but a handle, so it is no
+    // sheet. The plane fallback trims to that border and the face is a sliver inside the
+    // cut: it used to report deviation 0 "within the tolerance" with nothing measured.
+    const double R = 60.0, r = 20.0;
+    const int n = 72, m = 36;
+    std::vector<core::Vec3> v;
+    for (int i = 0; i < n; ++i)
+        for (int j = 0; j < m; ++j) {
+            const double a = 2.0 * std::numbers::pi * i / n, b = 2.0 * std::numbers::pi * j / m;
+            v.push_back({(R + r * std::cos(b)) * std::cos(a), (R + r * std::cos(b)) * std::sin(a), r * std::sin(b)});
+        }
+    auto id = [&](int i, int j) { return static_cast<std::uint32_t>((i % n) * m + (j % m)); };
+    std::vector<core::TriangleMesh::Triangle> t;
+    for (int i = 0; i < n; ++i)
+        for (int j = 0; j < m; ++j) {
+            t.push_back({id(i, j), id(i + 1, j), id(i + 1, j + 1)});
+            t.push_back({id(i, j), id(i + 1, j + 1), id(i, j + 1)});
+        }
+    const core::TriangleMesh torus(std::move(v), std::move(t));
+    const core::TriangleSet open = selectWhere(torus, [&](const core::Vec3& c) {
+        return (c - core::Vec3{R + r, 0, 0}).length() > 8.0;
+    });
+    REQUIRE(open.size() < torus.triangleCount());
+    // Before CAD-255: a face of 1e-13 mm^2, meshToSurfaceMax 0, outsideTrimMax 159 mm.
+    std::string error;
+    try {
+        (void)geometry::fitSurface(torus, open, {});
+    } catch (const geometry::SurfaceFitError& e) {
+        error = e.what();
+    }
+    CHECK(error.find("covers only") != std::string::npos);
+}
+
 TEST_CASE("Fit on extra data and trim to a subset of it", "[geometry][fit]")
 {
     const core::TriangleMesh mesh = tube(30.0, 80.0, 180, 60);
