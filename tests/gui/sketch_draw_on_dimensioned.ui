@@ -1,0 +1,25 @@
+# CAD-216: the sketch keeps the geometry where the solver put it (Fusion), so a line drawn
+# from the end of a dimensioned line starts where that end is shown and stays joined to it.
+# Run: AeroCAD --ui-script <this file>
+ui.wait(800)
+Qt.createQmlObject('import QtQuick; Item { objectName: "sdTest"; visible: false; function at(u, v) { const o = viewport.sketchOverlay; const q = o.toScreen([u, v]); return o.mapToItem(null, q.x, q.y) } function clickAt(u, v) { const p = at(u, v); ui.click(p.x, p.y) } function data() { return controller.execute("sketch.curves", { sketch: activeSketch.id }).result } function near(p, q) { return Math.hypot(p[0] - q[0], p[1] - q[1]) < 1e-6 } }', window.contentItem)
+# Drawn from (10, -20) to (30, -20), dimensioned to 30 long: shown ending at (40, -20).
+(() => { const r = controller.execute("sketch.create", { plane: "XY", curves: [{ type: "line", start: [10, -20], end: [30, -20] }], constraints: [{ type: "fix", points: [{ curve: 0, point: "start" }] }, { type: "horizontal", curve: 0 }, { type: "length", curve: 0, value: 30 }] }); if (!r.ok) ui.fail("sketch: " + r.error) })()
+ui.wait(300)
+(() => { enterSketch(controller.execute("timeline.list").result.features[0].id) })()
+ui.wait(800)
+ui.key("L")
+ui.wait(300)
+(() => { if (sketchTool !== "line") ui.fail("the Line tool did not start: " + sketchTool) })()
+# From the shown end up to (40, 0), then Esc.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "sdTest"); t.clickAt(40, -20); t.clickAt(40, 0) })()
+ui.wait(400)
+ui.key("Escape")
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "sdTest"); const d = t.data(); const l = d.curves[1]; ui.log("new line " + JSON.stringify(l ? l.points : null) + " constraints " + d.constraints.length); if (!l) ui.fail("no line drawn"); else if (!t.near(l.points[0], [40, -20]) || !t.near(l.points[1], [40, 0])) ui.fail("the new line moved: " + JSON.stringify(l.points)) })()
+# Changing the dimension moves the joined line with it, without a constraint of its own.
+(() => { const r = controller.execute("sketch.edit_constraint", { sketch: activeSketch.id, index: 2, value: 40 }); if (!r.ok) ui.fail("edit: " + r.error) })()
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "sdTest"); const d = t.data(); const l = d.curves[1]; ui.log("after the dimension " + JSON.stringify(l.points)); if (d.constraints.length !== 3) ui.fail("constraints " + JSON.stringify(d.constraints)); if (!t.near(l.points[0], [50, -20])) ui.fail("the new line did not follow the dimensioned end: " + JSON.stringify(l.points)) })()
+ui.shot("/mnt/project-files/ux/sketch-draw-on-dimensioned.png")
+ui.log("sketch draw on dimensioned done")

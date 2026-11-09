@@ -222,6 +222,13 @@ public:
     /// projected curves are added at the end, fixed where they are. `edges` as feature
     /// edge references (indices or {point}). They do not follow later changes of the body.
     void projectToSketch(FeatureId sketch, FeatureId body, const Json& edges);
+    /// Writes where the solver put a sketch's curves into its items (Fusion keeps sketch
+    /// geometry where it is solved), so the next edit starts from what is shown: new curves
+    /// join the shown ends and branch choices (tangent side, ...) follow the shown shape.
+    /// Items the solver did not move stay as written, with their expressions; an item whose
+    /// shape cannot make its solved curves (a polygon pulled out of regular) too. Called at
+    /// the start of every sketch edit. No regeneration: the items make the same curves.
+    void keepSolvedSketch(FeatureId sketch);
     /// Drags a sketch point (Fusion: drag sketch geometry). `point` is a constraint point
     /// reference ({curve, point: start | end | center}); it is held at `to` (sketch
     /// coordinates) while the solver moves the free degrees of freedom, and the sketch keeps

@@ -481,6 +481,11 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_tangent_arc.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_sketch_tangent_arc_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-216: a line drawn from a dimensioned end starts where it is shown and stays joined.
+    add_test(NAME app_sketch_draw_on_dimensioned_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_draw_on_dimensioned.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_sketch_draw_on_dimensioned_test PROPERTIES LABELS gui TIMEOUT 60)
     # CAD-206: Symmetric constraint (two points, lines or circles about a line).
     add_test(NAME app_sketch_symmetric_test
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_symmetric.ui
