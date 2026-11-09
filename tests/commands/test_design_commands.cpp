@@ -1692,6 +1692,184 @@ TEST_CASE("Design commands: Break preview of a long spline stays fast (CAD-260)"
     CHECK(seconds < 3.0);
 }
 
+TEST_CASE("Design commands: Sketch Conic Curve (CAD-262)", "[commands][cad][solver]")
+{
+    commands::Session s;
+    auto near = [](const Json& p, double x, double y, double tol = 1e-6) {
+        return std::hypot(p[0].get<double>() - x, p[1].get<double>() - y) < tol;
+    };
+    // A parabola (rho 0.5) from (0, 0) to (20, 0) towards the apex (10, 10), closed by a line.
+    const auto id = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "conic"}, {"start", {0, 0}}, {"end", {20, 0}}, {"apex", {10, 10}}},
+                                                 {{"type", "line"}, {"start", {20, 0}}, {"end", {0, 0}}}})}})
+                        .at("id")
+                        .get<std::uint64_t>();
+    Json c = run(s, "sketch.curves", {{"sketch", id}});
+    INFO(c.dump());
+    REQUIRE(c.at("curves").size() == 2);
+    const Json k = c.at("curves")[0];
+    CHECK(k.at("kind") == "conic");
+    CHECK(k.at("rho").get<double>() == Approx(0.5));
+    CHECK(near(k.at("points")[0], 0, 0));
+    CHECK(near(k.at("points")[1], 10, 10));
+    CHECK(near(k.at("points")[2], 20, 0));
+    // Its shoulder (middle) is rho of the way from the chord's middle to the apex.
+    const Json& smp = k.at("samples");
+    REQUIRE(smp.size() % 2 == 1);
+    CHECK(near(smp[smp.size() / 2], 10, 5, 1e-9));
+    // Start, end and apex (4 of them shared with the line's ends): 2 more for the apex.
+    CHECK(c.at("degreesOfFreedom") == 6);
+    // One profile: a parabolic segment, 2/3 of its base times its height.
+    CHECK(run(s, "sketch.profiles", {{"sketch", id}}).at("profiles").size() == 1);
+    const auto ex = run(s, "feature.extrude", {{"sketch", id}, {"distance", 1}});
+    CHECK(ex.at("bodies").back().at("volume").get<double>() == Approx(2.0 / 3.0 * 20 * 5).epsilon(1e-6));
+    run(s, "edit.undo");
+
+    // A lower rho bulges less (an ellipse), a higher one more (a hyperbola).
+    for (const double rho : {0.25, 0.8}) {
+        const auto r = run(s, "sketch.create",
+                           {{"plane", "XY"},
+                            {"curves", Json::array({{{"type", "conic"}, {"start", {0, 0}}, {"end", {20, 0}}, {"apex", {10, 10}},
+                                                     {"rho", rho}}})}})
+                           .at("id")
+                           .get<std::uint64_t>();
+        const Json m = run(s, "sketch.curves", {{"sketch", r}}).at("curves")[0].at("samples");
+        CHECK(near(m[m.size() / 2], 10, 10 * rho, 1e-9));
+    }
+
+    // Tangent to a line: the apex moves onto the line's direction.
+    const auto tg = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "conic"}, {"start", {0, 0}}, {"end", {20, 0}}, {"apex", {10, 10}}},
+                                                 {{"type", "line"}, {"start", {-5, -8}}, {"end", {0, 0}}},
+                                                 {{"type", "line"}, {"start", {20, 0}}, {"end", {25, -8}}}})}})
+                        .at("id")
+                        .get<std::uint64_t>();
+    run(s, "sketch.add_constraints",
+        {{"sketch", tg},
+         {"constraints", Json::array({{{"type", "fix"}, {"curves", Json::array({1, 2})}},
+                                      {{"type", "tangent"}, {"curves", Json::array({1, 0})}},
+                                      {{"type", "tangent"}, {"curves", Json::array({0, 2})}}})}});
+    c = run(s, "sketch.curves", {{"sketch", tg}});
+    INFO(c.dump());
+    {
+        const Json& p = c.at("curves")[0].at("points");
+        // Where the two lines' directions meet.
+        CHECK(near(p[1], 10, 16));
+        CHECK(near(p[0], 0, 0));
+        CHECK(near(p[2], 20, 0));
+    }
+    // Tangent to an arc is refused (only lines for now).
+    const auto ta = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "conic"}, {"start", {-10, -10}}, {"end", {10, -10}}, {"apex", {2, 5}}},
+                                                 {{"type", "circle"}, {"center", {30, 0}}, {"radius", 10}}})}})
+                        .at("id")
+                        .get<std::uint64_t>();
+    CHECK_FALSE(s.execute("sketch.add_constraints",
+                          {{"sketch", ta}, {"constraints", Json::array({{{"type", "tangent"}, {"curves", Json::array({0, 1})}}})}})
+                    .ok);
+
+    // The apex is a constraint point: put it on the origin.
+    run(s, "sketch.add_constraints",
+        {{"sketch", ta},
+         {"constraints", Json::array({{{"type", "coincident"},
+                                       {"points", Json::array({{{"curve", 0}, {"point", "apex"}}, "origin"})}}})}});
+    CHECK(near(run(s, "sketch.curves", {{"sketch", ta}}).at("curves")[0].at("points")[1], 0, 0));
+
+    // Mirror, move and scale keep it a conic (rho stays).
+    const auto mid = run(s, "sketch.create",
+                         {{"plane", "XY"},
+                          {"curves", Json::array({{{"type", "line"}, {"start", {-5, -50}}, {"end", {-5, 50}}, {"construction", true}},
+                                                  {{"type", "conic"}, {"start", {0, 0}}, {"end", {20, 0}}, {"apex", {10, 10}},
+                                                   {"rho", 0.3}}})}})
+                         .at("id")
+                         .get<std::uint64_t>();
+    const int dofBefore = run(s, "sketch.curves", {{"sketch", mid}}).at("degreesOfFreedom").get<int>();
+    run(s, "sketch.mirror", {{"sketch", mid}, {"curves", {1}}, {"line", 0}});
+    c = run(s, "sketch.curves", {{"sketch", mid}});
+    INFO(c.dump());
+    REQUIRE(c.at("curves").size() == 3);
+    CHECK(c.at("curves")[2].at("kind") == "conic");
+    CHECK(c.at("curves")[2].at("rho").get<double>() == Approx(0.3));
+    CHECK(near(c.at("curves")[2].at("points")[0], -10, 0));
+    CHECK(near(c.at("curves")[2].at("points")[1], -20, 10));
+    CHECK(near(c.at("curves")[2].at("points")[2], -30, 0));
+    // The copy follows the original (symmetric points): no extra freedom.
+    CHECK(c.at("degreesOfFreedom").get<int>() == dofBefore);
+
+    run(s, "sketch.move_curves", {{"sketch", mid}, {"curves", {1}}, {"angle", 90}, {"pivot", {0, 0}}});
+    c = run(s, "sketch.curves", {{"sketch", mid}});
+    CHECK(c.at("curves")[1].at("kind") == "conic");
+    CHECK(near(c.at("curves")[1].at("points")[1], -10, 10));
+    CHECK(near(c.at("curves")[1].at("points")[2], 0, 20));
+    CHECK(c.at("curves")[1].at("rho").get<double>() == Approx(0.3));
+
+    const auto sc = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "conic"}, {"start", {0, 0}}, {"end", {20, 0}}, {"apex", {10, 10}},
+                                                  {"rho", 0.4}}})}})
+                        .at("id")
+                        .get<std::uint64_t>();
+    run(s, "sketch.scale_curves", {{"sketch", sc}, {"curves", {0}}, {"factor", 2}, {"point", {0, 0}}});
+    c = run(s, "sketch.curves", {{"sketch", sc}});
+    CHECK(near(c.at("curves")[0].at("points")[1], 20, 20));
+    CHECK(near(c.at("curves")[0].at("points")[2], 40, 0));
+    CHECK(c.at("curves")[0].at("rho").get<double>() == Approx(0.4));
+
+    run(s, "sketch.circular_pattern", {{"sketch", sc}, {"curves", {0}}, {"center", {0, -30}}, {"count", 3}});
+    c = run(s, "sketch.curves", {{"sketch", sc}});
+    REQUIRE(c.at("curves").size() == 3);
+    for (const auto& pc : c.at("curves")) {
+        CHECK(pc.at("kind") == "conic");
+        CHECK(pc.at("rho").get<double>() == Approx(0.4));
+    }
+    run(s, "edit.undo");
+
+    // Fixed, it holds its ends and apex.
+    run(s, "sketch.add_constraints", {{"sketch", sc}, {"constraints", Json::array({{{"type", "fix"}, {"curve", 0}}})}});
+    CHECK(run(s, "sketch.curves", {{"sketch", sc}}).at("degreesOfFreedom") == 0);
+
+    // Other curves trim at it; Trim, Break and Extend of the conic itself are refused.
+    const auto tr = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "conic"}, {"start", {0, 0}}, {"end", {20, 0}}, {"apex", {10, 10}}},
+                                                 {{"type", "line"}, {"start", {10, -5}}, {"end", {10, 10}}}})}})
+                        .at("id")
+                        .get<std::uint64_t>();
+    run(s, "sketch.trim", {{"sketch", tr}, {"curve", 1}, {"at", {10, 8}}});
+    c = run(s, "sketch.curves", {{"sketch", tr}});
+    INFO(c.dump());
+    REQUIRE(c.at("curves").size() == 2);
+    CHECK(near(c.at("curves")[1].at("points")[1], 10, 5, 1e-3));
+    // A line below it extends up to it.
+    run(s, "sketch.add_curves", {{"sketch", tr}, {"curves", Json::array({{{"type", "line"}, {"start", {5, -5}}, {"end", {5, 1}}}})}});
+    run(s, "sketch.extend", {{"sketch", tr}, {"curve", 2}, {"at", {5, 0.9}}});
+    c = run(s, "sketch.curves", {{"sketch", tr}});
+    INFO(c.dump());
+    CHECK(near(c.at("curves")[2].at("points")[1], 5, 3.75, 1e-3)); // y = x (20 - x) / 20
+    run(s, "sketch.delete_curves", {{"sketch", tr}, {"curves", {2}}});
+    CHECK_FALSE(s.execute("sketch.trim", {{"sketch", tr}, {"curve", 0}, {"at", {3, 3}}}).ok);
+    CHECK_FALSE(s.execute("sketch.break", {{"sketch", tr}, {"curve", 0}, {"at", {3, 3}}}).ok);
+    CHECK_FALSE(s.execute("sketch.extend", {{"sketch", tr}, {"curve", 0}, {"at", {1, 0.5}}}).ok);
+    // Offset gives a spline beside it; Delete removes it.
+    run(s, "sketch.offset", {{"sketch", tr}, {"curves", {0}}, {"distance", 1}});
+    c = run(s, "sketch.curves", {{"sketch", tr}});
+    INFO(c.dump());
+    REQUIRE(c.at("curves").size() == 3);
+    CHECK(c.at("curves")[2].at("kind") == "spline");
+    run(s, "sketch.delete_curves", {{"sketch", tr}, {"curves", {0, 2}}});
+    CHECK(run(s, "sketch.curves", {{"sketch", tr}}).at("curves").size() == 1);
+
+    // Refused: rho out of range, the apex on the chord, start = end.
+    for (const Json& bad : {Json{{"type", "conic"}, {"start", {0, 0}}, {"end", {20, 0}}, {"apex", {10, 10}}, {"rho", 0}},
+                            Json{{"type", "conic"}, {"start", {0, 0}}, {"end", {20, 0}}, {"apex", {10, 10}}, {"rho", 1}},
+                            Json{{"type", "conic"}, {"start", {0, 0}}, {"end", {20, 0}}, {"apex", {10, 0}}},
+                            Json{{"type", "conic"}, {"start", {0, 0}}, {"end", {0, 0}}, {"apex", {10, 10}}}})
+        CHECK_FALSE(s.execute("sketch.create", {{"plane", "XY"}, {"curves", Json::array({bad})}}).ok);
+}
+
 TEST_CASE("Design commands: sketch offset (CAD-126)", "[commands][cad]")
 {
     commands::Session s;

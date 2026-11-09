@@ -102,6 +102,10 @@ Item {
                 out.push({ point: { curve: c.index, point: "start" }, pos: c.points[0] })
                 out.push({ point: { curve: c.index, point: "end" }, pos: c.points[3] })
                 out.push({ point: { curve: c.index, point: "center" }, pos: c.points[1] })
+            } else if (c.kind === "conic") {
+                out.push({ point: { curve: c.index, point: "start" }, pos: c.points[0] })
+                out.push({ point: { curve: c.index, point: "end" }, pos: c.points[2] })
+                out.push({ point: { curve: c.index, point: "apex" }, pos: c.points[1] })
             } else if (c.kind === "ellipse") {
                 // Its centre and the end of its major axis.
                 out.push({ point: { curve: c.index, point: "center" }, pos: c.points[0] })
@@ -409,7 +413,7 @@ Item {
             return c.points[1]
         if (c.kind === "ellipse" && c.samples)
             return c.samples[Math.floor(c.samples.length / 8)]
-        if (c.kind === "elliptical_arc" && c.samples)
+        if ((c.kind === "elliptical_arc" || c.kind === "conic") && c.samples)
             return c.samples[Math.floor(c.samples.length / 2)]
         return c.points[Math.floor(c.points.length / 2)]
     }
@@ -492,7 +496,7 @@ Item {
                 if (i === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y)
             }
         } else {
-            ((c.kind === "ellipse" || c.kind === "elliptical_arc") && c.samples ? c.samples : c.points).forEach((p, i) => {
+            ((c.kind === "ellipse" || c.kind === "elliptical_arc" || c.kind === "conic") && c.samples ? c.samples : c.points).forEach((p, i) => {
                 const q = overlay.toScreen(p)
                 if (i === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y)
             })

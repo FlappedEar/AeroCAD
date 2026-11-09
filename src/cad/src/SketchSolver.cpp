@@ -261,6 +261,9 @@ public:
                 c.points = {v.pts[0].at(m_x), v.pts[2].at(m_x), v.pts[3].at(m_x), v.pts[1].at(m_x)};
                 c.radius = std::abs(m_x[v.rvar]);
                 break;
+            case Kind::Conic:
+                c.points = {v.pts[0].at(m_x), v.pts[2].at(m_x), v.pts[1].at(m_x)};
+                break;
             }
         }
     }
@@ -356,6 +359,12 @@ private:
                          newPoint(c.points[2])};
                 v.rvar = m_x.size();
                 m_x.push_back(c.radius);
+                break;
+            case Kind::Conic:
+                // Start, end (shared with touching curves), apex; rho is fixed.
+                if (c.points.size() != 3)
+                    throw ModelingError("Sketch conic needs a start, an apex and an end");
+                v.pts = {endPoint(c.points[0], c.joinStart), endPoint(c.points[2], c.joinEnd), newPoint(c.points[1])};
                 break;
             }
         }
@@ -478,6 +487,10 @@ private:
                 return v.pts[1];
             if (c.kind == Kind::EllipticalArc)
                 return v.pts[3];
+            break;
+        case SketchPointRef::Kind::Apex:
+            if (c.kind == Kind::Conic)
+                return v.pts[2];
             break;
         case SketchPointRef::Kind::Origin:
             break;
@@ -681,6 +694,27 @@ private:
             needCurves(c, 2);
             std::size_t i = c.curves[0];
             std::size_t j = c.curves[1];
+            if (curve(i).kind == Kind::Conic || curve(j).kind == Kind::Conic) {
+                // A line and a conic: the line runs along the conic's end towards its apex
+                // (the end nearer the line as drawn).
+                if (curve(j).kind == Kind::Conic)
+                    std::swap(i, j);
+                if (curve(j).kind != Kind::Line)
+                    throw ModelingError("Tangent to a conic needs a line");
+                const auto& v = m_vars[i];
+                const auto seg = line(j);
+                const P a = seg.first, b = seg.second, apex = v.pts[2];
+                auto off = [&](P q) {
+                    const Vec2 d = b.at(x0) - a.at(x0);
+                    return std::abs(cross(d, q.at(x0) - a.at(x0))) / safe(len(d));
+                };
+                const P e = off(v.pts[0]) <= off(v.pts[1]) ? v.pts[0] : v.pts[1];
+                add(ci, varsOf({a, b, e, apex}), 1, [a, b, e, apex](const std::vector<double>& x, double* r) {
+                    const Vec2 d = b.at(x) - a.at(x), t = apex.at(x) - e.at(x);
+                    r[0] = cross(d, t) / safe(len(d));
+                });
+                break;
+            }
             if (!isCirc(i))
                 std::swap(i, j);
             if (!isCirc(i))

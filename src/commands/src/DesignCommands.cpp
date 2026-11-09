@@ -196,13 +196,14 @@ Json curveSchema()
          "(centre-to-centre); spline {points, closed?}; point {at} (a sketch point: no edge, no profile; "
          "it joins a curve end at the same place); tangent_arc {from: {curve, point: start | end}, end} "
          "(sketch.add_curves only: an arc leaving the end of a line or arc tangentially, kept tangent). "
+         "conic {start, end, apex, rho?} (Fusion: Conic Curve; tangent at its ends to the lines towards apex). "
          "construction: true excludes it from profiles."},
         {"properties",
          {{"type",
            {{"type", "string"},
             {"description", "Curve kind; selects which other fields apply."},
             {"enum", {"line", "rectangle", "center_rectangle", "three_point_rectangle", "circle", "arc", "center_arc", "polygon", "slot",
-                      "spline", "point", "tangent_arc", "ellipse", "elliptical_arc"}}}},
+                      "spline", "point", "tangent_arc", "ellipse", "elliptical_arc", "conic"}}}},
           {"from", {{"type", "object"},
                     {"description", "tangent_arc: the end it starts from, {curve: index, point: start | end}."}}},
           {"start", point2("Start point.")},
@@ -225,6 +226,9 @@ Json curveSchema()
           {"start_angle", numberOrExpr("elliptical_arc: parametric start angle (degrees; x = major cos t, y = minor sin t "
                                        "along the axes), counter-clockwise to end_angle.")},
           {"end_angle", numberOrExpr("elliptical_arc: parametric end angle (degrees).")},
+          {"apex", point2("conic: where the tangents at its start and end meet; the curve bends towards it.")},
+          {"rho", numberOrExpr("conic: how far it bulges towards the apex, between 0 and 1 (default 0.5, a parabola; "
+                               "less is an ellipse, more a hyperbola).")},
           {"points", {{"type", "array"}, {"items", point2("Fit point.")}, {"minItems", 2},
                       {"description", "spline: fit points, at least 2."}}},
           {"closed", {{"type", "boolean"}, {"description", "spline: true joins the last point to the first."}}},
@@ -242,9 +246,9 @@ Json constraintPointSchema()
 {
     return Json{{"type", Json::array({"string", "object"})},
                 {"description", "\"origin\" (sketch origin) or {curve: index, point: start | end | center} "
-                                "(an ellipse: center, end = the end of its major axis; axis = that point for an ellipse or elliptical arc), or a fit point of a spline {curve, point: fit, index} (0 = first fit point)."},
+                                "(an ellipse: center, end = the end of its major axis; axis = that point for an ellipse or elliptical arc; apex = a conic's apex), or a fit point of a spline {curve, point: fit, index} (0 = first fit point)."},
                 {"properties", {{"curve", {{"type", "integer"}, {"minimum", 0}, {"description", "Curve index in sketch.curves."}}},
-                                {"point", {{"type", "string"}, {"enum", {"start", "end", "center", "axis", "fit"}},
+                                {"point", {{"type", "string"}, {"enum", {"start", "end", "center", "axis", "apex", "fit"}},
                                            {"description", "Which point of the curve."}}},
                                 {"index", {{"type", "integer"}, {"minimum", 0},
                                            {"description", "point: fit only: fit point index (0 = first)."}}}}}};
@@ -854,6 +858,11 @@ geometry::Vec2 pointPosition(const std::vector<geometry::SketchCurve>& curves, c
         return which == "center" ? c.points[1] : c.points[2];
     if (which == "axis")
         throw CommandError("Curve " + std::to_string(i) + " has no major axis (only ellipses do)");
+    if (which == "apex") {
+        if (c.kind != K::Conic)
+            throw CommandError("Curve " + std::to_string(i) + " has no apex (only conics do)");
+        return c.points[1];
+    }
     if (which == "center") {
         if (c.kind == K::Circle)
             return c.points[0];
@@ -973,7 +982,7 @@ std::vector<std::pair<std::size_t, std::string>> curveEndsAt(const std::vector<g
             continue;
         }
         const bool open = c.kind == K::Line || (c.kind == K::Arc && c.points.size() == 3) ||
-                          (c.kind == K::Spline && !c.closed);
+                          (c.kind == K::Conic && c.points.size() == 3) || (c.kind == K::Spline && !c.closed);
         if (!open || c.points.size() < 2)
             continue;
         // As close as the solver's own joining (positions shown are rounded).
@@ -1140,6 +1149,10 @@ Json resolveFix(const std::vector<geometry::SketchCurve>& curves, const Json& c)
             points.push_back({{"curve", i}, {"point", "center"}});
             points.push_back({{"curve", i}, {"point", "axis"}});
             out.push_back({{"type", "minor_radius"}, {"curve", i}, {"value", k.radius}});
+        } else if (k.kind == K::Conic) {
+            // Its ends and apex (rho does not move).
+            for (const char* p : {"start", "end", "apex"})
+                points.push_back({{"curve", i}, {"point", p}});
         } else {
             points.push_back({{"curve", i}, {"point", "start"}});
             points.push_back({{"curve", i}, {"point", "end"}});
@@ -1899,7 +1912,7 @@ void registerSketchCommands(CommandRegistry& r)
               for (std::size_t i = 0; i < sk.curves.size(); ++i) {
                   const auto& c = sk.curves[i];
                   static const char* kinds[] = {"line", "arc", "circle", "spline", "point", "ellipse",
-                                                "elliptical_arc"};
+                                                "elliptical_arc", "conic"};
                   Json pts = Json::array();
                   for (const auto& p : c.points)
                       pts.push_back(Json::array({p.x, p.y}));
@@ -1939,6 +1952,16 @@ void registerSketchCommands(CommandRegistry& r)
                           const double u = major * std::cos(t), w = c.radius * std::sin(t);
                           samples.push_back(Json::array({o.x + u * std::cos(turn) - w * std::sin(turn),
                                                          o.y + u * std::sin(turn) + w * std::cos(turn)}));
+                      }
+                      cj["samples"] = samples;
+                  }
+                  if (c.kind == geometry::SketchCurve::Kind::Conic) {
+                      // points: start, apex, end; samples draw it.
+                      cj["rho"] = c.radius;
+                      Json samples = Json::array();
+                      for (int k = 0; k <= 64; ++k) {
+                          const auto p = geometry::conicPoint(c, k / 64.0);
+                          samples.push_back(Json::array({p.x, p.y}));
                       }
                       cj["samples"] = samples;
                   }

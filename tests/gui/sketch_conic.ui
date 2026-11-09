@@ -1,0 +1,47 @@
+# CAD-262: Sketch Conic Curve (Fusion: Create > Conic Curve) with real clicks: CREATE >
+# Conic Curve on the ribbon, click the start, the end and the apex: one conic (rho 0.5, a
+# parabola); a line across its ends makes a closed profile. A second one with rho typed
+# (0.3), and the apex dragged reshapes the first one.
+# Run: AeroCAD --ui-script <this file>
+Qt.createQmlObject('import QtQuick; Item { objectName: "coTest"; visible: false; function at(q) { const o = viewport.sketchOverlay; const p = o.toScreen(q); return o.mapToItem(null, p.x, p.y) } function clickAt(q) { const w = at(q); ui.move(w.x, w.y); ui.wait(80); ui.click(w.x, w.y); ui.wait(150) } function moveTo(q) { const w = at(q); ui.move(w.x, w.y); ui.wait(150) } function sketch() { return controller.execute("sketch.curves", { sketch: activeSketch.id }).result } function near(p, x, y) { return Math.hypot(p[0] - x, p[1] - y) < 1e-6 } }', window.contentItem)
+ui.wait(800)
+(() => { window.createSketch({ plane: "XY" }); if (!window.activeSketch) ui.fail("no sketch") })()
+ui.wait(800)
+(() => { viewport.restoreCameraState({ pivot: [50, 15, 0], pitch: -90, yaw: 0, distance: 200, orthographic: false }) })()
+ui.wait(400)
+(() => { if (!ui.clickText("CREATE")) ui.fail("no CREATE menu on the ribbon") })()
+ui.wait(400)
+(() => { if (!ui.clickText("Conic Curve")) ui.fail("no Conic Curve in the CREATE menu") })()
+ui.wait(300)
+(() => { if (sketchTool !== "conic") ui.fail("Conic Curve did not start: " + sketchTool) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "coTest"); t.clickAt([0, 0]); t.clickAt([40, 0]); t.moveTo([20, 30]) })()
+ui.shot("build/sketch-conic-preview.png")
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "coTest"); t.clickAt([20, 30]) })()
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "coTest"); const c = t.sketch().curves; ui.log("curves " + JSON.stringify(c.map(k => [k.kind, k.points, k.rho]))); if (c.length !== 1 || c[0].kind !== "conic") ui.fail("expected one conic"); else { if (!t.near(c[0].points[0], 0, 0) || !t.near(c[0].points[1], 20, 30) || !t.near(c[0].points[2], 40, 0) || Math.abs(c[0].rho - 0.5) > 1e-9) ui.fail("not the conic clicked: " + JSON.stringify(c[0])); const m = c[0].samples[(c[0].samples.length - 1) / 2]; if (!t.near(m, 20, 15)) ui.fail("its shoulder is not halfway to the apex: " + JSON.stringify(m)) } })()
+# The line across its ends: one closed profile.
+ui.key("Esc")
+ui.wait(200)
+ui.key("L")
+ui.wait(200)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "coTest"); t.clickAt([40, 0]); t.clickAt([0, 0]) })()
+ui.key("Esc")
+ui.wait(500)
+(() => { const n = controller.execute("sketch.profiles", { sketch: activeSketch.id }).result.profiles.length; ui.log("profiles " + n); if (n !== 1) ui.fail("the conic and the line are not one profile") })()
+# Rho typed: start, end, the apex at the cursor, 0.3, Enter.
+(() => { window.sketchTool_("conic"); if (sketchTool !== "conic") ui.fail("Conic Curve did not start again: " + sketchTool) })()
+ui.wait(200)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "coTest"); t.clickAt([60, 0]); t.clickAt([100, 0]); t.moveTo([80, 30]) })()
+ui.type("0.3")
+ui.shot("/mnt/project-files/ux/sketch-conic.png")
+ui.key("Return")
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "coTest"); const c = t.sketch().curves; ui.log("typed " + JSON.stringify(c[2])); if (c.length !== 3 || c[2].kind !== "conic" || Math.abs(c[2].rho - 0.3) > 1e-9 || !t.near(c[2].points[1], 80, 30)) ui.fail("the typed conic is not rho 0.3 with its apex at the cursor") })()
+# Drag the first conic's apex up: the curve follows, its ends stay.
+ui.key("Esc")
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "coTest"); const a = t.at([20, 30]), b = t.at([20, 40]); ui.drag(a.x, a.y, b.x, b.y, "left", "", 10) })()
+ui.wait(600)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "coTest"); const c = t.sketch().curves; ui.log("dragged " + JSON.stringify(c[0].points)); if (Math.abs(c[0].points[1][1] - 40) > 0.05 || !t.near(c[0].points[0], 0, 0) || !t.near(c[0].points[2], 40, 0)) ui.fail("the apex did not move to y = 40 with the ends kept") })()
+ui.shot("build/sketch-conic-dragged.png")
+ui.log("Sketch Conic Curve OK")
