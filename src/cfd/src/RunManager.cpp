@@ -1312,6 +1312,7 @@ std::size_t RunManager::exportResultsCsv(const std::string& id, const fs::path& 
         const Json& s = c.at("settings");
         row("Air speed (m/s)", csvJson(s.value("speed", Json())));
         row("Flow direction", csvJson(s.value("flowDirection", Json())));
+        row("Yaw (deg)", csvJson(s.value("yaw", Json(0.0)))); // CAD-188; older runs: 0.
         row("Mesh", csvJson(s.value("mesh", Json())));
         const bool ground = s.value("ground", false);
         row("Floor", !ground ? "off" : !s.value("groundMoving", true) ? "fixed" : "moving");

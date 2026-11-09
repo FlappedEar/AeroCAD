@@ -22,10 +22,11 @@ using core::Vec3;
 
 // --- CaseFrame --------------------------------------------------------------------------
 
-CaseFrame CaseFrame::forFlow(std::string_view flowDirection, const Vec3& origin)
+CaseFrame CaseFrame::forFlow(std::string_view flowDirection, const Vec3& origin, double yaw)
 {
     CaseFrame f;
     f.origin = origin;
+    f.yaw = yaw;
     // Rotation (counter-clockwise about +Z) that turns the flow direction into +X.
     if (flowDirection == "+X")
         f.quarterTurns = 0;
@@ -54,8 +55,28 @@ Vec3 rotateQuarter(const Vec3& v, int turns)
 
 } // namespace
 
-Vec3 CaseFrame::rotate(const Vec3& v) const { return rotateQuarter(v, quarterTurns); }
-Vec3 CaseFrame::unrotate(const Vec3& v) const { return rotateQuarter(v, -quarterTurns); }
+namespace {
+
+/// Counter-clockwise about +Z by `degrees`; exactly v at 0 (cases without yaw stay as before).
+Vec3 rotateAboutZ(const Vec3& v, double degrees)
+{
+    if (degrees == 0.0)
+        return v;
+    const double a = degrees * 3.14159265358979323846 / 180.0;
+    const double c = std::cos(a), s = std::sin(a);
+    return {c * v.x - s * v.y, s * v.x + c * v.y, v.z};
+}
+
+} // namespace
+
+Vec3 CaseFrame::rotate(const Vec3& v) const
+{
+    return rotateAboutZ(rotateQuarter(v, quarterTurns), -yaw);
+}
+Vec3 CaseFrame::unrotate(const Vec3& v) const
+{
+    return rotateQuarter(rotateAboutZ(v, yaw), -quarterTurns);
+}
 Vec3 CaseFrame::toCase(const Vec3& modelMm) const { return rotate(modelMm - origin) * 0.001; }
 Vec3 CaseFrame::toModel(const Vec3& caseM) const { return unrotate(caseM * 1000.0) + origin; }
 
@@ -75,13 +96,17 @@ BoundingBox boxFrom(const Json& j)
 
 } // namespace
 
-Json CaseFrame::toJson() const { return Json{{"origin", vec(origin)}, {"quarterTurns", quarterTurns}, {"scale", 0.001}}; }
+Json CaseFrame::toJson() const
+{
+    return Json{{"origin", vec(origin)}, {"quarterTurns", quarterTurns}, {"yaw", yaw}, {"scale", 0.001}};
+}
 
 CaseFrame CaseFrame::fromJson(const Json& j)
 {
     CaseFrame f;
     f.origin = vecFrom(j.at("origin"));
     f.quarterTurns = j.at("quarterTurns").get<int>();
+    f.yaw = j.value("yaw", 0.0); // Cases written before CAD-188 have none.
     return f;
 }
 
@@ -596,9 +621,18 @@ void writeFields(const fs::path& zero, const Settings& s, const std::vector<Whee
                     "    outlet { type inletOutlet; inletValue uniform (0 0 0); value $internalField; }\n"
                     "    farfield { type slip; }\n"
                     "    walls { type noSlip; }\n";
-    if (ground && s.groundMoving)
+    if (ground && s.groundMoving && s.yaw == 0.0) {
         u += "    ground { type fixedValue; value $internalField; }\n"; // Floor moving with the air.
-    else if (ground)
+    } else if (ground && s.groundMoving) {
+        // CAD-188: the road moves along the car's heading (the flow direction before the yaw
+        // turn, (cos yaw, -sin yaw) in the case) at the car's speed, speed * cos(yaw).
+        const double a = s.yaw * 3.14159265358979323846 / 180.0;
+        const double road = U * std::cos(a);
+        Text t;
+        t << "    ground { type fixedValue; value uniform (" << road * std::cos(a) << ' ' << -road * std::sin(a)
+          << " 0); }\n";
+        u += t.str();
+    } else if (ground)
         u += "    ground { type noSlip; }\n"; // Fixed tunnel floor.
     // CAD-154: each axle turns so that its tyres' bottom moves with the floor (+X at U):
     // about -Y, at U / r.
@@ -727,7 +761,7 @@ CaseInfo planCase(const CaseGeometry& geometry, const Settings& s)
     CaseInfo info;
     info.settings = s;
     const BoundingBox modelBounds = geometry.part.bounds();
-    info.frame = CaseFrame::forFlow(s.flowDirection, modelBounds.center());
+    info.frame = CaseFrame::forFlow(s.flowDirection, modelBounds.center(), s.yaw);
 
     const TriangleMesh part = toCaseMesh(geometry.part, info.frame);
     info.partBounds = part.bounds();
@@ -755,6 +789,8 @@ CaseInfo planCase(const CaseGeometry& geometry, const Settings& s)
         // cells; their surfaces then move with it there.
         if (!s.ground || !s.groundMoving)
             throw std::runtime_error("Rotating wheels need a moving floor: turn on the floor and let it move");
+        if (s.yaw != 0.0) // Wheels are found and split along the case axes (CAD-188).
+            throw std::runtime_error("Rotating wheels work at yaw 0 only: set the yaw to 0 or turn the wheels off");
         if (s.groundHeight)
             throw std::runtime_error(
                 "With rotating wheels the floor is put where the tyres touch it: leave the floor height empty");

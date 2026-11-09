@@ -313,7 +313,7 @@ Pane {
         if (!st)
             return ""
         const parts = [qsTr("%1 m/s (%2 km/h)").arg(Number(Number(st.speed).toFixed(2))).arg(Math.round(st.speed * 3.6)),
-                       qsTr("flow %1").arg(st.flowDirection),
+                       qsTr("flow %1").arg(st.flowDirection) + (st.yaw ? qsTr(", yaw %1°").arg(Number(st.yaw)) : ""),
                        qsTr("%1 mesh").arg(st.mesh)]
         if (st.ground) {
             let floor = st.rotatingWheels ? qsTr("moving floor, turning wheels")
@@ -689,6 +689,7 @@ Pane {
         const flow = flowBox.indexOfValue(st.flowDirection)
         if (flow >= 0)
             flowBox.currentIndex = flow
+        yawField.text = st.yaw ? String(st.yaw) : "" // CAD-188; older runs: none.
         const mesh = meshBox.indexOfValue(st.mesh)
         if (mesh >= 0)
             meshBox.currentIndex = mesh
@@ -740,6 +741,15 @@ Pane {
         return v > 0 ? v / 1e4 : NaN
     }
     readonly property bool refAreaValid: refAreaField.text.trim().length === 0 || typedRefArea() > 0
+    /// The yaw typed in the New run form in degrees: 0 when empty, NaN when not a number
+    /// (CAD-188). Valid from -30 to 30.
+    function typedYaw() {
+        const t = yawField.text.trim()
+        if (t.length === 0)
+            return 0
+        return /^[+-]?(\d+(?:[.,]\d*)?|[.,]\d+)$/.test(t) ? Number(t.replace(",", ".")) : NaN
+    }
+    readonly property bool yawValid: Math.abs(typedYaw()) <= 30
     readonly property real typedSpeed: speedMs(speedField.text)
     readonly property bool speedValid: typedSpeed > 0 && typedSpeed <= 150
     /// Under the speed field: the speed in both units, or why it cannot be used.
@@ -762,6 +772,9 @@ Pane {
             mesh: meshBox.currentValue,
             ground: groundBox.checked
         })
+        const yaw = typedYaw()
+        if (yaw !== 0 && isFinite(yaw))
+            params.yaw = yaw
         const area = typedRefArea()
         if (area > 0)
             params.referenceArea = area
@@ -1189,6 +1202,25 @@ Pane {
                             { text: qsTr("-X (onto the right side)"), value: "-X" }
                         ]
                     }
+                    // Crosswind (CAD-188): the air turned this far counter-clockwise, seen from above.
+                    Label { text: qsTr("Yaw (°)"); opacity: 0.7 }
+                    TextField {
+                        id: yawField
+                        objectName: "cfdYawField"
+                        Layout.fillWidth: true
+                        placeholderText: qsTr("0 (straight); crosswind e.g. 5")
+                        onTextEdited: proposalTimer.restart()
+                    }
+                    Label {
+                        objectName: "cfdYawError"
+                        Layout.columnSpan: 2
+                        Layout.fillWidth: true
+                        visible: !root.yawValid
+                        text: qsTr("The yaw must be a number from -30 to 30 degrees, or empty for 0.")
+                        color: Theme.warning
+                        wrapMode: Text.WordWrap
+                        font.pixelSize: 11
+                    }
                     Label { text: qsTr("Mesh"); opacity: 0.7 }
                     ComboBox {
                         id: meshBox
@@ -1295,7 +1327,7 @@ Pane {
                         text: qsTr("Run CFD")
                         highlighted: true
                         enabled: !!root.partInfo.id && root.partInfo.kind !== "sketch" && root.partInfo.kind !== "plane"
-                                 && root.speedValid && root.refAreaValid
+                                 && root.speedValid && root.refAreaValid && root.yawValid
                         onClicked: root.startRun()
                     }
                     // Why this run cannot be set up, before Run CFD is pressed (CAD-147).
@@ -1658,7 +1690,9 @@ Pane {
                         if (!c)
                             return ""
                         const conditions = qsTr("%1 m/s, flow %2, %3 mesh%4 · Aref %5 cm² · OpenFOAM %6")
-                            .arg(c.settings.speed).arg(c.settings.flowDirection).arg(c.settings.mesh)
+                            .arg(c.settings.speed)
+                            .arg(c.settings.flowDirection + (c.settings.yaw ? qsTr(" at yaw %1°").arg(Number(c.settings.yaw)) : ""))
+                            .arg(c.settings.mesh)
                             .arg(!c.settings.ground ? "" : c.settings.groundMoving === false ? qsTr(", fixed floor")
                                  : c.settings.rotatingWheels ? qsTr(", moving floor, %n rotating wheel(s)", "", (c.wheels || []).length)
                                  : qsTr(", moving floor"))

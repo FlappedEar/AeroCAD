@@ -26,6 +26,9 @@ ui.wait(1500)
 # Run list: ✕ asks; Keep leaves the run, Delete removes it.
 (() => { simulationPanel.tab = 0 })()
 ui.wait(500)
+# The run list is below the New run form: scroll it into view.
+(() => { let fl = null; const find = i => { if (!i || fl) return; if (i.objectName === "cfdPanelScroll") { fl = i.contentItem; return } for (let k = 0; k < (i.children || []).length; ++k) find(i.children[k]) }; find(simulationPanel); fl.contentY = Math.max(0, fl.contentHeight - fl.height) })()
+ui.wait(200)
 ui.clickText("✕")
 ui.wait(400)
 ui.shot("cfd-confirm-delete.png")

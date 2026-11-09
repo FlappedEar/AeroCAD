@@ -22,8 +22,12 @@ namespace aerocad::cfd {
 struct CaseFrame {
     core::Vec3 origin; ///< Model point (mm) that becomes the case origin.
     int quarterTurns = 0; ///< Rotation about +Z applied to model vectors, in 90 degree steps.
+    /// Yaw in degrees (CAD-188): after the quarter turns, model vectors are turned by -yaw
+    /// about +Z, so air arriving yaw degrees counter-clockwise of the flow direction runs
+    /// along +X in the case.
+    double yaw = 0.0;
 
-    static CaseFrame forFlow(std::string_view flowDirection, const core::Vec3& origin);
+    static CaseFrame forFlow(std::string_view flowDirection, const core::Vec3& origin, double yaw = 0.0);
 
     [[nodiscard]] core::Vec3 rotate(const core::Vec3& v) const;   ///< Model -> case direction.
     [[nodiscard]] core::Vec3 unrotate(const core::Vec3& v) const; ///< Case -> model direction.

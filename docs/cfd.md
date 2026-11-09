@@ -19,7 +19,11 @@ panel in place of Properties:
   parts as surroundings, label) and **Run CFD**. The speed is in m/s or with a unit
   (`72 km/h`, `45 mph`; a decimal comma works); the line under it shows it in m/s and km/h,
   and a speed that is not a number or above 150 m/s is named there and disables Run CFD
-  (CAD-180, [speed](images/audit/cad-180-speed-units.png)). *Ref. area (cm²)* sets the area
+  (CAD-180, [speed](images/audit/cad-180-speed-units.png)). *Yaw (°)* turns the oncoming
+  air for a crosswind or a car in a corner (`yaw`, -30 to 30, empty = 0, positive =
+  counter-clockwise seen from above); the tunnel preview turns with it, the frontal area
+  grows, and run rows say "flow +Y, yaw 5°" (CAD-188, [yaw](images/audit/cad-188-yaw.png)).
+  *Ref. area (cm²)* sets the area
   of Cd/Cl/Cs (`referenceArea`, e.g. a wing's planform area); empty uses the frontal area,
   which the field shows as "auto: … cm² (frontal)" (CAD-182,
   [field](images/audit/cad-182-ref-area.png)). With the moving floor on, *Floor at Z
@@ -296,7 +300,12 @@ up, use Move / Rotate / Scale (M): **Lay on Face** puts the face you click on th
 **Face Front** turns the face you click towards the oncoming air ([ui.md](ui.md#move--rotate--scale)). The case is
 rotated so the air flows along its +X axis. Results are reported as **drag** (along the
 flow), **lift** (+Z) and **side** force, and field data is converted back to model
-coordinates.
+coordinates. A **yaw** turns the part in the tunnel by that angle about Z on top
+(CAD-188), like a wind tunnel's turntable: the tunnel stays aligned with the air, forces
+stay in wind axes (drag along the air, side force across it), the frontal area is the one
+seen along the air, and a moving floor moves along the car's heading (the flow direction
+before the yaw) at speed × cos(yaw), the road speed under a crosswind. Rotating wheels
+are found along the tunnel axes, so they work at yaw 0 only.
 
 **Reference values.** Aref defaults to the frontal area of the part (projection on the
 plane normal to the flow, rasterised), lRef to its length along the flow. Both can be

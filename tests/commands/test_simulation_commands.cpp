@@ -354,6 +354,7 @@ TEST_CASE("simulation.export_results writes conditions, final values and the ful
     csv = read(file);
     CHECK(csv.find("\r\nState,finished\r\n") != std::string::npos);
     CHECK(csv.find("\r\nAir speed (m/s),") != std::string::npos);
+    CHECK(csv.find("\r\nYaw (deg),0\r\n") != std::string::npos); // CAD-188
     CHECK(csv.find("\r\nResults,\"final, mean of the last 20 % of the iterations\"\r\n") != std::string::npos);
     CHECK(csv.find("\r\nCd,0.8\r\n") != std::string::npos);
     CHECK(csv.find("\r\nDrag (N),1\r\n") != std::string::npos);

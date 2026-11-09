@@ -92,8 +92,8 @@ struct RunInput {
     cfd::Settings settings;
 };
 
-/// A box of the case frame (m) as an axis-aligned box in model coordinates (mm): the case
-/// frame only turns about Z in quarter turns, so the corners map onto a box again.
+/// A box of the case frame (m) as an axis-aligned box in model coordinates (mm): exact for
+/// quarter turns; at a yaw (CAD-188) it is the box around the turned corners.
 Json modelBox(const cfd::CaseFrame& frame, const core::BoundingBox& caseBox)
 {
     core::BoundingBox out;
@@ -103,6 +103,21 @@ Json modelBox(const cfd::CaseFrame& frame, const core::BoundingBox& caseBox)
         out.extend(frame.toModel(c));
     }
     return {{"min", {out.min.x, out.min.y, out.min.z}}, {"max", {out.max.x, out.max.y, out.max.z}}};
+}
+
+/// The 8 corners of a case-frame box (m) in model coordinates (mm), corner i at
+/// (i & 1 ? max.x : min.x, i & 2 ? max.y : min.y, i & 4 ? max.z : min.z) of the case box:
+/// the tunnel as it stands, also when turned by a yaw (CAD-188).
+Json modelCorners(const cfd::CaseFrame& frame, const core::BoundingBox& caseBox)
+{
+    Json out = Json::array();
+    for (int i = 0; i < 8; ++i) {
+        const core::Vec3 c =
+            frame.toModel({i & 1 ? caseBox.max.x : caseBox.min.x, i & 2 ? caseBox.max.y : caseBox.min.y,
+                           i & 4 ? caseBox.max.z : caseBox.min.z});
+        out.push_back({c.x, c.y, c.z});
+    }
+    return out;
 }
 
 /// Direction the air flows in model coordinates (unit vector): +X in the case frame.
@@ -315,6 +330,7 @@ void registerSimulationCommands(CommandRegistry& r)
                      {"baseCellSize", plan.baseCellSize},
                      {"domainSize", {plan.domain.size().x, plan.domain.size().y, plan.domain.size().z}},
                      {"domainModel", modelBox(plan.frame, plan.domain)},
+                     {"domainCorners", modelCorners(plan.frame, plan.domain)},
                      {"partModel", modelBox(plan.frame, plan.partBounds)},
                      {"flowModel", flowVector(plan.frame)},
                      {"environment", checkEngine ? cfd::detectEnvironment().toJson() : Json()},

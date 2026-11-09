@@ -59,6 +59,11 @@ struct Settings {
     /// Direction the air flows in, in model coordinates (Z up): "+X", "-X", "+Y" or "-Y".
     /// Default "+Y": the app's Front view looks from -Y, so the air hits the front.
     std::string flowDirection = "+Y";
+    /// Yaw (crosswind) in degrees, -30..30 (CAD-188): the oncoming air turns this far
+    /// counter-clockwise, seen from above, from flowDirection. Forces stay in wind axes
+    /// (drag along the air, side force across it); a moving floor moves along flowDirection
+    /// (the car's heading) at speed * cos(yaw).
+    double yaw = 0.0;
     /// Kinematic viscosity, m^2/s (air at about 20 degC).
     double kinematicViscosity = 1.5e-5;
     /// Density used to turn kinematic pressure and forces into Pa and N, kg/m^3.

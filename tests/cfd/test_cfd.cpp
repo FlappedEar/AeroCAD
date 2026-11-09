@@ -236,6 +236,68 @@ TEST_CASE("CaseFrame turns the flow direction into +X and back", "[cfd]")
     }
 }
 
+TEST_CASE("Yaw turns the oncoming air and the case frame (CAD-188)", "[cfd]")
+{
+    const double a = 5.0 * 3.14159265358979323846 / 180.0;
+    const auto f = cfd::CaseFrame::forFlow("+Y", {10, 20, 30}, 5.0);
+    // Air from +Y turned 5 degrees counter-clockwise (seen from above) runs along +X in the case.
+    const auto r = f.rotate({-std::sin(a), std::cos(a), 0});
+    CHECK(r.x == Approx(1.0));
+    CHECK(r.y == Approx(0.0).margin(1e-12));
+    const auto flow = f.unrotate({1, 0, 0});
+    CHECK(flow.x == Approx(-std::sin(a)));
+    CHECK(flow.y == Approx(std::cos(a)));
+    const core::Vec3 p{123, -45, 67};
+    const auto back = f.toModel(f.toCase(p));
+    CHECK(back.x == Approx(p.x));
+    CHECK(back.y == Approx(p.y));
+    CHECK(back.z == Approx(p.z));
+    CHECK(cfd::CaseFrame::fromJson(f.toJson()).yaw == 5.0);
+    nlohmann::json old = f.toJson();
+    old.erase("yaw"); // Cases written before CAD-188.
+    CHECK(cfd::CaseFrame::fromJson(old).yaw == 0.0);
+
+    // Settings: parsed, limited to +-30 degrees, a compared condition (0 for older runs).
+    CHECK(cfd::settingsFromJson({{"yaw", -12.5}}).yaw == -12.5);
+    CHECK_THROWS(cfd::settingsFromJson({{"yaw", 31}}));
+    auto withYaw = cfd::toJson(cfd::Settings{});
+    withYaw["yaw"] = 5.0;
+    auto before = cfd::toJson(cfd::Settings{});
+    before.erase("yaw");
+    CHECK(cfd::differingConditions(before, withYaw) == std::vector<std::string>{"yaw"});
+    CHECK(cfd::differingConditions(before, cfd::toJson(cfd::Settings{})).empty());
+    CHECK(cfd::describeCondition("yaw", cfd::toJson(cfd::Settings{}), withYaw) == "Yaw: A 0°, B 5°");
+}
+
+#ifndef _WIN32
+TEST_CASE("writeCase at yaw: geometry turned, road along the heading (CAD-188)", "[cfd]")
+{
+    TempDir tmp;
+    cfd::CaseGeometry g;
+    g.part = box({0, 0, 0}, {200, 80, 60});
+    cfd::Settings s;
+    s.flowDirection = "+X";
+    s.speed = 30;
+    s.ground = true;
+    const auto straight = cfd::planCase(g, s);
+    s.yaw = 10.0;
+    const auto info = cfd::writeCase(tmp.path(), g, s);
+    CHECK(info.frame.yaw == 10.0);
+    // The part is turned in the tunnel: wider across the air, so a larger frontal area.
+    CHECK(info.partBounds.size().y > straight.partBounds.size().y + 0.02);
+    CHECK(info.referenceArea == Approx(0.06 * (0.08 * std::cos(0.1745329) + 0.2 * std::sin(0.1745329))).epsilon(0.02));
+    // The road moves along the car's heading at 30 * cos(10 deg) = 29.54 m/s:
+    // (29.10, -5.13) in the case.
+    const std::string u = slurp(tmp.path() / "0.orig/U");
+    INFO(u);
+    CHECK(u.find("ground { type fixedValue; value uniform (29.09") != std::string::npos);
+    CHECK(u.find(" -5.13") != std::string::npos);
+    // Rotating wheels are found along the case axes: refused at yaw.
+    s.rotatingWheels = true;
+    CHECK_THROWS_WITH(cfd::planCase(g, s), Catch::Matchers::ContainsSubstring("yaw 0 only"));
+}
+#endif
+
 TEST_CASE("Frontal area of a box is its cross-section", "[cfd]")
 {
     // Already in case frame (m): 0.2 long in X, 0.08 x 0.06 cross-section.
