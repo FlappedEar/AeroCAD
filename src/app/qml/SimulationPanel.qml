@@ -488,6 +488,7 @@ Pane {
         copiedContext = null
         copiedContextForeign = 0
         renamingRun = ""
+        renameText = ""
         copiedSettings = ({})
         groundFixed = false
         autoSelect = false
@@ -495,6 +496,7 @@ Pane {
         compareRun = ""
         showB = false
         results = null
+        resultsB = null
         comparison = null
         fieldStats = ({})
         runSections = ({})
@@ -504,6 +506,8 @@ Pane {
         differenceStats = null
         cpMin.text = ""
         cpMax.text = ""
+        // A speed typed for the closed project's run (CAD-211).
+        scaleSpeedField.text = ""
         error = ""
     }
 
