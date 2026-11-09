@@ -124,9 +124,17 @@ Json CaseInfo::toJson() const
         {"baseCellSize", baseCellSize},
         {"geometryHash", geometryHash},
         {"contextHash", contextHash ? Json(*contextHash) : Json(nullptr)},
-        {"wheels", [&] {
+        {"wheels",
+         [&] {
              Json list = Json::array();
              for (const Wheel& w : wheels)
+                 list.push_back(w.toJson());
+             return list;
+         }()},
+        {"standingWheels",
+         [&] {
+             Json list = Json::array();
+             for (const Wheel& w : standingWheels)
                  list.push_back(w.toJson());
              return list;
          }()},
@@ -151,6 +159,9 @@ CaseInfo CaseInfo::fromJson(const Json& j)
     if (auto it = j.find("wheels"); it != j.end() && it->is_array())
         for (const Json& w : *it)
             c.wheels.push_back(Wheel::fromJson(w));
+    if (auto it = j.find("standingWheels"); it != j.end() && it->is_array())
+        for (const Json& w : *it)
+            c.standingWheels.push_back(Wheel::fromJson(w));
     return c;
 }
 
@@ -807,6 +818,21 @@ CaseInfo planCase(const CaseGeometry& geometry, const Settings& s)
     const double h = L / meshPlan(s.mesh).cellsPerLength;
     BoundingBox d;
     double floor = all.min.z - 0.02 * L;
+    // Wheels are found along the car's axes: in the case frame before the yaw turn
+    // (CAD-190); their centres are then turned into the case.
+    auto findWheels = [&] {
+        std::vector<Wheel> found;
+        if (s.yaw == 0.0) {
+            found = detectWheels(part, L);
+        } else {
+            const TriangleMesh straight = toCaseMesh(geometry.part, headingFrame(info.frame));
+            const Vec3 hs = straight.bounds().size();
+            found = detectWheels(straight, std::max({hs.x, hs.y, hs.z})); // The car's own length.
+        }
+        for (Wheel& w : found)
+            w.centre = rotateAboutZ(w.centre, -s.yaw);
+        return found;
+    };
     if (s.rotatingWheels) {
         // CAD-154: the tyres stand on the moving floor. It is put a little above their
         // bottom, so each tyre meets it in a contact patch instead of a line of degenerate
@@ -816,17 +842,7 @@ CaseInfo planCase(const CaseGeometry& geometry, const Settings& s)
         if (s.groundHeight)
             throw std::runtime_error(
                 "With rotating wheels the floor is put where the tyres touch it: leave the floor height empty");
-        // Wheels are found along the car's axes: in the case frame before the yaw turn
-        // (CAD-190); their centres are then turned into the case.
-        if (s.yaw == 0.0) {
-            info.wheels = detectWheels(part, L);
-        } else {
-            const TriangleMesh straight = toCaseMesh(geometry.part, headingFrame(info.frame));
-            const Vec3 hs = straight.bounds().size();
-            info.wheels = detectWheels(straight, std::max({hs.x, hs.y, hs.z})); // The car's own length.
-        }
-        for (Wheel& w : info.wheels)
-            w.centre = rotateAboutZ(w.centre, -s.yaw);
+        info.wheels = findWheels();
         if (info.wheels.empty())
             throw std::runtime_error("No wheels found: rotating wheels need tyres standing on the bottom of the part");
         double r = info.wheels.front().radius;
@@ -835,6 +851,10 @@ CaseInfo planCase(const CaseGeometry& geometry, const Settings& s)
         floor = info.partBounds.min.z + 0.015 * r;
         if (all.min.z < info.partBounds.min.z - 1e-9)
             throw std::runtime_error("With rotating wheels no other part may reach below the tyres");
+    } else if (s.ground) {
+        // A car on a floor whose wheels do not turn still has its axles: they give the aero
+        // balance (CAD-196), and nothing else in the case uses them.
+        info.standingWheels = findWheels();
     }
     if (s.ground && s.groundHeight) {
         floor = info.frame.toCase({0.0, 0.0, *s.groundHeight}).z; // Rotation is about Z only.

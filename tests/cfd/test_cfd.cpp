@@ -2116,6 +2116,63 @@ TEST_CASE("Aero balance: front and rear axle lift of a car with wheels (CAD-194)
     }
 }
 
+TEST_CASE("Aero balance of a car whose wheels do not turn (CAD-196)", "[cfd][wheels]")
+{
+    for (const bool moving : {false, true}) {
+        CAPTURE(moving);
+        TempDir tmp;
+        cfd::RunManager runs(tmp.path());
+        cfd::Settings s;
+        s.flowDirection = "+X";
+        s.ground = true;
+        s.groundMoving = moving;
+        cfd::CaseGeometry g;
+        g.part = car();
+        const std::string id = runs.prepare(g, s, {});
+        const auto info = runs.caseInfo(id);
+        REQUIRE(info);
+        CHECK(info->wheels.empty());
+        REQUIRE(info->standingWheels.size() == 4);
+        CHECK(info->standingWheels[0].axle == 0);
+        CHECK(info->standingWheels[3].axle == 1);
+        // Nothing in the case changes: no wheel surfaces of their own.
+        CHECK_FALSE(fs::exists(tmp.path() / id / "constant/triSurface/wheels0.stl"));
+
+        fakeFinishedRun(tmp.path() / id, 0.8, 1.0, -2.0);
+        // 100 N of downforce right between the axles, no moment about that point.
+        core::Vec3 mid{};
+        for (const auto& w : info->standingWheels)
+            mid = mid + core::Vec3{w.centre.x, w.centre.y, w.centre.z - w.radius} * 0.25;
+        const core::Vec3 m = (mid - info->partBounds.center()).cross(core::Vec3{0, 0, -100});
+        std::ostringstream forces, moments;
+        forces.precision(12);
+        moments.precision(12);
+        forces << "# Time total_x total_y total_z pressure_x pressure_y pressure_z viscous_x viscous_y viscous_z\n";
+        moments << "# Time total_x total_y total_z\n";
+        for (int i = 1; i <= 100; ++i) {
+            forces << i << " 0 0 -100 0 0 -100 0 0 0\n";
+            moments << i << ' ' << m.x << ' ' << m.y << ' ' << m.z << '\n';
+        }
+        write(tmp.path() / id / "postProcessing" / "forces" / "0" / "force.dat", forces.str());
+        write(tmp.path() / id / "postProcessing" / "forces" / "0" / "moment.dat", moments.str());
+        const auto summary = runs.results(id).at("summary");
+        INFO(summary.dump());
+        CHECK(summary.at("frontLiftN").get<double>() == Approx(-50.0).epsilon(1e-6));
+        CHECK(summary.at("rearLiftN").get<double>() == Approx(-50.0).epsilon(1e-6));
+        CHECK(summary.at("frontShare").get<double>() == Approx(50.0).epsilon(1e-6));
+    }
+    // No floor: a part is not standing on anything, so no axles are looked for.
+    TempDir tmp;
+    cfd::RunManager runs(tmp.path());
+    cfd::Settings s;
+    s.flowDirection = "+X";
+    cfd::CaseGeometry g;
+    g.part = car();
+    const auto info = runs.caseInfo(runs.prepare(g, s, {}));
+    REQUIRE(info);
+    CHECK(info->standingWheels.empty());
+}
+
 TEST_CASE("Aero balance is left out without two axles or moments (CAD-194)", "[cfd][wheels]")
 {
     TempDir tmp;
