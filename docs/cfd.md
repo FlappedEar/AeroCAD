@@ -81,7 +81,11 @@ panel in place of Properties:
   lifts the front, as on a real car. The front share is given only when both axles pull the
   same way. `simulation.results` returns `frontLiftN`, `rearLiftN`, `frontShare` (null for
   other runs) and their swing; the A/B table, `simulation.compare` and both CSV exports add
-  front and rear axle lift when the runs have them. On the test car (1 m box body on four
+  front and rear axle lift when the runs have them. When both runs have a front share, the
+  A/B table adds *Balance front %* with B − A in percentage points ("+6.4 pp", no % of a %),
+  `simulation.compare` returns `balance` {a, b, difference} and the A/B CSV the row
+  "Aero balance front (%; B - A in percentage points)" (CAD-197,
+  [A/B](images/audit/cad-197-balance-shift.png)). On the test car (1 m box body on four
   wheels, 0.6 m wheelbase, 30 m/s, coarse mesh) a real OpenFOAM v2506 run gave front +30.5 N,
   rear -11.6 N with 54 N of drag about 0.2 m above the floor (about 18 N of it lifting the
   front).

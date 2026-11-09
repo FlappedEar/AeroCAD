@@ -2173,6 +2173,60 @@ TEST_CASE("Aero balance of a car whose wheels do not turn (CAD-196)", "[cfd][whe
     CHECK(info->standingWheels.empty());
 }
 
+TEST_CASE("A/B shows the aero balance shift in percentage points (CAD-197)", "[cfd][wheels]")
+{
+    TempDir tmp;
+    cfd::RunManager runs(tmp.path());
+    cfd::Settings s;
+    s.flowDirection = "+X";
+    s.ground = true;
+    cfd::CaseGeometry g;
+    g.part = car();
+    // 100 N of downforce at `t` along the wheelbase from the front axle: front share 100 (1 - t) %.
+    const auto run = [&](double t) {
+        const std::string id = runs.prepare(g, s, {});
+        const auto info = runs.caseInfo(id);
+        REQUIRE(info);
+        REQUIRE(info->standingWheels.size() == 4);
+        fakeFinishedRun(tmp.path() / id, 0.8, 1.0, -2.0);
+        core::Vec3 front{}, rear{};
+        for (const auto& w : info->standingWheels)
+            (w.axle == 0 ? front : rear) =
+                (w.axle == 0 ? front : rear) + core::Vec3{w.centre.x, w.centre.y, w.centre.z - w.radius} * 0.5;
+        const core::Vec3 q = front + (rear - front) * t;
+        const core::Vec3 m = (q - info->partBounds.center()).cross(core::Vec3{0, 0, -100});
+        std::ostringstream forces, moments;
+        forces.precision(12);
+        moments.precision(12);
+        forces << "# Time total_x total_y total_z pressure_x pressure_y pressure_z viscous_x viscous_y viscous_z\n";
+        moments << "# Time total_x total_y total_z\n";
+        for (int i = 1; i <= 100; ++i) {
+            forces << i << " 0 0 -100 0 0 -100 0 0 0\n"; // No drag: no moment from above the floor.
+            moments << i << ' ' << m.x << ' ' << m.y << ' ' << m.z << '\n';
+        }
+        write(tmp.path() / id / "postProcessing" / "forces" / "0" / "force.dat", forces.str());
+        write(tmp.path() / id / "postProcessing" / "forces" / "0" / "moment.dat", moments.str());
+        return id;
+    };
+    const std::string a = run(0.5), b = run(0.4); // 50 % and 60 % on the front axle.
+    const auto cmp = runs.compare(a, b);
+    INFO(cmp.dump());
+    REQUIRE(cmp.contains("balance"));
+    CHECK(cmp.at("balance").at("a").get<double>() == Approx(50.0).epsilon(1e-6));
+    CHECK(cmp.at("balance").at("b").get<double>() == Approx(60.0).epsilon(1e-6));
+    CHECK(cmp.at("balance").at("difference").get<double>() == Approx(10.0).epsilon(1e-6));
+    CHECK(cmp.at("balance").at("percent").is_null()); // Not a % of a %.
+
+    runs.exportComparisonCsv(a, b, tmp.path() / "ab.csv");
+    std::ifstream in(tmp.path() / "ab.csv", std::ios::binary);
+    const std::string csv(std::istreambuf_iterator<char>(in), {});
+    INFO(csv);
+    const auto row = csv.find("\r\nAero balance front (%; B - A in percentage points),");
+    REQUIRE(row != std::string::npos);
+    // A, B, B - A and an empty change in %.
+    CHECK(csv.substr(row, csv.find("\r\n", row + 2) - row).find(",50,60,10,,") != std::string::npos);
+}
+
 TEST_CASE("Aero balance is left out without two axles or moments (CAD-194)", "[cfd][wheels]")
 {
     TempDir tmp;
@@ -2198,6 +2252,7 @@ TEST_CASE("Aero balance is left out without two axles or moments (CAD-194)", "[c
     CHECK(summary.at("frontLiftN").is_null());
     CHECK(summary.at("rearLiftN").is_null());
     CHECK_FALSE(runs.compare(box, noMoments).at("forces").contains("frontLiftN"));
+    CHECK_FALSE(runs.compare(box, noMoments).contains("balance")); // CAD-197
     runs.exportResultsCsv(box, tmp.path() / "box.csv");
     std::ifstream in(tmp.path() / "box.csv", std::ios::binary);
     CHECK(std::string(std::istreambuf_iterator<char>(in), {}).find("Front axle lift") == std::string::npos);
