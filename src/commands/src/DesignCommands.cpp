@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <array>
 #include <limits>
 #include <optional>
 #include <tuple>
@@ -690,7 +691,8 @@ geometry::Vec2 pointPosition(const std::vector<geometry::SketchCurve>& curves, c
 /// end of a line or arc in its direction and ends at `end`, as a three-point arc. Returns the
 /// arc item, the index of the curve it is tangent to and the tangent side for that constraint
 /// (SketchConstraint::side), taken from the solved geometry it was built on.
-std::tuple<Json, std::size_t, int> resolveTangentArc(const std::vector<geometry::SketchCurve>& curves, const Json& item)
+std::tuple<Json, std::size_t, int> resolveTangentArc(const cad::Design& design,
+                                                     const std::vector<geometry::SketchCurve>& curves, const Json& item)
 {
     using K = geometry::SketchCurve::Kind;
     if (!item.contains("from") || !item.contains("end"))
@@ -728,7 +730,7 @@ std::tuple<Json, std::size_t, int> resolveTangentArc(const std::vector<geometry:
     }
     const double tl = std::hypot(t.x, t.y);
     const auto& e = item.at("end");
-    const geometry::Vec2 end{e.at(0).get<double>(), e.at(1).get<double>()};
+    const geometry::Vec2 end{design.evaluate(e.at(0)), design.evaluate(e.at(1))};
     const geometry::Vec2 d{end.x - s.x, end.y - s.y};
     const geometry::Vec2 n{-t.y / tl, t.x / tl}; // left of the direction
     const double side = n.x * d.x + n.y * d.y, dd = d.x * d.x + d.y * d.y;
@@ -767,6 +769,55 @@ std::tuple<Json, std::size_t, int> resolveTangentArc(const std::vector<geometry:
         tangentSide = (b.x - a.x) * (ctr.y - a.y) - (b.y - a.y) * (ctr.x - a.x) > 0 ? 1 : -1;
     }
     return {arc, i, tangentSide};
+}
+
+/// A tangent arc as built: its item index in the sketch's curves, its curve index, and the
+/// start, through and end points it should solve to.
+struct PlacedArc {
+    std::size_t item;
+    std::size_t curve;
+    std::array<geometry::Vec2, 3> points;
+};
+
+/// The solve starts from the stored geometry, so a source that constraints moved far from where it
+/// was drawn drags the new, free arc away from where it was built. The stored arc is only the
+/// solver's starting point: shift its points by the remaining error and solve again, until the arc
+/// is where it was put or it stops getting closer (only when there is an error to remove).
+void settleTangentArcs(cad::Design& d, cad::FeatureId id, Json& curves, const Json& constraints,
+                       const std::vector<PlacedArc>& placed)
+{
+    static constexpr const char* keys[] = {"start", "through", "end"};
+    std::vector<double> history;
+    for (int iter = 0; iter < 30 && !placed.empty(); ++iter) {
+        const auto solved = d.sketches().find(id);
+        if (solved == d.sketches().end())
+            return;
+        std::vector<std::array<geometry::Vec2, 3>> errs;
+        double worst = 0;
+        for (const auto& a : placed) {
+            if (a.curve >= solved->second.curves.size() || solved->second.curves[a.curve].points.size() < 3)
+                return;
+            const auto& pts = solved->second.curves[a.curve].points;
+            std::array<geometry::Vec2, 3> e;
+            for (int k = 0; k < 3; ++k) {
+                e[k] = {a.points[k].x - pts[k].x, a.points[k].y - pts[k].y};
+                if (k != 1) // the through point only steers; the solver keeps ends and centre
+                    worst = std::max(worst, std::hypot(e[k].x, e[k].y));
+            }
+            errs.push_back(e);
+        }
+        history.push_back(worst);
+        if (worst < 1e-6 || (history.size() > 5 && worst > 0.99 * history[history.size() - 6]))
+            return;
+        for (std::size_t i = 0; i < placed.size(); ++i) {
+            Json& item = curves[placed[i].item];
+            for (int k = 0; k < 3; ++k) {
+                Json& p = item[keys[k]];
+                p = Json::array({p.at(0).get<double>() + errs[i][k].x, p.at(1).get<double>() + errs[i][k].y});
+            }
+        }
+        d.editFeature(id, {{"curves", curves}, {"constraints", constraints}});
+    }
 }
 
 /// A new fix constraint holds the geometry where it is now (after earlier dimensions),
@@ -928,6 +979,7 @@ void registerSketchCommands(CommandRegistry& r)
                       throw cad::DesignError("No sketch with id " + std::to_string(id));
                   Json curves = f->params.value("curves", Json::array());
                   Json constraints = f->params.value("constraints", Json::array());
+                  std::vector<PlacedArc> placed;
                   for (const auto& c : params.at("curves")) {
                       if (c.value("type", std::string()) != "tangent_arc") {
                           curves.push_back(c);
@@ -940,7 +992,11 @@ void registerSketchCommands(CommandRegistry& r)
                       if (solved == d.sketches().end())
                           throw CommandError("The sketch is not evaluated");
                       const std::size_t next = solved->second.curves.size();
-                      auto [arc, from, side] = resolveTangentArc(solved->second.curves, c);
+                      auto [arc, from, side] = resolveTangentArc(d, solved->second.curves, c);
+                      auto pt = [&arc](const char* k) {
+                          return geometry::Vec2{arc[k][0].get<double>(), arc[k][1].get<double>()};
+                      };
+                      placed.push_back({curves.size(), next, {pt("start"), pt("through"), pt("end")}});
                       curves.push_back(arc);
                       // The side is explicit for the same reason: the solver would pick it from
                       // the stored source, which may lie across the new centre.
@@ -952,6 +1008,7 @@ void registerSketchCommands(CommandRegistry& r)
                                                                      Json{{"curve", next}, {"point", "start"}}})}});
                   }
                   d.editFeature(id, {{"curves", curves}, {"constraints", constraints}});
+                  settleTangentArcs(d, id, curves, constraints, placed);
                   return Json{};
               });
               return addedFeature(design(ctx), ctx.document, id);
