@@ -1202,6 +1202,53 @@ void registerSketchCommands(CommandRegistry& r)
               return addedFeature(design(ctx), ctx.document, id);
           });
 
+    r.add({"sketch.extend", "Extend",
+           "Extends a sketch line or arc (Fusion: Extend): the end of `curve` nearer `at` (sketch coordinates) "
+           "moves along the line, or around the arc's circle, to the nearest crossing with another curve. The "
+           "curve keeps its index and constraints. Refused when nothing is in the way, the end is joined to "
+           "another curve, or the curve is a side of a rectangle, polygon or slot.",
+           objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
+                         {"curve", {{"type", "integer"}, {"description", "Index from sketch.curves."}}},
+                         {"at", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", {{"type", "number"}}}}}},
+                        {"sketch", "curve", "at"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              const auto id = params.at("sketch").get<cad::FeatureId>();
+              const Json& at = params.at("at");
+              designChange(ctx, "Extend", [&](cad::Design& d) {
+                  (void)sketchFeature(d, id);
+                  d.extendSketchCurve(id, params.at("curve").get<std::size_t>(), {at[0].get<double>(), at[1].get<double>()});
+                  return Json{};
+              });
+              return addedFeature(design(ctx), ctx.document, id);
+          });
+
+    r.add({"sketch.extend_preview", "Extend preview",
+           "What sketch.extend would make, without changing the sketch: {extendable, end (start / end), kind, "
+           "points} of the lengthened curve, or {extendable: false, reason}.",
+           objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
+                         {"curve", {{"type", "integer"}, {"description", "Index from sketch.curves."}}},
+                         {"at", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", {{"type", "number"}}}}}},
+                        {"sketch", "curve", "at"})},
+          [](CommandContext& ctx, const Json& params) {
+              const auto id = params.at("sketch").get<cad::FeatureId>();
+              const Json& at = params.at("at");
+              bool fromStart = false;
+              try {
+                  const auto c = design(ctx).extendedSketchCurve(id, params.at("curve").get<std::size_t>(),
+                                                                 {at[0].get<double>(), at[1].get<double>()}, &fromStart);
+                  Json pts = Json::array();
+                  for (const auto& q : c.points)
+                      pts.push_back(Json::array({q.x, q.y}));
+                  return Json{{"extendable", true},
+                              {"end", fromStart ? "start" : "end"},
+                              {"kind", c.kind == geometry::SketchCurve::Kind::Line ? "line" : "arc"},
+                              {"points", pts}};
+              } catch (const cad::DesignError& e) {
+                  return Json{{"extendable", false}, {"reason", e.what()}};
+              }
+          });
+
     r.add({"sketch.set_construction", "Construction",
            "Turns sketch curves into construction geometry or back (Fusion: Construction, X). Construction "
            "curves are drawn dashed and bound no profile; they still take constraints. One side of a rectangle, "

@@ -206,6 +206,16 @@ public:
     /// a curve that crosses nothing is removed whole. Lines, arcs and circles. Constraints
     /// on the trimmed curve go; the remaining pieces are added as new curves at the end.
     void trimSketchCurve(FeatureId sketch, std::size_t curve, const geometry::Vec2& at);
+    /// Extends a sketch line or arc (Fusion: Extend): the end of `curve` nearer `at` (sketch
+    /// coordinates) moves along the line, or around the arc's circle, to the nearest crossing
+    /// with another curve. The curve keeps its index and constraints. Throws DesignError (and
+    /// leaves the design unchanged) when nothing is in the way, the end is joined to another
+    /// curve, or the curve is part of a rectangle, polygon or slot.
+    void extendSketchCurve(FeatureId sketch, std::size_t curve, const geometry::Vec2& at);
+    /// The curve extendSketchCurve would make, without changing the design (a preview);
+    /// `atStart` tells which end moves. Throws DesignError like extendSketchCurve.
+    [[nodiscard]] geometry::SketchCurve extendedSketchCurve(FeatureId sketch, std::size_t curve,
+                                                            const geometry::Vec2& at, bool* atStart = nullptr) const;
     /// Mirrors sketch curves about sketch line `line` (Fusion: Sketch Mirror): the copies
     /// are added at the end and held symmetric to the originals (symmetry constraints on
     /// their points, equal radii), so they follow when the originals change.
