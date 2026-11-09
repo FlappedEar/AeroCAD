@@ -70,6 +70,11 @@ panel in place of Properties:
   Drag, lift and side show "± x": half of max − min over the same last 20 % of the iterations,
   so how far the force still swings around the mean (`summary.spread` in `simulation.results`,
   also for Cd/Cl/Cs; CAD-191, [summary](images/audit/cad-191-swing.png)).
+  **At speed** (CAD-208, [summary](images/audit/cad-208-scale-speed.png)): type another speed
+  (m/s, km/h or mph, as in New run) to read the final drag and lift there, for example
+  "200 km/h" on a 40 m/s run gives "drag 57.9 N · lift -185.2 N (×1.93)". The forces are scaled
+  by (speed / run speed)² with the run's own Cd and Cl; Reynolds-number effects are not
+  included, so for a large change run that speed instead. Final results only.
   **Aero balance** (CAD-194, [summary](images/audit/cad-194-balance.png)): for a car with two
   axles (turning wheels, or with the floor on, tyres standing on the part's bottom that do not
   turn, found the same way and kept in case.json as `standingWheels` only for this; CAD-196),

@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CAD-208: Results > At speed scales the final drag and lift by (speed / run speed)².
+# Injected results of a 40 m/s run (drag 30 N, lift -96 N), no engine.
+Qt.createQmlObject('import QtQuick; Item { objectName: "cfTest"; visible: false; function find(i, name) { if (!i) return null; if (i.objectName === name) return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = find(ch[k], name); if (r) return r } return null } function clickItem(name) { const b = find(simulationPanel, name); const p = b.mapToItem(null, b.width / 2, b.height / 2); ui.click(p.x, p.y) } }', window.contentItem)
+ui.wait(800)
+ui.clickText("SIMULATE")
+ui.wait(300)
+ui.clickText("Wind Tunnel")
+ui.wait(800)
+(() => { simulationPanel.tab = 1; simulationPanel.results = { summary: { dragN: 30, liftN: -96, sideN: 0.5, cd: 0.25, cl: -0.8, cs: 0.004, pressureDragN: 24, viscousDragN: 6, iterations: 500 }, finalResults: { available: true, reasons: [] }, provisional: false, quality: { status: "ok", checks: {} }, conditions: { settings: { speed: 40, flowDirection: "+X", mesh: "coarse", ground: false }, wheels: [], referenceArea: 0.012, openfoam: "2406" }, fields: {}, history: { iteration: [1, 2], cd: [0.3, 0.25], cl: [-0.7, -0.8] } } })()
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const f = t.find(simulationPanel, "cfdScaleSpeed"); if (!f || !f.visible) ui.fail("no At speed field"); if (t.find(simulationPanel, "cfdScaleResult").text !== "") ui.fail("result before typing") })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); t.clickItem("cfdScaleSpeed") })()
+ui.type("200 km/h")
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const r = t.find(simulationPanel, "cfdScaleResult").text; ui.log("200 KMH " + r); if (r !== "drag 57.9 N · lift -185.2 N (×1.93)") ui.fail("200 km/h: " + r) })()
+ui.shot("cfd-scale-speed.png")
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); t.find(simulationPanel, "cfdScaleSpeed").text = "40" })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const r = t.find(simulationPanel, "cfdScaleResult").text; ui.log("40 " + r); if (r !== "drag 30.0 N · lift -96.0 N (×1.00)") ui.fail("40: " + r) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); t.find(simulationPanel, "cfdScaleSpeed").text = "fast" })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const r = t.find(simulationPanel, "cfdScaleResult").text; ui.log("INVALID " + r); if (r.indexOf("a speed, e.g.") !== 0) ui.fail("invalid: " + r) })()
+# Provisional results: no scaling.
+(() => { const r = JSON.parse(JSON.stringify(simulationPanel.results)); r.provisional = true; simulationPanel.results = r })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); if (t.find(simulationPanel, "cfdScaleSpeed").visible) ui.fail("At speed shown for provisional results") })()
+ui.log("cfd scale speed done")
