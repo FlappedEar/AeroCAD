@@ -294,6 +294,9 @@ Pane {
     }
     /// One A/B table row: A, B, B − A and the change in % (null at noise level or for A = 0).
     function abRow(key) {
+        // L/D of A and B (CAD-187): a ratio, so never at force noise level.
+        if (key === "efficiency")
+            return comparison && comparison.efficiency ? comparison.efficiency : null
         const coefficient = ["cd", "cl", "cs"].indexOf(key) >= 0
         const src = !comparison ? null : coefficient ? comparison.coefficientsOnReferenceAreaOfA : comparison.forces
         const d = src && src[key] ? src[key] : null
@@ -1930,14 +1933,14 @@ Pane {
                         // Forces, the drag split and the coefficients (B on A's reference area, CAD-171).
                         model: [["dragN", qsTr("Drag N")], ["liftN", qsTr("Lift N")], ["sideN", qsTr("Side N")],
                                 ["pressureDragN", qsTr("Pressure drag N")], ["viscousDragN", qsTr("Friction drag N")],
-                                ["cd", "Cd"], ["cl", "Cl"], ["cs", "Cs"]]
+                                ["efficiency", qsTr("L/D")], ["cd", "Cd"], ["cl", "Cl"], ["cs", "Cs"]]
                         delegate: Repeater {
                             id: rowRep
                             required property var modelData
                             readonly property var d: root.abRow(modelData[0])
                             model: 5
                             // Coefficients to 4 decimals, so a change of a few drag counts shows.
-                            readonly property int digits: modelData[0].endsWith("N") ? 3 : 4
+                            readonly property int digits: modelData[0].endsWith("N") ? 3 : modelData[0] === "efficiency" ? 2 : 4
                             delegate: Label {
                                 required property int index
                                 font.bold: index === 3
