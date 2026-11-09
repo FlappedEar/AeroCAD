@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CAD-250: a recovery copy saved in the background keeps the status line (it showed
+# "Recovery copy saved" over a fit's deviation result).
+ui.wait(800)
+(() => { controller.showStatus("Surface fitted: max deviation 0.2 mm"); if (!controller.autosaveNow()) ui.fail("no recovery copy saved"); if (controller.statusMessage !== "Surface fitted: max deviation 0.2 mm") ui.fail("the recovery copy replaced the status: " + controller.statusMessage) })()
+(() => { Qt.quit() })()
