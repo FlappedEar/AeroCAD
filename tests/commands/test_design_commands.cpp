@@ -1938,4 +1938,57 @@ TEST_CASE("Design commands: sketch edits start from the solved geometry (CAD-216
         CHECK(c3.at("curves")[0].at("points")[1][0].get<double>() == Approx(15).margin(1e-6));
         CHECK(c3.at("curves")[1].at("points")[0][0].get<double>() == Approx(10).margin(1e-6));
     }
+
+    // Codex (#190): like the solver, an end joined to an earlier end is not one later ends join
+    // to. Starts at x = 0, 0.75e-6, 1.5e-6: the third is apart from the first two. Both fixed at
+    // (0, 0), the write-back must not weld the third to the first.
+    const Json g = run(s, "sketch.create",
+                       {{"plane", "XY"},
+                        {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {0, 50}}},
+                                                {{"type", "line"}, {"start", {0.75e-6, 0}}, {"end", {50, 50}}},
+                                                {{"type", "line"}, {"start", {1.5e-6, 0}}, {"end", {50, 0}}}})},
+                        {"constraints", Json::array({{{"type", "fix"},
+                                                      {"points", Json::array({{{"curve", 2}, {"point", "start"}}})},
+                                                      {"at", Json::array({Json::array({0, 0})})}},
+                                                     {{"type", "fix"},
+                                                      {"points", Json::array({{{"curve", 0}, {"point", "start"}}})},
+                                                      {"at", Json::array({Json::array({0, 0})})}}})}});
+    const auto gid = g.at("id").get<std::uint64_t>();
+    run(s, "sketch.add_curves",
+        {{"sketch", gid}, {"curves", Json::array({{{"type", "line"}, {"start", {0, 80}}, {"end", {10, 80}}}})}});
+    run(s, "sketch.edit_constraint", {{"sketch", gid}, {"index", 1}, {"remove", true}});
+    run(s, "sketch.add_constraints",
+        {{"sketch", gid},
+         {"constraints", Json::array({{{"type", "fix"},
+                                       {"points", Json::array({{{"curve", 0}, {"point", "start"}}})},
+                                       {"at", Json::array({Json::array({1, 0})})}}})}});
+    {
+        const Json c4 = run(s, "sketch.curves", {{"sketch", gid}});
+        INFO(c4.dump());
+        CHECK(c4.at("curves")[0].at("points")[0][0].get<double>() == Approx(1).margin(1e-6));
+        CHECK(c4.at("curves")[2].at("points")[0][0].get<double>() == Approx(0).margin(1e-6));
+    }
+
+    // Codex (#190): an unchanged expression inside a point stays when the item is rewritten.
+    run(s, "parameter.set", {{"name", "x"}, {"expression", "5 mm"}});
+    const Json h = run(s, "sketch.create",
+                       {{"plane", "XY"},
+                        {"curves", Json::array({{{"type", "circle"}, {"center", {"x", 0}}, {"radius", 10}}})},
+                        {"constraints", Json::array({{{"type", "radius"}, {"curve", 0}, {"value", 7}}})}});
+    const auto hid = h.at("id").get<std::uint64_t>();
+    run(s, "sketch.add_curves",
+        {{"sketch", hid}, {"curves", Json::array({{{"type", "line"}, {"start", {40, 0}}, {"end", {50, 0}}}})}});
+    {
+        const Json tl = run(s, "timeline.list");
+        Json item;
+        for (const auto& feat : tl.at("features"))
+            if (feat.at("id") == hid)
+                item = feat.at("params").at("curves")[0];
+        INFO(item.dump());
+        CHECK(item.at("center")[0] == "x");
+        CHECK(item.at("radius").get<double>() == Approx(7).margin(1e-6));
+    }
+    run(s, "parameter.set", {{"name", "x"}, {"expression", "8 mm"}});
+    CHECK(run(s, "sketch.curves", {{"sketch", hid}}).at("curves")[0].at("points")[0][0].get<double>() ==
+          Approx(8).margin(1e-6));
 }

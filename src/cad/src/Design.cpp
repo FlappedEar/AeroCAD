@@ -1074,11 +1074,19 @@ bool sameCurve(const SketchCurve& a, const SketchCurve& b, double tol)
 Json keepExpressions(const Eval& ev, const Json& item, Json out)
 {
     auto equal = [](double a, double b) { return std::abs(a - b) <= 1e-7 * std::max(1.0, std::abs(a)); };
+    // Also inside point arrays ([x, y], spline points), element by element.
+    auto restore = [&](auto& self, const Json& written, Json& now) -> void {
+        if (written.is_string() && now.is_number()) {
+            if (equal(ev.num(written), now.get<double>()))
+                now = written;
+        } else if (written.is_array() && now.is_array() && written.size() == now.size()) {
+            for (std::size_t i = 0; i < written.size(); ++i)
+                self(self, written[i], now[i]);
+        }
+    };
     for (const auto& [key, value] : item.items()) {
-        if (!value.is_string() || !out.contains(key) || !out.at(key).is_number())
-            continue;
-        if (equal(ev.num(value), out.at(key).get<double>()))
-            out[key] = value;
+        if (out.contains(key))
+            restore(restore, value, out[key]);
     }
     if (has(item, "diameter") && out.contains("radius") && equal(ev.num(item.at("diameter")), 2 * out.at("radius").get<double>())) {
         out.erase("radius");
@@ -1114,7 +1122,7 @@ std::vector<std::pair<std::size_t, std::size_t>> weldedEnds(const std::vector<Sk
             for (const auto& e : ends) {
                 if (std::hypot(e.at.x - at.x, e.at.y - at.y) < 1e-6) {
                     pairs.emplace_back(e.id, id);
-                    break;
+                    return; // like endPoint: a joined end is not a position to join later ends to
                 }
             }
         }
