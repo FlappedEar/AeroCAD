@@ -784,13 +784,14 @@ struct PlacedArc {
     std::size_t item;
     std::size_t curve;
     std::array<geometry::Vec2, 3> points;
+    std::size_t from; ///< the curve it is tangent to (already joined by a constraint)
 };
 
 /// The solve starts from the stored geometry, so a source that constraints moved far from where it
 /// was drawn drags the new, free arc away from where it was built. The stored arc is only the
 /// solver's starting point: shift its points by the remaining error and solve again, until the arc
 /// is where it was put or it stops getting closer (only when there is an error to remove).
-void settleTangentArcs(cad::Design& d, cad::FeatureId id, Json& curves, const Json& constraints,
+void settleTangentArcs(cad::Design& d, cad::FeatureId id, Json& curves, Json& constraints,
                        const std::vector<PlacedArc>& placed)
 {
     static constexpr const char* keys[] = {"start", "through", "end"};
@@ -816,6 +817,32 @@ void settleTangentArcs(cad::Design& d, cad::FeatureId id, Json& curves, const Js
         history.push_back(worst);
         if (worst < 1e-6 || (history.size() > 5 && worst > 0.99 * history[history.size() - 6]))
             return;
+        if (iter == 0) {
+            // Moving the stored arc breaks the joins the solver made by stored position (e.g. a
+            // line drawn on from the arc's end in the same batch): keep them as constraints.
+            const auto& sc = solved->second.curves;
+            for (const auto& a : placed) {
+                for (const auto& [k, name] : {std::pair{0, "start"}, std::pair{2, "end"}}) {
+                    const geometry::Vec2 at = sc[a.curve].points[k];
+                    for (std::size_t j = 0; j < sc.size(); ++j) {
+                        if (j == a.curve || (j == a.from && k == 0) || sc[j].points.size() < 2)
+                            continue;
+                        const bool line = sc[j].kind == geometry::SketchCurve::Kind::Line;
+                        const bool arc = sc[j].kind == geometry::SketchCurve::Kind::Arc && sc[j].points.size() == 3;
+                        if (!line && !arc)
+                            continue;
+                        const std::pair<std::size_t, const char*> ends[] = {{0, "start"}, {sc[j].points.size() - 1, "end"}};
+                        for (const auto& [m, other] : ends) {
+                            if (std::hypot(sc[j].points[m].x - at.x, sc[j].points[m].y - at.y) < 1e-9)
+                                constraints.push_back(
+                                    {{"type", "coincident"},
+                                     {"points", Json::array({Json{{"curve", a.curve}, {"point", name}},
+                                                             Json{{"curve", j}, {"point", other}}})}});
+                        }
+                    }
+                }
+            }
+        }
         for (std::size_t i = 0; i < placed.size(); ++i) {
             Json& item = curves[placed[i].item];
             for (int k = 0; k < 3; ++k) {
@@ -1003,7 +1030,7 @@ void registerSketchCommands(CommandRegistry& r)
                       auto pt = [&arc](const char* k) {
                           return geometry::Vec2{arc[k][0].get<double>(), arc[k][1].get<double>()};
                       };
-                      placed.push_back({curves.size(), next, {pt("start"), pt("through"), pt("end")}});
+                      placed.push_back({curves.size(), next, {pt("start"), pt("through"), pt("end")}, from});
                       curves.push_back(arc);
                       // The side is explicit for the same reason: the solver would pick it from
                       // the stored source, which may lie across the new centre.

@@ -1674,4 +1674,27 @@ TEST_CASE("Design commands: a tangent arc stays on a dimensioned line's end (CAD
     CHECK(wa[0][1].get<double>() == Approx(0).margin(1e-6));
     CHECK(wa[2][0].get<double>() == Approx(10).margin(1e-6));
     CHECK(wa[2][1].get<double>() == Approx(10).margin(1e-6));
+
+
+    // Codex: a line drawn on from a settled arc's end in the same batch stays joined to it (the
+    // settle moves the stored arc, so the join becomes a constraint).
+    const Json b = run(s, "sketch.create",
+                       {{"plane", "XY"},
+                        {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {10, 0}}}})},
+                        {"constraints", Json::array({{{"type", "fix"}, {"points", Json::array({{{"curve", 0}, {"point", "start"}}})}},
+                                                     {{"type", "vertical"}, {"curve", 0}},
+                                                     {{"type", "length"}, {"curve", 0}, {"value", 10}}})}});
+    const auto bid = b.at("id").get<std::uint64_t>();
+    run(s, "sketch.add_curves",
+        {{"sketch", bid},
+         {"curves", Json::array({{{"type", "tangent_arc"}, {"from", {{"curve", 0}, {"point", "end"}}}, {"end", {-10, 20}}},
+                                 {{"type", "line"}, {"start", {-10, 20}}, {"end", {-20, 20}}}})}});
+    run(s, "sketch.edit_constraint", {{"sketch", bid}, {"index", 2}, {"value", 15}});
+    const Json bc = run(s, "sketch.curves", {{"sketch", bid}});
+    const auto& ba = bc.at("curves")[1].at("points");
+    const auto& bl = bc.at("curves")[2].at("points");
+    INFO(bc.dump());
+    CHECK(ba[0][1].get<double>() == Approx(15).margin(1e-6));
+    CHECK(bl[0][0].get<double>() == Approx(ba[2][0].get<double>()).margin(1e-6));
+    CHECK(bl[0][1].get<double>() == Approx(ba[2][1].get<double>()).margin(1e-6));
 }
