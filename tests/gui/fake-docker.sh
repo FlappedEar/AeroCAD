@@ -8,6 +8,11 @@ case "$1" in
   info) echo 4 ;;
   image) echo sha256:0 ;;
   run)
+    # FAKE_DOCKER_FAIL=1 (CAD-220): the engine fails before the first iteration.
+    if [ -n "$FAKE_DOCKER_FAIL" ]; then
+      echo "FOAM FATAL ERROR: cannot find patch part" >&2
+      exit 1
+    fi
     if [ -n "$FAKE_DOCKER_HISTORY" ]; then
       case_dir=""
       prev=""

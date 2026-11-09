@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CAD-220: a run that fails before the first iteration shows its error, a short explanation and
+# "Back to Run", not an empty table of dashes, Export CSV, charts and missing-check warnings.
+ui.wait(800)
+Qt.createQmlObject('import QtQuick; Item { objectName: "cfTest"; visible: false; function find(i, name) { if (!i) return null; if (i.objectName === name) return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = find(ch[k], name); if (r) return r } return null } function clickItem(name) { const b = find(simulationPanel, name); const p = b.mapToItem(null, b.width / 2, b.height / 2); ui.click(p.x, p.y) } }', window.contentItem)
+(() => { for (const r of controller.execute("simulation.list").result.runs) controller.execute("simulation.delete", { run: r.id }) })()
+(() => { const p = controller.execute("document.parts").result.parts[0]; window.selectPart(p.id) })()
+ui.clickText("SIMULATE")
+ui.wait(300)
+ui.clickText("Wind Tunnel")
+ui.wait(800)
+ui.clickText("Run CFD")
+ui.wait(4000)
+(() => { simulationPanel.refreshRuns(); ui.log("tab " + simulationPanel.tab + " state " + (simulationPanel.activeStatus ? simulationPanel.activeStatus.state : "-")) })()
+ui.wait(1000)
+(() => { const s = simulationPanel.activeStatus; if (!s || s.state !== "failed") ui.fail("run did not fail: " + (s ? s.state : "none")) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const bad = []; if (!simulationPanel.noResults) bad.push("noResults false"); if (!t.find(simulationPanel, "cfdNoResults").visible) bad.push("no explanation"); if (!t.find(simulationPanel, "cfdNoResultsBack").visible) bad.push("no Back to Run"); if (t.find(simulationPanel, "cfdResultsData").visible) bad.push("results data shown"); if (t.find(simulationPanel, "cfdExportCsv").visible) bad.push("Export CSV shown"); if (t.find(simulationPanel, "cfdSummaryGrid").visible) bad.push("summary grid shown"); ui.log("FAILED VIEW " + (bad.join(", ") || "ok")); if (bad.length) ui.fail("failed run view: " + bad.join(", ")) })()
+ui.shot("cfd-failed-run.png")
+ui.clickText("Back to Run")
+ui.wait(300)
+(() => { if (simulationPanel.tab !== 0) ui.fail("Back to Run left tab " + simulationPanel.tab) })()
+ui.log("cfd failed run done")

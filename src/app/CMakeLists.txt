@@ -350,6 +350,13 @@ if(AEROCAD_BUILD_TESTS)
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_cfd_delete_a_test PROPERTIES LABELS gui TIMEOUT 60
         ENVIRONMENT "AEROCAD_CFD_DIR=${CMAKE_CURRENT_BINARY_DIR}/cfd-delete-a-runs;AEROCAD_DOCKER=${PROJECT_SOURCE_DIR}/tests/gui/fake-docker.sh;FAKE_DOCKER_HISTORY=1;FAKE_DOCKER_FINISH=1")
+    # CAD-220: a run that fails before the first iteration shows its error, not empty results.
+    add_test(NAME app_cfd_failed_run_test
+        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl
+                --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/cfd_failed_run.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_cfd_failed_run_test PROPERTIES LABELS gui TIMEOUT 60
+        ENVIRONMENT "AEROCAD_CFD_DIR=${CMAKE_CURRENT_BINARY_DIR}/cfd-failed-runs;AEROCAD_DOCKER=${PROJECT_SOURCE_DIR}/tests/gui/fake-docker.sh;FAKE_DOCKER_FAIL=1")
     # CAD-105: Simplify a scan, then Ctrl+Z restores the full mesh (also with a reduced display).
     add_test(NAME app_simplify_undo_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl

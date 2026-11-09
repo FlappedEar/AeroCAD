@@ -427,7 +427,9 @@ only after successful completion with complete, finite coefficient and force out
 covering the same iterations. Otherwise all summary metrics are `null` and
 `finalResults.available` is false, with explanations in `finalResults.reasons` and the
 lifecycle state in `run.state`. Prepared, running, interrupted, cancelled and failed
-runs cannot supply final results. Histories (Cd, Cl, Cs, forces) and residuals remain
+runs cannot supply final results. In the app, a failed or cancelled run that recorded no
+iteration shows only its error, one line on what to do and *Back to Run*; the empty table,
+Export CSV, check warnings and charts are hidden (CAD-220, [view](images/audit/cad-220-failed-run.png)). Histories (Cd, Cl, Cs, forces) and residuals remain
 available for monitoring; `provisional` marks data that is not final, also labelled in
 the app's charts. Non-finite values anywhere in the required histories and unreplaced
 truncated rows block final results, including before the averaging window. A repeated

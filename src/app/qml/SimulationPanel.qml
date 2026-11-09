@@ -179,6 +179,11 @@ Pane {
     readonly property var activeStatus: runs.find(r => r.id === activeRun) ?? null
     /// The shown run is still running: its checks and final numbers come after the run (CAD-150).
     readonly property bool activeRunning: !!activeStatus && activeStatus.state === "running"
+    /// A failed or cancelled run that recorded no iteration has nothing to show but its error
+    /// (CAD-220): no empty table, CSV export, charts or missing-check warnings.
+    readonly property bool noResults: !!results && !!activeStatus
+                                      && (activeStatus.state === "failed" || activeStatus.state === "cancelled")
+                                      && !(results.summary && results.summary.iterations > 0)
     // Re-read after any change of the parts (a Scale changes the size shown, CAD-109).
     property int partRevision: 0
     function bumpParts() { partRevision++ }
@@ -1806,6 +1811,7 @@ Pane {
                             return m.state === "running" ? qsTr("Running: %1").arg(step) + (time ? " · " + time : "")
                                                          : m.state + (m.message ? ": " + m.message : "")
                         }
+                        color: root.activeStatus && root.activeStatus.state === "failed" ? Theme.danger : Theme.text
                     }
                     RowLayout {
                         Layout.fillWidth: true
@@ -1817,6 +1823,26 @@ Pane {
                         }
                     }
                 }
+                Label {
+                    objectName: "cfdNoResults"
+                    Layout.fillWidth: true
+                    visible: root.tab === 1 && root.noResults
+                    wrapMode: Text.WordWrap
+                    text: qsTr("No iteration was recorded, so this run has no forces or fields. Change the settings on the Run tab and run it again.")
+                }
+                Button {
+                    objectName: "cfdNoResultsBack"
+                    visible: root.tab === 1 && root.noResults
+                    text: qsTr("Back to Run")
+                    onClicked: root.tab = 0
+                }
+            }
+            // The results themselves: hidden for a run with no iteration (CAD-220).
+            ColumnLayout {
+                objectName: "cfdResultsData"
+                Layout.fillWidth: true
+                visible: root.tab === 1 && !!root.results && !root.noResults
+                spacing: 8
 
                 Label {
                     text: root.results && root.results.finalResults.available ? qsTr("Final results")
