@@ -304,6 +304,9 @@ Item {
             for (let i = 1; i < patternCount; ++i)
                 out.push({ d: [0, 0], angle: step * i, pivot: patternCenter })
         } else if (tool === "rectangular_pattern") {
+            // The command's limit; also keeps the preview from drawing a million copies.
+            if (patternCount * patternCountY > 1000)
+                return out
             if ((patternCount > 1 && patternSpacingX === 0) || (patternCountY > 1 && patternSpacingY === 0))
                 return out
             for (let j = 0; j < patternCountY; ++j)
@@ -1464,6 +1467,8 @@ Item {
                     : root.tool === "circular_pattern" ? (root.patternCenter === null
                         ? qsTr("Circular Pattern of %n curve(s): click the centre", "", root.patternCurves.length)
                         : qsTr("Circular Pattern: set the count and angle, then OK or Enter (click again to move the centre)"))
+                    : root.tool === "rectangular_pattern" && root.patternCount * root.patternCountY > 1000
+                        ? qsTr("Rectangular Pattern: at most 1000 instances (columns x rows)")
                     : root.tool === "rectangular_pattern"
                         ? qsTr("Rectangular Pattern of %n curve(s): set counts and spacing (negative goes left / down), then OK or Enter", "", root.patternCurves.length)
                     : root.tool === "fillet" ? qsTr("Fillet: click a corner of two lines; then edit its radius under Constraints")
