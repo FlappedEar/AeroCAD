@@ -593,6 +593,9 @@ Pane {
     function loadComparison() {
         if (!activeRun || !compareRun || activeRun === compareRun) {
             comparison = null
+            // "Show B" belongs to a pair: unticking or deleting B must not leave it on for the
+            // next B ticked (CAD-217).
+            showB = false
             return
         }
         const r = controller.execute("simulation.compare", { a: activeRun, b: compareRun })
