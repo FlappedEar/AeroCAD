@@ -408,6 +408,37 @@ TEST_CASE("simulation.rename sets, trims and clears a run's label and keeps it o
     }
 }
 
+TEST_CASE("simulation.list and simulation.status name each run's conditions", "[commands][simulation]")
+{
+    RunsDir dir;
+    commands::Session session;
+    const auto part = importBox(session);
+    auto r = session.execute("simulation.run", {{"id", part},
+                                                {"speed", 35},
+                                                {"flowDirection", "+X"},
+                                                {"mesh", "medium"},
+                                                {"ground", true},
+                                                {"prepareOnly", true}});
+    REQUIRE(r.ok);
+    const std::string id = r.data.at("id");
+    r = session.execute("simulation.status", {{"run", id}});
+    REQUIRE(r.ok);
+    const auto& st = r.data.at("settings");
+    CHECK(st.at("speed") == 35.0);
+    CHECK(st.at("flowDirection") == "+X");
+    CHECK(st.at("mesh") == "medium");
+    CHECK(st.at("ground") == true);
+    r = session.execute("simulation.list");
+    REQUIRE(r.ok);
+    REQUIRE(r.data.at("runs").size() == 1);
+    CHECK(r.data.at("runs")[0].at("settings").at("speed") == 35.0);
+    // A run folder without case information lists no settings.
+    std::filesystem::remove(dir.path() / id / "case.json");
+    r = session.execute("simulation.list");
+    REQUIRE(r.ok);
+    CHECK(r.data.at("runs")[0].at("settings").is_null());
+}
+
 TEST_CASE("prepared simulation coefficients cannot produce final comparison values", "[commands][simulation]")
 {
     RunsDir dir;
