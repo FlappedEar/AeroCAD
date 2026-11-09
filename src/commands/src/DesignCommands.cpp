@@ -696,6 +696,9 @@ Json resolveFix(const std::vector<geometry::SketchCurve>& curves, const Json& c)
         } else {
             points.push_back({{"curve", i}, {"point", "start"}});
             points.push_back({{"curve", i}, {"point", "end"}});
+            // A fixed spline holds its fit points between the ends too (they can be dragged).
+            for (std::size_t f = 1; k.kind == K::Spline && f + 1 < k.points.size(); ++f)
+                points.push_back({{"curve", i}, {"point", "fit"}, {"index", f}});
             if (k.kind == K::Arc)
                 points.push_back({{"curve", i}, {"point", "center"}});
         }
