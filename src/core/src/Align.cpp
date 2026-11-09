@@ -69,6 +69,122 @@ void transformMesh(TriangleMesh& mesh, const Affine& transform)
     mesh = TriangleMesh(std::move(vertices), std::move(triangles));
 }
 
+std::optional<Affine> affineBetween(const TriangleMesh& from, const TriangleMesh& to)
+{
+    const auto& a = from.vertices();
+    const auto& b = to.vertices();
+    if (a.empty() || a.size() != b.size() || from.triangleCount() != to.triangleCount())
+        return std::nullopt;
+
+    // Winding: unchanged, or every triangle reversed the way transformMesh does it.
+    bool mirrored = false;
+    if (from.triangles() != to.triangles()) {
+        const auto& ta = from.triangles();
+        const auto& tb = to.triangles();
+        for (std::size_t i = 0; i < ta.size(); ++i) {
+            if (ta[i][0] != tb[i][0] || ta[i][1] != tb[i][2] || ta[i][2] != tb[i][1])
+                return std::nullopt;
+        }
+        mirrored = true;
+    }
+
+    // Four well spread source points (searched on a sample, enough for a stable solve).
+    const std::size_t step = std::max<std::size_t>(1, a.size() / 4096);
+    const std::size_t i0 = 0;
+    std::size_t i1 = i0;
+    std::size_t i2 = i0;
+    std::size_t i3 = i0;
+    double best = 0.0;
+    for (std::size_t i = 0; i < a.size(); i += step) {
+        const double d = (a[i] - a[i0]).dot(a[i] - a[i0]);
+        if (d > best) {
+            best = d;
+            i1 = i;
+        }
+    }
+    if (best <= 0.0)
+        return std::nullopt;
+    const Vec3 e1 = a[i1] - a[i0];
+    best = 0.0;
+    for (std::size_t i = 0; i < a.size(); i += step) {
+        const Vec3 c = (a[i] - a[i0]).cross(e1);
+        const double d = c.dot(c);
+        if (d > best) {
+            best = d;
+            i2 = i;
+        }
+    }
+    // Relative to |e1|^4: points this close to the line give no usable second direction.
+    if (best <= 1e-18 * e1.dot(e1) * e1.dot(e1))
+        return std::nullopt;
+    const Vec3 e2 = a[i2] - a[i0];
+    const Vec3 n = e1.cross(e2);
+    best = 0.0;
+    for (std::size_t i = 0; i < a.size(); i += step) {
+        const double d = std::abs((a[i] - a[i0]).dot(n));
+        if (d > best) {
+            best = d;
+            i3 = i;
+        }
+    }
+
+    const Vec3 f1 = b[i1] - b[i0];
+    const Vec3 f2 = b[i2] - b[i0];
+    Vec3 e3;
+    Vec3 f3;
+    if (best > 1e-9 * n.length() * e1.length()) {
+        e3 = a[i3] - a[i0];
+        f3 = b[i3] - b[i0];
+    } else {
+        // Flat mesh: map the plane normal like a similarity would.
+        const double s = f1.length() / e1.length();
+        if (!(s > 0.0) || !std::isfinite(s))
+            return std::nullopt;
+        e3 = n;
+        f3 = f1.cross(f2) * (1.0 / s);
+        if (mirrored)
+            f3 = f3 * -1.0;
+    }
+
+    // L = F * E^-1, with E and F the matrices whose columns are e1..e3 and f1..f3.
+    const double det = e1.dot(e2.cross(e3));
+    if (det == 0.0 || !std::isfinite(det))
+        return std::nullopt;
+    const Vec3 r1 = e2.cross(e3) * (1.0 / det);
+    const Vec3 r2 = e3.cross(e1) * (1.0 / det);
+    const Vec3 r3 = e1.cross(e2) * (1.0 / det);
+    Mat3 linear;
+    const Vec3 fs[3] = {f1, f2, f3};
+    const Vec3 rs[3] = {r1, r2, r3};
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j) {
+            double sum = 0.0;
+            for (int k = 0; k < 3; ++k) {
+                const double fi = i == 0 ? fs[k].x : i == 1 ? fs[k].y : fs[k].z;
+                const double rj = j == 0 ? rs[k].x : j == 1 ? rs[k].y : rs[k].z;
+                sum += fi * rj;
+            }
+            linear.m[static_cast<std::size_t>(i * 3 + j)] = sum;
+        }
+    }
+    if ((linear.determinant() < 0.0) != mirrored)
+        return std::nullopt;
+    const Affine tf{linear, b[i0] - linear * a[i0]};
+
+    // Every vertex must follow, within rounding relative to the size of the result.
+    const BoundingBox box = to.bounds();
+    const double magnitude = std::max({std::abs(box.min.x), std::abs(box.min.y), std::abs(box.min.z),
+                                       std::abs(box.max.x), std::abs(box.max.y), std::abs(box.max.z)});
+    const double tol = 1e-9 * (magnitude + (box.max - box.min).length()) + 1e-300;
+    const double tol2 = tol * tol;
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        const Vec3 d = tf.apply(a[i]) - b[i];
+        if (!(d.dot(d) <= tol2))
+            return std::nullopt;
+    }
+    return tf;
+}
+
 namespace {
 
 /// Eigen decomposition of a symmetric 3x3 matrix (cyclic Jacobi). Returns eigenvalues

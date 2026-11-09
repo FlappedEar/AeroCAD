@@ -45,6 +45,16 @@ struct Affine {
 /// determinant) the triangle winding is reversed so normals keep pointing outwards.
 void transformMesh(TriangleMesh& mesh, const Affine& transform);
 
+/// The affine transform that turns `from` into `to`, when `to` is `from` after
+/// transformMesh (same triangles, or all reversed for a mirroring transform, and every
+/// vertex at transform.apply of its source within a rounding tolerance). std::nullopt when
+/// the meshes differ in any other way or `from` has all vertices on one line. For a flat
+/// mesh the transform is only fixed in its plane; the normal direction is then taken as a
+/// similarity's (scaled like the plane), which is exact for moves, turns and uniform scales.
+/// Linear in the mesh size; lets a display level of detail follow a moved scan without
+/// simplifying it again.
+[[nodiscard]] std::optional<Affine> affineBetween(const TriangleMesh& from, const TriangleMesh& to);
+
 /// Best-fit plane (least squares, through the centroid).
 struct Plane {
     Vec3 origin; ///< Centroid of the points.

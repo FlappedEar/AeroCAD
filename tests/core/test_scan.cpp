@@ -497,3 +497,53 @@ TEST_CASE("smoothCornerNormals averages across triangles on a curved surface", "
             CHECK(std::abs(normals[corner++].dot(radial)) > std::cos(0.5 * std::numbers::pi / 180.0));
         }
 }
+
+TEST_CASE("affineBetween finds the transform of a moved mesh", "[core][scan]")
+{
+    const TriangleMesh source = cube();
+    auto check = [&](const Affine& tf) {
+        TriangleMesh moved = source;
+        transformMesh(moved, tf);
+        const auto found = affineBetween(source, moved);
+        REQUIRE(found.has_value());
+        for (int i = 0; i < 9; ++i)
+            CHECK(found->linear.m[static_cast<std::size_t>(i)] == Approx(tf.linear.m[static_cast<std::size_t>(i)]).margin(1e-9));
+        CHECK((found->translation - tf.translation).length() < 1e-9);
+    };
+    check(Affine{});
+    check(Affine::translationBy({120, -40, 7.5}));
+    check(Affine{Mat3::rotation({1, 2, 3}, 0.7), {5, 6, 7}});
+    check(Affine{Mat3::fromRows({2.5, 0, 0}, {0, 2.5, 0}, {0, 0, 2.5}), {-1, 0, 3}});
+    check(Affine{Mat3::fromRows({-1, 0, 0}, {0, 1, 0}, {0, 0, 1}), {}}); // mirror: winding reversed
+    check(Affine{Mat3::fromRows({1e-6, 0, 0}, {0, 1e-6, 0}, {0, 0, 1e-6}), {1000, 0, 0}});
+
+    SECTION("a flat mesh follows moves, turns and scales in its plane")
+    {
+        TriangleMesh flat({{0, 0, 0}, {10, 0, 0}, {10, 5, 0}, {0, 5, 0}}, {{0, 1, 2}, {0, 2, 3}});
+        const Affine tf{Mat3::rotation({1, 1, 0}, 1.1) * Mat3::fromRows({3, 0, 0}, {0, 3, 0}, {0, 0, 3}), {1, 2, 3}};
+        TriangleMesh moved = flat;
+        transformMesh(moved, tf);
+        const auto found = affineBetween(flat, moved);
+        REQUIRE(found.has_value());
+        const Vec3 off{4, 1, 2}; // also off the plane
+        CHECK((found->apply(off) - tf.apply(off)).length() < 1e-9);
+    }
+}
+
+TEST_CASE("affineBetween rejects meshes that are not one transform apart", "[core][scan]")
+{
+    const TriangleMesh source = cube();
+    TriangleMesh bent = source;
+    transformMesh(bent, Affine::translationBy({1, 0, 0}));
+    std::vector<Vec3> v = bent.vertices();
+    v[6].z += 0.01; // one vertex moved alone
+    CHECK_FALSE(affineBetween(source, TriangleMesh(v, bent.triangles())).has_value());
+
+    std::vector<TriangleMesh::Triangle> t = source.triangles();
+    std::swap(t[0][1], t[0][2]); // only one triangle flipped
+    CHECK_FALSE(affineBetween(source, TriangleMesh(source.vertices(), t)).has_value());
+
+    CHECK_FALSE(affineBetween(source, TriangleMesh{}).has_value());
+    TriangleMesh line({{0, 0, 0}, {1, 0, 0}, {2, 0, 0}}, {{0, 1, 2}});
+    CHECK_FALSE(affineBetween(line, line).has_value());
+}
