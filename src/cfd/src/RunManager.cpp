@@ -1617,7 +1617,9 @@ Json RunManager::results(const std::string& id, int maxPoints)
                       {"liftN", opt(tailSpread(forces.column("total_z")))},
                       {"sideN", opt(tailSpread(forces.column("total_y")))},
                       {"frontLiftN", opt(tailSpread(axles ? &axles->front : nullptr))},
-                      {"rearLiftN", opt(tailSpread(axles ? &axles->rear : nullptr))}}}};
+                      {"rearLiftN", opt(tailSpread(axles ? &axles->rear : nullptr))},
+                      {"wheelDragN", opt(tailSpread(wheelColumn("total_x")))},
+                      {"wheelLiftN", opt(tailSpread(wheelColumn("total_z")))}}}};
     // Aero balance (CAD-194): front / rear axle lift, and the front's share of the total when
     // both pull the same way (a share of a lift split into up and down means nothing).
     {

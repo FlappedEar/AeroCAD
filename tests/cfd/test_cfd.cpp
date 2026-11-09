@@ -2089,6 +2089,7 @@ TEST_CASE("Aero balance: front and rear axle lift of a car with wheels (CAD-194)
         INFO(summary.dump());
         CHECK(summary.at("wheelDragN").get<double>() == Approx(3.0));
         CHECK(summary.at("wheelLiftN").get<double>() == Approx(1.0));
+        CHECK(summary.at("spread").at("wheelDragN").get<double>() == Approx(0.0).margin(1e-9));
         const double expectedFront = -75.0 + 10.0 * h * std::cos(yaw * 3.14159265358979323846 / 180.0) / wheelbase;
         CHECK(summary.at("frontLiftN").get<double>() == Approx(expectedFront).epsilon(1e-6));
         CHECK(summary.at("rearLiftN").get<double>() == Approx(-100.0 - expectedFront).epsilon(1e-6));
@@ -2115,6 +2116,8 @@ TEST_CASE("Aero balance: front and rear axle lift of a car with wheels (CAD-194)
         write(tmp.path() / b / "postProcessing" / "wheelForces" / "0" / "force.dat", wheelForces.str());
         const auto cmp = runs.compare(id, b);
         CHECK(cmp.at("forces").at("wheelDragN").at("difference").get<double>() == Approx(0.0).margin(1e-9));
+        // The swing of the wheel forces feeds the noise check like the other forces (Codex on #173).
+        CHECK(cmp.at("forces").at("wheelDragN").contains("noise"));
         CHECK(cmp.at("forces").contains("wheelLiftN"));
         CHECK(cmp.at("forces").at("frontLiftN").at("difference").get<double>() == Approx(0.0).margin(1e-9));
         CHECK(cmp.at("forces").contains("rearLiftN"));
