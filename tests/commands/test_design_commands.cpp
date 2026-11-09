@@ -1493,6 +1493,33 @@ TEST_CASE("Design commands: Trim and Break an ellipse (CAD-258)", "[commands][ca
     INFO(c.dump());
     REQUIRE(c.at("curves").size() == 2);
     CHECK(c.at("curves")[1].at("kind") == "elliptical_arc");
+
+    // Fix on the axis point keeps it where it is; Fix on a whole elliptical arc or ellipse
+    // holds all of it (Codex review of #222).
+    const auto fixes = run(s, "sketch.create",
+                           {{"plane", "XY"},
+                            {"curves", Json::array({{{"type", "elliptical_arc"}, {"center", {0, 0}}, {"major_radius", 20},
+                                                     {"minor_radius", 10}, {"angle", 30}, {"start_angle", -90}, {"end_angle", 90}},
+                                                    {{"type", "ellipse"}, {"center", {100, 0}}, {"major_radius", 20}, {"minor_radius", 10}, {"angle", 0}},
+                                                    {{"type", "elliptical_arc"}, {"center", {200, 0}}, {"major_radius", 20},
+                                                     {"minor_radius", 10}, {"angle", 0}, {"start_angle", 20}, {"end_angle", 110}}})}})
+                           .at("id")
+                           .get<std::uint64_t>();
+    const double ax = 20 * std::cos(std::numbers::pi / 6), ay = 20 * std::sin(std::numbers::pi / 6);
+    run(s, "sketch.add_constraints", {{"sketch", fixes}, {"constraints", Json::array({{{"type", "fix"}, {"points", Json::array({{{"curve", 2}, {"point", "axis"}}})}}})}});
+    c = run(s, "sketch.curves", {{"sketch", fixes}});
+    INFO(c.dump());
+    CHECK(near(c.at("curves")[2].at("points")[2], 220, 0, 1e-6));
+    run(s, "sketch.add_constraints", {{"sketch", fixes}, {"constraints", Json::array({{{"type", "fix"}, {"curves", Json::array({0, 1, 2})}}})}});
+    c = run(s, "sketch.curves", {{"sketch", fixes}});
+    INFO(c.dump());
+    CHECK(c.at("degreesOfFreedom").get<int>() == 0);
+    CHECK(near(c.at("curves")[0].at("points")[2], ax, ay, 1e-6));
+    const auto r = s.execute("sketch.add_constraints", {{"sketch", fixes}, {"constraints", Json::array({{{"type", "major_radius"}, {"curve", 0}, {"value", 30}}})}});
+    if (r.ok) {
+        c = run(s, "sketch.curves", {{"sketch", fixes}});
+        CHECK(c.at("curves")[0].at("majorRadius").get<double>() == Approx(20));
+    }
 }
 
 TEST_CASE("Design commands: sketch offset (CAD-126)", "[commands][cad]")

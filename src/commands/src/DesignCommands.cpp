@@ -848,8 +848,12 @@ geometry::Vec2 pointPosition(const std::vector<geometry::SketchCurve>& curves, c
         return c.points[0]; // start, end and centre of a sketch point are the point
     if (c.kind == K::Ellipse && (which == "center" || which == "end"))
         return which == "center" ? c.points[0] : c.points[1]; // end: of the major axis
-    if (c.kind == K::EllipticalArc && which == "center")
+    if (c.kind == K::Ellipse && which == "axis")
         return c.points[1];
+    if (c.kind == K::EllipticalArc && (which == "center" || which == "axis"))
+        return which == "center" ? c.points[1] : c.points[2];
+    if (which == "axis")
+        throw CommandError("Curve " + std::to_string(i) + " has no major axis (only ellipses do)");
     if (which == "center") {
         if (c.kind == K::Circle)
             return c.points[0];
@@ -1127,6 +1131,15 @@ Json resolveFix(const std::vector<geometry::SketchCurve>& curves, const Json& c)
         if (k.kind == K::Circle) {
             points.push_back({{"curve", i}, {"point", "center"}});
             out.push_back({{"type", "radius"}, {"curve", i}, {"value", k.radius}});
+        } else if (k.kind == K::Ellipse || k.kind == K::EllipticalArc) {
+            // The whole ellipse: centre, major axis end and minor radius (and an arc's ends).
+            if (k.kind == K::EllipticalArc) {
+                points.push_back({{"curve", i}, {"point", "start"}});
+                points.push_back({{"curve", i}, {"point", "end"}});
+            }
+            points.push_back({{"curve", i}, {"point", "center"}});
+            points.push_back({{"curve", i}, {"point", "axis"}});
+            out.push_back({{"type", "minor_radius"}, {"curve", i}, {"value", k.radius}});
         } else {
             points.push_back({{"curve", i}, {"point", "start"}});
             points.push_back({{"curve", i}, {"point", "end"}});
