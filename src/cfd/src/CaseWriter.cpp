@@ -304,13 +304,20 @@ int axleCount(const std::vector<Wheel>& wheels)
     return n;
 }
 
+/// The turning wheels' patches, one per axle; "" without turning wheels.
+std::string wheelPatches(const std::vector<Wheel>& wheels)
+{
+    std::string out;
+    for (int a = 0; a < axleCount(wheels); ++a)
+        out += (out.empty() ? "" : " ") + wheelPatch(a);
+    return out;
+}
+
 /// The patches whose forces count: the part and its turning wheels.
 std::string partPatches(const std::vector<Wheel>& wheels)
 {
-    std::string out = "part";
-    for (int a = 0; a < axleCount(wheels); ++a)
-        out += " " + wheelPatch(a);
-    return out;
+    const std::string wheels_ = wheelPatches(wheels);
+    return wheels_.empty() ? "part" : "part " + wheels_;
 }
 
 void writeFile(const fs::path& path, const std::string& content)
@@ -495,13 +502,22 @@ std::string controlDict(const Settings& s, const CaseInfo& info)
       << ";\ndeltaT          1;\nwriteControl    timeStep;\nwriteInterval   " << iterations
       << ";\npurgeWrite      0;\nwriteFormat     binary;\nwritePrecision  8;\nwriteCompression off;\n"
       << "timeFormat      general;\ntimePrecision   6;\nrunTimeModifiable true;\n\n"
-      << "aerocadRhoInf   " << s.density << ";\naerocadUInf     " << s.speed << ";\n\nfunctions\n{\n"
+      << "aerocadRhoInf   " << s.density << ";\naerocadUInf     " << s.speed
+      << ";\n\nfunctions\n{\n"
       // Forces in N on the part only (rho = rhoInf: the solver works with kinematic pressure).
       << "    forces\n    {\n        type forces;\n        libs (forces);\n        writeControl timeStep;\n"
-      << "        writeInterval 1;\n        log no;\n        patches (" << partPatches(info.wheels) << ");\n        rho rhoInf;\n"
-      << "        rhoInf $aerocadRhoInf;\n        CofR " << c << ";\n    }\n"
-      << "    forceCoeffs\n    {\n        type forceCoeffs;\n        libs (forces);\n"
-      << "        writeControl timeStep;\n        writeInterval 1;\n        log yes;\n        patches (" << partPatches(info.wheels) << ");\n"
+      << "        writeInterval 1;\n        log no;\n        patches (" << partPatches(info.wheels)
+      << ");\n        rho rhoInf;\n"
+      << "        rhoInf $aerocadRhoInf;\n        CofR " << c << ";\n    }\n";
+    // The turning wheels' share of the forces (CAD-202), so a change to the body and a
+    // change at the wheels can be told apart.
+    if (!info.wheels.empty())
+        t << "    wheelForces\n    {\n        type forces;\n        libs (forces);\n        writeControl timeStep;\n"
+          << "        writeInterval 1;\n        log no;\n        patches (" << wheelPatches(info.wheels)
+          << ");\n        rho rhoInf;\n        rhoInf $aerocadRhoInf;\n        CofR " << c << ";\n    }\n";
+    t << "    forceCoeffs\n    {\n        type forceCoeffs;\n        libs (forces);\n"
+      << "        writeControl timeStep;\n        writeInterval 1;\n        log yes;\n        patches ("
+      << partPatches(info.wheels) << ");\n"
       << "        rho rhoInf;\n        rhoInf $aerocadRhoInf;\n        magUInf $aerocadUInf;\n"
       << "        lRef " << info.referenceLength << ";\n        Aref " << info.referenceArea << ";\n"
       << "        CofR " << c << ";\n        dragDir (1 0 0);\n        liftDir (0 0 1);\n"
@@ -539,10 +555,8 @@ std::string controlDict(const Settings& s, const CaseInfo& info)
       << "        formatOptions { vtk { format ascii; legacy true; } }\n        fields (p U);\n"
       << "        interpolationScheme cellPoint;\n        surfaces\n        {\n"
       << "            part { type patch; patches (" << partPatches(info.wheels) << "); interpolate true; }\n"
-      << "            sectionHorizontal { type cuttingPlane; point " << c
-      << "; normal (0 0 1); interpolate true; }\n"
-      << "            sectionVertical { type cuttingPlane; point " << c
-      << "; normal (0 1 0); interpolate true; }\n";
+      << "            sectionHorizontal { type cuttingPlane; point " << c << "; normal (0 0 1); interpolate true; }\n"
+      << "            sectionVertical { type cuttingPlane; point " << c << "; normal (0 1 0); interpolate true; }\n";
     // Stacks of sections the result view can step through (CAD-148), cropped to the
     // region around the part so even a fine mesh writes only a few MB.
     for (const SectionStack& stack : sectionStacks()) {

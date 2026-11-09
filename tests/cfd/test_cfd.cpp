@@ -2071,9 +2071,25 @@ TEST_CASE("Aero balance: front and rear axle lift of a car with wheels (CAD-194)
         }
         write(tmp.path() / id / "postProcessing" / "forces" / "0" / "force.dat", forces.str());
         write(tmp.path() / id / "postProcessing" / "forces" / "0" / "moment.dat", moments.str());
+        // The wheels' own forces (CAD-202): 3 N of the drag, 1 N of lift.
+        std::ostringstream wheelForces;
+        wheelForces
+            << "# Time total_x total_y total_z pressure_x pressure_y pressure_z viscous_x viscous_y viscous_z\n";
+        for (int i = 1; i <= 100; ++i)
+            wheelForces << i << " 3 0 1 2.5 0 1 0.5 0 0\n";
+        write(tmp.path() / id / "postProcessing" / "wheelForces" / "0" / "force.dat", wheelForces.str());
+        {
+            std::ifstream in(tmp.path() / id / "system" / "controlDict");
+            const std::string dict(std::istreambuf_iterator<char>(in), {});
+            CHECK(dict.find("wheelForces") != std::string::npos);
+            CHECK(dict.find("patches (wheels0 wheels1);") != std::string::npos);
+        }
 
         const auto summary = runs.results(id).at("summary");
         INFO(summary.dump());
+        CHECK(summary.at("wheelDragN").get<double>() == Approx(3.0));
+        CHECK(summary.at("wheelLiftN").get<double>() == Approx(1.0));
+        CHECK(summary.at("spread").at("wheelDragN").get<double>() == Approx(0.0).margin(1e-9));
         const double expectedFront = -75.0 + 10.0 * h * std::cos(yaw * 3.14159265358979323846 / 180.0) / wheelbase;
         CHECK(summary.at("frontLiftN").get<double>() == Approx(expectedFront).epsilon(1e-6));
         CHECK(summary.at("rearLiftN").get<double>() == Approx(-100.0 - expectedFront).epsilon(1e-6));
@@ -2087,6 +2103,7 @@ TEST_CASE("Aero balance: front and rear axle lift of a car with wheels (CAD-194)
             CHECK(failed.at("frontLiftN").is_null());
             CHECK(failed.at("rearLiftN").is_null());
             CHECK(failed.at("frontShare").is_null());
+            CHECK(failed.at("wheelDragN").is_null());
             CHECK(failed.at("spread").is_null());
             write(tmp.path() / id / "aerocad.status", "finished\n");
         }
@@ -2096,7 +2113,12 @@ TEST_CASE("Aero balance: front and rear axle lift of a car with wheels (CAD-194)
         fakeFinishedRun(tmp.path() / b, 0.8, 1.0, -2.0);
         write(tmp.path() / b / "postProcessing" / "forces" / "0" / "force.dat", forces.str());
         write(tmp.path() / b / "postProcessing" / "forces" / "0" / "moment.dat", moments.str());
+        write(tmp.path() / b / "postProcessing" / "wheelForces" / "0" / "force.dat", wheelForces.str());
         const auto cmp = runs.compare(id, b);
+        CHECK(cmp.at("forces").at("wheelDragN").at("difference").get<double>() == Approx(0.0).margin(1e-9));
+        // The swing of the wheel forces feeds the noise check like the other forces (Codex on #173).
+        CHECK(cmp.at("forces").at("wheelDragN").contains("noise"));
+        CHECK(cmp.at("forces").contains("wheelLiftN"));
         CHECK(cmp.at("forces").at("frontLiftN").at("difference").get<double>() == Approx(0.0).margin(1e-9));
         CHECK(cmp.at("forces").contains("rearLiftN"));
 
@@ -2110,9 +2132,11 @@ TEST_CASE("Aero balance: front and rear axle lift of a car with wheels (CAD-194)
         INFO(runCsv.substr(0, 2000));
         CHECK(runCsv.find("\r\nFront axle lift (N),") != std::string::npos);
         CHECK(runCsv.find("\r\nFront share of lift (%),") != std::string::npos);
+        CHECK(runCsv.find("\r\nWheel drag (N),3\r\n") != std::string::npos);
         runs.exportComparisonCsv(id, b, tmp.path() / "ab.csv");
         const std::string abCsv = read(tmp.path() / "ab.csv");
         CHECK(abCsv.find("\r\nRear axle lift (N),") != std::string::npos);
+        CHECK(abCsv.find("\r\nWheel lift (N),1,1,0,0,") != std::string::npos);
     }
 }
 
@@ -2160,6 +2184,10 @@ TEST_CASE("Aero balance of a car whose wheels do not turn (CAD-196)", "[cfd][whe
         CHECK(summary.at("frontLiftN").get<double>() == Approx(-50.0).epsilon(1e-6));
         CHECK(summary.at("rearLiftN").get<double>() == Approx(-50.0).epsilon(1e-6));
         CHECK(summary.at("frontShare").get<double>() == Approx(50.0).epsilon(1e-6));
+        // Standing wheels are part of the part: no wheel forces of their own (CAD-202).
+        CHECK(summary.at("wheelDragN").is_null());
+        std::ifstream in(tmp.path() / id / "system" / "controlDict");
+        CHECK(std::string(std::istreambuf_iterator<char>(in), {}).find("wheelForces") == std::string::npos);
     }
     // No floor: a part is not standing on anything, so no axles are looked for.
     TempDir tmp;
