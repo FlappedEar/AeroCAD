@@ -368,6 +368,14 @@ Item {
 
     // --- Building curves ------------------------------------------------------------------
 
+    /// True when size `i` of a curve is usable: the typed value (a positive number or an
+    /// expression) when there is one, else the drawn size `drawn`.
+    function sizeGiven(dim, i, drawn) {
+        if (dim && dim.length > i)
+            return typeof dim[i] === "string" ? dim[i].length > 0 : dim[i] > 0
+        return drawn >= 1e-9
+    }
+
     function curveFrom(pts, dim) {
         const a = pts[0], b = pts[1]
         switch (tool) {
@@ -376,7 +384,9 @@ Item {
         case "rectangle": {
             let w = Math.abs(b[0] - a[0]), h = Math.abs(b[1] - a[1])
             const corner = [Math.min(a[0], b[0]), Math.min(a[1], b[1])]
-            if (w < 1e-9 || h < 1e-9)
+            // A typed size counts, not the cursor offset (the cursor may be level with the
+            // first corner).
+            if (!sizeGiven(dim, 0, w) || !sizeGiven(dim, 1, h))
                 return null
             return { type: "rectangle", corner: corner, width: dim && dim.length > 0 ? dim[0] : w,
                      height: dim && dim.length > 1 ? dim[1] : h }
@@ -384,7 +394,7 @@ Item {
         case "center_rectangle": {
             // Centre, then a corner: the rectangle is symmetric about the centre.
             const w = 2 * Math.abs(b[0] - a[0]), h = 2 * Math.abs(b[1] - a[1])
-            if (w < 1e-9 || h < 1e-9)
+            if (!sizeGiven(dim, 0, w) || !sizeGiven(dim, 1, h))
                 return null
             return { type: "center_rectangle", center: a, width: dim && dim.length > 0 ? dim[0] : round6(w),
                      height: dim && dim.length > 1 ? dim[1] : round6(h) }

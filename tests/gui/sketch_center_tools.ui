@@ -19,8 +19,9 @@ ui.shot("sketch-center-rectangle-preview.png")
 (() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "ctTest"); t.clickAt(35, -10) })()
 ui.wait(500)
 (() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "ctTest"); const c = t.curves().slice(1); ui.log("center rectangle " + JSON.stringify(c.map(x => x.points))); if (c.length !== 4 || c.some(x => x.kind !== "line")) ui.fail("expected 4 lines, got " + JSON.stringify(c)); const xs = [].concat(...c.map(x => x.points.map(p => p[0]))), ys = [].concat(...c.map(x => x.points.map(p => p[1]))); if (Math.abs(Math.min(...xs) - 5) > 1e-6 || Math.abs(Math.max(...xs) - 35) > 1e-6 || Math.abs(Math.min(...ys) + 30) > 1e-6 || Math.abs(Math.max(...ys) + 10) > 1e-6) ui.fail("not 30 x 20 about (20, -20)") })()
-# Typed size: centre (-30, -30), then "16, 8" Enter.
-(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "ctTest"); t.clickAt(-30, -30); t.moveTo(-20, -25) })()
+# Typed size: centre (-30, -30), then "16, 8" Enter. The cursor is level with the centre
+# (an easy grid snap): the typed size counts, not the zero height to the cursor.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "ctTest"); t.clickAt(-30, -30); t.moveTo(-20, -30) })()
 ui.wait(200)
 ui.type("16, 8")
 ui.key("Return")
@@ -47,10 +48,18 @@ ui.wait(300)
 (() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "ctTest"); t.clickAt(-50, 10) })()
 ui.wait(500)
 (() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "ctTest"); const c = t.curves(); const a = c[c.length - 1]; ui.log("typed arc " + JSON.stringify(a)); if (c.length !== 11 || a.kind !== "arc" || !t.near(a.points[0], [-35, 10]) || !t.near(a.points[2], [-45, 10])) ui.fail("typed radius 5 arc not drawn: " + JSON.stringify(a)); if (!(a.points[1][1] > 10)) ui.fail("the half arc does not go over the top (counter-clockwise)") })()
+# The 2-corner Rectangle takes a typed size with the cursor level with the first corner too:
+# corner (0, -50), cursor (10, -50), "10, 6" Enter.
+(() => { sketchTool_("rectangle"); const t = Array.from(window.contentItem.children).find(c => c.objectName === "ctTest"); t.clickAt(0, -50); t.moveTo(10, -50) })()
+ui.wait(200)
+ui.type("10, 6")
+ui.key("Return")
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "ctTest"); const c = t.curves().slice(11); const xs = [].concat(...c.map(x => x.points.map(p => p[0]))), ys = [].concat(...c.map(x => x.points.map(p => p[1]))); if (c.length !== 4 || Math.abs(Math.min(...xs)) > 1e-6 || Math.abs(Math.max(...xs) - 10) > 1e-6 || Math.abs(Math.min(...ys) + 50) > 1e-6 || Math.abs(Math.max(...ys) + 44) > 1e-6) ui.fail("typed 10 x 6 rectangle at (0, -50) not drawn: " + JSON.stringify(c.map(x => x.points))) })()
 ui.shot("sketch-center-tools.png")
-# Finish and extrude: the two rectangles are the profiles (30 x 20 and 16 x 8, 10 mm).
+# Finish and extrude: the three rectangles are the profiles (30 x 20, 16 x 8 and 10 x 6; 10 mm).
 (() => { finishSketch(true) })()
 ui.wait(500)
 (() => { const sk = controller.execute("timeline.list").result.features[0].id; const r = controller.execute("feature.extrude", { sketch: sk, distance: 10 }); if (!r.ok) ui.fail("extrude: " + r.error) })()
 ui.wait(500)
-(() => { const b = controller.execute("timeline.list").result.bodies; const v = b.reduce((s, x) => s + x.volume, 0); ui.log("volume " + v); if (Math.abs(v - (600 + 128) * 10) > 1e-3) ui.fail("expected 7280 mm³, got " + v) })()
+(() => { const b = controller.execute("timeline.list").result.bodies; const v = b.reduce((s, x) => s + x.volume, 0); ui.log("volume " + v); if (Math.abs(v - (600 + 128 + 60) * 10) > 1e-3) ui.fail("expected 7880 mm³, got " + v) })()
