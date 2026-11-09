@@ -101,6 +101,12 @@ struct SketchGeometry {
 [[nodiscard]] std::vector<SketchCurve> projectEdges(const Shape& shape, const std::vector<std::size_t>& edgeIndices,
                                                     const Plane& plane);
 
+/// Points along the interpolating spline through the fit points of `spline` (a Spline
+/// curve; the same curve the sketch builds), in plane coordinates: `perSpan` points
+/// per span between fit points, the first and last fit points included (a closed
+/// spline ends where it starts). Throws ModelingError when interpolation fails.
+[[nodiscard]] std::vector<Vec2> sampleSpline(const SketchCurve& spline, int perSpan = 16);
+
 /// Area of all faces of a shape in mm^2.
 [[nodiscard]] double area(const Shape& shape);
 

@@ -121,9 +121,11 @@ Item {
                 return Math.abs(dist(p, ctr) - curveRadius(c))
             return Math.min(dist(p, c.points[0]), dist(p, c.points[2]))
         }
+        // A spline: along the real curve (samples), not the chords between its fit points.
+        const pts = c.samples || c.points
         let best = Infinity
-        for (let i = 0; i + 1 < c.points.length; ++i)
-            best = Math.min(best, segmentDistance(p, c.points[i], c.points[i + 1]))
+        for (let i = 0; i + 1 < pts.length; ++i)
+            best = Math.min(best, segmentDistance(p, pts[i], pts[i + 1]))
         return best
     }
 

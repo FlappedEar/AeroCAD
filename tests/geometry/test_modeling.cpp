@@ -699,3 +699,32 @@ TEST_CASE("Draft tilts side faces from the fixed plane", "[geometry][modeling]")
     CHECK_THROWS_AS(draft(box, {top}, {0, 0, 0}, {0, 0, 1}, 10), ModelingError); // parallel to the plane
     CHECK_THROWS_AS(draft(box, {}, {0, 0, 0}, {0, 0, 1}, 10), ModelingError);
 }
+
+TEST_CASE("Spline samples follow the interpolated curve through the fit points", "[geometry][sketch]")
+{
+    SketchCurve s;
+    s.kind = SketchCurve::Kind::Spline;
+    s.points = {{0, 0}, {10, 10}, {20, 0}};
+    const auto open = sampleSpline(s, 8);
+    REQUIRE(open.size() == 2 * 8 + 1);
+    CHECK(open.front().x == Approx(0).margin(1e-6));
+    CHECK(open.back().x == Approx(20));
+    // The fit point in the middle lies on the curve, and the curve bulges past the chords.
+    double best = 1e9, top = 0;
+    for (const auto& p : open) {
+        best = std::min(best, std::hypot(p.x - 10, p.y - 10));
+        top = std::max(top, p.y);
+    }
+    CHECK(best < 0.5);
+    CHECK(top >= 10 - 1e-6);
+
+    s.closed = true;
+    const auto closed = sampleSpline(s, 8);
+    REQUIRE(closed.size() == 3 * 8 + 1);
+    CHECK(closed.back().x == Approx(closed.front().x).margin(1e-6));
+    CHECK(closed.back().y == Approx(closed.front().y).margin(1e-6));
+
+    SketchCurve line;
+    line.points = {{0, 0}, {1, 0}};
+    CHECK_THROWS_AS(sampleSpline(line), ModelingError);
+}

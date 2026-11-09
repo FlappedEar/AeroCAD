@@ -247,6 +247,7 @@ ApplicationWindow {
         SketchMenuItem { action: arcAction; icon.source: Theme.iconUrl("arc") }
         SketchMenuItem { action: polygonAction; icon.source: Theme.iconUrl("polygon") }
         SketchMenuItem { action: slotAction; icon.source: Theme.iconUrl("slot") }
+        SketchMenuItem { action: splineAction; icon.source: Theme.iconUrl("spline") }
         SketchMenuItem { action: dimensionAction; icon.source: Theme.iconUrl("dimension") }
         MenuSeparator {}
         SketchMenuItem {
@@ -1297,6 +1298,7 @@ ApplicationWindow {
     Action { id: sketchProjectAction; text: qsTr("&Project"); shortcut: "P"; enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "project"; onTriggered: window.sketchTool_("project") }
     Action { id: sketchOffsetAction; text: qsTr("&Offset"); shortcut: "O"; enabled: !!window.activeSketch && (viewport.sketchOverlay.selectedCurves.length > 0 || window.sketchTool === "offset"); checkable: true; checked: window.sketchTool === "offset"; onTriggered: { if (window.sketchTool !== "offset") viewport.sketchOverlay.startOffset(); else window.sketchTool_("") } }
     Action { id: sketchMirrorAction; text: qsTr("&Mirror"); enabled: !!window.activeSketch && (viewport.sketchOverlay.selectedCurves.length > 0 || window.sketchTool === "mirror"); checkable: true; checked: window.sketchTool === "mirror"; onTriggered: { if (window.sketchTool !== "mirror") viewport.sketchOverlay.startMirror(); else window.sketchTool_("") } }
+    Action { id: splineAction; text: qsTr("Spli&ne"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "spline"; onTriggered: window.sketchTool_("spline") }
     Action { id: slotAction; text: qsTr("Sl&ot"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "slot"; onTriggered: window.sketchTool_("slot") }
 
     // Scan area selection tools (shortcuts 1/2/3 are in Viewport.qml).
@@ -1594,6 +1596,7 @@ ApplicationWindow {
             MenuItem { action: arcAction }
             MenuItem { action: polygonAction }
             MenuItem { action: slotAction }
+            MenuItem { action: splineAction }
             MenuSeparator {}
             MenuItem { action: sketchFilletAction }
             MenuItem { action: trimAction }
@@ -2046,6 +2049,7 @@ ApplicationWindow {
                 ToolCommand { action: arcAction; text: qsTr("Arc"); iconName: "arc" }
                 ToolCommand { action: polygonAction; text: qsTr("Polygon"); iconName: "polygon" }
                 ToolCommand { action: slotAction; text: qsTr("Slot"); iconName: "slot" }
+                ToolCommand { action: splineAction; text: qsTr("Spline"); iconName: "spline" }
                 ToolCommand { action: dimensionAction; text: qsTr("Dimension"); iconName: "dimension" }
             }
             ToolSeparator { tab: "sketch" }
