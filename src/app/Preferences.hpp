@@ -29,6 +29,9 @@ class Preferences : public QObject {
                    touchpadScrollPansChanged)
     Q_PROPERTY(int autosaveSeconds READ autosaveSeconds WRITE setAutosaveSeconds NOTIFY autosaveSecondsChanged)
     Q_PROPERTY(double minWallThickness READ minWallThickness WRITE setMinWallThickness NOTIFY minWallThicknessChanged)
+    Q_PROPERTY(QString printMaterial READ printMaterial WRITE setPrintMaterial NOTIFY printMaterialChanged)
+    Q_PROPERTY(double printDensity READ printDensity NOTIFY printMaterialChanged)
+    Q_PROPERTY(QVariantList printMaterials READ printMaterials CONSTANT)
     Q_PROPERTY(QVariantList lengthUnits READ lengthUnits CONSTANT)
     Q_PROPERTY(QVariantList themes READ themes CONSTANT)
     Q_PROPERTY(QVariantList mouseProfiles READ mouseProfiles CONSTANT)
@@ -67,6 +70,14 @@ public:
     [[nodiscard]] double minWallThickness() const { return m_minWallThickness; }
     void setMinWallThickness(double mm);
 
+    /// Material a part's mass is estimated in (Properties panel): "pla" (default), "petg",
+    /// "abs", "asa", "pa12" or "aluminium". Solid (100 % infill) density, g/cm^3.
+    [[nodiscard]] QString printMaterial() const { return m_printMaterial; }
+    void setPrintMaterial(const QString& material);
+    [[nodiscard]] double printDensity() const;
+    /// [{value, label, density}].
+    [[nodiscard]] static QVariantList printMaterials();
+
     /// [{value, label}] lists for the preferences dialog.
     [[nodiscard]] static QVariantList lengthUnits();
     [[nodiscard]] static QVariantList themes();
@@ -100,6 +111,7 @@ signals:
     void touchpadScrollPansChanged();
     void autosaveSecondsChanged();
     void minWallThicknessChanged();
+    void printMaterialChanged();
 
 private:
 
@@ -111,6 +123,7 @@ private:
     bool m_touchpadScrollPans = false;
     int m_autosaveSeconds = 120;
     double m_minWallThickness = 0.8;
+    QString m_printMaterial;
 };
 
 } // namespace aerocad::app

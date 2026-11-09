@@ -84,6 +84,24 @@ double enclosedVolume(const TriangleMesh& mesh)
     return sum / 6.0;
 }
 
+std::optional<Vec3> enclosedCentroid(const TriangleMesh& mesh)
+{
+    const auto& v = mesh.vertices();
+    double volume = 0.0;
+    Vec3 moment{};
+    for (const auto& t : mesh.triangles()) {
+        const Vec3& a = v[t[0]];
+        const Vec3& b = v[t[1]];
+        const Vec3& c = v[t[2]];
+        const double six = a.dot(b.cross(c)); // 6 x signed volume of the tetrahedron (0, a, b, c)
+        volume += six;
+        moment = moment + (a + b + c) * six; // its centroid is (a + b + c) / 4
+    }
+    if (std::abs(volume) < 1e-12)
+        return std::nullopt;
+    return moment * (1.0 / (4.0 * volume));
+}
+
 std::size_t openEdgeCount(const TriangleMesh& mesh)
 {
     // Weld vertices with identical coordinates first: tessellated B-rep shapes have

@@ -256,6 +256,26 @@ TEST_CASE("Delete Face in the timeline removes a hole and follows an edited box"
     CHECK_THROWS_AS(d.editFeature(del, {{"body", block}, {"faces", Json::array({{{"point", {20, 10, 20}}}})}}), cad::DesignError);
 }
 
+TEST_CASE("Centre of mass and area of an L-shaped body", "[cad][design]")
+{
+    // 20 x 10 x 10 block with a 10 x 10 x 10 block on its left half: volumes 2000 and 1000,
+    // centres (10, 5, 5) and (5, 5, 15).
+    Design d;
+    const auto base = d.addFeature("box", {{"size", {20, 10, 10}}});
+    d.addFeature("box", {{"corner", {0, 0, 10}}, {"size", {10, 10, 10}}, {"operation", "join"}});
+    const auto& shape = d.bodies().at(base).shape;
+    CHECK(shape.volume() == Approx(3000));
+    const auto c = shape.centerOfMass();
+    REQUIRE(c.has_value());
+    CHECK(c->x == Approx((2000 * 10 + 1000 * 5) / 3000.0));
+    CHECK(c->y == Approx(5));
+    CHECK(c->z == Approx((2000 * 5 + 1000 * 15) / 3000.0));
+    // Bottom 200, low and high tops 100 each, front and back L 300 each, left 10 x 20,
+    // right 10 x 10 and the step between the tops 10 x 10.
+    CHECK(shape.surfaceArea() == Approx(200 + 100 + 100 + 2 * 300 + 200 + 100 + 100));
+    CHECK_FALSE(geometry::Shape{}.centerOfMass().has_value());
+}
+
 TEST_CASE("Sphere and torus in the timeline", "[cad][design]")
 {
     const double pi = std::numbers::pi;

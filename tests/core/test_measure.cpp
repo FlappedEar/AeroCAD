@@ -36,6 +36,13 @@ TEST_CASE("Closest point on a mesh, volume and closedness", "[core][measure]")
     CHECK(hit->point == Vec3{2, 2, 0});
 
     CHECK(enclosedVolume(m) == Approx(1000.0 / 6.0));
+    // The centroid of a tetrahedron is the mean of its corners, wherever the origin is.
+    const auto centre = enclosedCentroid(m);
+    REQUIRE(centre.has_value());
+    CHECK(centre->x == Approx(2.5));
+    CHECK(centre->y == Approx(2.5));
+    CHECK(centre->z == Approx(2.5));
+    CHECK_FALSE(enclosedCentroid(TriangleMesh{}).has_value());
     CHECK(openEdgeCount(m) == 0);
 
     TriangleMesh open({{0, 0, 0}, {1, 0, 0}, {0, 1, 0}}, {{0, 1, 2}});
