@@ -1064,11 +1064,255 @@ Json itemFromSolved(const Json& item, const SketchCurve* c, std::size_t n)
     return out;
 }
 
+bool sameCurve(const SketchCurve& a, const SketchCurve& b, double tol)
+{
+    if (a.kind != b.kind || a.points.size() != b.points.size() || std::abs(a.radius - b.radius) > tol)
+        return false;
+    for (std::size_t i = 0; i < a.points.size(); ++i) {
+        if (std::hypot(a.points[i].x - b.points[i].x, a.points[i].y - b.points[i].y) > tol)
+            return false;
+    }
+    return true;
+}
+
+/// `out` (an item rewritten from solved curves) with the values of `item` that did not
+/// change put back as written, so their expressions stay.
+Json keepExpressions(const Eval& ev, const Json& item, Json out)
+{
+    auto equal = [](double a, double b) { return std::abs(a - b) <= 1e-7 * std::max(1.0, std::abs(a)); };
+    // Also inside point arrays ([x, y], spline points), element by element.
+    auto restore = [&](auto& self, const Json& written, Json& now) -> void {
+        if (written.is_string() && now.is_number()) {
+            if (equal(ev.num(written), now.get<double>()))
+                now = written;
+        } else if (written.is_array() && now.is_array() && written.size() == now.size()) {
+            for (std::size_t i = 0; i < written.size(); ++i)
+                self(self, written[i], now[i]);
+        }
+    };
+    for (const auto& [key, value] : item.items()) {
+        if (out.contains(key))
+            restore(restore, value, out[key]);
+    }
+    if (has(item, "diameter") && out.contains("radius") && equal(ev.num(item.at("diameter")), 2 * ev.num(out.at("radius")))) {
+        out.erase("radius");
+        out["diameter"] = item.at("diameter");
+    }
+    // A rectangle drawn with width / height keeps them when its size did not change.
+    if (has(item, "width") && has(item, "height") && out.contains("opposite") && out.contains("corner")) {
+        const auto& a = out.at("corner");
+        const auto& b = out.at("opposite");
+        // The corner may hold restored expressions: evaluate, do not read numbers.
+        if (equal(ev.num(item.at("width")), ev.num(b[0]) - ev.num(a[0])) &&
+            equal(ev.num(item.at("height")), ev.num(b[1]) - ev.num(a[1]))) {
+            out.erase("opposite");
+            out["width"] = item.at("width");
+            out["height"] = item.at("height");
+        }
+    }
+    return out;
+}
+
+/// The curve ends the solver welds by position (SketchSolver's endPoint: line and arc ends
+/// unless their join is off, open spline ends; an end joins an earlier one within 1e-6), as
+/// pairs of end ids (curve * 2 + 0 for the start, + 1 for the end).
+std::vector<std::pair<std::size_t, std::size_t>> weldedEnds(const std::vector<SketchCurve>& curves)
+{
+    struct End {
+        Vec2 at;
+        std::size_t id;
+    };
+    std::vector<End> ends;
+    std::vector<std::pair<std::size_t, std::size_t>> pairs;
+    auto end = [&](const Vec2& at, std::size_t id, bool join) {
+        if (join) {
+            for (const auto& e : ends) {
+                if (std::hypot(e.at.x - at.x, e.at.y - at.y) < 1e-6) {
+                    pairs.emplace_back(e.id, id);
+                    return; // like endPoint: a joined end is not a position to join later ends to
+                }
+            }
+        }
+        ends.push_back({at, id});
+    };
+    for (std::size_t i = 0; i < curves.size(); ++i) {
+        const auto& c = curves[i];
+        if (c.kind == SketchCurve::Kind::Line && c.points.size() == 2) {
+            end(c.points[0], 2 * i, c.joinStart);
+            end(c.points[1], 2 * i + 1, c.joinEnd);
+        } else if (c.kind == SketchCurve::Kind::Arc && c.points.size() == 3) {
+            end(c.points[0], 2 * i, c.joinStart);
+            end(c.points[2], 2 * i + 1, c.joinEnd);
+        } else if (c.kind == SketchCurve::Kind::Spline && !c.closed && !c.points.empty()) {
+            end(c.points.front(), 2 * i, true);
+            if (c.points.size() > 1)
+                end(c.points.back(), 2 * i + 1, true);
+        }
+    }
+    return pairs;
+}
+
+/// Groups (union-find roots) of `n` elements joined by `pairs`.
+std::vector<std::size_t> groupsOf(std::size_t n, const std::vector<std::pair<std::size_t, std::size_t>>& pairs)
+{
+    std::vector<std::size_t> g(n);
+    for (std::size_t i = 0; i < n; ++i)
+        g[i] = i;
+    auto root = [&](std::size_t i) {
+        while (g[i] != i)
+            i = g[i] = g[g[i]];
+        return i;
+    };
+    for (const auto& [a, b] : pairs)
+        if (a < n && b < n)
+            g[root(a)] = root(b);
+    for (std::size_t i = 0; i < n; ++i)
+        g[i] = root(i);
+    return g;
+}
+
+/// The sketch items rewritten where `solved` (the curves they make, in order) has them.
+/// Items whose curves match `shown` (the curves before the change; nullptr: none match)
+/// stay as written. With `exact`, the solver's welds of curve ends (by stored position) are
+/// kept as they are: an item that cannot make its solved curves again (a polygon pulled out
+/// of regular) stays as written, and so do the items welded to it, and items whose
+/// rewritten ends would weld to ends they were not welded to (two ends that only meet after
+/// solving) or part from ends they were.
+Json itemsFromSolved(const Eval& ev, const Json& items, const std::vector<SketchCurve>* shown,
+                     const std::vector<SketchCurve>& solved, bool exact)
+{
+    const std::size_t n = items.size();
+    std::vector<Json> out(n);
+    std::vector<std::vector<SketchCurve>> drawnOf(n), nowOf(n); // as written / as rewritten
+    std::vector<bool> keep(n, false);
+    std::vector<std::size_t> itemOf; // curve -> item
+    std::size_t first = 0;
+    for (std::size_t k = 0; k < n; ++k) {
+        const Json& item = items[k];
+        std::vector<SketchConstraint> implicit;
+        appendCurves(ev, item, drawnOf[k], implicit);
+        const std::size_t m = drawnOf[k].size();
+        if (first + m > solved.size())
+            throw DesignError("Sketch changed while it was solved");
+        bool moved = shown == nullptr || shown->size() != solved.size();
+        for (std::size_t i = 0; i < m && !moved; ++i)
+            moved = !sameCurve((*shown)[first + i], solved[first + i], 1e-7);
+        out[k] = item;
+        nowOf[k] = drawnOf[k];
+        if (moved) {
+            out[k] = keepExpressions(ev, item, itemFromSolved(item, solved.data() + first, m));
+            if (exact) {
+                std::vector<SketchCurve> again;
+                std::vector<SketchConstraint> unused;
+                try {
+                    appendCurves(ev, out[k], again, unused);
+                } catch (const DesignError&) {
+                    again.clear();
+                }
+                bool same = again.size() == m;
+                for (std::size_t i = 0; i < m && same; ++i)
+                    same = sameCurve(again[i], solved[first + i], 1e-6);
+                if (same)
+                    nowOf[k] = std::move(again);
+                else
+                    keep[k] = true;
+            }
+        }
+        for (std::size_t i = 0; i < m; ++i)
+            itemOf.push_back(k);
+        first += m;
+    }
+    if (exact) {
+        std::vector<SketchCurve> drawn;
+        for (const auto& d : drawnOf)
+            drawn.insert(drawn.end(), d.begin(), d.end());
+        const auto drawnPairs = weldedEnds(drawn);
+        const auto drawnGroups = groupsOf(2 * drawn.size(), drawnPairs);
+        // Items welded together as drawn: a kept item keeps its whole group as written.
+        const auto itemGroups = [&] {
+            std::vector<std::pair<std::size_t, std::size_t>> p;
+            for (const auto& [a, b] : drawnPairs)
+                p.emplace_back(itemOf[a / 2], itemOf[b / 2]);
+            return groupsOf(n, p);
+        }();
+        for (bool changed = true; changed;) {
+            changed = false;
+            std::set<std::size_t> keptGroups;
+            for (std::size_t k = 0; k < n; ++k)
+                if (keep[k])
+                    keptGroups.insert(itemGroups[k]);
+            for (std::size_t k = 0; k < n; ++k)
+                if (!keep[k] && keptGroups.count(itemGroups[k]) != 0)
+                    keep[k] = changed = true;
+            std::vector<SketchCurve> now;
+            for (std::size_t k = 0; k < n; ++k) {
+                const auto& c = keep[k] ? drawnOf[k] : nowOf[k];
+                now.insert(now.end(), c.begin(), c.end());
+            }
+            const auto nowPairs = weldedEnds(now);
+            const auto nowGroups = groupsOf(2 * now.size(), nowPairs);
+            auto keepBoth = [&](std::size_t a, std::size_t b) {
+                for (const std::size_t e : {a, b}) {
+                    if (!keep[itemOf[e / 2]])
+                        keep[itemOf[e / 2]] = changed = true;
+                }
+            };
+            for (const auto& [a, b] : nowPairs)
+                if (drawnGroups[a] != drawnGroups[b])
+                    keepBoth(a, b); // would weld ends that were apart
+            for (const auto& [a, b] : drawnPairs)
+                if (nowGroups[a] != nowGroups[b])
+                    keepBoth(a, b); // would part welded ends
+        }
+        for (std::size_t k = 0; k < n; ++k)
+            if (keep[k])
+                out[k] = items[k];
+    }
+    Json newItems = Json::array();
+    for (auto& o : out)
+        newItems.push_back(std::move(o));
+    return newItems;
+}
+
 } // namespace
+
+void Design::keepSolvedSketch(FeatureId sketchId)
+{
+    Feature& f = m_state.features[indexOf(sketchId)];
+    if (f.type != "sketch" || !f.params.contains("curves"))
+        return;
+    const auto it = m_sketches.find(sketchId);
+    if (it == m_sketches.end())
+        return; // not evaluated (rolled back, suppressed or failed): nothing is shown
+    const Eval ev{*this};
+    const Json& items = f.params.at("curves");
+    std::size_t total = 0;
+    try {
+        for (const auto& item : items) {
+            std::vector<SketchCurve> made;
+            std::vector<SketchConstraint> implicit;
+            appendCurves(ev, item, made, implicit);
+            total += made.size();
+        }
+    } catch (const DesignError&) {
+        return;
+    }
+    if (total != it->second.curves.size())
+        return;
+    // Where the items put the curves before solving: unchanged items stay as written.
+    std::vector<SketchCurve> drawn;
+    std::vector<SketchConstraint> implicit;
+    for (const auto& item : items)
+        appendCurves(ev, item, drawn, implicit);
+    Json newItems = itemsFromSolved(ev, items, &drawn, it->second.curves, true);
+    if (newItems != items)
+        f.params["curves"] = std::move(newItems);
+}
 
 void Design::moveSketchPoint(FeatureId sketchId, const Json& point, const geometry::Vec2& to)
 {
     const State before = m_state;
+    keepSolvedSketch(sketchId);
     Feature& f = m_state.features[indexOf(sketchId)];
     if (f.type != "sketch")
         throw DesignError("Feature " + std::to_string(sketchId) + " is not a sketch");
@@ -1114,54 +1358,7 @@ void Design::moveSketchPoint(FeatureId sketchId, const Json& point, const geomet
 
     // 2. Keep the result: each item that moved rewritten where its curves are now, without
     // the hold; values that did not change keep their expressions.
-    auto same = [](const SketchCurve& a, const SketchCurve& b) {
-        if (a.points.size() != b.points.size() || std::abs(a.radius - b.radius) > 1e-7)
-            return false;
-        for (std::size_t i = 0; i < a.points.size(); ++i) {
-            if (std::hypot(a.points[i].x - b.points[i].x, a.points[i].y - b.points[i].y) > 1e-7)
-                return false;
-        }
-        return true;
-    };
-    auto keepExpressions = [&](const Json& item, Json out) {
-        auto equal = [](double a, double b) { return std::abs(a - b) <= 1e-7 * std::max(1.0, std::abs(a)); };
-        for (const auto& [key, value] : item.items()) {
-            if (!value.is_string() || !out.contains(key) || !out.at(key).is_number())
-                continue;
-            if (equal(ev.num(value), out.at(key).get<double>()))
-                out[key] = value;
-        }
-        if (has(item, "diameter") && out.contains("radius") && equal(ev.num(item.at("diameter")), 2 * out.at("radius").get<double>())) {
-            out.erase("radius");
-            out["diameter"] = item.at("diameter");
-        }
-        // A rectangle drawn with width / height keeps them when its size did not change.
-        if (has(item, "width") && has(item, "height") && out.contains("opposite") && out.contains("corner")) {
-            const auto& a = out.at("corner");
-            const auto& b = out.at("opposite");
-            if (equal(ev.num(item.at("width")), b[0].get<double>() - a[0].get<double>()) &&
-                equal(ev.num(item.at("height")), b[1].get<double>() - a[1].get<double>())) {
-                out.erase("opposite");
-                out["width"] = item.at("width");
-                out["height"] = item.at("height");
-            }
-        }
-        return out;
-    };
-    Json newItems = Json::array();
-    std::size_t first = 0;
-    for (const auto& item : items) {
-        std::vector<SketchCurve> made;
-        std::vector<SketchConstraint> implicit;
-        appendCurves(ev, item, made, implicit);
-        if (first + made.size() > solved.size())
-            throw DesignError("Sketch changed while dragging");
-        bool moved = original.size() != solved.size();
-        for (std::size_t i = 0; i < made.size() && !moved; ++i)
-            moved = !same(original[first + i], solved[first + i]);
-        newItems.push_back(moved ? keepExpressions(item, itemFromSolved(item, solved.data() + first, made.size())) : item);
-        first += made.size();
-    }
+    const Json newItems = itemsFromSolved(ev, items, &original, solved, false);
     Feature& g = m_state.features[indexOf(sketchId)];
     g.params["curves"] = newItems;
     if (constraints.empty() && !before.features[indexOf(sketchId)].params.contains("constraints"))
@@ -1174,6 +1371,7 @@ void Design::moveSketchPoint(FeatureId sketchId, const Json& point, const geomet
 void Design::mirrorSketchCurves(FeatureId sketchId, const std::vector<std::size_t>& picked, std::size_t lineIdx)
 {
     const State before = m_state;
+    keepSolvedSketch(sketchId);
     Feature& f = m_state.features[indexOf(sketchId)];
     if (f.type != "sketch")
         throw DesignError("Feature " + std::to_string(sketchId) + " is not a sketch");
@@ -1255,6 +1453,7 @@ void Design::mirrorSketchCurves(FeatureId sketchId, const std::vector<std::size_
 void Design::projectToSketch(FeatureId sketchId, FeatureId bodyId, const Json& edgeRefs)
 {
     const State before = m_state;
+    keepSolvedSketch(sketchId);
     Feature& f = m_state.features[indexOf(sketchId)];
     if (f.type != "sketch")
         throw DesignError("Feature " + std::to_string(sketchId) + " is not a sketch");
@@ -1318,6 +1517,7 @@ void Design::projectToSketch(FeatureId sketchId, FeatureId bodyId, const Json& e
 void Design::offsetSketchCurves(FeatureId sketchId, const std::vector<std::size_t>& picked, double distance)
 {
     const State before = m_state;
+    keepSolvedSketch(sketchId);
     Feature& f = m_state.features[indexOf(sketchId)];
     if (f.type != "sketch")
         throw DesignError("Feature " + std::to_string(sketchId) + " is not a sketch");
@@ -1360,6 +1560,7 @@ void Design::offsetSketchCurves(FeatureId sketchId, const std::vector<std::size_
 void Design::filletSketchCorner(FeatureId sketchId, std::size_t ia, std::size_t ib, double radius)
 {
     const State before = m_state;
+    keepSolvedSketch(sketchId);
     const Feature& f = m_state.features[indexOf(sketchId)];
     if (f.type != "sketch")
         throw DesignError("Feature " + std::to_string(sketchId) + " is not a sketch");
@@ -1457,6 +1658,7 @@ void Design::filletSketchCorner(FeatureId sketchId, std::size_t ia, std::size_t 
 void Design::trimSketchCurve(FeatureId sketchId, std::size_t curve, const geometry::Vec2& at)
 {
     const State before = m_state;
+    keepSolvedSketch(sketchId);
     const Feature& f = m_state.features[indexOf(sketchId)];
     if (f.type != "sketch")
         throw DesignError("Feature " + std::to_string(sketchId) + " is not a sketch");
@@ -1544,6 +1746,7 @@ void Design::trimSketchCurve(FeatureId sketchId, std::size_t curve, const geomet
 void Design::setSketchConstruction(FeatureId sketchId, const std::vector<std::size_t>& picked, bool construction)
 {
     const State before = m_state;
+    keepSolvedSketch(sketchId);
     Feature& f = m_state.features[indexOf(sketchId)];
     if (f.type != "sketch")
         throw DesignError("Feature " + std::to_string(sketchId) + " is not a sketch");
@@ -1630,6 +1833,7 @@ void Design::setSketchConstruction(FeatureId sketchId, const std::vector<std::si
 void Design::deleteSketchCurves(FeatureId sketchId, const std::vector<std::size_t>& removed)
 {
     const State before = m_state;
+    keepSolvedSketch(sketchId);
     Feature& f = m_state.features[indexOf(sketchId)];
     if (f.type != "sketch")
         throw DesignError("Feature " + std::to_string(sketchId) + " is not a sketch");

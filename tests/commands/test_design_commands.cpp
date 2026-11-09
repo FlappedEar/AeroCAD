@@ -1770,3 +1770,259 @@ TEST_CASE("Design commands: a tangent arc stays on a dimensioned line's end (CAD
                     .ok);
     CHECK(run(s, "sketch.curves", {{"sketch", lcid}}).dump() == lcBefore);
 }
+
+TEST_CASE("Design commands: sketch edits start from the solved geometry (CAD-216)", "[commands][cad][solver]")
+{
+    commands::Session s;
+    auto pts = [&](std::uint64_t id, int curve) { return run(s, "sketch.curves", {{"sketch", id}}).at("curves")[curve].at("points"); };
+
+    // Codex (#184): a line stored (0,0)-(10,0) and fixed at (0,0)-(0,10). A line added from
+    // (10, 0) used to weld to the stale stored end and solve to (0, 10); it stays at (10, 0).
+    const Json a = run(s, "sketch.create",
+                       {{"plane", "XY"},
+                        {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {10, 0}}}})},
+                        {"constraints", Json::array({{{"type", "fix"},
+                                                      {"points", Json::array({{{"curve", 0}, {"point", "start"}}, {{"curve", 0}, {"point", "end"}}})},
+                                                      {"at", Json::array({Json::array({0, 0}), Json::array({0, 10})})}}})}});
+    const auto aid = a.at("id").get<std::uint64_t>();
+    run(s, "sketch.add_curves",
+        {{"sketch", aid}, {"curves", Json::array({{{"type", "line"}, {"start", {10, 0}}, {"end", {20, 0}}}})}});
+    {
+        const Json src = pts(aid, 0), added = pts(aid, 1);
+        INFO(src.dump() << " " << added.dump());
+        CHECK(src[1][0].get<double>() == Approx(0).margin(1e-6));
+        CHECK(src[1][1].get<double>() == Approx(10).margin(1e-6));
+        CHECK(added[0][0].get<double>() == Approx(10).margin(1e-6));
+        CHECK(added[0][1].get<double>() == Approx(0).margin(1e-6));
+    }
+    // The same after a tangent arc that ends at (10, 0), in one batch.
+    run(s, "sketch.add_curves",
+        {{"sketch", aid},
+         {"curves", Json::array({{{"type", "tangent_arc"}, {"from", {{"curve", 0}, {"point", "end"}}}, {"end", {10, 0}}},
+                                 {{"type", "line"}, {"start", {10, 0}}, {"end", {10, -10}}}})}});
+    {
+        const Json arc = pts(aid, 2), line = pts(aid, 3);
+        INFO(arc.dump() << " " << line.dump());
+        CHECK(arc[2][0].get<double>() == Approx(10).margin(1e-4));
+        CHECK(arc[2][1].get<double>() == Approx(0).margin(1e-4));
+        CHECK(line[0][0].get<double>() == Approx(10).margin(1e-4));
+        CHECK(line[0][1].get<double>() == Approx(0).margin(1e-4));
+    }
+
+    // A line drawn on from a dimensioned end joins it without a constraint of its own, so it
+    // follows when the dimension changes (Fusion).
+    const Json b = run(s, "sketch.create",
+                       {{"plane", "XY"},
+                        {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {10, 0}}}})},
+                        {"constraints", Json::array({{{"type", "fix"}, {"points", Json::array({{{"curve", 0}, {"point", "start"}}})}},
+                                                     {{"type", "horizontal"}, {"curve", 0}},
+                                                     {{"type", "length"}, {"curve", 0}, {"value", 20}}})}});
+    const auto bid = b.at("id").get<std::uint64_t>();
+    run(s, "sketch.add_curves",
+        {{"sketch", bid}, {"curves", Json::array({{{"type", "line"}, {"start", {20, 0}}, {"end", {20, 10}}}})}});
+    const std::size_t constraintsBefore = run(s, "sketch.curves", {{"sketch", bid}}).at("constraints").size();
+    run(s, "sketch.edit_constraint", {{"sketch", bid}, {"index", 2}, {"value", 25}});
+    {
+        const Json c = run(s, "sketch.curves", {{"sketch", bid}});
+        const Json up = c.at("curves")[1].at("points");
+        INFO(c.dump());
+        CHECK(c.at("constraints").size() == constraintsBefore);
+        CHECK(up[0][0].get<double>() == Approx(25).margin(1e-6));
+        CHECK(up[0][1].get<double>() == Approx(0).margin(1e-6));
+    }
+    // Each edit starts by storing the curves where they were shown: the line's item now ends
+    // at 20 (shown when the dimension was edited), not at 10 (where it was drawn).
+    {
+        const Json tl = run(s, "timeline.list");
+        const Json item = tl.at("features")[1].at("params").at("curves")[0];
+        INFO(item.dump());
+        CHECK(item.at("end")[0].get<double>() == Approx(20).margin(1e-6));
+    }
+
+    // Items the solver did not move keep their expressions.
+    run(s, "parameter.set", {{"name", "r"}, {"expression", "5 mm"}});
+    const Json c = run(s, "sketch.create",
+                       {{"plane", "XY"},
+                        {"curves", Json::array({{{"type", "circle"}, {"center", {50, 50}}, {"radius", "r"}},
+                                                {{"type", "line"}, {"start", {0, 0}}, {"end", {10, 0}}}})},
+                        {"constraints", Json::array({{{"type", "length"}, {"curve", 1}, {"value", 20}}})}});
+    const auto cid = c.at("id").get<std::uint64_t>();
+    run(s, "sketch.add_curves",
+        {{"sketch", cid}, {"curves", Json::array({{{"type", "line"}, {"start", {0, 30}}, {"end", {10, 30}}}})}});
+    {
+        const Json tl = run(s, "timeline.list");
+        const Json items = tl.at("features")[2].at("params").at("curves");
+        INFO(items.dump());
+        CHECK(items[0].at("radius") == "r");
+        CHECK(items[1].at("end")[0].get<double>() != Approx(10).margin(1e-3));
+    }
+
+    // A polygon pulled out of regular stays a polygon item; its shown shape does not change.
+    const Json d = run(s, "sketch.create",
+                       {{"plane", "XY"},
+                        {"curves", Json::array({{{"type", "polygon"}, {"center", {0, 0}}, {"radius", 10}, {"sides", 4}}})},
+                        {"constraints", Json::array({{{"type", "fix"},
+                                                      {"points", Json::array({{{"curve", 0}, {"point", "start"}}, {{"curve", 1}, {"point", "start"}}})},
+                                                      {"at", Json::array({Json::array({10, 0}), Json::array({2, 8})})}}})}});
+    const auto did = d.at("id").get<std::uint64_t>();
+    const Json shownBefore = run(s, "sketch.curves", {{"sketch", did}}).at("curves");
+    run(s, "sketch.add_curves",
+        {{"sketch", did}, {"curves", Json::array({{{"type", "line"}, {"start", {40, 0}}, {"end", {50, 0}}}})}});
+    {
+        const Json tl = run(s, "timeline.list");
+        CHECK(tl.at("features")[3].at("params").at("curves")[0].at("type") == "polygon");
+        const Json shown = run(s, "sketch.curves", {{"sketch", did}}).at("curves");
+        for (std::size_t i = 0; i < 4; ++i)
+            for (std::size_t k = 0; k < 2; ++k)
+                for (std::size_t x = 0; x < 2; ++x)
+                    CHECK(shown[i].at("points")[k][x].get<double>() ==
+                          Approx(shownBefore[i].at("points")[k][x].get<double>()).margin(1e-6));
+    }
+
+    // Codex (#190): a line welded to a vertex of such a polygon stays as written with it, so
+    // they stay joined when the vertex moves later.
+    const Json e = run(s, "sketch.create",
+                       {{"plane", "XY"},
+                        {"curves", Json::array({{{"type", "polygon"}, {"center", {0, 0}}, {"radius", 10}, {"sides", 4}},
+                                                {{"type", "line"}, {"start", {0, 10}}, {"end", {0, 30}}}})},
+                        {"constraints", Json::array({{{"type", "fix"},
+                                                      {"points", Json::array({{{"curve", 0}, {"point", "start"}}, {{"curve", 1}, {"point", "start"}}})},
+                                                      {"at", Json::array({Json::array({10, 0}), Json::array({2, 8})})}}})}});
+    const auto eid = e.at("id").get<std::uint64_t>();
+    run(s, "sketch.add_curves",
+        {{"sketch", eid}, {"curves", Json::array({{{"type", "line"}, {"start", {40, 0}}, {"end", {50, 0}}}})}});
+    {
+        const Json tl = run(s, "timeline.list");
+        const Json items = tl.at("features")[4].at("params").at("curves");
+        INFO(items.dump());
+        CHECK(items[0].at("type") == "polygon");
+        CHECK(items[1].at("start") == Json::array({0, 10}));
+    }
+    run(s, "sketch.edit_constraint", {{"sketch", eid}, {"index", 0}, {"remove", true}});
+    run(s, "sketch.add_constraints",
+        {{"sketch", eid},
+         {"constraints", Json::array({{{"type", "fix"},
+                                       {"points", Json::array({{{"curve", 0}, {"point", "start"}}, {{"curve", 1}, {"point", "start"}}})},
+                                       {"at", Json::array({Json::array({10, 0}), Json::array({3, 7})})}}})}});
+    {
+        const Json c2 = run(s, "sketch.curves", {{"sketch", eid}});
+        const Json vertex = c2.at("curves")[1].at("points")[0];
+        const Json line = c2.at("curves")[4].at("points")[0];
+        INFO(c2.dump());
+        CHECK(vertex[0].get<double>() == Approx(3).margin(1e-6));
+        CHECK(vertex[1].get<double>() == Approx(7).margin(1e-6));
+        CHECK(line[0].get<double>() == Approx(3).margin(1e-6));
+        CHECK(line[1].get<double>() == Approx(7).margin(1e-6));
+    }
+
+    // Codex (#190): ends that only meet after solving are not welded by the write-back. Line A
+    // ends at (10, 0) by its length; line B, drawn at (20, 0)-(30, 0), is fixed at (10, 0)-(20, 0).
+    // A later edit must not join them, so A's length can still change.
+    const Json f = run(s, "sketch.create",
+                       {{"plane", "XY"},
+                        {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {10, 0}}},
+                                                {{"type", "line"}, {"start", {20, 0}}, {"end", {30, 0}}}})},
+                        {"constraints", Json::array({{{"type", "fix"}, {"points", Json::array({{{"curve", 0}, {"point", "start"}}})}},
+                                                     {{"type", "horizontal"}, {"curve", 0}},
+                                                     {{"type", "length"}, {"curve", 0}, {"value", 10}},
+                                                     {{"type", "fix"},
+                                                      {"points", Json::array({{{"curve", 1}, {"point", "start"}}, {{"curve", 1}, {"point", "end"}}})},
+                                                      {"at", Json::array({Json::array({10, 0}), Json::array({20, 0})})}}})}});
+    const auto fid = f.at("id").get<std::uint64_t>();
+    run(s, "sketch.add_curves",
+        {{"sketch", fid}, {"curves", Json::array({{{"type", "line"}, {"start", {0, 40}}, {"end", {10, 40}}}})}});
+    run(s, "sketch.edit_constraint", {{"sketch", fid}, {"index", 2}, {"value", 15}});
+    {
+        const Json c3 = run(s, "sketch.curves", {{"sketch", fid}});
+        INFO(c3.dump());
+        CHECK(c3.at("curves")[0].at("points")[1][0].get<double>() == Approx(15).margin(1e-6));
+        CHECK(c3.at("curves")[1].at("points")[0][0].get<double>() == Approx(10).margin(1e-6));
+    }
+
+    // Codex (#190): like the solver, an end joined to an earlier end is not one later ends join
+    // to. Starts at x = 0, 0.75e-6, 1.5e-6: the third is apart from the first two. Both fixed at
+    // (0, 0), the write-back must not weld the third to the first.
+    const Json g = run(s, "sketch.create",
+                       {{"plane", "XY"},
+                        {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {0, 50}}},
+                                                {{"type", "line"}, {"start", {0.75e-6, 0}}, {"end", {50, 50}}},
+                                                {{"type", "line"}, {"start", {1.5e-6, 0}}, {"end", {50, 0}}}})},
+                        {"constraints", Json::array({{{"type", "fix"},
+                                                      {"points", Json::array({{{"curve", 2}, {"point", "start"}}})},
+                                                      {"at", Json::array({Json::array({0, 0})})}},
+                                                     {{"type", "fix"},
+                                                      {"points", Json::array({{{"curve", 0}, {"point", "start"}}})},
+                                                      {"at", Json::array({Json::array({0, 0})})}}})}});
+    const auto gid = g.at("id").get<std::uint64_t>();
+    run(s, "sketch.add_curves",
+        {{"sketch", gid}, {"curves", Json::array({{{"type", "line"}, {"start", {0, 80}}, {"end", {10, 80}}}})}});
+    run(s, "sketch.edit_constraint", {{"sketch", gid}, {"index", 1}, {"remove", true}});
+    run(s, "sketch.add_constraints",
+        {{"sketch", gid},
+         {"constraints", Json::array({{{"type", "fix"},
+                                       {"points", Json::array({{{"curve", 0}, {"point", "start"}}})},
+                                       {"at", Json::array({Json::array({1, 0})})}}})}});
+    {
+        const Json c4 = run(s, "sketch.curves", {{"sketch", gid}});
+        INFO(c4.dump());
+        CHECK(c4.at("curves")[0].at("points")[0][0].get<double>() == Approx(1).margin(1e-6));
+        CHECK(c4.at("curves")[2].at("points")[0][0].get<double>() == Approx(0).margin(1e-6));
+    }
+
+    // Codex (#190): an unchanged expression inside a point stays when the item is rewritten.
+    run(s, "parameter.set", {{"name", "x"}, {"expression", "5 mm"}});
+    const Json h = run(s, "sketch.create",
+                       {{"plane", "XY"},
+                        {"curves", Json::array({{{"type", "circle"}, {"center", {"x", 0}}, {"radius", 10}}})},
+                        {"constraints", Json::array({{{"type", "radius"}, {"curve", 0}, {"value", 7}}})}});
+    const auto hid = h.at("id").get<std::uint64_t>();
+    run(s, "sketch.add_curves",
+        {{"sketch", hid}, {"curves", Json::array({{{"type", "line"}, {"start", {40, 0}}, {"end", {50, 0}}}})}});
+    {
+        const Json tl = run(s, "timeline.list");
+        Json item;
+        for (const auto& feat : tl.at("features"))
+            if (feat.at("id") == hid)
+                item = feat.at("params").at("curves")[0];
+        INFO(item.dump());
+        CHECK(item.at("center")[0] == "x");
+        CHECK(item.at("radius").get<double>() == Approx(7).margin(1e-6));
+    }
+    run(s, "parameter.set", {{"name", "x"}, {"expression", "8 mm"}});
+    CHECK(run(s, "sketch.curves", {{"sketch", hid}}).at("curves")[0].at("points")[0][0].get<double>() ==
+          Approx(8).margin(1e-6));
+
+    // Codex (#190): a rectangle whose corner keeps an expression while its size changes.
+    const Json r = run(s, "sketch.create",
+                       {{"plane", "XY"},
+                        {"curves", Json::array({{{"type", "rectangle"}, {"corner", {"x", 0}}, {"width", 10}, {"height", 10}}})},
+                        {"constraints", Json::array({{{"type", "fix"}, {"points", Json::array({{{"curve", 0}, {"point", "start"}}})}},
+                                                     {{"type", "length"}, {"curve", 0}, {"value", 20}}})}});
+    const auto rid = r.at("id").get<std::uint64_t>();
+    run(s, "sketch.add_curves",
+        {{"sketch", rid}, {"curves", Json::array({{{"type", "line"}, {"start", {80, 0}}, {"end", {90, 0}}}})}});
+    {
+        const Json tl = run(s, "timeline.list");
+        Json item;
+        for (const auto& feat : tl.at("features"))
+            if (feat.at("id") == rid)
+                item = feat.at("params").at("curves")[0];
+        INFO(item.dump());
+        CHECK(item.at("type") == "rectangle");
+        CHECK(item.at("corner")[0] == "x");
+        const Json bottom = run(s, "sketch.curves", {{"sketch", rid}}).at("curves")[0].at("points");
+        CHECK(bottom[1][0].get<double>() - bottom[0][0].get<double>() == Approx(20).margin(1e-6));
+    }
+
+    // Codex (#190): a circle written with a diameter and a radius expression (the diameter wins)
+    // whose solved radius equals the expression.
+    run(s, "parameter.set", {{"name", "rr"}, {"expression", "15 mm"}});
+    const Json q = run(s, "sketch.create",
+                       {{"plane", "XY"},
+                        {"curves", Json::array({{{"type", "circle"}, {"center", {200, 0}}, {"diameter", 20}, {"radius", "rr"}}})},
+                        {"constraints", Json::array({{{"type", "radius"}, {"curve", 0}, {"value", 15}}})}});
+    const auto qid = q.at("id").get<std::uint64_t>();
+    run(s, "sketch.add_curves",
+        {{"sketch", qid}, {"curves", Json::array({{{"type", "line"}, {"start", {80, 0}}, {"end", {90, 0}}}})}});
+    CHECK(run(s, "sketch.curves", {{"sketch", qid}}).at("curves")[0].at("radius").get<double>() == Approx(15).margin(1e-6));
+}

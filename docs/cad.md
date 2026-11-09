@@ -154,6 +154,13 @@ stay closed. Shapes keep their implicit constraints: rectangle sides stay horizo
 vertical, polygon sides equal, slot ends tangent. Conflicting constraints are rejected with
 the index of the failing constraint. `degreesOfFreedom` (0 = fully constrained) is returned
 by `sketch.create`, `sketch.add_constraints` and `sketch.curves`.
+Like Fusion, the sketch keeps its geometry where the solver put it: every sketch edit
+(`sketch.add_curves`, `sketch.add_constraints`, `sketch.edit_constraint`, delete, trim, mirror,
+offset, fillet, project, drag) first writes the solved positions back into the items
+(`Design::keepSolvedSketch`). A curve drawn on a shown end therefore joins it, and branch
+choices (tangent side, ...) follow the shape as shown. Items the solver did not move keep
+their expressions; an item whose shape cannot hold its solved curves (a polygon pulled out
+of regular) stays as written.
 `fix` holds points where they are when the constraint is added (`sketch.add_constraints`
 stores the solved positions in `at`; a fixed circle also keeps its radius). Lines that must
 turn far (horizontal on a vertical line, perpendicular on parallel lines) are turned in the

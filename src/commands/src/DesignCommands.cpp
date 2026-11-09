@@ -1028,6 +1028,8 @@ void registerSketchCommands(CommandRegistry& r)
                   const cad::Feature* f = d.feature(id);
                   if (f == nullptr || f->type != "sketch")
                       throw cad::DesignError("No sketch with id " + std::to_string(id));
+                  // New curves join the ends as shown, not where they were first drawn.
+                  d.keepSolvedSketch(id);
                   Json curves = f->params.value("curves", Json::array());
                   Json constraints = f->params.value("constraints", Json::array());
                   std::vector<PlacedArc> placed;
@@ -1333,6 +1335,8 @@ void registerSketchCommands(CommandRegistry& r)
               const auto id = params.at("sketch").get<cad::FeatureId>();
               designChange(ctx, "Add Constraint", [&](cad::Design& d) {
                   Json list = sketchFeature(d, id).params.value("constraints", Json::array());
+                  // Branches (tangent side, ...) follow the shape as shown.
+                  d.keepSolvedSketch(id);
                   auto solved = d.sketches().find(id);
                   for (const auto& c : params.at("constraints")) {
                       if (solved == d.sketches().end()) {
@@ -1364,6 +1368,7 @@ void registerSketchCommands(CommandRegistry& r)
               const bool remove = params.value("remove", false);
               designChange(ctx, remove ? "Delete Constraint" : "Edit Dimension", [&](cad::Design& d) {
                   Json list = sketchFeature(d, id).params.value("constraints", Json::array());
+                  d.keepSolvedSketch(id);
                   if (index >= list.size())
                       throw cad::DesignError("Sketch has no constraint " + std::to_string(index));
                   if (remove) {
