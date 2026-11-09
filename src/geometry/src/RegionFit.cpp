@@ -331,8 +331,8 @@ RegionFitResult fitRegions(const core::TriangleMesh& mesh, const core::TriangleS
                 auto halves = bisect(mesh, adjacency, f.triangles);
                 if (halves.size() >= 2) {
                     split = true;
-                    known += static_cast<int>(halves.size()) - 1;
-                    --done;
+                    // The fit of the whole stays done; its halves are more work.
+                    known += static_cast<int>(halves.size());
                     for (auto& h : halves)
                         nextWave.emplace_back(std::move(h), depth + 1);
                     continue;
@@ -368,8 +368,9 @@ RegionFitResult fitRegions(const core::TriangleMesh& mesh, const core::TriangleS
             }
         }
         if (!refit.empty()) {
-            done = static_cast<int>(fitted.size() - refit.size());
-            known = static_cast<int>(fitted.size());
+            // Refits count as more work: progress never goes back.
+            done = static_cast<int>(fitted.size());
+            known = static_cast<int>(fitted.size() + refit.size());
             fitAll(refit);
         }
     }

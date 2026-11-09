@@ -217,9 +217,13 @@ TEST_CASE("Patches are fit in parallel, with progress and cancel (CAD-259)", "[g
     REQUIRE(steps.size() >= 2);
     CHECK(steps.front().first == 0);
     CHECK(steps.back().first == steps.back().second);
-    CHECK(steps.back().second == many.faces);
-    for (const auto& [done, total] : steps)
-        CHECK((done >= 0 && done <= total));
+    CHECK(steps.back().second >= many.faces); // refits after splits count as more work
+    // Never goes back: the bar only fills.
+    for (std::size_t k = 0; k < steps.size(); ++k) {
+        CHECK((steps[k].first >= 0 && steps[k].first <= steps[k].second));
+        if (k > 0)
+            CHECK(steps[k].first >= steps[k - 1].first);
+    }
 
     // Cancelled after the first patch: the fit stops with "Cancelled".
     geometry::RegionFitOptions cancel;
