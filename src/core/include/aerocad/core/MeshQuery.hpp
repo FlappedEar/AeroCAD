@@ -4,6 +4,7 @@
 #pragma once
 
 #include "aerocad/core/Mesh.hpp"
+#include "aerocad/core/MeshSelection.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -42,8 +43,11 @@ public:
 
     /// First intersection of the ray origin + t * direction, 0 < t <= maxT, with the
     /// surface (both triangle sides). `direction` need not be normalized; t is in mm.
+    /// With `includeOrigin`, a hit at t = 0 counts too (a ray starting on the surface, such
+    /// as a pick from a section plane lying on a face).
     [[nodiscard]] std::optional<MeshRayHit>
-    raycast(const Vec3& origin, const Vec3& direction, double maxT = std::numeric_limits<double>::infinity()) const;
+    raycast(const Vec3& origin, const Vec3& direction, double maxT = std::numeric_limits<double>::infinity(),
+            bool includeOrigin = false) const;
 
 private:
     struct Node {
@@ -58,6 +62,44 @@ private:
     std::shared_ptr<const TriangleMesh> m_mesh;
     std::vector<Node> m_nodes;
     std::vector<std::uint32_t> m_order; ///< Triangle indices, grouped by leaf.
+};
+
+/// Ray picking for the viewport on meshes of any size: a MeshBvh per mesh, built on a
+/// background thread the first time a mesh is picked (a few hundred ms for millions of
+/// triangles), so the pointer never waits for it. Until it is ready a pick casts the ray
+/// through every triangle, as before. Not thread-safe: use it from one thread (the UI).
+class MeshPickCache {
+public:
+    MeshPickCache() = default;
+    MeshPickCache(const MeshPickCache&) = delete;
+    MeshPickCache& operator=(const MeshPickCache&) = delete;
+
+    /// Meshes up to this many triangles get their hierarchy at once, on the calling thread.
+    static constexpr std::size_t kSyncTriangles = 50000;
+
+    /// Nearest hit of the ray origin + t * direction (t >= 0), both triangle sides, as
+    /// core::raycast: `distance` is in units of |direction|.
+    [[nodiscard]] std::optional<RayHit> raycast(const std::shared_ptr<const TriangleMesh>& mesh, const Vec3& origin,
+                                                const Vec3& direction);
+
+    /// The hierarchy for `mesh` if built (starting its build if needed), else nullptr.
+    [[nodiscard]] std::shared_ptr<const MeshBvh> bvh(const std::shared_ptr<const TriangleMesh>& mesh);
+    /// Starts building the hierarchy for `mesh` in the background (no-op if known).
+    void prepare(const std::shared_ptr<const TriangleMesh>& mesh);
+    /// Forgets the meshes not in `alive` (removed or replaced parts), so they are freed.
+    void retain(const std::vector<const TriangleMesh*>& alive);
+    /// Blocks until every started build is finished (tests).
+    void waitForBuilds();
+    [[nodiscard]] std::size_t size() const { return m_entries.size(); }
+
+private:
+    struct Build;
+    struct Entry {
+        const TriangleMesh* key = nullptr;
+        std::shared_ptr<Build> build;
+    };
+    Entry& entryFor(const std::shared_ptr<const TriangleMesh>& mesh);
+    std::vector<Entry> m_entries;
 };
 
 /// Minimum distance between two surfaces and the closest points on each.

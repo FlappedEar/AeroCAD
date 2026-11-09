@@ -877,6 +877,8 @@ Item {
     }
 
     ViewCube {
+        id: viewCube
+        objectName: "viewCube"
         anchors.top: parent.top
         anchors.right: parent.right
         anchors.margins: 8
@@ -1132,8 +1134,9 @@ Item {
         // every 40 ms, at the last pointer position.
         onPointChanged: {
             last = point.position
-            // Orbiting, dragging the manipulator or a selection: no highlight, no picks.
-            if (cameraInput.buttonHeld) {
+            // Orbiting, dragging the manipulator or a selection, or on the ViewCube: no
+            // highlight, no picks.
+            if (cameraInput.buttonHeld || viewCube.active) {
                 hoverTimer.stop()
                 root.hoveredPartId = 0
                 root.fieldProbe = null
@@ -1146,9 +1149,11 @@ Item {
     }
     // The view or the parts change under a still pointer (touchpad pan, F6, a command):
     // pick again, so the highlight keeps showing what a click would pick.
+    // While the view keeps moving (an animation, a ViewCube drag, a touchpad pan) the pick
+    // waits until it rests, so navigation never waits for picks.
     function refreshHover() {
-        if (partHover.hovered && hoverHighlightEnabled && !cameraInput.buttonHeld && !hoverTimer.running)
-            hoverTimer.start()
+        if (partHover.hovered && hoverHighlightEnabled && !cameraInput.buttonHeld && !viewCube.active)
+            hoverTimer.restart()
     }
     onViewKeyChanged: refreshHover()
     Connections {
@@ -1159,10 +1164,22 @@ Item {
         target: cameraInput
         function onButtonHeldChanged() { if (cameraInput.buttonHeld) { hoverTimer.stop(); root.hoveredPartId = 0 } }
     }
+    Connections {
+        target: viewCube
+        function onActiveChanged() {
+            if (viewCube.active) {
+                hoverTimer.stop()
+                root.hoveredPartId = 0
+                root.fieldProbe = null
+            } else {
+                root.refreshHover()
+            }
+        }
+    }
     Timer {
         id: hoverTimer
         interval: 40
-        onTriggered: if (partHover.hovered && !cameraInput.buttonHeld && root.hoverHighlightEnabled) root.updateHover(partHover.last.x, partHover.last.y)
+        onTriggered: if (partHover.hovered && !cameraInput.buttonHeld && !viewCube.active && root.hoverHighlightEnabled) root.updateHover(partHover.last.x, partHover.last.y)
     }
 
     // Brush outline under the pointer, sized from the surface depth.

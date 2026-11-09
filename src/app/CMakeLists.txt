@@ -711,6 +711,18 @@ if(AEROCAD_BUILD_TESTS)
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(app_large_scale_preview_test PROPERTIES LABELS gui TIMEOUT 60
                          FAIL_REGULAR_EXPRESSION "TypeError|ReferenceError")
+    # Navigation on a 1.5 M triangle scan: pick, camera move, wheel and ViewCube costs on the
+    # UI thread, and no model hover picks under the ViewCube.
+    add_executable(make_dense_mesh ${PROJECT_SOURCE_DIR}/tests/perf/make_dense_mesh.cpp)
+    aerocad_set_warnings(make_dense_mesh)
+    set(_dense ${CMAKE_CURRENT_BINARY_DIR}/gui-dense.stl)
+    add_test(NAME app_large_model_setup COMMAND make_dense_mesh ${_dense})
+    set_tests_properties(app_large_model_setup PROPERTIES LABELS gui FIXTURES_SETUP gui_dense)
+    add_test(NAME app_large_model_navigation_test
+        COMMAND aerocad ${_dense} --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/large_model_navigation.ui
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(app_large_model_navigation_test PROPERTIES LABELS gui TIMEOUT 180
+                         FIXTURES_REQUIRED gui_dense FAIL_REGULAR_EXPRESSION "TypeError|ReferenceError")
     add_test(NAME app_shell_closed_test
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/shell_closed.ui
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})

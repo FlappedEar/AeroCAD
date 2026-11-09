@@ -5,6 +5,7 @@
 #include "PartListModel.hpp"
 
 #include "aerocad/commands/Session.hpp"
+#include "aerocad/core/MeshQuery.hpp"
 #include "aerocad/core/MeshSelection.hpp"
 
 #include <QColor>
@@ -261,6 +262,13 @@ private:
     /// Shared fast queries on one mesh (scans of millions of triangles), cached.
     [[nodiscard]] const core::MeshProjector& projectorFor(const std::shared_ptr<const core::TriangleMesh>& mesh,
                                                           const core::Vec3& outward) const;
+    /// Ray hierarchies for viewport picks (hover, clicks, navigation anchors).
+    mutable core::MeshPickCache m_pickCache;
+    /// Document bounds, cached: the view reads them on every camera move, and computing
+    /// them walks every vertex of every part.
+    mutable std::optional<core::BoundingBox> m_bounds;
+    mutable std::uint64_t m_boundsRevision = 0; ///< Document revision m_bounds was computed at.
+    [[nodiscard]] const core::BoundingBox& documentBounds() const;
     mutable std::shared_ptr<const core::TriangleMesh> m_projectorMesh;
     mutable std::unique_ptr<core::MeshProjector> m_projector;
     mutable std::weak_ptr<const core::TriangleMesh> m_openEdgesMesh; ///< Mesh m_openEdges was counted on.

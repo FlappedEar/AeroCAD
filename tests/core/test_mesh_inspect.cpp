@@ -152,3 +152,130 @@ TEST_CASE("Mesh section: clip, curves and area", "[core][inspect]")
     CHECK(clipMesh(cube, {{0, 0, -1}, {0, 0, 1}}).isEmpty());
     CHECK(clipMesh(cube, {{0, 0, 11}, {0, 0, 1}}).triangleCount() == cube.triangleCount());
 }
+
+namespace {
+
+/// Wavy open sheet of 2 * n * n triangles over [0, 100] x [0, 100], like a scan patch.
+std::shared_ptr<const TriangleMesh> wavySheet(int n)
+{
+    TriangleMesh m;
+    for (int j = 0; j <= n; ++j)
+        for (int i = 0; i <= n; ++i) {
+            const double x = 100.0 * i / n;
+            const double y = 100.0 * j / n;
+            m.addVertex({x, y, 3.0 * std::sin(x * 0.2) * std::cos(y * 0.15)});
+        }
+    const auto at = [n](int i, int j) { return static_cast<std::uint32_t>(j * (n + 1) + i); };
+    for (int j = 0; j < n; ++j)
+        for (int i = 0; i < n; ++i) {
+            m.addTriangle(at(i, j), at(i + 1, j), at(i + 1, j + 1));
+            m.addTriangle(at(i, j), at(i + 1, j + 1), at(i, j + 1));
+        }
+    return std::make_shared<const TriangleMesh>(std::move(m));
+}
+
+} // namespace
+
+TEST_CASE("MeshPickCache picks like the brute-force ray cast", "[core][inspect][pick]")
+{
+    for (const int n : {20, 200}) { // built at once / built in the background
+        const auto mesh = wavySheet(n);
+        MeshPickCache cache;
+        cache.prepare(mesh);
+        cache.waitForBuilds();
+        REQUIRE(cache.bvh(mesh) != nullptr);
+        for (int k = 0; k < 50; ++k) {
+            const Vec3 origin{3.0 + 1.9 * k, 97.0 - 1.7 * k, 40.0};
+            const Vec3 direction{0.05 * (k % 7) - 0.15, 0.03 * (k % 5) - 0.06, -2.0}; // not unit length
+            const auto expected = raycast(*mesh, origin, direction);
+            const auto got = cache.raycast(mesh, origin, direction);
+            REQUIRE(expected.has_value() == got.has_value());
+            if (!expected)
+                continue;
+            CHECK(got->distance == Approx(expected->distance).epsilon(1e-9));
+            CHECK((got->point - expected->point).length() < 1e-9);
+        }
+        // A ray that misses.
+        CHECK_FALSE(cache.raycast(mesh, {50, 50, 40}, {0, 0, 1}).has_value());
+    }
+}
+
+TEST_CASE("MeshPickCache answers before a big hierarchy is ready and forgets old meshes", "[core][inspect][pick]")
+{
+    const auto big = wavySheet(300); // 180k triangles: built in the background
+    REQUIRE(big->triangleCount() > MeshPickCache::kSyncTriangles);
+    MeshPickCache cache;
+    // Whether or not the build has finished, the pick is right.
+    const auto hit = cache.raycast(big, {50, 50, 40}, {0, 0, -1});
+    REQUIRE(hit.has_value());
+    CHECK(hit->point.z == Approx(3.0 * std::sin(10.0) * std::cos(7.5)).margin(0.05));
+    cache.waitForBuilds();
+    CHECK(cache.bvh(big) != nullptr);
+
+    const auto small = wavySheet(10);
+    cache.prepare(small);
+    CHECK(cache.size() == 2);
+    cache.retain({small.get()});
+    CHECK(cache.size() == 1);
+    CHECK(cache.bvh(small) != nullptr);
+    // An empty or missing mesh is no hit and no entry.
+    CHECK_FALSE(cache.raycast(nullptr, {0, 0, 0}, {0, 0, 1}).has_value());
+    CHECK(cache.size() == 1);
+}
+
+TEST_CASE("MeshPickCache hits a face the ray starts on (section plane on a face)", "[core][inspect][pick]")
+{
+    // A flat sheet in z = 0, as a section plane through it would leave it.
+    TriangleMesh m;
+    m.addVertex({0, 0, 0});
+    m.addVertex({10, 0, 0});
+    m.addVertex({0, 10, 0});
+    m.addTriangle(0, 1, 2);
+    const auto mesh = std::make_shared<const TriangleMesh>(std::move(m));
+    const Vec3 origin{2, 2, 0};
+    const Vec3 direction{0, 0, -1};
+    const auto expected = raycast(*mesh, origin, direction);
+    REQUIRE(expected.has_value());
+    MeshPickCache cache;
+    const auto got = cache.raycast(mesh, origin, direction);
+    REQUIRE(got.has_value());
+    CHECK(got->distance == Approx(0.0).margin(1e-12));
+    // The Inspect queries still skip the start point (thickness rays leave the surface).
+    CHECK_FALSE(MeshBvh(mesh).raycast(origin, direction).has_value());
+}
+
+TEST_CASE("MeshPickCache picks the same triangle as the brute-force cast on an edge", "[core][inspect][pick]")
+{
+    // Two faces sharing the edge (-1,0,0)-(1,0,0), with different normals; a ray through
+    // the edge hits both at the same distance. The pick must not change triangle when the
+    // hierarchy becomes ready (Lay on Face / Face Front use its normal).
+    auto edgePair = [](int copies) {
+        TriangleMesh m;
+        for (int c = 0; c < copies; ++c) {
+            const double x = 10.0 * c;
+            const auto a = m.addVertex({x - 1, 0, 0});
+            const auto b = m.addVertex({x + 1, 0, 0});
+            const auto p = m.addVertex({x, 1, 0});
+            const auto q = m.addVertex({x, -1, 1});
+            m.addTriangle(a, b, p);
+            m.addTriangle(b, a, q);
+        }
+        return std::make_shared<const TriangleMesh>(std::move(m));
+    };
+    for (const int copies : {1, 30000}) { // hierarchy at once / built in the background
+        const auto mesh = edgePair(copies);
+        const Vec3 origin{0, 0, 2};
+        const Vec3 direction{0, 0, -1};
+        const auto expected = raycast(*mesh, origin, direction);
+        REQUIRE(expected.has_value());
+        CHECK(expected->triangle == 0);
+        MeshPickCache cache;
+        const auto before = cache.raycast(mesh, origin, direction); // brute force while building
+        cache.waitForBuilds();
+        const auto after = cache.raycast(mesh, origin, direction);
+        REQUIRE(before.has_value());
+        REQUIRE(after.has_value());
+        CHECK(before->triangle == expected->triangle);
+        CHECK(after->triangle == expected->triangle);
+    }
+}
