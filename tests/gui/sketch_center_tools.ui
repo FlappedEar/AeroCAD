@@ -48,6 +48,24 @@ ui.wait(300)
 (() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "ctTest"); t.clickAt(-50, 10) })()
 ui.wait(500)
 (() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "ctTest"); const c = t.curves(); const a = c[c.length - 1]; ui.log("typed arc " + JSON.stringify(a)); if (c.length !== 11 || a.kind !== "arc" || !t.near(a.points[0], [-35, 10]) || !t.near(a.points[2], [-45, 10])) ui.fail("typed radius 5 arc not drawn: " + JSON.stringify(a)); if (!(a.points[1][1] > 10)) ui.fail("the half arc does not go over the top (counter-clockwise)") })()
+# A typed radius expression: with r = 3 mm, centre (60, 10), "r * 2" Enter, then the end
+# straight up. The arc has radius 6 and keeps the expression, so it follows r.
+(() => { const r = controller.execute("parameter.set", { name: "r", expression: "3 mm" }); if (!r.ok) ui.fail("parameter: " + r.error) })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "ctTest"); t.clickAt(60, 10); t.moveTo(70, 10) })()
+ui.wait(200)
+# Letters are tool shortcuts in the sketch, so click the Size field first (as a user would).
+(() => { const find = it => { if (it.objectName === "sketchDimension") return it; for (let i = 0; i < it.children.length; ++i) { const f = find(it.children[i]); if (f) return f } return null }; const f = find(viewport.sketchOverlay); if (!f || !f.visible) ui.fail("no Size field"); const p = f.mapToItem(null, f.width / 2, f.height / 2); ui.click(p.x, p.y) })()
+ui.wait(200)
+ui.type("r * 2")
+ui.key("Return")
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "ctTest"); if (viewport.sketchOverlay.points.length !== 2) ui.fail("the radius expression did not place the start point: " + JSON.stringify(viewport.sketchOverlay.points)); t.clickAt(60, 20) })()
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "ctTest"); const c = t.curves(); const a = c[c.length - 1]; ui.log("expression arc " + JSON.stringify(a)); if (c.length !== 12 || a.kind !== "arc" || !t.near(a.points[0], [66, 10]) || !t.near(a.points[2], [60, 16])) ui.fail("radius r * 2 arc not drawn: " + JSON.stringify(a)); const items = controller.execute("timeline.list").result.features[0].params.curves; const item = items[items.length - 1]; if (item.type !== "center_arc" || item.radius !== "r * 2") ui.fail("the arc lost the radius expression: " + JSON.stringify(item)) })()
+(() => { const r = controller.execute("parameter.set", { name: "r", expression: "4 mm" }); if (!r.ok) ui.fail("parameter: " + r.error) })()
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "ctTest"); const c = t.curves(); const a = c[c.length - 1]; if (!t.near(a.points[0], [68, 10])) ui.fail("the arc did not follow r = 4: " + JSON.stringify(a)) })()
 # The 2-corner Rectangle takes a typed size with the cursor level with the first corner too:
 # corner (0, -50), cursor (10, -50), "10, 6" Enter.
 (() => { sketchTool_("rectangle"); const t = Array.from(window.contentItem.children).find(c => c.objectName === "ctTest"); t.clickAt(0, -50); t.moveTo(10, -50) })()
@@ -55,7 +73,7 @@ ui.wait(200)
 ui.type("10, 6")
 ui.key("Return")
 ui.wait(500)
-(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "ctTest"); const c = t.curves().slice(11); const xs = [].concat(...c.map(x => x.points.map(p => p[0]))), ys = [].concat(...c.map(x => x.points.map(p => p[1]))); if (c.length !== 4 || Math.abs(Math.min(...xs)) > 1e-6 || Math.abs(Math.max(...xs) - 10) > 1e-6 || Math.abs(Math.min(...ys) + 50) > 1e-6 || Math.abs(Math.max(...ys) + 44) > 1e-6) ui.fail("typed 10 x 6 rectangle at (0, -50) not drawn: " + JSON.stringify(c.map(x => x.points))) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "ctTest"); const c = t.curves().slice(12); const xs = [].concat(...c.map(x => x.points.map(p => p[0]))), ys = [].concat(...c.map(x => x.points.map(p => p[1]))); if (c.length !== 4 || Math.abs(Math.min(...xs)) > 1e-6 || Math.abs(Math.max(...xs) - 10) > 1e-6 || Math.abs(Math.min(...ys) + 50) > 1e-6 || Math.abs(Math.max(...ys) + 44) > 1e-6) ui.fail("typed 10 x 6 rectangle at (0, -50) not drawn: " + JSON.stringify(c.map(x => x.points))) })()
 ui.shot("sketch-center-tools.png")
 # Finish and extrude: the three rectangles are the profiles (30 x 20, 16 x 8 and 10 x 6; 10 mm).
 (() => { finishSketch(true) })()

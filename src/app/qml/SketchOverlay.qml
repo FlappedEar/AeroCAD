@@ -72,6 +72,10 @@ Item {
     readonly property bool selecting: sketch !== null && tool === ""
     /// Clicked points of the curve being drawn, [[u, v], ...].
     property var points: []
+    /// Center Point Arc: the radius typed after the centre (a number or an expression with
+    /// user parameters), kept for the finished arc; null when the radius is drawn.
+    property var typedRadius: null
+    onPointsChanged: if (points.length === 0) typedRadius = null
     property var hover: null
     property bool hoverSnapped: false
     readonly property real snapPixels: 10
@@ -410,7 +414,8 @@ Item {
             const s = deg(b), e = deg(pts[2])
             if (Math.abs(s - e) < 1e-6)
                 return null
-            return { type: "center_arc", center: a, radius: dim && dim.length > 0 ? dim[0] : round6(r), startAngle: s, endAngle: e }
+            return { type: "center_arc", center: a, radius: dim && dim.length > 0 ? dim[0] : typedRadius !== null ? typedRadius : round6(r),
+                     startAngle: s, endAngle: e }
         }
         case "circle": {
             const d = dist(a, b) * 2
@@ -528,13 +533,21 @@ Item {
             const dir = d > 1e-9 ? [(hover[0] - a[0]) / d, (hover[1] - a[1]) / d] : [1, 0]
             click([round6(a[0] + dir[0] * len), round6(a[1] + dir[1] * len)])
         } else if (tool === "center_arc" && points.length === 1) {
-            // The typed radius places the start point towards the cursor.
-            const r = Number(values[0])
+            // The typed radius places the start point towards the cursor; an expression is
+            // evaluated for that and kept as the arc's radius.
+            const ev = typeof values[0] === "string"
+                ? root.viewport.controller.execute("parameter.evaluate", { expression: values[0] }) : null
+            if (ev && !ev.ok) {
+                root.viewport.controller.showStatus(qsTr("Radius: %1").arg(ev.error))
+                return
+            }
+            const r = ev ? ev.result.value : Number(values[0])
             if (!(r > 0))
                 return
             const d = dist(a, hover)
             const dir = d > 1e-9 ? [(hover[0] - a[0]) / d, (hover[1] - a[1]) / d] : [1, 0]
             click([round6(a[0] + dir[0] * r), round6(a[1] + dir[1] * r)])
+            typedRadius = values[0]
         } else if (tool === "rectangle" || tool === "center_rectangle" || tool === "circle" || tool === "polygon") {
             const b = hover
             if ((tool === "rectangle" || tool === "center_rectangle") && values.length < 2)
@@ -997,6 +1010,7 @@ Item {
                             : root.tool === "offset" ? qsTr("Distance") : qsTr("Size") }
                 TextField {
                     id: dimension
+                    objectName: "sketchDimension"
                     Layout.preferredWidth: 140
                     placeholderText: qsTr("e.g. 40 or w/2")
                     onAccepted: {
