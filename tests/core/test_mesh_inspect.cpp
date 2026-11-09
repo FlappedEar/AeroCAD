@@ -222,3 +222,24 @@ TEST_CASE("MeshPickCache answers before a big hierarchy is ready and forgets old
     CHECK_FALSE(cache.raycast(nullptr, {0, 0, 0}, {0, 0, 1}).has_value());
     CHECK(cache.size() == 1);
 }
+
+TEST_CASE("MeshPickCache hits a face the ray starts on (section plane on a face)", "[core][inspect][pick]")
+{
+    // A flat sheet in z = 0, as a section plane through it would leave it.
+    TriangleMesh m;
+    m.addVertex({0, 0, 0});
+    m.addVertex({10, 0, 0});
+    m.addVertex({0, 10, 0});
+    m.addTriangle(0, 1, 2);
+    const auto mesh = std::make_shared<const TriangleMesh>(std::move(m));
+    const Vec3 origin{2, 2, 0};
+    const Vec3 direction{0, 0, -1};
+    const auto expected = raycast(*mesh, origin, direction);
+    REQUIRE(expected.has_value());
+    MeshPickCache cache;
+    const auto got = cache.raycast(mesh, origin, direction);
+    REQUIRE(got.has_value());
+    CHECK(got->distance == Approx(0.0).margin(1e-12));
+    // The Inspect queries still skip the start point (thickness rays leave the surface).
+    CHECK_FALSE(MeshBvh(mesh).raycast(origin, direction).has_value());
+}

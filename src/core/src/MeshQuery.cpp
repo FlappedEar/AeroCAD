@@ -255,7 +255,8 @@ std::optional<SurfacePoint> MeshBvh::closestPoint(const Vec3& p, double maxDista
     return result;
 }
 
-std::optional<MeshRayHit> MeshBvh::raycast(const Vec3& origin, const Vec3& direction, double maxT) const
+std::optional<MeshRayHit> MeshBvh::raycast(const Vec3& origin, const Vec3& direction, double maxT,
+                                           bool includeOrigin) const
 {
     const double len = direction.length();
     if (m_nodes.empty() || len == 0.0)
@@ -281,7 +282,7 @@ std::optional<MeshRayHit> MeshBvh::raycast(const Vec3& origin, const Vec3& direc
             for (std::uint32_t i = node.first; i < node.first + node.count; ++i) {
                 const auto& t = tris[m_order[i]];
                 const double hit = rayTriangle(origin, d, verts[t[0]], verts[t[1]], verts[t[2]]);
-                if (hit > 0.0 && hit <= best) {
+                if ((hit > 0.0 || (includeOrigin && hit == 0.0)) && hit <= best) {
                     best = hit;
                     result = MeshRayHit{hit, origin + d * hit, m_order[i]};
                 }
@@ -355,8 +356,9 @@ std::optional<RayHit> MeshPickCache::raycast(const std::shared_ptr<const Triangl
     const double len = direction.length();
     if (!(len > 0.0))
         return std::nullopt;
-    // The hierarchy takes t > 0 only; a hit exactly at the origin is not a pick anyway.
-    const auto hit = index->raycast(origin, direction);
+    // t >= 0 as core::raycast: a section pick starts on the section plane, which can lie on
+    // a face of the mesh.
+    const auto hit = index->raycast(origin, direction, std::numeric_limits<double>::infinity(), true);
     if (!hit)
         return std::nullopt;
     return RayHit{static_cast<std::uint32_t>(hit->triangle), hit->t / len, hit->point};
