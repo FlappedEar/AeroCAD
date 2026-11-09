@@ -1664,6 +1664,8 @@ TEST_CASE("RunManager: invalid metadata is contained to its run", "[cfd][run-met
             CHECK_FALSE(reopened->caseInfo(broken->id));
             CHECK_THROWS_WITH(reopened->results(broken->id), broken->message);
             CHECK_THROWS_WITH(reopened->field(broken->id, "surface"), broken->message);
+            CHECK_THROWS_WITH(reopened->setLabel(broken->id, "rename"), broken->message);
+            CHECK(slurp(dir / "run.json") == content);
             CHECK_FALSE(reopened->cancel(broken->id));
             reopened->rescan();
             CHECK(reopened->list().size() == 2);
@@ -1674,8 +1676,13 @@ TEST_CASE("RunManager: invalid metadata is contained to its run", "[cfd][run-met
             reopened->rescan();
             REQUIRE(reopened->status(broken->id));
             CHECK(reopened->status(broken->id)->state == cfd::RunState::Finished);
+            CHECK(reopened->setLabel(broken->id, "recovered"));
             cfd::RunManager repaired(tmp.path());
             CHECK(repaired.status(broken->id)->state == cfd::RunState::Finished);
+            // Another process may damage the file after this manager loaded it.
+            write(dir / "run.json", "{broken-again");
+            CHECK_THROWS(reopened->setLabel(broken->id, "must not overwrite"));
+            CHECK(slurp(dir / "run.json") == "{broken-again");
         }
     }
 }

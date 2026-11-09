@@ -1222,14 +1222,19 @@ bool RunManager::setLabel(const std::string& id, const std::string& label)
     Run* run = find(id);
     if (run == nullptr)
         return false;
+    if (!run->metadataError.empty())
+        throw std::runtime_error(run->metadataError);
     const fs::path file = run->dir / "run.json";
-    Json j = Json::object();
-    if (std::ifstream in(file); in) {
-        try {
-            in >> j;
-        } catch (const std::exception&) {
-            j = Json::object();
-        }
+    Json j;
+    try {
+        std::ifstream in(file);
+        if (!in)
+            throw std::runtime_error("file cannot be read");
+        in >> j;
+        if (!j.is_object())
+            throw std::runtime_error("expected a JSON object");
+    } catch (const std::exception& e) {
+        throw std::runtime_error("Cannot rename run: metadata '" + file.string() + "' is invalid: " + e.what());
     }
     RunSource source = run->source;
     source.label = label;
