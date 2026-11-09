@@ -1878,4 +1878,40 @@ TEST_CASE("Design commands: sketch edits start from the solved geometry (CAD-216
                     CHECK(shown[i].at("points")[k][x].get<double>() ==
                           Approx(shownBefore[i].at("points")[k][x].get<double>()).margin(1e-6));
     }
+
+    // Codex (#190): a line welded to a vertex of such a polygon stays as written with it, so
+    // they stay joined when the vertex moves later.
+    const Json e = run(s, "sketch.create",
+                       {{"plane", "XY"},
+                        {"curves", Json::array({{{"type", "polygon"}, {"center", {0, 0}}, {"radius", 10}, {"sides", 4}},
+                                                {{"type", "line"}, {"start", {0, 10}}, {"end", {0, 30}}}})},
+                        {"constraints", Json::array({{{"type", "fix"},
+                                                      {"points", Json::array({{{"curve", 0}, {"point", "start"}}, {{"curve", 1}, {"point", "start"}}})},
+                                                      {"at", Json::array({Json::array({10, 0}), Json::array({2, 8})})}}})}});
+    const auto eid = e.at("id").get<std::uint64_t>();
+    run(s, "sketch.add_curves",
+        {{"sketch", eid}, {"curves", Json::array({{{"type", "line"}, {"start", {40, 0}}, {"end", {50, 0}}}})}});
+    {
+        const Json tl = run(s, "timeline.list");
+        const Json items = tl.at("features")[4].at("params").at("curves");
+        INFO(items.dump());
+        CHECK(items[0].at("type") == "polygon");
+        CHECK(items[1].at("start") == Json::array({0, 10}));
+    }
+    run(s, "sketch.edit_constraint", {{"sketch", eid}, {"index", 0}, {"remove", true}});
+    run(s, "sketch.add_constraints",
+        {{"sketch", eid},
+         {"constraints", Json::array({{{"type", "fix"},
+                                       {"points", Json::array({{{"curve", 0}, {"point", "start"}}, {{"curve", 1}, {"point", "start"}}})},
+                                       {"at", Json::array({Json::array({10, 0}), Json::array({3, 7})})}}})}});
+    {
+        const Json c2 = run(s, "sketch.curves", {{"sketch", eid}});
+        const Json vertex = c2.at("curves")[1].at("points")[0];
+        const Json line = c2.at("curves")[4].at("points")[0];
+        INFO(c2.dump());
+        CHECK(vertex[0].get<double>() == Approx(3).margin(1e-6));
+        CHECK(vertex[1].get<double>() == Approx(7).margin(1e-6));
+        CHECK(line[0].get<double>() == Approx(3).margin(1e-6));
+        CHECK(line[1].get<double>() == Approx(7).margin(1e-6));
+    }
 }

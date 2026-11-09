@@ -1098,14 +1098,58 @@ Json keepExpressions(const Eval& ev, const Json& item, Json out)
     return out;
 }
 
+/// For each curve end the solver welds by position (SketchSolver's endPoint: line and arc
+/// ends unless their join is off, open spline ends), the earlier end it is welded to.
+/// Returns pairs of curve indices that share an end.
+std::vector<std::pair<std::size_t, std::size_t>> weldedCurves(const std::vector<SketchCurve>& curves)
+{
+    struct End {
+        Vec2 at;
+        std::size_t curve;
+    };
+    std::vector<End> ends;
+    std::vector<std::pair<std::size_t, std::size_t>> pairs;
+    auto end = [&](const Vec2& at, std::size_t curve, bool join) {
+        if (join) {
+            for (const auto& e : ends) {
+                if (std::hypot(e.at.x - at.x, e.at.y - at.y) < 1e-6) {
+                    pairs.emplace_back(e.curve, curve);
+                    break;
+                }
+            }
+        }
+        ends.push_back({at, curve});
+    };
+    for (std::size_t i = 0; i < curves.size(); ++i) {
+        const auto& c = curves[i];
+        if (c.kind == SketchCurve::Kind::Line && c.points.size() == 2) {
+            end(c.points[0], i, c.joinStart);
+            end(c.points[1], i, c.joinEnd);
+        } else if (c.kind == SketchCurve::Kind::Arc && c.points.size() == 3) {
+            end(c.points[0], i, c.joinStart);
+            end(c.points[2], i, c.joinEnd);
+        } else if (c.kind == SketchCurve::Kind::Spline && !c.closed && !c.points.empty()) {
+            end(c.points.front(), i, true);
+            if (c.points.size() > 1)
+                end(c.points.back(), i, true);
+        }
+    }
+    return pairs;
+}
+
 /// The sketch items rewritten where `solved` (the curves they make, in order) has them.
 /// Items whose curves match `shown` (the curves before the change; nullptr: none match)
 /// stay as written. With `exact`, an item that cannot make its solved curves again (a
-/// polygon pulled out of regular, a slot with unequal ends) also stays as written.
+/// polygon pulled out of regular, a slot with unequal ends) also stays as written, and so
+/// do the items welded to it by their stored ends (directly or through others): rewriting
+/// only some of them would part ends the solver joins by stored position.
 Json itemsFromSolved(const Eval& ev, const Json& items, const std::vector<SketchCurve>* shown,
                      const std::vector<SketchCurve>& solved, bool exact)
 {
-    Json newItems = Json::array();
+    std::vector<Json> out;
+    std::vector<bool> keep;              // moved, but kept as written
+    std::vector<std::size_t> itemOf;     // curve -> item
+    std::vector<SketchCurve> drawn;
     std::size_t first = 0;
     for (const auto& item : items) {
         std::vector<SketchCurve> made;
@@ -1116,27 +1160,58 @@ Json itemsFromSolved(const Eval& ev, const Json& items, const std::vector<Sketch
         bool moved = shown == nullptr || shown->size() != solved.size();
         for (std::size_t i = 0; i < made.size() && !moved; ++i)
             moved = !sameCurve((*shown)[first + i], solved[first + i], 1e-7);
-        Json out = item;
+        Json o = item;
+        bool kept = false;
         if (moved) {
-            out = keepExpressions(ev, item, itemFromSolved(item, solved.data() + first, made.size()));
+            o = keepExpressions(ev, item, itemFromSolved(item, solved.data() + first, made.size()));
             if (exact) {
                 std::vector<SketchCurve> again;
                 std::vector<SketchConstraint> unused;
                 try {
-                    appendCurves(ev, out, again, unused);
+                    appendCurves(ev, o, again, unused);
                 } catch (const DesignError&) {
                     again.clear();
                 }
                 bool same = again.size() == made.size();
                 for (std::size_t i = 0; i < again.size() && same; ++i)
                     same = sameCurve(again[i], solved[first + i], 1e-6);
-                if (!same)
-                    out = item;
+                if (!same) {
+                    o = item;
+                    kept = true;
+                }
             }
         }
-        newItems.push_back(out);
-        first += made.size();
+        for (auto& c : made) {
+            itemOf.push_back(out.size());
+            drawn.push_back(std::move(c));
+        }
+        out.push_back(std::move(o));
+        keep.push_back(kept);
+        first = drawn.size();
     }
+    if (exact && std::find(keep.begin(), keep.end(), true) != keep.end()) {
+        // Items welded by stored ends form groups; a group with a kept item stays as written.
+        std::vector<std::size_t> group(out.size());
+        for (std::size_t i = 0; i < group.size(); ++i)
+            group[i] = i;
+        auto root = [&](std::size_t i) {
+            while (group[i] != i)
+                i = group[i] = group[group[i]];
+            return i;
+        };
+        for (const auto& [a, b] : weldedCurves(drawn))
+            group[root(itemOf[a])] = root(itemOf[b]);
+        std::set<std::size_t> keptGroups;
+        for (std::size_t i = 0; i < out.size(); ++i)
+            if (keep[i])
+                keptGroups.insert(root(i));
+        for (std::size_t i = 0; i < out.size(); ++i)
+            if (keptGroups.count(root(i)) != 0)
+                out[i] = items[i];
+    }
+    Json newItems = Json::array();
+    for (auto& o : out)
+        newItems.push_back(std::move(o));
     return newItems;
 }
 
