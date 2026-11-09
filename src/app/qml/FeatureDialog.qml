@@ -302,8 +302,8 @@ Pane {
             { key: "path", type: "pathSketch", label: qsTr("Path sketch") },
             { key: "operation", type: "choice", label: qsTr("Operation"), init: "new_body", options: operations }] },
         midplane: { title: qsTr("Midplane"), command: "feature.plane", fields: [
-            { key: "base", type: "planePick", label: qsTr("First plane or face"), hint: qsTr("Click a planar face, or choose a plane") },
-            { key: "base2", type: "planePick", label: qsTr("Second plane or face"), hint: qsTr("Click the opposite face, or choose a plane") }] },
+            { key: "base", type: "planePick", label: qsTr("First plane or face"), hint: qsTr("Click a planar face, or choose a plane"), required: true },
+            { key: "base2", type: "planePick", label: qsTr("Second plane or face"), hint: qsTr("Click the opposite face, or choose a plane"), required: true }] },
         plane: { title: qsTr("Construction Plane"), command: "feature.plane", fields: [
             { key: "base", type: "planePick", label: qsTr("Base plane"), init: "XY", hint: qsTr("Origin plane, construction plane, or click a planar face") },
             { key: "offset", type: "expr", label: qsTr("Offset"), init: 10 },
@@ -766,6 +766,11 @@ Pane {
 
     /// Runs the feature command (create, or edit of `editId`) with the current values.
     function submit(quiet) {
+        // A field the command would otherwise default (Midplane's planes fall back to XY)
+        // must be filled in: nothing is made until it is.
+        const missing = spec.fields.find(f => f.required && values[f.key] === undefined)
+        if (missing)
+            return { ok: false, error: qsTr("%1: pick the %2").arg(spec.title).arg(missing.label.toLowerCase()) }
         const run = (name, args) => quiet ? controller.preview(name, args) : controller.execute(name, args)
         const params = Object.assign({}, values)
         for (const f of spec.fields) {
