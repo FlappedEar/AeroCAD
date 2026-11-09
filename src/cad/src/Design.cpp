@@ -2698,10 +2698,19 @@ CurveSplit splitSpline(const std::vector<SketchCurve>& curves, std::size_t curve
             SketchCurve trial{SketchCurve::Kind::Spline, chosen};
             double worst = 0.0;
             try {
+                // The trial is parametrised by chord length too, and sampled evenly over it:
+                // a sample's share of the parameter range tells its span.
                 const int per = 16;
                 const std::vector<Vec2> samples = geometry::sampleSpline(trial, per);
+                std::vector<double> chord{0.0};
+                for (std::size_t i = 1; i < chosen.size(); ++i)
+                    chord.push_back(chord.back() + std::hypot(chosen[i].x - chosen[i - 1].x, chosen[i].y - chosen[i - 1].y));
+                const double total = std::max(chord.back(), 1e-300);
+                std::size_t span = 0;
                 for (std::size_t q = 0; q < samples.size(); ++q) {
-                    const std::size_t span = std::min(q / per, us.size() - 2);
+                    const double f = total * static_cast<double>(q) / static_cast<double>(samples.size() - 1);
+                    while (span + 2 < chosen.size() && chord[span + 1] < f)
+                        ++span;
                     worst = std::max(worst, nearest(samples[q], segIndex(us[span]) - 2, segIndex(us[span + 1]) + 3).first);
                 }
             } catch (const geometry::ModelingError&) {

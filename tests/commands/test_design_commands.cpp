@@ -1648,6 +1648,27 @@ TEST_CASE("Design commands: Trim and Break a spline (CAD-260)", "[commands][cad]
     CHECK(c.at("curves")[0].value("closed", false) == true);
 }
 
+TEST_CASE("Design commands: a trimmed spline gets no needless fit points (CAD-260)", "[commands][cad]")
+{
+    // A straight spline with uneven fit points cut in its long span (Codex review of #224):
+    // the piece is straight, so it needs no points beyond its ends and the fit point.
+    commands::Session s;
+    const auto id = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "spline"}, {"points", {{0, 0}, {1, 0}, {100, 0}}}},
+                                                 {{"type", "line"}, {"start", {50, -5}}, {"end", {50, 5}}}})}})
+                        .at("id")
+                        .get<std::uint64_t>();
+    run(s, "sketch.trim", {{"sketch", id}, {"curve", 0}, {"at", {75, 0}}});
+    const Json c = run(s, "sketch.curves", {{"sketch", id}});
+    INFO(c.dump());
+    REQUIRE(c.at("curves").size() == 2);
+    const Json& piece = c.at("curves")[1];
+    CHECK(piece.at("kind") == "spline");
+    CHECK(piece.at("points").size() <= 4);
+    CHECK(piece.at("points").back()[0].get<double>() == Approx(50).margin(1e-9));
+}
+
 TEST_CASE("Design commands: Break preview of a long spline stays fast (CAD-260)", "[commands][cad]")
 {
     // Two long wavy splines crossing many times (Codex review of #224: the preview compared
