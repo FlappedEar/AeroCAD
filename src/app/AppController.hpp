@@ -118,8 +118,10 @@ public:
     Q_INVOKABLE bool importFile(const QUrl& url);
     /// Convenience wrapper around document.export for the save dialog. `ids` empty means
     /// all visible parts. Returns {ok, error?, warnings: [string]}; the status bar shows
-    /// the outcome.
-    Q_INVOKABLE QVariantMap exportFile(const QUrl& url, const QVariantList& ids = {});
+    /// the outcome. expectedState binds a GUI preflight approval to its project, document
+    /// revision, part set and format.
+    Q_INVOKABLE QVariantMap exportFile(const QUrl& url, const QVariantList& ids = {},
+                                      const QString& expectedState = {});
     /// Local file path of a file-dialog URL, for commands that take a path.
     Q_INVOKABLE QString localPath(const QUrl& url) const;
     /// Runs a JSON command script: an array of {"name": ..., "params": {...}} objects (the

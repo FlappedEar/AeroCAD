@@ -752,6 +752,32 @@ if(AEROCAD_BUILD_TESTS)
         WORKING_DIRECTORY ${_mcp})
     set_tests_properties(app_mcp_project_access_test PROPERTIES LABELS gui TIMEOUT 90 FIXTURES_REQUIRED gui_mcp
         ENVIRONMENT "XDG_DATA_HOME=${_mcp}/data;XDG_CONFIG_HOME=${_mcp}/config")
+    # CAD-92: an MCP edit while the warning modal is open needs a fresh export approval.
+    set(CAD92_DIR ${CMAKE_CURRENT_BINARY_DIR}/gui-export-preflight)
+    foreach(_file export_preflight.ui export_preflight_setup.cmake export_preflight_verify.cmake export_open_scan.ui)
+        configure_file(${PROJECT_SOURCE_DIR}/tests/gui/${_file}.in ${CMAKE_CURRENT_BINARY_DIR}/${_file} @ONLY)
+    endforeach()
+    add_test(NAME app_export_preflight_setup
+        COMMAND ${CMAKE_COMMAND} -DCMD=$<TARGET_FILE:aerocad_cmd>
+                -P ${CMAKE_CURRENT_BINARY_DIR}/export_preflight_setup.cmake)
+    set_tests_properties(app_export_preflight_setup PROPERTIES LABELS gui FIXTURES_SETUP gui_export_preflight)
+    add_test(NAME app_export_preflight_test
+        COMMAND aerocad ${CAD92_DIR}/fixture.aerocad --ui-script ${CMAKE_CURRENT_BINARY_DIR}/export_preflight.ui)
+    set_tests_properties(app_export_preflight_test PROPERTIES LABELS gui TIMEOUT 90
+        FIXTURES_REQUIRED gui_export_preflight
+        RESOURCE_LOCK gui_export_preflight_dir
+        ENVIRONMENT "XDG_DATA_HOME=${CAD92_DIR}/data;XDG_CONFIG_HOME=${CAD92_DIR}/data")
+    add_test(NAME app_export_preflight_verify
+        COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_BINARY_DIR}/export_preflight_verify.cmake)
+    set_tests_properties(app_export_preflight_verify PROPERTIES LABELS gui
+        FIXTURES_REQUIRED gui_export_preflight DEPENDS app_export_preflight_test)
+    add_test(NAME app_export_open_scan_test
+        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl
+                --ui-script ${CMAKE_CURRENT_BINARY_DIR}/export_open_scan.ui)
+    set_tests_properties(app_export_open_scan_test PROPERTIES LABELS gui TIMEOUT 90
+        FIXTURES_REQUIRED gui_export_preflight
+        RESOURCE_LOCK gui_export_preflight_dir
+        ENVIRONMENT "XDG_DATA_HOME=${CAD92_DIR}/data;XDG_CONFIG_HOME=${CAD92_DIR}/data")
     # Runs a coarse OpenFOAM case, so it needs the engine (label openfoam, not in CI). The
     # runs directory is in the build tree: under the home directory on macOS, which the
     # engine's VM can mount.
