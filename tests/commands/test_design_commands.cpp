@@ -1161,6 +1161,27 @@ TEST_CASE("Design commands: Sketch Chamfer (CAD-254)", "[commands][cad][solver]"
     const double la = std::hypot(30.0, 10.0), lb = std::hypot(20.0, 30.0);
     CHECK(near(t.at("curves")[2].at("points")[0], 30 - 5 * 30 / la, 10 - 5 * 10 / la));
     CHECK(near(t.at("curves")[2].at("points")[1], 30 - 5 * 20 / lb, 10 + 5 * 30 / lb));
+
+    // Two neighbouring corners: the second chamfer replaces the side shared with the first,
+    // and the first chamfer's cut-off corner stays tied to that side (no free rotation).
+    const auto rid = run(s, "sketch.create",
+                         {{"plane", "XY"},
+                          {"curves", Json::array({{{"type", "rectangle"}, {"corner", {0, 0}}, {"width", 40}, {"height", 20}}})}})
+                         .at("id")
+                         .get<std::uint64_t>();
+    run(s, "sketch.chamfer", {{"sketch", rid}, {"curves", {0, 1}}, {"distance", 5}});
+    // Now top (0), left (1), shortened bottom (2), shortened right (3, from (40, 20)), ...
+    Json r = run(s, "sketch.curves", {{"sketch", rid}});
+    REQUIRE(near(r.at("curves")[3].at("points")[0], 40, 20));
+    run(s, "sketch.chamfer", {{"sketch", rid}, {"curves", {3, 0}}, {"distance", 4}});
+    r = run(s, "sketch.curves", {{"sketch", rid}});
+    INFO(r.dump());
+    REQUIRE(r.at("curves").size() == 10);
+    CHECK(r.at("degreesOfFreedom") == 4);
+    std::size_t collinear = 0;
+    for (const auto& k : r.at("constraints"))
+        collinear += k.at("type") == "collinear" ? 1 : 0;
+    CHECK(collinear == 4);
 }
 
 TEST_CASE("Design commands: sketch offset (CAD-126)", "[commands][cad]")

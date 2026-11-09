@@ -1973,6 +1973,30 @@ std::optional<Json> axisConstraint(const SketchCurve& l, std::size_t index)
     return std::nullopt;
 }
 
+/// The collinear constraints that tie line `ia` or `ib` to another curve, as (0 for `ia` or
+/// 1 for `ib`, the other curve's index once `ia` and `ib` are deleted). A fillet or chamfer
+/// replaces both lines with shortened ones and puts these back on them, so an earlier
+/// chamfer on the neighbouring corner stays tied to its side.
+std::vector<std::pair<std::size_t, std::size_t>> collinearPartners(const Json& constraints, std::size_t ia,
+                                                                   std::size_t ib)
+{
+    std::vector<std::pair<std::size_t, std::size_t>> out;
+    for (const auto& c : constraints) {
+        if (!c.is_object() || c.value("type", std::string()) != "collinear" || !c.contains("curves") ||
+            !c["curves"].is_array() || c["curves"].size() != 2 || !c["curves"][0].is_number_integer() ||
+            !c["curves"][1].is_number_integer())
+            continue;
+        const std::size_t a = c["curves"][0].get<std::size_t>(), b = c["curves"][1].get<std::size_t>();
+        for (const auto& [mine, other] : {std::pair{a, b}, std::pair{b, a}}) {
+            if ((mine != ia && mine != ib) || other == ia || other == ib)
+                continue;
+            const std::size_t shifted = other - (ia < other ? 1 : 0) - (ib < other ? 1 : 0);
+            out.emplace_back(mine == ia ? 0 : 1, shifted);
+        }
+    }
+    return out;
+}
+
 } // namespace
 
 void Design::filletSketchCorner(FeatureId sketchId, std::size_t ia, std::size_t ib, double radius)
@@ -2025,6 +2049,7 @@ void Design::filletSketchCorner(FeatureId sketchId, std::size_t ia, std::size_t 
             item["construction"] = true;
         return item;
     };
+    const auto partners = collinearPartners(f.params.value("constraints", Json::array()), ia, ib);
     try {
         deleteSketchCurves(sketchId, {ia, ib});
         Feature& g = m_state.features[indexOf(sketchId)];
@@ -2047,6 +2072,8 @@ void Design::filletSketchCorner(FeatureId sketchId, std::size_t ia, std::size_t 
             constraints.push_back(*h);
         if (const auto h = axisConstraint(lb, first + 1))
             constraints.push_back(*h);
+        for (const auto& [side, other] : partners)
+            constraints.push_back({{"type", "collinear"}, {"curves", Json::array({first + side, other})}});
         g.params["constraints"] = constraints;
         regenerateChecked(sketchId, before);
     } catch (...) {
@@ -2094,6 +2121,7 @@ void Design::chamferSketchCorner(FeatureId sketchId, std::size_t ia, std::size_t
             item["construction"] = true;
         return item;
     };
+    const auto partners = collinearPartners(f.params.value("constraints", Json::array()), ia, ib);
     try {
         deleteSketchCurves(sketchId, {ia, ib});
         Feature& g = m_state.features[indexOf(sketchId)];
@@ -2116,6 +2144,8 @@ void Design::chamferSketchCorner(FeatureId sketchId, std::size_t ia, std::size_t
             constraints.push_back(*h);
         if (const auto h = axisConstraint(lb, first + 1))
             constraints.push_back(*h);
+        for (const auto& [side, other] : partners)
+            constraints.push_back({{"type", "collinear"}, {"curves", Json::array({first + side, other})}});
         g.params["constraints"] = constraints;
         regenerateChecked(sketchId, before);
         // The chamfer must be where it was asked for (the constraints could flip it).
