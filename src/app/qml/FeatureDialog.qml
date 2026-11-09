@@ -271,9 +271,15 @@ Pane {
             { key: "keepTools", type: "bool", label: qsTr("Keep tools"), showIf: v => (v.tools || []).some(t => typeof t !== "object") }] },
         hole: { title: qsTr("Hole"), command: "feature.hole", fields: [
             { key: "body", type: "body", label: qsTr("Body") },
-            { key: "point", type: "pointPick", label: qsTr("Position"), hint: qsTr("Click on a planar face") },
+            // Fusion: Placement. "At sketch points" drills one hole at every point of the sketch.
+            { key: "placement", type: "choice", label: qsTr("Placement"), init: "face", local: true,
+              options: [{ value: "face", label: qsTr("Click on face") }, { value: "sketch", label: qsTr("At sketch points") }] },
+            { key: "point", type: "pointPick", label: qsTr("Position"), hint: qsTr("Click on a planar face"),
+              showIf: v => v.placement !== "sketch" },
+            { key: "sketch", type: "sketch", label: qsTr("Sketch with points"), showIf: v => v.placement === "sketch" },
             { key: "diameter", type: "expr", label: qsTr("Diameter"), init: 5 },
-            { key: "depth", type: "expr", label: qsTr("Depth (empty: through all)") }] },
+            { key: "depth", type: "expr", label: qsTr("Depth (empty: through all)") },
+            { key: "flip", type: "bool", label: qsTr("Flip direction"), showIf: v => v.placement === "sketch" }] },
         box: { title: qsTr("Box"), command: "feature.box", fields: [
             { key: "corner", type: "vec3", label: qsTr("Corner"), init: [0, 0, 0] },
             { key: "size", type: "vec3", label: qsTr("Size"), init: [20, 20, 20] },
@@ -442,9 +448,14 @@ Pane {
                 v.diameter = typeof v.radius === "number" ? v.radius * 2 : "(" + v.radius + ") * 2"
             delete v.radius
         }
+        // A hole made at sketch points is edited with that placement.
+        if (featureType === "hole" && initial && initial.sketch !== undefined && initial.placement === undefined)
+            v.placement = "sketch"
         if (!featureId) {
             if (s.fields.some(f => f.key === "sketch") && v.sketch === undefined) {
-                const sk = sketches()
+                // A hole at sketch points starts from the latest sketch that has points.
+                const withPoints = featureType === "hole" ? sketches().filter(f => (f.params.curves || []).some(c => c.type === "point")) : []
+                const sk = withPoints.length > 0 ? withPoints : sketches()
                 if (sk.length > 0)
                     v.sketch = sk[sk.length - 1].id
             }
@@ -819,7 +830,7 @@ Pane {
         const run = (name, args) => quiet ? controller.preview(name, args) : controller.execute(name, args)
         const params = Object.assign({}, values)
         for (const f of spec.fields) {
-            if (f.showIf && !f.showIf(values))
+            if (f.local || (f.showIf && !f.showIf(values)))
                 delete params[f.key]
             if ((f.type.endsWith("Picks")) && params[f.key] && params[f.key].length === 0)
                 delete params[f.key]

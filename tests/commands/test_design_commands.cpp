@@ -2378,3 +2378,62 @@ TEST_CASE("Design commands: sketch points (CAD-235)", "[commands][cad][solver]")
         CHECK(near(tc[2].at("points")[2], 25, 10));
     }
 }
+
+TEST_CASE("Design commands: holes at sketch points (CAD-241)", "[commands][cad]")
+{
+    commands::Session s;
+    const double pi = std::numbers::pi;
+    auto volume = [&] { return run(s, "timeline.list").at("bodies")[0].at("volume").get<double>(); };
+    auto status = [&](std::uint64_t id) {
+        const Json tl = run(s, "timeline.list");
+        for (const auto& f : tl.at("features"))
+            if (f.at("id") == id)
+                return f.at("status").get<std::string>();
+        return std::string("missing");
+    };
+    // A 40 x 20 x 10 plate above the XY plane and a sketch on XY with three points and a line.
+    const auto box = run(s, "feature.box", {{"size", {40, 20, 10}}}).at("id").get<std::uint64_t>();
+    const Json sk = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "point"}, {"at", {10, 10}}},
+                                                 {{"type", "line"}, {"start", {0, 30}}, {"end", {40, 30}}},
+                                                 {{"type", "point"}, {"at", {20, 10}}},
+                                                 {{"type", "point"}, {"at", {30, 10}}}})}});
+    const auto sid = sk.at("id").get<std::uint64_t>();
+
+    // All points, through: the plate is on the +Z side, so the holes go up into it.
+    const auto hole = run(s, "feature.hole", {{"body", box}, {"sketch", sid}, {"diameter", 4}}).at("id").get<std::uint64_t>();
+    CHECK(volume() == Approx(8000 - 3 * pi * 4 * 10).epsilon(1e-6));
+    // Blind, and only two of the points.
+    run(s, "feature.edit", {{"id", hole}, {"params", {{"depth", 4}, {"through", false}, {"sketch_points", {0, 3}}}}});
+    CHECK(volume() == Approx(8000 - 2 * pi * 4 * 4).epsilon(1e-6));
+    // Flip drills away from the plate: nothing is cut (but the hair of clearance the tool starts with).
+    run(s, "feature.edit", {{"id", hole}, {"params", {{"flip", true}}}});
+    CHECK(volume() == Approx(8000).margin(0.05));
+    run(s, "feature.edit", {{"id", hole}, {"params", {{"flip", false}}}});
+
+    // Moving a point moves its hole (no edge of the sketch changes): off the plate, one hole left.
+    run(s, "sketch.move_point", {{"sketch", sid}, {"point", {{"curve", 3}, {"point", "start"}}}, {"to", {60, 10}}});
+    CHECK(volume() == Approx(8000 - pi * 4 * 4).epsilon(1e-6));
+    run(s, "edit.undo");
+    CHECK(volume() == Approx(8000 - 2 * pi * 4 * 4).epsilon(1e-6));
+
+    // Deleting the line keeps the picks on the same points (indices follow).
+    run(s, "sketch.delete_curves", {{"sketch", sid}, {"curves", {1}}});
+    CHECK(status(hole) == "ok");
+    CHECK(volume() == Approx(8000 - 2 * pi * 4 * 4).epsilon(1e-6));
+    // Deleting a picked point fails the hole until it is picked again.
+    run(s, "sketch.delete_curves", {{"sketch", sid}, {"curves", {0}}});
+    CHECK(status(hole) == "error");
+    run(s, "feature.edit", {{"id", hole}, {"params", {{"sketch_points", {0, 1}}}}});
+    CHECK(status(hole) == "ok");
+    CHECK(volume() == Approx(8000 - 2 * pi * 4 * 4).epsilon(1e-6));
+
+    // A sketch without points, or both placements, is refused.
+    const auto empty = run(s, "sketch.create",
+                           {{"plane", "XY"}, {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {5, 0}}}})}})
+                           .at("id")
+                           .get<std::uint64_t>();
+    CHECK_FALSE(s.execute("feature.hole", {{"body", box}, {"sketch", empty}, {"diameter", 4}}).ok);
+    CHECK_FALSE(s.execute("feature.hole", {{"body", box}, {"sketch", sid}, {"point", {5, 5, 10}}, {"diameter", 4}}).ok);
+}

@@ -1,0 +1,42 @@
+# CAD-241: Hole at sketch points (Fusion: Hole, Placement From Sketch) with real clicks:
+#  - a plate above a sketch with three points; a click selects the plate and H opens Hole;
+#  - Placement "At sketch points" takes the sketch with points; the preview and OK drill
+#    three holes up into the plate (one undo step);
+#  - editing the hole opens it with that placement; Flip drills away from the plate.
+# Run: AeroCAD --ui-script <this file>
+Qt.createQmlObject('import QtQuick; Item { objectName: "hsTest"; visible: false; function clickAt(x, y, z) { const v = viewport.viewPoint(Qt.vector3d(x, y, z)); const p = viewport.mapToItem(null, v.x, v.y); ui.click(p.x, p.y) } function findDisp(it, t) { if (!it.visible) return null; for (let i = it.children.length - 1; i >= 0; --i) { const h = findDisp(it.children[i], t); if (h) return h } return it.displayText === t ? it : null } function findCheck(it, key) { if (!it.visible) return null; for (let i = it.children.length - 1; i >= 0; --i) { const h = findCheck(it.children[i], key); if (h) return h } return it.field && it.field.key === key && it.checked !== undefined ? it : null } function volume() { return controller.execute("timeline.list").result.bodies[0].volume } }', window.contentItem)
+ui.wait(800)
+(() => { const b = controller.execute("feature.box", { size: [40, 20, 10] }); if (!b.ok) ui.fail("box"); const s = controller.execute("sketch.create", { plane: "XY", curves: [{ type: "point", at: [10, 10] }, { type: "point", at: [20, 10] }, { type: "point", at: [30, 10] }] }); if (!s.ok) ui.fail("sketch: " + s.error); viewport.fitAll() })()
+ui.wait(500)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "hsTest").clickAt(5, 5, 10) })()
+ui.wait(300)
+ui.key("H")
+ui.wait(500)
+(() => { ui.log("dialog " + featureDialog.visible + " type " + featureDialog.type + " body " + featureDialog.values.body + " placement " + featureDialog.values.placement); if (!featureDialog.visible || featureDialog.type !== "hole") ui.fail("Hole did not open"); if (featureDialog.values.body === undefined) ui.fail("Hole did not take the selected body") })()
+# Placement: open the list and choose "At sketch points".
+(() => { const c = Array.from(window.contentItem.children).find(c => c.objectName === "hsTest").findDisp(featureDialog, "Click on face"); if (!c) ui.fail("no Placement list"); const p = c.mapToItem(null, c.width / 2, c.height / 2); ui.click(p.x, p.y) })()
+ui.wait(400)
+(() => { if (!ui.clickText("At sketch points")) ui.fail("no At sketch points in the list") })()
+ui.wait(800)
+(() => { const sk = controller.execute("timeline.list").result.features.find(f => f.type === "sketch"); ui.log("placement " + featureDialog.values.placement + " sketch " + featureDialog.values.sketch + " preview volume " + Array.from(window.contentItem.children).find(c => c.objectName === "hsTest").volume()); if (featureDialog.values.placement !== "sketch") ui.fail("placement not taken"); if (featureDialog.values.sketch !== sk.id) ui.fail("the sketch with points was not taken") })()
+ui.shot("/mnt/project-files/ux/hole-sketch-points.png")
+(() => { if (!ui.clickText("OK")) ui.fail("no OK button") })()
+ui.wait(800)
+(() => { const v = Array.from(window.contentItem.children).find(c => c.objectName === "hsTest").volume(); const want = 8000 - 3 * Math.PI * 6.25 * 10; ui.log("after OK: volume " + v + " (want " + want + "), undo '" + controller.undoText + "'"); if (Math.abs(v - want) > 0.5) ui.fail("three holes were not drilled: " + v) })()
+(() => { const f = controller.execute("timeline.list").result.features.find(f => f.type === "hole"); ui.log("hole params " + JSON.stringify(f.params)); if (f.params.placement !== undefined || f.params.point !== undefined) ui.fail("dialog-only or face fields reached the hole: " + JSON.stringify(f.params)) })()
+ui.shot("build/hole-sketch-points.png")
+(() => { undoAction.trigger() })()
+ui.wait(500)
+(() => { const v = Array.from(window.contentItem.children).find(c => c.objectName === "hsTest").volume(); ui.log("Ctrl+Z: volume " + v); if (Math.abs(v - 8000) > 0.5) ui.fail("one undo did not remove the holes: " + v) })()
+(() => { redoAction.trigger() })()
+ui.wait(500)
+# Edit: the dialog opens with the sketch placement; Flip drills downwards, away from the plate.
+(() => { const f = controller.execute("timeline.list").result.features.find(f => f.type === "hole"); featureDialog.open("hole", f.params, f.id) })()
+ui.wait(500)
+(() => { ui.log("edit placement " + featureDialog.values.placement); if (featureDialog.values.placement !== "sketch") ui.fail("the hole did not open with its placement") })()
+(() => { const c = Array.from(window.contentItem.children).find(c => c.objectName === "hsTest").findCheck(featureDialog, "flip"); if (!c) ui.fail("no Flip direction box"); const p = c.mapToItem(null, c.width / 2, c.height / 2); ui.click(p.x, p.y) })()
+ui.wait(300)
+(() => { if (!ui.clickText("OK")) ui.fail("no OK button") })()
+ui.wait(800)
+(() => { const v = Array.from(window.contentItem.children).find(c => c.objectName === "hsTest").volume(); ui.log("flipped: volume " + v); if (Math.abs(v - 8000) > 0.5) ui.fail("Flip did not drill away from the plate: " + v) })()
+ui.log("hole at sketch points OK")
