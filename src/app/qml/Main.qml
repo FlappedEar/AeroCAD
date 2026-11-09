@@ -1234,6 +1234,8 @@ ApplicationWindow {
     Action { id: splitAction; text: qsTr("Spli&t Body"); enabled: !window.activeSketch; onTriggered: window.openFeature("split") }
     Action { id: combineAction; text: qsTr("Co&mbine"); onTriggered: window.openFeature("combine") }
     Action { id: planeAction; text: qsTr("Construction &Plane"); enabled: !window.activeSketch; onTriggered: window.openFeature("plane") }
+    // Fusion: Construct > Midplane (halfway between two parallel faces or planes).
+    Action { id: midplaneAction; text: qsTr("&Midplane"); enabled: !window.activeSketch; onTriggered: window.openFeature("midplane") }
     Action { id: loftAction; text: qsTr("&Loft"); enabled: !window.activeSketch; onTriggered: window.openFeature("loft") }
     Action { id: sweepAction; text: qsTr("S&weep"); enabled: !window.activeSketch; onTriggered: window.openFeature("sweep") }
     Action { id: mirrorAction; text: qsTr("M&irror"); enabled: !window.activeSketch; onTriggered: window.openFeature("mirror") }
@@ -1563,6 +1565,7 @@ ApplicationWindow {
         Menu {
             title: qsTr("C&onstruct")
             MenuItem { action: planeAction }
+            MenuItem { action: midplaneAction }
         }
         Menu {
             title: qsTr("&Modify")
@@ -1869,6 +1872,7 @@ ApplicationWindow {
             ToolGroup {
                 caption: qsTr("CONSTRUCT")
                 ToolCommand { action: planeAction; text: qsTr("Plane"); iconName: "plane" }
+                ToolCommand { action: midplaneAction; text: qsTr("Midplane"); iconName: "plane" }
             }
             ToolSeparator {}
             ToolGroup {

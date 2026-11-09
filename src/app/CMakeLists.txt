@@ -569,6 +569,10 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sphere_torus.ui
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(app_sphere_torus_test PROPERTIES LABELS gui TIMEOUT 60)
+    add_test(NAME app_midplane_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/midplane.ui
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(app_midplane_test PROPERTIES LABELS gui TIMEOUT 60)
     add_test(NAME app_transform_status_test
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/transform_status.ui
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
