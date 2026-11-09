@@ -606,6 +606,8 @@ private:
                     const Vec2 d = b.at(x) - a.at(x);
                     return cross(d, k.center.at(x) - a.at(x)) / safe(len(d));
                 };
+                if (c.side == -2)
+                    throw ModelingError("Tangent side -2 is only for two arcs or circles (a line takes 1 or -1)");
                 const double s = c.side != 0 ? double(c.side) : signOf(signedDist(x0));
                 add(ci, circVars(k, {a, b}), 1, [k, s, signedDist](const std::vector<double>& x, double* r) {
                     r[0] = s * signedDist(x) - k.radius(x);

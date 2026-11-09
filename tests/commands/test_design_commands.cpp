@@ -1754,4 +1754,19 @@ TEST_CASE("Design commands: a tangent arc stays on a dimensioned line's end (CAD
     INFO(spc.dump());
     CHECK(sps[0][0].get<double>() == Approx(spa[2][0].get<double>()).margin(1e-6));
     CHECK(sps[0][1].get<double>() == Approx(spa[2][1].get<double>()).margin(1e-6));
+
+
+    // side -2 (inside, second the larger) only fits two arcs/circles: on a line it is refused
+    // and the sketch is unchanged.
+    const Json lc = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "line"}, {"start", {-20, 0}}, {"end", {20, 0}}},
+                                                 {{"type", "circle"}, {"center", {0, -5}}, {"radius", 10}}})}});
+    const auto lcid = lc.at("id").get<std::uint64_t>();
+    const auto lcBefore = run(s, "sketch.curves", {{"sketch", lcid}}).dump();
+    CHECK_FALSE(s.execute("sketch.add_constraints",
+                          {{"sketch", lcid},
+                           {"constraints", Json::array({{{"type", "tangent"}, {"curves", Json::array({0, 1})}, {"side", -2}}})}})
+                    .ok);
+    CHECK(run(s, "sketch.curves", {{"sketch", lcid}}).dump() == lcBefore);
 }
