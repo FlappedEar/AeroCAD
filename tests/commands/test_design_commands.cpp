@@ -2132,4 +2132,30 @@ TEST_CASE("Design commands: Extend a sketch line or arc to the nearest curve (CA
     CHECK(near(pts(did, 0)[0], held[0][0].get<double>(), held[0][1].get<double>()));
     CHECK(near(pts(did, 0)[1], held[1][0].get<double>(), held[1][1].get<double>()));
     CHECK(run(s, "edit.history").dump() == steps); // no undo step
+
+    // A spline in the way bounds the extension too: the line stops at it (x = 10), not at the
+    // line beyond (x = 20); an arc stops where it meets one (Codex review on #197).
+    const Json e = run(s, "sketch.create",
+                       {{"plane", "XY"},
+                        {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {5, 0}}},
+                                                {{"type", "spline"}, {"points", {{12, -6}, {10, 0}, {12, 6}}}},
+                                                {{"type", "line"}, {"start", {20, -20}}, {"end", {20, 20}}},
+                                                {{"type", "arc"}, {"start", {-30, 0}}, {"through", {-32.928932188134524, 7.0710678118654755}}, {"end", {-40, 10}}},
+                                                {{"type", "spline"}, {"points", {{-46, -20}, {-46, 0}, {-46, 20}}}}})}});
+    const auto eid = e.at("id").get<std::uint64_t>();
+    run(s, "sketch.extend", {{"sketch", eid}, {"curve", 0}, {"at", {4, 0}}});
+    {
+        const Json p = pts(eid, 0);
+        INFO(p.dump());
+        CHECK(p[1][0].get<double>() == Approx(10).margin(1e-3));
+        CHECK(p[1][1].get<double>() == Approx(0).margin(1e-9));
+    }
+    // The arc about (-40, 0), radius 10, from (-30, 0) to (-40, 10): on to the spline at x = -46.
+    run(s, "sketch.extend", {{"sketch", eid}, {"curve", 3}, {"at", {-39, 9.5}}});
+    {
+        const Json p = pts(eid, 3);
+        INFO(p.dump());
+        CHECK(p[2][0].get<double>() == Approx(-46).margin(1e-3));
+        CHECK(p[2][1].get<double>() == Approx(8).margin(1e-3));
+    }
 }

@@ -1743,6 +1743,34 @@ void Design::trimSketchCurve(FeatureId sketchId, std::size_t curve, const geomet
     }
 }
 
+namespace {
+
+/// What another curve bounds an extension with: the curve itself, or a spline as the
+/// short segments of its drawn shape (128 per span, so the end lands within a hair of it).
+std::vector<TrimCurve> extendBoundaries(const SketchCurve& k)
+{
+    if (auto t = trimCurve(k))
+        return {*t};
+    std::vector<TrimCurve> out;
+    if (k.kind != SketchCurve::Kind::Spline)
+        return out;
+    std::vector<Vec2> pts;
+    try {
+        pts = geometry::sampleSpline(k, 128);
+    } catch (const geometry::ModelingError&) {
+        return out;
+    }
+    for (std::size_t i = 0; i + 1 < pts.size(); ++i) {
+        TrimCurve seg;
+        seg.a = pts[i];
+        seg.b = pts[i + 1];
+        out.push_back(seg);
+    }
+    return out;
+}
+
+} // namespace
+
 geometry::SketchCurve Design::extendedSketchCurve(FeatureId sketchId, std::size_t curve, const geometry::Vec2& at,
                                                   bool* atStart) const
 {
@@ -1818,14 +1846,12 @@ geometry::SketchCurve Design::extendedSketchCurve(FeatureId sketchId, std::size_
         for (std::size_t i = 0; i < curves.size(); ++i) {
             if (i == curve)
                 continue;
-            const auto other = trimCurve(curves[i]);
-            if (!other)
-                continue;
-            for (const Vec2& x : crossings(ray, *other)) {
-                const double t = (x.x - e.x) * d.x + (x.y - e.y) * d.y;
-                if (t > 1e-6 && (best < 0 || t < best))
-                    best = t;
-            }
+            for (const TrimCurve& other : extendBoundaries(curves[i]))
+                for (const Vec2& x : crossings(ray, other)) {
+                    const double t = (x.x - e.x) * d.x + (x.y - e.y) * d.y;
+                    if (t > 1e-6 && (best < 0 || t < best))
+                        best = t;
+                }
         }
         if (best < 0)
             throw DesignError("Nothing to extend to: no curve lies beyond that end");
@@ -1848,15 +1874,13 @@ geometry::SketchCurve Design::extendedSketchCurve(FeatureId sketchId, std::size_
     for (std::size_t i = 0; i < curves.size(); ++i) {
         if (i == curve)
             continue;
-        const auto other = trimCurve(curves[i]);
-        if (!other)
-            continue;
-        for (const Vec2& x : crossings(circle, *other)) {
-            const double a = std::atan2(x.y - arc->c.y, x.x - arc->c.x);
-            const double along = dir > 0 ? wrap2pi(a - aEnd) : wrap2pi(aEnd - a);
-            if (along > 1e-9 && along < room - 1e-9 && (best < 0 || along < best))
-                best = along;
-        }
+        for (const TrimCurve& other : extendBoundaries(curves[i]))
+            for (const Vec2& x : crossings(circle, other)) {
+                const double a = std::atan2(x.y - arc->c.y, x.x - arc->c.x);
+                const double along = dir > 0 ? wrap2pi(a - aEnd) : wrap2pi(aEnd - a);
+                if (along > 1e-9 && along < room - 1e-9 && (best < 0 || along < best))
+                    best = along;
+            }
     }
     if (best < 0)
         throw DesignError("Nothing to extend to: no curve lies beyond that end");
