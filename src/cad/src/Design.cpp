@@ -19,6 +19,7 @@
 #include <memory>
 #include <numbers>
 #include <set>
+#include <sstream>
 #include <utility>
 
 namespace aerocad::cad {
@@ -1473,16 +1474,41 @@ bool sameShape(const SketchCurve& a, const SketchCurve& b, double tol)
            close(curvePointAt(a, c), curvePointAt(b, c));
 }
 
-// `c` moved to a placement: each point p goes to pivot + R(angle) (p - pivot) + offset.
-SketchCurve placedCurve(SketchCurve c, const SketchPlacement& place)
+// A point moved to a placement: pivot + scale R(angle) (p - pivot) + offset.
+Vec2 placedPoint(const Vec2& p, const SketchPlacement& place)
 {
     const double a = place.angleDegrees * kDegToRad;
-    const double ca = std::cos(a), sa = std::sin(a);
-    for (auto& p : c.points) {
-        const Vec2 d = p - place.pivot;
-        p = Vec2{place.pivot.x + ca * d.x - sa * d.y + place.offset.x, place.pivot.y + sa * d.x + ca * d.y + place.offset.y};
-    }
+    const double ca = std::cos(a) * place.scale, sa = std::sin(a) * place.scale;
+    const Vec2 d = p - place.pivot;
+    return Vec2{place.pivot.x + ca * d.x - sa * d.y + place.offset.x, place.pivot.y + sa * d.x + ca * d.y + place.offset.y};
+}
+
+// `c` moved to a placement (its radius scaled too).
+SketchCurve placedCurve(SketchCurve c, const SketchPlacement& place)
+{
+    for (auto& p : c.points)
+        p = placedPoint(p, place);
+    c.radius *= place.scale;
     return c;
+}
+
+// A length dimension (distance, length, radius, ...) scaled by `s`: a number is multiplied,
+// an expression wrapped ("(w/2)*0.5"). Other constraints are left alone.
+void scaleDimension(Json& c, double s)
+{
+    static const std::set<std::string> lengths{"distance", "horizontal_distance", "vertical_distance",
+                                               "length", "radius", "diameter"};
+    if (s == 1.0 || !c.contains("value") || !lengths.contains(lower(c.value("type", std::string()))))
+        return;
+    Json& v = c["value"];
+    if (v.is_number())
+        v = v.get<double>() * s;
+    else if (v.is_string()) {
+        std::ostringstream out;
+        out.precision(17);
+        out << "(" << v.get<std::string>() << ")*" << s;
+        v = out.str();
+    }
 }
 
 // Each sketch item's curves as [first, first + count), in sketch.curves order.
@@ -1506,11 +1532,13 @@ std::vector<std::pair<std::size_t, std::size_t>> itemRanges(const Eval& ev, cons
 
 } // namespace
 
-void Design::moveSketchCurves(FeatureId sketchId, const std::vector<std::size_t>& picked, const Vec2& offset,
-                              double angleDegrees, const Vec2& pivot, bool copy)
+void Design::moveSketchCurves(FeatureId sketchId, const std::vector<std::size_t>& picked, const SketchPlacement& place,
+                              bool copy)
 {
+    if (!(place.scale > 0.0) || !std::isfinite(place.scale))
+        throw DesignError("The scale factor must be more than 0");
     if (copy) {
-        patternSketchCurves(sketchId, picked, {SketchPlacement{offset, angleDegrees, pivot}});
+        patternSketchCurves(sketchId, picked, {place});
         return;
     }
     const State before = m_state;
@@ -1530,21 +1558,27 @@ void Design::moveSketchCurves(FeatureId sketchId, const std::vector<std::size_t>
     }
     if (picked.empty())
         throw DesignError("Select the sketch curves to move");
-    const double a = angleDegrees * kDegToRad;
-    const double ca = std::cos(a), sa = std::sin(a);
-    auto moved = [&](const Vec2& p) {
-        const Vec2 d = p - pivot;
-        return Vec2{pivot.x + ca * d.x - sa * d.y + offset.x, pivot.y + sa * d.x + ca * d.y + offset.y};
-    };
-    auto movedCurve = [&](SketchCurve c) {
-        for (auto& p : c.points)
-            p = moved(p);
-        return c;
-    };
+    const bool turned = place.angleDegrees != 0.0;
+    const bool scaled = place.scale != 1.0;
+    const std::string cannot = scaled ? "Those curves cannot be scaled" : "Those curves cannot move there";
 
     const Eval ev{*this};
     Json items = f.params.value("curves", Json::array());
-    const Json constraints = f.params.value("constraints", Json::array());
+    // Scaled, the dimensions among the picked curves scale with them (Fusion: Sketch Scale).
+    Json constraints = f.params.value("constraints", Json::array());
+    if (scaled) {
+        std::vector<std::optional<std::size_t>> self(curves.size());
+        for (std::size_t i = 0; i < curves.size(); ++i)
+            if (sel[i])
+                self[i] = i;
+        // Only dimensions wholly among them: one to the sketch origin positions the curves
+        // and stays.
+        for (auto& c : constraints) {
+            Json probe = c;
+            if (c.dump().find("\"origin\"") == std::string::npos && remapConstraint(probe, self))
+                scaleDimension(c, place.scale);
+        }
+    }
     const auto ranges = itemRanges(ev, items, curves.size(), f.name);
     auto whole = [&](std::size_t k) {
         for (std::size_t i = 0; i < ranges[k].second; ++i)
@@ -1556,7 +1590,7 @@ void Design::moveSketchCurves(FeatureId sketchId, const std::vector<std::size_t>
     // becomes a 3-point rectangle (same corners and sides).
     auto turnable = [&](std::size_t k) {
         const std::string type = lower(items[k].at("type").get<std::string>());
-        if (a != 0.0 && (type == "rectangle" || type == "center_rectangle"))
+        if (turned && (type == "rectangle" || type == "center_rectangle"))
             return asThreePointRectangle(items[k], curves.data() + ranges[k].first);
         return items[k];
     };
@@ -1571,12 +1605,12 @@ void Design::moveSketchCurves(FeatureId sketchId, const std::vector<std::size_t>
         if (!sel[i])
             continue;
         for (const Json& ref : curvePointRefs(curves[i], i)) {
-            const Vec2 to = moved(curvePointAt(curves[i], ref));
+            const Vec2 to = placedPoint(curvePointAt(curves[i], ref), place);
             held.push_back({{"type", "fix"}, {"points", Json::array({ref})}, {"at", Json::array({Json::array({to.x, to.y})})}});
         }
         // A circle keeps its size too (its centre alone does not hold it).
         if (curves[i].kind == SketchCurve::Kind::Circle)
-            held.push_back({{"type", "radius"}, {"curve", i}, {"value", curves[i].radius}});
+            held.push_back({{"type", "radius"}, {"curve", i}, {"value", curves[i].radius * place.scale}});
     }
     // A polygon keeps its corner angles too (its sides alone are only kept equal), as in a
     // point drag, so it stays regular while one side moves.
@@ -1596,7 +1630,7 @@ void Design::moveSketchCurves(FeatureId sketchId, const std::vector<std::size_t>
     if (st.state == FeatureStatus::State::Error || it == m_sketches.end()) {
         m_state = before;
         regenerate();
-        throw DesignError("Those curves cannot move there: their constraints hold them (" + st.message + ")");
+        throw DesignError(cannot + ": their constraints hold them (" + st.message + ")");
     }
     const Json newItems = itemsFromSolved(ev, items, &curves, it->second.curves, false);
     Feature& g = m_state.features[indexOf(sketchId)];
@@ -1609,10 +1643,10 @@ void Design::moveSketchCurves(FeatureId sketchId, const std::vector<std::size_t>
     // Rewritten as items, the picked curves must still be where they were asked to go.
     it = m_sketches.find(sketchId);
     for (std::size_t i = 0; i < curves.size() && it != m_sketches.end(); ++i) {
-        if (sel[i] && (i >= it->second.curves.size() || !sameShape(it->second.curves[i], movedCurve(curves[i]), 1e-6))) {
+        if (sel[i] && (i >= it->second.curves.size() || !sameShape(it->second.curves[i], placedCurve(curves[i], place), 1e-6))) {
             m_state = before;
             regenerate();
-            throw DesignError("Those curves cannot move there: their shape holds them");
+            throw DesignError(cannot + ": their shape holds them");
         }
     }
 }
@@ -1691,8 +1725,10 @@ void Design::patternSketchCurves(FeatureId sketchId, const std::vector<std::size
             if (turned && (type == "horizontal" || type == "vertical" || type == "horizontal_distance" ||
                            type == "vertical_distance"))
                 continue;
-            if (remapConstraint(c, map))
+            if (remapConstraint(c, map)) {
+                scaleDimension(c, place.scale);
                 all.push_back(c);
+            }
         }
         maps.push_back(std::move(map));
     }

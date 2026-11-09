@@ -249,6 +249,13 @@ ApplicationWindow {
             onTriggered: viewport.sketchOverlay.startMove()
         }
         SketchMenuItem {
+            objectName: "scaleCurves"
+            text: qsTr("Sketch Scale")
+            icon.source: Theme.iconUrl("scale")
+            visible: !sketchMenu.drawing && viewport.sketchOverlay.selectedCurves.length > 0
+            onTriggered: viewport.sketchOverlay.startScale()
+        }
+        SketchMenuItem {
             objectName: "circularPatternCurves"
             text: qsTr("Circular Pattern")
             icon.source: Theme.iconUrl("circular-pattern")
@@ -1457,6 +1464,8 @@ ApplicationWindow {
     Action { id: sketchOffsetAction; text: qsTr("&Offset"); shortcut: "O"; enabled: !!window.activeSketch && (viewport.sketchOverlay.selectedCurves.length > 0 || window.sketchTool === "offset"); checkable: true; checked: window.sketchTool === "offset"; onTriggered: { if (window.sketchTool !== "offset") viewport.sketchOverlay.startOffset(); else window.sketchTool_("") } }
     // Fusion: Sketch > Move/Copy (M): the selected curves move or are copied.
     Action { id: sketchMoveAction; text: qsTr("Mo&ve/Copy"); shortcut: "M"; enabled: !!window.activeSketch && (viewport.sketchOverlay.selectedCurves.length > 0 || window.sketchTool === "move"); checkable: true; checked: window.sketchTool === "move"; onTriggered: { if (window.sketchTool !== "move") viewport.sketchOverlay.startMove(); else window.sketchTool_("") } }
+    // Fusion: Modify > Sketch Scale: the selected curves scale about a point.
+    Action { id: sketchScaleAction; text: qsTr("Sketch Scale"); enabled: !!window.activeSketch && (viewport.sketchOverlay.selectedCurves.length > 0 || window.sketchTool === "scale"); checkable: true; checked: window.sketchTool === "scale"; onTriggered: { if (window.sketchTool !== "scale") viewport.sketchOverlay.startScale(); else window.sketchTool_("") } }
     // Fusion: Sketch > Circular / Rectangular Pattern: copies of the selected curves.
     Action { id: sketchCircularPatternAction; text: qsTr("Circular Pattern"); enabled: !!window.activeSketch && (viewport.sketchOverlay.selectedCurves.length > 0 || window.sketchTool === "circular_pattern"); checkable: true; checked: window.sketchTool === "circular_pattern"; onTriggered: { if (window.sketchTool !== "circular_pattern") viewport.sketchOverlay.startPattern("circular_pattern"); else window.sketchTool_("") } }
     Action { id: sketchRectangularPatternAction; text: qsTr("Rectangular Pattern"); enabled: !!window.activeSketch && (viewport.sketchOverlay.selectedCurves.length > 0 || window.sketchTool === "rectangular_pattern"); checkable: true; checked: window.sketchTool === "rectangular_pattern"; onTriggered: { if (window.sketchTool !== "rectangular_pattern") viewport.sketchOverlay.startPattern("rectangular_pattern"); else window.sketchTool_("") } }
@@ -1787,6 +1796,7 @@ ApplicationWindow {
             MenuItem { action: sketchOffsetAction }
             MenuItem { action: sketchProjectAction }
             MenuItem { action: sketchMoveAction }
+            MenuItem { action: sketchScaleAction }
             MenuItem { action: sketchMirrorAction }
             MenuItem { action: sketchCircularPatternAction }
             MenuItem { action: sketchRectangularPatternAction }
@@ -2265,6 +2275,7 @@ ApplicationWindow {
                 ToolCommand { action: sketchMoveAction; text: qsTr("Move/Copy"); iconName: "move" }
                 ToolCommand { action: sketchMirrorAction; text: qsTr("Mirror"); iconName: "mirror" }
                 ToolCommand { action: constructionAction; text: qsTr("Construction"); iconName: "construction" }
+                ToolCommand { action: sketchScaleAction; text: qsTr("Sketch Scale"); iconName: "scale" }
             }
             ToolSeparator { tab: "sketch" }
             ToolGroup {
@@ -2488,6 +2499,17 @@ ApplicationWindow {
                 if (!window.activeSketch)
                     return
                 const r = window.controller.execute("sketch.move_curves", { sketch: window.activeSketch.id, curves: curves, dx: dx, dy: dy, angle: angle, copy: copy })
+                if (!r.ok)
+                    window.controller.showStatus(r.error)
+                window.refreshSketchSnaps()
+            }
+            onSketchScaleRequested: (curves, point, factor) => {
+                if (!window.activeSketch)
+                    return
+                const args = { sketch: window.activeSketch.id, curves: curves, factor: factor }
+                if (point !== null)
+                    args.point = point
+                const r = window.controller.execute("sketch.scale_curves", args)
                 if (!r.ok)
                     window.controller.showStatus(r.error)
                 window.refreshSketchSnaps()

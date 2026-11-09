@@ -777,6 +777,32 @@ const cad::Feature& sketchFeature(const cad::Design& d, cad::FeatureId id)
     return *f;
 }
 
+// A turn or scale centre: `params[key]` ([u, v]) when given, else the middle of the
+// curves' bounds (circles by their radius), as the sketch tools preview it.
+geometry::Vec2 curvesPivot(const cad::Design& d, cad::FeatureId id, const std::vector<std::size_t>& picked,
+                           const Json& params, const char* key)
+{
+    if (params.contains(key))
+        return {params.at(key)[0].get<double>(), params.at(key)[1].get<double>()};
+    geometry::Vec2 pivot{0, 0};
+    if (auto it = d.sketches().find(id); it != d.sketches().end()) {
+        double lo[2] = {1e300, 1e300}, hi[2] = {-1e300, -1e300};
+        for (const std::size_t i : picked) {
+            if (i >= it->second.curves.size())
+                continue;
+            const auto& c = it->second.curves[i];
+            for (const auto& p : c.points) {
+                const double rad = c.kind == geometry::SketchCurve::Kind::Circle ? c.radius : 0.0;
+                lo[0] = std::min(lo[0], p.x - rad), lo[1] = std::min(lo[1], p.y - rad);
+                hi[0] = std::max(hi[0], p.x + rad), hi[1] = std::max(hi[1], p.y + rad);
+            }
+        }
+        if (lo[0] <= hi[0])
+            pivot = {(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2};
+    }
+    return pivot;
+}
+
 /// Centre of a three-point arc (circumcentre), std::nullopt for degenerate arcs.
 std::optional<geometry::Vec2> arcCenter(const geometry::SketchCurve& c)
 {
@@ -1508,26 +1534,37 @@ void registerSketchCommands(CommandRegistry& r)
               const bool copy = params.value("copy", false);
               designChange(ctx, copy ? "Copy Sketch Curves" : "Move Sketch Curves", [&](cad::Design& d) {
                   (void)sketchFeature(d, id);
-                  geometry::Vec2 pivot{0, 0};
-                  if (params.contains("pivot")) {
-                      pivot = {params.at("pivot")[0].get<double>(), params.at("pivot")[1].get<double>()};
-                  } else if (auto it = d.sketches().find(id); it != d.sketches().end()) {
-                      double lo[2] = {1e300, 1e300}, hi[2] = {-1e300, -1e300};
-                      for (const std::size_t i : picked) {
-                          if (i >= it->second.curves.size())
-                              continue;
-                          const auto& c = it->second.curves[i];
-                          for (const auto& p : c.points) {
-                              const double rad = c.kind == geometry::SketchCurve::Kind::Circle ? c.radius : 0.0;
-                              lo[0] = std::min(lo[0], p.x - rad), lo[1] = std::min(lo[1], p.y - rad);
-                              hi[0] = std::max(hi[0], p.x + rad), hi[1] = std::max(hi[1], p.y + rad);
-                          }
-                      }
-                      if (lo[0] <= hi[0])
-                          pivot = {(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2};
-                  }
-                  d.moveSketchCurves(id, picked, {params.value("dx", 0.0), params.value("dy", 0.0)}, params.value("angle", 0.0),
-                                     pivot, copy);
+                  const geometry::Vec2 pivot = curvesPivot(d, id, picked, params, "pivot");
+                  d.moveSketchCurves(id, picked,
+                                     {{params.value("dx", 0.0), params.value("dy", 0.0)}, params.value("angle", 0.0), pivot},
+                                     copy);
+                  return Json{};
+              });
+              return addedFeature(design(ctx), ctx.document, id);
+          });
+
+    r.add({"sketch.scale_curves", "Sketch Scale",
+           "Scales sketch curves by `factor` about `point` (Fusion: Sketch > Sketch Scale; default point: the "
+           "middle of the curves' bounds). Lengths, distances and radii dimensioned among the curves scale with "
+           "them (an expression becomes (expr)*factor); curves joined to them stretch, as in Move. Refused when "
+           "other constraints hold the curves.",
+           objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
+                         {"curves", {{"type", "array"}, {"items", {{"type", "integer"}}}, {"minItems", 1},
+                                     {"description", "Curve indices from sketch.curves."}}},
+                         {"factor", {{"type", "number"}, {"exclusiveMinimum", 0}, {"description", "Scale factor, e.g. 2 or 0.5."}}},
+                         {"point", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", {{"type", "number"}}},
+                                    {"description", "Point that stays, [u, v]; default the middle of the curves."}}}},
+                        {"sketch", "curves", "factor"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              const auto id = params.at("sketch").get<cad::FeatureId>();
+              const auto picked = params.at("curves").get<std::vector<std::size_t>>();
+              const double factor = params.at("factor").get<double>();
+              if (!(factor > 0.0) || !std::isfinite(factor))
+                  throw CommandError("The scale factor must be more than 0");
+              designChange(ctx, "Sketch Scale", [&](cad::Design& d) {
+                  (void)sketchFeature(d, id);
+                  d.moveSketchCurves(id, picked, {{0, 0}, 0.0, curvesPivot(d, id, picked, params, "point"), factor}, false);
                   return Json{};
               });
               return addedFeature(design(ctx), ctx.document, id);
