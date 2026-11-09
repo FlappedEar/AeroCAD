@@ -137,8 +137,14 @@ Sketch curves: `line {start, end}`, `rectangle {corner, width, height | opposite
 `center_rectangle {center, width, height}`, `circle {center, radius | diameter}`,
 `arc {start, through, end}`, `center_arc {center, radius, startAngle, endAngle}`,
 `polygon {center, radius, sides, angle?}`, `slot {start, end, width}`,
-`spline {points, closed?}`; any curve can be `construction: true`. Curves are split at
+`spline {points, closed?}`, `point {at}`; any curve can be `construction: true`. Curves are split at
 intersections, so a circle inside a rectangle gives two profiles (ring and disk).
+
+A `point` (Fusion: Create › Point, the Point tool in the sketch CREATE menu) is a sketch point:
+it has no edge and bounds no profile, and is drawn as a small cross (a dot while editing). It
+takes constraints and dimensions through `{curve, point: start}` (end and center mean the same
+point). A point placed on a curve end is that end, so it moves with it. Mirror, Construction
+and Delete work on points; Trim, Extend, Break and Offset refuse them.
 
 ### Constraints and dimensions
 

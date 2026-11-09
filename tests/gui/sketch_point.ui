@@ -1,0 +1,35 @@
+# CAD-235: Point (Fusion: Create > Point) places a sketch point with one click; it snaps to
+# curve ends, can be dimensioned like one, is drawn as a dot and can be selected and deleted.
+# Run: AeroCAD --ui-script <this file>
+ui.wait(800)
+(() => { const r = controller.execute("sketch.create", { plane: "XY", curves: [{ type: "line", start: [-20, -10], end: [20, -10] }, { type: "line", start: [20, -10], end: [20, 10] }] }); if (!r.ok) ui.fail("sketch: " + r.error) })()
+ui.wait(300)
+(() => { enterSketch(controller.execute("timeline.list").result.features[0].id) })()
+ui.wait(800)
+(() => { pointAction.trigger() })()
+ui.wait(300)
+(() => { if (sketchTool !== "point") ui.fail("Point did not start: " + sketchTool) })()
+# A free point, then one on the corner (it snaps there).
+(() => { const o = viewport.sketchOverlay; const p = o.toScreen([-5, 5]); const w = o.mapToItem(null, p.x, p.y); ui.move(w.x, w.y); ui.click(w.x, w.y) })()
+ui.wait(400)
+(() => { const o = viewport.sketchOverlay; const p = o.toScreen([20.3, -9.8]); const w = o.mapToItem(null, p.x, p.y); ui.move(w.x, w.y); ui.wait(100); ui.click(w.x, w.y) })()
+ui.wait(500)
+(() => { const r = controller.execute("sketch.curves", { sketch: activeSketch.id }).result; const pts = r.curves.filter(c => c.kind === "point"); ui.log("points " + JSON.stringify(pts.map(c => c.points[0]))); if (pts.length !== 2) ui.fail("expected two points, got " + pts.length); if (Math.hypot(pts[0].points[0][0] + 5, pts[0].points[0][1] - 5) > 1e-6) ui.fail("the free point is not where clicked"); if (Math.hypot(pts[1].points[0][0] - 20, pts[1].points[0][1] + 10) > 1e-6) ui.fail("the corner point did not snap to the corner") })()
+# The corner point is the corner: two joined lines (6) and the free point (2), nothing for it.
+(() => { const r = controller.execute("sketch.curves", { sketch: activeSketch.id }).result; ui.log("degrees of freedom " + r.degreesOfFreedom); if (r.degreesOfFreedom !== 6 + 2) ui.fail("the corner point is not joined to the corner: " + r.degreesOfFreedom) })()
+ui.shot("/mnt/project-files/ux/sketch-point.png")
+# Esc ends the tool; click the free point to select it, Delete removes it.
+ui.key("Escape")
+ui.wait(300)
+(() => { if (sketchTool !== "") ui.fail("Esc did not end Point: " + sketchTool) })()
+(() => { const o = viewport.sketchOverlay; const p = o.toScreen([-5, 5]); const w = o.mapToItem(null, p.x, p.y); ui.move(w.x, w.y); ui.click(w.x, w.y) })()
+ui.wait(300)
+(() => { const o = viewport.sketchOverlay; ui.log("selected " + JSON.stringify(o.selectedCurves)); if (o.selectedCurves.length !== 1) ui.fail("the point was not selected") })()
+ui.key("Delete")
+ui.wait(500)
+(() => { const r = controller.execute("sketch.curves", { sketch: activeSketch.id }).result; if (r.curves.filter(c => c.kind === "point").length !== 1) ui.fail("Delete did not remove the point") })()
+ui.wait(300)
+# A dimension made through the API with a point's end or center alias still gets its glyph.
+(() => { const r = controller.execute("sketch.curves", { sketch: activeSketch.id }).result; const i = r.curves.findIndex(c => c.kind === "point"); const a = controller.execute("sketch.add_constraints", { sketch: activeSketch.id, constraints: [{ type: "fix", points: [{ curve: i, point: "center" }] }] }); if (!a.ok) ui.fail("fix by center: " + a.error) })()
+ui.wait(500)
+(() => { const o = viewport.sketchOverlay; const c = o.sketchConstraints[o.sketchConstraints.length - 1]; const g = o.constraintGlyphs; for (const alias of ["start", "end", "center"]) { const p = g.pointPos({ curve: c.points[0].curve, point: alias }); ui.log(alias + " at " + JSON.stringify(p)); if (!p || Math.hypot(p[0] - 20, p[1] + 10) > 1e-6) ui.fail("no position for the point's " + alias + ": " + JSON.stringify(p)) } if (!g.anchorOf(c)) ui.fail("the Fix on the point's center has no glyph anchor") })()

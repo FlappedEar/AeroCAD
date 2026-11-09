@@ -95,6 +95,8 @@ Item {
                 out.push({ point: { curve: c.index, point: "center" }, pos: c.center })
             } else if (c.kind === "circle") {
                 out.push({ point: { curve: c.index, point: "center" }, pos: c.points[0] })
+            } else if (c.kind === "point") {
+                out.push({ point: { curve: c.index, point: "start" }, pos: c.points[0] })
             }
         }
         out.push({ point: "origin", pos: [0, 0] })
@@ -109,6 +111,8 @@ Item {
     }
 
     function curveDistance(p, c) {
+        if (c.kind === "point")
+            return dist(p, c.points[0])
         if (c.kind === "line")
             return segmentDistance(p, c.points[0], c.points[1])
         if (c.kind === "circle")
@@ -389,6 +393,10 @@ Item {
             const c = curves.find(x => x.index === ref.curve)
             return c && c.kind === "spline" && ref.index < c.points.length ? c.points[ref.index] : null
         }
+        // A sketch point answers to start, end and center alike (as in the solver).
+        const own = curves.find(x => x.index === ref.curve)
+        if (own && own.kind === "point")
+            return own.points[0]
         for (const c of pointCandidates()) {
             if (c.point !== "origin" && c.point.curve === ref.curve && c.point.point === (ref.point || "start")
                     && (ref.point !== "fit" || c.point.index === ref.index))

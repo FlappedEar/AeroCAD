@@ -60,6 +60,7 @@ struct SketchCurve {
         Arc,    ///< points = {start, through, end} (three-point arc)
         Circle, ///< points = {center}, radius
         Spline, ///< points = interpolated fit points (>= 2), closed flag
+        Point,  ///< points = {position}; a sketch point (Fusion: Point): no edge, no profile
     };
     Kind kind = Kind::Line;
     std::vector<Vec2> points;

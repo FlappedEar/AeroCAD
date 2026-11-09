@@ -2253,3 +2253,128 @@ TEST_CASE("Design commands: Break a sketch curve where other curves cross it (CA
         CHECK(k[1].at("points")[1][0].get<double>() == Approx(10).margin(1e-3));
     }
 }
+
+TEST_CASE("Design commands: sketch points (CAD-235)", "[commands][cad][solver]")
+{
+    commands::Session s;
+    auto curves = [&](std::uint64_t id) { return run(s, "sketch.curves", {{"sketch", id}}).at("curves"); };
+    auto near = [](const Json& p, double x, double y) {
+        return std::hypot(p[0].get<double>() - x, p[1].get<double>() - y) < 1e-6;
+    };
+
+    // A rectangle with a free point inside, and a point on one corner.
+    const Json a = run(s, "sketch.create",
+                       {{"plane", "XY"},
+                        {"curves", Json::array({{{"type", "rectangle"}, {"corner", {0, 0}}, {"width", 40}, {"height", 20}},
+                                                {{"type", "point"}, {"at", {10, 5}}},
+                                                {{"type", "point"}, {"at", {40, 20}}}})}});
+    const auto id = a.at("id").get<std::uint64_t>();
+    {
+        const Json c = curves(id);
+        INFO(c.dump());
+        REQUIRE(c.size() == 6);
+        CHECK(c[4].at("kind") == "point");
+        CHECK(near(c[4].at("points")[0], 10, 5));
+    }
+    // Points bound no profile: still the one rectangle.
+    CHECK(run(s, "sketch.profiles", {{"sketch", id}}).at("profiles").size() == 1);
+
+    // Dimensions place the free point: 12 from the left side, 6 above the bottom.
+    run(s, "sketch.add_constraints",
+        {{"sketch", id},
+         {"constraints", Json::array({{{"type", "horizontal_distance"},
+                                       {"points", Json::array({{{"curve", 0}, {"point", "start"}}, {{"curve", 4}, {"point", "start"}}})},
+                                       {"value", 12}},
+                                      {{"type", "vertical_distance"},
+                                       {"points", Json::array({{{"curve", 0}, {"point", "start"}}, {{"curve", 4}, {"point", "start"}}})},
+                                       {"value", 6}}})}});
+    {
+        // Relative to the corner (the rectangle itself is free to move).
+        const Json c = curves(id);
+        INFO(c.dump());
+        const Json corner = c[0].at("points")[0];
+        CHECK(near(c[4].at("points")[0], corner[0].get<double>() + 12, corner[1].get<double>() + 6));
+    }
+
+    // The corner point is that corner: dragging the corner takes the point with it.
+    run(s, "sketch.move_point", {{"sketch", id}, {"point", {{"curve", 1}, {"point", "end"}}}, {"to", {44, 22}}});
+    {
+        const Json c = curves(id);
+        INFO(c.dump());
+        CHECK(near(c[5].at("points")[0], c[1].at("points")[1][0].get<double>(), c[1].at("points")[1][1].get<double>()));
+    }
+
+    // Mirror a point about a line, construction, delete; trim refuses a point.
+    const Json b = run(s, "sketch.create",
+                       {{"plane", "XY"},
+                        {"curves", Json::array({{{"type", "line"}, {"start", {0, -10}}, {"end", {0, 10}}},
+                                                {{"type", "point"}, {"at", {5, 3}}}})}});
+    const auto bid = b.at("id").get<std::uint64_t>();
+    run(s, "sketch.mirror", {{"sketch", bid}, {"curves", Json::array({1})}, {"line", 0}});
+    {
+        const Json c = curves(bid);
+        INFO(c.dump());
+        REQUIRE(c.size() == 3);
+        CHECK(c[2].at("kind") == "point");
+        CHECK(near(c[2].at("points")[0], -5, 3));
+    }
+    run(s, "sketch.set_construction", {{"sketch", bid}, {"curves", Json::array({2})}});
+    CHECK(curves(bid)[2].at("construction") == true);
+    CHECK_FALSE(s.execute("sketch.trim", {{"sketch", bid}, {"curve", 1}, {"at", {5, 3}}}).ok);
+    CHECK_FALSE(s.execute("sketch.offset", {{"sketch", bid}, {"curves", Json::array({1})}, {"distance", 2}}).ok);
+    run(s, "sketch.delete_curves", {{"sketch", bid}, {"curves", Json::array({1})}});
+    CHECK(curves(bid).size() == 2);
+
+    // A point on a line end is joined to it: Extend refuses that end (Codex review on #203).
+    const Json e = run(s, "sketch.create",
+                       {{"plane", "XY"},
+                        {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {10, 0}}},
+                                                {{"type", "line"}, {"start", {20, -5}}, {"end", {20, 5}}},
+                                                {{"type", "point"}, {"at", {10, 0}}}})}});
+    const auto eid = e.at("id").get<std::uint64_t>();
+    {
+        const auto r = s.execute("sketch.extend", {{"sketch", eid}, {"curve", 0}, {"at", {9, 0}}});
+        INFO(r.error);
+        CHECK_FALSE(r.ok);
+        CHECK(r.error.find("joined") != std::string::npos);
+        CHECK(near(curves(eid)[0].at("points")[1], 10, 0));
+    }
+    // "center" (and "end") of a point mean the point, in the command layer too: fix it there.
+    run(s, "sketch.add_constraints",
+        {{"sketch", eid}, {"constraints", Json::array({{{"type", "fix"}, {"point", {{"curve", 2}, {"point", "center"}}}}})}});
+    run(s, "sketch.add_constraints",
+        {{"sketch", eid},
+         {"constraints", Json::array({{{"type", "distance"},
+                                       {"points", Json::array({{{"curve", 2}, {"point", "end"}}, {{"curve", 0}, {"point", "start"}}})},
+                                       {"value", 8}}})}});
+    {
+        const Json c = curves(eid);
+        INFO(c.dump());
+        CHECK(near(c[2].at("points")[0], 10, 0)); // fixed where it was
+        CHECK(std::hypot(c[0].at("points")[0][0].get<double>() - 10, c[0].at("points")[0][1].get<double>()) ==
+              Approx(8).margin(1e-6));
+    }
+
+    // A sketch of points only evaluates (nothing to extrude, but no error).
+    const Json c = run(s, "sketch.create", {{"plane", "XY"}, {"curves", Json::array({{{"type", "point"}, {"at", {1, 2}}}})}});
+    CHECK(curves(c.at("id").get<std::uint64_t>()).size() == 1);
+    CHECK(run(s, "sketch.profiles", {{"sketch", c.at("id")}}).at("profiles").empty());
+
+    // A tangent arc that ends on a sketch point stays joined to it (Codex review): drag the
+    // point and the arc's end follows.
+    {
+        const Json t = run(s, "sketch.create",
+                           {{"plane", "XY"},
+                            {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {10, 0}}},
+                                                    {{"type", "point"}, {"at", {20, 10}}}})}});
+        const auto tid = t.at("id").get<std::uint64_t>();
+        run(s, "sketch.add_curves",
+            {{"sketch", tid},
+             {"curves", Json::array({{{"type", "tangent_arc"}, {"from", {{"curve", 0}, {"point", "end"}}}, {"end", {20, 10}}}})}});
+        run(s, "sketch.move_point", {{"sketch", tid}, {"point", {{"curve", 1}, {"point", "start"}}}, {"to", {25, 10}}});
+        const Json tc = curves(tid);
+        REQUIRE(tc.size() == 3);
+        CHECK(near(tc[1].at("points")[0], 25, 10));
+        CHECK(near(tc[2].at("points")[2], 25, 10));
+    }
+}

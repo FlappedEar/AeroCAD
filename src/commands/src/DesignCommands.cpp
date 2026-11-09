@@ -194,18 +194,20 @@ Json curveSchema()
          "at any angle, then the other side; height is signed, positive to the left of start -> end); circle {center, radius | diameter}; "
          "arc {start, through, end} (three-point arc); center_arc {center, radius, startAngle, endAngle} "
          "(degrees, counter-clockwise); polygon {center, radius, sides, angle?}; slot {start, end, width} "
-         "(centre-to-centre); spline {points, closed?}; tangent_arc {from: {curve, point: start | end}, end} "
+         "(centre-to-centre); spline {points, closed?}; point {at} (a sketch point: no edge, no profile; "
+         "it joins a curve end at the same place); tangent_arc {from: {curve, point: start | end}, end} "
          "(sketch.add_curves only: an arc leaving the end of a line or arc tangentially, kept tangent). "
          "construction: true excludes it from profiles."},
         {"properties",
          {{"type",
            {{"type", "string"},
             {"enum", {"line", "rectangle", "center_rectangle", "three_point_rectangle", "circle", "arc", "center_arc", "polygon", "slot",
-                      "spline", "tangent_arc"}}}},
+                      "spline", "point", "tangent_arc"}}}},
           {"from", {{"type", "object"},
                     {"description", "tangent_arc: the end it starts from, {curve: index, point: start | end}."}}},
           {"start", point2("Start point.")},
           {"end", point2("End point.")},
+          {"at", point2("point: its position.")},
           {"through", point2("Point on the arc.")},
           {"corner", point2("Rectangle corner.")},
           {"opposite", point2("Opposite rectangle corner.")},
@@ -800,6 +802,8 @@ geometry::Vec2 pointPosition(const std::vector<geometry::SketchCurve>& curves, c
     const auto& c = curves[i];
     const std::string which = ref.value("point", std::string("start"));
     using K = geometry::SketchCurve::Kind;
+    if (c.kind == K::Point && which != "fit" && !c.points.empty())
+        return c.points[0]; // start, end and centre of a sketch point are the point
     if (which == "center") {
         if (c.kind == K::Circle)
             return c.points[0];
@@ -912,6 +916,12 @@ std::vector<std::pair<std::size_t, std::string>> curveEndsAt(const std::vector<g
     std::vector<std::pair<std::size_t, std::string>> out;
     for (std::size_t j = 0; j < curves.size(); ++j) {
         const auto& c = curves[j];
+        // A sketch point has one position; a curve ending on it stays joined to it.
+        if (c.kind == K::Point && !c.points.empty()) {
+            if (std::hypot(c.points[0].x - at.x, c.points[0].y - at.y) < 1e-6)
+                out.emplace_back(j, "start");
+            continue;
+        }
         const bool open = c.kind == K::Line || (c.kind == K::Arc && c.points.size() == 3) ||
                           (c.kind == K::Spline && !c.closed);
         if (!open || c.points.size() < 2)
@@ -1624,7 +1634,7 @@ void registerSketchCommands(CommandRegistry& r)
               Json curves = Json::array();
               for (std::size_t i = 0; i < sk.curves.size(); ++i) {
                   const auto& c = sk.curves[i];
-                  static const char* kinds[] = {"line", "arc", "circle", "spline"};
+                  static const char* kinds[] = {"line", "arc", "circle", "spline", "point"};
                   Json pts = Json::array();
                   for (const auto& p : c.points)
                       pts.push_back(Json::array({p.x, p.y}));
