@@ -389,6 +389,9 @@ on the run in the run list, type the name and press Enter (or click elsewhere); 
 name removes the label ([run list](images/audit/cad-174-rename-run.png)). The label is saved
 in the run's `run.json`; `simulation.rename` does the same (at most 80 characters, one line).
 
+Next to its name, each run in the run list shows when it was started: "11:17" today,
+"8 Nov 11:17" before that, so runs of the same part can be told apart (CAD-223).
+
 Each run in the run list has a line with its conditions, for example "55.56 m/s (200 km/h) ·
 flow +X · medium mesh · fixed floor at Z -40 mm" (CAD-181,
 [run list](images/audit/cad-181-run-conditions.png)); `simulation.list` and
