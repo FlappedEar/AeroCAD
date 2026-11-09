@@ -57,6 +57,9 @@ struct SketchConstraint {
     double value = 0.0;
     /// Fix: positions to hold `points` at (same order). Empty = where they were drawn.
     std::vector<geometry::Vec2> at = {};
+    /// Tangent: which branch, 0 = as drawn. Line and arc/circle: +1 = centre left of the line's
+    /// start->end, -1 = right. Two arcs/circles: +1 = touching outside, -1 = inside.
+    int side = 0;
 };
 
 struct SketchSolveResult {

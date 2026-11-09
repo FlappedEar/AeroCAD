@@ -588,7 +588,8 @@ private:
                 const double d0 = len(k.center.at(x0) - l.center.at(x0));
                 const double r1 = k.radius(x0);
                 const double r2 = l.radius(x0);
-                const bool external = std::abs(d0 - (r1 + r2)) <= std::abs(d0 - std::abs(r1 - r2));
+                const bool external = c.side != 0 ? c.side > 0
+                                                  : std::abs(d0 - (r1 + r2)) <= std::abs(d0 - std::abs(r1 - r2));
                 const double s = signOf(r1 - r2);
                 std::vector<std::size_t> vars = circVars(k);
                 for (const std::size_t v : circVars(l))
@@ -605,7 +606,7 @@ private:
                     const Vec2 d = b.at(x) - a.at(x);
                     return cross(d, k.center.at(x) - a.at(x)) / safe(len(d));
                 };
-                const double s = signOf(signedDist(x0));
+                const double s = c.side != 0 ? double(c.side) : signOf(signedDist(x0));
                 add(ci, circVars(k, {a, b}), 1, [k, s, signedDist](const std::vector<double>& x, double* r) {
                     r[0] = s * signedDist(x) - k.radius(x);
                 });

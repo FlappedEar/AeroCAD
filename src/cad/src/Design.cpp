@@ -594,6 +594,8 @@ SketchConstraint parseConstraint(const Eval& ev, const Json& j)
     if (has(j, "at"))
         for (const auto& p : j.at("at"))
             c.at.push_back(ev.vec2(p));
+    if (c.type == SketchConstraint::Type::Tangent && has(j, "side"))
+        c.side = j.at("side").get<double>() < 0 ? -1 : 1;
     if (isDimension(c.type)) {
         c.value = ev.num(j, "value");
         if (c.type != SketchConstraint::Type::Angle && c.value < 0)

@@ -14,6 +14,7 @@
 #include <numbers>
 #include <limits>
 #include <optional>
+#include <tuple>
 #include <string>
 #include <utility>
 
@@ -144,6 +145,10 @@ Json constraintSchema()
           {"point", constraintPointSchema()},
           {"points", {{"type", "array"}, {"items", constraintPointSchema()}}},
           {"value", numberOrExpr("Dimension value (mm, or degrees for angle).")},
+          {"side", {{"type", "integer"},
+                    {"enum", {-1, 1}},
+                    {"description", "tangent: which branch (omit = as drawn). Line and arc/circle: 1 = centre left of "
+                                    "the line's start->end, -1 = right. Two arcs/circles: 1 = outside, -1 = inside."}}},
           {"at", {{"type", "array"},
                   {"items", point2("Position.")},
                   {"description", "fix: positions to hold the points at. sketch.add_constraints fills it with the "
@@ -682,8 +687,9 @@ geometry::Vec2 pointPosition(const std::vector<geometry::SketchCurve>& curves, c
 
 /// A tangent arc (Fusion: Arc > Tangent Arc), {from: {curve, point}, end}: an arc that leaves the
 /// end of a line or arc in its direction and ends at `end`, as a three-point arc. Returns the
-/// arc item and the index of the curve it is tangent to.
-std::pair<Json, std::size_t> resolveTangentArc(const std::vector<geometry::SketchCurve>& curves, const Json& item)
+/// arc item, the index of the curve it is tangent to and the tangent side for that constraint
+/// (SketchConstraint::side), taken from the solved geometry it was built on.
+std::tuple<Json, std::size_t, int> resolveTangentArc(const std::vector<geometry::SketchCurve>& curves, const Json& item)
 {
     using K = geometry::SketchCurve::Kind;
     if (!item.contains("from") || !item.contains("end"))
@@ -699,6 +705,7 @@ std::pair<Json, std::size_t> resolveTangentArc(const std::vector<geometry::Sketc
     const geometry::Vec2 s = pointPosition(curves, {{"curve", i}, {"point", which}});
     // Direction leaving the curve at that end.
     geometry::Vec2 t{0, 0};
+    std::optional<geometry::Vec2> srcCtr;
     if (c.kind == K::Line) {
         const auto& a = c.points[0];
         const auto& b = c.points[1];
@@ -707,6 +714,7 @@ std::pair<Json, std::size_t> resolveTangentArc(const std::vector<geometry::Sketc
         const auto ctr = arcCenter(c);
         if (!ctr)
             throw CommandError("tangent_arc: curve " + std::to_string(i) + " is a degenerate arc");
+        srcCtr = geometry::Vec2{ctr->x, ctr->y};
         const auto& p = c.points;
         const bool ccw = (p[1].x - p[0].x) * (p[2].y - p[0].y) - (p[1].y - p[0].y) * (p[2].x - p[0].x) > 0;
         // Direction of travel at s (counter-clockwise: the radius turned left), reversed at the start.
@@ -744,7 +752,17 @@ std::pair<Json, std::size_t> resolveTangentArc(const std::vector<geometry::Sketc
              {"end", Json::array({end.x, end.y})}};
     if (item.value("construction", false))
         arc["construction"] = true;
-    return {arc, i};
+    // The branch the arc was built on: for a line, the centre's side of start->end; for an arc,
+    // outside (centres on opposite sides of the joint) or inside.
+    int tangentSide = 1;
+    if (srcCtr)
+        tangentSide = (ctr.x - s.x) * (srcCtr->x - s.x) + (ctr.y - s.y) * (srcCtr->y - s.y) < 0 ? 1 : -1;
+    else {
+        const auto& a = c.points[0];
+        const auto& b = c.points[1];
+        tangentSide = (b.x - a.x) * (ctr.y - a.y) - (b.y - a.y) * (ctr.x - a.x) > 0 ? 1 : -1;
+    }
+    return {arc, i, tangentSide};
 }
 
 /// A new fix constraint holds the geometry where it is now (after earlier dimensions),
@@ -918,9 +936,11 @@ void registerSketchCommands(CommandRegistry& r)
                       if (solved == d.sketches().end())
                           throw CommandError("The sketch is not evaluated");
                       const std::size_t next = solved->second.curves.size();
-                      auto [arc, from] = resolveTangentArc(solved->second.curves, c);
+                      auto [arc, from, side] = resolveTangentArc(solved->second.curves, c);
                       curves.push_back(arc);
-                      constraints.push_back({{"type", "tangent"}, {"curves", Json::array({from, next})}});
+                      // The side is explicit for the same reason: the solver would pick it from
+                      // the stored source, which may lie across the new centre.
+                      constraints.push_back({{"type", "tangent"}, {"curves", Json::array({from, next})}, {"side", side}});
                       // Joined explicitly: the solver joins ends by their stored positions,
                       // which differ from the solved ones once dimensions have moved the source.
                       constraints.push_back({{"type", "coincident"},

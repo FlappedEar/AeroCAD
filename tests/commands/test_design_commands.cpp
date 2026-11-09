@@ -1569,4 +1569,30 @@ TEST_CASE("Design commands: a tangent arc stays on a dimensioned line's end (CAD
     const auto& ea = ec.at("curves")[1].at("points");
     CHECK(ea[0][0].get<double>() == Approx(10).margin(1e-6));
     CHECK(ea[0][1].get<double>() == Approx(0).margin(1e-6));
+
+
+    // Codex: a line drawn at y = 0 and dimensioned to y = 20 lies, as stored, on the other side of
+    // the new arc's centre (10, 10); the arc must still keep its end and turn downwards.
+    const Json h = run(s, "sketch.create",
+                       {{"plane", "XY"},
+                        {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {10, 0}}}})},
+                        {"constraints", Json::array({{{"type", "fix"},
+                                                      {"points", Json::array({{{"curve", 0}, {"point", "start"}}})},
+                                                      {"at", Json::array({Json::array({0, 20})})}},
+                                                     {{"type", "horizontal"}, {"curve", 0}},
+                                                     {{"type", "length"}, {"curve", 0}, {"value", 10}}})}});
+    const auto hid = h.at("id").get<std::uint64_t>();
+    const Json hl = run(s, "sketch.curves", {{"sketch", hid}});
+    REQUIRE(hl.at("curves")[0].at("points")[1][1].get<double>() == Approx(20).margin(1e-6));
+    run(s, "sketch.add_curves",
+        {{"sketch", hid},
+         {"curves", Json::array({{{"type", "tangent_arc"}, {"from", {{"curve", 0}, {"point", "end"}}}, {"end", {20, 10}}}})}});
+    const Json hc = run(s, "sketch.curves", {{"sketch", hid}});
+    const auto& ha = hc.at("curves")[1].at("points");
+    // The solve moves the stored line up to y = 20 together with the arc, so the free arc end
+    // settles within about 1e-3 mm of where it was put (the wrong branch moved it ~11 mm).
+    CHECK(ha[0][0].get<double>() == Approx(10).margin(1e-6));
+    CHECK(ha[0][1].get<double>() == Approx(20).margin(1e-6));
+    CHECK(ha[2][0].get<double>() == Approx(20).margin(1e-2));
+    CHECK(ha[2][1].get<double>() == Approx(10).margin(1e-2));
 }
