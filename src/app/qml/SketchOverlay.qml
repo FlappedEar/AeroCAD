@@ -60,6 +60,8 @@ Item {
     signal toolRequested(string tool)
 
     readonly property bool constraintTool: constraintLayer.toolNames.indexOf(tool) >= 0
+    /// The constraint glyph and pick layer (for tests and tools that place constraints).
+    readonly property alias constraintGlyphs: constraintLayer
 
     readonly property bool active: sketch !== null && tool !== ""
     /// With no tool (Fusion's select mode): curves picked with the mouse, indices of

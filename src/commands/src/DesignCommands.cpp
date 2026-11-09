@@ -640,7 +640,8 @@ std::optional<geometry::Vec2> arcCenter(const geometry::SketchCurve& c)
                           (aa * (e.x - b.x) + bb * (a.x - e.x) + ee * (b.x - a.x)) / den};
 }
 
-/// Position of a constraint point reference ("origin" or {curve, point}) in solved curves.
+/// Position of a constraint point reference ("origin", {curve, point} or a spline fit point
+/// {curve, point: fit, index}) in solved curves.
 geometry::Vec2 pointPosition(const std::vector<geometry::SketchCurve>& curves, const Json& ref)
 {
     if (ref.is_string())
@@ -656,6 +657,10 @@ geometry::Vec2 pointPosition(const std::vector<geometry::SketchCurve>& curves, c
             return c.points[0];
         if (const auto ctr = arcCenter(c))
             return *ctr;
+    } else if (which == "fit") {
+        const auto k = ref.value("index", std::size_t{0});
+        if (c.kind == K::Spline && k < c.points.size())
+            return c.points[k];
     } else if (c.kind != K::Circle && !c.points.empty()) {
         return which == "end" ? c.points.back() : c.points.front();
     }

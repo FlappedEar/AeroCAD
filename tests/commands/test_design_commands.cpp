@@ -748,6 +748,15 @@ TEST_CASE("Design commands: fit points between the ends of a spline (CAD-198)", 
     CHECK(a[0].get<double>() == Approx(b[0].get<double>()).margin(1e-5));
     CHECK(a[1].get<double>() == Approx(b[1].get<double>()).margin(1e-5));
 
+    // A Fix on a fit point holds it where it is (not at the spline's start).
+    run(s, "sketch.add_constraints",
+        {{"sketch", id}, {"constraints", Json::array({{{"type", "fix"}, {"points", Json::array({{{"curve", 0}, {"point", "fit"}, {"index", 1}}})}}})}});
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    const auto& fixAt = c.at("constraints").back().at("at")[0];
+    CHECK(fixAt[0].get<double>() == Approx(10).margin(1e-4));
+    CHECK(fixAt[1].get<double>() == Approx(20).margin(1e-4));
+    CHECK(c.at("curves")[0].at("points")[1][1].get<double>() == Approx(20).margin(1e-4));
+
     // An index past the fit points is an error, not a crash.
     const auto bad = s.execute("sketch.move_point",
                                {{"sketch", id}, {"point", {{"curve", 0}, {"point", "fit"}, {"index", 9}}}, {"to", {0, 0}}});
