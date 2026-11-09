@@ -244,6 +244,7 @@ ApplicationWindow {
         SketchMenuItem { action: lineAction; icon.source: Theme.iconUrl("line") }
         SketchMenuItem { action: rectangleAction; icon.source: Theme.iconUrl("rectangle") }
         SketchMenuItem { action: centerRectangleAction; icon.source: Theme.iconUrl("center-rectangle") }
+        SketchMenuItem { action: rectangle3PointAction; icon.source: Theme.iconUrl("rectangle-3point") }
         SketchMenuItem { action: circleAction; icon.source: Theme.iconUrl("circle") }
         SketchMenuItem { action: circle2PointAction; icon.source: Theme.iconUrl("circle-2point") }
         SketchMenuItem { action: circle3PointAction; icon.source: Theme.iconUrl("circle-3point") }
@@ -1303,6 +1304,7 @@ ApplicationWindow {
     Action { id: sketchOffsetAction; text: qsTr("&Offset"); shortcut: "O"; enabled: !!window.activeSketch && (viewport.sketchOverlay.selectedCurves.length > 0 || window.sketchTool === "offset"); checkable: true; checked: window.sketchTool === "offset"; onTriggered: { if (window.sketchTool !== "offset") viewport.sketchOverlay.startOffset(); else window.sketchTool_("") } }
     Action { id: sketchMirrorAction; text: qsTr("&Mirror"); enabled: !!window.activeSketch && (viewport.sketchOverlay.selectedCurves.length > 0 || window.sketchTool === "mirror"); checkable: true; checked: window.sketchTool === "mirror"; onTriggered: { if (window.sketchTool !== "mirror") viewport.sketchOverlay.startMirror(); else window.sketchTool_("") } }
     Action { id: centerRectangleAction; text: qsTr("Center Rectan&gle"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "center_rectangle"; onTriggered: window.sketchTool_("center_rectangle") }
+    Action { id: rectangle3PointAction; text: qsTr("3-Po&int Rectangle"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "rectangle_3point"; onTriggered: window.sketchTool_("rectangle_3point") }
     Action { id: circle2PointAction; text: qsTr("&2-Point Circle"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "circle_2point"; onTriggered: window.sketchTool_("circle_2point") }
     Action { id: circle3PointAction; text: qsTr("&3-Point Circle"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "circle_3point"; onTriggered: window.sketchTool_("circle_3point") }
     Action { id: centerArcAction; text: qsTr("C&enter Point Arc"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "center_arc"; onTriggered: window.sketchTool_("center_arc") }
@@ -1601,6 +1603,7 @@ ApplicationWindow {
             MenuItem { action: lineAction }
             MenuItem { action: rectangleAction }
             MenuItem { action: centerRectangleAction }
+            MenuItem { action: rectangle3PointAction }
             MenuItem { action: circleAction }
             MenuItem { action: circle2PointAction }
             MenuItem { action: circle3PointAction }
@@ -2066,6 +2069,7 @@ ApplicationWindow {
                 // Past maxVisible: in the CREATE caption menu (Fusion keeps them in the
                 // Rectangle / Circle / Arc drop-downs).
                 ToolCommand { action: centerRectangleAction; text: qsTr("Center Rectangle"); iconName: "center-rectangle" }
+                ToolCommand { action: rectangle3PointAction; text: qsTr("3-Point Rectangle"); iconName: "rectangle-3point" }
                 ToolCommand { action: circle2PointAction; text: qsTr("2-Point Circle"); iconName: "circle-2point" }
                 ToolCommand { action: circle3PointAction; text: qsTr("3-Point Circle"); iconName: "circle-3point" }
                 ToolCommand { action: centerArcAction; text: qsTr("Center Arc"); iconName: "center-arc" }
