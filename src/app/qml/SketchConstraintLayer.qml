@@ -79,6 +79,8 @@ Item {
 
     function isLine(i) { return !!curves[i] && curves[i].kind === "line" }
 
+    function isConic(i) { return !!curves[i] && curves[i].kind === "conic" }
+
     /// An ellipse or an elliptical arc (a trimmed ellipse).
     function isEllipse(i) { return !!curves[i] && (curves[i].kind === "ellipse" || curves[i].kind === "elliptical_arc") }
 
@@ -373,7 +375,9 @@ Item {
             if (curvesPicked.length === 2) {
                 const [i, j] = curvesPicked
                 const ok = tool === "equal" ? (isLine(i) && isLine(j)) || (isCirc(i) && isCirc(j)) || (isEllipse(i) && isEllipse(j))
-                         : tool === "tangent" ? isCirc(i) || isCirc(j)
+                         // A conic is tangent to lines only (at the end nearer the line).
+                         : tool === "tangent" ? (isConic(i) || isConic(j) ? (isConic(i) && isLine(j)) || (isLine(i) && isConic(j))
+                                                                          : isCirc(i) || isCirc(j))
                          : tool === "concentric" ? isCirc(i) && isCirc(j)
                          : isLine(i) && isLine(j)
                 if (ok && i !== j)

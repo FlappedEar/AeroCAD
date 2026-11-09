@@ -1760,6 +1760,26 @@ TEST_CASE("Design commands: Sketch Conic Curve (CAD-262)", "[commands][cad][solv
         CHECK(near(p[0], 0, 0));
         CHECK(near(p[2], 20, 0));
     }
+    // A line apart from the conic (Codex review of #226): tangent puts the conic's end on the
+    // line too, not only its direction along it.
+    const auto apart = run(s, "sketch.create",
+                           {{"plane", "XY"},
+                            {"curves", Json::array({{{"type", "conic"}, {"start", {0, 0}}, {"end", {20, 0}}, {"apex", {10, 10}}},
+                                                    {{"type", "line"}, {"start", {0, 5}}, {"end", {10, 15}}}})}})
+                           .at("id")
+                           .get<std::uint64_t>();
+    run(s, "sketch.add_constraints",
+        {{"sketch", apart},
+         {"constraints", Json::array({{{"type", "fix"}, {"curve", 1}}, {{"type", "tangent"}, {"curves", Json::array({1, 0})}}})}});
+    c = run(s, "sketch.curves", {{"sketch", apart}});
+    INFO(c.dump());
+    {
+        const Json& p = c.at("curves")[0].at("points");
+        // On y = x + 5, and the apex too (the line's direction from there).
+        CHECK(p[0][1].get<double>() - p[0][0].get<double>() == Approx(5).margin(1e-6));
+        CHECK(p[1][1].get<double>() - p[1][0].get<double>() == Approx(5).margin(1e-6));
+    }
+
     // Tangent to an arc is refused (only lines for now).
     const auto ta = run(s, "sketch.create",
                         {{"plane", "XY"},
