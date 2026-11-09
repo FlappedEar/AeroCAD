@@ -25,11 +25,12 @@ and the applied input `units`. `outputUnits` is always `mm`.
 The setting does not override embedded units. If a file declares the wrong unit, apply
 an explicit **Convert**, **Calibrate**, or **Scale** operation after import.
 
-**Names and colours (CAD-227).** STEP export writes one product per body, named after the
-body, with its Appearance colour. Importing a STEP file with several bodies gives one part
-per body, named from the file (or "<file name> <n>" when the file has no name), with the
-file's colours; one Undo removes them all. The result is the first part, and `parts` lists
-every part the import made.
+**Names and colours (CAD-227, CAD-228).** STEP export writes one product per body, named after
+the body, with its Appearance colour; 3MF export writes each body's colour as a core-spec
+`basematerials` display colour. Importing a STEP file with several bodies, or a 3MF file with
+several build items, gives one part per body, named from the file (or "<file name> <n>" when
+the file has no name), with the file's colours; one Undo removes them all. The result is the
+first part, and `parts` lists every part the import made.
 
 ## Orientation
 

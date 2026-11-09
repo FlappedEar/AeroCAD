@@ -386,7 +386,8 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND sh ${PROJECT_SOURCE_DIR}/tests/gui/project_recovery.sh $<TARGET_FILE:aerocad> ${PROJECT_SOURCE_DIR}
                 ${CMAKE_CURRENT_BINARY_DIR}/project-recovery)
     set_tests_properties(app_project_recovery_test PROPERTIES LABELS gui TIMEOUT 120)
-    # CAD-227: a STEP file with several bodies imports as one named, coloured part per body.
+    # CAD-227 / CAD-228: a STEP or 3MF file with several bodies imports as one named, coloured part
+    # per body.
     add_test(NAME app_step_bodies_test
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/step_bodies.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
