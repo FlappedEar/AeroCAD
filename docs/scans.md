@@ -15,7 +15,9 @@ command, available to scripts and to an AI agent over MCP (`commands.list`).
 
 In the app, a scan whose longest side is under 20 mm or over 50 m starts its guide with
 "Check the size": it names the unit the file was most likely saved in (the one that makes it
-0.1 to 10 m long) and converts it in one click (CAD-140).
+0.1 to 10 m long) and converts it in one click (CAD-140). The part remembers the unit it was
+imported in (`importUnits`, saved in the project), so a millimetre file imported as metres is
+reported as "imported as metres, most likely saved in millimetres (×0.001)" (CAD-239).
 
 File units are converted exactly once. A 10 × 20 × 30 mm STEP or 3MF model stays
 10 × 20 × 30 mm even if the last unitless scan was imported in centimetres or inches.

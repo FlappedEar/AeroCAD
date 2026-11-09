@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "aerocad/project/ProjectFile.hpp"
 
+#include "aerocad/core/Units.hpp"
 #include "aerocad/geometry/Shape.hpp"
 #include "aerocad/geometry/Tessellation.hpp"
 
@@ -161,6 +162,8 @@ std::string encodeProject(const ProjectData& data)
         Json j{{"id", p.id}, {"name", p.name}, {"source", p.source}, {"visible", p.visible}, {"kind", "imported"}};
         if (!p.color.empty())
             j["color"] = p.color;
+        if (!p.importUnits.empty())
+            j["importUnits"] = p.importUnits;
         if (p.mesh && !p.mesh->isEmpty()) {
             const std::string entry = "meshes/" + std::to_string(p.id) + ".amesh";
             blobs.emplace_back(entry, encodeMesh(*p.mesh));
@@ -284,6 +287,8 @@ ProjectData decodeImpl(std::string_view bytes)
         p.source = j.value("source", "");
         p.visible = j.value("visible", true);
         p.color = savedColor(j);
+        if (const auto u = j.value("importUnits", std::string{}); core::parseLengthUnit(u))
+            p.importUnits = u;
         p.kind = kindFromName(j.value("kind", "imported"));
         if (p.kind != model::PartKind::Imported)
             throw ProjectError("Part " + p.name + ": only imported parts are stored");

@@ -500,7 +500,8 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/scan_units_check.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
-    set_tests_properties(app_scan_units_check_test PROPERTIES LABELS gui TIMEOUT 60)
+    set_tests_properties(app_scan_units_check_test PROPERTIES LABELS gui TIMEOUT 60
+        ENVIRONMENT "XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/scan-units-data;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/scan-units-data")
     # CAD-152: drag arrows of Fillet, Chamfer and Shell; Shell of a filleted body.
     add_test(NAME app_feature_size_arrows_test
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/feature_size_arrows.ui

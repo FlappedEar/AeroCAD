@@ -48,6 +48,9 @@ Manifest (version 1):
   results are stored. Each body has `name`, `brep` and, for a step with several bodies,
   `slot`: its stable place (a fin's place in the stack, mirrored fins from 1000), which gives
   the body's id.
+- An imported part may carry `color` (Appearance, `#rrggbb`) and `importUnits`: the unit a
+  unitless file (STL, OBJ, PLY, BREP) was read in when it was not mm, so the size check can
+  say "imported as metres, saved in millimetres" (CAD-239).
 - `timelineParts` keeps the part ids, names and visibility of bodies and sketches, so ids
   that scripts or an agent hold stay valid after reopening.
 - `view` is the camera, opaque to the format (written by the UI). While a part is isolated
