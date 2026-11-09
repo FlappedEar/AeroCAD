@@ -202,7 +202,7 @@ Json curveSchema()
            {{"type", "string"},
             {"description", "Curve kind; selects which other fields apply."},
             {"enum", {"line", "rectangle", "center_rectangle", "three_point_rectangle", "circle", "arc", "center_arc", "polygon", "slot",
-                      "spline", "point", "tangent_arc"}}}},
+                      "spline", "point", "tangent_arc", "ellipse"}}}},
           {"from", {{"type", "object"},
                     {"description", "tangent_arc: the end it starts from, {curve: index, point: start | end}."}}},
           {"start", point2("Start point.")},
@@ -219,7 +219,9 @@ Json curveSchema()
           {"startAngle", numberOrExpr("Start angle (degrees).")},
           {"endAngle", numberOrExpr("End angle (degrees).")},
           {"sides", numberOrExpr("Number of polygon sides.")},
-          {"angle", numberOrExpr("Polygon rotation (degrees).")},
+          {"angle", numberOrExpr("Polygon rotation, or the direction of an ellipse's major axis (degrees).")},
+          {"major_radius", numberOrExpr("ellipse: centre to the end of the major axis (mm).")},
+          {"minor_radius", numberOrExpr("ellipse: half the minor axis (mm).")},
           {"points", {{"type", "array"}, {"items", point2("Fit point.")}, {"minItems", 2},
                       {"description", "spline: fit points, at least 2."}}},
           {"closed", {{"type", "boolean"}, {"description", "spline: true joins the last point to the first."}}},
@@ -236,8 +238,8 @@ Json curveSchema()
 Json constraintPointSchema()
 {
     return Json{{"type", Json::array({"string", "object"})},
-                {"description", "\"origin\" (sketch origin) or {curve: index, point: start | end | center}, "
-                                "or a fit point of a spline {curve, point: fit, index} (0 = first fit point)."},
+                {"description", "\"origin\" (sketch origin) or {curve: index, point: start | end | center} "
+                                "(an ellipse: center, end = the end of its major axis), or a fit point of a spline {curve, point: fit, index} (0 = first fit point)."},
                 {"properties", {{"curve", {{"type", "integer"}, {"minimum", 0}, {"description", "Curve index in sketch.curves."}}},
                                 {"point", {{"type", "string"}, {"enum", {"start", "end", "center", "fit"}},
                                            {"description", "Which point of the curve."}}},
@@ -258,7 +260,8 @@ Json constraintSchema()
          "or 2 arcs, curve: line} (stored as the matching point symmetries, plus equal radii); fix "
          "{points and/or curves}. Dimensions (value: number or expression): distance {points: 2} or {point, "
          "curve: line}; horizontal_distance / vertical_distance {points: 2}; length {curve: line}; radius / "
-         "diameter {curve}; angle {curves: 2 lines} (degrees)."},
+         "diameter {curve}; angle {curves: 2 lines} (degrees); major_radius / minor_radius {curve: ellipse} "
+         "(horizontal / vertical on an ellipse turn its major axis)."},
         {"properties",
          {{"type",
            {{"type", "string"},
@@ -266,7 +269,7 @@ Json constraintSchema()
             {"enum", {"coincident", "point_on_curve", "midpoint", "horizontal", "vertical", "parallel",
                       "perpendicular", "collinear", "tangent", "equal", "concentric", "symmetric", "fix",
                       "distance", "horizontal_distance", "vertical_distance", "length", "radius", "diameter",
-                      "angle"}}}},
+                      "angle", "major_radius", "minor_radius"}}}},
           {"curve", {{"type", "integer"}, {"minimum", 0}, {"description", "Curve index in sketch.curves."}}},
           {"curves", {{"type", "array"}, {"items", {{"type", "integer"}, {"minimum", 0}}},
                       {"description", "Curve indices in sketch.curves."}}},
@@ -791,8 +794,13 @@ geometry::Vec2 curvesPivot(const cad::Design& d, cad::FeatureId id, const std::v
             if (i >= it->second.curves.size())
                 continue;
             const auto& c = it->second.curves[i];
-            for (const auto& p : c.points) {
-                const double rad = c.kind == geometry::SketchCurve::Kind::Circle ? c.radius : 0.0;
+            // An ellipse is bounded around its centre (its axis end is on it).
+            const bool oval = c.kind == geometry::SketchCurve::Kind::Ellipse;
+            const auto pts = oval ? std::vector<geometry::Vec2>{c.points[0]} : c.points;
+            for (const auto& p : pts) {
+                const double rad = c.kind == geometry::SketchCurve::Kind::Circle ? c.radius
+                                   : oval ? std::max(c.radius, std::hypot(c.points[1].x - p.x, c.points[1].y - p.y))
+                                          : 0.0;
                 lo[0] = std::min(lo[0], p.x - rad), lo[1] = std::min(lo[1], p.y - rad);
                 hi[0] = std::max(hi[0], p.x + rad), hi[1] = std::max(hi[1], p.y + rad);
             }
@@ -835,6 +843,8 @@ geometry::Vec2 pointPosition(const std::vector<geometry::SketchCurve>& curves, c
     using K = geometry::SketchCurve::Kind;
     if (c.kind == K::Point && which != "fit" && !c.points.empty())
         return c.points[0]; // start, end and centre of a sketch point are the point
+    if (c.kind == K::Ellipse && (which == "center" || which == "end"))
+        return which == "center" ? c.points[0] : c.points[1]; // end: of the major axis
     if (which == "center") {
         if (c.kind == K::Circle)
             return c.points[0];
@@ -844,7 +854,7 @@ geometry::Vec2 pointPosition(const std::vector<geometry::SketchCurve>& curves, c
         const auto k = ref.value("index", std::size_t{0});
         if (c.kind == K::Spline && k < c.points.size())
             return c.points[k];
-    } else if (c.kind != K::Circle && !c.points.empty()) {
+    } else if (c.kind != K::Circle && c.kind != K::Ellipse && !c.points.empty()) {
         return which == "end" ? c.points.back() : c.points.front();
     }
     throw CommandError("Curve " + std::to_string(i) + " has no point '" + which + "'");
@@ -1840,7 +1850,7 @@ void registerSketchCommands(CommandRegistry& r)
               Json curves = Json::array();
               for (std::size_t i = 0; i < sk.curves.size(); ++i) {
                   const auto& c = sk.curves[i];
-                  static const char* kinds[] = {"line", "arc", "circle", "spline", "point"};
+                  static const char* kinds[] = {"line", "arc", "circle", "spline", "point", "ellipse"};
                   Json pts = Json::array();
                   for (const auto& p : c.points)
                       pts.push_back(Json::array({p.x, p.y}));
@@ -1848,6 +1858,25 @@ void registerSketchCommands(CommandRegistry& r)
                           {"construction", c.construction}};
                   if (c.kind == geometry::SketchCurve::Kind::Circle)
                       cj["radius"] = c.radius;
+                  if (c.kind == geometry::SketchCurve::Kind::Ellipse) {
+                      // Centre, the end of the major axis, radii and the axis angle (degrees);
+                      // samples draw it.
+                      const geometry::Vec2 o = c.points[0], e = c.points[1];
+                      const double major = std::hypot(e.x - o.x, e.y - o.y);
+                      const double turn = std::atan2(e.y - o.y, e.x - o.x);
+                      cj["center"] = Json::array({o.x, o.y});
+                      cj["majorRadius"] = major;
+                      cj["minorRadius"] = c.radius;
+                      cj["angle"] = turn * 180 / std::numbers::pi;
+                      Json samples = Json::array();
+                      for (int k = 0; k <= 96; ++k) {
+                          const double t = 2 * std::numbers::pi * k / 96;
+                          const double u = major * std::cos(t), w = c.radius * std::sin(t);
+                          samples.push_back(Json::array({o.x + u * std::cos(turn) - w * std::sin(turn),
+                                                         o.y + u * std::sin(turn) + w * std::cos(turn)}));
+                      }
+                      cj["samples"] = samples;
+                  }
                   if (c.kind == geometry::SketchCurve::Kind::Spline) {
                       cj["closed"] = c.closed;
                       // The real curve for drawing (points holds only the fit points).

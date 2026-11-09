@@ -736,6 +736,17 @@ void appendCurves(const Eval& ev, const Json& item, std::vector<SketchCurve>& ou
         implicit.push_back({CT::Tangent, {first + 2, first + 1}, {}});
         implicit.push_back({CT::Tangent, {first + 2, first + 3}, {}});
         implicit.push_back({CT::Tangent, {first, first + 3}, {}});
+    } else if (type == "ellipse") {
+        // Fusion's Ellipse: centre, major radius along `angle` (degrees), minor radius.
+        const Vec2 c = ev.vec2(item, "center");
+        const double major = ev.num(item, "major_radius");
+        const double minor = ev.num(item, "minor_radius");
+        const double a = ev.num(item, "angle", 0.0) * kDegToRad;
+        if (!(major > 0) || !(minor > 0))
+            throw DesignError("Ellipse radii must be positive");
+        SketchCurve e{SketchCurve::Kind::Ellipse, {c, {c.x + major * std::cos(a), c.y + major * std::sin(a)}}};
+        e.radius = minor;
+        push(e);
     } else if (type == "spline") {
         SketchCurve c{SketchCurve::Kind::Spline, {}};
         for (const auto& p : required(item, "points"))
@@ -966,6 +977,17 @@ std::vector<core::Vec3> sketchSegments(const SketchResult& s)
     return out;
 }
 
+/// An ellipse curve as a sketch item (centre, radii, axis angle in degrees).
+Json ellipseItem(const SketchCurve& c)
+{
+    const Vec2 ctr = c.points[0], end = c.points[1];
+    return Json{{"type", "ellipse"},
+                {"center", Json::array({ctr.x, ctr.y})},
+                {"major_radius", std::hypot(end.x - ctr.x, end.y - ctr.y)},
+                {"minor_radius", c.radius},
+                {"angle", std::atan2(end.y - ctr.y, end.x - ctr.x) / kDegToRad}};
+}
+
 Json curveItem(const SketchCurve& c)
 {
     auto pt = [](const Vec2& v) { return Json::array({v.x, v.y}); };
@@ -976,6 +998,8 @@ Json curveItem(const SketchCurve& c)
         item = {{"type", "arc"}, {"start", pt(c.points[0])}, {"through", pt(c.points[1])}, {"end", pt(c.points[2])}};
     else if (c.kind == SketchCurve::Kind::Point)
         item = {{"type", "point"}, {"at", pt(c.points[0])}};
+    else if (c.kind == SketchCurve::Kind::Ellipse)
+        item = ellipseItem(c);
     else
         throw DesignError("Only lines and arcs of a shape can be deleted separately");
     if (c.construction)
@@ -1096,6 +1120,10 @@ Json itemFromSolved(const Json& item, const SketchCurve* c, std::size_t n)
         out["points"] = pts;
     } else if (type == "point") {
         out["at"] = pt(c[0].points[0]);
+    } else if (type == "ellipse") {
+        out = ellipseItem(c[0]);
+        if (item.contains("construction"))
+            out["construction"] = item["construction"];
     }
     return out;
 }
@@ -1433,6 +1461,7 @@ std::vector<Json> curvePointRefs(const SketchCurve& c, std::size_t i)
     case K::Arc: return {ref("start"), ref("end"), ref("center")};
     case K::Circle: return {ref("center")};
     case K::Point: return {ref("start")};
+    case K::Ellipse: return {ref("center"), ref("end")};
     case K::Spline: {
         std::vector<Json> out;
         for (std::size_t k = 0; k < c.points.size(); ++k)
@@ -1452,6 +1481,8 @@ Vec2 curvePointAt(const SketchCurve& c, const Json& ref)
         return c.points.at(ref.at("index").get<std::size_t>());
     if (c.kind == K::Point || c.kind == K::Circle)
         return c.points[0];
+    if (c.kind == K::Ellipse)
+        return name == "center" ? c.points[0] : c.points[1];
     if (name == "center") {
         const Vec2 p1 = c.points[0], p2 = c.points[1], p3 = c.points[2];
         const double d = 2 * (p1.x * (p2.y - p3.y) + p2.x * (p3.y - p1.y) + p3.x * (p1.y - p2.y));
@@ -1497,7 +1528,8 @@ SketchCurve placedCurve(SketchCurve c, const SketchPlacement& place)
 void scaleDimension(Json& c, double s)
 {
     static const std::set<std::string> lengths{"distance", "horizontal_distance", "vertical_distance",
-                                               "length", "radius", "diameter"};
+                                               "length", "radius", "diameter", "major_radius",
+                                               "minor_radius"};
     if (s == 1.0 || !c.contains("value") || !lengths.contains(lower(c.value("type", std::string()))))
         return;
     Json& v = c["value"];
@@ -1611,6 +1643,8 @@ void Design::moveSketchCurves(FeatureId sketchId, const std::vector<std::size_t>
         // A circle keeps its size too (its centre alone does not hold it).
         if (curves[i].kind == SketchCurve::Kind::Circle)
             held.push_back({{"type", "radius"}, {"curve", i}, {"value", curves[i].radius * place.scale}});
+        if (curves[i].kind == SketchCurve::Kind::Ellipse)
+            held.push_back({{"type", "minor_radius"}, {"curve", i}, {"value", curves[i].radius * place.scale}});
     }
     // A polygon keeps its corner angles too (its sides alone are only kept equal), as in a
     // point drag, so it stays regular while one side moves.
@@ -1821,6 +1855,13 @@ void Design::mirrorSketchCurves(FeatureId sketchId, const std::vector<std::size_
             item = {{"type", "point"}, {"at", pt(mirror(c.points[0]))}};
             points = {"start"};
             break;
+        case SketchCurve::Kind::Ellipse: {
+            SketchCurve m = c;
+            m.points = {mirror(c.points[0]), mirror(c.points[1])};
+            item = ellipseItem(m);
+            points = {"center", "end"};
+            break;
+        }
         }
         if (c.construction)
             item["construction"] = true;
@@ -1829,7 +1870,8 @@ void Design::mirrorSketchCurves(FeatureId sketchId, const std::vector<std::size_
             constraints.push_back({{"type", "symmetric"},
                                    {"points", Json::array({{{"curve", i}, {"point", name}}, {{"curve", next}, {"point", name}}})},
                                    {"curve", lineIdx}});
-        if (c.kind == SketchCurve::Kind::Circle || c.kind == SketchCurve::Kind::Arc)
+        if (c.kind == SketchCurve::Kind::Circle || c.kind == SketchCurve::Kind::Arc ||
+            c.kind == SketchCurve::Kind::Ellipse)
             constraints.push_back({{"type", "equal"}, {"curves", Json::array({i, next})}});
         ++next;
     }

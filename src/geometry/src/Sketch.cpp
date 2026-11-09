@@ -40,6 +40,7 @@
 #include <gp_Ax2.hxx>
 #include <gp_Ax3.hxx>
 #include <gp_Circ.hxx>
+#include <gp_Elips.hxx>
 #include <gp_Pln.hxx>
 
 #include <algorithm>
@@ -117,6 +118,25 @@ TopoDS_Edge makeEdge(const Plane& plane, const SketchCurve& c)
     }
     case SketchCurve::Kind::Point:
         throw ModelingError("A sketch point has no edge");
+    case SketchCurve::Kind::Ellipse: {
+        requirePoints(2, "Ellipse");
+        const Vec2 ctr = c.points[0];
+        Vec2 axis{c.points[1].x - ctr.x, c.points[1].y - ctr.y};
+        double major = std::hypot(axis.x, axis.y);
+        double minor = c.radius;
+        if (major <= kTol || minor <= kTol)
+            throw ModelingError("Ellipse radii must be positive");
+        // OCCT wants the major radius first: a minor radius drawn longer turns the axes.
+        if (minor > major) {
+            axis = {-axis.y * minor / major, axis.x * minor / major};
+            std::swap(major, minor);
+        }
+        const core::Vec3 xw = plane.xDir * axis.x + plane.yDir() * axis.y;
+        const gp_Ax2 frame(toPnt(plane.toWorld(ctr)), toDir(plane.normal), toDir(xw));
+        if (std::abs(major - minor) <= kTol)
+            return BRepBuilderAPI_MakeEdge(gp_Circ(frame, major)).Edge();
+        return BRepBuilderAPI_MakeEdge(gp_Elips(frame, major, minor)).Edge();
+    }
     }
     throw ModelingError("Unknown curve kind");
 }
