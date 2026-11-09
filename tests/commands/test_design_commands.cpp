@@ -5,6 +5,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <numbers>
 #include <set>
@@ -1645,6 +1646,29 @@ TEST_CASE("Design commands: Trim and Break a spline (CAD-260)", "[commands][cad]
     c = run(s, "sketch.curves", {{"sketch", cl}});
     CHECK(c.at("curves")[0].at("kind") == "spline");
     CHECK(c.at("curves")[0].value("closed", false) == true);
+}
+
+TEST_CASE("Design commands: Break preview of a long spline stays fast (CAD-260)", "[commands][cad]")
+{
+    // Two long wavy splines crossing many times (Codex review of #224: the preview compared
+    // every segment of one with every segment of the other, and every sample of a piece with
+    // the whole original). Hovering Break must answer at once.
+    commands::Session s;
+    Json a = Json::array(), b = Json::array();
+    for (int i = 0; i < 300; ++i) {
+        a.push_back({i, 5 * std::sin(i / 3.0)});
+        b.push_back({i, 5 * std::cos(i / 3.0)});
+    }
+    const auto id = run(s, "sketch.create", {{"plane", "XY"}, {"curves", Json::array({{{"type", "spline"}, {"points", a}}, {{"type", "spline"}, {"points", b}}})}})
+                        .at("id")
+                        .get<std::uint64_t>();
+    const auto t0 = std::chrono::steady_clock::now();
+    const Json pv = run(s, "sketch.break_preview", {{"sketch", id}, {"curve", 0}, {"at", {150, 5 * std::sin(50.0)}}});
+    const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    INFO(pv.dump().substr(0, 400));
+    CHECK(pv.at("breakable") == true);
+    CHECK(pv.at("kind") == "spline");
+    CHECK(seconds < 3.0);
 }
 
 TEST_CASE("Design commands: sketch offset (CAD-126)", "[commands][cad]")

@@ -2497,7 +2497,7 @@ struct CurveSplit {
 /// span, see extendBoundaries), so a line and the spline cut each other at the same point.
 /// Each piece is a spline again: through its ends, the original fit points between them and
 /// as many more points of the original as keep it within 0.1 % of the spline's size of it.
-CurveSplit splitSpline(const std::vector<SketchCurve>& curves, std::size_t curve, const Vec2& at)
+CurveSplit splitSpline(const std::vector<SketchCurve>& curves, std::size_t curve, const Vec2& at, bool pickedOnly)
 {
     const SketchCurve& k = curves[curve];
     std::vector<Vec2> pts;
@@ -2518,10 +2518,20 @@ CurveSplit splitSpline(const std::vector<SketchCurve>& curves, std::size_t curve
         const double f = x - static_cast<double>(i);
         return pts[i] + (pts[i + 1] - pts[i]) * f;
     };
-    // Where a point is along it (nearest point of the polyline).
-    auto project = [&](const Vec2& q) {
+    // The nearest point of the polyline to q among segments [from, to) (wrapping round a
+    // closed spline, clamped for an open one): {distance, u}.
+    auto nearest = [&](const Vec2& q, std::ptrdiff_t from, std::ptrdiff_t to) {
+        const auto sn = static_cast<std::ptrdiff_t>(n);
+        if (!k.closed) {
+            from = std::max<std::ptrdiff_t>(from, 0);
+            to = std::min<std::ptrdiff_t>(to, sn);
+        } else if (to - from > sn) {
+            from = 0;
+            to = sn;
+        }
         double best = 1e300, u = 0.0;
-        for (std::size_t i = 0; i < n; ++i) {
+        for (std::ptrdiff_t j = from; j < to; ++j) {
+            const auto i = static_cast<std::size_t>(((j % sn) + sn) % sn);
             const Vec2 d = pts[i + 1] - pts[i];
             const double l2 = d.x * d.x + d.y * d.y;
             const double f = l2 > 0 ? std::clamp(((q.x - pts[i].x) * d.x + (q.y - pts[i].y) * d.y) / l2, 0.0, 1.0) : 0.0;
@@ -2532,25 +2542,82 @@ CurveSplit splitSpline(const std::vector<SketchCurve>& curves, std::size_t curve
                 u = (static_cast<double>(i) + f) / static_cast<double>(n);
             }
         }
-        return u;
+        return std::pair{best, u};
     };
+    auto segIndex = [&](double u) { return static_cast<std::ptrdiff_t>(std::floor(u * static_cast<double>(n))); };
+    const double spans = static_cast<double>(std::max<std::size_t>(1, k.points.size() - (k.closed ? 0 : 1)));
 
+    // Where the others cross it: segment pairs, pruned by the boxes of runs of 64 segments
+    // (a spline against another spline is many thousand segments each).
+    struct Box {
+        Vec2 lo{1e300, 1e300}, hi{-1e300, -1e300};
+        void add(const Vec2& v)
+        {
+            lo = {std::min(lo.x, v.x), std::min(lo.y, v.y)};
+            hi = {std::max(hi.x, v.x), std::max(hi.y, v.y)};
+        }
+        void add(const Box& b)
+        {
+            add(b.lo);
+            add(b.hi);
+        }
+        [[nodiscard]] bool meets(const Box& b) const
+        {
+            const double m = 1e-7;
+            return lo.x <= b.hi.x + m && b.lo.x <= hi.x + m && lo.y <= b.hi.y + m && b.lo.y <= hi.y + m;
+        }
+    };
+    auto boxOf = [](const TrimCurve& t) {
+        Box b;
+        if (t.line) {
+            b.add(t.a);
+            b.add(t.b);
+        } else {
+            const double r = t.ell ? std::max(t.ra, t.rb) : t.r;
+            b.add(Vec2{t.c.x - r, t.c.y - r});
+            b.add(Vec2{t.c.x + r, t.c.y + r});
+        }
+        return b;
+    };
+    const std::size_t run = 64;
+    std::vector<Box> runs((n + run - 1) / run);
+    for (std::size_t i = 0; i < n; ++i) {
+        runs[i / run].add(pts[i]);
+        runs[i / run].add(pts[i + 1]);
+    }
     std::vector<double> cuts;
     for (std::size_t j = 0; j < curves.size(); ++j) {
         if (j == curve)
             continue;
         const std::vector<TrimCurve> others = extendBoundaries(curves[j]);
-        for (std::size_t i = 0; i < n; ++i) {
-            TrimCurve seg;
-            seg.a = pts[i];
-            seg.b = pts[i + 1];
-            if (std::hypot(seg.b.x - seg.a.x, seg.b.y - seg.a.y) < 1e-12)
-                continue;
-            for (const TrimCurve& other : others)
-                for (const Vec2& x : crossings(seg, other))
-                    if (const auto f = trimParam(seg, x, 1e-9))
-                        cuts.push_back((static_cast<double>(i) + *f) / static_cast<double>(n));
+        std::vector<Box> otherBoxes;
+        std::vector<Box> otherRuns((others.size() + run - 1) / run);
+        for (std::size_t o = 0; o < others.size(); ++o) {
+            otherBoxes.push_back(boxOf(others[o]));
+            otherRuns[o / run].add(otherBoxes.back());
         }
+        for (std::size_t r = 0; r < runs.size(); ++r)
+            for (std::size_t q = 0; q < otherRuns.size(); ++q) {
+                if (!runs[r].meets(otherRuns[q]))
+                    continue;
+                for (std::size_t i = r * run; i < std::min(n, (r + 1) * run); ++i) {
+                    TrimCurve seg;
+                    seg.a = pts[i];
+                    seg.b = pts[i + 1];
+                    if (std::hypot(seg.b.x - seg.a.x, seg.b.y - seg.a.y) < 1e-12)
+                        continue;
+                    Box sb;
+                    sb.add(seg.a);
+                    sb.add(seg.b);
+                    for (std::size_t o = q * run; o < std::min(others.size(), (q + 1) * run); ++o) {
+                        if (!sb.meets(otherBoxes[o]))
+                            continue;
+                        for (const Vec2& x : crossings(seg, others[o]))
+                            if (const auto f = trimParam(seg, x, 1e-9))
+                                cuts.push_back((static_cast<double>(i) + *f) / static_cast<double>(n));
+                    }
+                }
+            }
     }
     std::sort(cuts.begin(), cuts.end());
     const double eps = 1e-7;
@@ -2567,9 +2634,23 @@ CurveSplit splitSpline(const std::vector<SketchCurve>& curves, std::size_t curve
         inner.pop_back();
 
     // The fit points, as places along it.
+    // Each is looked for within a span and a half of where its share of the chord length
+    // puts it (the spline is parametrised by chord length).
     std::vector<double> fits;
-    for (const Vec2& q : k.points)
-        fits.push_back(project(q));
+    {
+        std::vector<double> along{0.0};
+        const std::size_t m = k.points.size();
+        for (std::size_t i = 1; i < m + (k.closed ? 1 : 0); ++i) {
+            const Vec2 a = k.points[i - 1], b = k.points[i % m];
+            along.push_back(along.back() + std::hypot(b.x - a.x, b.y - a.y));
+        }
+        const double total = std::max(along.back(), 1e-300);
+        const auto w = static_cast<std::ptrdiff_t>(std::ceil(1.5 * static_cast<double>(n) / spans)) + 2;
+        for (std::size_t i = 0; i < m; ++i) {
+            const std::ptrdiff_t c = segIndex(along[i] / total);
+            fits.push_back(nearest(k.points[i], c - w, c + w).second);
+        }
+    }
     auto piece = [&](double lo, double hi) {
         // Anchors: the ends and the fit points between them (a closed spline's wrap round).
         std::vector<double> anchors{lo};
@@ -2589,43 +2670,40 @@ CurveSplit splitSpline(const std::vector<SketchCurve>& curves, std::size_t curve
         // Between the anchors, evenly spread points of the original (an interpolating spline
         // overshoots between uneven ones), as few as keep the piece within 0.1 % of the
         // spline's size of the original.
-        const double spans = static_cast<double>(std::max<std::size_t>(1, k.points.size() - (k.closed ? 0 : 1)));
         Vec2 bmin = pts.front(), bmax = pts.front();
         for (const Vec2& q : pts) {
             bmin = {std::min(bmin.x, q.x), std::min(bmin.y, q.y)};
             bmax = {std::max(bmax.x, q.x), std::max(bmax.y, q.y)};
         }
         const double tol = 1e-3 * std::hypot(bmax.x - bmin.x, bmax.y - bmin.y);
-        auto offOriginal = [&](const Vec2& q) {
-            double best = 1e300;
-            for (std::size_t i = 0; i < n; ++i) {
-                const Vec2 d = pts[i + 1] - pts[i];
-                const double l2 = d.x * d.x + d.y * d.y;
-                const double f = l2 > 0 ? std::clamp(((q.x - pts[i].x) * d.x + (q.y - pts[i].y) * d.y) / l2, 0.0, 1.0) : 0.0;
-                const Vec2 x = pts[i] + d * f;
-                best = std::min(best, std::hypot(q.x - x.x, q.y - x.y));
-            }
-            return best;
-        };
+        // Each span of the trial is compared with its own stretch of the original (and two
+        // segments either side), which bounds the work for a long spline.
         std::vector<Vec2> chosen;
         for (const double h : {1.0, 0.5, 0.25, 0.125, 0.0625}) {
             chosen.clear();
+            std::vector<double> us;
             for (std::size_t i = 0; i < anchors.size(); ++i) {
-                chosen.push_back(pointAt(anchors[i]));
+                us.push_back(anchors[i]);
                 if (i + 1 == anchors.size())
                     break;
                 const double len = anchors[i + 1] - anchors[i];
                 const int m = std::max(1, static_cast<int>(std::lround(len * spans / h)));
                 for (int j = 1; j < m; ++j)
-                    chosen.push_back(pointAt(anchors[i] + len * j / m));
+                    us.push_back(anchors[i] + len * j / m);
             }
-            if (chosen.size() < 3)
-                chosen.insert(chosen.begin() + 1, pointAt((anchors.front() + anchors.back()) / 2));
+            if (us.size() < 3)
+                us.insert(us.begin() + 1, (us.front() + us.back()) / 2);
+            for (const double a : us)
+                chosen.push_back(pointAt(a));
             SketchCurve trial{SketchCurve::Kind::Spline, chosen};
             double worst = 0.0;
             try {
-                for (const Vec2& q : geometry::sampleSpline(trial, 16))
-                    worst = std::max(worst, offOriginal(q));
+                const int per = 16;
+                const std::vector<Vec2> samples = geometry::sampleSpline(trial, per);
+                for (std::size_t q = 0; q < samples.size(); ++q) {
+                    const std::size_t span = std::min(q / per, us.size() - 2);
+                    worst = std::max(worst, nearest(samples[q], segIndex(us[span]) - 2, segIndex(us[span + 1]) + 3).first);
+                }
             } catch (const geometry::ModelingError&) {
                 worst = 1e300;
             }
@@ -2642,14 +2720,15 @@ CurveSplit splitSpline(const std::vector<SketchCurve>& curves, std::size_t curve
     };
 
     CurveSplit out;
-    const double u = project(at);
+    const double u = nearest(at, 0, static_cast<std::ptrdiff_t>(n)).second;
     if (k.closed) {
         if (inner.size() >= 2) {
             auto after = std::upper_bound(inner.begin(), inner.end(), u);
             const double hi = after == inner.end() ? inner.front() + 1.0 : *after;
             const double lo = after == inner.begin() ? inner.back() - 1.0 : *(after - 1);
             out.picked = piece(lo, hi);
-            out.after = piece(hi, lo + 1.0);
+            if (!pickedOnly)
+                out.after = piece(hi, lo + 1.0);
         }
         return out;
     }
@@ -2664,19 +2743,20 @@ CurveSplit splitSpline(const std::vector<SketchCurve>& curves, std::size_t curve
     }
     if (lo <= eps && hi >= 1 - eps)
         return out;
-    if (lo > eps)
+    if (lo > eps && !pickedOnly)
         out.before = piece(0.0, lo);
     out.picked = piece(lo, hi);
-    if (hi < 1 - eps)
+    if (hi < 1 - eps && !pickedOnly)
         out.after = piece(hi, 1.0);
     return out;
 }
 
-CurveSplit splitCurve(const std::vector<SketchCurve>& curves, std::size_t curve, const Vec2& at, const char* tool)
+CurveSplit splitCurve(const std::vector<SketchCurve>& curves, std::size_t curve, const Vec2& at, const char* tool,
+                      bool pickedOnly = false)
 {
     const SketchCurve& k = curves[curve];
     if (k.kind == SketchCurve::Kind::Spline)
-        return splitSpline(curves, curve, at);
+        return splitSpline(curves, curve, at, pickedOnly);
     const auto target = trimCurve(k);
     if (!target)
         throw DesignError(std::string(tool) + " works on lines, arcs, circles, ellipses and splines");
@@ -2762,7 +2842,7 @@ Json Design::sketchCurvePiece(FeatureId sketchId, std::size_t curve, const geome
     auto it = m_sketches.find(sketchId);
     if (it == m_sketches.end() || curve >= it->second.curves.size())
         throw DesignError(f.name + " has no curve " + std::to_string(curve));
-    return splitCurve(it->second.curves, curve, at, "Break").picked;
+    return splitCurve(it->second.curves, curve, at, "Break", true).picked;
 }
 
 void Design::splitSketchCurve(FeatureId sketchId, std::size_t curve, const geometry::Vec2& at, bool keep)
