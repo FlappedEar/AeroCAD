@@ -615,8 +615,11 @@ std::size_t refineShapeDistances(const Shape& shape, const std::vector<core::Vec
                         break;
                     auto& f = faces[c.face];
                     try {
-                        // Falls back to a global search by itself when the local one fails.
-                        const gp_Pnt2d uv = f.surface->NextValueOfUV(f.sampleUV[c.seed], p, 1e-6);
+                        // Falls back to a global search by itself when the local one fails,
+                        // and when it lands farther than the dense-mesh distance allows: a
+                        // folded face can have a farther local minimum next to the seed.
+                        const double maxGap = current + std::max(0.25 * current, 0.01);
+                        const gp_Pnt2d uv = f.surface->NextValueOfUV(f.sampleUV[c.seed], p, 1e-6, maxGap);
                         const double gap = f.surface->Gap();
                         if (gap >= best)
                             continue;
