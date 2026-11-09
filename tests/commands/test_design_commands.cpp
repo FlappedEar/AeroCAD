@@ -1508,7 +1508,7 @@ TEST_CASE("Design commands: tangent arc from the end of a line or arc (CAD-212)"
                          (c1[1].get<double>() - j[1].get<double>()) * (c2[0].get<double>() - j[0].get<double>());
     const double l1 = std::hypot(c1[0].get<double>() - j[0].get<double>(), c1[1].get<double>() - j[1].get<double>());
     const double l2 = std::hypot(c2[0].get<double>() - j[0].get<double>(), c2[1].get<double>() - j[1].get<double>());
-    CHECK(cross / (l1 * l2) == Approx(0).margin(1e-5)); // sine of the angle (curve points are rounded)
+    CHECK(cross / (l1 * l2) == Approx(0).margin(1e-4)); // sine of the angle (curve points are rounded; the join is a constraint)
 
     // Refused: an end on the tangent line, a circle as the source.
     CHECK_FALSE(s.execute("sketch.add_curves", {{"sketch", id},
@@ -1651,4 +1651,27 @@ TEST_CASE("Design commands: a tangent arc stays on a dimensioned line's end (CAD
     const auto& xa = xc.at("curves")[1].at("points");
     CHECK(xa[2][0].get<double>() == Approx(20).margin(1e-6));
     CHECK(xa[2][1].get<double>() == Approx(10).margin(1e-6));
+
+
+    // Codex: the line's end solves to (0, 0), where its start is stored; the new arc starting there
+    // must be joined to the end (by its constraint), not to the stored start.
+    const Json w = run(s, "sketch.create",
+                       {{"plane", "XY"},
+                        {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {10, 0}}}})},
+                        {"constraints", Json::array({{{"type", "fix"},
+                                                      {"points", Json::array({{{"curve", 0}, {"point", "start"}}, {{"curve", 0}, {"point", "end"}}})},
+                                                      {"at", Json::array({Json::array({-10, 0}), Json::array({0, 0})})}}})}});
+    const auto wid = w.at("id").get<std::uint64_t>();
+    run(s, "sketch.add_curves",
+        {{"sketch", wid},
+         {"curves", Json::array({{{"type", "tangent_arc"}, {"from", {{"curve", 0}, {"point", "end"}}}, {"end", {10, 10}}}})}});
+    const Json wc = run(s, "sketch.curves", {{"sketch", wid}});
+    const auto& wl = wc.at("curves")[0].at("points");
+    const auto& wa = wc.at("curves")[1].at("points");
+    INFO(wc.dump());
+    CHECK(wl[0][0].get<double>() == Approx(-10).margin(1e-6));
+    CHECK(wa[0][0].get<double>() == Approx(0).margin(1e-6));
+    CHECK(wa[0][1].get<double>() == Approx(0).margin(1e-6));
+    CHECK(wa[2][0].get<double>() == Approx(10).margin(1e-6));
+    CHECK(wa[2][1].get<double>() == Approx(10).margin(1e-6));
 }

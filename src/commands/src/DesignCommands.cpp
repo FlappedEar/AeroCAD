@@ -105,7 +105,11 @@ Json curveSchema()
           {"angle", numberOrExpr("Polygon rotation (degrees).")},
           {"points", {{"type", "array"}, {"items", point2("Fit point.")}, {"minItems", 2}}},
           {"closed", {{"type", "boolean"}}},
-          {"construction", {{"type", "boolean"}}}}},
+          {"construction", {{"type", "boolean"}}},
+          {"join_start",
+           {{"type", "boolean"},
+            {"description", "arc: false = its start is joined only by constraints, not to another curve end "
+                            "that happens to be there (default true)."}}}}},
         {"required", {"type"}},
         {"additionalProperties", false}};
 }
@@ -755,6 +759,9 @@ std::tuple<Json, std::size_t, int> resolveTangentArc(const cad::Design& design,
              {"end", Json::array({end.x, end.y})}};
     if (item.value("construction", false))
         arc["construction"] = true;
+    // Joined to the source by an explicit constraint; the solved start may lie on an unrelated
+    // curve end as stored (the solver joins ends by their stored positions).
+    arc["join_start"] = false;
     // The branch the arc was built on: for a line, the centre's side of start->end; for an arc,
     // outside (centres on opposite sides of the joint) or inside.
     int tangentSide = 1;

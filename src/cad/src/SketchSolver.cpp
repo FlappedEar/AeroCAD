@@ -241,10 +241,10 @@ private:
     }
 
     /// Curve ends are shared between curves that touch.
-    P endPoint(Vec2 p)
+    P endPoint(Vec2 p, bool joinEarlier = true)
     {
         for (const auto& [pos, handle] : m_ends) {
-            if (len(pos - p) < kMergeTolerance)
+            if (joinEarlier && len(pos - p) < kMergeTolerance)
                 return handle;
         }
         const P h = newPoint(p);
@@ -262,7 +262,7 @@ private:
             case Kind::Line:
                 if (c.points.size() != 2)
                     throw ModelingError("Sketch line needs two points");
-                v.pts = {endPoint(c.points[0]), endPoint(c.points[1])};
+                v.pts = {endPoint(c.points[0], c.joinStart), endPoint(c.points[1])};
                 break;
             case Kind::Arc: {
                 if (c.points.size() != 3)
@@ -282,7 +282,7 @@ private:
                                (ss * (e.x - t.x) + tt * (s.x - e.x) + ee * (t.x - s.x)) /
                                    (2 * (s.x * (t.y - e.y) + t.x * (e.y - s.y) + e.x * (s.y - t.y)))};
                 v.ccw = d > 0;
-                v.pts = {endPoint(s), endPoint(e), newPoint(ctr)};
+                v.pts = {endPoint(s, c.joinStart), endPoint(e), newPoint(ctr)};
                 break;
             }
             case Kind::Circle:
