@@ -262,6 +262,16 @@ Pane {
         return name + (time ? " (" + time + ")" : "") + (state && state !== "finished" ? ", " + state : "")
     }
 
+    /// When a run was started, for its row in the run list (CAD-223): "14:31" today, else
+    /// "8 Nov 14:31", so runs of the same part can be told apart.
+    function runStartText(r) {
+        const t = r && r.created ? new Date(r.created) : null
+        if (!t || isNaN(t))
+            return ""
+        const today = new Date().toDateString() === t.toDateString()
+        return t.toLocaleString(Qt.locale(), today ? "HH:mm" : "d MMM HH:mm")
+    }
+
     /// Deleting a run removes its files and stopping one cannot be undone: both are asked first
     /// (CAD-151). A run may take hours of computing.
     function confirmRunAction(action, id) {
@@ -1626,6 +1636,14 @@ Pane {
                                 text: (runRow.isA ? "[A] " : runRow.isB ? "[B] " : "") +
                                       (runRow.label ? runRow.label + " · " : "") +
                                       (runRow.modelData.source.partName || runRow.modelData.id)
+                            }
+                            // The start time (CAD-223): rows of the same part look alike otherwise.
+                            Label {
+                                objectName: "runTime_" + runRow.modelData.id
+                                visible: root.renamingRun !== runRow.modelData.id && text.length > 0
+                                font.pixelSize: 11
+                                color: Theme.textMuted
+                                text: root.runStartText(runRow.modelData)
                             }
                             // Rename in place (CAD-174): Enter or leaving the field applies, Esc cancels.
                             TextField {
