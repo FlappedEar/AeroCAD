@@ -1249,6 +1249,53 @@ std::optional<double> tailSpread(const std::vector<double>* v)
 
 Json opt(const std::optional<double>& v) { return v ? Json(*v) : Json(nullptr); }
 
+/// Aero balance (CAD-194): the vertical aero loads at the front and rear axle contacts on
+/// the ground, per iteration, for a case with two axles of turning wheels. Moments of the
+/// aero force about the rear contact line, along the horizontal axis normal to the
+/// wheelbase (so it also holds at yaw): L_front = M_rear . a / wheelbase, L_rear = L - L_front.
+/// Horizontal forces taken at the contacts add no such moment. Empty when the case has no
+/// two axles or the force and moment outputs do not cover the same iterations.
+struct AxleLoads {
+    std::vector<double> front, rear;
+};
+std::optional<AxleLoads> axleLoads(const CaseInfo& info, const Table& forces, const Table& moments)
+{
+    Vec3 contact[2] = {};
+    int count[2] = {0, 0};
+    for (const Wheel& w : info.wheels) {
+        if (w.axle < 0 || w.axle > 1)
+            return std::nullopt; // Only cars with two axles.
+        contact[w.axle] = contact[w.axle] + Vec3{w.centre.x, w.centre.y, w.centre.z - w.radius};
+        ++count[w.axle];
+    }
+    if (count[0] == 0 || count[1] == 0)
+        return std::nullopt;
+    for (int k = 0; k < 2; ++k)
+        contact[k] = contact[k] * (1.0 / count[k]);
+    const Vec3 d = contact[0] - contact[1]; // Rear to front.
+    const double wheelbase = std::hypot(d.x, d.y);
+    if (!(wheelbase > 1e-9))
+        return std::nullopt;
+    const Vec3 a{d.y / wheelbase, -d.x / wheelbase, 0.0};
+    // The forces function object takes moments about the part centre (controlDict CofR).
+    const Vec3 r = info.partBounds.center() - contact[1];
+    const auto *fx = forces.column("total_x"), *fy = forces.column("total_y"), *fz = forces.column("total_z");
+    const auto *mx = moments.column("total_x"), *my = moments.column("total_y"), *mz = moments.column("total_z");
+    if (!fx || !fy || !fz || !mx || !my || !mz || forces.time != moments.time || fx->size() != forces.time.size() ||
+        fy->size() != fx->size() || fz->size() != fx->size() || mx->size() != fx->size() || my->size() != fx->size() ||
+        mz->size() != fx->size())
+        return std::nullopt;
+    AxleLoads loads;
+    for (std::size_t i = 0; i < fx->size(); ++i) {
+        const Vec3 f{(*fx)[i], (*fy)[i], (*fz)[i]};
+        const Vec3 m = Vec3{(*mx)[i], (*my)[i], (*mz)[i]} + r.cross(f);
+        const double front = m.dot(a) / wheelbase;
+        loads.front.push_back(front);
+        loads.rear.push_back(f.z - front);
+    }
+    return loads;
+}
+
 std::pair<double, double> range(const std::vector<double>& v)
 {
     double lo = std::numeric_limits<double>::max(), hi = std::numeric_limits<double>::lowest();
@@ -1388,6 +1435,11 @@ std::size_t RunManager::exportResultsCsv(const std::string& id, const fs::path& 
             row(std::string(k.name) + suffix,
                 c.is_number() && area.is_number() ? csvNumber(c.get<double>() * area.get<double>()) : std::string());
         }
+        // Aero balance of a car with two axles (CAD-194); left out for other runs.
+        if (values.value("frontLiftN", Json()).is_number())
+            for (const Key k : {Key{"frontLiftN", "Front axle lift (N)"}, Key{"rearLiftN", "Rear axle lift (N)"},
+                                Key{"frontShare", "Front share of lift (%)"}})
+                row(std::string(k.name) + suffix, csvJson(values.value(k.key, Json())));
         // How far each value still swings over the averaging window (CAD-191, CAD-193).
         if (const Json spread = values.value("spread", Json()); spread.is_object())
             for (const Key k : {Key{"dragN", "Drag swing ± (N)"}, Key{"liftN", "Lift swing ± (N)"},
@@ -1475,6 +1527,11 @@ std::size_t RunManager::exportComparisonCsv(const std::string& a, const std::str
          {std::pair{"dragN", "Drag (N)"}, std::pair{"liftN", "Lift (N)"}, std::pair{"sideN", "Side force (N)"},
           std::pair{"pressureDragN", "Pressure drag (N)"}, std::pair{"viscousDragN", "Viscous drag (N)"}})
         table(name, forces.value(key, Json()));
+    // Aero balance rows only when both runs have it (CAD-194).
+    for (const auto& [key, name] :
+         {std::pair{"frontLiftN", "Front axle lift (N)"}, std::pair{"rearLiftN", "Rear axle lift (N)"}})
+        if (forces.contains(key))
+            table(name, forces.at(key));
     table("Efficiency L/D", cmp.value("efficiency", Json()));
     const Json coeffs = cmp.value("coefficientsOnReferenceAreaOfA", Json::object());
     for (const auto& [key, name] :
@@ -1495,6 +1552,9 @@ Json RunManager::results(const std::string& id, int maxPoints)
     const Table coeffs = readTable(run.caseDir / "postProcessing" / "forceCoeffs" / "0" / "coefficient.dat");
     const Table forces = readTable(run.caseDir / "postProcessing" / "forces" / "0" / "force.dat");
     const Table residuals = readTable(run.caseDir / "postProcessing" / "solverInfo" / "0" / "solverInfo.dat");
+    const auto axles =
+        info ? axleLoads(*info, forces, readTable(run.caseDir / "postProcessing" / "forces" / "0" / "moment.dat"))
+             : std::nullopt;
 
     Json j{{"run", st->toJson()}};
     if (info) {
@@ -1542,7 +1602,20 @@ Json RunManager::results(const std::string& id, int maxPoints)
                       {"cs", opt(tailSpread(coeffs.column("Cs")))},
                       {"dragN", opt(tailSpread(forces.column("total_x")))},
                       {"liftN", opt(tailSpread(forces.column("total_z")))},
-                      {"sideN", opt(tailSpread(forces.column("total_y")))}}}};
+                      {"sideN", opt(tailSpread(forces.column("total_y")))},
+                      {"frontLiftN", opt(tailSpread(axles ? &axles->front : nullptr))},
+                      {"rearLiftN", opt(tailSpread(axles ? &axles->rear : nullptr))}}}};
+    // Aero balance (CAD-194): front / rear axle lift, and the front's share of the total when
+    // both pull the same way (a share of a lift split into up and down means nothing).
+    {
+        const auto front = tailMean(axles ? &axles->front : nullptr);
+        const auto rear = tailMean(axles ? &axles->rear : nullptr);
+        Json& summary = j["summary"];
+        summary["frontLiftN"] = opt(front);
+        summary["rearLiftN"] = opt(rear);
+        summary["frontShare"] =
+            front && rear && *front * *rear > 0.0 ? Json(100.0 * *front / (*front + *rear)) : Json(nullptr);
+    }
 
     // Histories are useful while solving, but their current tail is not a final result.
     // Keep this gate independent of the numerical quality checks: even apparently good
@@ -2095,8 +2168,8 @@ Json RunManager::compare(const std::string& a, const std::string& b)
         d["withinNoise"] = std::abs(d.at("difference").get<double>()) <= noise;
     };
     Json deltas = Json::object();
-    for (const char* key : {"dragN", "liftN", "sideN", "pressureDragN", "viscousDragN"}) {
-        if (sa.at(key).is_number() && sb.at(key).is_number()) {
+    for (const char* key : {"dragN", "liftN", "sideN", "pressureDragN", "viscousDragN", "frontLiftN", "rearLiftN"}) {
+        if (sa.value(key, Json()).is_number() && sb.value(key, Json()).is_number()) {
             const double va = sa.at(key).get<double>(), vb = sb.at(key).get<double>();
             Json d{{"a", va}, {"b", vb}, {"difference", vb - va}};
             d["percent"] = std::abs(va) > 1e-12 ? Json(100.0 * (vb - va) / std::abs(va)) : Json(nullptr);

@@ -2027,6 +2027,114 @@ TEST_CASE("Results give the iteration swing; A/B flags differences inside it (CA
         CHECK(n.get<std::string>().find("iteration swing") == std::string::npos);
 }
 
+TEST_CASE("Aero balance: front and rear axle lift of a car with wheels (CAD-194)", "[cfd][wheels]")
+{
+    for (const double yaw : {0.0, 5.0}) {
+        CAPTURE(yaw);
+        TempDir tmp;
+        cfd::RunManager runs(tmp.path());
+        cfd::Settings s;
+        s.flowDirection = "+X";
+        s.ground = true;
+        s.rotatingWheels = true;
+        s.yaw = yaw;
+        cfd::CaseGeometry g;
+        g.part = car();
+        const std::string id = runs.prepare(g, s, {});
+        const auto info = runs.caseInfo(id);
+        REQUIRE(info);
+        REQUIRE(info->wheels.size() == 4);
+        fakeFinishedRun(tmp.path() / id, 0.8, 1.0, -2.0);
+
+        // Contacts of the front (axle 0) and rear axle on the floor, in the case frame (m).
+        core::Vec3 front{}, rear{};
+        for (const auto& w : info->wheels)
+            (w.axle == 0 ? front : rear) =
+                (w.axle == 0 ? front : rear) + core::Vec3{w.centre.x, w.centre.y, w.centre.z - w.radius} * 0.5;
+        const double wheelbase = std::hypot(front.x - rear.x, front.y - rear.y);
+        // 100 N of downforce a quarter of the wheelbase behind the front axle, and 10 N of drag
+        // acting h above that point: 75 / 25 N on the axles, and the drag lifts the front by
+        // 10 h cos(yaw) / wheelbase (the axle line turns by the yaw against the drag).
+        const core::Vec3 q = front + (rear - front) * 0.25;
+        const double h = 0.05;
+        const core::Vec3 down{0, 0, -100}, drag{10, 0, 0};
+        const core::Vec3 c = info->partBounds.center();
+        const core::Vec3 m = (q - c).cross(down) + (q + core::Vec3{0, 0, h} - c).cross(drag);
+        std::ostringstream forces, moments;
+        forces.precision(12);
+        moments.precision(12);
+        forces << "# Time total_x total_y total_z pressure_x pressure_y pressure_z viscous_x viscous_y viscous_z\n";
+        moments << "# Time total_x total_y total_z\n";
+        for (int i = 1; i <= 100; ++i) {
+            forces << i << " 10 0 -100 9 0 -100 1 0 0\n";
+            moments << i << ' ' << m.x << ' ' << m.y << ' ' << m.z << '\n';
+        }
+        write(tmp.path() / id / "postProcessing" / "forces" / "0" / "force.dat", forces.str());
+        write(tmp.path() / id / "postProcessing" / "forces" / "0" / "moment.dat", moments.str());
+
+        const auto summary = runs.results(id).at("summary");
+        INFO(summary.dump());
+        const double expectedFront = -75.0 + 10.0 * h * std::cos(yaw * 3.14159265358979323846 / 180.0) / wheelbase;
+        CHECK(summary.at("frontLiftN").get<double>() == Approx(expectedFront).epsilon(1e-6));
+        CHECK(summary.at("rearLiftN").get<double>() == Approx(-100.0 - expectedFront).epsilon(1e-6));
+        CHECK(summary.at("frontShare").get<double>() == Approx(100.0 * expectedFront / -100.0).epsilon(1e-6));
+        CHECK(summary.at("spread").at("frontLiftN").get<double>() == Approx(0.0).margin(1e-9));
+
+        // A/B: the axle loads compare like the other forces.
+        const std::string b = runs.prepare(g, s, {});
+        fakeFinishedRun(tmp.path() / b, 0.8, 1.0, -2.0);
+        write(tmp.path() / b / "postProcessing" / "forces" / "0" / "force.dat", forces.str());
+        write(tmp.path() / b / "postProcessing" / "forces" / "0" / "moment.dat", moments.str());
+        const auto cmp = runs.compare(id, b);
+        CHECK(cmp.at("forces").at("frontLiftN").at("difference").get<double>() == Approx(0.0).margin(1e-9));
+        CHECK(cmp.at("forces").contains("rearLiftN"));
+
+        // Both CSV exports carry the balance.
+        const auto read = [](const fs::path& p) {
+            std::ifstream in(p, std::ios::binary);
+            return std::string(std::istreambuf_iterator<char>(in), {});
+        };
+        runs.exportResultsCsv(id, tmp.path() / "run.csv");
+        const std::string runCsv = read(tmp.path() / "run.csv");
+        INFO(runCsv.substr(0, 2000));
+        CHECK(runCsv.find("\r\nFront axle lift (N),") != std::string::npos);
+        CHECK(runCsv.find("\r\nFront share of lift (%),") != std::string::npos);
+        runs.exportComparisonCsv(id, b, tmp.path() / "ab.csv");
+        const std::string abCsv = read(tmp.path() / "ab.csv");
+        CHECK(abCsv.find("\r\nRear axle lift (N),") != std::string::npos);
+    }
+}
+
+TEST_CASE("Aero balance is left out without two axles or moments (CAD-194)", "[cfd][wheels]")
+{
+    TempDir tmp;
+    cfd::RunManager runs(tmp.path());
+    cfd::Settings s;
+    s.flowDirection = "+X";
+    cfd::CaseGeometry g;
+    g.part = box({0, 0, 0}, {200, 80, 60});
+    const std::string box = runs.prepare(g, s, {}); // No wheels.
+    fakeFinishedRun(tmp.path() / box, 0.8, 1.0, -2.0);
+    write(tmp.path() / box / "postProcessing" / "forces" / "0" / "moment.dat",
+          "# Time total_x total_y total_z\n1 0 0 0\n");
+    auto summary = runs.results(box).at("summary");
+    CHECK(summary.at("frontLiftN").is_null());
+    CHECK(summary.at("frontShare").is_null());
+
+    s.ground = true;
+    s.rotatingWheels = true;
+    g.part = car();
+    const std::string noMoments = runs.prepare(g, s, {});
+    fakeFinishedRun(tmp.path() / noMoments, 0.8, 1.0, -2.0); // Writes no moment.dat.
+    summary = runs.results(noMoments).at("summary");
+    CHECK(summary.at("frontLiftN").is_null());
+    CHECK(summary.at("rearLiftN").is_null());
+    CHECK_FALSE(runs.compare(box, noMoments).at("forces").contains("frontLiftN"));
+    runs.exportResultsCsv(box, tmp.path() / "box.csv");
+    std::ifstream in(tmp.path() / "box.csv", std::ios::binary);
+    CHECK(std::string(std::istreambuf_iterator<char>(in), {}).find("Front axle lift") == std::string::npos);
+}
+
 namespace {
 
 void editCaseJson(const fs::path& runDir, const std::function<void(nlohmann::json&)>& edit)

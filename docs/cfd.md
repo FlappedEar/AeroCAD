@@ -70,6 +70,19 @@ panel in place of Properties:
   Drag, lift and side show "± x": half of max − min over the same last 20 % of the iterations,
   so how far the force still swings around the mean (`summary.spread` in `simulation.results`,
   also for Cd/Cl/Cs; CAD-191, [summary](images/audit/cad-191-swing.png)).
+  **Aero balance** (CAD-194, [summary](images/audit/cad-194-balance.png)): for a car with two
+  axles of turning wheels, the aero force split into vertical loads at the front and rear axle
+  contacts on the floor: *Front / rear axle* "-40.000 / -56.000 N" and *Aero balance (front)*
+  "41.7 %". It takes the
+  moments the solver writes (`moment.dat`, about the part centre) about the rear contact line,
+  along the horizontal axis across the car, so it holds at yaw too; drag acting above the floor
+  lifts the front, as on a real car. The front share is given only when both axles pull the
+  same way. `simulation.results` returns `frontLiftN`, `rearLiftN`, `frontShare` (null for
+  other runs) and their swing; the A/B table, `simulation.compare` and both CSV exports add
+  front and rear axle lift when the runs have them. On the test car (1 m box body on four
+  wheels, 0.6 m wheelbase, 30 m/s, coarse mesh) a real OpenFOAM v2506 run gave front +30.5 N,
+  rear -11.6 N with 54 N of drag about 0.2 m above the floor (about 18 N of it lifting the
+  front).
   **Show in 3D**:
   pressure on the part (Cp), horizontal and vertical velocity sections and streamlines
   (speed). Pressure is drawn in a high-contrast rainbow map (blue = suction, green = Cp 0,
