@@ -304,6 +304,23 @@ Pane {
                  percent: percent === null || noiseLevel(d.a, coefficient) ? null : percent }
     }
 
+    /// A run's conditions in one line for the run list (CAD-181): "35 m/s (126 km/h) · flow +X ·
+    /// medium mesh · moving floor at Z -40 mm"; "" without case information.
+    function runConditions(st) {
+        if (!st)
+            return ""
+        const parts = [qsTr("%1 m/s (%2 km/h)").arg(Number(Number(st.speed).toFixed(2))).arg(Math.round(st.speed * 3.6)),
+                       qsTr("flow %1").arg(st.flowDirection),
+                       qsTr("%1 mesh").arg(st.mesh)]
+        if (st.ground) {
+            let floor = st.rotatingWheels ? qsTr("moving floor, turning wheels")
+                      : st.groundMoving === false ? qsTr("fixed floor") : qsTr("moving floor")
+            if (st.groundHeight !== null && st.groundHeight !== undefined)
+                floor += " " + qsTr("at Z %1 mm").arg(Number(st.groundHeight))
+            parts.push(floor)
+        }
+        return parts.join(" · ")
+    }
     function num(v, digits) {
         return v === null || v === undefined || !isFinite(v) ? "–" : Number(v).toFixed(digits)
     }
@@ -1417,6 +1434,15 @@ Pane {
                                         + root.num(l.cd, 3) + " · drag " + root.num(l.dragN, 3) + " N"
                                 return s
                             }
+                        }
+                        Label {
+                            objectName: "runConditions_" + runRow.modelData.id
+                            Layout.fillWidth: true
+                            visible: text.length > 0
+                            font.pixelSize: 11
+                            color: Theme.textMuted
+                            wrapMode: Text.WordWrap
+                            text: root.runConditions(runRow.modelData.settings)
                         }
                         ProgressBar {
                             Layout.fillWidth: true

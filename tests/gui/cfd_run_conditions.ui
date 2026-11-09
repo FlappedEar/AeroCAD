@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CAD-181: each run in the run list names its conditions (speed, flow, mesh, floor), so runs
+# can be told apart without selecting them. Prepared cases only (no engine).
+Qt.createQmlObject('import QtQuick; Item { objectName: "cfTest"; visible: false; function find(i, name) { if (!i) return null; if (i.objectName === name) return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = find(ch[k], name); if (r) return r } return null } }', window.contentItem)
+ui.wait(800)
+(() => { for (const r of controller.execute("simulation.list").result.runs) controller.execute("simulation.delete", { run: r.id }) })()
+(() => { const p = controller.execute("document.parts").result.parts[0]; window.selectPart(p.id); const a = controller.execute("simulation.run", { id: p.id, label: "base", prepareOnly: true }); const b = controller.execute("simulation.run", { id: p.id, label: "fast", speed: 55.5556, flowDirection: "+X", mesh: "medium", ground: true, groundHeight: -40, groundMoving: false, prepareOnly: true }); const c = controller.execute("simulation.run", { id: p.id, label: "floor", ground: true, prepareOnly: true }); if (!a.ok || !b.ok || !c.ok) ui.fail("prepare: " + (a.error || b.error || c.error)) })()
+ui.clickText("SIMULATE")
+ui.wait(300)
+ui.clickText("Wind Tunnel")
+ui.wait(1000)
+(() => { simulationPanel.refreshRuns(); simulationPanel.tab = 0 })()
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const want = { base: "20 m/s (72 km/h) · flow +Y · coarse mesh", fast: "55.56 m/s (200 km/h) · flow +X · medium mesh · fixed floor at Z -40 mm", floor: "20 m/s (72 km/h) · flow +Y · coarse mesh · moving floor" }; for (const r of simulationPanel.runs) { const l = t.find(simulationPanel, "runConditions_" + r.id); const text = l ? l.text : "none"; ui.log("CONDITIONS " + r.source.label + ": " + text); if (!l || !l.visible || text !== want[r.source.label]) ui.fail(r.source.label + ": " + text) } })()
+# Turning wheels (needs a part with tyres, so checked on the line itself).
+(() => { const t = simulationPanel.runConditions({ speed: 30, flowDirection: "-Y", mesh: "fine", ground: true, groundMoving: true, rotatingWheels: true, groundHeight: null }); ui.log("WHEELS " + t); if (t !== "30 m/s (108 km/h) · flow -Y · fine mesh · moving floor, turning wheels") ui.fail("wheels: " + t) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); let fl = t.find(simulationPanel, "runConditions_" + simulationPanel.runs[0].id).parent; while (fl && fl.contentY === undefined) fl = fl.parent; if (fl) fl.contentY = Math.max(0, fl.contentHeight - fl.height) })()
+ui.wait(300)
+ui.shot("cfd-run-conditions.png")
+ui.log("cfd run conditions done")

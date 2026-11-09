@@ -315,6 +315,11 @@ on the run in the run list, type the name and press Enter (or click elsewhere); 
 name removes the label ([run list](images/audit/cad-174-rename-run.png)). The label is saved
 in the run's `run.json`; `simulation.rename` does the same (at most 80 characters, one line).
 
+Each run in the run list has a line with its conditions, for example "55.56 m/s (200 km/h) ·
+flow +X · medium mesh · fixed floor at Z -40 mm" (CAD-181,
+[run list](images/audit/cad-181-run-conditions.png)); `simulation.list` and
+`simulation.status` return them as `settings` (null when the run has no `case.json`).
+
 `simulation.run` returns at once with a run id; the run continues in the background,
 also when the app is closed (it is picked up again on the next start). Progress is
 estimated from the current step (`aerocad.stage`) and the solver iteration. A run

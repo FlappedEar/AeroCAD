@@ -73,6 +73,10 @@ Json statusJson(const CommandContext& ctx, const cfd::RunStatus& status)
 {
     Json j = status.toJson();
     j["sourceInDocument"] = sourceInDocument(ctx, status.source);
+    // The conditions it runs at, so a run list can tell runs apart (CAD-181); null for a
+    // run without case information.
+    const auto info = ctx.simulations != nullptr ? ctx.simulations->caseInfo(status.id) : std::nullopt;
+    j["settings"] = info ? cfd::toJson(info->settings) : Json(nullptr);
     return j;
 }
 
