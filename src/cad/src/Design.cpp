@@ -1904,8 +1904,9 @@ geometry::SketchCurve Design::extendedSketchCurve(FeatureId sketchId, std::size_
         if (i == curve)
             continue;
         const auto& c = curves[i];
+        // A sketch point on the end is joined to it too (the solver shares it like an end).
         const bool hasEnds = c.kind == SketchCurve::Kind::Line || c.kind == SketchCurve::Kind::Arc ||
-                             (c.kind == SketchCurve::Kind::Spline && !c.closed);
+                             c.kind == SketchCurve::Kind::Point || (c.kind == SketchCurve::Kind::Spline && !c.closed);
         if (!hasEnds || c.points.empty())
             continue;
         for (const Vec2& q : {c.points.front(), c.points.back()})

@@ -2325,6 +2325,36 @@ TEST_CASE("Design commands: sketch points (CAD-235)", "[commands][cad][solver]")
     run(s, "sketch.delete_curves", {{"sketch", bid}, {"curves", Json::array({1})}});
     CHECK(curves(bid).size() == 2);
 
+    // A point on a line end is joined to it: Extend refuses that end (Codex review on #203).
+    const Json e = run(s, "sketch.create",
+                       {{"plane", "XY"},
+                        {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {10, 0}}},
+                                                {{"type", "line"}, {"start", {20, -5}}, {"end", {20, 5}}},
+                                                {{"type", "point"}, {"at", {10, 0}}}})}});
+    const auto eid = e.at("id").get<std::uint64_t>();
+    {
+        const auto r = s.execute("sketch.extend", {{"sketch", eid}, {"curve", 0}, {"at", {9, 0}}});
+        INFO(r.error);
+        CHECK_FALSE(r.ok);
+        CHECK(r.error.find("joined") != std::string::npos);
+        CHECK(near(curves(eid)[0].at("points")[1], 10, 0));
+    }
+    // "center" (and "end") of a point mean the point, in the command layer too: fix it there.
+    run(s, "sketch.add_constraints",
+        {{"sketch", eid}, {"constraints", Json::array({{{"type", "fix"}, {"point", {{"curve", 2}, {"point", "center"}}}}})}});
+    run(s, "sketch.add_constraints",
+        {{"sketch", eid},
+         {"constraints", Json::array({{{"type", "distance"},
+                                       {"points", Json::array({{{"curve", 2}, {"point", "end"}}, {{"curve", 0}, {"point", "start"}}})},
+                                       {"value", 8}}})}});
+    {
+        const Json c = curves(eid);
+        INFO(c.dump());
+        CHECK(near(c[2].at("points")[0], 10, 0)); // fixed where it was
+        CHECK(std::hypot(c[0].at("points")[0][0].get<double>() - 10, c[0].at("points")[0][1].get<double>()) ==
+              Approx(8).margin(1e-6));
+    }
+
     // A sketch of points only evaluates (nothing to extrude, but no error).
     const Json c = run(s, "sketch.create", {{"plane", "XY"}, {"curves", Json::array({{{"type", "point"}, {"at", {1, 2}}}})}});
     CHECK(curves(c.at("id").get<std::uint64_t>()).size() == 1);

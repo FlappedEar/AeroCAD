@@ -680,6 +680,8 @@ geometry::Vec2 pointPosition(const std::vector<geometry::SketchCurve>& curves, c
     const auto& c = curves[i];
     const std::string which = ref.value("point", std::string("start"));
     using K = geometry::SketchCurve::Kind;
+    if (c.kind == K::Point && which != "fit" && !c.points.empty())
+        return c.points[0]; // start, end and centre of a sketch point are the point
     if (which == "center") {
         if (c.kind == K::Circle)
             return c.points[0];
