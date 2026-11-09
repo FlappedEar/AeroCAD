@@ -371,7 +371,7 @@ ApplicationWindow {
     }
     Connections {
         target: controller
-        function onHistoryChanged() { window.checkIsolation() }
+        function onHistoryChanged() { Qt.callLater(window.checkIsolation) }
     }
 
     function deleteSelected() {
@@ -2796,7 +2796,7 @@ ApplicationWindow {
         }
         // Undo/redo and edits elsewhere (timeline, parameters) change the sketch too.
         function onHistoryChanged() {
-            window.refreshSketchSnaps()
+            Qt.callLater(window.refreshSketchSnaps)
         }
         function onPartImported(id) {
             window.selectPart(id)
