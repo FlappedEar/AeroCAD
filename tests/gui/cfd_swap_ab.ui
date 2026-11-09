@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CAD-204: A/B > Swap A ↔ B exchanges the baseline and the variant and keeps the A/B tab open.
+# Two prepared runs (no engine): the comparison is not comparable, but its runs and the panel's
+# A and B follow the swap; the values come from simulation.compare(b, a).
+Qt.createQmlObject('import QtQuick; Item { objectName: "cfTest"; visible: false; property var store; function find(i, name) { if (!i) return null; if (i.objectName === name) return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = find(ch[k], name); if (r) return r } return null } }', window.contentItem)
+ui.wait(800)
+(() => { for (const r of controller.execute("simulation.list").result.runs) controller.execute("simulation.delete", { run: r.id }) })()
+ui.clickText("SIMULATE")
+ui.wait(300)
+ui.clickText("Wind Tunnel")
+ui.wait(800)
+(() => { const p = controller.execute("document.parts").result.parts[0]; const a = controller.execute("simulation.run", { id: p.id, prepareOnly: true }).result.id; const b = controller.execute("simulation.run", { id: p.id, prepareOnly: true }).result.id; controller.execute("simulation.rename", { run: a, label: "baseline" }); controller.execute("simulation.rename", { run: b, label: "splitter" }); simulationPanel.refreshRuns(); simulationPanel.selectRun(a); simulationPanel.compareRun = b; simulationPanel.loadComparison(); simulationPanel.tab = 2 })()
+ui.wait(800)
+(() => { const c = simulationPanel.comparison; if (!c || c.a !== simulationPanel.activeRun || c.b !== simulationPanel.compareRun) ui.fail("no comparison before the swap") })()
+ui.shot("cfd-swap-ab-before.png")
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const b = t.find(simulationPanel, "cfdSwapAB"); if (!b || !b.visible) ui.fail("no Swap A ↔ B button"); ui.log("BEFORE A " + simulationPanel.activeRun + " B " + simulationPanel.compareRun); t.store = [simulationPanel.activeRun, simulationPanel.compareRun] })()
+ui.clickText("Swap A ↔ B")
+ui.wait(800)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const was = t.store; const c = simulationPanel.comparison; ui.log("AFTER A " + simulationPanel.activeRun + " B " + simulationPanel.compareRun + " tab " + simulationPanel.tab); if (simulationPanel.activeRun !== was[1] || simulationPanel.compareRun !== was[0]) ui.fail("runs not swapped"); if (!c || c.a !== was[1] || c.b !== was[0]) ui.fail("comparison not swapped"); if (simulationPanel.tab !== 2) ui.fail("left the A/B tab"); if (!simulationPanel.results || simulationPanel.results.run.id !== was[1]) ui.fail("results not of the new A") })()
+ui.shot("cfd-swap-ab.png")
+ui.log("cfd swap ab done")

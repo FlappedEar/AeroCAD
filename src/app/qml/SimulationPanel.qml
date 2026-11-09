@@ -538,6 +538,21 @@ Pane {
         fieldStats = stats
     }
 
+    /// Exchanges the baseline and the variant (CAD-204): B − A, the % changes and the
+    /// balance shift flip sign; the A/B tab stays open.
+    function swapAB() {
+        if (!activeRun || !compareRun)
+            return
+        const a = activeRun
+        activeRun = compareRun
+        compareRun = a
+        showB = false
+        loadResults()
+        loadComparison()
+        if (comparison)
+            tab = 2
+    }
+
     function loadComparison() {
         if (!activeRun || !compareRun || activeRun === compareRun) {
             comparison = null
@@ -2117,6 +2132,13 @@ Pane {
                 }
                 RowLayout {
                     Layout.fillWidth: true
+                    Button {
+                        objectName: "cfdSwapAB"
+                        text: qsTr("Swap A ↔ B")
+                        ToolTip.visible: hovered
+                        ToolTip.text: qsTr("Make B the baseline and A the variant")
+                        onClicked: root.swapAB()
+                    }
                     Button {
                         objectName: "cfdExportAB"
                         text: qsTr("Export CSV…")
