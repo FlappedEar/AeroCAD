@@ -679,10 +679,38 @@ Pane {
         return true
     }
 
+    /// The speed typed in the New run form in m/s, or NaN: a number (decimal point or comma)
+    /// with an optional unit m/s, km/h (kmh, kph) or mph (CAD-180).
+    function speedMs(text) {
+        const m = /^\s*(\d+(?:[.,]\d*)?|[.,]\d+)\s*(m\/s|ms|km\/h|kmh|kph|mph)?\s*$/i.exec(text || "")
+        if (!m)
+            return NaN
+        const v = Number(m[1].replace(",", "."))
+        const unit = (m[2] || "m/s").toLowerCase()
+        // A converted speed is kept to 4 decimals, so "Use the settings of" shows it short and
+        // copies it exactly (same speed, same case).
+        const round = x => Math.round(x * 1e4) / 1e4
+        return unit === "km/h" || unit === "kmh" || unit === "kph" ? round(v / 3.6)
+             : unit === "mph" ? round(v * 0.44704) : v
+    }
+    readonly property real typedSpeed: speedMs(speedField.text)
+    readonly property bool speedValid: typedSpeed > 0 && typedSpeed <= 150
+    /// Under the speed field: the speed in both units, or why it cannot be used.
+    readonly property string speedHint: {
+        const v = typedSpeed
+        if (isNaN(v))
+            return qsTr("Type a speed, e.g. 20 (m/s), 72 km/h or 45 mph.")
+        if (!(v > 0))
+            return qsTr("The speed must be above 0.")
+        if (v > 150)
+            return qsTr("%1 m/s is above 150 m/s, the limit of this incompressible-flow solver.").arg(v.toFixed(1))
+        return qsTr("= %1 m/s = %2 km/h").arg(Number(v.toFixed(2))).arg(Number((v * 3.6).toFixed(1)))
+    }
+
     function runParams() {
         const params = Object.assign({}, copiedSettings, {
             id: partInfo.id,
-            speed: Number(speedField.text),
+            speed: speedMs(speedField.text),
             flowDirection: flowBox.currentValue,
             mesh: meshBox.currentValue,
             ground: groundBox.checked
@@ -1078,14 +1106,23 @@ Pane {
                         wrapMode: Text.WordWrap
                         font.pixelSize: 11
                     }
-                    Label { text: qsTr("Speed (m/s)"); opacity: 0.7 }
+                    Label { text: qsTr("Speed"); opacity: 0.7 }
                     TextField {
                         id: speedField
                         objectName: "cfdSpeedField"
                         Layout.fillWidth: true
                         text: "20"
-                        validator: DoubleValidator { bottom: 0.1; top: 150; locale: "C" }
+                        placeholderText: qsTr("m/s, or with a unit: 72 km/h, 45 mph")
                         onEditingFinished: proposalTimer.restart()
+                    }
+                    Item { implicitWidth: 1; implicitHeight: 1 }
+                    Label {
+                        objectName: "cfdSpeedHint"
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        font.pixelSize: 11
+                        text: root.speedHint
+                        color: root.speedValid ? Theme.textMuted : Theme.warning
                     }
                     Label { text: qsTr("Air flows"); opacity: 0.7 }
                     ComboBox {
@@ -1186,6 +1223,7 @@ Pane {
                         text: qsTr("Run CFD")
                         highlighted: true
                         enabled: !!root.partInfo.id && root.partInfo.kind !== "sketch" && root.partInfo.kind !== "plane"
+                                 && root.speedValid
                         onClicked: root.startRun()
                     }
                     // Why this run cannot be set up, before Run CFD is pressed (CAD-147).
