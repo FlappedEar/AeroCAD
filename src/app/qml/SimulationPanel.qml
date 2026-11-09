@@ -1854,10 +1854,14 @@ Pane {
                 spacing: 8
 
                 Label {
+                    objectName: "cfdResultsHeading"
                     text: root.results && root.results.finalResults.available ? qsTr("Final results")
                           : root.activeRunning && root.results && root.results.current
                             ? qsTr("Current values (provisional): mean of the last 20 % so far")
                           : root.activeRunning ? qsTr("Final results when the run has finished")
+                          : root.results && root.results.current
+                            ? qsTr("Values when the run stopped (provisional): mean of the last 20 % of %1 iterations")
+                                .arg(root.results.current.iterations)
                           : qsTr("Final results unavailable")
                     font.bold: true
                 }
@@ -1876,9 +1880,10 @@ Pane {
                     columns: 4
                     columnSpacing: 10
                     rowSpacing: 2
-                    // While running: the current means so far (CAD-158), dimmed as provisional.
+                    // While running, or for a stopped run: the means so far (CAD-158, CAD-221),
+                    // dimmed as provisional. The stop dialog promises they stay visible.
                     readonly property bool current: !!root.results && !root.results.finalResults.available
-                                                    && root.activeRunning && !!root.results.current
+                                                    && !!root.results.current
                     readonly property var s: !root.results ? ({}) : current ? root.results.current : root.results.summary
                     opacity: current ? 0.75 : 1.0
                     Label { text: qsTr("Drag"); opacity: 0.7 }

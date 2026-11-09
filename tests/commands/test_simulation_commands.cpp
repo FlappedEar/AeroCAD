@@ -325,9 +325,10 @@ TEST_CASE("simulation results require successful completion independently of out
     CHECK(result.data.at("history").at("iteration").size() == 20);
     CHECK(result.data.at("history").at("cd")[0] == 0.8);
     CHECK(result.data.at("provisional") == !finished);
-    // CAD-158: only a running run reports its current tail means, apart from the summary.
-    REQUIRE(result.data.at("current").is_object() == (state == "running"));
-    if (state == "running") {
+    // CAD-158 / CAD-221: a run without final results (running, or stopped with iterations)
+    // reports its tail means so far, apart from the summary; a finished run does not.
+    REQUIRE(result.data.at("current").is_object() == !finished);
+    if (!finished) {
         CHECK(result.data.at("current").at("cd") == 0.8);
         CHECK(result.data.at("current").at("dragN").is_number());
         CHECK(result.data.at("current").at("iterations") == 20);

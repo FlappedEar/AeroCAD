@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CAD-221: "Stop this run? … What it computed so far stays visible." After Stop run, Results
+# keeps the means of the iterations recorded so far (dimmed, provisional) instead of dashes.
+ui.wait(800)
+Qt.createQmlObject('import QtQuick; Item { objectName: "cfTest"; visible: false; function find(i, name) { if (!i) return null; if (i.objectName === name) return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = find(ch[k], name); if (r) return r } return null } function clickItem(name) { const b = find(simulationPanel, name); const p = b.mapToItem(null, b.width / 2, b.height / 2); ui.click(p.x, p.y) } }', window.contentItem)
+(() => { for (const r of controller.execute("simulation.list").result.runs) controller.execute("simulation.delete", { run: r.id }) })()
+(() => { const p = controller.execute("document.parts").result.parts[0]; window.selectPart(p.id) })()
+ui.clickText("SIMULATE")
+ui.wait(300)
+ui.clickText("Wind Tunnel")
+ui.wait(800)
+ui.clickText("Run CFD")
+ui.wait(3000)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const d = t.find(simulationPanel, "cfdSummaryDrag").text; ui.log("RUNNING " + d); if (d.indexOf("1.500") !== 0) ui.fail("no current drag while running: " + d) })()
+(() => { simulationPanel.confirmRunAction("cancel", simulationPanel.activeRun) })()
+ui.wait(400)
+ui.clickText("Stop run")
+ui.wait(2500)
+(() => { simulationPanel.refreshRuns() })()
+ui.wait(800)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const s = simulationPanel.activeStatus; const d = t.find(simulationPanel, "cfdSummaryDrag").text; const h = t.find(simulationPanel, "cfdResultsHeading").text; ui.log("STOPPED " + (s ? s.state : "-") + " | " + h + " | " + d); if (!s || s.state !== "cancelled") ui.fail("run not cancelled: " + (s ? s.state : "none")); if (d.indexOf("1.500") !== 0) ui.fail("values gone after Stop run: " + d); if (h.indexOf("Values when the run stopped") !== 0) ui.fail("heading: " + h); if (simulationPanel.noResults) ui.fail("noResults for a run with iterations") })()
+ui.shot("cfd-stopped-values.png")
+ui.log("cfd stopped values done")

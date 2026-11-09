@@ -183,8 +183,10 @@ Instead of dashes, the force and coefficient grid then shows the *current values
 mean over the last 20 % of the iterations recorded so far, the same averaging as the final
 results, dimmed and headed "Current values (provisional)" (CAD-158,
 [live fine run](images/audit/cad-158-current-values.png)). `simulation.results` returns
-them as `current` only while the run is running; `summary` stays null until it finishes, and
-A/B never uses them.
+them as `current` for every run without final results that recorded iterations; `summary`
+stays null until it finishes, and A/B never uses them. A stopped run (cancelled, failed,
+interrupted) keeps them, headed "Values when the run stopped (provisional)", as the stop
+dialog promises (CAD-221, [stopped run](images/audit/cad-221-stopped-values.png)).
 
 While a run runs, Results and the run list say how long it has run (`elapsedSeconds`, for
 runs this app started) and, while solving, at most how long is left (`remainingSeconds`):
