@@ -4,6 +4,7 @@
 // method used and data-quality warnings.
 #include "aerocad/commands/Session.hpp"
 
+#include "aerocad/core/Align.hpp"
 #include "aerocad/core/Measure.hpp"
 
 #include "CommandHelpers.hpp"
@@ -158,10 +159,11 @@ Json measurePointToPart(const model::Document& doc, const Json& params)
     } else {
         const double radius = params.contains("normal_radius") ? params.at("normal_radius").get<double>()
                                                                : core::defaultNormalRadius(*p.mesh, hit->triangle);
-        out["normal"] = vec(core::smoothedNormal(*p.mesh, hit->point, hit->triangle, radius));
+        out["normal"] = vec(core::patchNormal(*p.mesh, hit->point, hit->triangle, radius));
         out["normalRadius"] = radius;
-        out["normalMethod"] = "Area-weighted mean of the triangle normals within normalRadius mm of the closest "
-                              "point (scan noise smoothed out); triangleNormal is the closest triangle's own.";
+        out["normalMethod"] = "Mean of the triangle normals within normalRadius mm of the closest point, each "
+                              "weighted by its area inside that disc and by how closely it faces the same way (scan "
+                              "noise smoothed out); triangleNormal is the closest triangle's own.";
     }
     return out;
 }

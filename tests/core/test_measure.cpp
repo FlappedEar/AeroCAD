@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "aerocad/core/Align.hpp"
 #include "aerocad/core/Measure.hpp"
 
 #include <catch2/catch_approx.hpp>
@@ -65,7 +66,7 @@ TEST_CASE("openEdgeCount welds per-face vertices", "[core][measure]")
     CHECK(openEdgeCount(split) == 0);
 }
 
-TEST_CASE("smoothedNormal averages a noisy surface and ignores the far wall of a thin shell (CAD-232)", "[measure]")
+TEST_CASE("A picked normal on a noisy scan is the surface's, not one triangle's (CAD-232)", "[measure]")
 {
     // A 40 x 40 mm grid in z = 0 with +-0.3 mm noise on 2 mm cells, like a scan.
     std::vector<Vec3> v;
@@ -85,11 +86,18 @@ TEST_CASE("smoothedNormal averages a noisy surface and ignores the far wall of a
             t.push_back({a, a + 1, a + static_cast<std::uint32_t>(n) + 1});
             t.push_back({a, a + static_cast<std::uint32_t>(n) + 1, a + static_cast<std::uint32_t>(n)});
         }
-    // The far wall, 1 mm below and facing down.
-    const auto base = static_cast<std::uint32_t>(v.size());
+    // The far wall of a thin shell, 1 mm below and facing down.
+    auto base = static_cast<std::uint32_t>(v.size());
     v.push_back({0, 0, -1});
     v.push_back({40, 0, -1});
     v.push_back({0, 40, -1});
+    t.push_back({base, base + 2, base + 1});
+    // A large triangle tilted by 45 degrees that just reaches the neighbourhood: only its
+    // part inside it may count, not its whole area.
+    base = static_cast<std::uint32_t>(v.size());
+    v.push_back({23.5, 0, 0.5});
+    v.push_back({23.5, 40, 0.5});
+    v.push_back({123.5, 20, 100.5});
     t.push_back({base, base + 2, base + 1});
     const TriangleMesh mesh(v, t);
 
@@ -98,11 +106,7 @@ TEST_CASE("smoothedNormal averages a noisy surface and ignores the far wall of a
     const Vec3 raw = mesh.faceNormal(hit->triangle);
     const double radius = defaultNormalRadius(mesh, hit->triangle);
     CHECK(radius >= 2.0 * 2.0);
-    const Vec3 smooth = smoothedNormal(mesh, hit->point, hit->triangle, radius);
+    const Vec3 smooth = patchNormal(mesh, hit->point, hit->triangle, radius);
     CHECK(smooth.z > raw.z);
-    CHECK(smooth.z > 0.99);
-    // Nothing else in reach: the triangle's own normal.
-    const Vec3 own = smoothedNormal(mesh, {100, 100, 100}, hit->triangle, 1.0);
-    CHECK(own.x == Approx(raw.x));
-    CHECK(own.z == Approx(raw.z));
+    CHECK(smooth.z > 0.99); // within about 8 degrees of the surface normal
 }

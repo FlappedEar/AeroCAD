@@ -21,14 +21,7 @@ struct MeshPoint {
 /// std::nullopt for an empty mesh.
 [[nodiscard]] std::optional<MeshPoint> closestPointOnMesh(const TriangleMesh& mesh, const Vec3& p);
 
-/// Surface normal at a point of the mesh, smoothed over the neighbourhood: the area-weighted
-/// mean of the normals of the triangles within `radius` (mm) of `at`, counting only those that
-/// face the same way as `triangle` (so the far wall of a thin shell does not cancel it out).
-/// On a noisy scan this is the normal of the surface rather than of one triangle. Falls back to
-/// the triangle's own normal when nothing else is in reach.
-[[nodiscard]] Vec3 smoothedNormal(const TriangleMesh& mesh, const Vec3& at, std::size_t triangle, double radius);
-
-/// A neighbourhood for smoothedNormal: twice the longest edge of `triangle`, and at least
+/// A neighbourhood for a picked normal (patchNormal, Align.hpp): twice the longest edge of `triangle`, and at least
 /// 0.2 % of the mesh's bounding-box diagonal.
 [[nodiscard]] double defaultNormalRadius(const TriangleMesh& mesh, std::size_t triangle);
 
