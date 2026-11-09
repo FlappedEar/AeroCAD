@@ -19,3 +19,6 @@ ui.wait(300)
 ui.wait(300)
 (() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const text = n => t.find(simulationPanel, n).text; if (text("cfdSummaryLD") !== "–") ui.fail("L/D without drag: " + text("cfdSummaryLD")); if (text("cfdSummaryCoefficientArea") !== "– / – cm²") ui.fail("CdA without area: " + text("cfdSummaryCoefficientArea")) })()
 ui.log("cfd efficiency done")
+# CAD-185: the Coefficients chart crosses zero from below (Cl -0.8 .. Cd 0.3); the zero tick must read "0", not "-6e-17".
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const r = JSON.parse(JSON.stringify(simulationPanel.results)); r.summary.dragN = 30; r.history = { iteration: [1, 2], cd: [0.3, 0.25], cl: [-0.7, -0.8], cs: [0, 0.004] }; simulationPanel.results = r; ui.wait(300); const labels = t.find(simulationPanel, "cfdChartCoefficients").yAxisLabels(); ui.log("y ticks: " + labels.join(" ")); if (labels.indexOf("0") < 0 || labels.some(l => l.indexOf("e") >= 0)) ui.fail("bad y tick labels: " + labels.join(" ")) })()
+ui.log("cfd chart ticks done")
