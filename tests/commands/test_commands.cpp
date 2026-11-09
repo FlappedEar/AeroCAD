@@ -1692,6 +1692,13 @@ TEST_CASE("Parameter errors tell an agent what the command accepts", "[commands]
     r = s.execute("geometry.measure", {{"kind", 3}});
     REQUIRE_FALSE(r.ok);
     CHECK(r.error.find("expected string, got number") != std::string::npos);
+    // A misnamed key is reported before the required key it stands for, with the right name.
+    r = s.execute("feature.hole", {{"body", 1}, {"center", {0, 0, 0}}, {"diameter", 8}});
+    REQUIRE_FALSE(r.ok);
+    CHECK(r.error.find("center: unknown parameter - did you mean 'point'?") != std::string::npos);
+    r = s.execute("feature.extrude", {{"sketch", 1}, {"length", 20}});
+    REQUIRE_FALSE(r.ok);
+    CHECK(r.error.find("did you mean 'distance'?") != std::string::npos);
 }
 
 TEST_CASE("project.get_context says what each part is and which feature made it", "[commands]")

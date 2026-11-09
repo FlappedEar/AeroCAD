@@ -153,6 +153,8 @@ TEST_CASE("simulation.propose_run and a prepared run", "[commands][simulation]")
     // 200 x 80 x 60 mm box, flow along X: frontal area 80 x 60 mm.
     CHECK(std::abs(r.data.at("referenceArea").get<double>() - 0.0048) < 0.0048 * 0.01);
     CHECK(std::abs(r.data.at("characteristicLength").get<double>() - 0.2) < 1e-9);
+    CHECK(r.data.at("units").at("referenceArea") == "m^2"); // solver values SI, positions mm
+    CHECK(r.data.at("units").at("partModel").get<std::string>().rfind("mm", 0) == 0);
     // The tunnel and the flow in model coordinates (mm), for drawing them in the view; the
     // part box is the imported box.
     const Json& part = r.data.at("partModel");

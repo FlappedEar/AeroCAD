@@ -335,6 +335,18 @@ void registerSimulationCommands(CommandRegistry& r)
                      {"flowModel", flowVector(plan.frame)},
                      {"environment", checkEngine ? cfd::detectEnvironment().toJson() : Json()},
                      {"warnings", partWarnings(plan.characteristicLength, in.geometry.part)},
+                     // Solver values are SI, model positions mm: say which is which, so an agent
+                     // does not read a 0.008 m^2 reference area as mm^2.
+                     {"units",
+                      {{"referenceArea", "m^2"},
+                       {"referenceLength", "m"},
+                       {"characteristicLength", "m"},
+                       {"baseCellSize", "m"},
+                       {"domainSize", "m, solver axes (x along the flow, z up)"},
+                       {"domainModel", "mm, model coordinates"},
+                       {"domainCorners", "mm, model coordinates"},
+                       {"partModel", "mm, model coordinates"},
+                       {"settings", "SI: speed m/s, density kg/m^3, kinematicViscosity m^2/s, yaw degrees"}}},
                      {"next", "Call simulation.run with the same parameters to start it."}};
               return j;
           });
