@@ -1745,6 +1745,15 @@ Pane {
             }
 
             // --- Results --------------------------------------------------------------
+            Label {
+                objectName: "simulationResultsUnavailable"
+                Layout.fillWidth: true
+                visible: root.tab === 1 && !!root.activeStatus && !root.results
+                wrapMode: Text.WordWrap
+                color: Theme.danger
+                text: root.activeStatus && root.activeStatus.message
+                    ? root.activeStatus.message : qsTr("Results unavailable for this run.")
+            }
             ColumnLayout {
                 Layout.fillWidth: true
                 visible: root.tab === 1 && !!root.results

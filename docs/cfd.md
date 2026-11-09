@@ -162,6 +162,15 @@ panel in place of Properties:
 
 Runs continue when the panel or the app is closed.
 
+If a saved run's `run.json` cannot be read or contains invalid metadata, AeroCAD still
+opens and loads the other runs. The affected run appears as **failed**, with the file's
+path, the error and recovery instructions in the Wind Tunnel panel. Its results are
+unavailable and AeroCAD does not resume its engine. The original metadata and case files
+remain unchanged: restore a valid `run.json` from a backup. The Wind Tunnel panel
+reloads that run when it refreshes, without restarting AeroCAD. A remote run is not
+automatically followed during a refresh; restart AeroCAD to follow it. The panel's
+delete action still removes a run only when explicitly chosen.
+
 While a run runs, Results does not judge it yet: the badge reads *checks: after the run*
 (grey), and neither the quality warnings nor the reasons why final results are missing are
 listed, since every check is still incomplete then
