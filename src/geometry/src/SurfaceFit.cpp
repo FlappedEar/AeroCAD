@@ -1554,8 +1554,10 @@ SurfaceFitResult fitSurface(const core::TriangleMesh& mesh, const core::Triangle
     std::size_t count = 0;
     // Points just outside the trim are on the face's edge (the smoothed outline passes a
     // little inside a coarse border), not off the face: they count as covered (CAD-255).
+    // The reach is one mean edge length, at most 5 % of the selection's size; it does not
+    // grow with the fit tolerance, so a loose tolerance cannot pass a sliver face.
     std::size_t nearOutline = 0;
-    double outlineReach = options.tolerance;
+    double outlineReach = 0.0;
     {
         const core::TriangleSet& tris = options.trimTo.empty() ? selection : options.trimTo;
         double edgeSum = 0.0;
@@ -1564,8 +1566,13 @@ SurfaceFitResult fitSurface(const core::TriangleMesh& mesh, const core::Triangle
             for (int e = 0; e < 3; ++e)
                 edgeSum += (mesh.vertices()[tri[(e + 1) % 3]] - mesh.vertices()[tri[e]]).length();
         }
+        Vec3 lo = measured.empty() ? Vec3{} : measured.front(), hi = lo;
+        for (const auto& q : measured) {
+            lo = {std::min(lo.x, q.x), std::min(lo.y, q.y), std::min(lo.z, q.z)};
+            hi = {std::max(hi.x, q.x), std::max(hi.y, q.y), std::max(hi.z, q.z)};
+        }
         if (!tris.empty())
-            outlineReach = std::max(outlineReach, edgeSum / (3.0 * static_cast<double>(tris.size())));
+            outlineReach = std::min(edgeSum / (3.0 * static_cast<double>(tris.size())), 0.05 * (hi - lo).length());
     }
 
     // A point whose projection falls outside the trim is not on the created face: it is

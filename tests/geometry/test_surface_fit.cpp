@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <numeric>
 #include <random>
 
 using namespace aerocad;
@@ -390,6 +391,36 @@ TEST_CASE("Fit refuses a surface that covers little of the selection (CAD-255)",
     std::string error;
     try {
         (void)geometry::fitSurface(torus, open, {});
+    } catch (const geometry::SurfaceFitError& e) {
+        error = e.what();
+    }
+    CHECK(error.find("covers only") != std::string::npos);
+
+    // The same torus imported with the patch removed and all of it selected, at a loose
+    // tolerance: the tolerance must not widen the coverage check (review on #218).
+    std::vector<core::TriangleMesh::Triangle> kept;
+    std::vector<core::Vec3> keptVerts;
+    std::vector<std::int64_t> remap(torus.vertices().size(), -1);
+    for (const auto k : open) {
+        core::TriangleMesh::Triangle tri = torus.triangles()[k];
+        for (auto& vi : tri) {
+            if (remap[vi] < 0) {
+                remap[vi] = static_cast<std::int64_t>(keptVerts.size());
+                const auto& q = torus.vertices()[vi];
+                keptVerts.push_back({static_cast<float>(q.x), static_cast<float>(q.y), static_cast<float>(q.z)});
+            }
+            vi = static_cast<std::uint32_t>(remap[vi]);
+        }
+        kept.push_back(tri);
+    }
+    const core::TriangleMesh cut(std::move(keptVerts), std::move(kept));
+    core::TriangleSet all(cut.triangleCount());
+    std::iota(all.begin(), all.end(), 0u);
+    geometry::SurfaceFitOptions loose;
+    loose.tolerance = 200.0;
+    error.clear();
+    try {
+        (void)geometry::fitSurface(cut, all, loose);
     } catch (const geometry::SurfaceFitError& e) {
         error = e.what();
     }
