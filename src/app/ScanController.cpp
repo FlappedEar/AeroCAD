@@ -331,6 +331,13 @@ std::shared_ptr<const core::TriangleMesh> ScanController::displayMesh(const mode
     Lod lod;
     lod.source = part.mesh;
     lod.budget = m_triangleBudget;
+    for (const CachedLod& c : m_lodCache) {
+        if (c.budget == m_triangleBudget && c.source.lock() == part.mesh) {
+            lod.mesh = c.mesh;
+            m_lods.insert(part.id, lod);
+            return lod.mesh;
+        }
+    }
     m_lods.insert(part.id, lod);
 
     const quint64 id = part.id;
@@ -349,6 +356,7 @@ std::shared_ptr<const core::TriangleMesh> ScanController::displayMesh(const mode
                 if (entry == self->m_lods.end() || entry->source != source || entry->budget != budget)
                     return; // stale (mesh changed or budget changed meanwhile)
                 entry->mesh = mesh;
+                self->rememberLod(source, budget, mesh);
                 emit self->displayMeshReady(id);
             },
             Qt::QueuedConnection);
@@ -356,6 +364,16 @@ std::shared_ptr<const core::TriangleMesh> ScanController::displayMesh(const mode
     connect(worker, &QThread::finished, worker, &QObject::deleteLater);
     worker->start(QThread::LowPriority);
     return nullptr;
+}
+
+void ScanController::rememberLod(const std::shared_ptr<const core::TriangleMesh>& source, int budget,
+                                 const std::shared_ptr<const core::TriangleMesh>& mesh)
+{
+    std::erase_if(m_lodCache, [](const CachedLod& c) { return c.source.expired(); });
+    m_lodCache.insert(m_lodCache.begin(), CachedLod{source, budget, mesh});
+    constexpr std::size_t kCacheSize = 4;
+    if (m_lodCache.size() > kCacheSize)
+        m_lodCache.resize(kCacheSize);
 }
 
 } // namespace aerocad::app

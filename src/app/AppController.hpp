@@ -49,6 +49,9 @@ class AppController : public QObject {
     /// Changes whenever an Inspect analysis (section, heat map) changes; bind to it to
     /// re-evaluate inspectInfo() / sectionCuts().
     Q_PROPERTY(int inspectRevision READ inspectRevision NOTIFY inspectChanged)
+    /// Changes when a mesh check run in the background (big scans) has finished: bindings
+    /// that show its result (partOpenWarning) read it again.
+    Q_PROPERTY(int meshCheckRevision READ meshCheckRevision NOTIFY meshChecksChanged)
     Q_PROPERTY(QString projectName READ projectName NOTIFY projectChanged)
     Q_PROPERTY(QString projectPath READ projectPath NOTIFY projectChanged)
     Q_PROPERTY(bool projectDirty READ projectDirty NOTIFY projectChanged)
@@ -214,6 +217,7 @@ public:
     [[nodiscard]] const core::TriangleSet* displayedSelection(quint64 id) const;
 
     [[nodiscard]] int inspectRevision() const;
+    [[nodiscard]] int meshCheckRevision() const { return m_meshCheckRevision; }
     /// Active analyses for QML: {section: {enabled, origin, normal, cap}, heatMap: {enabled,
     /// kind, part, reference, rangeMin, rangeMax, stats}}.
     Q_INVOKABLE QVariantMap inspectInfo() const;
@@ -234,6 +238,7 @@ public:
     [[nodiscard]] commands::Session& session() { return m_session; }
 
 signals:
+    void meshChecksChanged();
     void partChanged(quint64 id);
     void boundsChanged();
     void historyChanged();
@@ -271,8 +276,16 @@ private:
     [[nodiscard]] const core::BoundingBox& documentBounds() const;
     mutable std::shared_ptr<const core::TriangleMesh> m_projectorMesh;
     mutable std::unique_ptr<core::MeshProjector> m_projector;
-    mutable std::weak_ptr<const core::TriangleMesh> m_openEdgesMesh; ///< Mesh m_openEdges was counted on.
-    mutable std::size_t m_openEdges = 0;
+    /// Mesh checks the UI shows (warnings), computed once per mesh: checking a scan of
+    /// millions of triangles takes about a second.
+    struct MeshFacts {
+        std::weak_ptr<const core::TriangleMesh> mesh;
+        std::optional<std::size_t> openEdges; ///< Empty until counted.
+        bool counting = false;                ///< Open edges being counted in the background.
+    };
+    mutable std::vector<std::pair<const core::TriangleMesh*, MeshFacts>> m_meshFacts;
+    MeshFacts& meshFacts(const std::shared_ptr<const core::TriangleMesh>& mesh) const;
+    int m_meshCheckRevision = 0;
 
     void setStatusMessage(const QString& message);
     /// Runs the heat map again after its parts changed (or clears it when they are gone).

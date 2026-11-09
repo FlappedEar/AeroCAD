@@ -1324,7 +1324,7 @@ Pane {
                         objectName: "cfdOpenWarning"
                         Layout.columnSpan: 2
                         Layout.fillWidth: true
-                        text: root.partInfo.id ? controller.partOpenWarning(root.partInfo.id) : ""
+                        text: root.partInfo.id && controller.meshCheckRevision >= 0 ? controller.partOpenWarning(root.partInfo.id) : ""
                         visible: text.length > 0
                         color: Theme.warning
                         wrapMode: Text.WordWrap

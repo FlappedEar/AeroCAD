@@ -1,6 +1,7 @@
-# Navigation stays fast on a big scan (CAD perf): picks go through a ray hierarchy, the
-# view does not walk the mesh on every camera move, and the ViewCube has the pointer to
-# itself (no model hover picks behind it, also while it is dragged).
+# Navigation and edits stay fast on a big scan (CAD-234, CAD-238): picks go through a ray
+# hierarchy, the view does not walk the mesh on every camera move, the ViewCube has the pointer
+# to itself (no model hover picks behind it, also while it is dragged), panels do not walk the
+# mesh per refresh, and Undo / Redo draw the scan at once.
 # Run: AeroCAD <dense.stl from make_dense_mesh> --ui-script <this file>
 Qt.createQmlObject('import QtQuick; Item { id: t; objectName: "perf"; visible: false; property var pts: []; property int i: 0; property string button: ""; property bool done: true; property real c0: 0; property real cpu: 0; property bool hoveredOnCube: false; property real yaw0: 0; Timer { id: tick; interval: 16; repeat: true; onTriggered: t.step() } function win(x, y) { return viewport.mapToItem(null, x, y) } function cube() { const c = viewport.mapFromItem(viewCubeItem(), viewCubeItem().width / 2, viewCubeItem().height / 2); return Qt.point(c.x, c.y) } function viewCubeItem() { return Array.from(viewport.children).find(c => c.objectName === "viewCube") } function ready() { const p = controller.execute("document.parts").result.parts; return p.length === 1 && !scan.busy && scan.displayedTriangles(p[0].id) > 0 } function run(a, b, n, btn) { pts = []; for (let k = 0; k <= n; ++k) pts.push(Qt.point(a.x + (b.x - a.x) * k / n, a.y + (b.y - a.y) * k / n)); i = 0; button = btn; hoveredOnCube = false; done = false; ui.move(pts[0].x, pts[0].y); if (btn) ui.press(pts[0].x, pts[0].y, btn); c0 = ui.uiThreadCpu(); tick.start() } function step() { if (viewport.hoveredPartId) hoveredOnCube = true; i++; if (i >= pts.length) { tick.stop(); cpu = (ui.uiThreadCpu() - c0) / pts.length; if (button) ui.release(pts[pts.length - 1].x, pts[pts.length - 1].y, button); done = true; return } ui.move(pts[i].x, pts[i].y) } function avgMs(fn, n) { ui.startClock(); for (let k = 0; k < n; ++k) fn(k); return ui.elapsedPrecise() / n } }', window.contentItem)
 (() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "perf"); if (!t.ready()) ui.wait(1000) })()
@@ -121,3 +122,26 @@ ui.wait(300)
 (() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "perf"); const w = t.win(viewport.width * 0.4, viewport.height * 0.5); ui.move(w.x, w.y); ui.move(w.x + 3, w.y + 2) })()
 ui.wait(400)
 (() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "perf"); if (!viewport.hoveredPartId) ui.fail("hover highlight does not come back off the ViewCube") })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "perf"); const id = controller.execute("document.parts").result.parts[0].id; const parts = t.avgMs(k => controller.execute("document.parts"), 20); ui.log("document.parts: " + parts.toFixed(3) + " ms"); if (parts > 1) ui.fail("document.parts takes " + parts.toFixed(2) + " ms on one scan (bounds not cached?)"); const info = t.avgMs(k => controller.partInfo(id), 20); ui.log("partInfo: " + info.toFixed(3) + " ms"); if (info > 1) ui.fail("partInfo takes " + info.toFixed(2) + " ms"); const r = controller.execute("part.transform", { id: id, translate: [5, 0, 0] }); if (!r.ok) ui.fail("move: " + r.error) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "perf"); if (!t.ready()) ui.wait(1000) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "perf"); if (!t.ready()) ui.wait(1000) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "perf"); if (!t.ready()) ui.wait(1000) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "perf"); if (!t.ready()) ui.wait(1000) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "perf"); if (!t.ready()) ui.wait(1000) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "perf"); if (!t.ready()) ui.wait(1000) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "perf"); if (!t.ready()) ui.wait(1000) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "perf"); if (!t.ready()) ui.wait(1000) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "perf"); if (!t.ready()) ui.wait(1000) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "perf"); if (!t.ready()) ui.wait(1000) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "perf"); if (!t.ready()) ui.wait(1000) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "perf"); if (!t.ready()) ui.wait(1000) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "perf"); if (!t.ready()) ui.wait(1000) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "perf"); if (!t.ready()) ui.wait(1000) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "perf"); if (!t.ready()) ui.wait(1000) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "perf"); if (!t.ready()) ui.wait(1000) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "perf"); if (!t.ready()) ui.wait(1000) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "perf"); if (!t.ready()) ui.wait(1000) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "perf"); if (!t.ready()) ui.wait(1000) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "perf"); if (!t.ready()) ui.wait(1000) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "perf"); if (!t.ready()) ui.wait(1000) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "perf"); const id = controller.execute("document.parts").result.parts[0].id; ui.startClock(); const r = controller.execute("edit.undo"); const ms = ui.elapsedPrecise(); ui.log("undo: " + ms.toFixed(1) + " ms"); if (!r.ok) ui.fail("undo: " + r.error); if (!(scan.displayedTriangles(id) > 0)) ui.fail("after Undo the scan is not drawn until it is simplified again"); ui.startClock(); controller.execute("edit.redo"); ui.log("redo: " + ui.elapsedPrecise().toFixed(1) + " ms"); if (!(scan.displayedTriangles(id) > 0)) ui.fail("after Redo the scan is not drawn until it is simplified again") })()

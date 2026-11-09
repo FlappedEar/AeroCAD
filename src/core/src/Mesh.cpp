@@ -19,6 +19,7 @@ TriangleMesh::TriangleMesh(std::vector<Vec3> vertices, std::vector<Triangle> tri
 std::uint32_t TriangleMesh::addVertex(const Vec3& v)
 {
     m_vertices.push_back(v);
+    m_bounds.reset();
     return static_cast<std::uint32_t>(m_vertices.size() - 1);
 }
 
@@ -34,6 +35,7 @@ void TriangleMesh::append(const TriangleMesh& other)
 {
     const auto offset = static_cast<std::uint32_t>(m_vertices.size());
     m_vertices.insert(m_vertices.end(), other.m_vertices.begin(), other.m_vertices.end());
+    m_bounds.reset();
     m_triangles.reserve(m_triangles.size() + other.m_triangles.size());
     for (const auto& t : other.m_triangles)
         m_triangles.push_back({t[0] + offset, t[1] + offset, t[2] + offset});
@@ -47,10 +49,12 @@ void TriangleMesh::reserve(std::size_t vertices, std::size_t triangles)
 
 BoundingBox TriangleMesh::bounds() const
 {
-    BoundingBox box;
-    for (const auto& v : m_vertices)
-        box.extend(v);
-    return box;
+    return m_bounds.get([this] {
+        BoundingBox box;
+        for (const auto& v : m_vertices)
+            box.extend(v);
+        return box;
+    });
 }
 
 Vec3 TriangleMesh::faceNormal(std::size_t triangle) const
@@ -78,6 +82,7 @@ void TriangleMesh::scale(double factor, const Vec3& origin)
 {
     for (auto& v : m_vertices)
         v = origin + (v - origin) * factor;
+    m_bounds.reset();
 }
 
 bool TriangleMesh::isValid() const

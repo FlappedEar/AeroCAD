@@ -6,6 +6,8 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <mutex>
+#include <optional>
 #include <vector>
 
 namespace aerocad::core {
@@ -36,6 +38,9 @@ public:
 
     void reserve(std::size_t vertices, std::size_t triangles);
 
+    /// Axis-aligned bounds; computed on the first call after a change and then kept (the
+    /// UI asks for the bounds of multi-million triangle scans many times per edit).
+    /// Safe to call from several threads at once.
     [[nodiscard]] BoundingBox bounds() const;
 
     /// Unit normal of a triangle (zero vector for degenerate triangles).
@@ -51,8 +56,41 @@ public:
     [[nodiscard]] bool isValid() const;
 
 private:
+    /// Lazily computed bounds. Copies and assignments start empty, so a mesh assigned new
+    /// geometry never keeps the old box.
+    class BoundsCache {
+    public:
+        // noexcept, so containers of meshes move them instead of copying. Assigning to a
+        // mesh that other threads read at the same time is a race anyway, hence no lock.
+        BoundsCache() noexcept = default;
+        BoundsCache(const BoundsCache&) noexcept {}
+        BoundsCache& operator=(const BoundsCache&) noexcept
+        {
+            m_box.reset();
+            return *this;
+        }
+        void reset()
+        {
+            const std::lock_guard lock(m_mutex);
+            m_box.reset();
+        }
+        template <typename Compute>
+        BoundingBox get(Compute&& compute) const
+        {
+            const std::lock_guard lock(m_mutex);
+            if (!m_box)
+                m_box = compute();
+            return *m_box;
+        }
+
+    private:
+        mutable std::mutex m_mutex;
+        mutable std::optional<BoundingBox> m_box;
+    };
+
     std::vector<Vec3> m_vertices;
     std::vector<Triangle> m_triangles;
+    BoundsCache m_bounds;
 };
 
 /// Builds an indexed mesh from triangle soup, welding vertices with identical coordinates.
