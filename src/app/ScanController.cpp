@@ -6,6 +6,7 @@
 
 #include "AppController.hpp"
 
+#include "aerocad/core/Align.hpp"
 #include "aerocad/core/MeshSimplify.hpp"
 #include "aerocad/core/Path.hpp"
 #include "aerocad/core/Units.hpp"
@@ -53,13 +54,14 @@ ScanController::ScanController(AppController* app, QObject* parent) : QObject(pa
     });
     // New / Open (from the menu, a script or MCP) ends the imports of the old project.
     connect(m_app, &AppController::projectChanged, this, &ScanController::dropStaleImports);
-    // Parts whose mesh changed or that were removed drop their cached level of detail.
+    // Removed parts drop their level of detail. A part whose mesh changed keeps it until it
+    // is drawn again: displayMesh moves it along when the mesh was only moved or turned.
     connect(m_app, &AppController::partChanged, this, [this](quint64 id) {
         auto it = m_lods.find(id);
         if (it == m_lods.end())
             return;
         const model::Part* p = m_app->part(id);
-        if (p == nullptr || p->mesh != it->source)
+        if (p == nullptr || !p->mesh)
             m_lods.erase(it);
     });
 }
@@ -335,6 +337,18 @@ std::shared_ptr<const core::TriangleMesh> ScanController::displayMesh(const mode
         if (c.budget == m_triangleBudget && c.source.lock() == part.mesh) {
             lod.mesh = c.mesh;
             m_lods.insert(part.id, lod);
+            return lod.mesh;
+        }
+    }
+    // A moved, turned or scaled scan: move its current reduced mesh along instead of
+    // simplifying it again, so it stays drawn (decimating takes ~0.5 s per 1.5M triangles).
+    if (it != m_lods.end() && it->mesh && it->source && it->budget == m_triangleBudget) {
+        if (const auto tf = core::affineBetween(*it->source, *part.mesh)) {
+            auto moved = std::make_shared<core::TriangleMesh>(*it->mesh);
+            core::transformMesh(*moved, *tf);
+            lod.mesh = std::move(moved);
+            m_lods.insert(part.id, lod);
+            rememberLod(part.mesh, m_triangleBudget, lod.mesh);
             return lod.mesh;
         }
     }

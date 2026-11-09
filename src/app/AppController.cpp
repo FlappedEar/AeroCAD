@@ -231,6 +231,70 @@ QString AppController::partOpenWarning(quint64 id) const
     return facts.openEdges ? QString::fromStdString(cfd::openPartWarning(*facts.openEdges)) : QString();
 }
 
+QVariantMap AppController::meshStats(quint64 id) const
+{
+    const model::Part* p = part(id);
+    if (p == nullptr || !p->mesh)
+        return {};
+    // A check of a multi-million triangle scan takes most of a second; the panel asks
+    // after every change of the part (also a rename or a selection), so check each mesh once.
+    MeshFacts& facts = meshFacts(p->mesh);
+    if (!facts.stats && !facts.checking) {
+        constexpr std::size_t kSyncTriangles = 100000;
+        if (p->mesh->triangleCount() <= kSyncTriangles) {
+            facts.stats = core::meshStats(*p->mesh);
+        } else {
+            facts.checking = true;
+            QPointer<AppController> self(const_cast<AppController*>(this));
+            std::shared_ptr<const core::TriangleMesh> mesh = p->mesh;
+            std::thread([self, mesh] {
+                const core::MeshStats stats = core::meshStats(*mesh);
+                QMetaObject::invokeMethod(
+                    QCoreApplication::instance(),
+                    [self, mesh, stats] {
+                        if (!self)
+                            return;
+                        for (auto& [key, f] : self->m_meshFacts) {
+                            if (key == mesh.get() && f.mesh.lock() == mesh) {
+                                f.stats = stats;
+                                f.checking = false;
+                            }
+                        }
+                        ++self->m_meshCheckRevision;
+                        emit self->meshChecksChanged();
+                    },
+                    Qt::QueuedConnection);
+            }).detach();
+        }
+    }
+    if (!facts.stats)
+        return {{QStringLiteral("pending"), true}};
+    const core::MeshStats& s = *facts.stats;
+    auto n = [](std::size_t v) { return QVariant::fromValue(static_cast<double>(v)); };
+    QVariantMap out{{QStringLiteral("id"), QVariant::fromValue(static_cast<double>(p->id))},
+                    {QStringLiteral("vertices"), n(s.vertices)},
+                    {QStringLiteral("triangles"), n(s.triangles)},
+                    {QStringLiteral("unusedVertices"), n(s.unusedVertices)},
+                    {QStringLiteral("degenerateTriangles"), n(s.degenerateTriangles)},
+                    {QStringLiteral("duplicateTriangles"), n(s.duplicateTriangles)},
+                    {QStringLiteral("boundaryEdges"), n(s.boundaryEdges)},
+                    {QStringLiteral("holes"), n(s.holes)},
+                    {QStringLiteral("largestBoundaryEdges"), n(s.largestBoundaryEdges)},
+                    {QStringLiteral("loopedBoundaryEdges"), n(s.loopedBoundaryEdges)},
+                    {QStringLiteral("nonManifoldEdges"), n(s.nonManifoldEdges)},
+                    {QStringLiteral("inconsistentEdges"), n(s.inconsistentEdges)},
+                    {QStringLiteral("components"), n(s.components)},
+                    {QStringLiteral("closed"), s.boundaryEdges == 0 && s.nonManifoldEdges == 0 && s.triangles > 0}};
+    const core::BoundingBox box = p->mesh->bounds();
+    if (!box.isEmpty()) {
+        auto vec = [](const core::Vec3& v) { return QVariantList{v.x, v.y, v.z}; };
+        out.insert(QStringLiteral("bounds"), QVariantMap{{QStringLiteral("min"), vec(box.min)},
+                                                         {QStringLiteral("max"), vec(box.max)},
+                                                         {QStringLiteral("size"), vec(box.size())}});
+    }
+    return out;
+}
+
 AppController::MeshFacts& AppController::meshFacts(const std::shared_ptr<const core::TriangleMesh>& mesh) const
 {
     for (auto& [key, facts] : m_meshFacts)

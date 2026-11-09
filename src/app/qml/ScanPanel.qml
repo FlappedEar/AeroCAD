@@ -98,8 +98,15 @@ Pane {
             stats = null
             return
         }
-        const r = controller.execute("mesh.stats", { id: partId })
-        stats = r.ok ? r.result : null
+        // Checked once per mesh, a big scan in the background (meshChecksChanged follows):
+        // until then the previous report of this part stays up.
+        const r = controller.meshStats(partId)
+        if (r.pending) {
+            if (stats && Number(stats.id) !== Number(partId))
+                stats = null
+            return
+        }
+        stats = r.id !== undefined ? r : null
     }
 
     function fmt(n) {
@@ -421,6 +428,10 @@ Pane {
         target: root.controller
         function onPartChanged(id) {
             if (root.visible && id === root.partId)
+                root.refreshStats()
+        }
+        function onMeshChecksChanged() {
+            if (root.visible)
                 root.refreshStats()
         }
     }

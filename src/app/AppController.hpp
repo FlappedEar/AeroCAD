@@ -6,6 +6,7 @@
 
 #include "aerocad/commands/Session.hpp"
 #include "aerocad/core/MeshQuery.hpp"
+#include "aerocad/core/MeshRepair.hpp"
 #include "aerocad/core/MeshSelection.hpp"
 
 #include <QColor>
@@ -228,6 +229,11 @@ public:
     Q_INVOKABLE QString partSizeWarning(quint64 id) const;
     /// Wind tunnel warning when the part's mesh is not closed (CAD-145), else empty.
     Q_INVOKABLE QString partOpenWarning(quint64 id) const;
+    /// The Scan panel's mesh report (the keys of the mesh.stats command, without area),
+    /// kept per mesh. A big mesh is checked in the background: the map then has only
+    /// `pending: true`, and meshChecksChanged follows when the report is ready. Empty for an
+    /// unknown part or one without a mesh.
+    Q_INVOKABLE QVariantMap meshStats(quint64 id) const;
     /// True when the heat map is shown on this part (and still matches its mesh).
     Q_INVOKABLE bool showsHeatMap(quint64 id) const;
     /// Heat map colour for t in [0, 1], for the legend.
@@ -282,6 +288,8 @@ private:
         std::weak_ptr<const core::TriangleMesh> mesh;
         std::optional<std::size_t> openEdges; ///< Empty until counted.
         bool counting = false;                ///< Open edges being counted in the background.
+        std::optional<core::MeshStats> stats; ///< Empty until checked.
+        bool checking = false;                ///< Stats being computed in the background.
     };
     mutable std::vector<std::pair<const core::TriangleMesh*, MeshFacts>> m_meshFacts;
     MeshFacts& meshFacts(const std::shared_ptr<const core::TriangleMesh>& mesh) const;
