@@ -1250,7 +1250,7 @@ std::optional<double> tailSpread(const std::vector<double>* v)
 Json opt(const std::optional<double>& v) { return v ? Json(*v) : Json(nullptr); }
 
 /// Aero balance (CAD-194): the vertical aero loads at the front and rear axle contacts on
-/// the ground, per iteration, for a case with two axles of turning wheels. Moments of the
+/// the ground, per iteration, for a car with two axles (turning wheels, or standing ones, CAD-196). Moments of the
 /// aero force about the rear contact line, along the horizontal axis normal to the
 /// wheelbase (so it also holds at yaw): L_front = M_rear . a / wheelbase, L_rear = L - L_front.
 /// Horizontal forces taken at the contacts add no such moment. Empty when the case has no
@@ -1262,7 +1262,8 @@ std::optional<AxleLoads> axleLoads(const CaseInfo& info, const Table& forces, co
 {
     Vec3 contact[2] = {};
     int count[2] = {0, 0};
-    for (const Wheel& w : info.wheels) {
+    // The turning wheels, else the tyres a car stands on with fixed wheels (CAD-196).
+    for (const Wheel& w : info.wheels.empty() ? info.standingWheels : info.wheels) {
         if (w.axle < 0 || w.axle > 1)
             return std::nullopt; // Only cars with two axles.
         contact[w.axle] = contact[w.axle] + Vec3{w.centre.x, w.centre.y, w.centre.z - w.radius};

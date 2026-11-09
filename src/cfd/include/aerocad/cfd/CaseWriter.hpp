@@ -65,6 +65,9 @@ struct CaseInfo {
     std::string openfoam; ///< Engine version the case was written for (case.json "openfoam").
     /// Wheels turning with the floor (settings.rotatingWheels, CAD-154), case frame.
     std::vector<Wheel> wheels;
+    /// Tyres standing on the part's bottom when the floor is on but the wheels do not turn
+    /// (CAD-196), case frame: only for the aero balance, never written into the case.
+    std::vector<Wheel> standingWheels;
 
     [[nodiscard]] Json toJson() const;
     static CaseInfo fromJson(const Json& json);

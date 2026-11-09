@@ -71,7 +71,9 @@ panel in place of Properties:
   so how far the force still swings around the mean (`summary.spread` in `simulation.results`,
   also for Cd/Cl/Cs; CAD-191, [summary](images/audit/cad-191-swing.png)).
   **Aero balance** (CAD-194, [summary](images/audit/cad-194-balance.png)): for a car with two
-  axles of turning wheels, the aero force split into vertical loads at the front and rear axle
+  axles (turning wheels, or with the floor on, tyres standing on the part's bottom that do not
+  turn, found the same way and kept in case.json as `standingWheels` only for this; CAD-196),
+  the aero force split into vertical loads at the front and rear axle
   contacts on the floor: *Front / rear axle* "-40.000 / -56.000 N" and *Aero balance (front)*
   "41.7 %". It takes the
   moments the solver writes (`moment.dat`, about the part centre) about the rear contact line,
