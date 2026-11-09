@@ -34,7 +34,7 @@ Session::Session()
     registerSimulationCommands(m_registry);
     declareCommandEffects(m_registry);
     m_design.setPartLookup([this](model::PartId id) { return m_document.part(id); });
-    registerSurfaceFeatures(m_design, m_document);
+    registerSurfaceFeatures(m_design, m_document, &m_fitStage);
 }
 
 Session::~Session() = default;

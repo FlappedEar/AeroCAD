@@ -6,6 +6,7 @@
 #include "aerocad/geometry/Shape.hpp"
 #include "aerocad/geometry/SurfaceFit.hpp"
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -27,6 +28,14 @@ struct RegionFitOptions {
     /// trimmed back to its own triangles: neighbouring surfaces fit the same data across
     /// the seam, so their tangents match (near G1). 0 fits each patch on its own (C0).
     int blendRings = 6;
+    /// Called on the calling thread as patches are fit: (patches done, patches known so
+    /// far; the total grows when a patch is split).
+    std::function<void(int done, int total)> progress;
+    /// Polled between patches; when it returns true the fit stops with
+    /// SurfaceFitError("Cancelled").
+    std::function<bool()> cancelled;
+    /// Threads that fit patches at the same time; 0 uses every core.
+    int threads = 0;
 };
 
 /// One smooth patch of the region and its fit.

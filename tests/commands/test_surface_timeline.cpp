@@ -12,6 +12,7 @@
 #include <cmath>
 #include <memory>
 #include <random>
+#include <variant>
 
 using namespace aerocad;
 using commands::Json;
@@ -349,4 +350,56 @@ TEST_CASE("Combine uses timeline surfaces as splitting tools with editable side 
     run(session, "edit.undo");
     REQUIRE(session.document().part(surface) != nullptr);
     CHECK(volume() == Approx(600).margin(0.01));
+}
+
+TEST_CASE("A fit computed ahead of time is used by the fit command (CAD-259)", "[commands][surface-timeline]")
+{
+    commands::Session session;
+    const auto source = sheet(session);
+
+    // fit_selection: the staged result is taken once, for the same mesh, region and options.
+    const Json selectionParams = {{"id", source}, {"tolerance", 0.1}, {"method", "plane"}};
+    auto prepared = commands::prepareFit(session.document(), session.design(), "surface.fit_selection", selectionParams);
+    REQUIRE(prepared);
+    CHECK(prepared->triangles == session.document().part(source)->selection->size());
+    std::vector<std::pair<int, int>> steps;
+    auto staged = prepared->run([&](int done, int total) { steps.emplace_back(done, total); }, [] { return false; });
+    REQUIRE(std::holds_alternative<geometry::SurfaceFitResult>(staged));
+    CHECK(steps.back() == std::pair{1, 1});
+    std::get<geometry::SurfaceFitResult>(staged).report.milliseconds = 12345; // marks the staged result
+    session.fitStage().put(prepared->key, staged);
+    // Other options: not the staged fit.
+    Json fit = run(session, "surface.fit_selection", {{"id", source}, {"tolerance", 0.2}, {"method", "plane"}});
+    CHECK(fit.at("fit").at("milliseconds") != 12345);
+    fit = run(session, "surface.fit_selection", selectionParams);
+    CHECK(fit.at("fit").at("milliseconds") == 12345);
+    CHECK_FALSE(session.fitStage().take(prepared->key)); // consumed
+
+    // fit_regions over the whole mesh, with progress; cancel stops the job.
+    const Json regionParams = {{"id", source}, {"useSelection", false}};
+    prepared = commands::prepareFit(session.document(), session.design(), "surface.fit_regions", regionParams);
+    REQUIRE(prepared);
+    CHECK(prepared->triangles == session.document().part(source)->mesh->triangleCount());
+    std::string error;
+    try {
+        (void)prepared->run({}, [] { return true; });
+    } catch (const geometry::SurfaceFitError& e) {
+        error = e.what();
+    }
+    CHECK(error == "Cancelled");
+    steps.clear();
+    staged = prepared->run([&](int done, int total) { steps.emplace_back(done, total); }, [] { return false; });
+    REQUIRE(std::holds_alternative<geometry::RegionFitResult>(staged));
+    REQUIRE_FALSE(steps.empty());
+    CHECK(steps.back().first == steps.back().second);
+    std::get<geometry::RegionFitResult>(staged).milliseconds = 12345;
+    session.fitStage().put(prepared->key, staged);
+    fit = run(session, "surface.fit_regions", regionParams);
+    CHECK(fit.at("fit").at("milliseconds") == 12345);
+
+    // Nothing to fit: the command reports it itself.
+    CHECK_FALSE(commands::prepareFit(session.document(), session.design(), "surface.fit_selection", {{"id", 999}}));
+    CHECK_FALSE(commands::prepareFit(session.document(), session.design(), "surface.offset", selectionParams));
+    run(session, "selection.clear", {{"id", source}});
+    CHECK_FALSE(commands::prepareFit(session.document(), session.design(), "surface.fit_selection", selectionParams));
 }

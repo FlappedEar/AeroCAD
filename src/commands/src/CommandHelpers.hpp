@@ -10,6 +10,8 @@
 
 namespace aerocad::commands {
 
+class FitStage;
+
 inline Json vecToJson(const core::Vec3& v)
 {
     return Json::array({v.x, v.y, v.z});
@@ -93,6 +95,7 @@ void registerSurfaceCommands(CommandRegistry& registry);
 
 /// Lets the design timeline build part_on_surface and fin_on_surface features from the
 /// document's scans and surfaces (SurfaceCommands.cpp).
-void registerSurfaceFeatures(cad::Design& design, const model::Document& document);
+/// Fit steps take results staged in `fitStage` (may be null).
+void registerSurfaceFeatures(cad::Design& design, const model::Document& document, FitStage* fitStage = nullptr);
 
 } // namespace aerocad::commands

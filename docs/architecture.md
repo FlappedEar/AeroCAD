@@ -88,6 +88,15 @@ core -------+                 transforms, primitives).
   across the seam, so their tangents match closely (near G1, not exact). The largest
   normal angle along those seams is reported (`seamAngleMaxDeg`; a 90-sided can drops
   from 0.87 to 0.11 degrees). Exact G1 (constrained fitting) is not done.
+- **Large fits in the background** (CAD-259): patches are fit on every core at once
+  (`RegionFitOptions::threads`, in waves: the halves of a split patch go to the next wave),
+  with `progress` and `cancelled` callbacks; `SurfaceFitOptions::cancelled` is polled
+  inside a single fit too (unfold solver, holes, measuring). In the app, a fit of at least
+  20,000 triangles (`ScanController::backgroundFitTriangles`) runs on a worker thread
+  (`commands::prepareFit`) while a pane shows progress and Cancel. The result is staged in
+  `commands::FitStage` under a key of mesh, region and options, and the normal
+  `surface.fit_*` command takes it, so the timeline step, undo and MCP behaviour stay the
+  same. A result whose scan, selection or project changed meanwhile is discarded.
 - **Offset / thicken** (`geometry/Offset`, commands `surface.offset`, `surface.thicken`):
   `BRepOffset_MakeSimpleOffset`, which offsets each face on its own surface (exact for
   the single-face base surfaces); with the solid flag it adds side walls and caps. The

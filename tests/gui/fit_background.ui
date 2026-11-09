@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CAD-259: a large fit runs in the background: the window stays usable, a pane shows the
+# progress with Cancel, and the fit command then takes the computed result (one timeline
+# step, one undo). Cancel adds nothing; a fit whose scan selection changed meanwhile is
+# discarded. The threshold is lowered so the small dome scan counts as large.
+ui.wait(1200)
+(() => { window.scan.backgroundFitTriangles = 1 })()
+# Cancel right away: nothing is added.
+(() => { const p = controller.execute("document.parts").result.parts[0]; window.selectPart(p.id); controller.execute("selection.invert", { id: p.id }) })()
+ui.wait(300)
+(() => { const p = controller.execute("document.parts").result.parts[0]; const r = contextActions.run("fitSurface", controller.partInfo(p.id), { tolerance: 0.25 }); ui.log("START " + JSON.stringify(r)); if (!r.pending) ui.fail("the fit did not start in the background"); if (!window.scan.busy) ui.fail("not busy while fitting"); window.scan.cancel(); window.scan.waitForFit() })()
+ui.wait(200)
+(() => { const m = controller.statusMessage; ui.log("CANCEL " + m); if (m !== "Fit cancelled") ui.fail("cancel not reported: " + m); const n = controller.execute("document.parts").result.parts.length; if (n !== 1) ui.fail("a cancelled fit added parts: " + n) })()
+# The selection changes while the fit runs: the result is discarded.
+(() => { const p = controller.execute("document.parts").result.parts[0]; const r = contextActions.run("fitSurface", controller.partInfo(p.id), { tolerance: 0.25 }); if (!r.pending) ui.fail("second fit did not start"); controller.execute("selection.grow", { id: p.id, steps: -1 }); window.scan.waitForFit() })()
+ui.wait(200)
+(() => { const m = controller.statusMessage; ui.log("CHANGED " + m); if (m.indexOf("Fit discarded") !== 0) ui.fail("stale fit not discarded: " + m); const n = controller.execute("document.parts").result.parts.length; if (n !== 1) ui.fail("a discarded fit added parts: " + n) })()
+# Scan to Solid on the whole scan: the progress pane shows, the window keeps running, and
+# the result is added as one step.
+(() => { const p = controller.execute("document.parts").result.parts[0]; controller.execute("selection.clear", { id: p.id }); const r = contextActions.run("fitWhole", controller.partInfo(p.id), { tolerance: 0.25 }); if (!r.pending) ui.fail("Scan to Solid did not start in the background") })()
+ui.wait(30)
+(() => { const find = (item, out) => { if (item.objectName === "backgroundJobPane") out.push(item); for (let k = 0; k < item.children.length; ++k) find(item.children[k], out); return out }; const panes = find(window.contentItem, []); ui.log("PANE " + panes.length + " busy " + window.scan.busy + " " + window.scan.progressText); if (window.scan.busy && (panes.length !== 1 || !panes[0].visible)) ui.fail("no progress pane while fitting") })()
+ui.shot("fit-background-progress.png")
+(() => { window.scan.waitForFit() })()
+ui.wait(300)
+(() => { const m = controller.statusMessage; ui.log("DONE " + m); if (!/patches, .*max deviation/.test(m)) ui.fail("Scan to Solid result not reported: " + m); const parts = controller.execute("document.parts").result.parts; if (parts.length !== 2) ui.fail("expected the fit as a second part: " + parts.length); const steps = controller.execute("timeline.list").result.features.filter(f => f.type === "fit_regions").length; if (steps !== 1) ui.fail("fit steps: " + steps); if (window.scan.busy) ui.fail("still busy") })()
+ui.log("fit background done")

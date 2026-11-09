@@ -15,6 +15,7 @@ add_library(aerocad_commands STATIC
     src/ProjectCommands.cpp
     src/SurfaceCommands.cpp
     src/ImportStage.cpp
+    src/FitStage.cpp
     src/ScanCommands.cpp
     src/Session.cpp
     src/CommandEffects.cpp
