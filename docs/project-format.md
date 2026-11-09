@@ -50,7 +50,9 @@ Manifest (version 1):
   the body's id.
 - `timelineParts` keeps the part ids, names and visibility of bodies and sketches, so ids
   that scripts or an agent hold stay valid after reopening.
-- `view` is the camera, opaque to the format (written by the UI).
+- `view` is the camera, opaque to the format (written by the UI). While a part is isolated
+  the UI also stores `view.isolation` (`id`, `name`, `hidden`: the ids Isolate hid), so after
+  reopening Unisolate still brings those parts back (CAD-224).
 - `originalPath` is set only on copies (autosave): the project the copy belongs to.
 
 **Versioning.** Readers accept every version up to their own and refuse newer files with

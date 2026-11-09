@@ -329,6 +329,23 @@ ApplicationWindow {
         checkIsolation()
         selectPart(id)
     }
+    /// The view saved with the project: the camera and, while a part is isolated, the
+    /// isolation, so Exit Isolate still brings back the hidden parts after reopening (CAD-224).
+    function projectView() {
+        const v = viewport.cameraState()
+        if (isolation)
+            v.isolation = { id: isolation.id, name: isolation.name, hidden: isolation.hidden }
+        return v
+    }
+    /// Takes back the isolation of an opened project (projectView()); it only counts while a
+    /// part it hid is still hidden, as checkIsolation() decides.
+    function restoreIsolation(saved) {
+        if (!saved || !saved.id || !Array.isArray(saved.hidden))
+            return
+        isolationRecords = [{ id: saved.id, name: saved.name || controller.partInfo(saved.id).name || "",
+                              hidden: saved.hidden, step: -1, exitStep: 0 }]
+        checkIsolation()
+    }
     /// Appearance (A): swatches for part `id`, at the pointer when it is over the view.
     function openAppearance(id) {
         const p = viewHover.hovered ? viewport.mapToItem(Overlay.overlay, viewHover.point.position.x, viewHover.point.position.y)
@@ -351,8 +368,9 @@ ApplicationWindow {
     /// hid is still hidden (it ends when they have all been shown again or deleted by hand).
     function checkIsolation() {
         // A step is done while applied, and also once it has aged out of the history (its
-        // change is kept for good: an Isolate 200 edits ago still hides the other parts).
-        const done = step => controller.historyApplied(step) || controller.historyExpired(step)
+        // change is kept for good: an Isolate 200 edits ago still hides the other parts). An
+        // Isolate restored from the project file (step -1, CAD-224) is done for good too.
+        const done = step => step < 0 || controller.historyApplied(step) || controller.historyExpired(step)
         let found = null
         for (let i = isolationRecords.length - 1; i >= 0 && !found; --i) {
             const rec = isolationRecords[i]
@@ -744,7 +762,7 @@ ApplicationWindow {
     }
 
     function saveProject(then) {
-        if (controller.saveProject(viewport.cameraState())) {
+        if (controller.saveProject(projectView())) {
             if (then)
                 then()
             return
@@ -841,7 +859,7 @@ ApplicationWindow {
         defaultSuffix: "aerocad"
         nameFilters: [qsTr("AeroCAD projects (*.aerocad)")]
         onAccepted: {
-            if (window.controller.saveProjectAs(selectedFile, viewport.cameraState()) && then)
+            if (window.controller.saveProjectAs(selectedFile, window.projectView()) && then)
                 then()
             then = null
         }
@@ -2818,6 +2836,7 @@ ApplicationWindow {
         function onEditingContextChanged() { window.resetWorkspace() }
         function onProjectOpened(view) {
             viewport.restoreCameraState(view)
+            window.restoreIsolation(view ? view.isolation : null)
         }
         // Undo/redo and edits elsewhere (timeline, parameters) change the sketch too.
         function onHistoryChanged() {

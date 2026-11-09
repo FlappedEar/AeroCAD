@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CAD-224: an isolated part stays isolated after saving and reopening the project, and Exit
+# Isolate (Unisolate) then brings back the parts it hid. Before, the other parts came back
+# hidden with no way out of the isolation but showing each one by hand.
+ui.wait(800)
+Qt.createQmlObject('import QtQuick; Item { objectName: "isoTest"; visible: false; property string file: "" }', window.contentItem)
+(() => { const sk = controller.execute("sketch.create", { plane: "XY", curves: [{ type: "center_rectangle", center: [0, 150], width: 40, height: 20 }] }); const ex = controller.execute("feature.extrude", { sketch: sk.result.id, distance: 10 }); if (!ex.ok) ui.fail("extrude: " + ex.error) })()
+ui.wait(300)
+(() => { const parts = controller.execute("document.parts").result.parts; const box = parts.find(p => p.kind === "imported"); window.isolatePart(box.id); if (!window.isolation) ui.fail("not isolated before saving") })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "isoTest"); t.file = "project-isolation.aerocad"; if (!controller.saveProjectAs(t.file, window.projectView())) ui.fail("save failed") })()
+(() => { controller.newProject() })()
+ui.wait(500)
+(() => { if (window.isolation) ui.fail("isolation left after File > New") })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "isoTest"); if (!controller.openPath(t.file)) ui.fail("open failed: " + t.file) })()
+ui.wait(1000)
+(() => { const parts = controller.execute("document.parts").result.parts; const box = parts.find(p => p.kind === "imported"); const body = parts.find(p => p.kind === "body"); ui.log("REOPENED isolation " + JSON.stringify(window.isolation) + " body visible " + body.visible); if (!window.isolation || window.isolation.id !== box.id) ui.fail("isolation lost after reopening"); if (body.visible) ui.fail("body visible while isolated") })()
+ui.shot("project-isolation-reopened.png")
+(() => { window.unisolate() })()
+ui.wait(300)
+(() => { const body = controller.execute("document.parts").result.parts.find(p => p.kind === "body"); ui.log("UNISOLATED body visible " + body.visible + " isolation " + JSON.stringify(window.isolation)); if (!body.visible) ui.fail("Unisolate did not bring the body back"); if (window.isolation) ui.fail("still isolated after Unisolate") })()
+ui.key("Z", "ctrl")
+ui.wait(500)
+(() => { const body = controller.execute("document.parts").result.parts.find(p => p.kind === "body"); ui.log("UNDO body visible " + body.visible + " isolation " + JSON.stringify(window.isolation)); if (body.visible || !window.isolation) ui.fail("Undo of Unisolate did not bring the isolation back") })()
+ui.log("project isolation done")
