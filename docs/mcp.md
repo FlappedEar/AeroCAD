@@ -102,7 +102,7 @@ replaced by `_` (`document.import` -> `document_import`). New commands (CAD tool
 | `agent_guide` | Step-by-step recipes for the common tasks (basics, scan, sketch_on_surface, fin, solid, cfd, variants, export), with the exact tool and parameter names. |
 | `view_screenshot` | Image of the 3D view (or `area: "window"`: the whole window, panels and dialogs included), optionally after turning the camera (`direction`: front, top, iso, ... or `[x, y, z]`) and framing a part (`part`) or an area (`center`, `radius`). Returned as MCP image content, with the camera and the visible parts. |
 | `view_set` | The same camera control without an image. |
-| `view_pick` | Positions `[x, y]` (0..1) in the last viewport screenshot to the part hit, the 3D point (mm) and the surface normal there (on a scan smoothed over the nearby triangles, `triangleNormal` is the hit triangle's own): how an agent finds "that corner of the bumper" on a scan. |
+| `view_pick` | Positions `[x, y]` (0..1) in the last viewport screenshot to the part hit, the 3D point (mm) and the surface normal there (on a scan smoothed over the nearby triangles by `patchNormal`, `triangleNormal` is the hit triangle's own): how an agent finds "that corner of the bumper" on a scan. |
 | `view_show_results` | Draws a finished CFD run in the 3D view (Cp on the part, streamlines, sections, wake, vortices), as SIMULATE > Results does. |
 
 What the agent gets from `view_screenshot {part: <fin>}` after `surface_fin_from_sketch`, and
@@ -127,7 +127,8 @@ saying so. They do not change the document.
 - Descriptions and messages use tool names (`sketch_create`), not the command names
   (`sketch.create`) the app uses internally.
 - `geometry_measure {kind: 'point_to_part'}` returns `normal` (on scans and meshes the
-  area-weighted mean normal within `normalRadius` mm of the point, so scan noise does not tilt
+  mean normal of the triangles within `normalRadius` mm of the point (each by its area inside that
+  disc and how closely it faces the same way), so scan noise does not tilt
   it; `normal_radius` sets the radius), and `triangleNormal`, the closest triangle's own.
 - `project_get_context` gives each part's `kind` (imported, body, sketch, plane) and the
   timeline `featureId` that made it; tools taking `sketch` or `feature` want that id.
