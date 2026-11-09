@@ -266,6 +266,34 @@ TEST_CASE("Canards on both sides: mirrored in the scan's centre plane, each on i
     std::filesystem::remove(file, ec);
 }
 
+// CAD-246.
+TEST_CASE("Both sides refuses a fin drawn across the centre plane (it would overlap its mirror)", "[commands][fit][canard]")
+{
+    BumperScene scene;
+    // A level fin on the front, its 80 mm chord across x = 10: it reaches 30 mm past x = 0.
+    const core::Vec3 front = scene.bumper.onCorner(0.0, 120.0);
+    auto sk = scene.session.execute("sketch.create", {{"surface", {{"part", scene.scanId},
+                                                                   {"point", {10.0, front.y, front.z}},
+                                                                   {"across", true},
+                                                                   {"angle", 0.0}}},
+                                                      {"curves", canardOutline()}});
+    INFO(sk.toJson().dump());
+    REQUIRE(sk.ok);
+    auto both = scene.session.execute("surface.fin_from_sketch",
+                                      {{"sketch", sk.data.at("id")}, {"thickness", 3.0}, {"mirror", true}});
+    INFO(both.toJson().dump());
+    REQUIRE_FALSE(both.ok);
+    CHECK(both.error.find("across the centre plane") != std::string::npos);
+    std::size_t bodies = 0;
+    for (const auto& q : scene.session.document().parts())
+        bodies += q.kind == model::PartKind::Body ? 1 : 0;
+    CHECK(bodies == 0);
+    // This side only is still fine.
+    auto one = scene.session.execute("surface.fin_from_sketch", {{"sketch", sk.data.at("id")}, {"thickness", 3.0}});
+    INFO(one.toJson().dump());
+    CHECK(one.ok);
+}
+
 TEST_CASE("Canards exported for printing: one STL and one STEP per fin", "[commands][fit][canard][export]")
 {
     BumperScene scene;

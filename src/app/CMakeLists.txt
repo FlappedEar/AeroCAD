@@ -483,6 +483,13 @@ if(AEROCAD_BUILD_TESTS)
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/scan_to_part_next_steps.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_scan_to_part_next_steps_test PROPERTIES LABELS gui TIMEOUT 90)
+    # CAD-246, CAD-247: Both sides refuses a fin across the mirror plane; no selection toolbar under the pane.
+    add_test(NAME app_fin_both_sides_centre_test
+        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl
+                --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/fin_both_sides_centre.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_fin_both_sides_centre_test PROPERTIES LABELS gui TIMEOUT 90
+        ENVIRONMENT "XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/fin-centre-data;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/fin-centre-data")
     # CAD-133: a construction plane has its own guide (not the scan's).
     add_test(NAME app_construction_plane_guide_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl

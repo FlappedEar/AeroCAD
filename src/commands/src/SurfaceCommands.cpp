@@ -482,10 +482,32 @@ cad::FeatureEvaluator::Output finOnSurface(const model::Document& doc, const cad
         mirrorReport["point"] = {point.x, point.y, point.z};
         mirrorReport["normal"] = {normal.x, normal.y, normal.z};
         const std::size_t one = placements.size();
+        const std::string planeName = plane == "auto" ? "centre plane" : "mirror plane";
         for (std::size_t k = 0; k < one; ++k) {
             const Placement& p = placements[k];
             if (std::abs((p.plane.origin - point).dot(normal)) < 1.0)
                 throw CommandError("The fin stands on the mirror plane; a mirrored copy would fall on it");
+            // A fin drawn across the centre plane would overlap its own mirrored copy
+            // (two bodies in one place, printed twice).
+            const double half = 0.5 * thickness * std::abs(p.plane.normal.dot(normal));
+            double lo = std::numeric_limits<double>::max(), hi = -lo;
+            for (const auto& o : p.outlines) {
+                const auto t = geometry::tessellate(o);
+                for (const auto& v : t.vertices()) {
+                    const double s = (v - point).dot(normal);
+                    lo = std::min(lo, s - half);
+                    hi = std::max(hi, s + half);
+                }
+            }
+            const double across = std::min(-lo, hi);
+            if (across > 0.5) {
+                char mm[32];
+                std::snprintf(mm, sizeof mm, "%.1f", across);
+                throw CommandError((one > 1 ? "Fin " + std::to_string(k + 1) : std::string("The fin")) +
+                                   " reaches " + mm + " mm across the " + planeName +
+                                   ", so it would overlap its mirrored copy. Draw it on one side of the " +
+                                   planeName + ", or make it on this side only");
+            }
             Placement q;
             q.plane.origin = core::mirrorPoint(p.plane.origin, point, normal);
             q.plane.xDir = core::mirrorDirection(p.plane.xDir, normal);

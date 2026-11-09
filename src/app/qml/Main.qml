@@ -2303,6 +2303,7 @@ ApplicationWindow {
             sketchTool: window.sketchTool
             selectionToolsEnabled: !featureDialog.visible && !window.pickingSketchPlane && !measurePanel.active
                                    && !scanPanel.pickMode
+                                   && !partOnSurfacePane.visible // the pane sits where the toolbar is
             snapToNearestSurface: window.pickingSketchPlane
             property bool snappedClick: false
             onSnappedToNearestSurface: snappedClick = true
@@ -2655,6 +2656,7 @@ ApplicationWindow {
             // After a sketch over a surface or scan: cut the outline out of the surface and
             // thicken it, in one step.
             Pane {
+                id: partOnSurfacePane
                 objectName: "partOnSurfacePane"
                 anchors.left: parent.left
                 anchors.top: parent.top
@@ -2747,6 +2749,7 @@ ApplicationWindow {
                         }
                         ComboBox {
                             id: finMirrorPlane
+                            objectName: "finMirrorPlane"
                             visible: finMirror.checked
                             Layout.preferredWidth: 200
                             model: [qsTr("Scan's centre plane"), qsTr("YZ plane"), qsTr("XZ plane"), qsTr("XY plane")]
