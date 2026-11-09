@@ -78,7 +78,9 @@ Item {
     /// 3-Point Rectangle: the height typed after the first side (number or expression,
     /// signed to the side of the cursor), kept for the finished rectangle.
     property var typedHeight: null
-    onPointsChanged: if (points.length === 0) { typedRadius = null; typedHeight = null }
+    onPointsChanged: if (points.length === 0) { typedRadius = null; typedHeight = null; tangentFrom = null }
+    /// Tangent Arc: the curve end it starts from, { ref: {curve, point}, pos, dir }.
+    property var tangentFrom: null
     property var hover: null
     property bool hoverSnapped: false
     readonly property real snapPixels: 10
@@ -365,6 +367,7 @@ Item {
     /// Number of clicks a tool needs.
     function clicksNeeded() {
         switch (tool) {
+        case "tangent_arc": return 2
         case "arc":
         case "center_arc":
         case "circle_3point":
@@ -415,6 +418,57 @@ Item {
         const ux = ((x1 * x1 + y1 * y1) * (y2 - y3) + (x2 * x2 + y2 * y2) * (y3 - y1) + (x3 * x3 + y3 * y3) * (y1 - y2)) / d
         const uy = ((x1 * x1 + y1 * y1) * (x3 - x2) + (x2 * x2 + y2 * y2) * (x1 - x3) + (x3 * x3 + y3 * y3) * (x2 - x1)) / d
         return { center: [ux, uy], radius: Math.hypot(x1 - ux, y1 - uy) }
+    }
+
+    /// The end of a line or arc at `p` (a snapped point) with the direction leaving the curve
+    /// there, as Tangent Arc starts from it; null when no line or arc ends at `p`.
+    function tangentStartAt(p) {
+        for (const c of sketchCurves) {
+            if (c.kind !== "line" && c.kind !== "arc")
+                continue
+            for (const which of ["end", "start"]) {
+                const pos = which === "end" ? c.points[c.points.length - 1] : c.points[0]
+                if (dist(pos, p) > 1e-6)
+                    continue
+                let dir
+                if (c.kind === "line") {
+                    const a = c.points[0], b = c.points[1]
+                    dir = which === "end" ? [b[0] - a[0], b[1] - a[1]] : [a[0] - b[0], a[1] - b[1]]
+                } else {
+                    // Direction of travel along the arc (counter-clockwise: the radius turned
+                    // left), reversed at its start.
+                    const q = c.points, ctr = c.center
+                    const ccw = (q[1][0] - q[0][0]) * (q[2][1] - q[0][1]) - (q[1][1] - q[0][1]) * (q[2][0] - q[0][0]) > 0
+                    const r = [pos[0] - ctr[0], pos[1] - ctr[1]]
+                    dir = ccw ? [-r[1], r[0]] : [r[1], -r[0]]
+                    if (which === "start")
+                        dir = [-dir[0], -dir[1]]
+                }
+                if (Math.hypot(dir[0], dir[1]) > 1e-12)
+                    return { ref: { curve: c.index, point: which }, pos: pos, dir: dir }
+            }
+        }
+        return null
+    }
+
+    /// Preview of a tangent arc from `from` to `end`: { center, radius, a0, sweep }, or null when
+    /// the end lies on the tangent line. sketch.add_curves builds the real arc.
+    function tangentArc(from, end) {
+        const t = from.dir, tl = Math.hypot(t[0], t[1])
+        const d = [end[0] - from.pos[0], end[1] - from.pos[1]], dd = d[0] * d[0] + d[1] * d[1]
+        const n = [-t[1] / tl, t[0] / tl]
+        const side = n[0] * d[0] + n[1] * d[1]
+        if (dd < 1e-18 || Math.abs(side) < 1e-9 * Math.sqrt(dd))
+            return null
+        const k = dd / (2 * side)
+        const ctr = [from.pos[0] + n[0] * k, from.pos[1] + n[1] * k]
+        const a0 = Math.atan2(from.pos[1] - ctr[1], from.pos[0] - ctr[0])
+        let sweep = Math.atan2(end[1] - ctr[1], end[0] - ctr[0]) - a0
+        if (side > 0)
+            while (sweep <= 0) sweep += 2 * Math.PI
+        else
+            while (sweep >= 0) sweep -= 2 * Math.PI
+        return { center: ctr, radius: Math.abs(k), a0: a0, sweep: sweep }
     }
 
     function curveFrom(pts, dim) {
@@ -506,6 +560,10 @@ Item {
             if (pts.length < 3)
                 return null
             return { type: "arc", start: a, through: pts[2], end: b }
+        case "tangent_arc":
+            if (!tangentFrom || !tangentArc(tangentFrom, b))
+                return null
+            return { type: "tangent_arc", from: tangentFrom.ref, end: b }
         case "slot": {
             if (pts.length < 3)
                 return null
@@ -571,6 +629,18 @@ Item {
                 finishSpline(false)
             else
                 points = pts
+            canvas.requestPaint()
+            return
+        }
+        if (tool === "tangent_arc" && points.length === 0) {
+            // It starts from the end of a line or arc (Fusion: Tangent Arc).
+            const from = tangentStartAt(p)
+            if (!from) {
+                root.viewport.controller.showStatus(qsTr("Tangent arc: click the end of a line or arc"))
+                return
+            }
+            points = [from.pos]
+            tangentFrom = from
             canvas.requestPaint()
             return
         }
@@ -853,7 +923,7 @@ Item {
         } else if (tool === "spline" && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)) {
             finishSpline(false)
             event.accepted = true
-        } else if (active && !constraintTool && tool !== "spline" && (points.length > 0 || tool === "offset") && /^[0-9.(\-]$/.test(event.text)) {
+        } else if (active && !constraintTool && tool !== "spline" && tool !== "tangent_arc" && (points.length > 0 || tool === "offset") && /^[0-9.(\-]$/.test(event.text)) {
             dimension.text = event.text
             dimension.forceActiveFocus()
             event.accepted = true
@@ -925,6 +995,15 @@ Item {
                     ctx.moveTo(c[0].x, c[0].y)
                     for (let i = 1; i <= 4; ++i)
                         ctx.lineTo(c[i % 4].x, c[i % 4].y)
+                } else if (root.tool === "tangent_arc") {
+                    const arc = root.tangentFrom ? root.tangentArc(root.tangentFrom, pts[1]) : null
+                    if (arc) {
+                        for (let i = 0; i <= 64; ++i) {
+                            const t = arc.a0 + arc.sweep * i / 64
+                            const q = root.toScreen([arc.center[0] + arc.radius * Math.cos(t), arc.center[1] + arc.radius * Math.sin(t)])
+                            if (i === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y)
+                        }
+                    }
                 } else if (root.tool === "center_arc") {
                     // Radius line, then the arc counter-clockwise from the start to the cursor.
                     const c = pts[0], r = root.dist(c, pts[1])
@@ -1023,6 +1102,10 @@ Item {
                     text = Preferences.formatLength(2 * Math.abs(b[0] - a[0]), Preferences.lengthUnit) + " × " + Preferences.formatLength(2 * Math.abs(b[1] - a[1]), Preferences.lengthUnit)
                 else if (root.tool === "center_arc")
                     text = "R " + Preferences.formatLength(root.dist(a, b), Preferences.lengthUnit)
+                else if (root.tool === "tangent_arc") {
+                    const arc = root.tangentFrom ? root.tangentArc(root.tangentFrom, b) : null
+                    text = arc ? "R " + Preferences.formatLength(arc.radius, Preferences.lengthUnit) : ""
+                }
                 else if (root.tool === "circle")
                     text = "⌀ " + Preferences.formatLength(2 * root.dist(a, b), Preferences.lengthUnit)
                 else if (root.tool === "circle_2point")
@@ -1081,6 +1164,7 @@ Item {
                     : root.tool === "rectangle" ? qsTr("Rectangle: drag or click two corners; type width, height")
                     : root.tool === "center_rectangle" ? qsTr("Center rectangle: click the centre, then a corner; type width, height")
                     : root.tool === "center_arc" ? qsTr("Center point arc: click the centre, the start, then the end (counter-clockwise); type the radius")
+                    : root.tool === "tangent_arc" ? qsTr("Tangent arc: click the end of a line or arc, then the end of the arc")
                     : root.tool === "circle" ? qsTr("Circle: click centre and a point; type the diameter")
                     : root.tool === "rectangle_3point" ? qsTr("3-point rectangle: click both ends of one side (any angle), then the far side; type the length, then the height")
                     : root.tool === "circle_2point" ? qsTr("2-point circle: click both ends of a diameter; type the diameter")
@@ -1124,6 +1208,7 @@ Item {
             }
             RowLayout {
                 visible: root.active && !root.constraintTool && root.tool !== "trim" && root.tool !== "mirror" && root.tool !== "fillet" && root.tool !== "project" && root.tool !== "spline"
+                         && root.tool !== "tangent_arc"
                          && root.tool !== "circle_3point"
                 Label { text: root.tool === "rectangle" || root.tool === "center_rectangle" ? qsTr("Width, height")
                             : root.tool === "center_arc" ? qsTr("Radius") : root.tool === "line" ? qsTr("Length")

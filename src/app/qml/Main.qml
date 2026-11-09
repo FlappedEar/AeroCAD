@@ -250,6 +250,7 @@ ApplicationWindow {
         SketchMenuItem { action: circle3PointAction; icon.source: Theme.iconUrl("circle-3point") }
         SketchMenuItem { action: arcAction; icon.source: Theme.iconUrl("arc") }
         SketchMenuItem { action: centerArcAction; icon.source: Theme.iconUrl("center-arc") }
+        SketchMenuItem { action: tangentArcAction; icon.source: Theme.iconUrl("tangent-arc") }
         SketchMenuItem { action: polygonAction; icon.source: Theme.iconUrl("polygon") }
         SketchMenuItem { action: slotAction; icon.source: Theme.iconUrl("slot") }
         SketchMenuItem { action: splineAction; icon.source: Theme.iconUrl("spline") }
@@ -1308,6 +1309,7 @@ ApplicationWindow {
     Action { id: rectangle3PointAction; text: qsTr("3-Po&int Rectangle"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "rectangle_3point"; onTriggered: window.sketchTool_("rectangle_3point") }
     Action { id: circle2PointAction; text: qsTr("&2-Point Circle"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "circle_2point"; onTriggered: window.sketchTool_("circle_2point") }
     Action { id: circle3PointAction; text: qsTr("&3-Point Circle"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "circle_3point"; onTriggered: window.sketchTool_("circle_3point") }
+    Action { id: tangentArcAction; text: qsTr("&Tangent Arc"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "tangent_arc"; onTriggered: window.sketchTool_("tangent_arc") }
     Action { id: centerArcAction; text: qsTr("C&enter Point Arc"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "center_arc"; onTriggered: window.sketchTool_("center_arc") }
     Action { id: splineAction; text: qsTr("Spli&ne"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "spline"; onTriggered: window.sketchTool_("spline") }
     Action { id: slotAction; text: qsTr("Sl&ot"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "slot"; onTriggered: window.sketchTool_("slot") }
@@ -1610,6 +1612,7 @@ ApplicationWindow {
             MenuItem { action: circle3PointAction }
             MenuItem { action: arcAction }
             MenuItem { action: centerArcAction }
+            MenuItem { action: tangentArcAction }
             MenuItem { action: polygonAction }
             MenuItem { action: slotAction }
             MenuItem { action: splineAction }
@@ -2075,6 +2078,7 @@ ApplicationWindow {
                 ToolCommand { action: circle2PointAction; text: qsTr("2-Point Circle"); iconName: "circle-2point" }
                 ToolCommand { action: circle3PointAction; text: qsTr("3-Point Circle"); iconName: "circle-3point" }
                 ToolCommand { action: centerArcAction; text: qsTr("Center Arc"); iconName: "center-arc" }
+                ToolCommand { action: tangentArcAction; text: qsTr("Tangent Arc"); iconName: "tangent-arc" }
             }
             ToolSeparator { tab: "sketch" }
             ToolGroup {

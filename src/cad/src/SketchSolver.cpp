@@ -241,10 +241,10 @@ private:
     }
 
     /// Curve ends are shared between curves that touch.
-    P endPoint(Vec2 p)
+    P endPoint(Vec2 p, bool joinEarlier = true)
     {
         for (const auto& [pos, handle] : m_ends) {
-            if (len(pos - p) < kMergeTolerance)
+            if (joinEarlier && len(pos - p) < kMergeTolerance)
                 return handle;
         }
         const P h = newPoint(p);
@@ -262,7 +262,7 @@ private:
             case Kind::Line:
                 if (c.points.size() != 2)
                     throw ModelingError("Sketch line needs two points");
-                v.pts = {endPoint(c.points[0]), endPoint(c.points[1])};
+                v.pts = {endPoint(c.points[0], c.joinStart), endPoint(c.points[1], c.joinEnd)};
                 break;
             case Kind::Arc: {
                 if (c.points.size() != 3)
@@ -282,7 +282,7 @@ private:
                                (ss * (e.x - t.x) + tt * (s.x - e.x) + ee * (t.x - s.x)) /
                                    (2 * (s.x * (t.y - e.y) + t.x * (e.y - s.y) + e.x * (s.y - t.y)))};
                 v.ccw = d > 0;
-                v.pts = {endPoint(s), endPoint(e), newPoint(ctr)};
+                v.pts = {endPoint(s, c.joinStart), endPoint(e, c.joinEnd), newPoint(ctr)};
                 break;
             }
             case Kind::Circle:
@@ -588,8 +588,9 @@ private:
                 const double d0 = len(k.center.at(x0) - l.center.at(x0));
                 const double r1 = k.radius(x0);
                 const double r2 = l.radius(x0);
-                const bool external = std::abs(d0 - (r1 + r2)) <= std::abs(d0 - std::abs(r1 - r2));
-                const double s = signOf(r1 - r2);
+                const bool external = c.side != 0 ? c.side > 0
+                                                  : std::abs(d0 - (r1 + r2)) <= std::abs(d0 - std::abs(r1 - r2));
+                const double s = c.side == -1 ? 1.0 : c.side == -2 ? -1.0 : signOf(r1 - r2);
                 std::vector<std::size_t> vars = circVars(k);
                 for (const std::size_t v : circVars(l))
                     vars.push_back(v);
@@ -605,7 +606,9 @@ private:
                     const Vec2 d = b.at(x) - a.at(x);
                     return cross(d, k.center.at(x) - a.at(x)) / safe(len(d));
                 };
-                const double s = signOf(signedDist(x0));
+                if (c.side == -2)
+                    throw ModelingError("Tangent side -2 is only for two arcs or circles (a line takes 1 or -1)");
+                const double s = c.side != 0 ? double(c.side) : signOf(signedDist(x0));
                 add(ci, circVars(k, {a, b}), 1, [k, s, signedDist](const std::vector<double>& x, double* r) {
                     r[0] = s * signedDist(x) - k.radius(x);
                 });

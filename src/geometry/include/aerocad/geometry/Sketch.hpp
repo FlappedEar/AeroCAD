@@ -67,6 +67,11 @@ struct SketchCurve {
     bool closed = false;
     /// Construction geometry is shown but never forms profiles.
     bool construction = false;
+    /// False: the solver does not join this curve's start to an earlier curve end that only happens
+    /// to be at the same place (an explicit coincident constraint joins it). Later curves still join it.
+    bool joinStart = true;
+    /// The same for the end of a line or arc.
+    bool joinEnd = true;
 };
 
 /// Result of evaluating a sketch.

@@ -11,8 +11,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numbers>
+#include <array>
 #include <limits>
 #include <optional>
+#include <tuple>
 #include <string>
 #include <utility>
 
@@ -76,12 +79,16 @@ Json curveSchema()
          "at any angle, then the other side; height is signed, positive to the left of start -> end); circle {center, radius | diameter}; "
          "arc {start, through, end} (three-point arc); center_arc {center, radius, startAngle, endAngle} "
          "(degrees, counter-clockwise); polygon {center, radius, sides, angle?}; slot {start, end, width} "
-         "(centre-to-centre); spline {points, closed?}. construction: true excludes it from profiles."},
+         "(centre-to-centre); spline {points, closed?}; tangent_arc {from: {curve, point: start | end}, end} "
+         "(sketch.add_curves only: an arc leaving the end of a line or arc tangentially, kept tangent). "
+         "construction: true excludes it from profiles."},
         {"properties",
          {{"type",
            {{"type", "string"},
             {"enum", {"line", "rectangle", "center_rectangle", "three_point_rectangle", "circle", "arc", "center_arc", "polygon", "slot",
-                      "spline"}}}},
+                      "spline", "tangent_arc"}}}},
+          {"from", {{"type", "object"},
+                    {"description", "tangent_arc: the end it starts from, {curve: index, point: start | end}."}}},
           {"start", point2("Start point.")},
           {"end", point2("End point.")},
           {"through", point2("Point on the arc.")},
@@ -98,7 +105,12 @@ Json curveSchema()
           {"angle", numberOrExpr("Polygon rotation (degrees).")},
           {"points", {{"type", "array"}, {"items", point2("Fit point.")}, {"minItems", 2}}},
           {"closed", {{"type", "boolean"}}},
-          {"construction", {{"type", "boolean"}}}}},
+          {"construction", {{"type", "boolean"}}},
+          {"join_start",
+           {{"type", "boolean"},
+            {"description", "arc: false = its start is joined only by constraints, not to another curve end "
+                            "that happens to be there (default true)."}}},
+          {"join_end", {{"type", "boolean"}, {"description", "arc: as join_start, for its end."}}}}},
         {"required", {"type"}},
         {"additionalProperties", false}};
 }
@@ -139,6 +151,11 @@ Json constraintSchema()
           {"point", constraintPointSchema()},
           {"points", {{"type", "array"}, {"items", constraintPointSchema()}}},
           {"value", numberOrExpr("Dimension value (mm, or degrees for angle).")},
+          {"side", {{"type", "integer"},
+                    {"enum", {-2, -1, 1}},
+                    {"description", "tangent: which branch (omit = as drawn). Line and arc/circle: 1 = centre left of "
+                                    "the line's start->end, -1 = right. Two arcs/circles: 1 = outside, -1 = inside with "
+                                    "the first the larger, -2 = inside with the second the larger."}}},
           {"at", {{"type", "array"},
                   {"items", point2("Position.")},
                   {"description", "fix: positions to hold the points at. sketch.add_constraints fills it with the "
@@ -319,10 +336,16 @@ Json designChange(CommandContext& ctx, const std::string& label, Fn&& fn)
     cad::Design& d = design(ctx);
     const cad::Design::State before = d.state();
     Json result;
+    // A command that fails part-way (after some edits) leaves the design as it was: nothing
+    // half-applied without an undo step (the document mirror is only synced on success).
     try {
         result = fn(d);
     } catch (const cad::DesignError& e) {
+        d.restore(before);
         throw CommandError(e.what());
+    } catch (...) {
+        d.restore(before);
+        throw;
     }
     const cad::Design::State after = d.state();
     model::Document& doc = ctx.document;
@@ -669,6 +692,184 @@ geometry::Vec2 pointPosition(const std::vector<geometry::SketchCurve>& curves, c
     throw CommandError("Curve " + std::to_string(i) + " has no point '" + which + "'");
 }
 
+/// A tangent arc (Fusion: Arc > Tangent Arc), {from: {curve, point}, end}: an arc that leaves the
+/// end of a line or arc in its direction and ends at `end`, as a three-point arc. Returns the
+/// arc item, the index of the curve it is tangent to and the tangent side for that constraint
+/// (SketchConstraint::side), taken from the solved geometry it was built on.
+std::tuple<Json, std::size_t, int> resolveTangentArc(const cad::Design& design,
+                                                     const std::vector<geometry::SketchCurve>& curves, const Json& item)
+{
+    using K = geometry::SketchCurve::Kind;
+    if (!item.contains("from") || !item.contains("end"))
+        throw CommandError("tangent_arc: give from {curve, point} and end");
+    const Json& from = item.at("from");
+    const auto i = from.at("curve").get<std::size_t>();
+    if (i >= curves.size())
+        throw CommandError("No curve " + std::to_string(i) + " in the sketch");
+    const std::string which = from.value("point", std::string("end"));
+    if (which != "start" && which != "end")
+        throw CommandError("tangent_arc: from.point must be start or end");
+    const auto& c = curves[i];
+    const geometry::Vec2 s = pointPosition(curves, {{"curve", i}, {"point", which}});
+    // Direction leaving the curve at that end.
+    geometry::Vec2 t{0, 0};
+    std::optional<geometry::Vec2> srcCtr;
+    if (c.kind == K::Line) {
+        const auto& a = c.points[0];
+        const auto& b = c.points[1];
+        t = which == "end" ? geometry::Vec2{b.x - a.x, b.y - a.y} : geometry::Vec2{a.x - b.x, a.y - b.y};
+    } else if (c.kind == K::Arc) {
+        const auto ctr = arcCenter(c);
+        if (!ctr)
+            throw CommandError("tangent_arc: curve " + std::to_string(i) + " is a degenerate arc");
+        srcCtr = geometry::Vec2{ctr->x, ctr->y};
+        const auto& p = c.points;
+        const bool ccw = (p[1].x - p[0].x) * (p[2].y - p[0].y) - (p[1].y - p[0].y) * (p[2].x - p[0].x) > 0;
+        // Direction of travel at s (counter-clockwise: the radius turned left), reversed at the start.
+        const geometry::Vec2 r{s.x - ctr->x, s.y - ctr->y};
+        t = ccw ? geometry::Vec2{-r.y, r.x} : geometry::Vec2{r.y, -r.x};
+        if (which == "start")
+            t = {-t.x, -t.y};
+    } else {
+        throw CommandError("tangent_arc: start from the end of a line or an arc");
+    }
+    const double tl = std::hypot(t.x, t.y);
+    const auto& e = item.at("end");
+    const geometry::Vec2 end{design.evaluate(e.at(0)), design.evaluate(e.at(1))};
+    const geometry::Vec2 d{end.x - s.x, end.y - s.y};
+    const geometry::Vec2 n{-t.y / tl, t.x / tl}; // left of the direction
+    const double side = n.x * d.x + n.y * d.y, dd = d.x * d.x + d.y * d.y;
+    if (tl < 1e-12 || dd < 1e-18 || std::abs(side) < 1e-9 * std::sqrt(dd))
+        throw CommandError("tangent_arc: the end lies on the tangent line (that would be a straight line)");
+    // Centre on the normal at s, equally far from s and end; the arc turns towards the end.
+    const double k = dd / (2 * side);
+    const geometry::Vec2 ctr{s.x + n.x * k, s.y + n.y * k};
+    const double a0 = std::atan2(s.y - ctr.y, s.x - ctr.x);
+    double a1 = std::atan2(end.y - ctr.y, end.x - ctr.x);
+    if (side > 0) {
+        while (a1 <= a0)
+            a1 += 2 * std::numbers::pi;
+    } else {
+        while (a1 >= a0)
+            a1 -= 2 * std::numbers::pi;
+    }
+    const double am = (a0 + a1) / 2, rad = std::abs(k);
+    Json arc{{"type", "arc"},
+             {"start", Json::array({s.x, s.y})},
+             {"through", Json::array({ctr.x + rad * std::cos(am), ctr.y + rad * std::sin(am)})},
+             {"end", Json::array({end.x, end.y})}};
+    if (item.value("construction", false))
+        arc["construction"] = true;
+    // Joined to the source by an explicit constraint; the solved start may lie on an unrelated
+    // curve end as stored (the solver joins ends by their stored positions).
+    arc["join_start"] = false;
+    arc["join_end"] = false; // add_curves joins it to a curve end it lands on, by constraint
+    // The branch the arc was built on: for a line, the centre's side of start->end; for an arc,
+    // outside (centres on opposite sides of the joint) or inside.
+    int tangentSide = 1;
+    if (srcCtr) {
+        const bool outside = (ctr.x - s.x) * (srcCtr->x - s.x) + (ctr.y - s.y) * (srcCtr->y - s.y) < 0;
+        const double srcRad = std::hypot(s.x - srcCtr->x, s.y - srcCtr->y);
+        tangentSide = outside ? 1 : srcRad >= rad ? -1 : -2;
+    }
+    else {
+        const auto& a = c.points[0];
+        const auto& b = c.points[1];
+        tangentSide = (b.x - a.x) * (ctr.y - a.y) - (b.y - a.y) * (ctr.x - a.x) > 0 ? 1 : -1;
+    }
+    return {arc, i, tangentSide};
+}
+
+/// The ends of lines, arcs and open splines at `at` (the solver joins those ends), as
+/// {curve, "start" | "end"}.
+std::vector<std::pair<std::size_t, std::string>> curveEndsAt(const std::vector<geometry::SketchCurve>& curves,
+                                                             geometry::Vec2 at)
+{
+    using K = geometry::SketchCurve::Kind;
+    std::vector<std::pair<std::size_t, std::string>> out;
+    for (std::size_t j = 0; j < curves.size(); ++j) {
+        const auto& c = curves[j];
+        const bool open = c.kind == K::Line || (c.kind == K::Arc && c.points.size() == 3) ||
+                          (c.kind == K::Spline && !c.closed);
+        if (!open || c.points.size() < 2)
+            continue;
+        // As close as the solver's own joining (positions shown are rounded).
+        if (std::hypot(c.points.front().x - at.x, c.points.front().y - at.y) < 1e-6)
+            out.emplace_back(j, "start");
+        if (std::hypot(c.points.back().x - at.x, c.points.back().y - at.y) < 1e-6)
+            out.emplace_back(j, "end");
+    }
+    return out;
+}
+
+/// A tangent arc as built: its item index in the sketch's curves, its curve index, and the
+/// start, through and end points it should solve to.
+struct PlacedArc {
+    std::size_t item;
+    std::size_t curve;
+    std::array<geometry::Vec2, 3> points;
+    std::size_t from; ///< the curve it is tangent to (already joined by a constraint)
+};
+
+/// The solve starts from the stored geometry, so a source that constraints moved far from where it
+/// was drawn drags the new, free arc away from where it was built. The stored arc is only the
+/// solver's starting point: shift its points by the remaining error and solve again, until the arc
+/// is where it was put or it stops getting closer (only when there is an error to remove).
+void settleTangentArcs(cad::Design& d, cad::FeatureId id, Json& curves, Json& constraints,
+                       const std::vector<PlacedArc>& placed)
+{
+    static constexpr const char* keys[] = {"start", "through", "end"};
+    std::vector<double> history;
+    for (int iter = 0; iter < 30 && !placed.empty(); ++iter) {
+        const auto solved = d.sketches().find(id);
+        if (solved == d.sketches().end())
+            return;
+        std::vector<std::array<geometry::Vec2, 3>> errs;
+        double worst = 0;
+        for (const auto& a : placed) {
+            if (a.curve >= solved->second.curves.size() || solved->second.curves[a.curve].points.size() < 3)
+                return;
+            const auto& pts = solved->second.curves[a.curve].points;
+            std::array<geometry::Vec2, 3> e;
+            for (int k = 0; k < 3; ++k) {
+                e[k] = {a.points[k].x - pts[k].x, a.points[k].y - pts[k].y};
+                if (k != 1) // the through point only steers; the solver keeps ends and centre
+                    worst = std::max(worst, std::hypot(e[k].x, e[k].y));
+            }
+            errs.push_back(e);
+        }
+        history.push_back(worst);
+        if (worst < 1e-6 || (history.size() > 5 && worst > 0.99 * history[history.size() - 6]))
+            return;
+        if (iter == 0) {
+            // Moving the stored arc breaks the joins the solver made by stored position (e.g. a
+            // line drawn on from the arc's end in the same batch): keep them as constraints.
+            const auto& sc = solved->second.curves;
+            for (const auto& a : placed) {
+                for (const auto& [k, name] : {std::pair{0, "start"}, std::pair{2, "end"}}) {
+                    for (const auto& [j, other] : curveEndsAt(sc, sc[a.curve].points[k])) {
+                        if (j == a.curve || (j == a.from && k == 0))
+                            continue;
+                        const Json join{{"type", "coincident"},
+                                        {"points", Json::array({Json{{"curve", a.curve}, {"point", name}},
+                                                                Json{{"curve", j}, {"point", other}}})}};
+                        if (std::find(constraints.begin(), constraints.end(), join) == constraints.end())
+                            constraints.push_back(join);
+                    }
+                }
+            }
+        }
+        for (std::size_t i = 0; i < placed.size(); ++i) {
+            Json& item = curves[placed[i].item];
+            for (int k = 0; k < 3; ++k) {
+                Json& p = item[keys[k]];
+                p = Json::array({p.at(0).get<double>() + errs[i][k].x, p.at(1).get<double>() + errs[i][k].y});
+            }
+        }
+        d.editFeature(id, {{"curves", curves}, {"constraints", constraints}});
+    }
+}
+
 /// A new fix constraint holds the geometry where it is now (after earlier dimensions),
 /// not where it was drawn: curves are expanded to their points and the solved positions
 /// are stored in "at". A fixed circle also keeps its radius.
@@ -827,9 +1028,44 @@ void registerSketchCommands(CommandRegistry& r)
                   if (f == nullptr || f->type != "sketch")
                       throw cad::DesignError("No sketch with id " + std::to_string(id));
                   Json curves = f->params.value("curves", Json::array());
-                  for (const auto& c : params.at("curves"))
-                      curves.push_back(c);
-                  d.editFeature(id, {{"curves", curves}});
+                  Json constraints = f->params.value("constraints", Json::array());
+                  std::vector<PlacedArc> placed;
+                  for (const auto& c : params.at("curves")) {
+                      if (c.value("type", std::string()) != "tangent_arc") {
+                          curves.push_back(c);
+                          continue;
+                      }
+                      // It refers to the solved curves: apply what came before it first (a
+                      // failure later restores the design). The arc is the next curve.
+                      d.editFeature(id, {{"curves", curves}});
+                      const auto solved = d.sketches().find(id);
+                      if (solved == d.sketches().end())
+                          throw CommandError("The sketch is not evaluated");
+                      const std::size_t next = solved->second.curves.size();
+                      auto [arc, from, side] = resolveTangentArc(d, solved->second.curves, c);
+                      auto pt = [&arc](const char* k) {
+                          return geometry::Vec2{arc[k][0].get<double>(), arc[k][1].get<double>()};
+                      };
+                      placed.push_back({curves.size(), next, {pt("start"), pt("through"), pt("end")}, from});
+                      curves.push_back(arc);
+                      // The side is explicit for the same reason: the solver would pick it from
+                      // the stored source, which may lie across the new centre.
+                      constraints.push_back({{"type", "tangent"}, {"curves", Json::array({from, next})}, {"side", side}});
+                      // Joined explicitly: the solver joins ends by their stored positions,
+                      // which differ from the solved ones once dimensions have moved the source.
+                      constraints.push_back({{"type", "coincident"},
+                                             {"points", Json::array({Json{{"curve", from}, {"point", c.at("from").value("point", std::string("end"))}},
+                                                                     Json{{"curve", next}, {"point", "start"}}})}});
+                      // An end put on a curve end (as shown, i.e. solved) joins it by constraint:
+                      // the solver's own joining compares stored positions.
+                      const geometry::Vec2 endAt{arc["end"][0].get<double>(), arc["end"][1].get<double>()};
+                      for (const auto& [j, other] : curveEndsAt(solved->second.curves, endAt))
+                          constraints.push_back({{"type", "coincident"},
+                                                 {"points", Json::array({Json{{"curve", next}, {"point", "end"}},
+                                                                         Json{{"curve", j}, {"point", other}}})}});
+                  }
+                  d.editFeature(id, {{"curves", curves}, {"constraints", constraints}});
+                  settleTangentArcs(d, id, curves, constraints, placed);
                   return Json{};
               });
               return addedFeature(design(ctx), ctx.document, id);

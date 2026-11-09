@@ -297,7 +297,8 @@ See [cad.md](cad.md) for the timeline and the commands behind the tools.
   Circle (both ends of a diameter), 3-Point Circle (three points on it), Arc
   (start, end, point on arc), Center Rectangle (centre, then a corner), 3-Point Rectangle
   (one side at any angle, then the far side), Center Point Arc
-  (centre, start, end; counter-clockwise), Polygon, Slot, Spline (Fusion: Fit Point Spline; click fit
+  (centre, start, end; counter-clockwise), Tangent Arc (click the end of a line or arc,
+  then the end of the arc; it leaves that end tangentially and stays tangent), Polygon, Slot, Spline (Fusion: Fit Point Spline; click fit
   points, Enter, a double-click or Esc ends it open, a click on the first point closes it;
   the preview and the finished curve are smooth). Points snap to existing points and to a grid
   that follows the zoom. While drawing, type a number (or `width, height` for rectangles)
