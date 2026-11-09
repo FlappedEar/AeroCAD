@@ -1007,6 +1007,12 @@ Item {
         canvas.requestPaint()
     }
 
+    /// Whether an Extend/Break preview can be stroked: a line, an arc (with its centre) or a
+    /// sampled curve (an elliptical arc).
+    function previewDrawable(p) {
+        return !!p && (p.kind === "line" || !!p.center || (!!p.samples && p.samples.length > 1))
+    }
+
     /// Extend and Break hover: the curve under the cursor and what the click would make
     /// (Extend: the lengthened curve; Break: the piece it splits off), asked of the tool's
     /// read-only preview command.
@@ -1398,7 +1404,7 @@ Item {
                 }
             }
             // Extend: the lengthened curve the click would make; Break: the piece it splits off.
-            if ((root.tool === "extend" || root.tool === "break") && root.piecePreview && (root.piecePreview.kind === "line" || root.piecePreview.center)) {
+            if ((root.tool === "extend" || root.tool === "break") && root.previewDrawable(root.piecePreview)) {
                 ctx.lineWidth = 2.5
                 ctx.strokeStyle = Theme.accent
                 root.strokeCurve(ctx, root.piecePreview)
