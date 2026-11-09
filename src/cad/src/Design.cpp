@@ -676,6 +676,7 @@ void appendCurves(const Eval& ev, const Json& item, std::vector<SketchCurve>& ou
     } else if (type == "arc") {
         SketchCurve c{SketchCurve::Kind::Arc, {ev.vec2(item, "start"), ev.vec2(item, "through"), ev.vec2(item, "end")}};
         c.joinStart = item.value("join_start", true);
+        c.joinEnd = item.value("join_end", true);
         push(c);
     } else if (type == "center_arc") {
         const Vec2 c = ev.vec2(item, "center");

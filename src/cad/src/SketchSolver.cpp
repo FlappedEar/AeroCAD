@@ -262,7 +262,7 @@ private:
             case Kind::Line:
                 if (c.points.size() != 2)
                     throw ModelingError("Sketch line needs two points");
-                v.pts = {endPoint(c.points[0], c.joinStart), endPoint(c.points[1])};
+                v.pts = {endPoint(c.points[0], c.joinStart), endPoint(c.points[1], c.joinEnd)};
                 break;
             case Kind::Arc: {
                 if (c.points.size() != 3)
@@ -282,7 +282,7 @@ private:
                                (ss * (e.x - t.x) + tt * (s.x - e.x) + ee * (t.x - s.x)) /
                                    (2 * (s.x * (t.y - e.y) + t.x * (e.y - s.y) + e.x * (s.y - t.y)))};
                 v.ccw = d > 0;
-                v.pts = {endPoint(s, c.joinStart), endPoint(e), newPoint(ctr)};
+                v.pts = {endPoint(s, c.joinStart), endPoint(e, c.joinEnd), newPoint(ctr)};
                 break;
             }
             case Kind::Circle:

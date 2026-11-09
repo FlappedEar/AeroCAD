@@ -1697,4 +1697,61 @@ TEST_CASE("Design commands: a tangent arc stays on a dimensioned line's end (CAD
     CHECK(ba[0][1].get<double>() == Approx(15).margin(1e-6));
     CHECK(bl[0][0].get<double>() == Approx(ba[2][0].get<double>()).margin(1e-6));
     CHECK(bl[0][1].get<double>() == Approx(ba[2][1].get<double>()).margin(1e-6));
+
+
+    // Codex: the requested end (10, 0) is where the line's end is stored, not where it is shown;
+    // the arc must not be welded to it (that collapsed the arc onto (0, 10)).
+    const Json e2 = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {10, 0}}}})},
+                         {"constraints", Json::array({{{"type", "fix"},
+                                                       {"points", Json::array({{{"curve", 0}, {"point", "start"}}, {{"curve", 0}, {"point", "end"}}})},
+                                                       {"at", Json::array({Json::array({0, 0}), Json::array({0, 10})})}}})}});
+    const auto e2id = e2.at("id").get<std::uint64_t>();
+    run(s, "sketch.add_curves",
+        {{"sketch", e2id},
+         {"curves", Json::array({{{"type", "tangent_arc"}, {"from", {{"curve", 0}, {"point", "end"}}}, {"end", {10, 0}}}})}});
+    const Json e2c = run(s, "sketch.curves", {{"sketch", e2id}});
+    const auto& e2a = e2c.at("curves")[1].at("points");
+    INFO(e2c.dump());
+    CHECK(e2a[0][1].get<double>() == Approx(10).margin(1e-4));
+    CHECK(e2a[2][0].get<double>() == Approx(10).margin(1e-4));
+    CHECK(e2a[2][1].get<double>() == Approx(0).margin(1e-4));
+
+    // An end put on another curve's end (as shown) is joined to it.
+    const Json j2 = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {10, 0}}},
+                                                 {{"type", "line"}, {"start", {20, 10}}, {"end", {30, 10}}}})}});
+    const auto j2id = j2.at("id").get<std::uint64_t>();
+    run(s, "sketch.add_curves",
+        {{"sketch", j2id},
+         {"curves", Json::array({{{"type", "tangent_arc"}, {"from", {{"curve", 0}, {"point", "end"}}}, {"end", {20, 10}}}})}});
+    const Json j2c = run(s, "sketch.curves", {{"sketch", j2id}});
+    bool joined = false;
+    for (const auto& k : j2c.at("constraints"))
+        if (k.at("type") == "coincident" && k.at("points")[0].at("curve") == 2 && k.at("points")[0].at("point") == "end" &&
+            k.at("points")[1].at("curve") == 1 && k.at("points")[1].at("point") == "start")
+            joined = true;
+    CHECK(joined);
+
+    // Codex: an open spline drawn on from a settled arc's end in the same batch stays joined too.
+    const Json sp = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {10, 0}}}})},
+                         {"constraints", Json::array({{{"type", "fix"}, {"points", Json::array({{{"curve", 0}, {"point", "start"}}})}},
+                                                      {{"type", "vertical"}, {"curve", 0}},
+                                                      {{"type", "length"}, {"curve", 0}, {"value", 10}}})}});
+    const auto spid = sp.at("id").get<std::uint64_t>();
+    run(s, "sketch.add_curves",
+        {{"sketch", spid},
+         {"curves", Json::array({{{"type", "tangent_arc"}, {"from", {{"curve", 0}, {"point", "end"}}}, {"end", {-10, 20}}},
+                                 {{"type", "spline"}, {"points", Json::array({Json::array({-10, 20}), Json::array({-15, 25}), Json::array({-20, 20})})}}})}});
+    run(s, "sketch.edit_constraint", {{"sketch", spid}, {"index", 2}, {"value", 15}});
+    const Json spc = run(s, "sketch.curves", {{"sketch", spid}});
+    const auto& spa = spc.at("curves")[1].at("points");
+    const auto& sps = spc.at("curves")[2].at("points");
+    INFO(spc.dump());
+    CHECK(sps[0][0].get<double>() == Approx(spa[2][0].get<double>()).margin(1e-6));
+    CHECK(sps[0][1].get<double>() == Approx(spa[2][1].get<double>()).margin(1e-6));
 }
