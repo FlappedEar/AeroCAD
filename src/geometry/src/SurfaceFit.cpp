@@ -1552,6 +1552,28 @@ SurfaceFitResult fitSurface(const core::TriangleMesh& mesh, const core::Triangle
     const std::size_t stride = std::max<std::size_t>(1, measured.size() / 20000);
     double sum = 0.0;
     std::size_t count = 0;
+    // Points just outside the trim are on the face's edge (the smoothed outline passes a
+    // little inside a coarse border), not off the face: they count as covered (CAD-255).
+    // The reach is one mean edge length, at most 5 % of the selection's size; it does not
+    // grow with the fit tolerance, so a loose tolerance cannot pass a sliver face.
+    std::size_t nearOutline = 0;
+    double outlineReach = 0.0;
+    {
+        const core::TriangleSet& tris = options.trimTo.empty() ? selection : options.trimTo;
+        double edgeSum = 0.0;
+        for (const auto t : tris) {
+            const auto& tri = mesh.triangles()[t];
+            for (int e = 0; e < 3; ++e)
+                edgeSum += (mesh.vertices()[tri[(e + 1) % 3]] - mesh.vertices()[tri[e]]).length();
+        }
+        Vec3 lo = measured.empty() ? Vec3{} : measured.front(), hi = lo;
+        for (const auto& q : measured) {
+            lo = {std::min(lo.x, q.x), std::min(lo.y, q.y), std::min(lo.z, q.z)};
+            hi = {std::max(hi.x, q.x), std::max(hi.y, q.y), std::max(hi.z, q.z)};
+        }
+        if (!tris.empty())
+            outlineReach = std::min(edgeSum / (3.0 * static_cast<double>(tris.size())), 0.05 * (hi - lo).length());
+    }
 
     // A point whose projection falls outside the trim is not on the created face: it is
     // measured to the face boundary (densely sampled polyline) and reported separately.
@@ -1592,7 +1614,10 @@ SurfaceFitResult fitSurface(const core::TriangleMesh& mesh, const core::Triangle
                 locate.Point().Parameter(pu, pv);
             }
             if (classifier && classifier->Perform(gp_Pnt2d(pu, pv)) == TopAbs_OUT) {
-                report.outsideTrimMax = std::max(report.outsideTrimMax, boundaryDistance(measured[i]));
+                const double off = boundaryDistance(measured[i]);
+                report.outsideTrimMax = std::max(report.outsideTrimMax, off);
+                if (off <= outlineReach)
+                    ++nearOutline;
                 continue; // not on the created face; reported as outsideTrimMax
             }
         } catch (const Standard_Failure&) {
@@ -1603,6 +1628,18 @@ SurfaceFitResult fitSurface(const core::TriangleMesh& mesh, const core::Triangle
         ++count;
     }
     report.meshToSurfaceRms = count > 0 ? std::sqrt(sum / static_cast<double>(count)) : 0.0;
+    // Most of the selection must lie on the face. When the trim outline went wrong (an
+    // area folded over itself, e.g. a whole car body seen from above), the face is a
+    // sliver and nothing was measured on it: deviation 0 "within the tolerance" (CAD-255).
+    const std::size_t sampled = (measured.size() + stride - 1) / stride;
+    if (sampled > 0 && (count + nearOutline) * 2 < sampled) {
+        char pct[32];
+        std::snprintf(pct, sizeof pct, "%.0f",
+                      100.0 * static_cast<double>(count + nearOutline) / static_cast<double>(sampled));
+        throw SurfaceFitError(std::string("The surface covers only ") + pct +
+                              " % of the selected area (its outline could not follow the selection). Select a "
+                              "smaller area that does not fold over itself");
+    }
 
     // Surface -> mesh, sampled on the face's own triangulation (so only inside the trim).
     // Measured against the selection grown by two rings: the smoothed trim outline may

@@ -71,7 +71,9 @@ core -------+                 transforms, primitives).
   checked both ways; mesh to surface uses a local projection seeded from surface samples.
   Selected vertices that project outside the trimmed face are reported separately
   (`outsideTrimMax`, outline fidelity: mesh staircase, rounded corners) with a warning
-  above the tolerance. Not yet: analytic primitives (plane, cylinder) before free-form
+  above the tolerance. When fewer than half of them lie on the face (a trim outline that
+  failed on an area folding over itself), the fit is refused instead of reporting a sliver
+  as within the tolerance (CAD-255). Not yet: analytic primitives (plane, cylinder) before free-form
   fitting.
 - **Scan to solid** (`geometry/RegionFit`, command `surface.fit_regions`): the mesh (or its
   selection) is split into smooth patches at creases (`core::segmentSmoothRegions`, small
