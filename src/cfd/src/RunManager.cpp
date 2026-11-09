@@ -2260,13 +2260,17 @@ Json RunManager::compare(const std::string& a, const std::string& b)
         j["balance"] = {
             {"a", fa}, {"b", fb}, {"difference", fb.get<double>() - fa.get<double>()}, {"percent", nullptr}};
     // Coefficients of B on A's reference area, so Cd/Cl compare like the forces do.
+    // The same area is not rescaled: (c * area) / area can differ from c in the last bit, and
+    // identical runs then showed a 1e-16 change outside a zero swing (CAD-219).
+    const bool sameArea = areaA > 0 && areaB > 0 && std::abs(areaA - areaB) <= 1e-9 * std::max(areaA, areaB);
+    const double areaScale = sameArea ? 1.0 : areaB / areaA;
     Json coeffs = Json::object();
     for (const char* key : {"cd", "cl", "cs"}) {
         if (sa.at(key).is_number() && sb.at(key).is_number() && areaA > 0 && areaB > 0) {
             const double va = sa.at(key).get<double>();
-            const double vb = sb.at(key).get<double>() * areaB / areaA;
+            const double vb = sb.at(key).get<double>() * areaScale;
             coeffs[key] = {{"a", va}, {"b", vb}, {"difference", vb - va}};
-            addNoise(coeffs[key], key, areaB / areaA);
+            addNoise(coeffs[key], key, areaScale);
         }
     }
     j["coefficientsOnReferenceAreaOfA"] = std::move(coeffs);

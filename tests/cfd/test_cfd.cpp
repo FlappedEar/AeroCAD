@@ -1979,6 +1979,42 @@ TEST_CASE("simulation compare reports the efficiency L/D of A and B (CAD-187)", 
     CHECK_FALSE(runs.compare(a, c).contains("efficiency"));
 }
 
+TEST_CASE("Identical runs compare with exactly zero coefficient change, also in the CSV (CAD-219)", "[cfd]")
+{
+    TempDir tmp;
+    cfd::RunManager runs(tmp.path());
+    cfd::Settings s;
+    s.flowDirection = "-Y"; // Frontal area 200 x 60 mm = 0.012 m2: 0.85 * 0.012 / 0.012 != 0.85.
+    cfd::CaseGeometry g;
+    g.part = box({0, 0, 0}, {200, 80, 60});
+    // Several Cd values: for many of them (cd * area) / area is not exactly cd.
+    for (const double cd : {0.013, 0.026, 0.051, 0.3, 0.7, 0.85}) {
+        const std::string a = runs.prepare(g, s, {});
+        const std::string b = runs.prepare(g, s, {});
+        for (const auto& id : {a, b}) {
+            fakeFinishedRun(tmp.path() / id, cd, 1.6);
+            // Constant coefficients, so the summary Cd is exactly cd.
+            std::ostringstream coeffs;
+            coeffs << "# Time Cd Cd(f) Cd(r) Cl Cl(f) Cl(r) CmPitch CmRoll CmYaw Cs Cs(f) Cs(r)\n";
+            for (int i = 1; i <= 100; ++i)
+                coeffs << i << ' ' << cd << " 0 0 0.1 0 0 0 0 0 0.01 0 0\n";
+            write(tmp.path() / id / "postProcessing" / "forceCoeffs" / "0" / "coefficient.dat", coeffs.str());
+        }
+        const auto cmp = runs.compare(a, b);
+        INFO(cmp.dump());
+        // Same reference area: B's coefficients are not rescaled, so rounding does not show up
+        // as a 1e-16 change or a 1e-14 % change.
+        for (const char* key : {"cd", "cl", "cs"})
+            CHECK(cmp.at("coefficientsOnReferenceAreaOfA").at(key).at("difference").get<double>() == 0.0);
+        runs.exportComparisonCsv(a, b, tmp.path() / "ab.csv");
+        std::ifstream in(tmp.path() / "ab.csv", std::ios::binary);
+        const std::string csv(std::istreambuf_iterator<char>(in), {});
+        INFO(csv);
+        CHECK(csv.find("e-1") == std::string::npos);
+        CHECK(csv.find("\r\nCd (on the reference area of A),") != std::string::npos);
+    }
+}
+
 TEST_CASE("Results give the iteration swing; A/B flags differences inside it (CAD-191)", "[cfd]")
 {
     TempDir tmp;
