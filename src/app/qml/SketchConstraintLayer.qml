@@ -2,7 +2,8 @@
 // Sketch constraints and dimensions (Fusion: Sketch > Constraints, Sketch Dimension D).
 // Shows the constraints of the active sketch as small glyphs and dimension labels, and
 // implements the constraint tools: the user clicks curves or points, and a finished
-// selection is reported with constraintAdded() in the format of sketch.add_constraints.
+// selection is reported with constraintAdded() in the format of sketch.add_constraints (one
+// constraint, or an array that is added as one step).
 import QtQuick
 import QtQuick.Controls
 
@@ -26,7 +27,7 @@ Item {
     readonly property real pickPixels: 8
 
     readonly property var toolNames: ["dimension", "horizontal", "vertical", "coincident", "tangent",
-        "equal", "parallel", "perpendicular", "concentric", "midpoint", "collinear", "fix"]
+        "equal", "parallel", "perpendicular", "concentric", "midpoint", "collinear", "symmetric", "fix"]
 
     onToolChanged: reset()
     onCurvesChanged: canvas.requestPaint()
@@ -52,6 +53,9 @@ Item {
         case "concentric": return qsTr("Concentric: click two circles or arcs")
         case "midpoint": return qsTr("Midpoint: click a point, then a line")
         case "collinear": return qsTr("Collinear: click two lines")
+        case "symmetric": return picks.length < 2
+            ? qsTr("Symmetric: click two points, two lines or two circles/arcs, then the symmetry line")
+            : qsTr("Symmetric: click the symmetry line")
         case "fix": return qsTr("Fix: click a point or a curve")
         }
         return ""
@@ -137,6 +141,7 @@ Item {
         switch (tool) {
         case "coincident":
         case "midpoint": return picks.length === 0 || tool === "coincident"
+        case "symmetric": return picks.length === 0 || (picks.length === 1 && picks[0].point !== undefined)
         case "dimension":
         case "fix":
         case "horizontal":
@@ -149,6 +154,7 @@ Item {
         switch (tool) {
         case "coincident": return picks.length === 1
         case "midpoint": return picks.length === 1
+        case "symmetric": return picks.length === 0 || picks.length === 2 || picks[0].curve !== undefined
         default: return true
         }
     }
@@ -236,6 +242,52 @@ Item {
         return [u / n, v / n]
     }
 
+    function sameRef(a, b) { return JSON.stringify(a) === JSON.stringify(b) }
+
+    /// The first two picks of Symmetric: two points, two lines or two circles/arcs.
+    function symmetricPairOk(ps) {
+        if (ps.length < 2)
+            return true
+        const [a, b] = ps
+        if (a.point !== undefined && b.point !== undefined)
+            return !sameRef(a.point, b.point)
+        if (a.curve === undefined || b.curve === undefined || a.curve === b.curve)
+            return false
+        return (isLine(a.curve) && isLine(b.curve)) || (isCirc(a.curve) && isCirc(b.curve))
+    }
+
+    /// p mirrored about the line through a and b.
+    function mirrorPoint(p, a, b) {
+        const dx = b[0] - a[0], dy = b[1] - a[1]
+        const l2 = dx * dx + dy * dy
+        const t = l2 > 0 ? ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / l2 : 0
+        const f = [a[0] + t * dx, a[1] + t * dy]
+        return [2 * f[0] - p[0], 2 * f[1] - p[1]]
+    }
+
+    /// Symmetric constraints for two items and the symmetry line (Fusion: Symmetry), or null.
+    /// Two lines: each end is held symmetric to the nearer end of the other line's mirror image;
+    /// two circles/arcs: the centres are symmetric and the radii equal.
+    function symmetricFor(ps) {
+        if (ps.length !== 3 || !symmetricPairOk(ps))
+            return null
+        const axis = ps[2].curve
+        if (axis === undefined || !isLine(axis) || axis === ps[0].curve || axis === ps[1].curve)
+            return null
+        const [a, b] = ps
+        if (a.point !== undefined)
+            return { type: "symmetric", points: [a.point, b.point], curve: axis }
+        if (isCirc(a.curve))
+            return [{ type: "symmetric", points: [{ curve: a.curve, point: "center" }, { curve: b.curve, point: "center" }], curve: axis },
+                    { type: "equal", curves: [a.curve, b.curve] }]
+        const ax = curves[axis].points, ca = curves[a.curve].points, cb = curves[b.curve].points
+        const m = mirrorPoint(ca[0], ax[0], ax[1])
+        const startToStart = dist(m, cb[0]) <= dist(m, cb[1])
+        const ref = (i, end) => ({ curve: i, point: end })
+        return [{ type: "symmetric", points: [ref(a.curve, "start"), ref(b.curve, startToStart ? "start" : "end")], curve: axis },
+                { type: "symmetric", points: [ref(a.curve, "end"), ref(b.curve, startToStart ? "end" : "start")], curve: axis }]
+    }
+
     function emit(constraint) {
         constraintAdded(constraint)
         picks = []
@@ -295,6 +347,14 @@ Item {
             else
                 picks = ps.length >= 2 ? [] : ps
             break
+        case "symmetric": {
+            const c = symmetricFor(ps)
+            if (c === null)
+                picks = ps.length >= 3 || !symmetricPairOk(ps) ? [] : ps
+            else
+                emit(c)
+            break
+        }
         default:
             // Two-curve constraints.
             if (curvesPicked.length === 2) {

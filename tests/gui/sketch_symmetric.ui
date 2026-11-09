@@ -1,0 +1,49 @@
+# CAD-206: Symmetric constraint in the sketch (Fusion: Constraints › Symmetry). Two points,
+# two lines or two circles are made mirror images about a line; the wrong picks are refused.
+# Run: AeroCAD --ui-script <this file>
+ui.wait(800)
+Qt.createQmlObject('import QtQuick; Item { objectName: "symTest"; visible: false; function clickAt(u, v) { const o = viewport.sketchOverlay; const q = o.toScreen([u, v]); const p = o.mapToItem(null, q.x, q.y); ui.click(p.x, p.y) } function curves() { return controller.execute("sketch.curves", { sketch: activeSketch.id }).result.curves } function mirrored(p, q) { const a = curves()[0].points; const dx = a[1][0] - a[0][0], dy = a[1][1] - a[0][1]; const t = ((p[0] - a[0][0]) * dx + (p[1] - a[0][1]) * dy) / (dx * dx + dy * dy); const f = [a[0][0] + t * dx, a[0][1] + t * dy]; return Math.hypot(2 * f[0] - p[0] - q[0], 2 * f[1] - p[1] - q[1]) < 1e-4 } function clickMid(i) { const c = curves()[i].points; clickAt((c[0][0] + c[1][0]) / 2, (c[0][1] + c[1][1]) / 2) } function count() { return viewport.sketchOverlay.sketchConstraints.length } }', window.contentItem)
+# Curve 0 is the symmetry axis (construction, x = 0); 1-2 lines, 3-4 circles, 5-6 lines whose
+# starts are the two points. Line 2 runs the other way, so its end pairs with the start of 1.
+(() => { const r = controller.execute("sketch.create", { plane: "XY", curves: [{ type: "line", start: [0, -95], end: [0, -25], construction: true }, { type: "line", start: [8, -56], end: [16, -64] }, { type: "line", start: [-18, -65], end: [-9, -57] }, { type: "circle", center: [22, -74], radius: 3 }, { type: "circle", center: [-19, -76], radius: 4 }, { type: "line", start: [26, -86], end: [31, -83] }, { type: "line", start: [-24, -87], end: [-29, -84] }] }); if (!r.ok) ui.fail("sketch: " + r.error) })()
+ui.wait(300)
+(() => { enterSketch(controller.execute("timeline.list").result.features[0].id) })()
+ui.wait(800)
+# Pan the view down (middle drag) so that no curve sits under the sketch palette.
+(() => { const o = viewport.sketchOverlay; const q = o.toScreen([0, -90]); const w = o.mapToItem(null, q.x, q.y); ui.drag(w.x + 200, w.y - 300, w.x + 200, w.y - 150, "middle", "", 20) })()
+ui.wait(300)
+(() => { const o = viewport.sketchOverlay; const q = o.toScreen([-13.5, -61]); const w = o.mapToItem(null, q.x, q.y); ui.log("line 2 middle at " + Math.round(w.x) + "," + Math.round(w.y)); if (w.y < 360) ui.fail("the view did not pan down") })()
+(() => { if (!ui.clickText("CONSTRAINTS")) ui.fail("no CONSTRAINTS caption in the sketch ribbon") })()
+ui.wait(300)
+(() => { if (!ui.clickText("Symmetric")) ui.fail("no Symmetric in the CONSTRAINTS menu"); if (sketchTool !== "symmetric") ui.fail("the tool did not start: " + sketchTool) })()
+ui.wait(300)
+# Two points, then the axis.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "symTest"); t.clickAt(26, -86); t.clickAt(-24, -87) })()
+ui.wait(200)
+(() => { const h = viewport.sketchOverlay.constraintGlyphs.hint(); if (h.indexOf("symmetry line") < 0 || h.indexOf("two points") >= 0) ui.fail("hint after two picks: " + h) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "symTest"); t.clickAt(0, -70) })()
+ui.wait(400)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "symTest"); const c = t.curves(); ui.log("points " + JSON.stringify(c[5].points[0]) + " " + JSON.stringify(c[6].points[0])); if (t.count() !== 1) ui.fail("expected 1 constraint, got " + t.count()); if (!t.mirrored(c[5].points[0], c[6].points[0])) ui.fail("the points are not symmetric about the axis") })()
+# The constraint list names both items and the line.
+(() => { const find = it => { if (it.text !== undefined && String(it.text).indexOf("symmetric ") === 0) return it; for (let i = 0; i < it.children.length; ++i) { const f = find(it.children[i]); if (f) return f } return null }; const l = find(viewport.sketchOverlay); if (!l || l.text !== "symmetric #5, #6 about #0") ui.fail("constraint list label: " + (l ? l.text : "none")) })()
+# Two lines, then the axis: both ends paired by position, one undo step.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "symTest"); t.clickMid(1); t.clickMid(2); t.clickAt(0, -72) })()
+ui.wait(400)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "symTest"); const c = t.curves(); ui.log("lines " + JSON.stringify(c[1].points) + " " + JSON.stringify(c[2].points)); if (t.count() !== 3) ui.fail("expected 3 constraints, got " + t.count()); if (!t.mirrored(c[1].points[0], c[2].points[1]) || !t.mirrored(c[1].points[1], c[2].points[0])) ui.fail("the lines are not mirror images") })()
+ui.shot("sketch-symmetric-lines.png")
+(() => { controller.execute("edit.undo") })()
+ui.wait(400)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "symTest"); if (t.count() !== 1) ui.fail("one undo should remove both line constraints, left " + t.count()) })()
+(() => { controller.execute("edit.redo") })()
+ui.wait(400)
+# Two circles, then the axis: mirrored centres and equal radii.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "symTest"); t.clickAt(25, -74); t.clickAt(-15, -76); t.clickAt(0, -82) })()
+ui.wait(400)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "symTest"); const c = t.curves(); ui.log("circles " + JSON.stringify([c[3].points[0], c[3].radius, c[4].points[0], c[4].radius])); if (t.count() !== 5) ui.fail("expected 5 constraints, got " + t.count()); if (!t.mirrored(c[3].points[0], c[4].points[0])) ui.fail("the centres are not symmetric"); if (Math.abs(c[3].radius - c[4].radius) > 1e-4) ui.fail("the radii are not equal") })()
+# Refused: a line and a circle; a line as its own axis. Nothing is added and the picks reset.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "symTest"); t.clickMid(1); const c = t.curves()[3]; t.clickAt(c.points[0][0] + c.radius, c.points[0][1]) })()
+ui.wait(200)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "symTest"); if (viewport.sketchOverlay.constraintGlyphs.picks.length !== 0) ui.fail("a line and a circle were kept as a pair"); t.clickMid(1); t.clickMid(2); t.clickMid(1) })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "symTest"); if (t.count() !== 5) ui.fail("a refused pick added a constraint: " + t.count()); if (viewport.sketchOverlay.constraintGlyphs.picks.length !== 0) ui.fail("picks not reset after a refused axis") })()
+ui.shot("sketch-symmetric.png")

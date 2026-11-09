@@ -1107,6 +1107,7 @@ Item {
                         { tool: "concentric", text: "◎", tip: qsTr("Concentric") },
                         { tool: "midpoint", text: "M", tip: qsTr("Midpoint") },
                         { tool: "collinear", text: "≡", tip: qsTr("Collinear") },
+                        { tool: "symmetric", text: "⇋", tip: qsTr("Symmetric") },
                         { tool: "fix", text: "⚓", tip: qsTr("Fix") }
                     ]
                     delegate: IconButton {
@@ -1182,7 +1183,10 @@ Item {
                     width: ListView.view.width
                     Label {
                         Layout.fillWidth: true
-                        text: modelData.type.replace(/_/g, " ") + (modelData.curve !== undefined ? " #" + modelData.curve
+                        // Symmetric names its two items and the line: "symmetric #5, #6 about #0".
+                        text: modelData.type === "symmetric" && modelData.points !== undefined
+                              ? qsTr("symmetric %1 about #%2").arg(modelData.points.map(p => typeof p === "object" ? "#" + p.curve : String(p)).join(", ")).arg(modelData.curve)
+                              : modelData.type.replace(/_/g, " ") + (modelData.curve !== undefined ? " #" + modelData.curve
                               : modelData.curves !== undefined ? " #" + modelData.curves.join(", #") : "")
                         elide: Text.ElideRight
                     }
