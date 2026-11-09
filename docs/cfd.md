@@ -475,6 +475,11 @@ line comes the full, unsampled history: iteration, Cd, Cl, Cs and the forces in 
 Numbers use a `.` decimal point, and lines end with CRLF. MCP: `simulation.export_results
 {"run": "<id>", "path": "/path/results.csv"}` returns the path and the number of history rows.
 
+**A/B > Swap A ↔ B** makes B the baseline and A the variant in one click (CAD-204,
+[panel](images/audit/cad-204-swap-ab.png)): the selected run and the compared run change
+places, Results show the new A, and B − A, the % changes and the balance shift flip sign. The
+A/B tab stays open.
+
 **A/B > Export CSV…** writes the comparison (CAD-193, [panel](images/audit/cad-193-export-ab.png)).
 The default file name is "A-label A-id vs B-label B-id". A `Quantity,Value` block lists run A
 (baseline) and B (variant) with their labels and part, the verdict, each differing or unknown
