@@ -17,6 +17,9 @@ Pane {
     /// Physical properties (Fusion: Properties) of a closed body, solid or mesh:
     /// geometry.measure kind "part" (volume, surfaceArea, centerOfMass), or null.
     property var physical: null
+    /// Measuring waits while this is true: geometry.measure would end a Move / Rotate /
+    /// Scale preview (an explicit analysis commits it), so it is left until the tool ends.
+    property bool busy: false
 
     function refresh() {
         info = partId ? controller.partInfo(partId) : ({})
@@ -25,7 +28,7 @@ Pane {
         const measurable = info.kind === "body" || (info.kind === "imported" && (info.hasBrep ? (info.solids ?? 0) > 0
                                                                                     : (info.triangles ?? 0) <= 200000))
         // Measured only while the panel is shown (it runs on the GUI thread).
-        if (!partId || !measurable || !visible)
+        if (!partId || !measurable || !visible || busy)
             return
         const r = controller.execute("geometry.measure", { kind: "part", id: partId })
         if (r.ok && r.result.closed && r.result.volume > 0)
@@ -35,6 +38,7 @@ Pane {
 
     onPartIdChanged: refresh()
     onVisibleChanged: if (visible) refresh()
+    onBusyChanged: if (!busy) refresh()
     Connections {
         target: root.controller
         function onPartChanged(id) {

@@ -17,6 +17,18 @@ ui.wait(200)
 (() => { window.propertiesVisible = true })()
 ui.wait(300)
 (() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "bpTest"); if (!/^3[.,]000 cm³$/.test(t.text("propVolume"))) ui.fail("shown again, the panel has no volume: '" + t.text("propVolume") + "'") })()
+# Showing the panel during a Move preview must not end the move (an explicit
+# geometry.measure would commit it): it waits, and Esc still cancels the move.
+(() => { window.propertiesVisible = false })()
+ui.wait(200)
+ui.key("M")
+ui.wait(400)
+(() => { if (!viewport.transformActive) ui.fail("M did not start Move"); window.propertiesVisible = true })()
+ui.wait(300)
+(() => { if (!viewport.transformActive) ui.fail("showing Properties ended the Move preview"); if (properties.physical !== null) ui.fail("the panel measured during the Move preview") })()
+ui.key("Esc")
+ui.wait(400)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "bpTest"); if (viewport.transformActive) ui.fail("Esc did not cancel Move"); if (!/^3[.,]000 cm³$/.test(t.text("propVolume"))) ui.fail("after Move the panel has no volume: '" + t.text("propVolume") + "'") })()
 # Scroll the panel down to the details, as a user would.
 (() => { const p = properties.mapToItem(null, properties.width / 2, properties.height / 2); ui.mouseWheel(p.x, p.y, -3) })()
 ui.wait(150)
