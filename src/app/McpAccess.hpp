@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "aerocad/commands/CommandRegistry.hpp"
 #include "aerocad/mcp/IpcServer.hpp"
 
 #include <QObject>
@@ -9,6 +10,8 @@
 #include <QtQml/qqmlregistration.h>
 
 #include <cstdint>
+#include <functional>
+#include <utility>
 
 namespace aerocad::app {
 
@@ -61,6 +64,13 @@ public:
     Q_INVOKABLE void clearLog();
     Q_INVOKABLE void copyToClipboard(const QString& text) const;
 
+    /// Runs the view.* commands (screenshot, camera, pick), which need the window rather
+    /// than the document. Set by main(); without it they fail as in headless mode.
+    using ViewHandler = std::function<commands::CommandResult(const std::string&, const nlohmann::json&)>;
+    void setViewHandler(ViewHandler handler) { m_viewHandler = std::move(handler); }
+    /// A view.* command as an agent gets it (for UI scripts and tests): {ok, result | error}.
+    Q_INVOKABLE QVariantMap runViewCommand(const QString& name, const QVariantMap& params);
+
 signals:
     void stateChanged();
     void clientsChanged();
@@ -81,6 +91,7 @@ private:
     QString m_error;
     QVariantList m_log;
     int m_operationCount = 0;
+    ViewHandler m_viewHandler;
 };
 
 } // namespace aerocad::app

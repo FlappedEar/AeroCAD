@@ -473,6 +473,31 @@ Item {
         cameraInput.animateTo(pitch, yaw)
     }
 
+    /// As setViewDirection, without the animation (an agent's screenshot follows at once).
+    function setViewDirectionNow(direction) {
+        const d = Qt.vector3d(direction.x, direction.z, -direction.y).normalized()
+        const pitch = -Math.asin(Math.max(-1, Math.min(1, d.y))) * 180 / Math.PI
+        const yaw = Math.abs(d.y) > 0.9999 ? 0 : Math.atan2(d.x, d.z) * 180 / Math.PI
+        setPitchYawNow(pitch, yaw)
+    }
+
+    function setPitchYawNow(pitch, yaw) {
+        cameraInput.stopAnimation()
+        cameraInput.pitch = pitch
+        cameraInput.yaw = yaw
+        updateClipping()
+    }
+
+    /// The camera in model coordinates (mm, Z up), for an AI agent.
+    function agentCamera() {
+        const p = cameraInput.pivot.position
+        const pr = cameraInput.pitch * Math.PI / 180, yr = cameraInput.yaw * Math.PI / 180
+        const d = Qt.vector3d(Math.cos(pr) * Math.sin(yr), -Math.sin(pr), Math.cos(pr) * Math.cos(yr))
+        const toModel = v => [v.x, -v.z, v.y]
+        return { target: toModel(p), eye: toModel(p.plus(d.times(cameraInput.distance))),
+                 towardsCamera: toModel(d), distance: cameraInput.distance, orthographic: orthographic }
+    }
+
     function goHome() {
         setView(homePitch, homeYaw)
     }

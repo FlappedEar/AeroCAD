@@ -3,6 +3,7 @@
 
 #include "aerocad/commands/Session.hpp"
 
+#include <cstddef>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -41,7 +42,28 @@ private:
 [[nodiscard]] Json toolDefinition(const commands::CommandInfo& info);
 
 /// Commands that are not exposed as tools (internal introspection).
+/// `text` with command names (sketch.create) written as their tool names (sketch_create).
+[[nodiscard]] std::string withToolNames(std::string text, const commands::CommandRegistry& registry);
+
+/// `value` with withToolNames applied to the strings under explanatory keys (message, hint,
+/// warnings, next, ...) only: part names, paths and other data are returned unchanged.
+[[nodiscard]] Json messagesWithToolNames(Json value, const commands::CommandRegistry& registry,
+                                         bool isMessage = false);
+
 [[nodiscard]] bool isExposedAsTool(const commands::CommandInfo& info);
+
+/// Results longer than this (characters of JSON) have their long arrays shortened.
+inline constexpr std::size_t kMaxResultChars = 60000;
+/// Items kept of each array in a shortened result.
+inline constexpr std::size_t kShortenedArrayItems = 40;
+
+/// The tools/call result for a successful command: its JSON as text, an "image" member
+/// ({mimeType, data: base64}) as MCP image content, and long arrays shortened when the text
+/// would be too large for the agent to read.
+[[nodiscard]] Json toolResultContent(Json data);
+
+/// Copy of `value` with every array cut to `maxItems` items plus a "... N more" entry.
+[[nodiscard]] Json shortenArrays(const Json& value, std::size_t maxItems);
 
 struct ServerInfo {
     std::string name = "aerocad";

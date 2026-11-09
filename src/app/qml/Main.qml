@@ -433,6 +433,87 @@ ApplicationWindow {
     // --- View (right-click menu on empty space) ----------------------------------------
 
     function fitView() { viewport.fitAll() }
+
+    // --- View for an AI agent (view.set / view.screenshot / view.pick, AgentView.cpp) ----
+
+    /// Turns and frames the camera at once (no animation, so a screenshot right after
+    /// shows the new view). Returns the camera, or {error}.
+    function agentSetView(p) {
+        p = p || {}
+        viewport.stopCameraAnimation()
+        if (p.orthographic !== undefined)
+            viewport.orthographic = !!p.orthographic
+        let turned = false
+        if (p.direction !== undefined) {
+            const named = { front: [0, -1, 0], back: [0, 1, 0], right: [1, 0, 0], left: [-1, 0, 0],
+                            top: [0, 0, 1], bottom: [0, 0, -1], iso: [1, -1, 1] }
+            if (p.direction === "home") {
+                viewport.setPitchYawNow(viewport.homePitch, viewport.homeYaw)
+            } else {
+                const d = typeof p.direction === "string" ? named[p.direction] : p.direction
+                viewport.setViewDirectionNow(Qt.vector3d(d[0], d[1], d[2]))
+            }
+            turned = true
+        }
+        const notes = []
+        if (p.part !== undefined) {
+            const info = controller.partInfo(p.part)
+            if (!info.id)
+                return { error: "No part with id " + p.part + " (see project_get_context)" }
+            if (!info.center || info.center.length !== 3)
+                return { error: "Part " + p.part + " has no geometry to frame" }
+            if (info.visible === false)
+                notes.push("Part " + p.part + " is hidden; part_set_visible {id: " + p.part + ", visible: true} shows it.")
+            zoomToPart(p.part)
+        } else if (p.center !== undefined) {
+            viewport.frameAround(p.center, p.radius)
+        } else if (p.fit === true || (turned && p.fit !== false)) {
+            viewport.fitAll()
+        }
+        const cam = viewport.agentCamera()
+        if (notes.length)
+            cam.notes = notes
+        return cam
+    }
+
+    /// Shows run `p.run` in the 3D view (simulation panel, Results tab), with `p.fields` on.
+    function agentShowResults(p) {
+        if (!p.run) {
+            simulationPanel.selectRun("")
+            return { shown: "" }
+        }
+        window.simulationVisible = true
+        simulationPanel.refreshRuns()
+        const run = simulationPanel.runs.find(r => r.id === p.run)
+        if (!run)
+            return { error: "No run " + p.run + " (see simulation_list)" }
+        if (run.state !== "finished")
+            return { error: "Run " + p.run + " is " + run.state + "; only a finished run has fields to show" }
+        if (p.fields !== undefined) {
+            const on = p.fields
+            simulationPanel.fieldChoices = simulationPanel.fieldChoices.map(f => Object.assign({}, f, { on: on.indexOf(f.kind) >= 0 }))
+        }
+        // One run, as asked: not the B - A difference a user may have left on (dCp).
+        simulationPanel.showDifference = false
+        simulationPanel.selectRun(p.run)
+        simulationPanel.tab = 1
+        const out = { shown: p.run, fields: simulationPanel.fieldChoices.filter(f => f.on).map(f => f.kind),
+                      drawn: simulationPanel.viewportFields.map(f => f.kind + " (" + f.scalar + " " +
+                                                                  Number(f.min).toPrecision(3) + " .. " +
+                                                                  Number(f.max).toPrecision(3) + ")") }
+        if (!simulationPanel.displayedSourcePresent)
+            out.warning = "The run's part is not in the open document (or has changed), so nothing is drawn in 3D."
+        return out
+    }
+
+    /// Surface hits under fractions [x, y] of the viewport: {part, point, distanceFromCamera} or null.
+    function agentPick(points) {
+        return points.map(pt => {
+            const h = viewport.pickPart(pt[0] * viewport.width, pt[1] * viewport.height, true)
+            return h ? { part: h.partId, point: [h.point.x, h.point.y, h.point.z],
+                         distanceFromCamera: h.distance } : null
+        })
+    }
     function homeView() { viewport.goHome() }
     function isOrthographic() { return viewport.orthographic }
     function setOrthographic(ortho) { viewport.orthographic = ortho }

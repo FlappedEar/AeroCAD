@@ -13,6 +13,9 @@
 #include <cmath>
 #include <numbers>
 #include <array>
+#include <deque>
+#include <map>
+#include <vector>
 #include <limits>
 #include <optional>
 #include <tuple>
@@ -22,6 +25,118 @@
 namespace aerocad::commands {
 
 namespace {
+
+/// Douglas-Peucker simplification of a 2D polyline.
+void simplifyPolyline(const std::vector<std::array<double, 2>>& pts, std::size_t a, std::size_t b, double tol,
+                      std::vector<bool>& keep)
+{
+    if (b <= a + 1)
+        return;
+    const double dx = pts[b][0] - pts[a][0], dy = pts[b][1] - pts[a][1];
+    const double len = std::hypot(dx, dy);
+    double worst = -1.0;
+    std::size_t at = a;
+    for (std::size_t i = a + 1; i < b; ++i) {
+        const double ex = pts[i][0] - pts[a][0], ey = pts[i][1] - pts[a][1];
+        const double d = len > 1e-12 ? std::abs(dx * ey - dy * ex) / len : std::hypot(ex, ey);
+        if (d > worst) {
+            worst = d;
+            at = i;
+        }
+    }
+    if (worst > tol) {
+        keep[at] = true;
+        simplifyPolyline(pts, a, at, tol, keep);
+        simplifyPolyline(pts, at, b, tol, keep);
+    }
+}
+
+/// Where a fin sketch's plane cuts the surface, for an agent: the cut segments chained into
+/// polylines, the one passing nearest the sketch origin (the picked point on the surface)
+/// kept and simplified to at most `maxPoints` points. The raw segments (surfaceLine) run to
+/// thousands on a scan, too many to read.
+Json surfaceCurveFromSegments(std::vector<std::array<double, 2>> all, double reach, std::size_t maxPoints)
+{
+    // Only near the sketch: the plane may cut the whole scan.
+    std::vector<std::array<double, 2>> seg;
+    for (std::size_t i = 0; i + 1 < all.size(); i += 2)
+        if (std::hypot(all[i][0], all[i][1]) <= reach && std::hypot(all[i + 1][0], all[i + 1][1]) <= reach) {
+            seg.push_back(all[i]);
+            seg.push_back(all[i + 1]);
+        }
+    if (seg.size() < 2)
+        return nullptr;
+    // Chain by shared end points (the slicer emits each crossing point once per triangle).
+    const auto key = [](const std::array<double, 2>& p) {
+        return std::make_pair(std::llround(p[0] * 1e4), std::llround(p[1] * 1e4));
+    };
+    std::map<std::pair<long long, long long>, std::vector<std::size_t>> ends;
+    const std::size_t n = seg.size() / 2;
+    for (std::size_t i = 0; i < n; ++i) {
+        ends[key(seg[2 * i])].push_back(i);
+        ends[key(seg[2 * i + 1])].push_back(i);
+    }
+    std::vector<bool> used(n, false);
+    std::vector<std::vector<std::array<double, 2>>> lines;
+    for (std::size_t start = 0; start < n; ++start) {
+        if (used[start])
+            continue;
+        used[start] = true;
+        std::deque<std::array<double, 2>> line{seg[2 * start], seg[2 * start + 1]};
+        for (int side = 0; side < 2; ++side) {
+            for (;;) {
+                const auto& tip = side == 0 ? line.back() : line.front();
+                auto it = ends.find(key(tip));
+                std::size_t next = n;
+                if (it != ends.end())
+                    for (std::size_t c : it->second)
+                        if (!used[c]) {
+                            next = c;
+                            break;
+                        }
+                if (next == n)
+                    break;
+                used[next] = true;
+                const bool forward = key(seg[2 * next]) == key(tip);
+                const auto& far = seg[2 * next + (forward ? 1 : 0)];
+                if (side == 0)
+                    line.push_back(far);
+                else
+                    line.push_front(far);
+            }
+        }
+        lines.emplace_back(line.begin(), line.end());
+    }
+    const auto distanceToOrigin = [](const std::vector<std::array<double, 2>>& l) {
+        double best = std::numeric_limits<double>::infinity();
+        for (const auto& p : l)
+            best = std::min(best, std::hypot(p[0], p[1]));
+        return best;
+    };
+    const auto nearest = std::min_element(lines.begin(), lines.end(), [&](const auto& a, const auto& b) {
+        return distanceToOrigin(a) < distanceToOrigin(b);
+    });
+    const auto& pts = *nearest;
+    double tol = 0.2; // below a scan's noise is detail an agent cannot use
+    std::vector<bool> keep;
+    for (int round = 0; round < 30; ++round, tol *= 1.6) {
+        keep.assign(pts.size(), false);
+        keep.front() = keep.back() = true;
+        simplifyPolyline(pts, 0, pts.size() - 1, tol, keep);
+        if (static_cast<std::size_t>(std::count(keep.begin(), keep.end(), true)) <= maxPoints)
+            break;
+    }
+    Json points = Json::array();
+    for (std::size_t i = 0; i < pts.size(); ++i)
+        if (keep[i])
+            points.push_back(Json::array({pts[i][0], pts[i][1]}));
+    return Json{{"points", points},
+                {"tolerance", tol},
+                {"within", reach},
+                {"note", "Where the surface is in sketch coordinates (x along the surface normal, 0 at the "
+                         "surface), simplified to within `tolerance` mm, up to `within` mm from the sketch "
+                         "origin. The fin root must reach below these x values."}};
+}
 
 // --- Schema helpers ---------------------------------------------------------------------
 
@@ -377,6 +492,13 @@ Json addedFeature(cad::Design& d, const model::Document& doc, cad::FeatureId id)
     if (auto it = d.sketches().find(id); it != d.sketches().end()) {
         j["profiles"] = it->second.geometry.profiles.size();
         j["degreesOfFreedom"] = it->second.degreesOfFreedom;
+        // An agent cannot see the sketch: say why nothing can be made from it yet.
+        if (it->second.geometry.profiles.empty())
+            j["hint"] = it->second.curves.empty()
+                ? "The sketch has no curves yet: add them with sketch.add_curves."
+                : "No closed profile: extrude, revolve, part on surface and fin need a closed outline. End the "
+                  "last curve where the first one starts (or use rectangle, circle, polygon, slot or a spline with "
+                  "closed: true); sketch.curves lists the end points.";
     }
     if (auto it = d.planes().find(id); it != d.planes().end()) {
         const auto& pl = it->second.plane;
@@ -1346,7 +1468,10 @@ void registerSketchCommands(CommandRegistry& r)
                          {"surfaceLine",
                           {{"type", "boolean"},
                            {"description", "For a sketch across a surface (a fin): also return where the sketch "
-                                           "plane cuts the surface, as segments in sketch coordinates."}}}},
+                                           "plane cuts the surface, in sketch coordinates: surfaceCurve, one "
+                                           "simplified polyline through the picked point (read this one), and "
+                                           "surfaceLine, all raw cut segments as point pairs (for drawing; "
+                                           "thousands on a scan)."}}}},
                         {"sketch"})},
           [](CommandContext& ctx, const Json& params) {
               const auto id = params.at("sketch").get<cad::FeatureId>();
@@ -1371,6 +1496,7 @@ void registerSketchCommands(CommandRegistry& r)
               // coordinates, so the root can be drawn into it. Seen from the sketch normal
               // the surface itself hides that line.
               Json surfaceLine = Json::array();
+              Json surfaceCurve = nullptr;
               if (params.value("surfaceLine", false) && onSurface.is_object() && onSurface.value("across", false) &&
                   onSurface.contains("part")) {
                   const model::Part* surface = ctx.document.part(onSurface.at("part").get<model::PartId>());
@@ -1400,14 +1526,19 @@ void registerSketchCommands(CommandRegistry& r)
                           }
                           cut = std::move(nearest);
                       }
+                      std::vector<std::array<double, 2>> local;
                       for (const auto& p : cut) {
                           const auto uv = sk.plane.toLocal(p);
                           surfaceLine.push_back(Json::array({uv.x, uv.y}));
+                          local.push_back({uv.x, uv.y});
                       }
+                      const double near = std::max(box.isEmpty() ? 0.0 : 1.5 * box.diagonal(), 50.0);
+                      surfaceCurve = surfaceCurveFromSegments(std::move(local), near, 60);
                   }
               }
               return Json{{"sketch", id},
                           {"surfaceLine", surfaceLine},
+                          {"surfaceCurve", surfaceCurve},
                           {"onSurface", onSurface},
                           {"plane", {{"origin", vec(sk.plane.origin)},
                                      {"normal", vec(sk.plane.normal)},

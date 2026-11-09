@@ -25,6 +25,8 @@ set(AEROCAD_APP_SOURCES
     FieldGeometry.hpp
     JsonBridge.cpp
     JsonBridge.hpp
+    AgentView.cpp
+    AgentView.hpp
     McpAccess.cpp
     McpAccess.hpp
     Preferences.cpp
@@ -185,6 +187,12 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/section_sketch_snap.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_section_sketch_snap_test PROPERTIES LABELS gui TIMEOUT 60)
+    # An MCP agent's view tools: camera, screenshot, pick, results (view.* commands).
+    add_test(NAME app_agent_view_test
+        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl
+                --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/agent_view.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_agent_view_test PROPERTIES LABELS gui TIMEOUT 60)
     # CAD-109: the Wind tunnel panel shows the part size and warns about implausible units.
     add_test(NAME app_cfd_size_warning_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl

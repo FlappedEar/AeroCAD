@@ -2,6 +2,7 @@
 #include "McpAccess.hpp"
 
 #include "AppController.hpp"
+#include "JsonBridge.hpp"
 
 #include "aerocad/mcp/IpcProtocol.hpp"
 #include "aerocad/mcp/McpServer.hpp"
@@ -193,9 +194,11 @@ nlohmann::json McpAccess::handle(const mcp::IpcServer::Client& client, const std
     const QString target = m_grantedProject;
     const QString effects = describeEffects(m_controller.session().registry().info(command));
     projectChanged();
-    const commands::CommandResult result = m_enabled
-        ? m_controller.executeCommand(command, params)
-        : commands::CommandResult::failure("AI agent access is not granted for this project");
+    const bool viewCommand = command.rfind("view.", 0) == 0 && m_viewHandler;
+    const commands::CommandResult result = !m_enabled ? commands::CommandResult::failure(
+                                                            "AI agent access is not granted for this project")
+                                           : viewCommand ? m_viewHandler(command, params)
+                                                         : m_controller.executeCommand(command, params);
     const qint64 ms = timer.elapsed();
 
     if (result.ok && command == "document.import" && result.data.contains("id"))
@@ -218,6 +221,14 @@ nlohmann::json McpAccess::handle(const mcp::IpcServer::Client& client, const std
     ++m_operationCount;
     emit logChanged();
     return result.toJson();
+}
+
+QVariantMap McpAccess::runViewCommand(const QString& name, const QVariantMap& params)
+{
+    const commands::CommandResult r = m_viewHandler
+        ? m_viewHandler(name.toStdString(), toJson(QVariant(params)))
+        : commands::CommandResult::failure("No view handler");
+    return toVariant(r.toJson()).toMap();
 }
 
 QString McpAccess::serverPath() const
