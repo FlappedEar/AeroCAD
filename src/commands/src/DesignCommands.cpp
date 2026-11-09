@@ -146,9 +146,10 @@ Json constraintSchema()
           {"points", {{"type", "array"}, {"items", constraintPointSchema()}}},
           {"value", numberOrExpr("Dimension value (mm, or degrees for angle).")},
           {"side", {{"type", "integer"},
-                    {"enum", {-1, 1}},
+                    {"enum", {-2, -1, 1}},
                     {"description", "tangent: which branch (omit = as drawn). Line and arc/circle: 1 = centre left of "
-                                    "the line's start->end, -1 = right. Two arcs/circles: 1 = outside, -1 = inside."}}},
+                                    "the line's start->end, -1 = right. Two arcs/circles: 1 = outside, -1 = inside with "
+                                    "the first the larger, -2 = inside with the second the larger."}}},
           {"at", {{"type", "array"},
                   {"items", point2("Position.")},
                   {"description", "fix: positions to hold the points at. sketch.add_constraints fills it with the "
@@ -755,8 +756,11 @@ std::tuple<Json, std::size_t, int> resolveTangentArc(const std::vector<geometry:
     // The branch the arc was built on: for a line, the centre's side of start->end; for an arc,
     // outside (centres on opposite sides of the joint) or inside.
     int tangentSide = 1;
-    if (srcCtr)
-        tangentSide = (ctr.x - s.x) * (srcCtr->x - s.x) + (ctr.y - s.y) * (srcCtr->y - s.y) < 0 ? 1 : -1;
+    if (srcCtr) {
+        const bool outside = (ctr.x - s.x) * (srcCtr->x - s.x) + (ctr.y - s.y) * (srcCtr->y - s.y) < 0;
+        const double srcRad = std::hypot(s.x - srcCtr->x, s.y - srcCtr->y);
+        tangentSide = outside ? 1 : srcRad >= rad ? -1 : -2;
+    }
     else {
         const auto& a = c.points[0];
         const auto& b = c.points[1];

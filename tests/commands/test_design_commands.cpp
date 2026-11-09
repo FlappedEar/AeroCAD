@@ -1595,4 +1595,29 @@ TEST_CASE("Design commands: a tangent arc stays on a dimensioned line's end (CAD
     CHECK(ha[0][1].get<double>() == Approx(20).margin(1e-6));
     CHECK(ha[2][0].get<double>() == Approx(20).margin(1e-2));
     CHECK(ha[2][1].get<double>() == Approx(10).margin(1e-2));
+
+
+    // Codex: a quarter arc drawn with radius 10 and dimensioned to 20, continued inwards to
+    // (-15, 5): the new arc (radius 15) lies inside the source, which is now the larger one.
+    const Json q = run(s, "sketch.create",
+                       {{"plane", "XY"},
+                        {"curves", Json::array({{{"type", "arc"}, {"start", {10, 0}}, {"through", {7.0710678118654755, 7.0710678118654755}}, {"end", {0, 10}}}})},
+                        {"constraints", Json::array({{{"type", "fix"}, {"points", Json::array({{{"curve", 0}, {"point", "center"}}})}},
+                                                     {{"type", "fix"}, {"points", Json::array({{{"curve", 0}, {"point", "start"}}})}, {"at", Json::array({Json::array({20, 0})})}},
+                                                     {{"type", "radius"}, {"curve", 0}, {"value", 20}}})}});
+    const auto qid = q.at("id").get<std::uint64_t>();
+    const Json qs = run(s, "sketch.curves", {{"sketch", qid}});
+    const auto& qe = qs.at("curves")[0].at("points")[2];
+    INFO(qs.dump());
+    REQUIRE(std::hypot(qe[0].get<double>(), qe[1].get<double>()) == Approx(20).margin(1e-6));
+    const double tx = qe[0].get<double>(), ty = qe[1].get<double>();
+    // A point inside the source circle, on the side the arc turns to (left, towards the centre).
+    run(s, "sketch.add_curves",
+        {{"sketch", qid},
+         {"curves", Json::array({{{"type", "tangent_arc"}, {"from", {{"curve", 0}, {"point", "end"}}}, {"end", {tx - 15, ty - 15}}}})}});
+    const Json qc = run(s, "sketch.curves", {{"sketch", qid}});
+    const auto& qa = qc.at("curves")[1].at("points");
+    INFO(qc.dump());
+    CHECK(qa[2][0].get<double>() == Approx(tx - 15).margin(1e-2));
+    CHECK(qa[2][1].get<double>() == Approx(ty - 15).margin(1e-2));
 }

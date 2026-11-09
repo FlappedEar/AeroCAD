@@ -590,7 +590,7 @@ private:
                 const double r2 = l.radius(x0);
                 const bool external = c.side != 0 ? c.side > 0
                                                   : std::abs(d0 - (r1 + r2)) <= std::abs(d0 - std::abs(r1 - r2));
-                const double s = signOf(r1 - r2);
+                const double s = c.side == -1 ? 1.0 : c.side == -2 ? -1.0 : signOf(r1 - r2);
                 std::vector<std::size_t> vars = circVars(k);
                 for (const std::size_t v : circVars(l))
                     vars.push_back(v);

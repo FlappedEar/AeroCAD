@@ -594,8 +594,12 @@ SketchConstraint parseConstraint(const Eval& ev, const Json& j)
     if (has(j, "at"))
         for (const auto& p : j.at("at"))
             c.at.push_back(ev.vec2(p));
-    if (c.type == SketchConstraint::Type::Tangent && has(j, "side"))
-        c.side = j.at("side").get<double>() < 0 ? -1 : 1;
+    if (c.type == SketchConstraint::Type::Tangent && has(j, "side")) {
+        const auto side = std::lround(j.at("side").get<double>());
+        if (side != 1 && side != -1 && side != -2)
+            throw DesignError("tangent side must be 1, -1 or -2");
+        c.side = static_cast<int>(side);
+    }
     if (isDimension(c.type)) {
         c.value = ev.num(j, "value");
         if (c.type != SketchConstraint::Type::Angle && c.value < 0)
