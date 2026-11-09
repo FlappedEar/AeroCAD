@@ -21,11 +21,11 @@ ui.wait(300)
 ui.shot("sketch-tangent-arc-preview.png")
 (() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "taTest"); t.clickAt(40, -10) })()
 ui.wait(400)
-(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "taTest"); const d = t.data(); const a = d.curves[1]; ui.log("arc " + JSON.stringify(a ? a.points : null) + " constraints " + JSON.stringify(d.constraints.map(c => c.type + c.curves))); if (!a || a.kind !== "arc") ui.fail("no arc drawn"); else { if (!t.near(a.points[0], [30, -20]) || !t.near(a.points[2], [40, -10])) ui.fail("arc ends " + JSON.stringify(a.points)); if (!t.near(t.centre(a), [30, -10])) ui.fail("arc centre " + JSON.stringify(t.centre(a))) } if (d.constraints.length !== 1 || d.constraints[0].type !== "tangent") ui.fail("expected one tangent constraint") })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "taTest"); const d = t.data(); const a = d.curves[1]; ui.log("arc " + JSON.stringify(a ? a.points : null) + " constraints " + JSON.stringify(d.constraints.map(c => c.type + c.curves))); if (!a || a.kind !== "arc") ui.fail("no arc drawn"); else { if (!t.near(a.points[0], [30, -20]) || !t.near(a.points[2], [40, -10])) ui.fail("arc ends " + JSON.stringify(a.points)); if (!t.near(t.centre(a), [30, -10])) ui.fail("arc centre " + JSON.stringify(t.centre(a))) } if (d.constraints.length !== 2 || d.constraints[0].type !== "tangent" || d.constraints[1].type !== "coincident") ui.fail("expected a tangent and a coincident constraint") })()
 # On from the end of that arc (heading +y) to (20, 0): radius 12.5 about (27.5, -10).
 (() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "taTest"); t.clickAt(40, -10); t.clickAt(20, 0) })()
 ui.wait(400)
-(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "taTest"); const d = t.data(); const a = d.curves[2]; if (!a || a.kind !== "arc") ui.fail("no second arc"); else if (!t.near(t.centre(a), [27.5, -10])) ui.fail("second arc centre " + JSON.stringify(t.centre(a))); if (d.constraints.length !== 2) ui.fail("expected two tangent constraints") })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "taTest"); const d = t.data(); const a = d.curves[2]; if (!a || a.kind !== "arc") ui.fail("no second arc"); else if (!t.near(t.centre(a), [27.5, -10])) ui.fail("second arc centre " + JSON.stringify(t.centre(a))); if (d.constraints.filter(c => c.type === "tangent").length !== 2) ui.fail("expected two tangent constraints") })()
 ui.shot("sketch-tangent-arc.png")
 # Esc ends the tool; dragging the line's start then keeps the arc tangent to the line.
 ui.key("Esc")

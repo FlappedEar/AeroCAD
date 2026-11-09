@@ -1480,9 +1480,10 @@ TEST_CASE("Design commands: tangent arc from the end of a line or arc (CAD-212)"
     };
     at(centre(c.at("curves")[2].at("points")), -5, 10);
     const auto& cons = c.at("constraints");
-    REQUIRE(cons.size() == 2);
+    REQUIRE(cons.size() == 4); // tangent + coincident per arc
     CHECK(cons[0].at("type") == "tangent");
-    CHECK(cons[1].at("curves") == Json::array({1, 2}));
+    CHECK(cons[1].at("type") == "coincident");
+    CHECK(cons[2].at("curves") == Json::array({1, 2}));
     // One undo step removes both arcs.
     run(s, "edit.undo");
     CHECK(run(s, "sketch.curves", {{"sketch", id}}).at("curves").size() == 1);
@@ -1519,4 +1520,40 @@ TEST_CASE("Design commands: tangent arc from the end of a line or arc (CAD-212)"
                                                 {"curves", Json::array({{{"type", "tangent_arc"},
                                                                          {"from", {{"curve", 3}, {"point", "end"}}},
                                                                          {"end", {60, 60}}}})}}).ok);
+
+    // A batch that fails part-way changes nothing: the line before the bad arc is not kept,
+    // and there is no undo step for it.
+    const auto before = run(s, "sketch.curves", {{"sketch", id}}).at("curves").size();
+    const auto undoBefore = run(s, "edit.history").dump();
+    CHECK_FALSE(s.execute("sketch.add_curves", {{"sketch", id},
+                                                {"curves", Json::array({{{"type", "line"}, {"start", {70, 70}}, {"end", {80, 70}}},
+                                                                        {{"type", "tangent_arc"},
+                                                                         {"from", {{"curve", 0}, {"point", "end"}}},
+                                                                         {"end", {40, 0}}}})}}).ok);
+    CHECK(run(s, "sketch.curves", {{"sketch", id}}).at("curves").size() == before);
+    CHECK(run(s, "edit.history").dump() == undoBefore);
+}
+
+TEST_CASE("Design commands: a tangent arc stays on a dimensioned line's end (CAD-212)", "[commands][cad][solver]")
+{
+    // Codex: drawn to (10, 0), dimensioned to 20; the arc starts at the solved end (20, 0),
+    // which is not where the line was stored, so it must be joined explicitly.
+    commands::Session s;
+    const Json sk = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {10, 0}}}})},
+                         {"constraints", Json::array({{{"type", "fix"}, {"points", Json::array({{{"curve", 0}, {"point", "start"}}})}},
+                                                      {{"type", "horizontal"}, {"curve", 0}},
+                                                      {{"type", "length"}, {"curve", 0}, {"value", 20}}})}});
+    const auto id = sk.at("id").get<std::uint64_t>();
+    run(s, "sketch.add_curves",
+        {{"sketch", id},
+         {"curves", Json::array({{{"type", "tangent_arc"}, {"from", {{"curve", 0}, {"point", "end"}}}, {"end", {30, 10}}}})}});
+    run(s, "sketch.edit_constraint", {{"sketch", id}, {"index", 2}, {"value", 25}});
+    const Json c = run(s, "sketch.curves", {{"sketch", id}});
+    const auto& l = c.at("curves")[0].at("points");
+    const auto& a = c.at("curves")[1].at("points");
+    CHECK(l[1][0].get<double>() == Approx(25).margin(1e-6));
+    CHECK(a[0][0].get<double>() == Approx(25).margin(1e-6));
+    CHECK(a[0][1].get<double>() == Approx(0).margin(1e-6));
 }

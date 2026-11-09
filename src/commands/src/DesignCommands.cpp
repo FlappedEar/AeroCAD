@@ -324,10 +324,16 @@ Json designChange(CommandContext& ctx, const std::string& label, Fn&& fn)
     cad::Design& d = design(ctx);
     const cad::Design::State before = d.state();
     Json result;
+    // A command that fails part-way (after some edits) leaves the design as it was: nothing
+    // half-applied without an undo step (the document mirror is only synced on success).
     try {
         result = fn(d);
     } catch (const cad::DesignError& e) {
+        d.restore(before);
         throw CommandError(e.what());
+    } catch (...) {
+        d.restore(before);
+        throw;
     }
     const cad::Design::State after = d.state();
     model::Document& doc = ctx.document;
@@ -905,9 +911,8 @@ void registerSketchCommands(CommandRegistry& r)
                           curves.push_back(c);
                           continue;
                       }
-                      // It refers to the solved curves: apply what came before it first. The
-                      // arc is the next curve; the tangent constraint keeps it tangent (the
-                      // shared end is joined by the solver).
+                      // It refers to the solved curves: apply what came before it first (a
+                      // failure later restores the design). The arc is the next curve.
                       d.editFeature(id, {{"curves", curves}});
                       const auto solved = d.sketches().find(id);
                       if (solved == d.sketches().end())
@@ -916,6 +921,11 @@ void registerSketchCommands(CommandRegistry& r)
                       auto [arc, from] = resolveTangentArc(solved->second.curves, c);
                       curves.push_back(arc);
                       constraints.push_back({{"type", "tangent"}, {"curves", Json::array({from, next})}});
+                      // Joined explicitly: the solver joins ends by their stored positions,
+                      // which differ from the solved ones once dimensions have moved the source.
+                      constraints.push_back({{"type", "coincident"},
+                                             {"points", Json::array({Json{{"curve", from}, {"point", c.at("from").value("point", std::string("end"))}},
+                                                                     Json{{"curve", next}, {"point", "start"}}})}});
                   }
                   d.editFeature(id, {{"curves", curves}, {"constraints", constraints}});
                   return Json{};
