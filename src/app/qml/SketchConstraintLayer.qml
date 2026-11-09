@@ -26,7 +26,7 @@ Item {
     readonly property real pickPixels: 8
 
     readonly property var toolNames: ["dimension", "horizontal", "vertical", "coincident", "tangent",
-        "equal", "parallel", "perpendicular", "concentric", "midpoint", "collinear", "fix"]
+        "equal", "parallel", "perpendicular", "concentric", "midpoint", "collinear", "symmetric", "fix"]
 
     onToolChanged: reset()
     onCurvesChanged: canvas.requestPaint()
@@ -52,6 +52,9 @@ Item {
         case "concentric": return qsTr("Concentric: click two circles or arcs")
         case "midpoint": return qsTr("Midpoint: click a point, then a line")
         case "collinear": return qsTr("Collinear: click two lines")
+        case "symmetric": return picks.length < 2
+            ? qsTr("Symmetric: click two points, two lines, two circles or two arcs, then the symmetry line")
+            : qsTr("Symmetric: click the symmetry line")
         case "fix": return qsTr("Fix: click a point or a curve")
         }
         return ""
@@ -137,6 +140,7 @@ Item {
         switch (tool) {
         case "coincident":
         case "midpoint": return picks.length === 0 || tool === "coincident"
+        case "symmetric": return picks.length === 0 || (picks.length === 1 && picks[0].point !== undefined)
         case "dimension":
         case "fix":
         case "horizontal":
@@ -149,6 +153,7 @@ Item {
         switch (tool) {
         case "coincident": return picks.length === 1
         case "midpoint": return picks.length === 1
+        case "symmetric": return picks.length === 0 || picks.length === 2 || picks[0].curve !== undefined
         default: return true
         }
     }
@@ -236,6 +241,33 @@ Item {
         return [u / n, v / n]
     }
 
+    function sameRef(a, b) { return JSON.stringify(a) === JSON.stringify(b) }
+
+    /// The first two picks of Symmetric: two points, two lines, two circles or two arcs.
+    function symmetricPairOk(ps) {
+        if (ps.length < 2)
+            return true
+        const [a, b] = ps
+        if (a.point !== undefined && b.point !== undefined)
+            return !sameRef(a.point, b.point)
+        if (a.curve === undefined || b.curve === undefined || a.curve === b.curve)
+            return false
+        return curves[a.curve].kind === curves[b.curve].kind && (isLine(a.curve) || isCirc(a.curve))
+    }
+
+    /// Symmetric for two items and the symmetry line (Fusion: Symmetry), or null. Two curves are
+    /// sent as {curves, curve}; sketch.add_constraints turns them into the matching point symmetries.
+    function symmetricFor(ps) {
+        if (ps.length !== 3 || !symmetricPairOk(ps))
+            return null
+        const axis = ps[2].curve
+        if (axis === undefined || !isLine(axis) || axis === ps[0].curve || axis === ps[1].curve)
+            return null
+        const [a, b] = ps
+        return a.point !== undefined ? { type: "symmetric", points: [a.point, b.point], curve: axis }
+                                     : { type: "symmetric", curves: [a.curve, b.curve], curve: axis }
+    }
+
     function emit(constraint) {
         constraintAdded(constraint)
         picks = []
@@ -295,6 +327,14 @@ Item {
             else
                 picks = ps.length >= 2 ? [] : ps
             break
+        case "symmetric": {
+            const c = symmetricFor(ps)
+            if (c === null)
+                picks = ps.length >= 3 || !symmetricPairOk(ps) ? [] : ps
+            else
+                emit(c)
+            break
+        }
         default:
             // Two-curve constraints.
             if (curvesPicked.length === 2) {

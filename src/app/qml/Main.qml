@@ -1294,6 +1294,7 @@ ApplicationWindow {
     Action { id: perpendicularAction; text: qsTr("Perpendicular"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "perpendicular"; onTriggered: window.sketchTool_("perpendicular") }
     Action { id: concentricAction; text: qsTr("Concentric"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "concentric"; onTriggered: window.sketchTool_("concentric") }
     Action { id: midpointAction; text: qsTr("Midpoint"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "midpoint"; onTriggered: window.sketchTool_("midpoint") }
+    Action { id: symmetricAction; text: qsTr("Symmetric"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "symmetric"; onTriggered: window.sketchTool_("symmetric") }
     Action { id: collinearAction; text: qsTr("Collinear"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "collinear"; onTriggered: window.sketchTool_("collinear") }
     // Fusion: Construction (X) switches the selected sketch curves.
     Action { id: constructionAction; text: qsTr("Construction"); shortcut: "X"; enabled: !!window.activeSketch && viewport.sketchOverlay.selectedCurves.length > 0; onTriggered: viewport.sketchOverlay.toggleConstruction() }
@@ -1633,6 +1634,7 @@ ApplicationWindow {
                 MenuItem { action: concentricAction }
                 MenuItem { action: midpointAction }
                 MenuItem { action: collinearAction }
+                MenuItem { action: symmetricAction }
                 MenuItem { action: fixAction }
             }
             MenuSeparator {}
@@ -2100,6 +2102,7 @@ ApplicationWindow {
                 ToolCommand { action: concentricAction; text: qsTr("Concentric"); iconName: "concentric" }
                 ToolCommand { action: midpointAction; text: qsTr("Midpoint"); iconName: "midpoint" }
                 ToolCommand { action: collinearAction; text: qsTr("Collinear"); iconName: "collinear" }
+                ToolCommand { action: symmetricAction; text: qsTr("Symmetric"); iconName: "symmetric" }
                 ToolCommand { action: fixAction; text: qsTr("Fix/Unfix"); iconName: "fix" }
             }
             ToolSeparator { tab: "sketch" }

@@ -455,6 +455,11 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_construction.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_sketch_construction_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-206: Symmetric constraint (two points, lines or circles about a line).
+    add_test(NAME app_sketch_symmetric_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_symmetric.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_sketch_symmetric_test PROPERTIES LABELS gui TIMEOUT 60)
     # CAD-125: Extrude up to an object (To Object), following its curved shape.
     add_test(NAME app_extrude_to_object_test
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/extrude_to_object.ui

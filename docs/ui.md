@@ -335,8 +335,10 @@ See [cad.md](cad.md) for the timeline and the commands behind the tools.
   (length), a circle (diameter), an arc (radius), two points (distance), a point and a line
   (distance) or two lines (angle), type the value or an expression and press Enter. The
   constraint buttons in the sketch palette (H, V, coincident, tangent, equal, parallel,
-  perpendicular, concentric, midpoint, collinear, fix) work by clicking the curves or points
-  they need. The palette lists the constraints (edit a dimension value, ✕ deletes) and the
+  perpendicular, concentric, midpoint, collinear, symmetric, fix) work by clicking the curves or points
+  they need. **Symmetric**: click two points, two lines, two circles or two arcs, then
+  the symmetry line (a construction line works well); the two items become mirror images
+  (lines and arcs by their ends, circles and arcs by their centres and equal radii). The palette lists the constraints (edit a dimension value, ✕ deletes) and the
   degrees of freedom left; "Fully constrained" means nothing can move. Conflicting
   constraints are refused with a message in the status bar.
 - **Extrude (E)**, Revolve, Box, Cylinder, **Fillet (F)**, Chamfer, Shell, Combine open a

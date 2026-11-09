@@ -122,7 +122,8 @@ Json constraintSchema()
          "lines, a slot two lines and two arcs). Geometric: coincident {points: 2}; point_on_curve {point, curve}; "
          "midpoint {point, curve: line}; horizontal / vertical {curve: line} or {points: 2}; parallel, "
          "perpendicular, collinear {curves: 2 lines}; tangent {curves: line/arc/circle + arc/circle}; equal "
-         "{curves: 2 lines or 2 arcs/circles}; concentric {curves: 2}; symmetric {points: 2, curve: line}; fix "
+         "{curves: 2 lines or 2 arcs/circles}; concentric {curves: 2}; symmetric {points: 2, curve: line}, or {curves: 2 lines, 2 circles "
+         "or 2 arcs, curve: line} (stored as the matching point symmetries, plus equal radii); fix "
          "{points and/or curves}. Dimensions (value: number or expression): distance {points: 2} or {point, "
          "curve: line}; horizontal_distance / vertical_distance {points: 2}; length {curve: line}; radius / "
          "diameter {curve}; angle {curves: 2 lines} (degrees)."},
@@ -671,6 +672,58 @@ geometry::Vec2 pointPosition(const std::vector<geometry::SketchCurve>& curves, c
 /// A new fix constraint holds the geometry where it is now (after earlier dimensions),
 /// not where it was drawn: curves are expanded to their points and the solved positions
 /// are stored in "at". A fixed circle also keeps its radius.
+/// Symmetric on two whole items, {curves: [a, b], curve: line} (Fusion: Symmetry on curves), as the
+/// point constraints it stands for: two lines get each end of `a` held symmetric to the end of `b`
+/// nearer its mirror image (so a line drawn the other way is not flipped); two circles get
+/// symmetric centres and equal radii; two arcs get symmetric ends (by direction), centres and
+/// equal radii, so the whole arc is mirrored. Other constraints are returned unchanged.
+Json resolveSymmetric(const std::vector<geometry::SketchCurve>& curves, const Json& c)
+{
+    if (c.value("type", std::string()) != "symmetric" || !c.contains("curves"))
+        return Json::array({c});
+    using K = geometry::SketchCurve::Kind;
+    const auto& ids = c.at("curves");
+    if (ids.size() != 2 || !c.contains("curve"))
+        throw CommandError("symmetric: give two curves and the symmetry line (curve)");
+    const auto a = ids[0].get<std::size_t>(), b = ids[1].get<std::size_t>(), axis = c.at("curve").get<std::size_t>();
+    for (const std::size_t i : {a, b, axis})
+        if (i >= curves.size())
+            throw CommandError("No curve " + std::to_string(i) + " in the sketch");
+    if (curves[axis].kind != K::Line)
+        throw CommandError("symmetric: the symmetry curve must be a line");
+    if (a == b || axis == a || axis == b)
+        throw CommandError("symmetric: the two curves and the symmetry line must all be different");
+    const auto ref = [](std::size_t i, const char* point) { return Json{{"curve", i}, {"point", point}}; };
+    const auto sym = [&](const char* pa, const char* pb) {
+        return Json{{"type", "symmetric"}, {"points", {ref(a, pa), ref(b, pb)}}, {"curve", axis}};
+    };
+    const K ka = curves[a].kind, kb = curves[b].kind;
+    if (ka != kb || (ka != K::Line && ka != K::Circle && ka != K::Arc))
+        throw CommandError("symmetric: pick two lines, two circles or two arcs");
+    if (ka == K::Circle)
+        return Json::array({sym("center", "center"), {{"type", "equal"}, {"curves", {a, b}}}});
+    if (ka == K::Arc) {
+        // A mirror image runs the other way round: with both arcs counter-clockwise (or both
+        // clockwise) the start of one is the mirrored end of the other; else start to start.
+        // Ends and centres symmetric (and equal radii, as Sketch Mirror) fix the whole arc.
+        const auto ccw = [](const geometry::SketchCurve& k) {
+            const auto& p = k.points;
+            return (p[1].x - p[0].x) * (p[2].y - p[0].y) - (p[1].y - p[0].y) * (p[2].x - p[0].x) > 0;
+        };
+        const bool swap = ccw(curves[a]) == ccw(curves[b]);
+        return Json::array({sym("start", swap ? "end" : "start"), sym("end", swap ? "start" : "end"),
+                            sym("center", "center"), {{"type", "equal"}, {"curves", {a, b}}}});
+    }
+    // Lines: the start of `a` mirrored about the axis, matched with the nearer end of `b`.
+    const auto p0 = curves[axis].points[0], p1 = curves[axis].points[1], q = curves[a].points[0];
+    const double dx = p1.x - p0.x, dy = p1.y - p0.y, l2 = dx * dx + dy * dy;
+    const double t = l2 > 0 ? ((q.x - p0.x) * dx + (q.y - p0.y) * dy) / l2 : 0.0;
+    const double mx = 2 * (p0.x + t * dx) - q.x, my = 2 * (p0.y + t * dy) - q.y;
+    const auto d = [&](const geometry::Vec2& v) { return std::hypot(v.x - mx, v.y - my); };
+    const bool same = d(curves[b].points[0]) <= d(curves[b].points[1]);
+    return Json::array({sym("start", same ? "start" : "end"), sym("end", same ? "end" : "start")});
+}
+
 Json resolveFix(const std::vector<geometry::SketchCurve>& curves, const Json& c)
 {
     Json out = Json::array();
@@ -1049,8 +1102,9 @@ void registerSketchCommands(CommandRegistry& r)
                           list.push_back(c);
                           continue;
                       }
-                      for (const auto& resolved : resolveFix(solved->second.curves, c))
-                          list.push_back(resolved);
+                      for (const auto& sym : resolveSymmetric(solved->second.curves, c))
+                          for (const auto& resolved : resolveFix(solved->second.curves, sym))
+                              list.push_back(resolved);
                   }
                   d.editFeature(id, {{"constraints", list}});
                   return Json{};
