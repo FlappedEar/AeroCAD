@@ -41,6 +41,7 @@
 #include <gp_Ax3.hxx>
 #include <gp_Circ.hxx>
 #include <gp_Elips.hxx>
+#include <GC_MakeArcOfEllipse.hxx>
 #include <gp_Pln.hxx>
 
 #include <algorithm>
@@ -136,6 +137,34 @@ TopoDS_Edge makeEdge(const Plane& plane, const SketchCurve& c)
         if (std::abs(major - minor) <= kTol)
             return BRepBuilderAPI_MakeEdge(gp_Circ(frame, major)).Edge();
         return BRepBuilderAPI_MakeEdge(gp_Elips(frame, major, minor)).Edge();
+    }
+    case SketchCurve::Kind::EllipticalArc: {
+        requirePoints(4, "Elliptical arc");
+        const Vec2 ctr = c.points[1];
+        Vec2 axis{c.points[2].x - ctr.x, c.points[2].y - ctr.y};
+        double major = std::hypot(axis.x, axis.y);
+        double minor = c.radius;
+        if (major <= kTol || minor <= kTol)
+            throw ModelingError("Ellipse radii must be positive");
+        if (minor > major) {
+            axis = {-axis.y * minor / major, axis.x * minor / major};
+            std::swap(major, minor);
+        }
+        const core::Vec3 xw = plane.xDir * axis.x + plane.yDir() * axis.y;
+        const gp_Ax2 frame(toPnt(plane.toWorld(ctr)), toDir(plane.normal), toDir(xw));
+        const gp_Pnt a = toPnt(plane.toWorld(c.points[0])), b = toPnt(plane.toWorld(c.points[3]));
+        if (a.Distance(b) < kTol)
+            throw ModelingError("Elliptical arc has no length");
+        if (std::abs(major - minor) <= kTol) {
+            GC_MakeArcOfCircle arc(gp_Circ(frame, major), a, b, true);
+            if (!arc.IsDone())
+                throw ModelingError("Invalid elliptical arc");
+            return BRepBuilderAPI_MakeEdge(arc.Value()).Edge();
+        }
+        GC_MakeArcOfEllipse arc(gp_Elips(frame, major, minor), a, b, true);
+        if (!arc.IsDone())
+            throw ModelingError("Invalid elliptical arc");
+        return BRepBuilderAPI_MakeEdge(arc.Value()).Edge();
     }
     }
     throw ModelingError("Unknown curve kind");

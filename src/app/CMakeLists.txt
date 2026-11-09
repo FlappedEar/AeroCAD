@@ -574,6 +574,11 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_ellipse.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_sketch_ellipse_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-258: Trim an ellipse into an elliptical arc with real clicks.
+    add_test(NAME app_sketch_ellipse_trim_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_ellipse_trim.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_sketch_ellipse_trim_test PROPERTIES LABELS gui TIMEOUT 60)
     # CAD-253: Sketch Scale with real clicks and keys.
     add_test(NAME app_sketch_scale_test
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_scale.ui

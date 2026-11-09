@@ -101,8 +101,8 @@ rebuilding, AeroCAD reports the problem; Undo restores the previous source.
 | `sketch.scale_curves` | select curves, Sketch Scale (ribbon MODIFY menu, Sketch menu or right-click): type the factor (previewed) and Enter; click first to pick the point that stays (default: the curves' middle) | `curves`, `factor` (> 0), `point` [u, v]: as a move, the curves' points are held at their scaled places and joined curves stretch; lengths, distances, radii and diameters dimensioned among the picked curves scale too (an expression becomes `(expr)*factor`); refused, unchanged, when other constraints hold the curves |
 | `sketch.circular_pattern` | select curves, Create > Circular Pattern (ribbon CREATE menu, Sketch menu or right-click): click the centre, set Count and Angle, OK or Enter | `curves`, `center` [u, v], `count` (instances with the originals, 2-360), `angle` (total degrees, default 360: evenly round; less: first and last `angle` apart; negative goes clockwise): copies are added at the end as with Move/Copy's Copy (constraints among them come along); they are not linked to the originals afterwards |
 | `sketch.rectangular_pattern` | select curves, Create > Rectangular Pattern: set Columns / Spacing and Rows / Spacing (negative goes left / down; default 1.5 times the curves' size), OK or Enter | `curves`, `count_x`, `spacing_x`, `count_y`, `spacing_y` (mm, instances with the originals, at most 1000 in all), `angle` (direction of the first row, degrees from the sketch's x, default 0): copies added at the end as above, not linked to the originals |
-| `sketch.trim` | Trim (T) | `curve`, `at` [u, v]: the piece of the curve under `at` between its nearest crossings goes (whole curve when it crosses nothing; a circle becomes an arc; splines count as crossings); the pieces left are added at the end of `sketch.curves`; constraints on the curve are removed |
-| `sketch.break` | Break | `curve`, `at` [u, v]: the piece of the curve under `at` between its nearest crossings becomes a curve of its own, as do the pieces either side (a circle becomes two arcs); nothing is removed; the pieces are added at the end of `sketch.curves`; constraints on the curve are removed; refused when nothing crosses it |
+| `sketch.trim` | Trim (T) | `curve`, `at` [u, v]: the piece of the curve under `at` between its nearest crossings goes (whole curve when it crosses nothing; a circle becomes an arc, an ellipse an elliptical arc; splines count as crossings); the pieces left are added at the end of `sketch.curves`; constraints on the curve are removed |
+| `sketch.break` | Break | `curve`, `at` [u, v]: the piece of the curve under `at` between its nearest crossings becomes a curve of its own, as do the pieces either side (a circle becomes two arcs, an ellipse two elliptical arcs); nothing is removed; the pieces are added at the end of `sketch.curves`; constraints on the curve are removed; refused when nothing crosses it |
 | `sketch.break_preview` | (Break hover) | same parameters, read-only: `{breakable, kind, points}` of the piece, or `{breakable: false, reason}` |
 | `sketch.extend` | Extend | `curve`, `at` [u, v]: the end of a line or arc nearer `at` is lengthened to the nearest curve beyond it (a line along its direction, an arc round its circle); the curve keeps its index and constraints. Refused for a joined end, for the sides of a rectangle, polygon or slot, for circles and splines, and when nothing lies beyond the end |
 | `sketch.extend_preview` | (Extend hover) | same parameters, read-only: `{extendable, end, kind, points}` of the lengthened curve, or `{extendable: false, reason}` |
@@ -146,7 +146,8 @@ Sketch curves: `line {start, end}`, `rectangle {corner, width, height | opposite
 `arc {start, through, end}`, `center_arc {center, radius, startAngle, endAngle}`,
 `polygon {center, radius, sides, angle?}`, `slot {start, end, width}`,
 `spline {points, closed?}`, `point {at}`,
-`ellipse {center, major_radius, minor_radius, angle?}`; any curve can be `construction: true`. Curves are split at
+`ellipse {center, major_radius, minor_radius, angle?}`,
+`elliptical_arc {center, major_radius, minor_radius, angle?, start_angle, end_angle}`; any curve can be `construction: true`. Curves are split at
 intersections, so a circle inside a rectangle gives two profiles (ring and disk).
 
 An `ellipse` (Fusion: Create › Ellipse; ribbon CREATE menu or Sketch menu) is drawn by
@@ -157,8 +158,18 @@ of the major axis], `center`, `majorRadius`, `minorRadius`, `angle` and `samples
 Its points for constraints are `center` and `end` (the end of the major axis). The dimensions
 `major_radius` and `minor_radius` set its size; `horizontal` / `vertical` on it level its major
 axis. The Dimension tool picks the major radius near the end of the major axis, else the minor
-one. Move, copy, scale, mirror and patterns keep it an ellipse. Trim, Extend, Break, Fillet
-and Chamfer refuse it, and Offset gives a spline.
+one. Move, copy, scale, mirror and patterns keep it an ellipse. Fillet and Chamfer refuse
+it, and Offset gives a spline.
+
+Trim and Break cut an ellipse where lines, arcs, circles and other ellipses cross it (Fusion),
+and lines, arcs and circles trim and break at an ellipse. A piece of an ellipse is an
+`elliptical_arc`: it runs counter-clockwise from `start_angle` to `end_angle`, which are
+parametric angles in degrees measured from the major axis (the point at t is
+centre + major·cos t along the axis + minor·sin t across it). In `sketch.curves` it has `points`
+[start, centre, end of the major axis, end], `center`, `majorRadius`, `minorRadius`, `angle` and
+`samples`. Its points for constraints are `start`, `end` and `center`; its ends stay on the
+ellipse as they move, and it takes the same dimensions, H/V and Equal as an ellipse. Mirror
+keeps it an elliptical arc (its ends swap), Offset gives a spline, and Extend refuses it.
 
 A `point` (Fusion: Create › Point, the Point tool in the sketch CREATE menu) is a sketch point:
 it has no edge and bounds no profile, and is drawn as a small cross (a dot while editing). It
@@ -179,7 +190,7 @@ right, top, left; a slot is line, arc, line, arc) and to points as
   `parallel`, `perpendicular`, `collinear`, `tangent`, `equal`, `concentric`, `symmetric`, `fix`.
 - Dimensions (`value` is a number or an expression): `distance` (two points, or a point and a
   line), `horizontal_distance`, `vertical_distance`, `length`, `radius`, `diameter`, `angle`,
-  `major_radius`, `minor_radius` (ellipse).
+  `major_radius`, `minor_radius` (ellipse, elliptical arc).
 
 The solver (Levenberg-Marquardt, `src/cad/src/SketchSolver.cpp`) starts from the drawn
 curves and moves them as little as possible. Curve ends that touch are merged, so outlines

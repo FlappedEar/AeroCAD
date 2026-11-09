@@ -414,7 +414,7 @@ Item {
             if (list.indexOf(c.index) < 0)
                 continue
             const r = c.kind === "circle" ? c.radius : 0
-            for (const p of c.kind === "ellipse" && c.samples ? c.samples : c.points) {
+            for (const p of (c.kind === "ellipse" || c.kind === "elliptical_arc") && c.samples ? c.samples : c.points) {
                 lo = [Math.min(lo[0], p[0] - r), Math.min(lo[1], p[1] - r)]
                 hi = [Math.max(hi[0], p[0] + r), Math.max(hi[1], p[1] + r)]
             }
@@ -1018,7 +1018,7 @@ Item {
             const extend = tool === "extend"
             const r = viewport.controller.execute(extend ? "sketch.extend_preview" : "sketch.break_preview", { sketch: sketch.id, curve: i, at: at })
             if (r.ok && (extend ? r.result.extendable : r.result.breakable)) {
-                preview = { kind: r.result.kind, points: r.result.points }
+                preview = { kind: r.result.kind, points: r.result.points, samples: r.result.samples }
                 if (preview.kind === "arc")
                     preview.center = circumcenter(preview.points[0], preview.points[1], preview.points[2])
             }
@@ -1049,7 +1049,7 @@ Item {
             return
         }
         let uv = []
-        if (c.kind === "spline" || c.kind === "ellipse") {
+        if (c.kind === "spline" || c.kind === "ellipse" || c.kind === "elliptical_arc") {
             uv = c.samples || c.points
         } else if (c.kind === "line") {
             uv = c.points

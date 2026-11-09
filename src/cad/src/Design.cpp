@@ -747,6 +747,29 @@ void appendCurves(const Eval& ev, const Json& item, std::vector<SketchCurve>& ou
         SketchCurve e{SketchCurve::Kind::Ellipse, {c, {c.x + major * std::cos(a), c.y + major * std::sin(a)}}};
         e.radius = minor;
         push(e);
+    } else if (type == "elliptical_arc") {
+        // Part of an ellipse (a trimmed one), counter-clockwise from start_angle to end_angle
+        // (parametric angles in degrees: x = major cos t, y = minor sin t along the axes).
+        const Vec2 c = ev.vec2(item, "center");
+        const double major = ev.num(item, "major_radius");
+        const double minor = ev.num(item, "minor_radius");
+        const double a = ev.num(item, "angle", 0.0) * kDegToRad;
+        const double t0 = ev.num(item, "start_angle") * kDegToRad;
+        double t1 = ev.num(item, "end_angle") * kDegToRad;
+        if (!(major > 0) || !(minor > 0))
+            throw DesignError("Ellipse radii must be positive");
+        while (t1 <= t0)
+            t1 += 2 * std::numbers::pi;
+        const Vec2 u{std::cos(a), std::sin(a)};
+        auto at = [&](double t) {
+            const double x = major * std::cos(t), y = minor * std::sin(t);
+            return Vec2{c.x + x * u.x - y * u.y, c.y + x * u.y + y * u.x};
+        };
+        SketchCurve e{SketchCurve::Kind::EllipticalArc, {at(t0), c, {c.x + major * u.x, c.y + major * u.y}, at(t1)}};
+        e.radius = minor;
+        e.joinStart = item.value("join_start", true);
+        e.joinEnd = item.value("join_end", true);
+        push(e);
     } else if (type == "spline") {
         SketchCurve c{SketchCurve::Kind::Spline, {}};
         for (const auto& p : required(item, "points"))
@@ -767,7 +790,32 @@ struct TrimCurve {
     Vec2 a, b;
     Vec2 c;
     double r = 0.0, a0 = 0.0, sweep = 0.0;
+    /// An ellipse or elliptical arc: major axis direction `u`, radii `ra` (along u) and `rb`;
+    /// a0 and sweep are then parametric angles (x = ra cos t, y = rb sin t).
+    bool ell = false;
+    Vec2 u{1, 0};
+    double ra = 0.0, rb = 0.0;
 };
+
+/// The angle of `p` about the centre of a circular or elliptical trim curve (parametric for
+/// an ellipse).
+double angleOn(const TrimCurve& t, const Vec2& p)
+{
+    if (!t.ell)
+        return std::atan2(p.y - t.c.y, p.x - t.c.x);
+    const Vec2 d{p.x - t.c.x, p.y - t.c.y};
+    const double x = d.x * t.u.x + d.y * t.u.y, y = t.u.x * d.y - t.u.y * d.x;
+    return std::atan2(y / t.rb, x / t.ra);
+}
+
+/// The point at angle `a` of a circular or elliptical trim curve.
+Vec2 pointAtAngle(const TrimCurve& t, double a)
+{
+    if (!t.ell)
+        return {t.c.x + t.r * std::cos(a), t.c.y + t.r * std::sin(a)};
+    const double x = t.ra * std::cos(a), y = t.rb * std::sin(a);
+    return {t.c.x + x * t.u.x - y * t.u.y, t.c.y + x * t.u.y + y * t.u.x};
+}
 
 Vec2 circleThrough(const Vec2& p1, const Vec2& p2, const Vec2& p3)
 {
@@ -800,6 +848,26 @@ std::optional<TrimCurve> trimCurve(const SketchCurve& k)
         t.sweep = 2 * std::numbers::pi;
         return t;
     }
+    if (k.kind == SketchCurve::Kind::Ellipse || k.kind == SketchCurve::Kind::EllipticalArc) {
+        const bool arc = k.kind == SketchCurve::Kind::EllipticalArc;
+        t.ell = true;
+        t.c = k.points[arc ? 1 : 0];
+        const Vec2 ax{k.points[arc ? 2 : 1].x - t.c.x, k.points[arc ? 2 : 1].y - t.c.y};
+        t.ra = std::hypot(ax.x, ax.y);
+        t.rb = k.radius;
+        if (t.ra < 1e-12 || t.rb < 1e-12)
+            return std::nullopt;
+        t.u = {ax.x / t.ra, ax.y / t.ra};
+        if (!arc) {
+            t.sweep = 2 * std::numbers::pi;
+            return t;
+        }
+        t.a0 = angleOn(t, k.points[0]);
+        t.sweep = wrap2pi(angleOn(t, k.points[3]) - t.a0); // counter-clockwise
+        if (t.sweep < 1e-12)
+            t.sweep = 2 * std::numbers::pi;
+        return t;
+    }
     if (k.kind != SketchCurve::Kind::Arc)
         return std::nullopt;
     t.c = circleThrough(k.points[0], k.points[1], k.points[2]);
@@ -825,7 +893,7 @@ std::optional<double> trimParam(const TrimCurve& t, const Vec2& p, double tol = 
             return std::nullopt;
         return std::clamp(u, 0.0, 1.0);
     }
-    const double a = std::atan2(p.y - t.c.y, p.x - t.c.x);
+    const double a = angleOn(t, p);
     double along = t.sweep >= 0 ? wrap2pi(a - t.a0) : wrap2pi(t.a0 - a);
     const double span = std::abs(t.sweep);
     if (along > span + tol) {
@@ -841,8 +909,55 @@ Vec2 trimPoint(const TrimCurve& t, double u)
 {
     if (t.line)
         return t.a + (t.b - t.a) * u;
-    const double a = t.a0 + t.sweep * u;
-    return {t.c.x + t.r * std::cos(a), t.c.y + t.r * std::sin(a)};
+    return pointAtAngle(t, t.a0 + t.sweep * u);
+}
+
+/// How far `x` is off curve `t` taken whole (a line as infinite, an arc as its circle,
+/// an elliptical arc as its ellipse), signed: 0 on it.
+double offCurve(const TrimCurve& t, const Vec2& x)
+{
+    if (t.line) {
+        const Vec2 d = t.b - t.a;
+        return (d.x * (x.y - t.a.y) - d.y * (x.x - t.a.x)) / std::max(1e-300, std::hypot(d.x, d.y));
+    }
+    if (!t.ell)
+        return std::hypot(x.x - t.c.x, x.y - t.c.y) - t.r;
+    const Vec2 d{x.x - t.c.x, x.y - t.c.y};
+    const double px = (d.x * t.u.x + d.y * t.u.y) / t.ra, py = (t.u.x * d.y - t.u.y * d.x) / t.rb;
+    return (px * px + py * py - 1) * (t.ra + t.rb) / 4;
+}
+
+/// Where curve `p` (along its length) crosses curve `q`: sign changes of q's offset along
+/// p, sampled and then bisected (for pairs with an ellipse, which have no closed form here).
+std::vector<Vec2> crossingsAlong(const TrimCurve& p, const TrimCurve& q)
+{
+    std::vector<Vec2> pts;
+    const int n = 720;
+    auto f = [&](double s) { return offCurve(q, trimPoint(p, s)); };
+    double s0 = 0.0, f0 = f(0.0);
+    for (int i = 1; i <= n; ++i) {
+        const double s1 = static_cast<double>(i) / n, f1 = f(s1);
+        if (f0 == 0.0) {
+            pts.push_back(trimPoint(p, s0));
+        } else if ((f0 < 0) != (f1 < 0) && f1 != 0.0) {
+            double lo = s0, hi = s1, flo = f0;
+            for (int k = 0; k < 80; ++k) {
+                const double mid = (lo + hi) / 2, fm = f(mid);
+                if ((fm < 0) == (flo < 0)) {
+                    lo = mid;
+                    flo = fm;
+                } else {
+                    hi = mid;
+                }
+            }
+            pts.push_back(trimPoint(p, (lo + hi) / 2));
+        }
+        s0 = s1;
+        f0 = f1;
+    }
+    if (f0 == 0.0 && !(!p.line && std::abs(p.sweep) >= 2 * std::numbers::pi - 1e-12))
+        pts.push_back(trimPoint(p, 1.0));
+    return pts;
 }
 
 /// Points where two curves cross.
@@ -859,7 +974,36 @@ std::vector<Vec2> crossings(const TrimCurve& p, const TrimCurve& q)
         for (const double u : {(-B - sq) / (2 * A), (-B + sq) / (2 * A)})
             pts.push_back(l.a + d * u);
     };
-    if (p.line && q.line) {
+    auto lineEllipse = [&](const TrimCurve& l, const TrimCurve& e) {
+        // In the ellipse's own scaled frame it is the unit circle and the line stays a line
+        // (same parameter along it).
+        auto local = [&](const Vec2& x) {
+            const Vec2 d{x.x - e.c.x, x.y - e.c.y};
+            return Vec2{(d.x * e.u.x + d.y * e.u.y) / e.ra, (e.u.x * d.y - e.u.y * d.x) / e.rb};
+        };
+        TrimCurve ll = l, unit;
+        ll.a = local(l.a);
+        ll.b = local(l.b);
+        unit.line = false;
+        unit.r = 1.0;
+        unit.sweep = 2 * std::numbers::pi;
+        const std::size_t first = pts.size();
+        lineCircle(ll, unit);
+        const Vec2 d = l.b - l.a, dl = ll.b - ll.a;
+        for (std::size_t i = first; i < pts.size(); ++i) {
+            const Vec2 w = pts[i] - ll.a;
+            const double s = (w.x * dl.x + w.y * dl.y) / std::max(1e-300, dl.x * dl.x + dl.y * dl.y);
+            pts[i] = l.a + d * s;
+        }
+    };
+    if (p.ell || q.ell) {
+        if (p.line)
+            lineEllipse(p, q);
+        else if (q.line)
+            lineEllipse(q, p);
+        else
+            pts = crossingsAlong(p, q);
+    } else if (p.line && q.line) {
         const Vec2 r = p.b - p.a, s = q.b - q.a;
         const double den = r.x * s.y - r.y * s.x;
         if (std::abs(den) < 1e-12)
@@ -900,6 +1044,14 @@ Json trimPiece(const TrimCurve& t, double u0, double u1, bool construction)
     Json item;
     if (t.line)
         item = {{"type", "line"}, {"start", pt(trimPoint(t, u0))}, {"end", pt(trimPoint(t, u1))}};
+    else if (t.ell)
+        item = {{"type", "elliptical_arc"},
+                {"center", pt(t.c)},
+                {"major_radius", t.ra},
+                {"minor_radius", t.rb},
+                {"angle", std::atan2(t.u.y, t.u.x) / kDegToRad},
+                {"start_angle", (t.a0 + t.sweep * std::min(u0, u1)) / kDegToRad},
+                {"end_angle", (t.a0 + t.sweep * std::max(u0, u1)) / kDegToRad}};
     else
         item = {{"type", "arc"},
                 {"start", pt(trimPoint(t, u0))},
@@ -988,6 +1140,29 @@ Json ellipseItem(const SketchCurve& c)
                 {"angle", std::atan2(end.y - ctr.y, end.x - ctr.x) / kDegToRad}};
 }
 
+/// An elliptical arc curve as a sketch item (parametric angles in degrees, counter-clockwise).
+Json ellipticalArcItem(const SketchCurve& c)
+{
+    const Vec2 ctr = c.points[1], end = c.points[2];
+    const double a = std::hypot(end.x - ctr.x, end.y - ctr.y), b = c.radius;
+    const Vec2 u{(end.x - ctr.x) / a, (end.y - ctr.y) / a};
+    auto param = [&](const Vec2& p) {
+        const Vec2 d{p.x - ctr.x, p.y - ctr.y};
+        return std::atan2((u.x * d.y - u.y * d.x) / b, (d.x * u.x + d.y * u.y) / a) / kDegToRad;
+    };
+    const double t0 = param(c.points[0]);
+    double t1 = param(c.points[3]);
+    while (t1 <= t0)
+        t1 += 360.0;
+    return Json{{"type", "elliptical_arc"},
+                {"center", Json::array({ctr.x, ctr.y})},
+                {"major_radius", a},
+                {"minor_radius", b},
+                {"angle", std::atan2(u.y, u.x) / kDegToRad},
+                {"start_angle", t0},
+                {"end_angle", t1}};
+}
+
 Json curveItem(const SketchCurve& c)
 {
     auto pt = [](const Vec2& v) { return Json::array({v.x, v.y}); };
@@ -1000,6 +1175,8 @@ Json curveItem(const SketchCurve& c)
         item = {{"type", "point"}, {"at", pt(c.points[0])}};
     else if (c.kind == SketchCurve::Kind::Ellipse)
         item = ellipseItem(c);
+    else if (c.kind == SketchCurve::Kind::EllipticalArc)
+        item = ellipticalArcItem(c);
     else
         throw DesignError("Only lines and arcs of a shape can be deleted separately");
     if (c.construction)
@@ -1124,6 +1301,12 @@ Json itemFromSolved(const Json& item, const SketchCurve* c, std::size_t n)
         out = ellipseItem(c[0]);
         if (item.contains("construction"))
             out["construction"] = item["construction"];
+    } else if (type == "elliptical_arc") {
+        Json e = ellipticalArcItem(c[0]);
+        for (const char* k : {"construction", "join_start", "join_end"})
+            if (item.contains(k))
+                e[k] = item[k];
+        out = e;
     }
     return out;
 }
@@ -1204,6 +1387,9 @@ std::vector<std::pair<std::size_t, std::size_t>> weldedEnds(const std::vector<Sk
         if (c.kind == SketchCurve::Kind::Line && c.points.size() == 2) {
             end(c.points[0], 2 * i, c.joinStart);
             end(c.points[1], 2 * i + 1, c.joinEnd);
+        } else if (c.kind == SketchCurve::Kind::EllipticalArc && c.points.size() == 4) {
+            end(c.points[0], 2 * i, c.joinStart);
+            end(c.points[3], 2 * i + 1, c.joinEnd);
         } else if (c.kind == SketchCurve::Kind::Arc && c.points.size() == 3) {
             end(c.points[0], 2 * i, c.joinStart);
             end(c.points[2], 2 * i + 1, c.joinEnd);
@@ -1462,6 +1648,7 @@ std::vector<Json> curvePointRefs(const SketchCurve& c, std::size_t i)
     case K::Circle: return {ref("center")};
     case K::Point: return {ref("start")};
     case K::Ellipse: return {ref("center"), ref("end")};
+    case K::EllipticalArc: return {ref("start"), ref("end"), ref("center")};
     case K::Spline: {
         std::vector<Json> out;
         for (std::size_t k = 0; k < c.points.size(); ++k)
@@ -1483,6 +1670,8 @@ Vec2 curvePointAt(const SketchCurve& c, const Json& ref)
         return c.points[0];
     if (c.kind == K::Ellipse)
         return name == "center" ? c.points[0] : c.points[1];
+    if (c.kind == K::EllipticalArc && name == "center")
+        return c.points[1];
     if (name == "center") {
         const Vec2 p1 = c.points[0], p2 = c.points[1], p3 = c.points[2];
         const double d = 2 * (p1.x * (p2.y - p3.y) + p2.x * (p3.y - p1.y) + p3.x * (p1.y - p2.y));
@@ -1643,7 +1832,7 @@ void Design::moveSketchCurves(FeatureId sketchId, const std::vector<std::size_t>
         // A circle keeps its size too (its centre alone does not hold it).
         if (curves[i].kind == SketchCurve::Kind::Circle)
             held.push_back({{"type", "radius"}, {"curve", i}, {"value", curves[i].radius * place.scale}});
-        if (curves[i].kind == SketchCurve::Kind::Ellipse)
+        if (curves[i].kind == SketchCurve::Kind::Ellipse || curves[i].kind == SketchCurve::Kind::EllipticalArc)
             held.push_back({{"type", "minor_radius"}, {"curve", i}, {"value", curves[i].radius * place.scale}});
     }
     // A polygon keeps its corner angles too (its sides alone are only kept equal), as in a
@@ -1827,6 +2016,7 @@ void Design::mirrorSketchCurves(FeatureId sketchId, const std::vector<std::size_
         const SketchCurve& c = curves[i];
         Json item;
         std::vector<const char*> points;
+        bool swappedEnds = false;
         switch (c.kind) {
         case SketchCurve::Kind::Line:
             item = {{"type", "line"}, {"start", pt(mirror(c.points[0]))}, {"end", pt(mirror(c.points[1]))}};
@@ -1862,6 +2052,16 @@ void Design::mirrorSketchCurves(FeatureId sketchId, const std::vector<std::size_
             points = {"center", "end"};
             break;
         }
+        case SketchCurve::Kind::EllipticalArc: {
+            // Mirrored, counter-clockwise turns clockwise: the copy runs from the mirrored
+            // end to the mirrored start.
+            SketchCurve m = c;
+            m.points = {mirror(c.points[3]), mirror(c.points[1]), mirror(c.points[2]), mirror(c.points[0])};
+            item = ellipticalArcItem(m);
+            points = {"center"};
+            swappedEnds = true;
+            break;
+        }
         }
         if (c.construction)
             item["construction"] = true;
@@ -1870,8 +2070,13 @@ void Design::mirrorSketchCurves(FeatureId sketchId, const std::vector<std::size_
             constraints.push_back({{"type", "symmetric"},
                                    {"points", Json::array({{{"curve", i}, {"point", name}}, {{"curve", next}, {"point", name}}})},
                                    {"curve", lineIdx}});
+        if (swappedEnds)
+            for (const auto& [from, to] : {std::pair{"start", "end"}, std::pair{"end", "start"}})
+                constraints.push_back({{"type", "symmetric"},
+                                       {"points", Json::array({{{"curve", i}, {"point", from}}, {{"curve", next}, {"point", to}}})},
+                                       {"curve", lineIdx}});
         if (c.kind == SketchCurve::Kind::Circle || c.kind == SketchCurve::Kind::Arc ||
-            c.kind == SketchCurve::Kind::Ellipse)
+            c.kind == SketchCurve::Kind::Ellipse || c.kind == SketchCurve::Kind::EllipticalArc)
             constraints.push_back({{"type", "equal"}, {"curves", Json::array({i, next})}});
         ++next;
     }
@@ -2242,7 +2447,7 @@ CurveSplit splitCurve(const std::vector<SketchCurve>& curves, std::size_t curve,
     const SketchCurve& k = curves[curve];
     const auto target = trimCurve(k);
     if (!target)
-        throw DesignError(std::string(tool) + " works on lines, arcs and circles");
+        throw DesignError(std::string(tool) + " works on lines, arcs, circles and ellipses");
 
     // Where the others cross it, as parameters along it.
     std::vector<double> cuts;
@@ -2260,7 +2465,7 @@ CurveSplit splitCurve(const std::vector<SketchCurve>& curves, std::size_t curve,
     double u = pu ? *pu : 0.5;
     if (!target->line && std::abs(target->sweep) < 2 * std::numbers::pi) {
         // An arc: the click's angle, clamped to the arc.
-        const double a = std::atan2(at.y - target->c.y, at.x - target->c.x);
+        const double a = angleOn(*target, at);
         const double along = target->sweep >= 0 ? wrap2pi(a - target->a0) : wrap2pi(target->a0 - a);
         const double span = std::abs(target->sweep);
         u = along <= span ? along / span : (along - span < 2 * std::numbers::pi - along ? 1.0 : 0.0);
@@ -2417,6 +2622,7 @@ geometry::SketchCurve Design::extendedSketchCurve(FeatureId sketchId, std::size_
         const auto& c = curves[i];
         // A sketch point on the end is joined to it too (the solver shares it like an end).
         const bool hasEnds = c.kind == SketchCurve::Kind::Line || c.kind == SketchCurve::Kind::Arc ||
+                             c.kind == SketchCurve::Kind::EllipticalArc ||
                              c.kind == SketchCurve::Kind::Point || (c.kind == SketchCurve::Kind::Spline && !c.closed);
         if (!hasEnds || c.points.empty())
             continue;
