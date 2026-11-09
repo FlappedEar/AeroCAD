@@ -118,6 +118,9 @@ struct RunStatus {
     /// Latest values (empty until the solver writes the first iteration). Forces in N
     /// along the flow (drag), up (lift) and to the side.
     std::optional<double> cd, cl, cs, dragN, liftN, sideN;
+    /// A finished run's final result (CAD-205): the means over the last 20 % of the
+    /// iterations, as in the results summary; empty otherwise.
+    std::optional<double> finalCd, finalCl, finalDragN, finalLiftN;
 
     [[nodiscard]] Json toJson() const;
 };

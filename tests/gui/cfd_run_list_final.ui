@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CAD-205: the run list shows a finished run's final result (mean of the last 20 % of the
+# iterations), the same numbers as Results, not its last iteration. Uses
+# tests/gui/fake-docker.sh with FAKE_DOCKER_HISTORY=1 FAKE_DOCKER_FINISH=1: Cd 0.8 / 0.9 and
+# drag 1.5 / 1.7 N in turn over 20 iterations, so the final means are 0.85 and 1.6 N and the
+# last iteration has 0.9 and 1.7 N.
+Qt.createQmlObject('import QtQuick; Item { objectName: "cfTest"; visible: false; function find(i, name) { if (!i) return null; if (i.objectName === name) return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = find(ch[k], name); if (r) return r } return null } }', window.contentItem)
+ui.wait(800)
+(() => { for (const r of controller.execute("simulation.list").result.runs) controller.execute("simulation.delete", { run: r.id }) })()
+(() => { const p = controller.execute("document.parts").result.parts[0]; window.selectPart(p.id) })()
+ui.clickText("SIMULATE")
+ui.wait(300)
+ui.clickText("Wind Tunnel")
+ui.wait(800)
+ui.clickText("Run CFD")
+ui.wait(3000)
+(() => { simulationPanel.refreshRuns(); simulationPanel.tab = 0 })()
+ui.wait(800)
+(() => { const st = controller.execute("simulation.status", { run: simulationPanel.activeRun }).result; ui.log("STATUS " + st.state + " final " + JSON.stringify(st.final) + " latest " + JSON.stringify(st.latest)); if (st.state !== "finished") ui.fail("run not finished: " + st.state); if (!st.final || Math.abs(st.final.cd - 0.85) > 1e-9 || Math.abs(st.final.dragN - 1.6) > 1e-9) ui.fail("final: " + JSON.stringify(st.final)); const r = controller.execute("simulation.results", { run: simulationPanel.activeRun }).result.summary; if (Math.abs(r.cd - st.final.cd) > 1e-12 || Math.abs(r.dragN - st.final.dragN) > 1e-12) ui.fail("final differs from Results") })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const l = t.find(simulationPanel, "runSummary_" + simulationPanel.activeRun); ui.log("ROW " + l.text); if (l.text !== "finished · Cd 0.850 · drag 1.600 N") ui.fail("row: " + l.text) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const l = t.find(simulationPanel, "runSummary_" + simulationPanel.activeRun); const f = t.find(simulationPanel, "cfdPanelScroll").contentItem; f.contentY = Math.max(0, Math.min(f.contentHeight - f.height, l.mapToItem(f.contentItem, 0, 0).y - 150)) })()
+ui.wait(300)
+ui.clickText("finished · Cd 0.850 · drag 1.600 N")
+ui.shot("cfd-run-list-final.png")
+ui.log("cfd run list final done")

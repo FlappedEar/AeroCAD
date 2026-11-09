@@ -2579,3 +2579,39 @@ TEST_CASE("Part sizes outside a wind tunnel's range are flagged (CAD-109)", "[cf
     CHECK(cfd::partSizeWarning(0.00112).find("only 1.12 mm long") != std::string::npos);
     CHECK(cfd::partSizeWarning(4600.0).find("4600 m long") != std::string::npos);
 }
+
+TEST_CASE("The status of a finished run carries its final result, as in Results (CAD-205)", "[cfd]")
+{
+    TempDir tmp;
+    cfd::RunManager runs(tmp.path());
+    cfd::CaseGeometry g;
+    g.part = box({0, 0, 0}, {200, 80, 60});
+    const std::string id = runs.prepare(g, {}, {});
+    fakeFinishedRun(tmp.path() / id, 0.8, 1.0, -2.0);
+    auto st = runs.status(id);
+    REQUIRE(st);
+    REQUIRE(st->state == cfd::RunState::Finished);
+    const auto summary = runs.results(id).at("summary");
+    const auto final = st->toJson().at("final");
+    INFO(final.dump());
+    // The mean of the last 20 %, not the last iteration (0.8 + 0.5 / 100).
+    CHECK(final.at("cd").get<double>() == Approx(summary.at("cd").get<double>()).epsilon(1e-12));
+    CHECK(final.at("cl").get<double>() == Approx(summary.at("cl").get<double>()).epsilon(1e-12));
+    CHECK(final.at("dragN").get<double>() == Approx(summary.at("dragN").get<double>()).epsilon(1e-12));
+    CHECK(final.at("liftN").get<double>() == Approx(-2.0));
+    CHECK(final.at("cd").get<double>() != Approx(*st->cd).epsilon(1e-9));
+    // The list carries it too.
+    const auto list = runs.list();
+    REQUIRE(list.size() == 1);
+    CHECK(list[0].toJson().at("final").at("cd") == final.at("cd"));
+
+    // A failed run, or one whose outputs are cut off, has no final result.
+    write(tmp.path() / id / "aerocad.status", "failed: solve\n");
+    CHECK(runs.status(id)->toJson().at("final").is_null());
+    write(tmp.path() / id / "aerocad.status", "finished\n");
+    CHECK(runs.status(id)->toJson().at("final").is_object());
+    {
+        std::ofstream(tmp.path() / id / "postProcessing" / "forces" / "0" / "force.dat", std::ios::app) << "101 1.0";
+    }
+    CHECK(runs.status(id)->toJson().at("final").is_null());
+}
