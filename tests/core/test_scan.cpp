@@ -184,6 +184,20 @@ TEST_CASE("meshStats reports holes, duplicates and flipped faces", "[core][scan]
     CHECK(s.duplicateTriangles == 1);
     CHECK(s.inconsistentEdges > 0);
     CHECK(s.unusedVertices == 1);
+    CHECK(s.loopedBoundaryEdges == 3);
+}
+
+TEST_CASE("meshStats separates boundary edges that no loop closes", "[core][scan]")
+{
+    // Tetrahedron without its bottom and with one side doubled: edge 0-1 is non-manifold,
+    // so the bottom's boundary is the open chain 1-2-0 and no loop closes it.
+    const std::vector<Vec3> v{{0, 0, 0}, {10, 0, 0}, {0, 10, 0}, {0, 0, 10}};
+    const std::vector<TriangleMesh::Triangle> t{{0, 1, 3}, {1, 2, 3}, {2, 0, 3}, {0, 1, 3}};
+    const MeshStats s = meshStats(TriangleMesh(v, t));
+    CHECK(s.boundaryEdges == 2);
+    CHECK(s.holes == 0);
+    CHECK(s.loopedBoundaryEdges == 0);
+    CHECK(s.nonManifoldEdges > 0);
 }
 
 TEST_CASE("repairMesh welds, dedupes, orients and fills holes", "[core][scan]")
@@ -229,13 +243,19 @@ TEST_CASE("repairMesh welds, dedupes, orients and fills holes", "[core][scan]")
     tris.erase(tris.begin() + 2, tris.begin() + 4);
     const TriangleMesh open(c.vertices(), tris);
     REQUIRE(meshStats(open).holes == 1);
+    CHECK(meshStats(open).largestBoundaryEdges == 4);
+    CHECK(meshStats(c).largestBoundaryEdges == 0);
     RepairOptions fill;
     fill.maxHoleEdges = 3;
-    CHECK(meshStats(repairMesh(open, fill)).holes == 1); // too large to fill
+    RepairReport large;
+    CHECK(meshStats(repairMesh(open, fill, &large)).holes == 1); // too large to fill
+    CHECK(large.largeBoundaries == 1);
+    CHECK(large.filledHoles == 0);
     fill.maxHoleEdges = 8;
     RepairReport frep;
     const TriangleMesh filled = repairMesh(open, fill, &frep);
     CHECK(frep.filledHoles == 1);
+    CHECK(frep.largeBoundaries == 0);
     CHECK(frep.addedTriangles == 2); // ear clipping: a square needs two triangles
     const MeshStats fs = meshStats(filled);
     CHECK(fs.holes == 0);

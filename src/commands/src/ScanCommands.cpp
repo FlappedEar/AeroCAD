@@ -78,6 +78,8 @@ Json statsToJson(const core::MeshStats& s)
                 {"duplicateTriangles", s.duplicateTriangles},
                 {"boundaryEdges", s.boundaryEdges},
                 {"holes", s.holes},
+                {"largestBoundaryEdges", s.largestBoundaryEdges},
+                {"loopedBoundaryEdges", s.loopedBoundaryEdges},
                 {"nonManifoldEdges", s.nonManifoldEdges},
                 {"inconsistentEdges", s.inconsistentEdges},
                 {"components", s.components},
@@ -228,6 +230,7 @@ void registerMeshCommands(CommandRegistry& r)
                           {"flippedTriangles", rep.flippedTriangles},
                           {"filledHoles", rep.filledHoles},
                           {"skippedHoles", rep.skippedHoles},
+                          {"largeBoundaries", rep.largeBoundaries},
                           {"addedTriangles", rep.addedTriangles},
                           {"stats", statsToJson(after)}};
           });

@@ -449,7 +449,12 @@ MeshStats meshStats(const TriangleMesh& mesh)
         if (find(t) == t)
             ++s.components;
     }
-    s.holes = boundaryLoops(uses).size();
+    const auto loops = boundaryLoops(uses);
+    s.holes = loops.size();
+    for (const auto& loop : loops) {
+        s.largestBoundaryEdges = std::max(s.largestBoundaryEdges, loop.size());
+        s.loopedBoundaryEdges += loop.size();
+    }
     return s;
 }
 
@@ -515,8 +520,10 @@ TriangleMesh repairMesh(const TriangleMesh& mesh, const RepairOptions& options, 
     // to a simple polygon are left open (counted in skippedHoles).
     if (options.maxHoleEdges >= 3) {
         for (const auto& loop : boundaryLoops(edgeUses(triangles))) {
-            if (loop.size() > options.maxHoleEdges)
+            if (loop.size() > options.maxHoleEdges) {
+                ++report.largeBoundaries;
                 continue;
+            }
             const std::size_t before = triangles.size();
             if (triangulateLoop(vertices, loop, triangles)) {
                 ++report.filledHoles;

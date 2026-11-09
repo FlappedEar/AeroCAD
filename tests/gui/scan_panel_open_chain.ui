@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CAD-236 (Codex review): boundary edges that form no closed loop (an open chain at a
+# non-manifold edge) are reported as open edges, never as "0 (closed)".
+# Run: AeroCAD tests/data/open_chain.stl --ui-script <this file>
+ui.wait(1500)
+(() => { const p = controller.execute("document.parts").result.parts[0]; window.selectPart(p.id); scanToolsAction.trigger() })()
+ui.wait(800)
+(() => { const b = ((g) => g(g, scanPanel))((g, it) => it.objectName === "scanOpenBoundaries" ? it : Array.from(it.children).reduce((a, c) => a || g(g, c), null)); ui.log("BOUNDARIES " + b.text); if (b.text.indexOf("closed") >= 0) ui.fail("an open mesh is shown as closed: " + b.text); if (b.text !== "2 open edges not forming a loop") ui.fail("open chain: " + b.text) })()
+ui.shot("scan-panel-open-chain.png")

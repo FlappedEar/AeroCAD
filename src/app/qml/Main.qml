@@ -2317,6 +2317,13 @@ ApplicationWindow {
             pickSketchLines: measurePanel.active
             onSectionDragged: delta => sectionPanel.moveBy(delta)
             onPartPicked: (id, additive, forMenu) => {
+                // Scan Tools picking points (calibrate, orient): the click is a point on the
+                // scan, never a selection change. A miss or another part keeps the points so far.
+                if (!forMenu && scanPanel.visible && scanPanel.pickMode) {
+                    if (Number(id) !== Number(scanPanel.partId))
+                        window.controller.showStatus(qsTr("Click on %1 to pick a point").arg(scanPanel.info.name || qsTr("the scan")))
+                    return
+                }
                 if (forMenu)
                     window.selectPartForMenu(id)
                 else

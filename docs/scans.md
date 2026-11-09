@@ -48,7 +48,7 @@ To put a picked face of a scan on the floor, align with that face's triangles an
 
 | Command | What it does |
 | --- | --- |
-| `mesh.stats {"id"}` | Triangles, holes (boundary loops), boundary / non-manifold / inconsistent (flipped) edges, duplicate and degenerate triangles, unused vertices, shells, area, bounds. |
+| `mesh.stats {"id"}` | Triangles, holes (boundary loops, every open border including the outline of a one-sided scan), `largestBoundaryEdges` (edges of the longest loop), `loopedBoundaryEdges` (boundary edges in closed loops; the rest are open chains, for example at non-manifold edges), boundary / non-manifold / inconsistent (flipped) edges, duplicate and degenerate triangles, unused vertices, shells, area, bounds. |
 | `mesh.repair {"id", "mergeDistance", "removeDegenerate", "removeDuplicates", "fixOrientation", "maxHoleEdges"}` | Merge (close) vertices, drop degenerate and duplicate triangles, make the winding consistent (closed shells face outwards), fill holes up to `maxHoleEdges` edges, drop unused vertices. Returns the counts and the stats afterwards. |
 | `mesh.flip_normals {"id"}` | Reverse every triangle. |
 | `mesh.decimate {"id", "targetTriangles"}` | Permanently reduce the mesh (vertex clustering). Usually not needed, see below. |
@@ -58,8 +58,16 @@ timeline bodies; they are meant for meshes.
 
 Holes are filled by ear clipping in the hole's best-fit plane (no new vertices), which suits
 the small, roughly planar holes typical of scans; a hole that does not project to a simple
-polygon is left open and reported as `skippedHoles`. Large holes (scanner shadows) are better closed by
+polygon is left open and reported as `skippedHoles`. Loops longer than `maxHoleEdges` are left
+open and counted in `largeBoundaries`. On a scan of one side of an object the longest loop is its
+outline, so the Scan Tools panel lists "Open boundaries" with the longest loop's edge count, and the
+Repair status says how many boundaries stayed open. Large holes (scanner shadows) are better closed by
 modelling over them.
+
+While Scan Tools picks points (calibrate, orient), a click next to the scan or on another part
+keeps the points picked so far and shows a hint; it does not change the selection.
+
+![Scan Tools after Repair: open boundaries and the status line](images/audit/cad-236-scan-panel-repaired.png)
 
 ## Performance (5.1 M triangles, Release build, one core)
 

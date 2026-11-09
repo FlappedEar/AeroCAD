@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CAD-236: the Scan Tools panel fits its width (nothing cut, close button visible), lists the
+# scan's outline as an open boundary, and Repair reports what it did in plain English.
+# Run: AeroCAD tests/data/models/dome_scan.stl --ui-script <this file>
+ui.wait(1500)
+(() => { const p = controller.execute("document.parts").result.parts[0]; window.selectPart(p.id); scanToolsAction.trigger() })()
+ui.wait(800)
+# Every row and control laid out in the panel ends inside its padding.
+(() => { const right = scanPanel.width - scanPanel.rightPadding + 0.5; const bad = []; const walk = (it, d) => { if (d > 10) return; for (let i = 0; i < it.children.length; ++i) { const c = it.children[i]; if (!c.visible) continue; if (String(it).indexOf("Layout") >= 0 && c.width > 0) { const x = c.mapToItem(scanPanel, 0, 0).x + c.width; if (x > right) bad.push(String(c).split("(")[0] + " '" + (c.text || "") + "' ends at " + x.toFixed(0)) } walk(c, d + 1) } }; walk(scanPanel, 0); ui.log("PANEL " + scanPanel.width + " overflow " + JSON.stringify(bad)); if (bad.length) ui.fail("Scan Tools content is wider than the panel: " + bad.join("; ")) })()
+(() => { const b = ((f) => f(f, scanPanel))((f, it) => it.objectName === "scanOpenBoundaries" ? it : Array.from(it.children).reduce((a, c) => a || f(f, c), null)); ui.log("BOUNDARIES " + b.text); if (!/^2 \(longest [0-9,]+ edges\)$/.test(b.text)) ui.fail("open boundaries: " + b.text) })()
+ui.shot("scan-panel.png")
+(() => { if (!ui.clickText("Repair")) ui.fail("no Repair button") })()
+ui.wait(1500)
+(() => { const s = controller.statusMessage; ui.log("STATUS " + s); if (s.indexOf("filled 1 hole") < 0 || s.indexOf("holes filled") >= 0) ui.fail("repair status: " + s); if (s.indexOf("1 boundary longer than 200 edges left open") < 0) ui.fail("repair status does not explain the open outline: " + s); const b = ((f) => f(f, scanPanel))((f, it) => it.objectName === "scanOpenBoundaries" ? it : Array.from(it.children).reduce((a, c) => a || f(f, c), null)); if (!/^1 \(longest/.test(b.text)) ui.fail("after repair: " + b.text) })()
+ui.shot("scan-panel-repaired.png")
+# Calibrate with the mouse: a click next to the scan neither cancels picking nor loses the first point.
+(() => { if (!ui.clickText("Pick 2 Points")) ui.fail("no Pick 2 Points button") })()
+ui.wait(300)
+ui.click(700, 470)
+ui.wait(300)
+ui.click(1050, 330)
+ui.wait(300)
+(() => { ui.log("AFTER MISS mode=" + scanPanel.pickMode + " points=" + scanPanel.calibratePoints.length + " part=" + scanPanel.partId + " | " + controller.statusMessage); if (scanPanel.pickMode !== "calibrate" || scanPanel.calibratePoints.length !== 1 || !scanPanel.partId) ui.fail("a click next to the scan cancelled calibration"); if (controller.statusMessage.indexOf("Invalid parameters") >= 0) ui.fail("status shows an internal error: " + controller.statusMessage) })()
+ui.click(800, 560)
+ui.wait(300)
+(() => { ui.log("MEASURED " + scanPanel.measured); if (scanPanel.calibratePoints.length !== 2 || !(scanPanel.measured > 1)) ui.fail("second calibration point not picked") })()
+(() => { const f = ((g) => g(g, scanPanel))((g, it) => it.objectName === "scanTrueDistance" ? it : Array.from(it.children).reduce((a, c) => a || g(g, c), null)); const c = f.mapToItem(null, f.width / 2, f.height / 2); ui.click(c.x, c.y) })()
+ui.type("100")
+ui.wait(200)
+(() => { const b = ((g) => g(g, scanPanel))((g, it) => it.objectName === "scanScaleButton" ? it : Array.from(it.children).reduce((a, c) => a || g(g, c), null)); if (!b.enabled) ui.fail("Scale is disabled after entering the true distance"); const c = b.mapToItem(null, b.width / 2, b.height / 2); ui.click(c.x, c.y) })()
+ui.wait(800)
+(() => { const id = scanPanel.partId; const size = controller.execute("mesh.stats", { id: id }).result.bounds.size; ui.log("SCALED " + JSON.stringify(size) + " | " + controller.statusMessage); if (controller.statusMessage.indexOf("Scaled by") !== 0) ui.fail("calibration did not scale: " + controller.statusMessage); if (scanPanel.pickMode !== "") ui.fail("pick mode still on after Scale") })()
+ui.shot("scan-panel-calibrated.png")
+# Convert units with the mouse: the status says what happened and the choice returns to mm.
+(() => { const c = ((g) => g(g, scanPanel))((g, it) => it.objectName === "scanFromUnit" ? it : Array.from(it.children).reduce((a, x) => a || g(g, x), null)); const p = c.mapToItem(null, c.width / 2, c.height / 2); ui.click(p.x, p.y) })()
+ui.wait(400)
+(() => { if (!ui.clickText("cm")) ui.fail("no cm entry in the unit list") })()
+ui.wait(300)
+(() => { const before = controller.execute("mesh.stats", { id: scanPanel.partId }).result.bounds.size[0]; if (!ui.clickText("Convert")) ui.fail("no Convert button"); const after = controller.execute("mesh.stats", { id: scanPanel.partId }).result.bounds.size[0]; const c = ((g) => g(g, scanPanel))((g, it) => it.objectName === "scanFromUnit" ? it : Array.from(it.children).reduce((a, x) => a || g(g, x), null)); ui.log("CONVERT " + before + " -> " + after + " | " + controller.statusMessage + " | now " + c.currentText); if (Math.abs(after / before - 10) > 1e-6) ui.fail("cm to mm did not scale by 10"); if (controller.statusMessage.indexOf("Converted") !== 0) ui.fail("no status after Convert: " + controller.statusMessage); if (c.currentText !== "mm") ui.fail("unit choice stays on " + c.currentText + ": a second click would scale again") })()
+(() => { if (!ui.clickText("✕")) ui.fail("close button not clickable") })()
+ui.wait(300)
+(() => { if (scanPanel.visible) ui.fail("✕ did not close the panel") })()
