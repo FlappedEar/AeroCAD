@@ -29,6 +29,10 @@ struct Part {
     std::string name;
     /// Where the part came from (file path), empty for parts created in the app.
     std::string source;
+    /// Unit a unitless file (STL, OBJ, PLY, BREP) was read in and scaled from ("cm", "m", ...);
+    /// empty for millimetres and for files with their own units. Lets the app tell "saved in
+    /// millimetres but imported as metres" apart from "saved in micrometres" (CAD-239).
+    std::string importUnits;
     /// Display / mesh representation in millimetres.
     std::shared_ptr<const core::TriangleMesh> mesh;
     /// Exact geometry when available (STEP import, CAD operations).

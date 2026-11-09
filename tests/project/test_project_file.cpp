@@ -93,6 +93,7 @@ TEST_CASE("Project data round-trips through the file format", "[project]")
     part.source = "/tmp/scan.stl";
     part.visible = false;
     part.color = "#2ea89a";
+    part.importUnits = "cm";
     part.mesh = std::make_shared<const core::TriangleMesh>(tetra());
     part.shape = geometry::makeBox(10, 20, 30);
     part.selection = std::make_shared<const core::TriangleSet>(core::TriangleSet{1, 3});
@@ -118,6 +119,7 @@ TEST_CASE("Project data round-trips through the file format", "[project]")
     CHECK(back.parts[0].source == "/tmp/scan.stl");
     CHECK_FALSE(back.parts[0].visible);
     CHECK(back.parts[0].color == "#2ea89a");
+    CHECK(back.parts[0].importUnits == "cm"); // CAD-239
     CHECK(back.parts[0].mesh->vertices() == part.mesh->vertices());
     REQUIRE(back.parts[0].selection);
     CHECK(*back.parts[0].selection == core::TriangleSet{1, 3});

@@ -168,17 +168,33 @@ QtObject {
     readonly property real minPlausibleSize: 20
     readonly property real maxPlausibleSize: 50000
 
+    readonly property var lengthUnits: [{ unit: "m", factor: 1000, label: qsTr("metres") },
+                                        { unit: "in", factor: 25.4, label: qsTr("inches") },
+                                        { unit: "cm", factor: 10, label: qsTr("centimetres") },
+                                        { unit: "mm", factor: 1, label: qsTr("millimetres") },
+                                        { unit: "um", factor: 0.001, label: qsTr("micrometres") },
+                                        { unit: "ft", factor: 304.8, label: qsTr("feet") }]
+
+    /// The unit the file was read in (Scan Tools > Unitless files in): millimetres unless the
+    /// part says otherwise (CAD-239).
+    function importUnit(info) {
+        return lengthUnits.find(u => u.unit === (info.importUnits || "mm")) ?? lengthUnits[3]
+    }
+
     /// The unit a scan of implausible size (`length`, its longest side in mm) was most likely
-    /// saved in: { unit, factor, label }, or null when its size is plausible (CAD-140).
-    function likelyUnit(length) {
+    /// saved in: { unit, label, scale, from }, or null when its size is plausible (CAD-140).
+    /// `from` is the unit it was imported in and `scale` the factor that fixes it, so a mm file
+    /// imported as metres reads "saved in millimetres (×0.001)", not "in micrometres" (CAD-239).
+    function likelyUnit(length, info) {
         if (!(length > 0) || (length >= minPlausibleSize && length <= maxPlausibleSize))
             return null
-        const units = [{ unit: "m", factor: 1000, label: qsTr("metres") },
-                       { unit: "in", factor: 25.4, label: qsTr("inches") },
-                       { unit: "cm", factor: 10, label: qsTr("centimetres") },
-                       { unit: "um", factor: 0.001, label: qsTr("micrometres") }]
-        // The unit that makes it 0.1 to 10 m long, the size of car parts; metres first.
-        return units.find(u => length * u.factor >= 100 && length * u.factor <= 10000) ?? null
+        const from = importUnit(info ?? {})
+        const numbers = length / from.factor
+        // The unit that makes it 0.1 to 10 m long, the size of car parts; metres first. When
+        // it was imported in another unit, millimetres (the usual STL unit) comes first.
+        const order = from.unit === "mm" ? lengthUnits.slice(0, 5) : [lengthUnits[3], ...lengthUnits.slice(0, 3), lengthUnits[4]]
+        const u = order.find(c => c.unit !== from.unit && numbers * c.factor >= 100 && numbers * c.factor <= 10000)
+        return u ? { unit: u.unit, label: u.label, scale: u.factor / from.factor, from: from } : null
     }
 
     function _longest(info) {
@@ -298,12 +314,12 @@ QtObject {
                      tip: qsTr("Makes the part bigger or smaller, e.g. when a scan came in the wrong unit: drag the middle square or type a percentage (1000 % turns cm into mm).") }
 
         case "convertUnits": {
-            const u = likelyUnit(_longest(info))
-            return { id: id, text: u ? qsTr("It is in %1 (×%2)").arg(u.label).arg(u.factor) : qsTr("Convert units"),
+            const u = likelyUnit(_longest(info), info)
+            return { id: id, text: u ? qsTr("It is in %1 (×%2)").arg(u.label).arg(u.scale) : qsTr("Convert units"),
                      icon: "scale", enabled: !!u, primary: !!u,
                      reason: qsTr("The size looks right."),
-                     tip: u ? qsTr("Scales the scan from %1 to millimetres: it becomes %2 mm long. Undo puts it back.")
-                                  .arg(u.label).arg(_mm(_longest(info) * u.factor))
+                     tip: u ? qsTr("Scales the scan by %1 (read as %2, saved in %3): it becomes %4 mm long. Undo puts it back.")
+                                  .arg(u.scale).arg(u.from.label).arg(u.label).arg(_mm(_longest(info) * u.scale))
                             : "" }
         }
 
@@ -547,13 +563,15 @@ QtObject {
             const finSketch = scanSketches(info, true).length > 0
             // A scan of implausible size was saved in another unit: fix that first (CAD-140).
             const length = _longest(info)
-            const unit = likelyUnit(length)
+            const unit = likelyUnit(length, info)
             const units = length > 0 && (length < minPlausibleSize || length > maxPlausibleSize)
                 ? [{ title: qsTr("Check the size"), steps: [
                          { title: length < minPlausibleSize ? qsTr("The scan is only %1 mm long").arg(_mm(length))
                                                             : qsTr("The scan is %1 m long").arg(_mm(length / 1000)),
                            done: false,
-                           text: unit ? qsTr("STL, OBJ and PLY files carry no unit. This one was most likely saved in %1: convert it before designing, or parts and thicknesses come out at the wrong scale.").arg(unit.label)
+                           text: unit ? (unit.from.unit === "mm"
+                                             ? qsTr("STL, OBJ and PLY files carry no unit. This one was most likely saved in %1: convert it before designing, or parts and thicknesses come out at the wrong scale.").arg(unit.label)
+                                             : qsTr("STL, OBJ and PLY files carry no unit. It was imported as %1, but it was most likely saved in %2: convert it before designing, or parts and thicknesses come out at the wrong scale.").arg(unit.from.label).arg(unit.label))
                                       : qsTr("STL, OBJ and PLY files carry no unit. Scale it to its real size before designing (Scale, or Scan Tools > This part is in)."),
                            actions: unit ? [a("convertUnits"), a("scale")] : [a("scale")] }] }]
                 : []
@@ -821,14 +839,17 @@ QtObject {
         case "simplify": return controller.execute("mesh.decimate", { id: pid, targetTriangles: Math.max(4, Math.round(v.targetTriangles)) })
         case "scale": return host.startTransform(pid)
         case "convertUnits": {
-            const u = likelyUnit(_longest(info))
+            const u = likelyUnit(_longest(info), info)
             if (!u)
                 return null
-            const r = controller.execute("part.convert_units", { id: pid, from: u.unit, to: "mm" })
+            // Scale by saved unit / imported unit (from: "mm", to: "m" is ×0.001).
+            const r = controller.execute("part.convert_units", { id: pid, from: u.unit, to: u.from.unit })
             if (r.ok) {
                 host.zoomToPart(pid)
-                controller.showStatus(qsTr("\"%1\" converted from %2 to millimetres: now %3 mm long.")
-                                      .arg(info.name).arg(u.label).arg(_mm(_longest(controller.partInfo(pid)))))
+                const now = _mm(_longest(controller.partInfo(pid)))
+                controller.showStatus(u.from.unit === "mm"
+                    ? qsTr("\"%1\" converted from %2 to millimetres: now %3 mm long.").arg(info.name).arg(u.label).arg(now)
+                    : qsTr("\"%1\" is now read as %2 instead of %3: %4 mm long.").arg(info.name).arg(u.label).arg(u.from.label).arg(now))
             }
             return r
         }

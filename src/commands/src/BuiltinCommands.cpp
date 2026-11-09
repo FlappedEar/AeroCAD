@@ -128,6 +128,8 @@ void registerDocumentCommands(CommandRegistry& r)
               std::vector<model::PartId> ids;
               for (auto& part : newParts) {
                   part.source = core::pathToUtf8(path);
+                  if (!fileUnits && unit != core::LengthUnit::Millimetre)
+                      part.importUnits = std::string(core::unitSymbol(unit));
                   part.id = doc.addPart(part);
                   ids.push_back(part.id);
               }
