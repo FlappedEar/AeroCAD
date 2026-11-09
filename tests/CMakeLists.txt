@@ -24,7 +24,7 @@ aerocad_add_test(test_geometry
 
 aerocad_add_test(test_io
     SOURCES io/test_import.cpp io/test_export.cpp
-    LIBS AeroCAD::io AeroCAD::geometry_occt miniz::miniz)
+    LIBS AeroCAD::io AeroCAD::geometry_occt ${AEROCAD_OCCT_XDE_LIBS} miniz::miniz)
 
 aerocad_add_test(test_model
     SOURCES model/test_document.cpp

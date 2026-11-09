@@ -7,6 +7,7 @@
 
 #include "aerocad/geometry/OcctShape.hpp"
 
+#include <BRepBuilderAPI_Copy.hxx>
 #include <BRep_Tool.hxx>
 #include <Geom_SurfaceOfRevolution.hxx>
 #include <IFSelect_ReturnStatus.hxx>
@@ -25,6 +26,7 @@
 #include <ShapeCustom.hxx>
 #include <Standard_Failure.hxx>
 #include <TopExp_Explorer.hxx>
+#include <TopTools_MapOfShape.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Face.hxx>
@@ -116,8 +118,17 @@ void writeStep(const std::filesystem::path& path, const std::vector<ExportItem>&
         } closeDocument{doc};
         const Handle(XCAFDoc_ShapeTool) shapes = XCAFDoc_DocumentTool::ShapeTool(doc->Main());
         const Handle(XCAFDoc_ColorTool) colors = XCAFDoc_DocumentTool::ColorTool(doc->Main());
+        TopTools_MapOfShape written;
         for (const auto& item : items) {
-            const TDF_Label label = shapes->AddShape(stepShape(item.shape->impl()->shape), Standard_False);
+            // A duplicated, unmoved part shares its geometry with the original. The same shape
+            // twice would become one STEP product (AddShape() returns the existing label, and
+            // the writer maps one shape to one product), so the second body would overwrite
+            // the first one's name and colour. Such a repeat is written as a copy.
+            TopoDS_Shape shape = stepShape(item.shape->impl()->shape);
+            if (!written.Add(shape))
+                shape = BRepBuilderAPI_Copy(shape).Shape();
+            const TDF_Label label = shapes->NewShape();
+            shapes->SetShape(label, shape);
             TDataStd_Name::Set(label, TCollection_ExtendedString(item.name.c_str(), Standard_True));
             Quantity_Color color;
             if (parseColor(item.color, color))

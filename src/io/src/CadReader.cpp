@@ -147,6 +147,14 @@ std::string labelName(const TDF_Label& label)
     return text;
 }
 
+/// "NAUO12": the id STEP writers give an assembly occurrence that has no name of its own.
+bool isGeneratedOccurrenceName(const std::string& name)
+{
+    if (name.size() <= 4 || name.compare(0, 4, "NAUO") != 0)
+        return false;
+    return std::all_of(name.begin() + 4, name.end(), [](char c) { return c >= '0' && c <= '9'; });
+}
+
 std::string labelColor(const Handle(XCAFDoc_ColorTool)& colors, const TDF_Label& label)
 {
     Quantity_Color c;
@@ -162,7 +170,7 @@ std::string labelColor(const Handle(XCAFDoc_ColorTool)& colors, const TDF_Label&
     return text;
 }
 
-/// Walks an assembly down to its simple shapes, composing the placements. Instance names
+/// Walks an assembly down to its simple shapes, composing the placements. Occurrence names
 /// and colours win over the product's.
 void collectLeaves(const Handle(XCAFDoc_ShapeTool)& shapes, const Handle(XCAFDoc_ColorTool)& colors,
                    const TDF_Label& label, const TopLoc_Location& parent, const std::string& parentColor,
@@ -190,9 +198,15 @@ void collectLeaves(const Handle(XCAFDoc_ShapeTool)& shapes, const Handle(XCAFDoc
     const TopoDS_Shape shape = XCAFDoc_ShapeTool::GetShape(ref);
     if (shape.IsNull())
         return;
-    name = labelName(ref);
-    if (name.empty() && ref != label)
+    // The occurrence's own name ("Left bracket") wins over its product's ("Bracket");
+    // generated occurrence ids (NAUO1, ...) are not names.
+    if (ref != label) {
         name = labelName(label);
+        if (isGeneratedOccurrenceName(name))
+            name.clear();
+    }
+    if (name.empty())
+        name = labelName(ref);
     out.push_back({name, color, shape.Moved(location)});
 }
 
