@@ -1,0 +1,53 @@
+# CAD-178: Draft (Fusion: Modify > Draft) with real clicks:
+#  - a click selects the box; Modify > Draft opens the dialog on it with the XY fixed plane and 3 deg;
+#  - a click on the +X side picks it; the preview and OK tilt it in (one undo step);
+#  - with a construction plane over the box, the click on the side goes through the plane,
+#    and the plane can be chosen as the fixed plane;
+#  - picking the top face (parallel to the fixed plane) gives a clear error.
+# Run: AeroCAD --ui-script <this file>
+Qt.createQmlObject('import QtQuick; Item { objectName: "drTest"; visible: false; function clickAt(x, y, z) { const v = viewport.viewPoint(Qt.vector3d(x, y, z)); const p = viewport.mapToItem(null, v.x, v.y); ui.click(p.x, p.y) } function findDisp(it, t) { if (!it.visible) return null; for (let i = it.children.length - 1; i >= 0; --i) { const h = findDisp(it.children[i], t); if (h) return h } return it.displayText === t ? it : null } function volume() { return controller.execute("timeline.list").result.bodies[0].volume } }', window.contentItem)
+ui.wait(800)
+(() => { const b = controller.execute("feature.box", { size: [20, 20, 10] }); if (!b.ok) ui.fail("setup"); viewport.fitAll() })()
+ui.wait(500)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "drTest").clickAt(10, 10, 10) })()
+ui.wait(300)
+(() => { if (!ui.clickText("Modify")) ui.fail("no Modify menu") })()
+ui.wait(400)
+(() => { if (!ui.clickText("Draft")) ui.fail("no Draft in the Modify menu") })()
+ui.wait(400)
+(() => { ui.log("dialog " + featureDialog.visible + " type " + featureDialog.type + " body " + featureDialog.values.body + " plane " + featureDialog.values.plane + " angle " + featureDialog.values.angle); if (!featureDialog.visible || featureDialog.type !== "draft") ui.fail("Draft did not open"); if (featureDialog.values.body === undefined) ui.fail("Draft did not take the selected body") })()
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "drTest").clickAt(20, 10, 5) })()
+ui.wait(800)
+(() => { const f = featureDialog.values.faces || []; ui.log("picked " + JSON.stringify(f) + ", preview volume " + Array.from(window.contentItem.children).find(c => c.objectName === "drTest").volume()); if (f.length !== 1) ui.fail("the click did not pick the side") })()
+ui.shot("build/draft-preview.png")
+(() => { if (!ui.clickText("OK")) ui.fail("no OK button") })()
+ui.wait(800)
+(() => { const v = Array.from(window.contentItem.children).find(c => c.objectName === "drTest").volume(); const want = 4000 - 0.5 * 10 * 10 * Math.tan(3 * Math.PI / 180) * 20; ui.log("after OK: volume " + v + " (want " + want + "), undo '" + controller.undoText + "'"); if (Math.abs(v - want) > 0.5) ui.fail("the side did not tilt: volume " + v) })()
+ui.shot("build/draft.png")
+(() => { undoAction.trigger() })()
+ui.wait(500)
+(() => { const v = Array.from(window.contentItem.children).find(c => c.objectName === "drTest").volume(); ui.log("Ctrl+Z: volume " + v); if (Math.abs(v - 4000) > 0.5) ui.fail("one undo did not bring the box back: " + v) })()
+# The fixed plane can be a construction plane from the list: one at the top makes
+# the side lean out below it. The plane lies over the box, and the click on the side goes
+# through it (only faces can be picked now).
+(() => { const r = controller.execute("feature.plane", { base: "XY", offset: 10 }); if (!r.ok) ui.fail("plane: " + r.error); viewport.fitAll() })()
+ui.wait(500)
+(() => { if (!ui.clickText("Body1")) ui.fail("no Body1 in the browser") })()
+ui.wait(300)
+(() => { if (!ui.clickText("Modify")) ui.fail("no Modify menu") })()
+ui.wait(400)
+(() => { if (!ui.clickText("Draft")) ui.fail("no Draft in the Modify menu") })()
+ui.wait(400)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "drTest").clickAt(20, 10, 5) })()
+ui.wait(500)
+(() => { ui.log("second dialog " + featureDialog.type + " faces " + JSON.stringify(featureDialog.values.faces)); const c = Array.from(window.contentItem.children).find(c => c.objectName === "drTest").findDisp(featureDialog, "XY"); if (!c) ui.fail("no fixed plane list"); const p = c.mapToItem(null, c.width / 2, c.height / 2); ui.click(p.x, p.y) })()
+ui.wait(400)
+(() => { const name = controller.execute("timeline.list").result.features.find(f => f.type === "plane").name; if (!ui.clickText(name)) ui.fail("the construction plane " + name + " is not in the list") })()
+ui.wait(800)
+(() => { ui.log("plane " + JSON.stringify(featureDialog.values.plane)); if (!featureDialog.values.plane || featureDialog.values.plane.plane === undefined) ui.fail("the construction plane was not taken") })()
+(() => { if (!ui.clickText("OK")) ui.fail("no OK button") })()
+ui.wait(800)
+(() => { const v = Array.from(window.contentItem.children).find(c => c.objectName === "drTest").volume(); const want = 4000 + 0.5 * 10 * 10 * Math.tan(3 * Math.PI / 180) * 20; ui.log("from the top plane: volume " + v + " (want " + want + ")"); if (Math.abs(v - want) > 0.5) ui.fail("the side did not lean out below the plane: " + v) })()
+ui.shot("build/draft-plane.png")
+(() => { const b = controller.execute("document.parts").result.parts.find(x => x.kind === "body"); const r = controller.execute("feature.draft", { body: b.featureId, faces: [{ point: [10, 10, 10] }], angle: 5 }); ui.log("top: " + r.ok + " " + r.error); if (r.ok) ui.fail("drafting the top face did not fail") })()
+ui.log("draft OK")

@@ -256,6 +256,20 @@ TEST_CASE("Delete Face in the timeline removes a hole and follows an edited box"
     CHECK_THROWS_AS(d.editFeature(del, {{"body", block}, {"faces", Json::array({{{"point", {20, 10, 20}}}})}}), cad::DesignError);
 }
 
+TEST_CASE("Draft in the timeline tilts a side and follows an edited angle", "[cad][design]")
+{
+    Design d;
+    const auto block = d.addFeature("box", {{"size", {20, 20, 10}}});
+    const auto dr = d.addFeature("draft", {{"body", block}, {"faces", Json::array({{{"point", {20, 10, 5}}}})},
+                                           {"plane", "XY"}, {"angle", 10}});
+    const double t = std::tan(10 * std::numbers::pi / 180);
+    CHECK(bodyVolume(d, block) == Approx(4000 - 0.5 * 10 * 10 * t * 20).epsilon(1e-6));
+    d.editFeature(dr, {{"angle", -10}});
+    CHECK(bodyVolume(d, block) == Approx(4000 + 0.5 * 10 * 10 * t * 20).epsilon(1e-6));
+    CHECK_THROWS_AS(d.addFeature("draft", {{"body", block}, {"faces", Json::array({{{"point", {10, 10, 10}}}})},
+                                           {"angle", 5}}), cad::DesignError);
+}
+
 TEST_CASE("Chamfer types in the timeline", "[cad][design]")
 {
     Design d;
