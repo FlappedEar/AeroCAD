@@ -203,6 +203,23 @@ Item {
 
     /// Nearest hit under (x, y) on one of the parts `ids` (a click that goes through
     /// everything else, such as planes or sketches in front), or null.
+    /// Like pickPart, but a part that cannot take this pick (a construction plane while a
+    /// dialog waits for faces, say) is clicked through to the pickable part behind it, as in
+    /// Fusion.
+    function pickPickablePart(x, y) {
+        const hit = pickPart(x, y)
+        const node = hit && !transformActive ? previewNode(hit.partId) : null
+        if (!node || node.pickable)
+            return hit
+        const ids = []
+        for (let i = 0; i < partRepeater.count; ++i) {
+            const n = partRepeater.objectAt(i)
+            if (n && n.visible && n.pickable)
+                ids.push(n.partId)
+        }
+        return pickPartAmong(x, y, ids)
+    }
+
     function pickPartAmong(x, y, ids) {
         const near = modelSpace.mapPositionFromScene(view.mapTo3DScene(Qt.vector3d(x, y, 0)))
         const far = modelSpace.mapPositionFromScene(view.mapTo3DScene(Qt.vector3d(x, y, 100)))
@@ -864,7 +881,8 @@ Item {
             if (tapCount === 1)
                 firstTapPicked = !!root.transformPickMode
             // Mesh ray cast: Qt Quick 3D picks custom geometry by its bounding volume only.
-            let hit = root.pickPart(eventPoint.position.x, eventPoint.position.y)
+            let hit = root.transformPickMode ? root.pickPart(eventPoint.position.x, eventPoint.position.y)
+                                             : root.pickPickablePart(eventPoint.position.x, eventPoint.position.y)
             if (root.transformPickMode) {
                 // Lay on face / Face front: the click picks a face of the part being moved.
                 if (hit && hit.partId === root.transformTarget.partId)
@@ -1008,7 +1026,7 @@ Item {
     readonly property bool hoverHighlightEnabled: tool === "navigate" && !sketch && leftDragMode === ""
     onHoverHighlightEnabledChanged: if (!hoverHighlightEnabled) hoveredPartId = 0
     function updateHover(x, y) {
-        const hit = pickPart(x, y)
+        const hit = pickPickablePart(x, y)
         const node = hit ? previewNode(hit.partId) : null
         hoveredPartId = node && node.visible && node.pickable ? hit.partId : 0
         updateFieldProbe(x, y, hit)
