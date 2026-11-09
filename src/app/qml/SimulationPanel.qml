@@ -1338,6 +1338,7 @@ Pane {
                     Label { text: qsTr("Mesh"); opacity: 0.7 }
                     ComboBox {
                         id: meshBox
+                        objectName: "cfdMeshBox"
                         Layout.fillWidth: true
                         onActivated: proposalTimer.restart()
                         textRole: "text"
@@ -1360,6 +1361,16 @@ Pane {
                         color: Theme.textMuted
                         elide: Text.ElideRight
                         font.pixelSize: 11
+                        // Reachable with Tab and opened with Space or Enter, like a button.
+                        activeFocusOnTab: true
+                        font.underline: activeFocus
+                        Keys.onPressed: (event) => {
+                            if (event.key === Qt.Key_Space || event.key === Qt.Key_Return ||
+                                    event.key === Qt.Key_Enter) {
+                                root.moreOpen = !root.moreOpen
+                                event.accepted = true
+                            }
+                        }
                         MouseArea {
                             anchors.fill: parent
                             cursorShape: Qt.PointingHandCursor
