@@ -301,6 +301,9 @@ Pane {
             { key: "points", type: "profilePicks", label: qsTr("Profiles"), hint: qsTr("All profiles (click inside profiles to pick)") },
             { key: "path", type: "pathSketch", label: qsTr("Path sketch") },
             { key: "operation", type: "choice", label: qsTr("Operation"), init: "new_body", options: operations }] },
+        midplane: { title: qsTr("Midplane"), command: "feature.plane", fields: [
+            { key: "base", type: "planePick", label: qsTr("First plane or face"), hint: qsTr("Click a planar face, or choose a plane"), required: true },
+            { key: "base2", type: "planePick", label: qsTr("Second plane or face"), hint: qsTr("Click the opposite face, or choose a plane"), required: true }] },
         plane: { title: qsTr("Construction Plane"), command: "feature.plane", fields: [
             { key: "base", type: "planePick", label: qsTr("Base plane"), init: "XY", hint: qsTr("Origin plane, construction plane, or click a planar face") },
             { key: "offset", type: "expr", label: qsTr("Offset"), init: 10 },
@@ -374,6 +377,9 @@ Pane {
         // Earlier features may have changed the body since the arrow was last placed.
         sizeArrowPlace.key = ""
         sizeArrowPlace.place = null
+        // A plane made halfway between two (Construct > Midplane) is edited in its own dialog.
+        if (featureType === "plane" && featureId && initial && initial.base2 !== undefined)
+            featureType = "midplane"
         const s = specs[featureType]
         if (!s)
             return false
@@ -453,7 +459,7 @@ Pane {
     property bool previewApplied: false
     property var previewFeatureId: -1
     /// The plane being created or edited must not catch the clicks meant for faces behind it.
-    readonly property var ownPlane: type !== "plane" ? -1 : editId ? editId : previewFeatureId
+    readonly property var ownPlane: type !== "plane" && type !== "midplane" ? -1 : editId ? editId : previewFeatureId
 
     /// What viewport clicks should hit while the dialog waits for picks: profiles live on
     /// sketches, edges/faces/points on bodies (the preview body would hide the sketch).
@@ -698,10 +704,17 @@ Pane {
             // recomputed, so a face of it cannot hold the plane.
             if (part.kind === "body" && part.featureId === previewFeatureId)
                 return
+            const key = pickKey
             if (part.kind === "plane")
-                setValue(pickKey, { plane: part.featureId })
+                setValue(key, { plane: part.featureId })
             else if ((part = asBody(part)))
-                setValue(pickKey, { body: part.featureId, point: [point.x, point.y, point.z].map(x => Math.round(x * 1e4) / 1e4) })
+                setValue(key, { body: part.featureId, point: [point.x, point.y, point.z].map(x => Math.round(x * 1e4) / 1e4) })
+            else
+                return
+            // Midplane: the next click fills the second plane.
+            const next = spec.fields.find(f => f.type === "planePick" && f.key !== key && values[f.key] === undefined)
+            if (next)
+                pickKey = next.key
             return
         }
         if (field.type === "pointPick") {
@@ -753,6 +766,11 @@ Pane {
 
     /// Runs the feature command (create, or edit of `editId`) with the current values.
     function submit(quiet) {
+        // A field the command would otherwise default (Midplane's planes fall back to XY)
+        // must be filled in: nothing is made until it is.
+        const missing = spec.fields.find(f => f.required && values[f.key] === undefined)
+        if (missing)
+            return { ok: false, error: qsTr("%1: pick the %2").arg(spec.title).arg(missing.label.toLowerCase()) }
         const run = (name, args) => quiet ? controller.preview(name, args) : controller.execute(name, args)
         const params = Object.assign({}, values)
         for (const f of spec.fields) {
@@ -953,9 +971,15 @@ Pane {
     }
     Component {
         id: planeEditor
-        // Origin planes and construction planes; a face clicked in the view shows as an extra entry.
-        ComboBox {
+        // Origin planes and construction planes; a face clicked in the view shows as an extra
+        // entry. "Pick in the view" sends the next click here, when the dialog also picks
+        // faces or edges (Draft) or has two planes (Midplane).
+        ColumnLayout {
             property var field: parent ? parent.field : ({})
+            spacing: 2
+            ComboBox {
+            Layout.fillWidth: true
+            readonly property var field: parent.field
             readonly property var current: root.values[field.key]
             readonly property var items: {
                 const out = [{ name: "XY", value: "XY" }, { name: "XZ", value: "XZ" }, { name: "YZ", value: "YZ" }]
@@ -971,7 +995,17 @@ Pane {
             }
             model: items.map(i => i.name)
             currentIndex: items.findIndex(i => JSON.stringify(i.value) === JSON.stringify(current))
+            displayText: currentIndex < 0 ? (field.hint || "") : currentText
             onActivated: index => root.setValue(field.key, items[index].value)
+            }
+            Button {
+                Layout.fillWidth: true
+                visible: root.spec && root.spec.fields.filter(f => f.type.endsWith("Picks") || f.type.endsWith("Pick")).length > 1
+                checkable: true
+                checked: root.pickKey === field.key
+                text: root.pickKey === field.key ? qsTr("Click a planar face or plane in the view") : qsTr("Pick in the view")
+                onClicked: root.pickKey = field.key
+            }
         }
     }
     Component {

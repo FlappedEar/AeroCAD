@@ -360,6 +360,10 @@ See [cad.md](cad.md) for the timeline and the commands behind the tools.
 - **Construct > Construction Plane** (toolbar: Plane) makes an offset or angled plane from
   an origin plane, another construction plane or a clicked planar face. Planes are drawn as
   translucent orange squares; Create Sketch accepts a click on a plane.
+- **Construct > Midplane** (toolbar: Midplane) makes the plane halfway between two parallel
+  faces or planes: the first click fills the first plane, the next click the second. In any
+  dialog that also picks faces or edges (Draft), a plane field has **Pick in the view** to
+  take a clicked planar face or plane instead of choosing from the list.
 - **Timeline** (bottom): features in order; double-click to edit (sketches reopen in the
   sketch environment with the timeline rolled back to just after the sketch, as in Fusion:
   later features are hidden until Finish Sketch rolls forward again), right-click for Edit Profile Sketch (Extrude, Revolve, Sweep, Loft:

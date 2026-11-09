@@ -1,0 +1,62 @@
+# CAD-189: Construct > Midplane and clicking a face for any plane field, with real clicks:
+#  - Construct > Midplane; a click on the low top face (z = 10) of a stepped block fills the
+#    first plane, a click on the high top face (z = 20) the second; OK makes a plane halfway
+#    (z = 15);
+#    editing it opens the Midplane dialog again;
+#  - Draft: the low part's +X side is clicked, then "Pick in the view" under Fixed plane and a
+#    click on the low top face make that face the fixed plane (the side leans out below it).
+# Run: AeroCAD --ui-script <this file>
+Qt.createQmlObject('import QtQuick; Item { objectName: "mpTest"; visible: false; function clickAt(x, y, z) { const v = viewport.viewPoint(Qt.vector3d(x, y, z)); const p = viewport.mapToItem(null, v.x, v.y); ui.click(p.x, p.y) } function volume() { return controller.execute("timeline.list").result.bodies[0].volume } function planeFeature() { return controller.execute("timeline.list").result.features.find(f => f.type === "plane") } }', window.contentItem)
+ui.wait(800)
+(() => { const a = controller.execute("feature.box", { size: [40, 20, 10] }); const b = controller.execute("feature.box", { corner: [0, 0, 0], size: [20, 20, 20], operation: "join" }); if (!a.ok || !b.ok) ui.fail("setup"); viewport.fitAll() })()
+ui.wait(500)
+(() => { if (!ui.clickText("Construct")) ui.fail("no Construct menu") })()
+ui.wait(400)
+(() => { if (!ui.clickText("Midplane")) ui.fail("no Midplane in the Construct menu") })()
+ui.wait(400)
+(() => { ui.log("dialog " + featureDialog.type + " pick " + featureDialog.pickKey); if (featureDialog.type !== "midplane") ui.fail("Midplane did not open"); if (featureDialog.pickKey !== "base") ui.fail("the first click does not go to the first plane") })()
+# OK with no plane picked makes nothing and says what is missing.
+(() => { if (!ui.clickText("OK")) ui.fail("no OK button") })()
+ui.wait(400)
+(() => { ui.log("empty OK: '" + featureDialog.error + "', visible " + featureDialog.visible); if (!featureDialog.visible || !/pick the first plane/.test(featureDialog.error)) ui.fail("OK without planes did not ask for them"); if (Array.from(window.contentItem.children).find(c => c.objectName === "mpTest").planeFeature()) ui.fail("OK without planes made a plane") })()
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "mpTest").clickAt(30, 10, 10) })()
+ui.wait(500)
+(() => { ui.log("base " + JSON.stringify(featureDialog.values.base) + ", next pick " + featureDialog.pickKey); if (!featureDialog.values.base || featureDialog.values.base.body === undefined) ui.fail("the click did not pick the low face"); if (featureDialog.pickKey !== "base2") ui.fail("the next click does not go to the second plane") })()
+(() => { if (!ui.clickText("OK")) ui.fail("no OK button") })()
+ui.wait(400)
+(() => { ui.log("one plane OK: '" + featureDialog.error + "'"); if (!featureDialog.visible || !/pick the second plane/.test(featureDialog.error)) ui.fail("OK with one plane did not ask for the second"); if (Array.from(window.contentItem.children).find(c => c.objectName === "mpTest").planeFeature()) ui.fail("OK with one plane made a plane") })()
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "mpTest").clickAt(10, 10, 20) })()
+ui.wait(800)
+(() => { ui.log("base2 " + JSON.stringify(featureDialog.values.base2)); if (!featureDialog.values.base2 || featureDialog.values.base2.body === undefined) ui.fail("the click did not pick the high face") })()
+ui.shot("build/midplane-preview.png")
+(() => { if (!ui.clickText("OK")) ui.fail("no OK button") })()
+ui.wait(800)
+(() => { const f = Array.from(window.contentItem.children).find(c => c.objectName === "mpTest").planeFeature(); const parts = controller.execute("document.parts").result.parts; const p = parts.find(x => x.kind === "plane"); ui.log("plane feature " + JSON.stringify(f && f.params) + " status " + (f && f.status)); if (!f || f.status !== "ok" || f.params.base2 === undefined) ui.fail("no midplane in the timeline"); const z = p ? p.bounds : null; ui.log("plane bounds " + JSON.stringify(z)); if (!z || Math.abs(z.min[2] - 15) > 1e-3 || Math.abs(z.max[2] - 15) > 1e-3) ui.fail("the plane is not at z = 15") })()
+ui.shot("build/midplane.png")
+# Editing the plane opens the Midplane dialog.
+(() => { window.editFeature(Array.from(window.contentItem.children).find(c => c.objectName === "mpTest").planeFeature()) })()
+ui.wait(500)
+(() => { ui.log("edit dialog " + featureDialog.type); if (featureDialog.type !== "midplane") ui.fail("editing a midplane did not open its dialog") })()
+(() => { if (!ui.clickText("Cancel")) ui.fail("no Cancel button") })()
+ui.wait(400)
+# Draft with a clicked face as the fixed plane.
+(() => { const f = Array.from(window.contentItem.children).find(c => c.objectName === "mpTest").planeFeature(); controller.execute("feature.delete", { id: f.id }); viewport.fitAll() })()
+ui.wait(400)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "mpTest").clickAt(30, 10, 10) })()
+ui.wait(300)
+(() => { if (!ui.clickText("Modify")) ui.fail("no Modify menu") })()
+ui.wait(400)
+(() => { if (!ui.clickText("Draft")) ui.fail("no Draft in the Modify menu") })()
+ui.wait(400)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "mpTest").clickAt(40, 10, 5) })()
+ui.wait(500)
+(() => { ui.log("draft faces " + JSON.stringify(featureDialog.values.faces)); if ((featureDialog.values.faces || []).length !== 1) ui.fail("the click did not pick the side") })()
+(() => { if (!ui.clickText("Pick in the view")) ui.fail("no Pick in the view button for the fixed plane") })()
+ui.wait(300)
+(() => { ui.log("pick " + featureDialog.pickKey); Array.from(window.contentItem.children).find(c => c.objectName === "mpTest").clickAt(30, 10, 10) })()
+ui.wait(800)
+(() => { ui.log("fixed plane " + JSON.stringify(featureDialog.values.plane) + ", faces " + JSON.stringify(featureDialog.values.faces)); if (!featureDialog.values.plane || featureDialog.values.plane.body === undefined) ui.fail("the click did not make the top face the fixed plane"); if ((featureDialog.values.faces || []).length !== 1) ui.fail("the plane click also changed the faces") })()
+(() => { if (!ui.clickText("OK")) ui.fail("no OK button") })()
+ui.wait(800)
+(() => { const v = Array.from(window.contentItem.children).find(c => c.objectName === "mpTest").volume(); const want = 12000 + 0.5 * 10 * 10 * Math.tan(3 * Math.PI / 180) * 20; ui.log("draft from the top face: " + v + " (want " + want + ")"); if (Math.abs(v - want) > 0.5) ui.fail("the side did not lean out below the top face: " + v) })()
+ui.log("midplane OK")

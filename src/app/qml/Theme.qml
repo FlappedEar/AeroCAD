@@ -150,7 +150,7 @@ QtObject {
         "combine": "combine", "split body": "section", "delete face": "delete", "draft": "shell", "parameters": "parameters", "show/hide": "visible", "delete": "delete",
         "selected": "export", "all": "export", "export": "export", "fit": "fit", "home": "home",
         "ortho": "ortho", "sweep": "sweep", "loft": "loft", "mirror": "mirror", "pattern": "pattern",
-        "circular pattern": "circular-pattern", "plane": "plane", "measure": "measure",
+        "circular pattern": "circular-pattern", "plane": "plane", "midplane": "plane", "measure": "measure",
         "clearance": "clearance", "section": "section", "deviation": "deviation",
         "thickness": "thickness", "a/b": "variants", "new": "duplicate", "variant": "variants"
     })
@@ -177,6 +177,7 @@ QtObject {
         "shell": qsTr("Hollow out a body, leaving walls of the thickness you type."),
         "move/rotate": qsTr("Turn the selected part about an axis and move it by a distance (Fusion: Move/Copy, M)."),
         "combine": qsTr("Join, cut or intersect two bodies."),
+        "midplane": qsTr("Add a construction plane halfway between two parallel faces or planes, e.g. a part's symmetry plane (Fusion: Midplane)."),
         "draft": qsTr("Tilt faces of a body by an angle from a fixed plane, e.g. mould walls (Fusion: Draft)."),
         "delete face": qsTr("Remove faces of a body (a hole, a fillet, a boss) and close the gap from the faces around them (Fusion: Delete)."),
         "split body": qsTr("Cut a body with a plane into two bodies, e.g. to print a part larger than the printer bed (Fusion: Split Body)."),
