@@ -40,6 +40,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <functional>
 #include <limits>
 #include <numbers>
@@ -1689,8 +1690,9 @@ SurfaceFitResult fitSurface(const core::TriangleMesh& mesh, const core::Triangle
     report.withinTolerance =
         report.meshToSurfaceMax <= options.tolerance && report.surfaceToMeshMax <= options.tolerance;
     if (report.outsideTrimMax > options.tolerance) {
-        report.warnings.push_back("The smoothed outline leaves selected mesh up to " +
-                                  std::to_string(report.outsideTrimMax) +
+        char mm[32];
+        std::snprintf(mm, sizeof mm, "%.2f", report.outsideTrimMax);
+        report.warnings.push_back(std::string("The smoothed outline leaves selected mesh up to ") + mm +
                                   " mm outside the face (rounded corners or a coarse mesh edge).");
     }
     if (!report.withinTolerance)

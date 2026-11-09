@@ -1,0 +1,79 @@
+# CAD-195: Fit Point Spline in the sketch (Fusion: Create > Spline). Click fit points;
+# Enter, a double-click or Esc ends an open spline, a click on the first point closes it.
+# The closed spline extrudes into a body.
+# Run: AeroCAD --ui-script <this file>
+ui.wait(800)
+Qt.createQmlObject('import QtQuick; Item { objectName: "spTest"; visible: false; property var s: ({}); function at(u, v) { const o = viewport.sketchOverlay; const q = o.toScreen([u, v]); return o.mapToItem(null, q.x, q.y) } function clickAt(u, v) { const p = at(u, v); ui.click(p.x, p.y) } function curves() { return controller.execute("sketch.curves", { sketch: activeSketch.id }).result.curves } }', window.contentItem)
+(() => { const r = controller.execute("sketch.create", { plane: "XY", curves: [{ type: "line", start: [-20, -20], end: [100, 80], construction: true }] }); if (!r.ok) ui.fail("sketch: " + r.error) })()
+ui.wait(300)
+(() => { enterSketch(controller.execute("timeline.list").result.features[0].id) })()
+ui.wait(800)
+# The Spline button of the sketch ribbon.
+(() => { if (!ui.clickText("Spline")) ui.fail("no Spline in the sketch ribbon"); if (sketchTool !== "spline") ui.fail("Spline did not start the tool: " + sketchTool) })()
+ui.wait(300)
+# Open spline, ended with Enter.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "spTest"); t.clickAt(10, 0); t.clickAt(30, 20); t.clickAt(50, 0); const p = t.at(60, 10); ui.move(p.x, p.y) })()
+ui.wait(300)
+(() => { if (viewport.sketchOverlay.points.length !== 3) ui.fail("expected 3 fit points while drawing, got " + JSON.stringify(viewport.sketchOverlay.points)) })()
+ui.shot("sketch-spline-preview.png")
+ui.key("Return")
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "spTest"); const c = t.curves(); const s = c[c.length - 1]; ui.log("open spline " + JSON.stringify(s.points) + " samples " + (s.samples || []).length); if (c.length !== 2 || s.kind !== "spline" || s.closed) ui.fail("Enter did not make an open spline: " + JSON.stringify(c)); if (JSON.stringify(s.points) !== JSON.stringify([[10, 0], [30, 20], [50, 0]])) ui.fail("fit points: " + JSON.stringify(s.points)); if (!s.samples || s.samples.length < 20) ui.fail("no samples of the real curve"); if (!s.samples.some(q => Math.hypot(q[0] - 30, q[1] - 20) < 0.5)) ui.fail("the curve misses its middle fit point"); if (sketchTool !== "spline") ui.fail("the tool ended with the spline") })()
+# Closed spline: a click on the first point closes it (below the sketch palette).
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "spTest"); t.clickAt(0, -20); t.clickAt(20, -10); t.clickAt(40, -20); t.clickAt(20, -40); if (viewport.sketchOverlay.points.length !== 4) ui.fail("closed spline: 4 fit points expected, got " + JSON.stringify(viewport.sketchOverlay.points)); t.clickAt(0, -20) })()
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "spTest"); const c = t.curves(); const s = c[c.length - 1]; ui.log("closed spline " + JSON.stringify(s.points)); if (c.length !== 3 || s.kind !== "spline" || !s.closed || s.points.length !== 4) ui.fail("the first point did not close the spline: " + JSON.stringify(s)); if (viewport.sketchOverlay.points.length !== 0) ui.fail("points left after closing") })()
+# A double-click on the last point ends it open.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "spTest"); t.clickAt(50, -50); t.clickAt(60, -40); const p = t.at(70, -50); ui.doubleClick(p.x, p.y) })()
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "spTest"); const c = t.curves(); const s = c[c.length - 1]; ui.log("double-click spline " + JSON.stringify(s.points)); if (c.length !== 4 || s.kind !== "spline" || s.closed || s.points.length !== 3) ui.fail("the double-click did not end the spline: " + JSON.stringify(c.slice(3))) })()
+# Esc keeps the points so far as an open spline.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "spTest"); t.clickAt(-40, -10); t.clickAt(-20, -30) })()
+ui.key("Esc")
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "spTest"); const c = t.curves(); const s = c[c.length - 1]; if (c.length !== 5 || s.kind !== "spline" || s.points.length !== 2) ui.fail("Esc lost the spline: " + JSON.stringify(c.slice(4))) })()
+ui.shot("sketch-spline.png")
+# Selecting a spline picks it along the real curve, not its chords: (30, 25) is off the
+# chord (10,0)-(30,20) but on the curve near its top.
+ui.key("Esc")
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "spTest"); const c = t.curves(); const top = c[1].samples.reduce((a, q) => q[1] > a[1] ? q : a, [0, -1e9]); const o = viewport.sketchOverlay; const p = o.toScreen(top); if (o.curveAt(p.x, p.y) !== 1) ui.fail("the top of the spline " + JSON.stringify(top) + " does not pick it: " + o.curveAt(p.x, p.y)) })()
+# CAD-198: with no tool, dragging a fit point in the middle of a spline reshapes it (one undo step).
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "spTest"); const a = t.at(30, 20), b = t.at(30, 10); ui.drag(a.x, a.y, b.x, b.y, "left", "", 10) })()
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "spTest"); const s = t.curves()[1]; ui.log("dragged spline " + JSON.stringify(s.points)); const want = [[10, 0], [30, 10], [50, 0]]; if (s.points.length !== 3 || s.points.some((p, i) => Math.hypot(p[0] - want[i][0], p[1] - want[i][1]) > 1e-6)) ui.fail("the middle fit point did not move to (30, 10): " + JSON.stringify(s.points)); if (Math.max(...s.samples.map(q => q[1])) > 10.5) ui.fail("the curve was not reshaped") })()
+ui.shot("sketch-spline-drag.png")
+(() => { controller.execute("edit.undo") })()
+ui.wait(400)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "spTest"); const s = t.curves()[1]; const want = [[10, 0], [30, 20], [50, 0]]; if (s.points.some((p, i) => Math.hypot(p[0] - want[i][0], p[1] - want[i][1]) > 1e-6)) ui.fail("undo did not take back the fit point drag: " + JSON.stringify(s.points)); if (t.curves().length !== 5) ui.fail("undo took back more than the drag") })()
+# CAD-201: another window takes focus in the middle of a drag (the press is cancelled). The
+# drag is dropped as with Esc: the point goes back, nothing is recorded, nothing stays stuck.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "spTest"); t.s.top = controller.historyTopId(); const a = t.at(30, 20), b = t.at(30, 10); ui.move(a.x, a.y); ui.press(a.x, a.y); for (let i = 1; i <= 5; ++i) ui.move(a.x, a.y + (b.y - a.y) * i / 10) })()
+ui.wait(200)
+(() => { if (!viewport.sketchOverlay.pointDragging) ui.fail("the drag did not start") ; const t = Array.from(window.contentItem.children).find(c => c.objectName === "spTest"); t.s.other = Qt.createQmlObject('import QtQuick; Window { width: 200; height: 200; visible: true }', window); t.s.other.requestActivate() })()
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "spTest"); const b = t.at(30, 10); ui.move(b.x, b.y); ui.release(b.x, b.y) })()
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "spTest"); const s = t.curves()[1]; ui.log("after focus loss " + JSON.stringify(s.points)); if (viewport.sketchOverlay.pointDragging) ui.fail("the point drag is stuck after focus loss"); if (Math.hypot(s.points[1][0] - 30, s.points[1][1] - 20) > 1e-6) ui.fail("the cancelled drag moved the point: " + JSON.stringify(s.points)); if (controller.historyTopId() !== t.s.top) ui.fail("the cancelled drag was recorded"); t.s.other.close(); t.s.other.destroy(); window.requestActivate() })()
+ui.wait(500)
+# A Fix on the whole spline holds its inner fit points: dragging one changes nothing.
+(() => { const r = controller.execute("sketch.add_constraints", { sketch: activeSketch.id, constraints: [{ type: "fix", curve: 1 }] }); if (!r.ok) ui.fail("fix spline: " + r.error) })()
+ui.wait(400)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "spTest"); const a = t.at(30, 20), b = t.at(30, 10); ui.drag(a.x, a.y, b.x, b.y, "left", "", 10) })()
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "spTest"); const s = t.curves()[1]; if (Math.hypot(s.points[1][0] - 30, s.points[1][1] - 20) > 1e-6) ui.fail("a fixed spline was reshaped: " + JSON.stringify(s.points)) })()
+(() => { controller.execute("edit.undo") })()
+ui.wait(300)
+(() => { if (viewport.sketchOverlay.sketchConstraints.length !== 0) ui.fail("undo did not remove the spline Fix: " + JSON.stringify(viewport.sketchOverlay.sketchConstraints)) })()
+# A Fix on a spline end named by its fit index (as the API may give it) still gets its glyph.
+(() => { const r = controller.execute("sketch.add_constraints", { sketch: activeSketch.id, constraints: [{ type: "fix", points: [{ curve: 1, point: "fit", index: 2 }] }] }); if (!r.ok) ui.fail("fix on fit point 2: " + r.error) })()
+ui.wait(400)
+(() => { const o = viewport.sketchOverlay; const c = o.sketchConstraints[o.sketchConstraints.length - 1]; const p = o.constraintGlyphs.pointPos(c.points[0]); ui.log("fix on fit 2 at " + JSON.stringify(p)); if (!p || Math.hypot(p[0] - 50, p[1]) > 1e-6) ui.fail("no position for the fit point reference: " + JSON.stringify(p)); if (!o.constraintGlyphs.anchorOf(c)) ui.fail("the Fix on fit point 2 has no glyph anchor") })()
+(() => { controller.execute("edit.undo") })()
+ui.wait(300)
+# Finish and extrude: the closed spline is the profile.
+(() => { finishSketch(true) })()
+ui.wait(500)
+(() => { const sk = controller.execute("timeline.list").result.features[0].id; const r = controller.execute("feature.extrude", { sketch: sk, distance: 10 }); if (!r.ok) ui.fail("extrude: " + r.error) })()
+ui.wait(500)
+(() => { const b = controller.execute("timeline.list").result.bodies; ui.log("bodies " + JSON.stringify(b.map(x => x.volume))); if (b.length !== 1 || !(b[0].volume > 4000 && b[0].volume < 12000)) ui.fail("the closed spline did not extrude into the expected body: " + JSON.stringify(b)) })()

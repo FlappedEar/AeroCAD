@@ -4,8 +4,11 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <cmath>
 #include <numbers>
+#include <set>
+#include <utility>
 
 using namespace aerocad;
 using commands::Json;
@@ -487,4 +490,959 @@ TEST_CASE("Design commands: loft of rings stays hollow", "[commands][cad][patter
                            {"offset", 20},
                            {"curves", Json::array({{{"type", "circle"}, {"center", {0, 0}}, {"radius", 8}}})}});
     CHECK_FALSE(s.execute("feature.loft", {{"sections", Json::array({b, disk.at("id")})}}).ok);
+}
+
+TEST_CASE("Design commands: deleting sketch curves (CAD-122)", "[commands][cad][solver]")
+{
+    commands::Session s;
+    // A rectangle, a circle and a line; the circle and the line carry dimensions.
+    const Json sk = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "rectangle"}, {"corner", {0, 0}}, {"width", 40}, {"height", 20}},
+                                                 {{"type", "circle"}, {"center", {20, 10}}, {"radius", 4}},
+                                                 {{"type", "line"}, {"start", {50, 0}}, {"end", {60, 0}}}})},
+                         {"constraints", Json::array({{{"type", "radius"}, {"curve", 4}, {"value", 5}},
+                                                      {{"type", "length"}, {"curve", 5}, {"value", 12}},
+                                                      {{"type", "length"}, {"curve", 1}, {"value", 20}}})}});
+    const auto id = sk.at("id").get<std::uint64_t>();
+    CHECK(sk.at("profiles") == 2);
+
+    SECTION("a whole item and its constraint go")
+    {
+        run(s, "sketch.delete_curves", {{"sketch", id}, {"curves", {4}}});
+        const Json c = run(s, "sketch.curves", {{"sketch", id}});
+        REQUIRE(c.at("curves").size() == 5);
+        CHECK(c.at("curves")[4].at("kind") == "line");
+        REQUIRE(c.at("constraints").size() == 2);
+        // The line's length now refers to curve 4.
+        CHECK(c.at("constraints")[0].at("curve") == 4);
+        CHECK(c.at("constraints")[0].at("resolved").get<double>() == Approx(12));
+        CHECK(run(s, "sketch.profiles", {{"sketch", id}}).at("profiles").size() == 1);
+        // One undo step brings it back.
+        run(s, "edit.undo");
+        CHECK(run(s, "sketch.curves", {{"sketch", id}}).at("curves").size() == 6);
+        CHECK(run(s, "sketch.curves", {{"sketch", id}}).at("constraints").size() == 3);
+    }
+
+    SECTION("one side of a rectangle: the other sides stay lines that keep their direction")
+    {
+        run(s, "sketch.delete_curves", {{"sketch", id}, {"curves", {2}}});
+        const Json c = run(s, "sketch.curves", {{"sketch", id}});
+        REQUIRE(c.at("curves").size() == 5);
+        for (int i = 0; i < 3; ++i)
+            CHECK(c.at("curves")[i].at("kind") == "line");
+        CHECK(run(s, "sketch.profiles", {{"sketch", id}}).at("profiles").size() == 1); // only the circle
+        // The right side (still curve 1) keeps its length and stays vertical when dimensioned again.
+        run(s, "sketch.add_constraints",
+            {{"sketch", id}, {"constraints", Json::array({{{"type", "length"}, {"curve", 0}, {"value", 30}}})}});
+        const Json after = run(s, "sketch.curves", {{"sketch", id}});
+        const auto& right = after.at("curves")[1].at("points");
+        CHECK(right[0][0].get<double>() == Approx(right[1][0].get<double>()).margin(1e-6));
+        CHECK(std::abs(right[1][1].get<double>() - right[0][1].get<double>()) == Approx(20).margin(1e-6));
+        const auto& bottom = after.at("curves")[0].at("points");
+        CHECK(bottom[0][1].get<double>() == Approx(bottom[1][1].get<double>()).margin(1e-6));
+    }
+
+    SECTION("bad indices are refused and change nothing")
+    {
+        const auto bad = s.execute("sketch.delete_curves", {{"sketch", id}, {"curves", {9}}});
+        CHECK_FALSE(bad.ok);
+        CHECK(run(s, "sketch.curves", {{"sketch", id}}).at("curves").size() == 6);
+    }
+}
+
+TEST_CASE("Design commands: deleting sketch curves re-indexes a revolve axis", "[commands][cad]")
+{
+    commands::Session s;
+    // A circle first, then a closed triangle with its axis line on the left.
+    const Json sk = run(s, "sketch.create",
+                        {{"plane", "XZ"},
+                         {"curves", Json::array({{{"type", "circle"}, {"center", {50, 50}}, {"radius", 2}},
+                                                 {{"type", "line"}, {"start", {10, 0}}, {"end", {10, 20}}},
+                                                 {{"type", "line"}, {"start", {10, 20}}, {"end", {20, 0}}},
+                                                 {{"type", "line"}, {"start", {20, 0}}, {"end", {10, 0}}}})}});
+    const auto id = sk.at("id").get<std::uint64_t>();
+    const Json profiles = run(s, "sketch.profiles", {{"sketch", id}});
+    Json triangle;
+    for (const auto& p : profiles.at("profiles"))
+        if (p.at("area").get<double>() > 50)
+            triangle = p.at("centroid");
+    REQUIRE(triangle.is_array());
+    run(s, "feature.revolve",
+        {{"sketch", id}, {"points", Json::array({triangle})}, {"axis", {{"line", 1}}}, {"angle", 360}});
+    const double volume = run(s, "timeline.list").at("bodies")[0].at("volume").get<double>();
+    // Removing the circle moves the axis line to index 0; the cone stays the same.
+    run(s, "sketch.delete_curves", {{"sketch", id}, {"curves", {0}}});
+    const Json tl = run(s, "timeline.list");
+    CHECK(tl.at("features")[1].at("params").at("axis").at("line") == 0);
+    CHECK(tl.at("features")[1].at("status") == "ok");
+    CHECK(tl.at("bodies")[0].at("volume").get<double>() == Approx(volume));
+}
+
+TEST_CASE("Design commands: deleting a side of a later shape keeps its own constraints (CAD-122 review)",
+          "[commands][cad][solver]")
+{
+    commands::Session s;
+    // A circle first: the rectangle's sides are curves 1..4.
+    const Json sk = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "circle"}, {"center", {-30, 0}}, {"radius", 4}},
+                                                 {{"type", "rectangle"}, {"corner", {0, 0}}, {"width", 40}, {"height", 20}}})}});
+    const auto id = sk.at("id").get<std::uint64_t>();
+    run(s, "sketch.delete_curves", {{"sketch", id}, {"curves", {3}}}); // the rectangle's top
+    const Json c = run(s, "sketch.curves", {{"sketch", id}});
+    REQUIRE(c.at("curves").size() == 4);
+    CHECK(c.at("curves")[0].at("kind") == "circle");
+    std::vector<std::pair<std::string, int>> kept;
+    for (const auto& k : c.at("constraints"))
+        kept.emplace_back(k.at("type").get<std::string>(), k.at("curve").get<int>());
+    // bottom (1) horizontal, right (2) and left (3) vertical; nothing on the circle.
+    CHECK(kept == std::vector<std::pair<std::string, int>>{{"horizontal", 1}, {"vertical", 2}, {"vertical", 3}});
+}
+
+TEST_CASE("Design commands: splitting a dimensioned shape keeps its solved size (CAD-122 review)",
+          "[commands][cad][solver]")
+{
+    commands::Session s;
+    const Json sk = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "rectangle"}, {"corner", {0, 0}}, {"width", 40}, {"height", 20}}})},
+                         {"constraints", Json::array({{{"type", "length"}, {"curve", 0}, {"value", 60}}})}});
+    const auto id = sk.at("id").get<std::uint64_t>();
+    run(s, "sketch.delete_curves", {{"sketch", id}, {"curves", {0}}}); // the dimensioned bottom
+    const Json c = run(s, "sketch.curves", {{"sketch", id}});
+    REQUIRE(c.at("curves").size() == 3);
+    const auto& top = c.at("curves")[1].at("points");
+    CHECK(std::abs(top[1][0].get<double>() - top[0][0].get<double>()) == Approx(60).margin(1e-6));
+}
+
+TEST_CASE("Design commands: a deleted revolve axis line stays missing when lines are added (CAD-122 review)",
+          "[commands][cad]")
+{
+    commands::Session s;
+    const Json sk = run(s, "sketch.create",
+                        {{"plane", "XZ"},
+                         {"curves", Json::array({{{"type", "line"}, {"start", {0, -5}}, {"end", {0, 25}}, {"construction", true}},
+                                                 {{"type", "rectangle"}, {"corner", {5, 0}}, {"width", 5}, {"height", 20}}})}});
+    const auto id = sk.at("id").get<std::uint64_t>();
+    run(s, "feature.revolve", {{"sketch", id}, {"axis", {{"line", 0}}}});
+    run(s, "sketch.delete_curves", {{"sketch", id}, {"curves", {0}}});
+    Json tl = run(s, "timeline.list");
+    CHECK(tl.at("features")[1].at("status") == "error");
+    // A new line takes the next index; the revolve must not turn about it.
+    run(s, "sketch.add_curves",
+        {{"sketch", id}, {"curves", Json::array({{{"type", "line"}, {"start", {30, 0}}, {"end", {30, 20}}}})}});
+    tl = run(s, "timeline.list");
+    CHECK(tl.at("features")[1].at("status") == "error");
+    CHECK(tl.at("features")[1].at("error").get<std::string>().find("deleted") != std::string::npos);
+}
+
+TEST_CASE("Design commands: a deleted axis or path can be picked again (CAD-122 review)", "[commands][cad]")
+{
+    commands::Session s;
+    const Json sk = run(s, "sketch.create",
+                        {{"plane", "XZ"},
+                         {"curves", Json::array({{{"type", "line"}, {"start", {0, -5}}, {"end", {0, 25}}, {"construction", true}},
+                                                 {{"type", "rectangle"}, {"corner", {5, 0}}, {"width", 5}, {"height", 20}}})}});
+    const auto id = sk.at("id").get<std::uint64_t>();
+    const auto rev = run(s, "feature.revolve", {{"sketch", id}, {"axis", {{"line", 0}}}}).at("id").get<std::uint64_t>();
+    run(s, "sketch.delete_curves", {{"sketch", id}, {"curves", {0}}});
+    run(s, "sketch.add_curves",
+        {{"sketch", id}, {"curves", Json::array({{{"type", "line"}, {"start", {0, -5}}, {"end", {0, 25}}, {"construction", true}}})}});
+    // The dialog sends the new axis as a merge patch.
+    run(s, "feature.edit", {{"id", rev}, {"params", {{"axis", {{"line", 4}}}}}});
+    Json tl = run(s, "timeline.list");
+    CHECK(tl.at("features")[1].at("status") == "ok");
+    CHECK_FALSE(tl.at("features")[1].at("params").at("axis").contains("deletedLine"));
+
+    // Sweep: a deleted path curve, then the path sketch picked again (all its curves).
+    const Json path = run(s, "sketch.create",
+                          {{"plane", "XY"},
+                           {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {0, 40}}},
+                                                   {{"type", "line"}, {"start", {50, 0}}, {"end", {50, 40}}}})}});
+    const auto pid = path.at("id").get<std::uint64_t>();
+    const Json prof = run(s, "sketch.create",
+                          {{"plane", "XZ"}, {"curves", Json::array({{{"type", "circle"}, {"center", {0, 0}}, {"radius", 2}}})}});
+    const auto sw = run(s, "feature.sweep",
+                        {{"sketch", prof.at("id")}, {"path", {{"sketch", pid}, {"curves", {0}}}}}).at("id").get<std::uint64_t>();
+    run(s, "sketch.delete_curves", {{"sketch", pid}, {"curves", {0}}});
+    tl = run(s, "timeline.list");
+    CHECK(tl.at("features").back().at("status") == "error");
+    run(s, "feature.edit", {{"id", sw}, {"params", {{"path", {{"sketch", pid}}}}}});
+    tl = run(s, "timeline.list");
+    CHECK(tl.at("features").back().at("status") == "ok");
+}
+
+TEST_CASE("Design commands: dragging sketch points (CAD-123)", "[commands][cad][solver]")
+{
+    commands::Session s;
+    const Json sk = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "rectangle"}, {"corner", {0, 0}}, {"width", 40}, {"height", 20}},
+                                                 {{"type", "circle"}, {"center", {80, 0}}, {"radius", 5}}})},
+                         {"constraints", Json::array({{{"type", "radius"}, {"curve", 4}, {"value", 5}}})}});
+    const auto id = sk.at("id").get<std::uint64_t>();
+
+    // The top-right corner of the rectangle goes to (50, 30): it stays a rectangle.
+    run(s, "sketch.move_point", {{"sketch", id}, {"point", {{"curve", 1}, {"point", "end"}}}, {"to", {50, 30}}});
+    Json c = run(s, "sketch.curves", {{"sketch", id}});
+    const auto& right = c.at("curves")[1].at("points");
+    CHECK(right[1][0].get<double>() == Approx(50).margin(1e-4));
+    CHECK(right[1][1].get<double>() == Approx(30).margin(1e-4));
+    CHECK(right[0][0].get<double>() == Approx(50).margin(1e-4)); // still vertical
+    const auto& bottom = c.at("curves")[0].at("points");
+    CHECK(bottom[0][1].get<double>() == Approx(bottom[1][1].get<double>()).margin(1e-6));
+    CHECK(c.at("constraints").size() == 1); // the hold is not kept
+
+    // The circle's centre moves; its radius dimension holds.
+    run(s, "sketch.move_point", {{"sketch", id}, {"point", {{"curve", 4}, {"point", "center"}}}, {"to", {90, 10}}});
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    CHECK(c.at("curves")[4].at("points")[0][0].get<double>() == Approx(90).margin(1e-4));
+    CHECK(c.at("curves")[4].at("radius").get<double>() == Approx(5).margin(1e-6));
+
+    // A fixed point does not move, and nothing changes.
+    run(s, "sketch.add_constraints",
+        {{"sketch", id}, {"constraints", Json::array({{{"type", "fix"}, {"points", Json::array({{{"curve", 0}, {"point", "start"}}})}}})}});
+    const auto bad = s.execute("sketch.move_point",
+                               {{"sketch", id}, {"point", {{"curve", 0}, {"point", "start"}}}, {"to", {-10, -10}}});
+    CHECK_FALSE(bad.ok);
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    CHECK(c.at("curves")[0].at("points")[0][0].get<double>() == Approx(0).margin(1e-6));
+
+    // One undo step per drag.
+    run(s, "edit.undo"); // the fix
+    run(s, "edit.undo"); // the circle drag
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    CHECK(c.at("curves")[4].at("points")[0][0].get<double>() == Approx(80).margin(1e-4));
+}
+
+TEST_CASE("Design commands: fit points between the ends of a spline (CAD-198)", "[commands][cad][solver]")
+{
+    commands::Session s;
+    const Json sk = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "spline"}, {"points", {{0, 0}, {10, 10}, {20, 0}, {30, 5}}}},
+                                                 {{"type", "line"}, {"start", {0, 30}}, {"end", {40, 30}}}})}});
+    const auto id = sk.at("id").get<std::uint64_t>();
+
+    // Dragging the second fit point moves only it; the ends stay.
+    run(s, "sketch.move_point",
+        {{"sketch", id}, {"point", {{"curve", 0}, {"point", "fit"}, {"index", 1}}}, {"to", {10, 20}}});
+    Json c = run(s, "sketch.curves", {{"sketch", id}});
+    const auto& pts = c.at("curves")[0].at("points");
+    REQUIRE(pts.size() == 4);
+    CHECK(pts[1][0].get<double>() == Approx(10).margin(1e-4));
+    CHECK(pts[1][1].get<double>() == Approx(20).margin(1e-4));
+    CHECK(pts[0][0].get<double>() == Approx(0).margin(1e-6));
+    CHECK(pts[2][0].get<double>() == Approx(20).margin(1e-6));
+    CHECK(pts[3][1].get<double>() == Approx(5).margin(1e-6));
+
+    // A fit point can be constrained too: coincident with the end of the line.
+    run(s, "sketch.add_constraints",
+        {{"sketch", id},
+         {"constraints", Json::array({{{"type", "coincident"},
+                                       {"points", Json::array({{{"curve", 0}, {"point", "fit"}, {"index", 2}},
+                                                               {{"curve", 1}, {"point", "end"}}})}}})}});
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    const auto& a = c.at("curves")[0].at("points")[2];
+    const auto& b = c.at("curves")[1].at("points")[1];
+    CHECK(a[0].get<double>() == Approx(b[0].get<double>()).margin(1e-5));
+    CHECK(a[1].get<double>() == Approx(b[1].get<double>()).margin(1e-5));
+
+    // A Fix on a fit point holds it where it is (not at the spline's start).
+    run(s, "sketch.add_constraints",
+        {{"sketch", id}, {"constraints", Json::array({{{"type", "fix"}, {"points", Json::array({{{"curve", 0}, {"point", "fit"}, {"index", 1}}})}}})}});
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    const auto& fixAt = c.at("constraints").back().at("at")[0];
+    CHECK(fixAt[0].get<double>() == Approx(10).margin(1e-4));
+    CHECK(fixAt[1].get<double>() == Approx(20).margin(1e-4));
+    CHECK(c.at("curves")[0].at("points")[1][1].get<double>() == Approx(20).margin(1e-4));
+
+    // A Fix on the whole spline holds its inner fit points too.
+    const Json sk2 = run(s, "sketch.create",
+                         {{"plane", "XY"},
+                          {"curves", Json::array({{{"type", "spline"}, {"points", {{0, 50}, {10, 60}, {20, 50}}}}})},
+                          {"constraints", Json::array({{{"type", "fix"}, {"curve", 0}}})}});
+    const auto id2 = sk2.at("id").get<std::uint64_t>();
+    const auto held = s.execute("sketch.move_point",
+                                {{"sketch", id2}, {"point", {{"curve", 0}, {"point", "fit"}, {"index", 1}}}, {"to", {10, 70}}});
+    CHECK_FALSE(held.ok);
+    c = run(s, "sketch.curves", {{"sketch", id2}});
+    CHECK(c.at("curves")[0].at("points")[1][1].get<double>() == Approx(60).margin(1e-6));
+
+    // An index past the fit points is an error, not a crash.
+    const auto bad = s.execute("sketch.move_point",
+                               {{"sketch", id}, {"point", {{"curve", 0}, {"point", "fit"}, {"index", 9}}}, {"to", {0, 0}}});
+    CHECK_FALSE(bad.ok);
+    const auto line = s.execute("sketch.move_point",
+                                {{"sketch", id}, {"point", {{"curve", 1}, {"point", "fit"}, {"index", 0}}}, {"to", {0, 0}}});
+    CHECK_FALSE(line.ok);
+}
+
+TEST_CASE("Design commands: dragging keeps expressions and regular polygons (CAD-123)", "[commands][cad][solver]")
+{
+    {
+        // A centre rectangle's corner dragged past the opposite corner stays where it is put.
+        commands::Session t;
+        const auto rid = run(t, "sketch.create",
+                             {{"plane", "XY"},
+                              {"curves", Json::array({{{"type", "center_rectangle"}, {"center", {0, 0}}, {"width", 40}, {"height", 20}}})}})
+                             .at("id")
+                             .get<std::uint64_t>();
+        run(t, "sketch.move_point", {{"sketch", rid}, {"point", {{"curve", 0}, {"point", "start"}}}, {"to", {30, 20}}});
+        const Json rc = run(t, "sketch.curves", {{"sketch", rid}});
+        const auto& p = rc.at("curves")[0].at("points")[0];
+        CHECK(p[0].get<double>() == Approx(30).margin(1e-4));
+        CHECK(p[1].get<double>() == Approx(20).margin(1e-4));
+    }
+    commands::Session s;
+    run(s, "parameter.set", {{"name", "r"}, {"expression", "6 mm"}});
+    const auto id = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {20, 0}}},
+                                                 {{"type", "circle"}, {"center", {50, 0}}, {"radius", "r"}},
+                                                 {{"type", "polygon"}, {"center", {0, 50}}, {"radius", 10}, {"sides", 5}}})}})
+                        .at("id")
+                        .get<std::uint64_t>();
+
+    // A line end is dragged: the circle does not move and keeps its parameter.
+    run(s, "sketch.move_point", {{"sketch", id}, {"point", {{"curve", 0}, {"point", "end"}}}, {"to", {25, 5}}});
+    run(s, "parameter.set", {{"name", "r"}, {"expression", "8 mm"}});
+    Json c = run(s, "sketch.curves", {{"sketch", id}});
+    CHECK(c.at("curves")[1].at("radius").get<double>() == Approx(8));
+
+    // A polygon vertex goes where it is dragged, and the polygon stays regular.
+    run(s, "sketch.move_point", {{"sketch", id}, {"point", {{"curve", 4}, {"point", "start"}}}, {"to", {0, 65}}});
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    const auto& v = c.at("curves")[4].at("points")[0];
+    CHECK(v[0].get<double>() == Approx(0).margin(1e-4));
+    CHECK(v[1].get<double>() == Approx(65).margin(1e-4));
+    std::vector<double> sides;
+    for (std::size_t i = 2; i < 7; ++i) {
+        const auto& p = c.at("curves")[i].at("points");
+        sides.push_back(std::hypot(p[1][0].get<double>() - p[0][0].get<double>(), p[1][1].get<double>() - p[0][1].get<double>()));
+    }
+    for (const double l : sides)
+        CHECK(l == Approx(sides[0]).epsilon(1e-6));
+    // Regular: every vertex at the same distance from the centre of the vertices.
+    double cx = 0, cy = 0;
+    for (std::size_t i = 2; i < 7; ++i) {
+        cx += c.at("curves")[i].at("points")[0][0].get<double>() / 5;
+        cy += c.at("curves")[i].at("points")[0][1].get<double>() / 5;
+    }
+    const auto& p0 = c.at("curves")[2].at("points")[0];
+    const double r0 = std::hypot(p0[0].get<double>() - cx, p0[1].get<double>() - cy);
+    for (std::size_t i = 3; i < 7; ++i) {
+        const auto& p = c.at("curves")[i].at("points")[0];
+        CHECK(std::hypot(p[0].get<double>() - cx, p[1].get<double>() - cy) == Approx(r0).epsilon(1e-6));
+    }
+}
+
+TEST_CASE("Design commands: extrude to object (CAD-125)", "[commands][cad]")
+{
+    commands::Session s;
+    // A round bar along X at z = 30 (radius 10) and a 10 x 10 square under it.
+    const auto barSketch = run(s, "sketch.create",
+                               {{"plane", "YZ"},
+                                {"curves", Json::array({{{"type", "circle"}, {"center", {0, 30}}, {"radius", 10}}})}})
+                               .at("id")
+                               .get<std::uint64_t>();
+    const auto bar = run(s, "feature.extrude", {{"sketch", barSketch}, {"distance", 20}, {"extent", "symmetric"}})
+                         .at("id")
+                         .get<std::uint64_t>();
+    const auto sq = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "center_rectangle"}, {"center", {0, 0}}, {"width", 10}, {"height", 10}}})}})
+                        .at("id")
+                        .get<std::uint64_t>();
+
+    // Up to the bar: the top follows its round underside.
+    // V = 10 * (10 * 30 - integral of sqrt(100 - y^2) over [-5, 5]).
+    const double expected = 10.0 * (300.0 - (5.0 * std::sqrt(75.0) + 100.0 * std::asin(0.5)));
+    Json ex = run(s, "feature.extrude", {{"sketch", sq}, {"extent", "to_object"}, {"to", {{"body", bar}}}});
+    REQUIRE(ex.at("bodies").size() == 2); // the bar and the new body
+    CHECK(ex.at("bodies").back().at("volume").get<double>() == Approx(expected).epsilon(1e-4));
+    const auto ext = ex.at("id").get<std::uint64_t>();
+
+    // The other way (flip) nothing is there: an error, nothing built.
+    const auto bad = s.execute("feature.edit", {{"id", ext}, {"params", {{"flip", true}}}});
+    CHECK_FALSE(bad.ok);
+
+    // Up to a picked flat face: the bar's end cap is not in the way, a box top is.
+    run(s, "edit.undo"); // the extrude
+    const auto box = run(s, "feature.box", {{"corner", {-20, -20, 12}}, {"size", {40, 40, 3}}}).at("id").get<std::uint64_t>();
+    (void)box;
+    ex = run(s, "feature.extrude",
+             {{"sketch", sq}, {"extent", "to_object"}, {"to", {{"body", box}, {"faces", Json::array({{{"point", {0, 0, 15}}}})}}}});
+    // Through the box (its top face at z = 15 picked): 10 x 10 x 15.
+    CHECK(ex.at("bodies").back().at("volume").get<double>() == Approx(1500).epsilon(1e-6));
+    // The picked top face is followed when the box gets taller (z 12..20): the old pick point
+    // (z = 15) is now nearer the bottom, but the hints keep the top.
+    run(s, "feature.edit", {{"id", box}, {"params", {{"size", {40, 40, 8}}}}});
+    Json bodiesNow = run(s, "timeline.list").at("bodies");
+    CHECK(bodiesNow.back().at("volume").get<double>() == Approx(2000).epsilon(1e-6));
+    run(s, "feature.edit", {{"id", box}, {"params", {{"size", {40, 40, 3}}}}});
+
+    // A target narrower than the profile does not stop all of it: refused, not a column
+    // running past the object.
+    const auto wide = run(s, "sketch.create",
+                          {{"plane", "XY"},
+                           {"curves", Json::array({{{"type", "center_rectangle"}, {"center", {100, 0}}, {"width", 20}, {"height", 20}}})}})
+                          .at("id")
+                          .get<std::uint64_t>();
+    const auto small = run(s, "feature.box", {{"corner", {95, -5, 20}}, {"size", {10, 10, 10}}}).at("id").get<std::uint64_t>();
+    CHECK_FALSE(s.execute("feature.extrude", {{"sketch", wide}, {"extent", "to_object"}, {"to", {{"body", small}}}}).ok);
+}
+
+TEST_CASE("Design commands: construction curves (CAD-126)", "[commands][cad]")
+{
+    commands::Session s;
+    const Json sk = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "rectangle"}, {"corner", {0, 0}}, {"width", 40}, {"height", 20}},
+                                                 {{"type", "line"}, {"start", {0, 0}}, {"end", {40, 20}}}})}});
+    const auto id = sk.at("id").get<std::uint64_t>();
+    CHECK(sk.at("profiles") == 2); // the diagonal splits the rectangle
+
+    // The diagonal as construction: one profile again; indices do not change.
+    Json r = run(s, "sketch.set_construction", {{"sketch", id}, {"curves", {4}}});
+    CHECK(r.at("profiles") == 1);
+    Json c = run(s, "sketch.curves", {{"sketch", id}});
+    CHECK(c.at("curves")[4].at("construction") == true);
+    CHECK(c.at("curves")[0].at("construction") == false);
+
+    // One side of the rectangle: the shape keeps its constraints (still a rectangle when a
+    // side is dimensioned), and the outline is open: no profile.
+    r = run(s, "sketch.set_construction", {{"sketch", id}, {"curves", {2}}});
+    CHECK(r.at("profiles") == 0);
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    CHECK(c.at("curves").size() == 5);
+    CHECK(c.at("curves")[2].at("construction") == true);
+    run(s, "sketch.add_constraints", {{"sketch", id}, {"constraints", Json::array({{{"type", "length"}, {"curve", 1}, {"value", 30}}})}});
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    const auto& left = c.at("curves")[3].at("points");
+    CHECK(std::abs(left[0][1].get<double>() - left[1][1].get<double>()) == Approx(30).margin(1e-4)); // parallel sides follow
+
+    // Back to normal: the outline closes again; one undo step each.
+    run(s, "sketch.set_construction", {{"sketch", id}, {"curves", {2}}, {"construction", false}});
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    CHECK(c.at("curves")[2].at("construction") == false);
+    run(s, "edit.undo");
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    CHECK(c.at("curves")[2].at("construction") == true);
+}
+
+TEST_CASE("Design commands: trim sketch curves (CAD-126)", "[commands][cad]")
+{
+    commands::Session s;
+    // A plus sign: two lines crossing at (0, 0), and a circle of radius 10 through both.
+    const auto id = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "line"}, {"start", {-20, 0}}, {"end", {20, 0}}},
+                                                 {{"type", "line"}, {"start", {0, -20}}, {"end", {0, 20}}},
+                                                 {{"type", "circle"}, {"center", {0, 0}}, {"radius", 10}}})}})
+                        .at("id")
+                        .get<std::uint64_t>();
+    auto lineLength = [](const Json& c) {
+        const auto& p = c.at("points");
+        return std::hypot(p[1][0].get<double>() - p[0][0].get<double>(), p[1][1].get<double>() - p[0][1].get<double>());
+    };
+
+    // The horizontal line's end outside the circle (x 10..20) goes.
+    run(s, "sketch.trim", {{"sketch", id}, {"curve", 0}, {"at", {15, 0.3}}});
+    Json c = run(s, "sketch.curves", {{"sketch", id}});
+    REQUIRE(c.at("curves").size() == 3);
+    // Line 0 is now the remaining piece -20..10 (added at the end).
+    const auto& last = c.at("curves")[2];
+    CHECK(last.at("kind") == "line");
+    CHECK(lineLength(last) == Approx(30).margin(1e-6));
+
+    // The circle's quarter between the two lines (upper right) goes: a 270 degree arc stays.
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    std::size_t circle = 0;
+    for (std::size_t i = 0; i < c.at("curves").size(); ++i)
+        if (c.at("curves")[i].at("kind") == "circle")
+            circle = i;
+    run(s, "sketch.trim", {{"sketch", id}, {"curve", circle}, {"at", {7, 7}}});
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    bool arc = false;
+    for (const auto& k : c.at("curves")) {
+        if (k.at("kind") != "arc")
+            continue;
+        arc = true;
+        const auto& p = k.at("points");
+        // From (0, 10) round the left to (10, 0): the through point is at (-10, 0)-ish side.
+        CHECK(p[1][0].get<double>() < 0);
+        const std::set<std::pair<long, long>> ends{{std::lround(p[0][0].get<double>()), std::lround(p[0][1].get<double>())},
+                                                   {std::lround(p[2][0].get<double>()), std::lround(p[2][1].get<double>())}};
+        CHECK(ends == std::set<std::pair<long, long>>{{0, 10}, {10, 0}});
+    }
+    CHECK(arc);
+
+    // A line that crosses nothing is removed whole; one undo step.
+    const std::size_t before = c.at("curves").size();
+    run(s, "sketch.add_curves", {{"sketch", id}, {"curves", Json::array({{{"type", "line"}, {"start", {50, 50}}, {"end", {60, 50}}}})}});
+    run(s, "sketch.trim", {{"sketch", id}, {"curve", before}, {"at", {55, 50}}});
+    CHECK(run(s, "sketch.curves", {{"sketch", id}}).at("curves").size() == before);
+    run(s, "edit.undo");
+    CHECK(run(s, "sketch.curves", {{"sketch", id}}).at("curves").size() == before + 1);
+}
+
+TEST_CASE("Design commands: mirror sketch curves (CAD-126)", "[commands][cad][solver]")
+{
+    commands::Session s;
+    // A vertical centre line at x = 0, a triangle on its right and a circle.
+    const auto id = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "line"}, {"start", {0, -30}}, {"end", {0, 30}}, {"construction", true}},
+                                                 {{"type", "line"}, {"start", {0, 0}}, {"end", {20, 0}}},
+                                                 {{"type", "line"}, {"start", {20, 0}}, {"end", {0, 15}}},
+                                                 {{"type", "circle"}, {"center", {10, 20}}, {"radius", 3}}})}})
+                        .at("id")
+                        .get<std::uint64_t>();
+    run(s, "sketch.mirror", {{"sketch", id}, {"curves", {1, 2, 3}}, {"line", 0}});
+    Json c = run(s, "sketch.curves", {{"sketch", id}});
+    REQUIRE(c.at("curves").size() == 7);
+    CHECK(c.at("curves")[4].at("points")[1][0].get<double>() == Approx(-20).margin(1e-6));
+    CHECK(c.at("curves")[6].at("points")[0][0].get<double>() == Approx(-10).margin(1e-6));
+    CHECK(c.at("curves")[6].at("radius").get<double>() == Approx(3).margin(1e-6));
+    // Closed with the mirrored side: one triangle profile (two halves) plus the circles.
+    CHECK(run(s, "sketch.profiles", {{"sketch", id}}).at("profiles").size() >= 3);
+
+    // The copies follow: a dimension on the original moves the mirrored point too (the
+    // mirror line is fixed, else the solver may move it as well).
+    run(s, "sketch.add_constraints",
+        {{"sketch", id}, {"constraints", Json::array({{{"type", "fix"}, {"curve", 0}}, {{"type", "length"}, {"curve", 1}, {"value", 25}}, {{"type", "radius"}, {"curve", 3}, {"value", 5}}})}});
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    const double xo = c.at("curves")[1].at("points")[1][0].get<double>();
+    const double xm = c.at("curves")[4].at("points")[1][0].get<double>();
+    CHECK(xm == Approx(-xo).margin(1e-5));
+    CHECK(c.at("curves")[6].at("radius").get<double>() == Approx(5).margin(1e-6));
+
+    // A spline's copy keeps its ends mirrored.
+    {
+        commands::Session t;
+        const auto sid = run(t, "sketch.create",
+                             {{"plane", "XY"},
+                              {"curves", Json::array({{{"type", "line"}, {"start", {0, -30}}, {"end", {0, 30}}},
+                                                      {{"type", "spline"}, {"points", Json::array({{5, 0}, {10, 8}, {20, 3}})}}})}})
+                             .at("id")
+                             .get<std::uint64_t>();
+        run(t, "sketch.mirror", {{"sketch", sid}, {"curves", {1}}, {"line", 0}});
+        run(t, "sketch.add_constraints", {{"sketch", sid}, {"constraints", Json::array({{{"type", "fix"}, {"curve", 0}}})}});
+        run(t, "sketch.move_point", {{"sketch", sid}, {"point", {{"curve", 1}, {"point", "end"}}}, {"to", {25, 6}}});
+        const Json sc = run(t, "sketch.curves", {{"sketch", sid}});
+        const auto& copy = sc.at("curves")[2].at("points");
+        CHECK(copy.back()[0].get<double>() == Approx(-25).margin(1e-5));
+        CHECK(copy.back()[1].get<double>() == Approx(6).margin(1e-5));
+    }
+
+    // The mirror line must be a line; one undo step.
+    CHECK_FALSE(s.execute("sketch.mirror", {{"sketch", id}, {"curves", {1}}, {"line", 3}}).ok);
+    run(s, "edit.undo");
+    run(s, "edit.undo");
+    CHECK(run(s, "sketch.curves", {{"sketch", id}}).at("curves").size() == 4);
+}
+
+TEST_CASE("Design commands: sketch fillet (CAD-126)", "[commands][cad][solver]")
+{
+    commands::Session s;
+    const auto id = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "rectangle"}, {"corner", {0, 0}}, {"width", 40}, {"height", 20}}})}})
+                        .at("id")
+                        .get<std::uint64_t>();
+    // Bottom (0) and right (1) sides meet at (40, 0).
+    run(s, "sketch.fillet", {{"sketch", id}, {"curves", {0, 1}}, {"radius", 5}});
+    Json c = run(s, "sketch.curves", {{"sketch", id}});
+    REQUIRE(c.at("curves").size() == 5);
+    CHECK(c.at("curves")[4].at("kind") == "arc");
+    const auto ex = run(s, "feature.extrude", {{"sketch", id}, {"distance", 1}});
+    CHECK(ex.at("bodies").back().at("volume").get<double>() == Approx(800 - (25 - std::numbers::pi * 25 / 4)).epsilon(1e-6));
+
+    // The radius is a dimension: editing it updates the corner (and the extrude).
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    std::size_t radiusIndex = 0;
+    for (std::size_t i = 0; i < c.at("constraints").size(); ++i)
+        if (c.at("constraints")[i].at("type") == "radius")
+            radiusIndex = i;
+    run(s, "sketch.edit_constraint", {{"sketch", id}, {"index", radiusIndex}, {"value", 8}});
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    const auto& arcCurve = c.at("curves")[4];
+    CHECK(std::hypot(arcCurve.at("points")[0][0].get<double>() - arcCurve.at("center")[0].get<double>(),
+                     arcCurve.at("points")[0][1].get<double>() - arcCurve.at("center")[1].get<double>()) == Approx(8).margin(1e-6));
+    // Still tangent: the arc ends where the (still horizontal) bottom line ends.
+    const auto& bottom = c.at("curves")[2].at("points");
+    CHECK(bottom[0][1].get<double>() == Approx(bottom[1][1].get<double>()).margin(1e-6));
+    const Json tl = run(s, "timeline.list");
+    CHECK(tl.at("features").back().at("status") == "ok"); // the extrude still has its profile
+
+    // Too large a radius, or lines that do not meet: refused.
+    CHECK_FALSE(s.execute("sketch.fillet", {{"sketch", id}, {"curves", {0, 1}}, {"radius", 50}}).ok);
+
+    // Rounding a corner of two construction lines gives a construction arc (no new profile).
+    const auto cid = run(s, "sketch.create",
+                         {{"plane", "XY"},
+                          {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {20, 0}}, {"construction", true}},
+                                                  {{"type", "line"}, {"start", {20, 0}}, {"end", {20, 20}}, {"construction", true}}})}})
+                         .at("id")
+                         .get<std::uint64_t>();
+    run(s, "sketch.fillet", {{"sketch", cid}, {"curves", {0, 1}}, {"radius", 5}});
+    const Json cc = run(s, "sketch.curves", {{"sketch", cid}});
+    REQUIRE(cc.at("curves").size() == 3);
+    for (const auto& curve : cc.at("curves"))
+        CHECK(curve.at("construction") == true);
+}
+
+TEST_CASE("Design commands: sketch offset (CAD-126)", "[commands][cad]")
+{
+    commands::Session s;
+    const auto id = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "rectangle"}, {"corner", {0, 0}}, {"width", 40}, {"height", 20}},
+                                                 {{"type", "circle"}, {"center", {100, 0}}, {"radius", 5}}})}})
+                        .at("id")
+                        .get<std::uint64_t>();
+    // The rectangle 2 mm outwards: 4 sides and 4 corner arcs; the ring between them is
+    // its own profile.
+    run(s, "sketch.offset", {{"sketch", id}, {"curves", {0, 1, 2, 3}}, {"distance", 2}});
+    Json c = run(s, "sketch.curves", {{"sketch", id}});
+    CHECK(c.at("curves").size() == 5 + 8);
+    double minX = 1e9;
+    for (std::size_t i = 5; i < c.at("curves").size(); ++i)
+        for (const auto& p : c.at("curves")[i].at("points"))
+            minX = std::min(minX, p[0].get<double>());
+    CHECK(minX == Approx(-2).margin(1e-6));
+    // A circle 1 mm inwards.
+    run(s, "sketch.offset", {{"sketch", id}, {"curves", {4}}, {"distance", -1}});
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    CHECK(c.at("curves").back().at("kind") == "circle");
+    CHECK(c.at("curves").back().at("radius").get<double>() == Approx(4).margin(1e-6));
+    // Too far inwards collapses: refused.
+    CHECK_FALSE(s.execute("sketch.offset", {{"sketch", id}, {"curves", {4}}, {"distance", -6}}).ok);
+
+    // A closed spline gives a closed (periodic) spline: smooth at the seam, its end point
+    // not repeated.
+    Json oval = Json::array();
+    for (int i = 0; i < 8; ++i) {
+        const double a = 2 * std::numbers::pi * i / 8;
+        oval.push_back({200 + 20 * std::cos(a), 10 * std::sin(a)});
+    }
+    const auto sp = run(s, "sketch.create",
+                        {{"plane", "XY"}, {"curves", Json::array({{{"type", "spline"}, {"points", oval}, {"closed", true}}})}})
+                        .at("id")
+                        .get<std::uint64_t>();
+    run(s, "sketch.offset", {{"sketch", sp}, {"curves", {0}}, {"distance", 2}});
+    c = run(s, "sketch.curves", {{"sketch", sp}});
+    REQUIRE(c.at("curves").size() == 2);
+    const auto& outer = c.at("curves")[1];
+    CHECK(outer.at("kind") == "spline");
+    CHECK(outer.at("closed") == true);
+    const auto& pts = outer.at("points");
+    CHECK(std::hypot(pts.front()[0].get<double>() - pts.back()[0].get<double>(),
+                     pts.front()[1].get<double>() - pts.back()[1].get<double>()) > 1.0);
+}
+
+TEST_CASE("Design commands: project body edges into a sketch (CAD-126)", "[commands][cad]")
+{
+    commands::Session s;
+    // A cylinder r 10 standing on XY at (30, 0), and a box; a sketch on a plane above.
+    run(s, "feature.cylinder", {{"center", {30, 0, 0}}, {"radius", 10}, {"height", 15}});
+    const auto box = run(s, "feature.box", {{"corner", {-20, -5, 0}}, {"size", {10, 10, 10}}}).at("id").get<std::uint64_t>();
+    const auto id = run(s, "sketch.create", {{"plane", "XY"}, {"offset", 40}}).at("id").get<std::uint64_t>();
+    // The box's top edge along x at y = -5, z = 10 and a vertical edge (seen end-on: left out).
+    run(s, "sketch.project", {{"sketch", id}, {"body", box}, {"edges", Json::array({{{"point", {-15, -5, 10}}}, {{"point", {-20, -5, 5}}}})}});
+    Json c = run(s, "sketch.curves", {{"sketch", id}});
+    REQUIRE(c.at("curves").size() == 1);
+    CHECK(c.at("curves")[0].at("kind") == "line");
+    CHECK(c.at("curves")[0].at("points")[0][1].get<double>() == Approx(-5).margin(1e-6));
+    // The cylinder's top circle stays a circle.
+    run(s, "sketch.project", {{"sketch", id}, {"body", "Body1"}, {"edges", Json::array({{{"point", {30, 10, 15}}}})}});
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    REQUIRE(c.at("curves").size() == 2);
+    CHECK(c.at("curves")[1].at("kind") == "circle");
+    CHECK(c.at("curves")[1].at("radius").get<double>() == Approx(10).margin(1e-6));
+    CHECK(c.at("curves")[1].at("points")[0][0].get<double>() == Approx(30).margin(1e-6));
+    CHECK(c.at("degreesOfFreedom") == 0); // fixed
+    // The projected circle bounds a profile to extrude.
+    CHECK(run(s, "sketch.profiles", {{"sketch", id}}).at("profiles").size() == 1);
+
+    // Seen edge-on from a side plane, the rim is its diameter: a line, not a spline that
+    // runs there and back.
+    const auto side = run(s, "sketch.create", {{"plane", "XZ"}, {"offset", 30}}).at("id").get<std::uint64_t>();
+    run(s, "sketch.project", {{"sketch", side}, {"body", "Body1"}, {"edges", Json::array({{{"point", {30, 10, 15}}}})}});
+    c = run(s, "sketch.curves", {{"sketch", side}});
+    REQUIRE(c.at("curves").size() == 1);
+    CHECK(c.at("curves")[0].at("kind") == "line");
+    const auto& ends = c.at("curves")[0].at("points");
+    CHECK(std::hypot(ends[0][0].get<double>() - ends[1][0].get<double>(), ends[0][1].get<double>() - ends[1][1].get<double>()) ==
+          Approx(20).margin(1e-6));
+    CHECK(c.at("degreesOfFreedom") == 0);
+}
+
+TEST_CASE("Design commands: body.faces gives the nearest face and its normal at a point", "[commands][cad]")
+{
+    // Codex on PR #125: on a cylinder, a pick on the side opposite the face's parameter
+    // middle is nearer the caps' planes than the side's tangent plane there.
+    commands::Session s;
+    run(s, "feature.cylinder", {{"center", {0, 0, 0}}, {"radius", 10}, {"height", 20}});
+    const double k = std::sqrt(0.5);
+    for (const auto& [px, py] : {std::pair{10.0, 0.0}, std::pair{-10.0, 0.0}, std::pair{0.0, -10.0},
+                                 std::pair{10 * k, 10 * k}}) {
+        const Json r = run(s, "body.faces", {{"body", "Body1"}, {"point", {px, py, 10}}});
+        const auto& faces = r.at("faces");
+        const auto idx = r.at("nearest").at("index").get<std::size_t>();
+        CHECK(faces.at(idx).at("type").get<std::string>() == "cylinder");
+        const auto& n = r.at("nearest").at("normal");
+        CHECK(n[0].get<double>() == Approx(px / 10).margin(1e-6));
+        CHECK(n[1].get<double>() == Approx(py / 10).margin(1e-6));
+        CHECK(n[2].get<double>() == Approx(0).margin(1e-6));
+    }
+    const Json top = run(s, "body.faces", {{"body", "Body1"}, {"point", {3, 2, 20}}});
+    CHECK(top.at("nearest").at("normal")[2].get<double>() == Approx(1).margin(1e-9));
+    CHECK_FALSE(run(s, "body.faces", {{"body", "Body1"}}).contains("nearest"));
+}
+
+TEST_CASE("Design commands: body.edges / body.faces before a feature see the rolled-back body", "[commands][cad]")
+{
+    // The size arrow of an edited fillet is placed on the body as it was before the fillet.
+    commands::Session s;
+    run(s, "feature.box", {{"corner", {0, 0, 0}}, {"size", {40, 30, 20}}});
+    const Json fillet =
+        run(s, "feature.fillet", {{"body", "Body1"}, {"edges", Json::array({{{"point", {28, 0, 20}}}})}, {"radius", 6}});
+    const auto filletId = fillet.at("id").get<std::uint64_t>();
+    CHECK(run(s, "body.edges", {{"body", "Body1"}}).at("edges").size() > 12);
+    const Json before = run(s, "body.edges", {{"body", "Body1"}, {"before", filletId}, {"point", {28, 0, 20}}});
+    CHECK(before.at("edges").size() == 12);
+    const auto& e = before.at("edges").at(before.at("nearest").at("index").get<std::size_t>());
+    CHECK(e.at("middle")[0].get<double>() == Approx(20));
+    CHECK(e.at("middle")[1].get<double>() == Approx(0).margin(1e-9));
+    CHECK(e.at("middle")[2].get<double>() == Approx(20));
+    CHECK(run(s, "body.faces", {{"body", "Body1"}, {"before", filletId}}).at("faces").size() == 6);
+    // The design itself is untouched: still filleted, marker at the end, nothing to undo added.
+    const double pi = std::numbers::pi;
+    CHECK(s.design().bodies().begin()->second.shape.volume() == Approx(24000 - 40 * 36 * (1 - pi / 4)).epsilon(1e-6));
+    CHECK(s.design().marker() == s.design().features().size());
+}
+
+TEST_CASE("Design commands: timeline.move_feature reorders the timeline, refuses broken orders", "[commands][cad]")
+{
+    // CAD-160 (Fusion: drag a feature in the timeline).
+    commands::Session s;
+    const auto box = run(s, "feature.box", {{"corner", {0, 0, 0}}, {"size", {40, 30, 20}}}).at("id").get<std::uint64_t>();
+    const auto fillet = run(s, "feature.fillet",
+                            {{"body", box}, {"edges", Json::array({{{"point", {28, 0, 20}}}})}, {"radius", 4}})
+                            .at("id")
+                            .get<std::uint64_t>();
+    const auto other = run(s, "feature.box", {{"corner", {100, 0, 0}}, {"size", {10, 10, 10}}}).at("id").get<std::uint64_t>();
+    const auto order = [&] {
+        std::vector<std::uint64_t> ids;
+        const Json tl = run(s, "timeline.list");
+        for (const auto& f : tl.at("features"))
+            ids.push_back(f.at("id").get<std::uint64_t>());
+        return ids;
+    };
+    REQUIRE(order() == std::vector<std::uint64_t>{box, fillet, other});
+
+    // An independent body can go first; everything still works.
+    const Json moved = run(s, "timeline.move_feature", {{"id", other}, {"position", 0}});
+    CHECK(order() == std::vector<std::uint64_t>{other, box, fillet});
+    for (const auto& f : moved.at("features"))
+        CHECK(f.at("status").get<std::string>() == "ok");
+    CHECK(s.design().bodies().size() == 2);
+
+    // The fillet cannot go before the box it rounds: refused, nothing changes.
+    const commands::CommandResult bad = s.execute("timeline.move_feature", {{"id", fillet}, {"position", 0}});
+    CHECK_FALSE(bad.ok);
+    CHECK(bad.error.find("Cannot move it there") != std::string::npos);
+    CHECK(order() == std::vector<std::uint64_t>{other, box, fillet});
+    const double pi = std::numbers::pi;
+    CHECK(s.design().bodies().at(box).shape.volume() == Approx(24000 - 40 * 16 * (1 - pi / 4)).epsilon(1e-6));
+
+    // Across the marker: rolled back features stay rolled back, the moved one follows its side.
+    run(s, "timeline.set_marker", {{"position", 2}}); // other, box active; fillet rolled back
+    run(s, "timeline.move_feature", {{"id", other}, {"position", 2}});
+    CHECK(order() == std::vector<std::uint64_t>{box, fillet, other});
+    const Json tl = run(s, "timeline.list");
+    CHECK(tl.at("marker").get<std::size_t>() == 1);
+    CHECK(tl.at("features")[1].at("status").get<std::string>() == "rolled_back");
+    CHECK(tl.at("features")[2].at("status").get<std::string>() == "rolled_back");
+
+    // One undo step each.
+    run(s, "edit.undo");
+    CHECK(order() == std::vector<std::uint64_t>{other, box, fillet});
+    CHECK(run(s, "timeline.list").at("marker").get<std::size_t>() == 2);
+    run(s, "edit.undo"); // marker
+    run(s, "edit.undo"); // first move
+    CHECK(order() == std::vector<std::uint64_t>{box, fillet, other});
+}
+
+TEST_CASE("Design commands: parameter.evaluate evaluates without recording (CAD-199)", "[commands][cad]")
+{
+    commands::Session s;
+    run(s, "parameter.set", {{"name", "w"}, {"expression", "30 mm"}});
+    CHECK(run(s, "parameter.evaluate", {{"expression", "w / 2"}}).at("value").get<double>() == Approx(15.0));
+    CHECK(run(s, "parameter.evaluate", {{"expression", "1 cm"}}).at("value").get<double>() == Approx(10.0));
+    CHECK(run(s, "parameter.evaluate", {{"expression", 7}}).at("value").get<double>() == Approx(7.0));
+    CHECK_FALSE(s.execute("parameter.evaluate", {{"expression", "nope * 2"}}).ok);
+    // Nothing was recorded: one undo removes the parameter, then there is nothing left.
+    REQUIRE(s.execute("edit.undo").ok);
+    CHECK_FALSE(s.execute("edit.undo").ok);
+}
+
+TEST_CASE("Design commands: three-point rectangle at an angle (CAD-203)", "[commands][cad][solver]")
+{
+    commands::Session s;
+    run(s, "parameter.set", {{"name", "h"}, {"expression", "10 mm"}});
+    // One side from (0, 0) to (30, 40) (50 long), the other 10 to its left; and one with a
+    // negative height, to the right of its first side.
+    const Json sk = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "three_point_rectangle"}, {"start", {0, 0}}, {"end", {30, 40}},
+                                                  {"height", "h"}},
+                                                 {{"type", "three_point_rectangle"}, {"start", {100, 0}},
+                                                  {"end", {120, 0}}, {"height", -5}}})}});
+    CHECK(sk.at("profiles") == 2);
+    const auto id = sk.at("id").get<std::uint64_t>();
+    Json c = run(s, "sketch.curves", {{"sketch", id}});
+    REQUIRE(c.at("curves").size() == 8);
+    const auto& far = c.at("curves")[1].at("points")[1];
+    CHECK(far[0].get<double>() == Approx(22).margin(1e-6));
+    CHECK(far[1].get<double>() == Approx(46).margin(1e-6));
+    const auto& below = c.at("curves")[5].at("points")[1];
+    CHECK(below[0].get<double>() == Approx(120).margin(1e-6));
+    CHECK(below[1].get<double>() == Approx(-5).margin(1e-6));
+
+    const Json ex = run(s, "feature.extrude", {{"sketch", id}, {"distance", 5}});
+    double volume = 0;
+    for (const auto& b : ex.at("bodies"))
+        volume += b.at("volume").get<double>();
+    CHECK(volume == Approx((50 * 10 + 20 * 5) * 5.0));
+
+    // Dragging the far corner keeps a rectangle: the sides stay perpendicular and parallel.
+    run(s, "edit.undo");
+    run(s, "sketch.move_point", {{"sketch", id}, {"point", {{"curve", 1}, {"point", "end"}}}, {"to", {10, 60}}});
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    auto dir = [&](int i) {
+        const auto& p = c.at("curves")[i].at("points");
+        return std::array<double, 2>{p[1][0].get<double>() - p[0][0].get<double>(),
+                                     p[1][1].get<double>() - p[0][1].get<double>()};
+    };
+    const auto d0 = dir(0), d1 = dir(1), d2 = dir(2), d3 = dir(3);
+    CHECK(d0[0] * d1[0] + d0[1] * d1[1] == Approx(0).margin(1e-6));
+    CHECK(d0[0] * d2[1] - d0[1] * d2[0] == Approx(0).margin(1e-6));
+    CHECK(d1[0] * d3[1] - d1[1] * d3[0] == Approx(0).margin(1e-6));
+    // The stored item follows the drag (its height is no longer the expression).
+    const Json tl = run(s, "timeline.list");
+    const Json item = tl.at("features")[0].at("params").at("curves")[0];
+    CHECK(item.at("type") == "three_point_rectangle");
+    CHECK(item.at("height").is_number());
+
+    // One side made construction splits the item into lines; the drag still keeps a
+    // rectangle (the perpendicular constraint is carried over, not dropped).
+    run(s, "sketch.set_construction", {{"sketch", id}, {"curves", {3}}});
+    run(s, "sketch.move_point", {{"sketch", id}, {"point", {{"curve", 1}, {"point", "end"}}}, {"to", {0, 70}}});
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    CHECK(c.at("curves")[3].at("construction") == true);
+    const auto e0 = dir(0), e1 = dir(1), e2 = dir(2), e3 = dir(3);
+    CHECK(e0[0] * e1[0] + e0[1] * e1[1] == Approx(0).margin(1e-6));
+    CHECK(e0[0] * e2[1] - e0[1] * e2[0] == Approx(0).margin(1e-6));
+    CHECK(e1[0] * e3[1] - e1[1] * e3[0] == Approx(0).margin(1e-6));
+
+    // A zero height is refused.
+    CHECK_FALSE(s.execute("sketch.create", {{"plane", "XY"},
+                                            {"curves", Json::array({{{"type", "three_point_rectangle"},
+                                                                     {"start", {0, 0}}, {"end", {10, 0}},
+                                                                     {"height", 0}}})}})
+                    .ok);
+}
+
+TEST_CASE("Design commands: symmetric on two lines or two circles (CAD-206)", "[commands][cad][solver]")
+{
+    commands::Session s;
+    // Axis x = 0 (curve 0, fixed); line 2 runs the other way, so its end pairs with the start of
+    // line 1; circles 3 and 4.
+    const Json sk = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "line"}, {"start", {0, -50}}, {"end", {0, 50}}, {"construction", true}},
+                                                 {{"type", "line"}, {"start", {10, 0}}, {"end", {20, 10}}},
+                                                 {{"type", "line"}, {"start", {-22, 13}}, {"end", {-11, 1}}},
+                                                 {{"type", "circle"}, {"center", {20, -20}}, {"radius", 4}},
+                                                 {{"type", "circle"}, {"center", {-18, -22}}, {"radius", 6}}})},
+                         {"constraints", Json::array({{{"type", "fix"}, {"curves", {0}}}})}});
+    const auto id = sk.at("id").get<std::uint64_t>();
+    run(s, "sketch.add_constraints",
+        {{"sketch", id},
+         {"constraints", Json::array({{{"type", "symmetric"}, {"curves", {1, 2}}, {"curve", 0}},
+                                      {{"type", "symmetric"}, {"curves", {3, 4}}, {"curve", 0}}})}});
+    const Json c = run(s, "sketch.curves", {{"sketch", id}});
+    const auto pt = [&](int i, int k) { return c.at("curves")[i].at("points")[k]; };
+    const auto mirrored = [](const Json& p, const Json& q) {
+        CHECK(p[0].get<double>() == Approx(-q[0].get<double>()).margin(1e-6));
+        CHECK(p[1].get<double>() == Approx(q[1].get<double>()).margin(1e-6));
+    };
+    mirrored(pt(1, 0), pt(2, 1)); // start of 1 with the end of 2 (the nearer end), not flipped
+    mirrored(pt(1, 1), pt(2, 0));
+    mirrored(pt(3, 0), pt(4, 0));
+    CHECK(c.at("curves")[3].at("radius").get<double>() == Approx(c.at("curves")[4].at("radius").get<double>()));
+    // Stored as point symmetries (+ equal radii): fix, 2 for the lines, 2 for the circles.
+    const auto& list = c.at("constraints");
+    REQUIRE(list.size() == 5);
+    CHECK(list[1].at("points")[1] == Json({{"curve", 2}, {"point", "end"}}));
+    CHECK(list[4].at("type") == "equal");
+    // One undo step removes all of them.
+    run(s, "edit.undo");
+    CHECK(run(s, "sketch.curves", {{"sketch", id}}).at("constraints").size() == 1);
+
+    // Refused: a line with a circle, a circle as the axis, an item as its own axis.
+    for (const Json& bad : {Json{{"type", "symmetric"}, {"curves", {1, 3}}, {"curve", 0}},
+                            Json{{"type", "symmetric"}, {"curves", {1, 2}}, {"curve", 3}},
+                            Json{{"type", "symmetric"}, {"curves", {1, 2}}, {"curve", 1}}}) {
+        const auto r = s.execute("sketch.add_constraints", {{"sketch", id}, {"constraints", Json::array({bad})}});
+        CHECK_FALSE(r.ok);
+    }
+}
+
+TEST_CASE("Design commands: symmetric on two arcs mirrors the whole arc (CAD-206)", "[commands][cad][solver]")
+{
+    commands::Session s;
+    // Axis x = 0 (fixed). Arcs 1 and 2 both counter-clockwise (the start of 1 pairs with the end
+    // of 2); arcs 3 (counter-clockwise) and 4 (clockwise) pair start to start. Circle 5.
+    const auto arc = [](Json st, Json th, Json en) { return Json{{"type", "arc"}, {"start", st}, {"through", th}, {"end", en}}; };
+    const Json sk = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "line"}, {"start", {0, -80}}, {"end", {0, 80}}, {"construction", true}},
+                                                 arc({30, -30}, {40, -25}, {30, -20}),
+                                                 arc({-31, -21}, {-41, -26}, {-30, -31}),
+                                                 arc({50, 30}, {60, 35}, {50, 40}),
+                                                 arc({-50, 29}, {-61, 34}, {-51, 39}),
+                                                 {{"type", "circle"}, {"center", {20, 60}}, {"radius", 4}}})},
+                         {"constraints", Json::array({{{"type", "fix"}, {"curves", {0}}}})}});
+    const auto id = sk.at("id").get<std::uint64_t>();
+    run(s, "sketch.add_constraints",
+        {{"sketch", id},
+         {"constraints", Json::array({{{"type", "symmetric"}, {"curves", {1, 2}}, {"curve", 0}},
+                                      {{"type", "symmetric"}, {"curves", {3, 4}}, {"curve", 0}}})}});
+    // The whole arc (start, middle, end) is the mirror image, also after a dimension change.
+    const auto check = [&]() {
+        const Json c = run(s, "sketch.curves", {{"sketch", id}}).at("curves");
+        const auto mirrored = [](const Json& p, const Json& q) {
+            CHECK(p[0].get<double>() == Approx(-q[0].get<double>()).margin(1e-6));
+            CHECK(p[1].get<double>() == Approx(q[1].get<double>()).margin(1e-6));
+        };
+        for (int k = 0; k < 3; ++k) {
+            mirrored(c[1].at("points")[k], c[2].at("points")[2 - k]); // same direction: reversed
+            mirrored(c[3].at("points")[k], c[4].at("points")[k]);     // opposite direction
+        }
+        const auto& p = c[1].at("points");
+        CHECK(std::hypot(p[0][0].get<double>() - p[1][0].get<double>(), p[0][1].get<double>() - p[1][1].get<double>()) > 1);
+    };
+    check();
+    run(s, "sketch.add_constraints",
+        {{"sketch", id}, {"constraints", Json::array({{{"type", "radius"}, {"curve", 1}, {"value", 9}}, {{"type", "radius"}, {"curve", 3}, {"value", 7}}})}});
+    check();
+    // A circle and an arc cannot be mirror images.
+    const auto r = s.execute("sketch.add_constraints",
+                             {{"sketch", id}, {"constraints", Json::array({{{"type", "symmetric"}, {"curves", {5, 1}}, {"curve", 0}}})}});
+    CHECK_FALSE(r.ok);
 }

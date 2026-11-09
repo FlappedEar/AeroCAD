@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CAD-115: Export suggests the part's name as the file name and its button says Export, and
+# an open scan mesh can be written as STL (a warning, Export Anyway), not only Cancel.
+ui.wait(1000)
+(() => { const p = controller.execute("document.parts").result.parts[0]; window.selectPart(p.id); window.openExport([p.id]) })()
+ui.wait(800)
+(() => { const f = decodeURIComponent(exportDialog.selectedFile.toString()); ui.log("SUGGESTED " + f + " label " + exportDialog.acceptLabel); if (!/\/dome_scan\.stl$/.test(f)) ui.fail("no part name suggested: " + f); if (exportDialog.acceptLabel !== "Export") ui.fail("button: " + exportDialog.acceptLabel) })()
+ui.shot("export-file-name.png")
+ui.key("Escape")
+ui.wait(300)
+# Accepting the suggested name: the scan is open, so the check warns and still lets it out.
+(() => { const p = controller.execute("document.parts").result.parts[0]; window.openExport([p.id]); exportDialog.accept() })()
+ui.wait(800)
+(() => { ui.log("CHECK " + exportCheckDialog.opened + " canExport " + exportCheckDialog.check.canExport); if (!exportCheckDialog.opened || !exportCheckDialog.check.canExport) ui.fail("an open scan cannot be exported") })()
+ui.shot("export-open-scan.png")
+ui.clickText("Export Anyway")
+ui.wait(800)
+(() => { const m = controller.statusMessage; ui.log("STATUS " + m); if (m.indexOf("Exported 1 part") !== 0 || m.indexOf("dome_scan.stl") < 0) ui.fail("the scan was not written: " + m) })()
+# Everything visible: the project's name (an unsaved project has a default one) or "export".
+(() => { window.openExport([]); const f = decodeURIComponent(exportDialog.selectedFile.toString()); ui.log("ALL " + f); if (!/\/[^/]+\.stl$/.test(f) || /\/\.stl$/.test(f)) ui.fail("no file name for all parts: " + f) })()
+ui.key("Escape")
+ui.log("export file name done")

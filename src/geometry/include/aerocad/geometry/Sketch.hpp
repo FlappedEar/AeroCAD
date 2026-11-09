@@ -87,6 +87,26 @@ struct SketchGeometry {
 /// The given curves as 3D edges (a compound), unsplit; used as sweep paths.
 [[nodiscard]] Shape curveEdges(const Plane& plane, const std::vector<SketchCurve>& curves);
 
+/// Offsets a connected chain of sketch curves (Fusion: Sketch Offset) by `distance` in
+/// plane coordinates: positive outwards for a closed chain (to the left of an open one),
+/// negative the other way. Corners are rounded with arcs. The result is lines, arcs,
+/// circles and splines (sampled) in plane coordinates. Throws ModelingError when the
+/// curves are not one chain or the offset collapses.
+[[nodiscard]] std::vector<SketchCurve> offsetCurves(const std::vector<SketchCurve>& curves, double distance);
+
+/// Edges `edgeIndices` of `shape` (indices as Modeling's edges()) projected onto `plane`
+/// as sketch curves in plane coordinates (Fusion: Sketch > Project): lines stay lines,
+/// circles and arcs parallel to the plane stay circles and arcs, anything else becomes a
+/// spline through sampled points. Edges seen end-on (a point) are left out.
+[[nodiscard]] std::vector<SketchCurve> projectEdges(const Shape& shape, const std::vector<std::size_t>& edgeIndices,
+                                                    const Plane& plane);
+
+/// Points along the interpolating spline through the fit points of `spline` (a Spline
+/// curve; the same curve the sketch builds), in plane coordinates: `perSpan` points
+/// per span between fit points, the first and last fit points included (a closed
+/// spline ends where it starts). Throws ModelingError when interpolation fails.
+[[nodiscard]] std::vector<Vec2> sampleSpline(const SketchCurve& spline, int perSpan = 16);
+
 /// Area of all faces of a shape in mm^2.
 [[nodiscard]] double area(const Shape& shape);
 

@@ -9,9 +9,20 @@ Item {
 
     required property AppController controller
     property var selectedPartId: 0
-    signal partPicked(var id)
+    /// Every selected part (Ctrl / Shift + click); selectedPartId is the last picked one.
+    property var selectedPartIds: []
+    /// A click picked part `id` (0: empty space). `additive`: Ctrl / Shift was held, so the
+    /// part joins or leaves the selection. `forMenu`: a right-click, which keeps a selection
+    /// the part is in.
+    signal partPicked(var id, bool additive, bool forMenu)
+    /// A click while a revolve axis is being picked (view coordinates).
+    signal axisClicked(real x, real y)
+    /// Fill the view with part `id` (or its selected area); 0 = the selected part.
+    signal zoomToPartRequested(var id)
     /// Right-click on a part (id 0: on empty space), at x, y in this item.
     signal partContextRequested(var id, real x, real y)
+    /// Right click while a sketch is being edited.
+    signal sketchContextRequested(real x, real y)
     /// Left click on a part: its id and the hit point in model coordinates (mm, Z up).
     signal pointPicked(var id, vector3d point)
     /// A left click went into a hole (or just past an edge) and was moved to the nearest
@@ -49,6 +60,8 @@ Item {
     property var shownSketch: -1
     /// Construction plane that clicks pass through (the one a dialog is creating).
     property var unpickablePlane: -1
+    /// Body (feature id) that must not catch clicks: a feature's own live preview.
+    property var unpickableBody: -1
     property var sketchCurves: []
     property var sketchConstraints: []
     property int sketchDegreesOfFreedom: -1
@@ -56,6 +69,15 @@ Item {
     signal constraintAdded(var constraint)
     signal constraintEdited(int index, var value)
     signal constraintRemoved(int index)
+    signal sketchCurvesDeleted(var indices)
+    signal sketchConstructionToggled(var indices, bool on)
+    signal sketchTrimRequested(int curve, var at)
+    signal sketchMirrorRequested(var curves, int line)
+    signal sketchFilletRequested(var curves, real radius)
+    signal sketchOffsetRequested(var curves, real distance)
+    signal sketchProjectRequested(int body, var point)
+    signal sketchPointDragged(var point, var to, bool done)
+    signal sketchPointDragCancelled()
     signal sketchToolRequested(string tool)
     /// Model-space points to mark (selections of the open feature dialog).
     property var markers: []
@@ -120,14 +142,16 @@ Item {
             const hit = controller.pickSurface(near, far.minus(near))
             if (!hit.partId)
                 return null
-            return { partId: hit.partId, point: hit.point, distance: hit.point.minus(eye).length() }
+            return { partId: hit.partId, point: hit.point, distance: hit.point.minus(eye).length(),
+                     triangle: hit.triangle, localPoint: hit.point }
         }
         // Move / Rotate / Scale running: pick the moved part where it is shown (the ray taken
         // back into its own, unmoved coordinates), the other parts as they are.
         let best = null
         const others = controller.pickSurface(near, far.minus(near), transformTarget.partId, 0)
         if (others.partId)
-            best = { partId: others.partId, point: others.point, distance: others.point.minus(eye).length() }
+            best = { partId: others.partId, point: others.point, distance: others.point.minus(eye).length(),
+                     triangle: others.triangle, localPoint: others.point }
         const localNear = node.mapPositionFromScene(sceneNear)
         const localFar = node.mapPositionFromScene(sceneFar)
         const own = controller.pickSurface(localNear, localFar.minus(localNear), 0, transformTarget.partId)
@@ -135,7 +159,7 @@ Item {
             const p = modelSpace.mapPositionFromScene(node.mapPositionToScene(own.point))
             const d = p.minus(eye).length()
             if (!best || d < best.distance)
-                best = { partId: own.partId, point: p, distance: d }
+                best = { partId: own.partId, point: p, distance: d, triangle: own.triangle, localPoint: own.point }
         }
         return best
     }
@@ -175,6 +199,41 @@ Item {
         if (!hit.partId)
             return null
         return { partId: hit.partId, point: hit.point, distance: hit.point.minus(eye).length(), snapped: true }
+    }
+
+    /// Nearest hit under (x, y) on one of the parts `ids` (a click that goes through
+    /// everything else, such as planes or sketches in front), or null.
+    /// Like pickPart, but a part that cannot take this pick (a construction plane while a
+    /// dialog waits for faces, say) is clicked through to the pickable part behind it, as in
+    /// Fusion.
+    function pickPickablePart(x, y) {
+        const hit = pickPart(x, y)
+        const node = hit && !transformActive ? previewNode(hit.partId) : null
+        if (!node || node.pickable)
+            return hit
+        const ids = []
+        for (let i = 0; i < partRepeater.count; ++i) {
+            const n = partRepeater.objectAt(i)
+            if (n && n.visible && n.pickable)
+                ids.push(n.partId)
+        }
+        return pickPartAmong(x, y, ids)
+    }
+
+    function pickPartAmong(x, y, ids) {
+        const near = modelSpace.mapPositionFromScene(view.mapTo3DScene(Qt.vector3d(x, y, 0)))
+        const far = modelSpace.mapPositionFromScene(view.mapTo3DScene(Qt.vector3d(x, y, 100)))
+        const eye = modelSpace.mapPositionFromScene(view.camera.scenePosition)
+        let best = null
+        for (const id of ids) {
+            const hit = controller.pickSurface(near, far.minus(near), 0, id)
+            if (!hit.partId)
+                continue
+            const d = hit.point.minus(eye).length()
+            if (!best || d < best.distance)
+                best = { partId: hit.partId, point: hit.point, distance: d, triangle: hit.triangle, localPoint: hit.point }
+        }
+        return best
     }
 
     /// Sketch line within the pick radius of view position (x, y), like pickPart, or null.
@@ -261,7 +320,7 @@ Item {
             visibleOnly: !lassoThrough,
             mode: selectMode
         })
-        partPicked(id)
+        partPicked(id, false, false)
     }
 
     /// Frames all visible parts. Deferred until the view has a size.
@@ -272,21 +331,89 @@ Item {
         }
         fitPending = false
         // An empty scene (e.g. a new sketch) gets a 100 mm view.
-        const r = controller.sceneRadius > 1e-6 ? Math.max(controller.sceneRadius, 1) : 50
-        cameraInput.pivot.position = controller.sceneCenter
-        const halfFov = camera.fieldOfView * Math.PI / 360
-        const aspect = Math.max(0.1, width / Math.max(1, height))
-        const fitFov = aspect < 1 ? Math.atan(Math.tan(halfFov) * aspect) : halfFov
-        cameraInput.distance = r / Math.sin(fitFov) * 1.1
+        let r = controller.sceneRadius > 1e-6 ? Math.max(controller.sceneRadius, 1) : 50
+        let c = controller.sceneCenter
+        const p = previewSphere()
+        if (p) {
+            // Move / Rotate / Scale running: everything as it is shown, the preview included.
+            // Smallest sphere around both spheres.
+            const d = p.center.minus(c).length()
+            if (d + r <= p.radius) {
+                c = p.center
+                r = Math.max(p.radius, 1)
+            } else if (d + p.radius > r) {
+                const outer = (d + r + p.radius) / 2
+                c = c.plus(p.center.minus(c).times((outer - r) / d))
+                r = outer
+            }
+        }
+        cameraInput.pivot.position = c
+        cameraInput.distance = frameDistance(r)
         updateClipping()
     }
 
-    /// Frames the area of `radius` (mm) around a model point (a place being worked on).
-    function frameAround(point, radius) {
+    /// Bounding sphere of the Move / Rotate / Scale preview in scene coordinates
+    /// ({ center, radius }), or null when the tool is not running.
+    function previewSphere() {
+        const target = transformTarget
+        if (!target)
+            return null
+        const m = previewPoint(target.partId, target.center)
+        return { center: Qt.vector3d(m.x, m.z, -m.y), radius: (target.radius ?? 0) * transformScale }
+    }
+
+    /// After a typed Move or Scale value: when the preview no longer fits the view (the
+    /// camera ends up inside a part scaled up, the part reaches past an edge, shrinks to a
+    /// dot or moves off screen), frame it, so the whole part stays visible while it is placed.
+    function keepPreviewInView() {
+        const t = transformTarget
+        const p = previewSphere()
+        if (!p)
+            return
+        // The corners of the part's box as previewed (moved, turned, scaled), projected: a
+        // perspective-correct test of what is on screen. A corner behind the camera means
+        // the camera is inside or right next to the preview.
+        const h = (t.size ?? Qt.vector3d(0, 0, 0)).times(0.5)
+        let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, behind = false
+        for (let i = 0; i < 8; ++i) {
+            const c = t.center.plus(Qt.vector3d(i & 1 ? h.x : -h.x, i & 2 ? h.y : -h.y, i & 4 ? h.z : -h.z))
+            const m = previewPoint(t.partId, c)
+            const v = view.mapFrom3DScene(modelSpace.mapPositionToScene(m))
+            if (!(v.z > 0) || !isFinite(v.x) || !isFinite(v.y))
+                behind = true
+            x0 = Math.min(x0, v.x); x1 = Math.max(x1, v.x)
+            y0 = Math.min(y0, v.y); y1 = Math.max(y1, v.y)
+        }
+        const fits = !behind && x0 >= 0 && y0 >= 0 && x1 <= width && y1 <= height
+                     && Math.max(x1 - x0, y1 - y0) >= Math.min(width, height) / 20
+        if (!fits) {
+            const m = previewPoint(t.partId, t.center)
+            // No 1 mm floor here: a part scaled down to a speck is still shown large enough.
+            frameAround([m.x, m.y, m.z], Math.max(p.radius, 1e-6), 1e-3)
+        }
+    }
+
+    /// Zoom In / Zoom Out (keyboard): towards the view centre by `factor` (< 1 = closer).
+    function zoomView(factor) {
+        cameraInput.zoomBy(factor)
+    }
+
+    /// Camera distance at which a sphere of `radius` (mm) fills the view with a margin, also
+    /// in a window narrower than it is high.
+    function frameDistance(radius) {
+        const halfFov = camera.fieldOfView * Math.PI / 360
+        const aspect = Math.max(0.1, width / Math.max(1, height))
+        const fitFov = aspect < 1 ? Math.atan(Math.tan(halfFov) * aspect) : halfFov
+        return radius / Math.sin(fitFov) * 1.1
+    }
+
+    /// Frames the area of `radius` (mm) around a model point (a place being worked on), as
+    /// fitAll() does: the whole sphere fits also in a narrow window.
+    /// `minRadius` (default 1 mm) keeps a click on a tiny feature from zooming in too far.
+    function frameAround(point, radius, minRadius) {
         // Model (x, y, z) is (x, z, -y) in the Y-up scene.
         cameraInput.pivot.position = Qt.vector3d(point[0], point[2], -point[1])
-        const halfFov = camera.fieldOfView * Math.PI / 360
-        cameraInput.distance = Math.max(radius, 1) / Math.sin(halfFov) * 1.1
+        cameraInput.distance = frameDistance(Math.max(radius, minRadius ?? 1))
         updateClipping()
     }
 
@@ -346,10 +473,47 @@ Item {
     }
 
     function updateClipping() {
-        const r = Math.max(controller.sceneRadius, 1)
-        camera.clipFar = cameraInput.distance + r * 4
-        camera.clipNear = Math.max(cameraInput.distance - r * 2, cameraInput.distance * 0.001, 0.001)
+        let r = Math.max(controller.sceneRadius, 1)
+        let c = controller.sceneCenter
+        // A part being moved or scaled can reach past the document's bounds: keep all of
+        // its preview between the clipping planes. (transformTarget itself, not
+        // transformActive: this also runs while the target changes, before bindings update.)
+        const p = previewSphere()
+        if (p) {
+            // Smallest sphere around both, as in fitAll().
+            const d = p.center.minus(c).length()
+            if (d + r <= p.radius) {
+                c = p.center
+                r = p.radius
+            } else if (d + p.radius > r) {
+                const outer = (d + r + p.radius) / 2
+                c = c.plus(p.center.minus(c).times((outer - r) / d))
+                r = outer
+            }
+        }
+        // The planes hug the scene as the camera sees it now (after a pan or an orbit
+        // around the pointer the pivot is no longer the scene centre). The near plane stays
+        // at least 2 % of the pivot distance and 1e-5 of the far one: a near plane much
+        // closer than what is looked at leaves no depth precision, and the surfaces of a
+        // large scan and of a part laid on it flicker through each other when zoomed in.
+        const fwd = Qt.vector3d(-Math.cos(cameraInput.pitch * Math.PI / 180) * Math.sin(cameraInput.yaw * Math.PI / 180),
+                                Math.sin(cameraInput.pitch * Math.PI / 180),
+                                -Math.cos(cameraInput.pitch * Math.PI / 180) * Math.cos(cameraInput.yaw * Math.PI / 180))
+        const eye = cameraInput.pivot.position.minus(fwd.times(cameraInput.distance))
+        const depth = c.minus(eye).dotProduct(fwd)
+        const far = Math.max(depth + r, cameraInput.distance) * 1.02 + 1e-3
+        camera.clipFar = far
+        camera.clipNear = Math.max((depth - r) * 0.98, cameraInput.distance * 0.02, far * 1e-5, 1e-3)
     }
+
+    /// Near and far clipping distances (for tests).
+    function clipRange() {
+        return { near: camera.clipNear, far: camera.clipFar }
+    }
+
+    onTransformScaleChanged: updateClipping()
+    onTransformMoveChanged: updateClipping()
+    onTransformTargetChanged: updateClipping()
 
     Rectangle {
         anchors.fill: parent
@@ -373,6 +537,7 @@ Item {
 
         Node {
             id: pivot
+            onPositionChanged: root.updateClipping()
             PerspectiveCamera {
                 id: camera
                 fieldOfView: 40
@@ -450,8 +615,10 @@ Item {
                     required property string kind
                     required property var featureId
                     required property bool hasBrep
+                    required property string partColor // Appearance, "" = default
                     property var pickPartId: partId
-                    readonly property bool selected: partId === root.selectedPartId
+                    readonly property bool selected: root.selectedPartIds.indexOf(partId) >= 0
+                    readonly property bool hovered: partId === root.hoveredPartId && !selected
                     // Inspect: section view (cut + cap) and heat map replace the plain mesh.
                     readonly property bool sectioned: root.controller.inspectRevision >= 0
                                                       && root.controller.sectionCuts(partId)
@@ -484,7 +651,9 @@ Item {
                     visible: (partVisible || (kind === "sketch" && featureId == root.shownSketch))
                              && root.hiddenPartIds.indexOf(partId) < 0
                     pickable: (root.pickKind === "" || kind === root.pickKind
-                               || (root.pickKind === "solid" && (kind === "body" || (kind === "imported" && hasBrep))))
+                               || (root.pickKind === "solid" && (kind === "body" || (kind === "imported" && hasBrep)))
+                               || (root.pickKind === "axis" && kind === "body" && featureId != root.unpickableBody)
+                               || (root.pickKind === "object" && (kind === "imported" || (kind === "body" && featureId != root.unpickableBody))))
                               && !(kind === "plane" && featureId == root.unpickablePlane)
                     geometry: sectioned ? clippedGeometry : heatMapped ? heatGeometry : plainGeometry
                     // Fusion-like colours: grey bodies, translucent orange sketch profiles and planes.
@@ -492,9 +661,11 @@ Item {
                     PrincipledMaterial {
                         id: plainMaterial
                         baseColor: partModel.selected ? (partModel.kind === "plane" ? Theme.planeSelected : Theme.selectedColor)
-                                 : partModel.kind === "sketch" ? Theme.sketchProfile
-                                 : partModel.kind === "plane" ? Theme.planeFill
-                                 : partModel.kind === "body" ? Theme.bodyColor : Theme.meshColor
+                                 : partModel.kind === "sketch" ? (partModel.hovered ? Theme.planeHover : Theme.sketchProfile)
+                                 : partModel.kind === "plane" ? (partModel.hovered ? Theme.planeHover : Theme.planeFill)
+                                 : Qt.tint(partModel.partColor !== "" ? partModel.partColor
+                                           : partModel.kind === "body" ? Theme.bodyColor : Theme.meshColor,
+                                           partModel.hovered ? Theme.hoverTint : "transparent")
                         alphaMode: partModel.kind === "sketch" || partModel.kind === "plane" ? PrincipledMaterial.Blend : PrincipledMaterial.Default
                         metalness: 0.0
                         roughness: 0.45
@@ -592,25 +763,39 @@ Item {
                 }
             }
 
-            // Simulation results, coloured per vertex and unlit so colours match the legend.
+            // Simulation results, coloured per vertex. The pressure map and the streamline
+            // tubes are lit so their shape reads; sections are flat and unlit so their colours
+            // match the legend exactly (CAD-129).
             Repeater3D {
+                id: fieldRepeater
                 model: root.simulationFields
                 delegate: Model {
+                    id: fieldModel
                     required property var modelData
+                    readonly property bool flat: modelData.kind.indexOf("section") === 0
+                    objectName: "simulationField_" + modelData.kind
                     pickable: false
                     geometry: FieldGeometry {
                         controller: root.controller
                         run: modelData.run
+                        compareRun: modelData.compareRun ?? ""
                         kind: modelData.kind
                         scalar: modelData.scalar
                         rangeMin: modelData.min
                         rangeMax: modelData.max
+                        tubeRadius: modelData.tubeRadius ?? 0
+                        palette: modelData.palette ?? ""
                     }
                     materials: DefaultMaterial {
                         vertexColorsEnabled: true
-                        lighting: DefaultMaterial.NoLighting
+                        lighting: fieldModel.flat ? DefaultMaterial.NoLighting : DefaultMaterial.FragmentLighting
+                        specularAmount: 0.15
                         cullMode: Material.NoCulling
-                        lineWidth: 2
+                        // Dense streamlines, the wake and the vortex cores are see-through, so the part
+                        // shows behind them.
+                        opacity: fieldModel.modelData.kind === "streamlines"
+                                 ? ((fieldModel.modelData.palette ?? "").indexOf("smoke") === 0 ? 0.8 : 0.55)
+                               : (fieldModel.modelData.kind === "wake" || fieldModel.modelData.kind === "vortices") ? 0.8 : 1.0
                     }
                 }
             }
@@ -622,17 +807,25 @@ Item {
         anchors.fill: parent
         pivot: pivot
         camera: camera
+        orthographic: root.orthographic
         pointUnder: (x, y, onModelOnly) => root.scenePointUnder(x, y, onModelOnly)
-        // Right-click: select the part under the cursor and open its context menu.
-        contextMenuEnabled: !root.sketch
+        // Right-click: select the part under the cursor and open its context menu; in a
+        // sketch, the sketch menu (end the curve, tools, Look At, Finish Sketch).
+        onFitAllRequested: root.fitAll()
         onContextClicked: (x, y) => {
+            if (root.sketch) {
+                root.sketchContextRequested(x, y)
+                return
+            }
             const hit = root.pickPart(x, y)
             const id = hit ? hit.partId : 0
             if (id)
-                root.partPicked(id)
+                root.partPicked(id, false, true)
             root.partContextRequested(id, x, y)
         }
         onDistanceChanged: root.updateClipping()
+        onPitchChanged: root.updateClipping()
+        onYawChanged: root.updateClipping()
     }
 
     // Move / Rotate / Scale handles; above the navigation, below the view's own controls.
@@ -669,6 +862,8 @@ Item {
         orthographic: root.orthographic
         onModeSelected: mode => cameraInput.leftDragMode = mode
         onFitRequested: root.fitAll()
+        canFitSelection: !!root.selectedPartId
+        onFitSelectionRequested: root.zoomToPartRequested(0)
         onHomeRequested: root.goHome()
         onProjectionRequested: ortho => root.orthographic = ortho
         gridVisible: root.gridVisible
@@ -677,9 +872,39 @@ Item {
 
     TapHandler {
         acceptedButtons: Qt.LeftButton
+        /// The first click of a double click picked a face (Lay on Face / Face Front).
+        property bool firstTapPicked: false
+        // A click in the view takes the keyboard focus, as in Fusion: a name or value being
+        // typed elsewhere (Browser rename, Move fields) is applied first.
+        onPressedChanged: if (pressed) root.forceActiveFocus()
         onTapped: eventPoint => {
+            if (tapCount === 1)
+                firstTapPicked = !!root.transformPickMode
             // Mesh ray cast: Qt Quick 3D picks custom geometry by its bounding volume only.
-            let hit = root.pickPart(eventPoint.position.x, eventPoint.position.y)
+            let hit = root.transformPickMode ? root.pickPart(eventPoint.position.x, eventPoint.position.y)
+                                             : root.pickPickablePart(eventPoint.position.x, eventPoint.position.y)
+            if (root.transformPickMode) {
+                // Lay on face / Face front: the click picks a face of the part being moved.
+                if (hit && hit.partId === root.transformTarget.partId)
+                    root.orientToFace(hit)
+                else
+                    root.transformStatus(qsTr("Click a face of %1.").arg(root.transformTarget.name))
+                return
+            }
+            // Extrude To Object: only bodies (not the preview), surfaces, solids and scans
+            // take the click; planes and sketches in front are clicked through.
+            if (root.pickKind === "object") {
+                const parts = root.controller.execute("document.parts")
+                const ids = parts.ok ? parts.result.parts.filter(p => p.kind === "imported"
+                                                                  || (p.kind === "body" && p.featureId != root.unpickableBody)).map(p => p.id) : []
+                hit = root.pickPartAmong(eventPoint.position.x, eventPoint.position.y, ids)
+            }
+            // Revolve axis (Fusion: Axis selection): the dialog resolves the click itself, as
+            // a sketch line or a body edge behind its own preview.
+            if (root.pickKind === "axis") {
+                root.axisClicked(eventPoint.position.x, eventPoint.position.y)
+                return
+            }
             if (root.pickSketchLines) {
                 // Sketch lines have no surface: take one within the pick radius unless a
                 // surface is clearly in front of it.
@@ -693,7 +918,11 @@ Item {
                     root.snappedToNearestSurface()
             }
             const id = hit ? hit.partId : 0
-            root.partPicked(id)
+            // Ctrl / Shift + click adds a part to the selection or takes it out (Fusion);
+            // the scan selection tools use their own add / subtract modes.
+            const additive = root.tool === "navigate" && !root.pickKind && !root.pickSketchLines
+                             && !!(point.modifiers & (Qt.ControlModifier | Qt.ShiftModifier))
+            root.partPicked(id, additive, false)
             if (!hit)
                 return
             if (root.tool === "region") {
@@ -708,7 +937,16 @@ Item {
                 root.pointPicked(id, root.modelPoint(hit))
             }
         }
-        onDoubleTapped: if (root.tool === "navigate") root.fitAll()
+        // Double click: on a part fills the view with it, on empty space fits everything.
+        onDoubleTapped: eventPoint => {
+            if (root.tool !== "navigate" || root.transformPickMode || firstTapPicked)
+                return
+            const hit = root.pickPart(eventPoint.position.x, eventPoint.position.y)
+            if (hit)
+                root.zoomToPartRequested(hit.partId)
+            else
+                root.fitAll()
+        }
     }
 
     // Brush strokes and lasso drawing (left drag while a selection tool is active).
@@ -754,7 +992,7 @@ Item {
                 strokePartId = hit ? hit.partId : 0
                 if (!strokePartId)
                     return
-                root.partPicked(strokePartId)
+                root.partPicked(strokePartId, false, false)
                 root.ensureBrushRadius(strokePartId)
                 if (root.controller.brushBegin(strokePartId, root.brushRadius, root.brushConnected, root.brushStrokeMode()))
                     brushAt(centroid.pressPosition.x, centroid.pressPosition.y)
@@ -780,6 +1018,111 @@ Item {
             }
             lastScreen = pos
         }
+    }
+
+    /// Part under the pointer (0 = none), drawn highlighted like in Fusion so it is clear
+    /// what a click would pick. Only parts that can be picked now are highlighted.
+    property var hoveredPartId: 0
+    readonly property bool hoverHighlightEnabled: tool === "navigate" && !sketch && leftDragMode === ""
+    onHoverHighlightEnabledChanged: if (!hoverHighlightEnabled) hoveredPartId = 0
+    function updateHover(x, y) {
+        const hit = pickPickablePart(x, y)
+        const node = hit ? previewNode(hit.partId) : null
+        hoveredPartId = node && node.visible && node.pickable ? hit.partId : 0
+        updateFieldProbe(x, y, hit)
+    }
+
+    /// Wind tunnel result under the pointer (CAD-134): {x, y, kind, values} or null.
+    property var fieldProbe: null
+    onSimulationFieldsChanged: { fieldProbe = null; refreshHover() }
+    function updateFieldProbe(x, y, partHit) {
+        if (simulationFields.length === 0) {
+            fieldProbe = null
+            return
+        }
+        const near = modelSpace.mapPositionFromScene(view.mapTo3DScene(Qt.vector3d(x, y, 0)))
+        const far = modelSpace.mapPositionFromScene(view.mapTo3DScene(Qt.vector3d(x, y, 100)))
+        const dir = far.minus(near)
+        let best = null
+        for (let i = 0; i < fieldRepeater.count; ++i) {
+            const m = fieldRepeater.objectAt(i)
+            if (!m || !m.geometry)
+                continue
+            const r = m.geometry.pick(near, dir)
+            if (r.point && (!best || r.distance < best.distance))
+                best = r
+        }
+        // A part drawn in front of the result hides it (not the part under its own pressure
+        // map, which is hidden and lies on the same surface).
+        if (best && partHit && hiddenPartIds.indexOf(partHit.partId) < 0) {
+            const partT = partHit.point.minus(near).length() / dir.length()
+            if (partT < best.distance * (1 - 1e-4))
+                best = null
+        }
+        fieldProbe = best ? { x: x, y: y, kind: best.kind, values: best.values } : null
+    }
+    /// The 3D model drawing a result field of the given kind, or null (for checks).
+    function simulationFieldModel(kind) {
+        for (let i = 0; i < fieldRepeater.count; ++i) {
+            const m = fieldRepeater.objectAt(i)
+            if (m && m.modelData.kind === kind)
+                return m
+        }
+        return null
+    }
+    function probeText(p) {
+        if (!p)
+            return ""
+        const v = p.values
+        const f = (x, d) => Number(x).toFixed(d)
+        if (p.kind === "surface")
+            return v.Cp !== undefined ? qsTr("Cp %1 · %2 Pa").arg(f(v.Cp, 2)).arg(f(v.pressure, 0)) : ""
+        const parts = []
+        if (v.speed !== undefined)
+            parts.push(qsTr("%1 m/s").arg(f(v.speed, 1)))
+        if (v.Cp !== undefined)
+            parts.push(qsTr("Cp %1").arg(f(v.Cp, 2)))
+        return parts.join(" · ")
+    }
+    HoverHandler {
+        id: partHover
+        enabled: root.hoverHighlightEnabled
+        property point last
+        // A pick casts a ray through every triangle, so a dense scan is picked at most
+        // every 40 ms, at the last pointer position.
+        onPointChanged: {
+            last = point.position
+            // Orbiting, dragging the manipulator or a selection: no highlight, no picks.
+            if (cameraInput.buttonHeld) {
+                hoverTimer.stop()
+                root.hoveredPartId = 0
+                root.fieldProbe = null
+                return
+            }
+            if (!hoverTimer.running)
+                hoverTimer.start()
+        }
+        onHoveredChanged: if (!hovered) { hoverTimer.stop(); root.hoveredPartId = 0; root.fieldProbe = null }
+    }
+    // The view or the parts change under a still pointer (touchpad pan, F6, a command):
+    // pick again, so the highlight keeps showing what a click would pick.
+    function refreshHover() {
+        if (partHover.hovered && hoverHighlightEnabled && !cameraInput.buttonHeld && !hoverTimer.running)
+            hoverTimer.start()
+    }
+    onViewKeyChanged: refreshHover()
+    Connections {
+        target: root.controller
+        function onBoundsChanged() { root.refreshHover() }
+    }
+    Connections {
+        target: cameraInput
+        function onButtonHeldChanged() { if (cameraInput.buttonHeld) { hoverTimer.stop(); root.hoveredPartId = 0 } }
+    }
+    Timer {
+        id: hoverTimer
+        interval: 40
+        onTriggered: if (partHover.hovered && !cameraInput.buttonHeld && root.hoverHighlightEnabled) root.updateHover(partHover.last.x, partHover.last.y)
     }
 
     // Brush outline under the pointer, sized from the surface depth.
@@ -877,6 +1220,15 @@ Item {
         return view.mapFrom3DScene(modelSpace.mapPositionToScene(p))
     }
 
+    /// Whether a model-space point is in front of the eye (an overlay drawn over the view
+    /// can show it even nearer than the near clipping plane, which hugs the parts).
+    function inFrontOfEye(p) {
+        if (root.orthographic)
+            return true
+        const s = modelSpace.mapPositionToScene(p)
+        return s.minus(camera.scenePosition).dotProduct(camera.forward) > 1e-6
+    }
+
     // --- Move / Rotate / Scale tool (Fusion: Move/Copy, M) --------------------------------
     // The part follows the manipulator (TransformGizmo) and the panel live, as a transform of
     // its 3D node; finishTransform(true) applies it as one command (one undo step):
@@ -890,6 +1242,8 @@ Item {
     property real transformScale: 1
     readonly property bool transformActive: !!transformTarget
     /// After the tool applied (committed) or was cancelled.
+    /// "lay" or "front" while the next click picks a face to orient the part by.
+    property string transformPickMode: ""
     signal transformFinished(bool committed)
 
     /// Starts the tool on a part (partInfo). Returns false for parts that cannot be moved.
@@ -902,9 +1256,11 @@ Item {
         transformMove = Qt.vector3d(0, 0, 0)
         transformRotation = Qt.quaternion(1, 0, 0, 0)
         transformScale = 1
+        transformPickMode = ""
         transformTarget = { partId: info.id, kind: info.kind, featureId: info.featureId,
                       center: Qt.vector3d(info.center[0], info.center[1], info.center[2]),
-                      name: info.name || "", canScale: true }
+                      name: info.name || "", canScale: true, radius: (info.diagonal ?? 0) / 2,
+                      size: Qt.vector3d(info.sizeX ?? 0, info.sizeY ?? 0, info.sizeZ ?? 0) }
         return true
     }
 
@@ -963,7 +1319,7 @@ Item {
     readonly property var transformKeepsFor: ["document.parts", "document.bounds", "timeline.list", "sketch.profiles",
         "sketch.curves", "mesh.stats", "simulation.list", "simulation.results", "simulation.field",
         "simulation.environment", "simulation.status", "project.info", "project.get_context", "edit.history",
-        "inspect.state", "inspect.dimensions", "selection.get", "parameter.list"]
+        "inspect.state", "inspect.dimensions", "selection.get", "parameter.list", "part.face_orientation"]
     Connections {
         target: root.controller
         enabled: root.transformActive
@@ -976,15 +1332,72 @@ Item {
     }
 
     /// Ends the tool: commit applies the preview as one command, otherwise the part goes back.
+    /// The part being moved was just pasted (Copy / Paste): cancelling removes it again.
+    property bool transformPasted: false
+
+    /// Esc / Cancel / Undo in the tool: drops the preview; a part pasted for this move is
+    /// removed again (Fusion: cancelling Paste pastes nothing).
+    function cancelTransform() {
+        const pasted = transformPasted && transformTarget
+        finishTransform(false)
+        if (pasted && controller.undoText.startsWith("Duplicate"))
+            controller.execute("edit.undo")
+    }
+
+    /// The last hint or error the Move / Rotate / Scale tool put in the status bar: cleared
+    /// when the tool ends, so no instruction of a closed tool stays there (CAD-98).
+    property string transformStatusText: ""
+    function transformStatus(message) {
+        transformStatusText = message
+        controller.showStatus(message)
+    }
+
     function finishTransform(commit) {
         if (!transformTarget)
             return null
         const c = commit ? transformCommand() : null
+        transformPasted = false
+        transformPickMode = ""
         transformTarget = null
         resetTransform()
+        // Before the command: a failure it reports stays in the status bar.
+        if (transformStatusText && controller.statusMessage === transformStatusText)
+            controller.showStatus("")
+        transformStatusText = ""
         const r = c ? controller.execute(c.command, c.params) : null
         transformFinished(!!commit)
         return r
+    }
+
+    /// Lay on Face / Face Front: the part.face_orientation command works out the whole
+    /// transform from the picked face and the pending one; the preview shows it.
+    function orientToFace(hit) {
+        const t = transformTarget
+        const mode = transformPickMode
+        const q = transformRotation
+        const w = Math.max(-1, Math.min(1, q.scalar))
+        const sinHalf = Math.sqrt(Math.max(0, 1 - w * w))
+        const params = { id: t.partId, point: [hit.localPoint.x, hit.localPoint.y, hit.localPoint.z],
+                         mode: mode === "lay" ? "down" : "front", center: [t.center.x, t.center.y, t.center.z],
+                         scale: transformScale, translate: [transformMove.x, transformMove.y, transformMove.z] }
+        if (hit.triangle !== undefined)
+            params.triangle = hit.triangle
+        if (sinHalf > 1e-9) {
+            params.axis = [q.x / sinHalf, q.y / sinHalf, q.z / sinHalf]
+            params.angle = 2 * Math.acos(w) * 180 / Math.PI
+        }
+        const r = controller.execute("part.face_orientation", params)
+        transformPickMode = ""
+        if (!r.ok) {
+            transformStatus(r.error)
+            return false
+        }
+        const o = r.result
+        transformRotation = axisAngleQuaternion(Qt.vector3d(o.axis[0], o.axis[1], o.axis[2]), o.angle)
+        transformMove = Qt.vector3d(o.translate[0], o.translate[1], o.translate[2])
+        transformStatus(mode === "lay" ? qsTr("Laid on the picked face, on the ground. Enter applies.")
+                        : qsTr("The picked face looks to the front (where the wind tunnel air comes from). Enter applies."))
+        return true
     }
 
     function quaternionMultiply(a, b) {
@@ -1093,6 +1506,118 @@ Item {
     function pickTolerance() {
         const w = cameraInput.worldPerPixel()
         return isFinite(w) && w > 0 ? w * 8 : 0.5
+    }
+
+    /// Wind tunnel being set up (SimulationPanel.proposal: domainModel, partModel, flowModel
+    /// in model mm), drawn as the tunnel's outline and arrows of the air flowing onto the
+    /// part, so the flow direction and the tunnel are clear before a run. null: nothing.
+    property var cfdPreview: null
+    Canvas {
+        id: tunnelCanvas
+        objectName: "tunnelCanvas"
+        anchors.fill: parent
+        visible: !!root.cfdPreview
+        /// Arrows drawn on the last paint (for tests): [{tail, head}] in view pixels.
+        property var arrows: []
+        readonly property var key: [root.viewKey, root.cfdPreview]
+        onKeyChanged: requestPaint()
+        function pt(x, y, z) {
+            const m = Qt.vector3d(x, y, z)
+            const v = root.viewPoint(m)
+            // z > 0: in front of the eye (the near plane only bounds the parts).
+            return Qt.vector3d(v.x, v.y, root.inFrontOfEye(m) ? 1 : -1)
+        }
+        onPaint: {
+            const ctx = getContext("2d")
+            ctx.reset()
+            const p = root.cfdPreview
+            if (!p) {
+                arrows = []
+                return
+            }
+            const d = p.domainModel, b = p.partModel, f = p.flowModel
+            // Tunnel outline: the 12 edges of the domain box, dashed; its own corners when
+            // given, so a tunnel turned by a yaw is drawn turned (CAD-188).
+            const c = []
+            for (let i = 0; i < 8; ++i)
+                c.push(p.domainCorners ? pt(p.domainCorners[i][0], p.domainCorners[i][1], p.domainCorners[i][2])
+                                       : pt(i & 1 ? d.max[0] : d.min[0], i & 2 ? d.max[1] : d.min[1], i & 4 ? d.max[2] : d.min[2]))
+            ctx.strokeStyle = Theme.accent
+            ctx.globalAlpha = 0.55
+            ctx.lineWidth = 1.2
+            ctx.setLineDash([5, 5])
+            ctx.beginPath()
+            for (let i = 0; i < 8; ++i)
+                for (const bit of [1, 2, 4])
+                    if (!(i & bit) && c[i].z > 0 && c[i | bit].z > 0) {
+                        ctx.moveTo(c[i].x, c[i].y)
+                        ctx.lineTo(c[i | bit].x, c[i | bit].y)
+                    }
+            ctx.stroke()
+            // Air arrows: a 3 x 3 grid over the part's front, ending a little before it.
+            const size = [0, 1, 2].map(i => b.max[i] - b.min[i])
+            const mid = [0, 1, 2].map(i => (b.min[i] + b.max[i]) / 2)
+            const along = Math.abs(f[0]) * size[0] + Math.abs(f[1]) * size[1] + Math.abs(f[2]) * size[2]
+            const reach = Math.max(...size)
+            // Front of the part: its centre moved back against the flow by half its length.
+            const front = [0, 1, 2].map(i => mid[i] - f[i] * (along / 2 + reach * 0.08))
+            const across = Math.abs(f[0]) > 0.5 ? 1 : 0 // the other horizontal axis
+            const out = []
+            ctx.globalAlpha = 0.9
+            ctx.setLineDash([])
+            ctx.lineWidth = 2.5
+            ctx.fillStyle = ctx.strokeStyle = Theme.accent
+            for (const u of [-0.35, 0, 0.35]) {
+                for (const v of [0.2, 0.5, 0.8]) {
+                    const head = front.slice()
+                    head[across] += u * size[across]
+                    head[2] = b.min[2] + v * size[2]
+                    const tail = [0, 1, 2].map(i => head[i] - f[i] * reach * 0.3)
+                    const h = pt(head[0], head[1], head[2]), t = pt(tail[0], tail[1], tail[2])
+                    if (h.z <= 0 || t.z <= 0)
+                        continue
+                    const len = Math.hypot(h.x - t.x, h.y - t.y)
+                    if (len < 4)
+                        continue
+                    const ux = (h.x - t.x) / len, uy = (h.y - t.y) / len
+                    const tip = Math.min(12, len * 0.4)
+                    ctx.beginPath()
+                    ctx.moveTo(t.x, t.y)
+                    ctx.lineTo(h.x - ux * tip * 0.6, h.y - uy * tip * 0.6)
+                    ctx.stroke()
+                    ctx.beginPath()
+                    ctx.moveTo(h.x, h.y)
+                    ctx.lineTo(h.x - ux * tip - uy * tip * 0.5, h.y - uy * tip + ux * tip * 0.5)
+                    ctx.lineTo(h.x - ux * tip + uy * tip * 0.5, h.y - uy * tip - ux * tip * 0.5)
+                    ctx.closePath()
+                    ctx.fill()
+                    out.push({ tail: Qt.point(t.x, t.y), head: Qt.point(h.x, h.y) })
+                }
+            }
+            arrows = out
+        }
+    }
+
+    // Value of the wind tunnel result under the pointer, next to it (CAD-134).
+    Rectangle {
+        id: probeLabel
+        objectName: "fieldProbeLabel"
+        readonly property string text: root.probeText(root.fieldProbe)
+        visible: text.length > 0
+        x: root.fieldProbe ? Math.min(root.fieldProbe.x + 14, root.width - width - 4) : 0
+        y: root.fieldProbe ? Math.max(4, root.fieldProbe.y - height - 10) : 0
+        z: 10
+        width: probeLabelText.implicitWidth + 12
+        height: probeLabelText.implicitHeight + 6
+        radius: 4
+        color: Theme.tooltip
+        Text {
+            id: probeLabelText
+            anchors.centerIn: parent
+            text: probeLabel.text
+            color: Theme.tooltipText
+            font.pixelSize: 12
+        }
     }
 
     Canvas {
@@ -1239,6 +1764,145 @@ Item {
         function onMoved(delta) { root.sectionDragged(delta) }
     }
 
+    // --- Distance arrow of a feature dialog (Fusion: drag the Extrude arrow) ---------------
+    /// {base: [x, y, z], direction: [x, y, z] (unit), distance: signed mm along it}, or null.
+    property var distanceArrow: null
+    /// Emitted while the arrow is dragged: the signed distance under the cursor (mm).
+    signal distanceArrowDragged(real distance)
+    /// Emitted when a drag of the arrow ends.
+    signal distanceArrowReleased()
+
+    /// Signed position along the line (base, dir) closest to the view ray at (x, y).
+    function lineParameterAt(x, y, base, dir) {
+        const a = modelSpace.mapPositionFromScene(view.mapTo3DScene(Qt.vector3d(x, y, 0)))
+        const b = modelSpace.mapPositionFromScene(view.mapTo3DScene(Qt.vector3d(x, y, 100)))
+        const r = b.minus(a).normalized()
+        const w = base.minus(a)
+        const k = dir.dotProduct(r)
+        const den = 1 - k * k
+        if (den < 1e-6)
+            return NaN // looking straight along the arrow
+        return (k * w.dotProduct(r) - w.dotProduct(dir)) / den
+    }
+
+    Item {
+        id: distanceHandle
+        objectName: "distanceArrow"
+        anchors.fill: parent
+        readonly property var arrow: root.distanceArrow
+        readonly property var ends: {
+            cameraInput.pitch; cameraInput.yaw; cameraInput.distance; pivot.position; root.width; root.height
+            root.orthographic
+            if (!arrow)
+                return null
+            const o = Qt.vector3d(arrow.base[0], arrow.base[1], arrow.base[2])
+            const n = Qt.vector3d(arrow.direction[0], arrow.direction[1], arrow.direction[2])
+            // A zero distance still shows a short arrow to grab.
+            const len = Math.abs(arrow.distance) > 1e-9 ? arrow.distance : root.controller.sceneRadius * 0.1
+            return { o: root.viewPoint(o), tip: root.viewPoint(o.plus(n.times(len))) }
+        }
+        visible: !!ends
+
+        Canvas {
+            anchors.fill: parent
+            readonly property var ends: distanceHandle.ends
+            onEndsChanged: requestPaint()
+            onPaint: {
+                const ctx = getContext("2d")
+                ctx.reset()
+                if (!ends)
+                    return
+                const dx = ends.tip.x - ends.o.x
+                const dy = ends.tip.y - ends.o.y
+                const len = Math.hypot(dx, dy)
+                ctx.strokeStyle = Theme.accent
+                ctx.fillStyle = Theme.accent
+                ctx.lineWidth = 2.5
+                ctx.setLineDash([6, 4])
+                ctx.beginPath()
+                ctx.moveTo(ends.o.x, ends.o.y)
+                ctx.lineTo(ends.tip.x, ends.tip.y)
+                ctx.stroke()
+                ctx.setLineDash([])
+                if (len > 1) {
+                    const ux = dx / len
+                    const uy = dy / len
+                    ctx.beginPath()
+                    ctx.moveTo(ends.tip.x + ux * 14, ends.tip.y + uy * 14)
+                    ctx.lineTo(ends.tip.x - uy * 8, ends.tip.y + ux * 8)
+                    ctx.lineTo(ends.tip.x + uy * 8, ends.tip.y - ux * 8)
+                    ctx.closePath()
+                    ctx.fill()
+                }
+                ctx.beginPath()
+                ctx.arc(ends.o.x, ends.o.y, 4, 0, 2 * Math.PI)
+                ctx.fill()
+                // The distance next to the head, as Fusion shows it while dragging.
+                ctx.font = "bold 12px sans-serif"
+                ctx.fillStyle = Theme.text
+                ctx.fillText(Preferences.formatLength(distanceHandle.arrow.distance, Preferences.lengthUnit),
+                             ends.tip.x + 20, ends.tip.y + 4)
+            }
+        }
+        // Grab area on the arrow head.
+        Rectangle {
+            id: distanceGrip
+            objectName: "distanceArrowGrip"
+            visible: !!distanceHandle.ends
+            x: distanceHandle.ends ? distanceHandle.ends.tip.x - width / 2 : 0
+            y: distanceHandle.ends ? distanceHandle.ends.tip.y - height / 2 : 0
+            width: 30
+            height: 30
+            radius: 15
+            color: distanceDrag.active || distanceHover.hovered ? Theme.accentSoft : "transparent"
+            border.color: Theme.accent
+            border.width: 1.5
+            HoverHandler {
+                id: distanceHover
+                cursorShape: Qt.SizeAllCursor
+            }
+            DragHandler {
+                id: distanceDrag
+                target: null
+                /// Where along the arrow the grab started, relative to its tip.
+                property real grabOffset: 0
+                onActiveChanged: {
+                    const a = root.distanceArrow
+                    if (active && a) {
+                        // From the press, not from where the drag threshold was passed.
+                        const p = distanceGrip.mapToItem(root, centroid.pressPosition.x, centroid.pressPosition.y)
+                        const t = root.lineParameterAt(p.x, p.y, Qt.vector3d(a.base[0], a.base[1], a.base[2]),
+                                                       Qt.vector3d(a.direction[0], a.direction[1], a.direction[2]))
+                        grabOffset = isFinite(t) ? t - a.distance : 0
+                    } else if (!active) {
+                        root.distanceArrowReleased()
+                    }
+                }
+                onCentroidChanged: {
+                    const a = root.distanceArrow
+                    if (!active || !a)
+                        return
+                    const p = distanceGrip.mapToItem(root, centroid.position.x, centroid.position.y)
+                    const base = Qt.vector3d(a.base[0], a.base[1], a.base[2])
+                    const t = root.lineParameterAt(p.x, p.y, base, Qt.vector3d(a.direction[0], a.direction[1], a.direction[2]))
+                    if (!isFinite(t))
+                        return
+                    // Round to a step that follows the zoom (0.1 mm close up, 1 mm or more far away).
+                    const wpp = root.worldPerPixelAt(base)
+                    const step = wpp < 0.05 ? 0.01 : wpp < 0.5 ? 0.1 : wpp < 5 ? 1 : 10
+                    root.distanceArrowDragged(Math.round((t - grabOffset) / step) * step)
+                }
+            }
+        }
+    }
+
+    /// A curve or a constraint pick is under way in the sketch.
+    readonly property bool sketchDrawing: sketchOverlay.drawing
+    /// Ends it, as Esc does.
+    function endSketchCurve() {
+        sketchOverlay.endCurrent()
+    }
+
     SketchOverlay {
         id: sketchOverlay
         anchors.fill: parent
@@ -1253,6 +1917,15 @@ Item {
         onConstraintAdded: c => root.constraintAdded(c)
         onConstraintEdited: (i, v) => root.constraintEdited(i, v)
         onConstraintRemoved: i => root.constraintRemoved(i)
+        onCurvesDeleted: list => root.sketchCurvesDeleted(list)
+        onConstructionToggled: (list, on) => root.sketchConstructionToggled(list, on)
+        onTrimRequested: (curve, at) => root.sketchTrimRequested(curve, at)
+        onMirrorRequested: (curves, line) => root.sketchMirrorRequested(curves, line)
+        onFilletRequested: (curves, radius) => root.sketchFilletRequested(curves, radius)
+        onOffsetRequested: (curves, distance) => root.sketchOffsetRequested(curves, distance)
+        onProjectRequested: (body, point) => root.sketchProjectRequested(body, point)
+        onPointDragged: (point, to, done) => root.sketchPointDragged(point, to, done)
+        onPointDragCancelled: root.sketchPointDragCancelled()
         onToolRequested: t => root.sketchToolRequested(t)
     }
 

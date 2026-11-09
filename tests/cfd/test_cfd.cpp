@@ -4,17 +4,21 @@
 #include "aerocad/cfd/Results.hpp"
 #include "aerocad/cfd/RunManager.hpp"
 #include "aerocad/cfd/Settings.hpp"
+#include "aerocad/cfd/Wheels.hpp"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <optional>
 #include <random>
 #include <sstream>
 #include <thread>
@@ -73,6 +77,48 @@ core::TriangleMesh box(core::Vec3 origin, core::Vec3 size)
     return m;
 }
 
+/// Tyre with its axle along Y and outward normals: the tread, plus side disks when closed.
+/// Each tread triangle spans the whole width, as in a coarse CAD export.
+core::TriangleMesh tyre(core::Vec3 centre, double radius, double width, bool closed = false, int segments = 64)
+{
+    core::TriangleMesh m;
+    const double pi = 3.14159265358979323846;
+    for (int i = 0; i < segments; ++i) {
+        const double a = 2 * pi * i / segments;
+        for (const double side : {-0.5, 0.5})
+            m.addVertex({centre.x + radius * std::cos(a), centre.y + side * width, centre.z + radius * std::sin(a)});
+    }
+    for (int i = 0; i < segments; ++i) {
+        const auto a0 = static_cast<std::uint32_t>(2 * i), b0 = a0 + 1;
+        const auto a1 = static_cast<std::uint32_t>(2 * ((i + 1) % segments)), b1 = a1 + 1;
+        m.addTriangle(a0, b0, b1);
+        m.addTriangle(a0, b1, a1);
+    }
+    if (closed) {
+        const auto lo = m.addVertex({centre.x, centre.y - 0.5 * width, centre.z});
+        const auto hi = m.addVertex({centre.x, centre.y + 0.5 * width, centre.z});
+        for (int i = 0; i < segments; ++i) {
+            const auto a0 = static_cast<std::uint32_t>(2 * i), a1 = static_cast<std::uint32_t>(2 * ((i + 1) % segments));
+            m.addTriangle(lo, a0, a1);
+            m.addTriangle(hi, a1 + 1, a0 + 1);
+        }
+    }
+    return m;
+}
+
+/// A 1000 mm car body on four tyres standing on Z = 0: front r 150 at X 200, rear r 160 at
+/// X 800, tyres 60 wide at Y = +-190, 10 off the body (mm, or metres with scale 0.001).
+core::TriangleMesh car(double scale = 1.0, bool closedTyres = false)
+{
+    core::TriangleMesh m = box({0, -150, 100}, {1000, 300, 200});
+    for (const double y : {-190.0, 190.0}) {
+        m.append(tyre({200, y, 150}, 150, 60, closedTyres));
+        m.append(tyre({800, y, 160}, 160, 60, closedTyres));
+    }
+    m.scale(scale, {0, 0, 0});
+    return m;
+}
+
 std::string slurp(const fs::path& p)
 {
     std::ifstream in(p);
@@ -89,6 +135,24 @@ void write(const fs::path& p, const std::string& text)
 
 /// Writes the output files of a finished solver run into a case directory, in the
 /// formats OpenFOAM v2506 writes them (abridged).
+const char* const kBrokenMeshLog =
+    "Checking geometry...\n"
+    "    Overall domain bounding box (-0.1 -0.2 0) (0.3 0.2 0.2)\n"
+    " ***Zero or negative cell volume detected.  Minimum negative volume: -1.2e-15, Number of negative volume "
+    "cells: 3\n"
+    "  <<Writing 3 zero volume cells to set zeroVolumeCells\n"
+    "    Mesh non-orthogonality Max: 88.1 average: 9.2\n"
+    " ***Number of non-orthogonality errors: 12\n"
+    " ***Error in face pyramids: 24 faces are incorrectly oriented.\n"
+    " ***Max skewness = 6.2, 4 highly skew faces detected which may impair the quality of the results\n"
+    "\nFailed 4 mesh checks.\n\nEnd\n";
+const char* const kPoorMeshLog = "Checking geometry...\n"
+                                 "    Mesh non-orthogonality Max: 72.1 average: 9.2\n"
+                                 " ***Number of non-orthogonality errors: 12\n"
+                                 " ***Max skewness = 6.2, 4 highly skew faces detected which may impair the "
+                                 "quality of the results\n"
+                                 "\nFailed 2 mesh checks.\n\nEnd\n";
+
 void fakeFinishedRun(const fs::path& dir, double cd, double dragN, double liftN = 0.2)
 {
     std::ostringstream coeffs, forces, residuals;
@@ -173,11 +237,197 @@ TEST_CASE("CaseFrame turns the flow direction into +X and back", "[cfd]")
     }
 }
 
+TEST_CASE("Yaw turns the oncoming air and the case frame (CAD-188)", "[cfd]")
+{
+    const double a = 5.0 * 3.14159265358979323846 / 180.0;
+    const auto f = cfd::CaseFrame::forFlow("+Y", {10, 20, 30}, 5.0);
+    // Air from +Y turned 5 degrees counter-clockwise (seen from above) runs along +X in the case.
+    const auto r = f.rotate({-std::sin(a), std::cos(a), 0});
+    CHECK(r.x == Approx(1.0));
+    CHECK(r.y == Approx(0.0).margin(1e-12));
+    const auto flow = f.unrotate({1, 0, 0});
+    CHECK(flow.x == Approx(-std::sin(a)));
+    CHECK(flow.y == Approx(std::cos(a)));
+    const core::Vec3 p{123, -45, 67};
+    const auto back = f.toModel(f.toCase(p));
+    CHECK(back.x == Approx(p.x));
+    CHECK(back.y == Approx(p.y));
+    CHECK(back.z == Approx(p.z));
+    CHECK(cfd::CaseFrame::fromJson(f.toJson()).yaw == 5.0);
+    nlohmann::json old = f.toJson();
+    old.erase("yaw"); // Cases written before CAD-188.
+    CHECK(cfd::CaseFrame::fromJson(old).yaw == 0.0);
+
+    // Settings: parsed, limited to +-30 degrees, a compared condition (0 for older runs).
+    CHECK(cfd::settingsFromJson({{"yaw", -12.5}}).yaw == -12.5);
+    CHECK_THROWS(cfd::settingsFromJson({{"yaw", 31}}));
+    auto withYaw = cfd::toJson(cfd::Settings{});
+    withYaw["yaw"] = 5.0;
+    auto before = cfd::toJson(cfd::Settings{});
+    before.erase("yaw");
+    CHECK(cfd::differingConditions(before, withYaw) == std::vector<std::string>{"yaw"});
+    CHECK(cfd::differingConditions(before, cfd::toJson(cfd::Settings{})).empty());
+    CHECK(cfd::describeCondition("yaw", cfd::toJson(cfd::Settings{}), withYaw) == "Yaw: A 0°, B 5°");
+}
+
+#ifndef _WIN32
+TEST_CASE("writeCase at yaw: geometry turned, road along the heading (CAD-188)", "[cfd]")
+{
+    TempDir tmp;
+    cfd::CaseGeometry g;
+    g.part = box({0, 0, 0}, {200, 80, 60});
+    cfd::Settings s;
+    s.flowDirection = "+X";
+    s.speed = 30;
+    s.ground = true;
+    const auto straight = cfd::planCase(g, s);
+    s.yaw = 10.0;
+    const auto info = cfd::writeCase(tmp.path(), g, s);
+    CHECK(info.frame.yaw == 10.0);
+    // The part is turned in the tunnel: wider across the air, so a larger frontal area.
+    CHECK(info.partBounds.size().y > straight.partBounds.size().y + 0.02);
+    CHECK(info.referenceArea == Approx(0.06 * (0.08 * std::cos(0.1745329) + 0.2 * std::sin(0.1745329))).epsilon(0.02));
+    // The road moves along the car's heading at 30 * cos(10 deg) = 29.54 m/s:
+    // (29.10, -5.13) in the case.
+    const std::string u = slurp(tmp.path() / "0.orig/U");
+    INFO(u);
+    CHECK(u.find("ground { type fixedValue; value uniform (29.09") != std::string::npos);
+    CHECK(u.find(" -5.13") != std::string::npos);
+}
+
+TEST_CASE("writeCase turns the wheels with the car at yaw (CAD-190)", "[cfd][wheels]")
+{
+    TempDir straightDir, yawDir;
+    cfd::CaseGeometry g;
+    g.part = car();
+    cfd::Settings s;
+    s.flowDirection = "+X";
+    s.speed = 30;
+    s.ground = true;
+    s.rotatingWheels = true;
+    const auto straight = cfd::writeCase(straightDir.path(), g, s);
+    s.yaw = 5.0;
+    const auto info = cfd::writeCase(yawDir.path(), g, s);
+    REQUIRE(info.wheels.size() == 4);
+    REQUIRE(straight.wheels.size() == 4);
+    const double a = 5.0 * 3.14159265358979323846 / 180.0;
+    for (std::size_t i = 0; i < 4; ++i) {
+        // The same wheels, their centres turned by -yaw about the case origin.
+        const auto& w0 = straight.wheels[i];
+        const auto& w = info.wheels[i];
+        CHECK(w.radius == Approx(w0.radius));
+        CHECK(w.axle == w0.axle);
+        CHECK(w.centre.x == Approx(std::cos(a) * w0.centre.x + std::sin(a) * w0.centre.y).margin(1e-9));
+        CHECK(w.centre.y == Approx(-std::sin(a) * w0.centre.x + std::cos(a) * w0.centre.y).margin(1e-9));
+        CHECK(w.centre.z == Approx(w0.centre.z));
+    }
+    CHECK(fs::is_regular_file(yawDir.path() / "constant/triSurface/wheels0.stl"));
+    CHECK(fs::is_regular_file(yawDir.path() / "constant/triSurface/wheels1.stl"));
+    // The tyres keep standing on the floor.
+    CHECK(info.domain.min.z == Approx(straight.domain.min.z).margin(1e-9));
+    // Axle (0, -1, 0) turned by -5 deg = (-sin 5, -cos 5); rolling at 30 cos 5 / r.
+    const std::string u = slurp(yawDir.path() / "0.orig/U");
+    INFO(u);
+    std::ostringstream axis, omega;
+    axis.precision(10); // As the case files are written.
+    omega.precision(10);
+    axis << "axis (" << -std::sin(a) << ' ' << -std::cos(a) << " 0)";
+    omega << "omega " << 30.0 * std::cos(a) / info.wheels[0].radius << ';';
+    CHECK(u.find(axis.str()) != std::string::npos);
+    CHECK(u.find(omega.str()) != std::string::npos);
+    // Yaw 0 is written as before.
+    CHECK(slurp(straightDir.path() / "0.orig/U").find("axis (0 -1 0); omega ") != std::string::npos);
+}
+#endif
+
 TEST_CASE("Frontal area of a box is its cross-section", "[cfd]")
 {
     // Already in case frame (m): 0.2 long in X, 0.08 x 0.06 cross-section.
     const auto mesh = box({0, 0, 0}, {0.2, 0.08, 0.06});
     CHECK(cfd::frontalArea(mesh) == Approx(0.08 * 0.06).epsilon(0.01));
+}
+
+TEST_CASE("detectWheels finds the tyres a car stands on", "[cfd][wheels]")
+{
+    // CAD-154, case frame in metres.
+    const auto wheels = cfd::detectWheels(car(0.001), 1.0);
+    REQUIRE(wheels.size() == 4);
+    CHECK(wheels[0].axle == 0);
+    CHECK(wheels[1].axle == 0);
+    CHECK(wheels[2].axle == 1);
+    CHECK(wheels[3].axle == 1);
+    for (int i = 0; i < 4; ++i) {
+        INFO(i);
+        const double r = i < 2 ? 0.150 : 0.160;
+        CHECK(wheels[i].radius == Approx(r).margin(0.003));
+        CHECK(wheels[i].centre.x == Approx(i < 2 ? 0.2 : 0.8).margin(0.002));
+        CHECK(wheels[i].centre.z == Approx(r).margin(0.003));
+        CHECK(wheels[i].centre.y == Approx(i % 2 == 0 ? -0.19 : 0.19).margin(0.002));
+        CHECK(wheels[i].yMax - wheels[i].yMin == Approx(0.06).margin(0.004));
+    }
+    // A box has no wheels.
+    CHECK(cfd::detectWheels(box({0, 0, 0}, {1, 0.4, 0.3}), 1.0).empty());
+
+    const auto split = cfd::splitWheels(car(0.001), wheels);
+    REQUIRE(split.axles.size() == 2);
+    CHECK(split.body.triangleCount() == 12);
+    CHECK(split.axles[0].triangleCount() == 2 * 128);
+    CHECK(split.axles[1].triangleCount() == 2 * 128);
+
+    // Closed tyres: the side disks turn with the tread.
+    const auto closed = cfd::detectWheels(car(0.001, true), 1.0);
+    REQUIRE(closed.size() == 4);
+    for (const auto& w : closed)
+        CHECK(w.yMax - w.yMin == Approx(0.06).margin(0.004));
+    const auto closedSplit = cfd::splitWheels(car(0.001, true), closed);
+    REQUIRE(closedSplit.axles.size() == 2);
+    CHECK(closedSplit.body.triangleCount() == 12);
+    CHECK(closedSplit.axles[0].triangleCount() == 2 * 256);
+    CHECK(closedSplit.axles[1].triangleCount() == 2 * 256);
+}
+
+TEST_CASE("writeCase turns the wheels with the moving floor", "[cfd][wheels]")
+{
+    TempDir tmp;
+    cfd::CaseGeometry g;
+    g.part = car();
+    cfd::Settings s;
+    s.flowDirection = "+X";
+    s.speed = 30;
+    s.ground = true;
+    s.rotatingWheels = true;
+    const auto info = cfd::writeCase(tmp.path(), g, s);
+    REQUIRE(info.wheels.size() == 4);
+    // The floor cuts the tyres 1.5 % of the smaller radius above their bottom.
+    CHECK(info.domain.min.z == Approx(info.partBounds.min.z + 0.015 * info.wheels[0].radius).margin(1e-4));
+    CHECK(fs::is_regular_file(tmp.path() / "constant/triSurface/wheels0.stl"));
+    CHECK(fs::is_regular_file(tmp.path() / "constant/triSurface/wheels1.stl"));
+    const std::string u = slurp(tmp.path() / "0.orig/U");
+    CHECK(u.find("wheels0 { type rotatingWallVelocity; origin (") != std::string::npos);
+    CHECK(u.find("axis (0 -1 0); omega " + std::to_string(30 / info.wheels[0].radius).substr(0, 5)) !=
+          std::string::npos);
+    CHECK(u.find("wheels1 { type rotatingWallVelocity;") != std::string::npos);
+    const std::string control = slurp(tmp.path() / "system/controlDict");
+    CHECK(control.find("patches (part wheels0 wheels1);") != std::string::npos);
+    const std::string snappy = slurp(tmp.path() / "system/snappyHexMeshDict");
+    CHECK(snappy.find("wheels1.stl { type triSurfaceMesh; name wheels1; }") != std::string::npos);
+    CHECK(snappy.find("\"(part|wheels0|wheels1)\" { nSurfaceLayers") != std::string::npos);
+    CHECK(slurp(tmp.path() / "system/surfaceFeatureExtractDict").find("wheels0.stl") != std::string::npos);
+    const auto rt = cfd::CaseInfo::fromJson(nlohmann::json::parse(slurp(tmp.path() / "case.json")));
+    REQUIRE(rt.wheels.size() == 4);
+    CHECK(rt.wheels[3].radius == Approx(info.wheels[3].radius));
+
+    // Without a moving floor, a floor height, or wheels, it says what is wrong.
+    TempDir other;
+    cfd::Settings fixed = s;
+    fixed.groundMoving = false;
+    CHECK_THROWS_WITH(cfd::writeCase(other.path(), g, fixed), Catch::Matchers::ContainsSubstring("moving floor"));
+    cfd::Settings height = s;
+    height.groundHeight = -5.0;
+    CHECK_THROWS_WITH(cfd::writeCase(other.path(), g, height), Catch::Matchers::ContainsSubstring("floor height"));
+    cfd::CaseGeometry plain;
+    plain.part = box({0, 0, 0}, {1000, 400, 300});
+    CHECK_THROWS_WITH(cfd::writeCase(other.path(), plain, s), Catch::Matchers::ContainsSubstring("No wheels"));
 }
 
 TEST_CASE("writeCase writes a complete OpenFOAM case in SI units", "[cfd]")
@@ -215,6 +465,51 @@ TEST_CASE("writeCase writes a complete OpenFOAM case in SI units", "[cfd]")
     CHECK(control.find("Aref " + std::to_string(info.referenceArea).substr(0, 5)) != std::string::npos);
     CHECK(control.find("magUInf $aerocadUInf") != std::string::npos);
     CHECK(control.find("patches (part)") != std::string::npos);
+    CHECK(control.find("type runTimeControl;") != std::string::npos); // CAD-155
+    CHECK(control.find("fields (CdMean ClMean);") != std::string::npos);
+    CHECK(control.find("satisfiedAction end;") != std::string::npos);
+    // Vortex cores (CAD-175): Q at 20 (U / L)^2, the same structures at any speed and size.
+    CHECK(control.find("type Q;") != std::string::npos);
+    CHECK(cfd::vortexQ(info) == Approx(20.0 * std::pow(info.settings.speed / info.characteristicLength, 2)));
+    CHECK(control.find("vortices { type isoSurface; isoField Q; isoValue ") != std::string::npos);
+    // Section stacks for the result view (CAD-148): every plane, cropped to the region
+    // around the part.
+    for (const auto& stack : cfd::sectionStacks())
+        for (std::size_t i = 0; i < stack.fractions.size(); ++i)
+            CHECK(control.find(cfd::sectionName(stack.axis, static_cast<int>(i)) + " { type cuttingPlane;") !=
+                  std::string::npos);
+    CHECK(cfd::sectionName('x', 12) == "sectionX_12");
+    {
+        const auto region = cfd::resultRegion(info);
+        const std::size_t at = control.find("sectionY_2 { type cuttingPlane; point ");
+        REQUIRE(at != std::string::npos);
+        const std::string line = control.substr(at, control.find('\n', at) - at);
+        CHECK(line.find("normal (0 1 0)") != std::string::npos);
+        CHECK(line.find("bounds (") != std::string::npos);
+        // The region holds the part with 0.4 lengths around it and 1.5 lengths of wake.
+        const double L = info.characteristicLength;
+        CHECK(region.min.x == Approx(info.partBounds.min.x - 0.4 * L));
+        CHECK(region.max.x == Approx(info.partBounds.max.x + 1.5 * L));
+        CHECK(region.min.z == Approx(info.partBounds.min.z - 0.4 * L)); // No floor here.
+    }
+    {
+        // CAD-153: a near box around the part at the wake's old level, the far wake one
+        // level coarser; medium surface levels unchanged (default coarse mesh).
+        const std::string snappy = slurp(tmp.path() / "system/snappyHexMeshDict");
+        CHECK(snappy.find("near { type box; min (") != std::string::npos);
+        CHECK(snappy.find("near { mode inside; levels ((1e15 2)); }") != std::string::npos);
+        CHECK(snappy.find("wake { mode inside; levels ((1e15 1)); }") != std::string::npos);
+        CHECK(snappy.find("part { level (3 4);") != std::string::npos);
+        TempDir fineDir;
+        cfd::Settings fine = s;
+        fine.mesh = cfd::MeshLevel::Fine;
+        cfd::writeCase(fineDir.path(), g, fine);
+        const std::string fineSnappy = slurp(fineDir.path() / "system/snappyHexMeshDict");
+        CHECK(fineSnappy.find("part { level (6 7);") != std::string::npos);
+        CHECK(fineSnappy.find("{ file \"part.eMesh\"; level 7; }") != std::string::npos);
+        CHECK(fineSnappy.find("near { mode inside; levels ((1e15 4)); }") != std::string::npos);
+        CHECK(fineSnappy.find("wake { mode inside; levels ((1e15 3)); }") != std::string::npos);
+    }
     CHECK(slurp(tmp.path() / "Allrun").find("runParallel simpleFoam") != std::string::npos);
     CHECK(slurp(tmp.path() / "Allrun").find("\"${WM_PROJECT_VERSION:-}\" > aerocad.engine") != std::string::npos); // CAD-84
     CHECK(slurp(tmp.path() / "system/blockMeshDict").find("ground") == std::string::npos);
@@ -294,6 +589,46 @@ TEST_CASE("Allrun keeps the engine of reused solver results (CAD-84)", "[cfd]")
         CHECK(slurp(tmp.path() / "aerocad.engine") == "v2506\n");
     }
 }
+
+TEST_CASE("Allrun stops before the solve on a mesh with fatal checkMesh defects (CAD-103)", "[cfd]")
+{
+    // Stand-in RunFunctions with OpenFOAM's rule that an application whose log exists is
+    // skipped, so a prepared log.checkMesh is what the check step reads.
+    TempDir foam;
+    fs::create_directories(foam.path() / "bin/tools");
+    write(foam.path() / "bin/tools/RunFunctions",
+          "runApplication() { [ -f \"log.$1\" ] && return 0; echo ran > \"log.$1\"; }\n"
+          "runParallel() { runApplication \"$@\"; }\n"
+          "restore0Dir() { :; }\n");
+    for (const int processes : {1, 3}) {
+        INFO("processes " << processes);
+        for (const bool broken : {true, false}) {
+            INFO((broken ? "broken mesh" : "poor but usable mesh"));
+            TempDir tmp;
+            cfd::CaseGeometry g;
+            g.part = box({0, 0, 0}, {100, 50, 20});
+            cfd::Settings s;
+            s.processes = processes;
+            cfd::writeCase(tmp.path(), g, s);
+            write(tmp.path() / "log.checkMesh", broken ? kBrokenMeshLog : kPoorMeshLog);
+            const std::string cmd = "WM_PROJECT_DIR=\"" + foam.path().string() + "\" sh \"" +
+                                    (tmp.path() / "Allrun").string() + "\" >/dev/null 2>&1";
+            const int rc = std::system(cmd.c_str());
+            if (broken) {
+                CHECK(rc != 0);
+                CHECK(slurp(tmp.path() / "aerocad.status") == "failed check\n");
+                CHECK_FALSE(fs::exists(tmp.path() / "log.potentialFoam"));
+                CHECK_FALSE(fs::exists(tmp.path() / "log.simpleFoam"));
+                // The diagnosis stays in place.
+                CHECK(slurp(tmp.path() / "log.checkMesh") == kBrokenMeshLog);
+            } else {
+                CHECK(rc == 0);
+                CHECK(slurp(tmp.path() / "aerocad.status") == "finished\n");
+                CHECK(fs::exists(tmp.path() / "log.simpleFoam"));
+            }
+        }
+    }
+}
 #endif
 
 TEST_CASE("writeCase with a fixed floor at a given height", "[cfd]")
@@ -311,8 +646,10 @@ TEST_CASE("writeCase with a fixed floor at a given height", "[cfd]")
     CHECK(slurp(tmp.path() / "0.orig/U").find("ground { type noSlip; }") != std::string::npos);
     // Case origin is the part's bounds; model z = 0 is 50 mm below the part.
     CHECK(info.domain.min.z == Approx(info.partBounds.min.z - 0.05));
-    s.groundHeight = 60.0; // Above the part's lowest point.
-    CHECK_THROWS(cfd::writeCase(tmp.path(), g, s));
+    s.groundHeight = 60.0; // Above the part's lowest point: the message names both heights (CAD-147).
+    CHECK_THROWS_WITH(cfd::writeCase(tmp.path(), g, s),
+                      Catch::Matchers::ContainsSubstring("floor at Z = 60.0 mm is above the lowest point of the part "
+                                                         "(Z = 50.0 mm)"));
 
     const auto j = cfd::toJson(s);
     CHECK(cfd::settingsFromJson(j).groundMoving == false);
@@ -322,6 +659,35 @@ TEST_CASE("writeCase with a fixed floor at a given height", "[cfd]")
     old.erase("groundHeight");
     CHECK(cfd::differingConditions(old, cfd::toJson(cfd::Settings{})).empty());
     CHECK(cfd::differingConditions(old, j) == std::vector<std::string>{"flowDirection", "ground", "groundMoving", "groundHeight"});
+}
+
+TEST_CASE("Differing conditions are described in words with both values (CAD-159)", "[cfd]")
+{
+    auto a = cfd::toJson(cfd::Settings{});
+    auto b = a;
+    a["ground"] = true;
+    b["ground"] = true;
+    a["groundHeight"] = -40.0;
+    b["groundHeight"] = -150.0;
+    CHECK(cfd::describeCondition("groundHeight", a, b) == "Floor height: A -40 mm, B -150 mm");
+    b["groundHeight"] = nullptr;
+    CHECK(cfd::describeCondition("groundHeight", a, b) == "Floor height: A -40 mm, B just under the part");
+    b["ground"] = false;
+    CHECK(cfd::describeCondition("ground", a, b) == "Floor: A on, B off");
+    b["groundMoving"] = false;
+    CHECK(cfd::describeCondition("groundMoving", a, b) == "Floor motion: A moving, B fixed");
+    a["speed"] = 30.0;
+    b["speed"] = 40.0;
+    CHECK(cfd::describeCondition("speed", a, b) == "Air speed: A 30 m/s, B 40 m/s");
+    b["flowDirection"] = "-Y";
+    a["flowDirection"] = "+X";
+    CHECK(cfd::describeCondition("flowDirection", a, b) == "Flow direction: A +X, B -Y");
+    a["turbulenceIntensity"] = 0.01;
+    b["turbulenceIntensity"] = 0.05;
+    CHECK(cfd::describeCondition("turbulenceIntensity", a, b) == "Turbulence intensity: A 1 %, B 5 %");
+    b["referenceArea"] = 0.0048;
+    CHECK(cfd::describeCondition("referenceArea", a, b) == "Reference area: A from the part, B 48 cm²");
+    CHECK(cfd::describeCondition("somethingNew", a, b) == "somethingNew");
 }
 
 TEST_CASE("readTable reads function object output and handles restarts", "[cfd]")
@@ -445,6 +811,90 @@ TEST_CASE("readVtk reads OpenFOAM legacy polydata", "[cfd]")
     CHECK_THROWS(cfd::readVtk(f)); // Index out of range.
 }
 
+TEST_CASE("cropPolygons keeps the polygons around a region", "[cfd]")
+{
+    // Two triangles: one at the origin, one far away. Point 1 is shared.
+    cfd::PolyData d;
+    d.points = {{0, 0, 0}, {1, 0, 0}, {0, 1, 0}, {10, 0, 0}, {10, 1, 0}};
+    d.polygons = {{0, 1, 2}, {1, 3, 4}};
+    d.scalars["p"] = {0, 1, 2, 3, 4};
+    d.vectors["U"] = {{0, 0, 0}, {1, 0, 0}, {2, 0, 0}, {3, 0, 0}, {4, 0, 0}};
+    core::BoundingBox box;
+    box.extend({-1, -1, -1});
+    box.extend({2, 2, 1});
+    const auto c = cfd::cropPolygons(d, box);
+    REQUIRE(c.polygons.size() == 1);
+    CHECK(c.points.size() == 3);
+    CHECK(c.polygons[0] == std::vector<std::uint32_t>{0, 1, 2});
+    CHECK(c.scalars.at("p") == std::vector<double>{0, 1, 2});
+    CHECK(c.vectors.at("U")[2].x == 2.0);
+    CHECK(cfd::cropPolygons(d, core::BoundingBox{}).empty());
+}
+
+TEST_CASE("dropNearPoints removes the wake's skin on the part", "[cfd]")
+{
+    // CAD-165: a triangle hugging a surface point and one well away from it.
+    cfd::PolyData d;
+    d.points = {{0, 0, 0.01}, {0.1, 0, 0.01}, {0, 0.1, 0.01}, {2, 0, 0}, {2.1, 0, 0}, {2, 0.1, 0}};
+    d.polygons = {{0, 1, 2}, {3, 4, 5}};
+    d.scalars["speed"] = {1, 2, 3, 4, 5, 6};
+    const std::vector<core::Vec3> surface{{0.03, 0.03, 0}, {5, 5, 5}};
+    const auto kept = cfd::dropNearPoints(d, surface, 0.05);
+    REQUIRE(kept.polygons.size() == 1);
+    CHECK(kept.points.size() == 3);
+    CHECK(kept.scalars.at("speed") == std::vector<double>{4, 5, 6});
+    // Closer than a small gap: kept.
+    CHECK(cfd::dropNearPoints(d, surface, 0.01).polygons.size() == 2);
+    CHECK(cfd::dropNearPoints(d, {}, 0.05).polygons.size() == 2);
+}
+
+TEST_CASE("cropLines splits lines at the region and appendPolyData merges sets", "[cfd]")
+{
+    cfd::PolyData d;
+    d.points = {{0, 0, 0}, {1, 0, 0}, {5, 0, 0}, {1.5, 0, 0}, {1.8, 0, 0}};
+    d.lines = {{0, 1, 2, 3, 4}};
+    d.scalars["p"] = {0, 1, 2, 3, 4};
+    core::BoundingBox box;
+    box.extend({-1, -1, -1});
+    box.extend({2, 1, 1});
+    const auto c = cfd::cropLines(d, box);
+    REQUIRE(c.lines.size() == 2); // Leaves the box at x = 5 and comes back.
+    CHECK(c.points.size() == 4);
+    CHECK(c.scalars.at("p") == std::vector<double>{0, 1, 3, 4});
+
+    cfd::PolyData merged = c;
+    cfd::PolyData other;
+    other.points = {{0, 0, 1}, {0, 0, 2}};
+    other.lines = {{0, 1}};
+    other.scalars["p"] = {7, 8};
+    other.scalars["k"] = {1, 1}; // Only in one set: dropped.
+    cfd::appendPolyData(merged, other);
+    CHECK(merged.points.size() == 6);
+    REQUIRE(merged.lines.size() == 3);
+    CHECK(merged.lines[2] == std::vector<std::uint32_t>{4, 5});
+    CHECK(merged.scalars.at("p").size() == 6);
+    CHECK(merged.scalars.at("p")[5] == 8.0);
+    CHECK(merged.scalars.count("k") == 0);
+}
+
+TEST_CASE("surfaceDifference maps B - A onto A's surface", "[cfd]")
+{
+    cfd::PolyData a;
+    a.points = {{0, 0, 0}, {10, 0, 0}, {0, 10, 0}};
+    a.polygons = {{0, 1, 2}};
+    a.scalars["Cp"] = {0.5, -0.2, 0.0};
+    cfd::PolyData b;
+    b.points = {{0.05, 0, 0}, {10, 0.02, 0}, {50, 50, 0}}; // B has no surface near A's third point.
+    b.scalars["Cp"] = {0.7, -0.5, 1.0};
+    const auto d = cfd::surfaceDifference(a, b, 0.5);
+    CHECK(d.points.size() == 3);
+    CHECK(d.polygons.size() == 1);
+    const auto& dcp = d.scalars.at("dCp");
+    CHECK(dcp[0] == Approx(0.2));
+    CHECK(dcp[1] == Approx(-0.3));
+    CHECK(std::isnan(dcp[2]));
+}
+
 TEST_CASE("Quality report from logs and histories", "[cfd]")
 {
     TempDir tmp;
@@ -465,6 +915,40 @@ TEST_CASE("Quality report from logs and histories", "[cfd]")
     CHECK(bad.meshOk == false);
     CHECK(bad.failedMeshChecks == 2);
     CHECK(bad.status == "warning");
+}
+
+TEST_CASE("Quality report tells an oscillating Cd from a drifting one", "[cfd][quality]")
+{
+    // CAD-168: both fail the 2 % band, but only the drift is "still changing".
+    TempDir tmp;
+    fakeFinishedRun(tmp.path(), 0.8, 1.0);
+    auto coefficients = [&](auto cdAt) {
+        std::ostringstream data;
+        data << "# Time Cd Cl Cs\n";
+        for (int row = 1; row <= 100; ++row) // The fake log ends at 100.
+            data << row << ' ' << cdAt(row) << " 0.1 0.01\n";
+        write(tmp.path() / "postProcessing" / "forceCoeffs" / "0" / "coefficient.dat", data.str());
+        return cfd::assessQuality(tmp.path());
+    };
+    const auto oscillating = coefficients([](int i) { return 0.8 * (1.0 + 0.015 * std::sin(i * 0.9)); });
+    REQUIRE(oscillating.cdFluctuation);
+    REQUIRE(oscillating.cdDrift);
+    CHECK(*oscillating.cdFluctuation > 0.02);
+    CHECK(*oscillating.cdDrift < 0.01);
+    CHECK(oscillating.checks.at("forceStability") == "failed");
+    CHECK(std::any_of(oscillating.warnings.begin(), oscillating.warnings.end(), [](const std::string& w) {
+        return w.find("Cd oscillates by ") != std::string::npos &&
+               w.find("the results are that mean") != std::string::npos;
+    }));
+    CHECK(oscillating.toJson().at("cdDrift").get<double>() < 0.01);
+
+    const auto drifting = coefficients([](int i) { return 0.8 + 0.002 * i; });
+    REQUIRE(drifting.cdDrift);
+    CHECK(*drifting.cdDrift > 0.01);
+    CHECK(drifting.checks.at("forceStability") == "failed");
+    CHECK(std::any_of(drifting.warnings.begin(), drifting.warnings.end(), [](const std::string& w) {
+        return w.find("Cd still changes by more than 2 %") != std::string::npos;
+    }));
 }
 
 TEST_CASE("Quality report never accepts missing convergence evidence", "[cfd][quality]")
@@ -507,6 +991,46 @@ TEST_CASE("Quality report accepts complete current evidence", "[cfd][quality]")
         CHECK(state == "passed");
     }
     CHECK(q.toJson().at("checks").at("convergence") == "passed");
+}
+
+TEST_CASE("Quality report accepts a run stopped because its forces settled", "[cfd][quality]")
+{
+    // CAD-155: runTimeControl forcesSettled ended the run; residuals then need only 1e-3.
+    TempDir tmp;
+    fakeFinishedRun(tmp.path(), 0.8, 1.0);
+    const auto residuals = tmp.path() / "postProcessing" / "solverInfo" / "0" / "solverInfo.dat";
+    write(tmp.path() / "log.simpleFoam",
+          "Exec   : simpleFoam\nDate   : fixture\nCreate time\n\nTime = 100\n"
+          "time step continuity errors : sum local = 1e-5, global = 1e-7\n"
+          "runTimeControl forcesSettled output:\n    runTimeControl: forces averages:\n"
+          "        CdMeanMean: 0.8, delta: 1e-05\n\n    average: forces condition satisfied\n"
+          "    Stopping calculation\n    Writing fields\nExecutionTime = 1 s  ClockTime = 1 s\nEnd\n");
+    SECTION("residuals below 1e-3")
+    {
+        write(residuals, "# Time Ux_initial Uy_initial Uz_initial p_initial k_initial omega_initial\n"
+                         "100 1e-5 1.2e-4 1e-4 2e-5 4e-6 2e-7\n");
+        const auto q = cfd::assessQuality(tmp.path());
+        CHECK(q.forcesSettled);
+        CHECK_FALSE(q.solverConverged);
+        CHECK(q.iterations == 100);
+        CHECK(q.status == "ok");
+        CHECK(q.checks.at("convergence") == "passed");
+        CHECK(q.checks.at("residual.Uy") == "passed");
+        CHECK(q.toJson().at("forcesSettled") == true);
+        CHECK(q.toJson().at("iterations") == 100);
+    }
+    SECTION("a residual above 1e-3")
+    {
+        write(residuals, "# Time Ux_initial Uy_initial Uz_initial p_initial k_initial omega_initial\n"
+                         "100 2e-4 3e-3 1e-4 2e-3 4e-6 2e-7\n");
+        const auto q = cfd::assessQuality(tmp.path());
+        CHECK(q.forcesSettled);
+        CHECK(q.status == "warning");
+        CHECK(q.checks.at("convergence") == "passed");
+        CHECK(q.checks.at("residual.Uy") == "failed");
+        CHECK(q.checks.at("residual.p") == "failed");
+        CHECK(q.checks.at("residual.Ux") == "passed");
+    }
 }
 
 TEST_CASE("Quality report requires complete current evidence", "[cfd][quality]")
@@ -772,8 +1296,42 @@ TEST_CASE("OpenFOAM: box in a wind tunnel", "[.openfoam]")
           Approx(cd * 0.5 * s.density * s.speed * s.speed * r.at("conditions").at("referenceArea").get<double>())
               .epsilon(0.05));
     CHECK(r.at("quality").at("meshOk") == true);
-    for (const char* kind : {"surface", "sectionHorizontal", "sectionVertical", "streamlines"})
+    for (const char* kind : {"surface", "sectionHorizontal", "sectionVertical", "wake", "streamlines"}) {
+        INFO(kind);
+        CHECK(r.at("fields").at(kind) == true);
         CHECK_FALSE(runs.field(id, kind).empty());
+    }
+    // The vortex cores (CAD-175) are written; a coarse box may have none off its skin.
+    CHECK(r.at("fields").at("vortices") == true);
+    {
+        // The total-pressure loss (CAD-165) lies along and behind the box, with its speed.
+        const auto wake = runs.field(id, "wake");
+        double y = 0;
+        for (const auto& q : wake.points)
+            y += q.y;
+        CHECK(y / static_cast<double>(wake.points.size()) > 100.0);
+        CHECK(wake.scalars.count("speed") == 1);
+    }
+    // Every plane of the section stacks (CAD-148) is listed and readable; a plane across
+    // the flow lies at its listed distance behind the part's front.
+    const auto& sections = r.at("fields").at("sections");
+    REQUIRE(sections.size() == cfd::sectionStacks().size());
+    for (const auto& stack : sections)
+        for (const auto& p : stack.at("positions"))
+            CHECK_FALSE(runs.field(id, p.at("kind").get<std::string>()).empty());
+    {
+        const auto& x = sections.at(0);
+        REQUIRE(x.at("axis") == "x");
+        const auto& p = x.at("positions").at(6); // Half the part's length.
+        const auto plane = runs.field(id, p.at("kind").get<std::string>());
+        double y = 0;
+        for (const auto& q : plane.points)
+            y += q.y;
+        y /= static_cast<double>(plane.points.size());
+        // +Y flow: the box spans y 0..200 mm, so the plane at 0.5 lies at y = 100 mm.
+        CHECK(p.at("mm").get<double>() == Approx(100.0).margin(1.0));
+        CHECK(y == Approx(100.0).margin(1.0));
+    }
     // Streamlines come back in model coordinates: they travel along +Y.
     const auto lines = runs.field(id, "streamlines");
     const auto& u = lines.vectors.at("U");
@@ -824,7 +1382,11 @@ TEST_CASE("Install for me: the next setup step", "[cfd]")
 
     cfd::Environment installed;
     installed.docker = "/usr/local/bin/docker";
-    CHECK(cfd::planEngineSetup(installed, Platform::Linux, {}).action == "manual");
+    installed.message = "Docker is installed but not running. Start it (sudo systemctl start docker) and try again.";
+    step = cfd::planEngineSetup(installed, Platform::Linux, {});
+    CHECK(step.action == "manual");
+    // The panel shows the engine message once; a manual step only repeats it (CAD-116).
+    CHECK(step.message == installed.message);
 
     installed.dockerRunning = true;
     step = cfd::planEngineSetup(installed, Platform::MacOS, {});
@@ -973,6 +1535,44 @@ TEST_CASE("RunManager: mesh check names a smaller force that does not hold", "[c
     CHECK(cmp.at("meshSensitivity").at("status") == "check quality");
     CHECK(cmp.at("meshSensitivity").at("message").get<std::string>().find("fine mesh") != std::string::npos);
     CHECK(cmp.at("verdict") == "check quality");
+}
+
+TEST_CASE("RunManager: mesh check shows its running runs, and does not apply to a repeat run", "[cfd]")
+{
+    TempDir tmp;
+    cfd::RunManager runs(tmp.path());
+    cfd::CaseGeometry ga, gb;
+    ga.part = box({0, 0, 0}, {200, 80, 60});
+    gb.part = box({0, 0, 0}, {200, 80, 70});
+    auto prepare = [&](const cfd::CaseGeometry& g, cfd::MeshLevel mesh) {
+        cfd::Settings s;
+        s.flowDirection = "+X";
+        s.mesh = mesh;
+        return runs.prepare(g, s, {});
+    };
+    const std::string a = prepare(ga, cfd::MeshLevel::Coarse);
+    fakeFinishedRun(tmp.path() / a, 1.0, 1.0);
+    const std::string b = prepare(gb, cfd::MeshLevel::Coarse);
+    fakeFinishedRun(tmp.path() / b, 1.1, 1.1);
+
+    // A's medium run still solving: the check waits for it and names it, for its progress (CAD-120).
+    const std::string am = prepare(ga, cfd::MeshLevel::Medium);
+    write(tmp.path() / am / "aerocad.stage", "solve\n");
+    write(tmp.path() / am / "aerocad.status", "");
+    write(tmp.path() / am / "log.simpleFoam", "Time = 10\n");
+    auto ms = runs.compare(a, b).at("meshSensitivity");
+    CHECK(ms.at("status") == "pending");
+    CHECK(ms.at("runningRuns") == nlohmann::json{am});
+
+    // A repeat run (same case as A): its difference is run-to-run variation, so the mesh
+    // check does not apply and offers no runs on another mesh. Otherwise A and B would share
+    // the runs on the other level and the check would pair them arbitrarily (CAD-120).
+    const std::string a2 = prepare(ga, cfd::MeshLevel::Coarse);
+    fakeFinishedRun(tmp.path() / a2, 1.0, 1.01);
+    ms = runs.compare(a, a2).at("meshSensitivity");
+    CHECK(ms.at("status") == "same case");
+    CHECK_FALSE(ms.contains("suggestedMesh"));
+    CHECK(ms.at("message").get<std::string>().rfind("A and B are the same case", 0) == 0);
 }
 
 TEST_CASE("RunManager: runs from an earlier session", "[cfd]")
@@ -1148,6 +1748,208 @@ TEST_CASE("Listing runs only reads; a remote run is followed again at start-up (
 }
 #endif
 
+#ifndef _WIN32
+TEST_CASE("Local runs beyond the processor limit wait in a queue (CAD-144)", "[cfd]")
+{
+    // A stand-in docker: reports a running engine with the image, and "solves" by sleeping
+    // until it is stopped.
+    TempDir root;
+    TempDir bin;
+    const fs::path docker = bin.path() / "docker";
+    write(docker, "#!/bin/sh\ncase \"$1\" in\n  info) echo 4 ;;\n  image) echo sha256:0 ;;\n"
+                  "  run) exec sleep 30 ;;\nesac\nexit 0\n");
+    fs::permissions(docker, fs::perms::owner_all, fs::perm_options::add);
+    const auto keep = [](const char* name) {
+        const char* v = std::getenv(name);
+        return v != nullptr ? std::optional<std::string>(v) : std::nullopt;
+    };
+    const auto oldDocker = keep("AEROCAD_DOCKER"), oldHost = keep("AEROCAD_ENGINE_HOST"),
+               oldDir = keep("AEROCAD_CFD_DIR");
+    ::setenv("AEROCAD_DOCKER", docker.c_str(), 1);
+    ::setenv("AEROCAD_CFD_DIR", root.path().c_str(), 1); // No engine.json of this machine.
+    ::unsetenv("AEROCAD_ENGINE_HOST");
+
+    cfd::RunManager runs(root.path());
+    runs.setProcessorLimit(4);
+    cfd::CaseGeometry g;
+    g.part = box({0, 0, 0}, {200, 80, 60});
+    cfd::Settings s;
+    s.processes = 2;
+    const std::string a = runs.start(g, s, {}, cfd::Backend::Docker);
+    const std::string b = runs.start(g, s, {}, cfd::Backend::Docker);
+    const std::string c = runs.start(g, s, {}, cfd::Backend::Docker);
+    // A and B fill the 4 processors; C waits and says why.
+    CHECK(runs.status(a)->stage != "queued");
+    CHECK(runs.status(b)->stage != "queued");
+    auto sc = runs.status(c);
+    CHECK(sc->state == cfd::RunState::Running);
+    CHECK(sc->stage == "queued");
+    CHECK(sc->message.find("Waiting for the other runs") != std::string::npos);
+
+    // When A ends, C starts by itself.
+    REQUIRE(runs.cancel(a));
+    for (int i = 0; i < 50 && runs.status(a)->state == cfd::RunState::Running; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    CHECK(runs.status(a)->state == cfd::RunState::Cancelled);
+    CHECK(runs.status(c)->stage != "queued");
+
+    // A queued run can be cancelled before it starts.
+    const std::string d = runs.start(g, s, {}, cfd::Backend::Docker);
+    CHECK(runs.status(d)->stage == "queued");
+    REQUIRE(runs.cancel(d));
+    CHECK(runs.status(d)->state == cfd::RunState::Cancelled);
+
+    for (const auto& id : {b, c})
+        runs.cancel(id);
+    for (int i = 0;
+         i < 50 && (runs.status(b)->state == cfd::RunState::Running || runs.status(c)->state == cfd::RunState::Running);
+         ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    const auto restore = [](const char* name, const std::optional<std::string>& v) {
+        if (v)
+            ::setenv(name, v->c_str(), 1);
+        else
+            ::unsetenv(name);
+    };
+    restore("AEROCAD_DOCKER", oldDocker);
+    restore("AEROCAD_ENGINE_HOST", oldHost);
+    restore("AEROCAD_CFD_DIR", oldDir);
+}
+
+TEST_CASE("Queued runs start in submission order, and one that cannot start does not block the rest (CAD-144)", "[cfd]")
+{
+    TempDir root;
+    TempDir bin;
+    const fs::path docker = bin.path() / "docker";
+    write(docker, "#!/bin/sh\ncase \"$1\" in\n  info) echo 4 ;;\n  image) echo sha256:0 ;;\n"
+                  "  run) exec sleep 1 ;;\nesac\nexit 0\n");
+    fs::permissions(docker, fs::perms::owner_all, fs::perm_options::add);
+    const auto keep = [](const char* name) {
+        const char* v = std::getenv(name);
+        return v != nullptr ? std::optional<std::string>(v) : std::nullopt;
+    };
+    const auto oldDocker = keep("AEROCAD_DOCKER"), oldHost = keep("AEROCAD_ENGINE_HOST"),
+               oldDir = keep("AEROCAD_CFD_DIR");
+    ::setenv("AEROCAD_DOCKER", docker.c_str(), 1);
+    ::setenv("AEROCAD_CFD_DIR", root.path().c_str(), 1);
+    ::unsetenv("AEROCAD_ENGINE_HOST");
+
+    cfd::RunManager runs(root.path());
+    runs.setProcessorLimit(2);
+    cfd::CaseGeometry g;
+    g.part = box({0, 0, 0}, {200, 80, 60});
+    cfd::Settings s;
+    s.processes = 2;
+    const auto named = [](const char* name) {
+        cfd::RunSource src;
+        src.partName = name;
+        return src;
+    };
+    const auto waitWhileRunning = [&](const std::string& id) {
+        for (int i = 0;
+             i < 50 && runs.status(id)->state == cfd::RunState::Running && runs.status(id)->stage != "queued"; ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    };
+    const std::string first = runs.start(g, s, named("first"), cfd::Backend::Docker);
+    // Submitted in this order within one second: the id of "aaa" sorts before "zzz".
+    const std::string z = runs.start(g, s, named("zzz"), cfd::Backend::Docker);
+    const std::string a = runs.start(g, s, named("aaa"), cfd::Backend::Docker);
+    REQUIRE(runs.status(z)->stage == "queued");
+    REQUIRE(runs.status(a)->stage == "queued");
+
+    waitWhileRunning(first);
+    CHECK(runs.status(z)->stage != "queued"); // The earlier submission goes first.
+    CHECK(runs.status(a)->stage == "queued");
+
+    // The engine disappears while "aaa" waits: it fails alone, and the list still works.
+    fs::remove(docker);
+    waitWhileRunning(z);
+    std::vector<cfd::RunStatus> all;
+    REQUIRE_NOTHROW(all = runs.list());
+    CHECK(all.size() == 3);
+    const auto sa = runs.status(a);
+    CHECK(sa->state == cfd::RunState::Failed);
+    CHECK(sa->message.find("could not start") != std::string::npos);
+
+    const auto restore = [](const char* name, const std::optional<std::string>& v) {
+        if (v)
+            ::setenv(name, v->c_str(), 1);
+        else
+            ::unsetenv(name);
+    };
+    restore("AEROCAD_DOCKER", oldDocker);
+    restore("AEROCAD_ENGINE_HOST", oldHost);
+    restore("AEROCAD_CFD_DIR", oldDir);
+}
+
+TEST_CASE("A running run reports the time so far and at most how long is left (CAD-149)", "[cfd]")
+{
+    TempDir root;
+    TempDir bin;
+    const fs::path docker = bin.path() / "docker";
+    write(docker, "#!/bin/sh\ncase \"$1\" in\n  info) echo 4 ;;\n  image) echo sha256:0 ;;\n"
+                  "  run) exec sleep 30 ;;\nesac\nexit 0\n");
+    fs::permissions(docker, fs::perms::owner_all, fs::perm_options::add);
+    const auto keep = [](const char* name) {
+        const char* v = std::getenv(name);
+        return v != nullptr ? std::optional<std::string>(v) : std::nullopt;
+    };
+    const auto oldDocker = keep("AEROCAD_DOCKER"), oldHost = keep("AEROCAD_ENGINE_HOST"),
+               oldDir = keep("AEROCAD_CFD_DIR");
+    ::setenv("AEROCAD_DOCKER", docker.c_str(), 1);
+    ::setenv("AEROCAD_CFD_DIR", root.path().c_str(), 1);
+    ::unsetenv("AEROCAD_ENGINE_HOST");
+
+    cfd::RunManager runs(root.path());
+    cfd::CaseGeometry g;
+    g.part = box({0, 0, 0}, {200, 80, 60});
+    const std::string id = runs.start(g, cfd::Settings{}, {}, cfd::Backend::Docker);
+    auto st = runs.status(id);
+    REQUIRE(st->state == cfd::RunState::Running);
+    REQUIRE(st->elapsedSeconds.has_value());
+    CHECK(*st->elapsedSeconds >= 0);
+    CHECK_FALSE(st->remainingSeconds.has_value()); // Not solving yet: unknown.
+    CHECK(st->toJson().at("remainingSeconds").is_null());
+
+    // Solving: 100 of the iterations done in the 50 s since the initialisation ended.
+    const fs::path dir = st->caseDir;
+    write(dir / "aerocad.stage", "solve\n");
+    std::ostringstream coeffs;
+    coeffs << "# Force and moment coefficients\n# Time Cd Cl Cs\n";
+    for (int i = 1; i <= 100; ++i)
+        coeffs << i << " 0.8 0.1 0.01\n";
+    write(dir / "postProcessing" / "forceCoeffs" / "0" / "coefficient.dat", coeffs.str());
+    write(dir / "log.potentialFoam", "End\n");
+    fs::last_write_time(dir / "log.potentialFoam", fs::file_time_type::clock::now() - std::chrono::seconds(50));
+    st = runs.status(id);
+    REQUIRE(st->iteration == 100);
+    REQUIRE(st->maxIterations > 100);
+    REQUIRE(st->remainingSeconds.has_value());
+    const double expected = 50.0 / 100.0 * (st->maxIterations - 100);
+    CHECK(*st->remainingSeconds >= expected - 1);
+    CHECK(*st->remainingSeconds <= expected + 3);
+    CHECK(st->toJson().at("remainingSeconds") == *st->remainingSeconds);
+
+    // Finished or stopped runs have no running time.
+    REQUIRE(runs.cancel(id));
+    for (int i = 0; i < 50 && runs.status(id)->state == cfd::RunState::Running; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    st = runs.status(id);
+    CHECK_FALSE(st->elapsedSeconds.has_value());
+    CHECK_FALSE(st->remainingSeconds.has_value());
+
+    const auto restore = [](const char* name, const std::optional<std::string>& v) {
+        if (v)
+            ::setenv(name, v->c_str(), 1);
+        else
+            ::unsetenv(name);
+    };
+    restore("AEROCAD_DOCKER", oldDocker);
+    restore("AEROCAD_ENGINE_HOST", oldHost);
+    restore("AEROCAD_CFD_DIR", oldDir);
+}
+#endif
+
 TEST_CASE("Remote engine host: validation and docker command line", "[cfd]")
 {
     CHECK(cfd::isValidEngineHost(""));
@@ -1190,6 +1992,15 @@ TEST_CASE("Different surroundings or domains are not identical conditions (CAD-8
     const auto diff = cmp.at("differingConditions").get<std::vector<std::string>>();
     CHECK(std::find(diff.begin(), diff.end(), "context") != diff.end());
     CHECK(std::find(diff.begin(), diff.end(), "domain") != diff.end());
+    // The domain grew because of the surroundings, not the unchanged part (CAD-159).
+    bool surroundingsNamed = false, partBlamed = false;
+    for (const auto& n : cmp.at("notes")) {
+        const auto text = n.get<std::string>();
+        surroundingsNamed = surroundingsNamed || text.find("because the surroundings differ;") != std::string::npos;
+        partBlamed = partBlamed || text.find("part differs") != std::string::npos;
+    }
+    CHECK(surroundingsNamed);
+    CHECK_FALSE(partBlamed);
     CHECK(cmp.at("sameDomain") == false);
     CHECK(cmp.at("verdict") == "not comparable");
 
@@ -1209,6 +2020,372 @@ TEST_CASE("Different surroundings or domains are not identical conditions (CAD-8
     const auto cond = runs.results(b).at("conditions");
     CHECK(cond.contains("domain"));
     CHECK_FALSE(cond.at("contextHash").is_null());
+}
+
+TEST_CASE("A different reference area does not make runs incomparable (CAD-186)", "[cfd]")
+{
+    TempDir tmp;
+    cfd::RunManager runs(tmp.path());
+    cfd::Settings s;
+    s.flowDirection = "+X";
+    cfd::CaseGeometry g;
+    g.part = box({0, 0, 0}, {200, 80, 60}); // Frontal area 48 cm².
+    const std::string a = runs.prepare(g, s, {});
+    s.referenceArea = 0.024; // E.g. a wing's planform area.
+    const std::string b = runs.prepare(g, s, {});
+    for (const auto& id : {a, b})
+        fakeFinishedRun(tmp.path() / id, 0.8, 1.0);
+
+    const auto cmp = runs.compare(a, b);
+    INFO(cmp.dump());
+    CHECK(cmp.at("sameConditions") == true);
+    CHECK(cmp.at("differingConditions").empty());
+    CHECK(cmp.at("verdict") == "comparable");
+    CHECK(cmp.at("meshSensitivity").at("status") == "same case");
+    bool noted = false;
+    for (const auto& n : cmp.at("notes"))
+        noted = noted || n.get<std::string>().find("Reference areas differ (A 48 cm², B 240 cm²): Cd/Cl/Cs of B are "
+                                                   "rescaled to the area of A") != std::string::npos;
+    CHECK(noted);
+    // B's coefficients are rescaled to A's area.
+    CHECK(cmp.at("coefficientsOnReferenceAreaOfA").at("cd").at("b").get<double>() ==
+          Approx(0.8 * 0.024 / 0.0048).epsilon(0.02));
+}
+
+TEST_CASE("simulation compare reports the efficiency L/D of A and B (CAD-187)", "[cfd]")
+{
+    TempDir tmp;
+    cfd::RunManager runs(tmp.path());
+    cfd::Settings s;
+    s.flowDirection = "+X";
+    cfd::CaseGeometry g;
+    g.part = box({0, 0, 0}, {200, 80, 60});
+    const std::string a = runs.prepare(g, s, {});
+    const std::string b = runs.prepare(g, s, {});
+    const std::string c = runs.prepare(g, s, {});
+    fakeFinishedRun(tmp.path() / a, 0.8, 1.0, -2.0); // Downforce: L/D uses |lift|.
+    fakeFinishedRun(tmp.path() / b, 0.8, 1.25, -3.0);
+    fakeFinishedRun(tmp.path() / c, 0.8, 0.0, -3.0); // No drag: no L/D.
+
+    const auto cmp = runs.compare(a, b);
+    INFO(cmp.dump());
+    const auto& f = cmp.at("forces");
+    const double ea = 2.0 / f.at("dragN").at("a").get<double>();
+    const double eb = 3.0 / f.at("dragN").at("b").get<double>();
+    const auto& e = cmp.at("efficiency");
+    CHECK(e.at("a").get<double>() == Approx(ea));
+    CHECK(e.at("b").get<double>() == Approx(eb));
+    CHECK(e.at("difference").get<double>() == Approx(eb - ea));
+    CHECK(e.at("percent").get<double>() == Approx(100.0 * (eb - ea) / ea));
+    CHECK(e.at("percent").get<double>() == Approx(20.0).margin(1.0));
+    CHECK_FALSE(runs.compare(a, c).contains("efficiency"));
+}
+
+TEST_CASE("Results give the iteration swing; A/B flags differences inside it (CAD-191)", "[cfd]")
+{
+    TempDir tmp;
+    cfd::RunManager runs(tmp.path());
+    cfd::Settings s;
+    s.flowDirection = "+X";
+    cfd::CaseGeometry g;
+    g.part = box({0, 0, 0}, {200, 80, 60});
+    const std::string a = runs.prepare(g, s, {});
+    const std::string b = runs.prepare(g, s, {});
+    const std::string c = runs.prepare(g, s, {});
+    fakeFinishedRun(tmp.path() / a, 0.8, 1.0, -2.0);
+    fakeFinishedRun(tmp.path() / b, 0.8, 1.0005, -2.0); // Inside the swing.
+    fakeFinishedRun(tmp.path() / c, 0.8, 1.25, -3.0);   // Well outside it.
+
+    // The fake drag is 1.0 * (0.8 + 0.5 / i) / 0.8 for i = 1..100; the window is i = 81..100.
+    // The files hold 6 significant digits, hence the 1 % tolerance.
+    const auto ra = runs.results(a);
+    const auto& spread = ra.at("summary").at("spread");
+    const double dragSpread = 0.5 * (1.0 / 0.8) * (0.5 / 81 - 0.5 / 100);
+    CHECK(spread.at("dragN").get<double>() == Approx(dragSpread).epsilon(0.01));
+    CHECK(spread.at("cd").get<double>() == Approx(0.5 * (0.5 / 81 - 0.5 / 100)).epsilon(0.01));
+    CHECK(spread.at("liftN").get<double>() == Approx(0.0).margin(1e-12)); // Constant lift.
+
+    const auto near = runs.compare(a, b);
+    INFO(near.dump());
+    const auto& drag = near.at("forces").at("dragN");
+    CHECK(drag.at("noise").get<double>() == Approx(dragSpread * (1.0 + 1.0005)).epsilon(0.01));
+    CHECK(drag.at("withinNoise").get<bool>());
+    CHECK(near.at("coefficientsOnReferenceAreaOfA").at("cd").contains("withinNoise"));
+    const auto& notes = near.at("notes");
+    CHECK(std::any_of(notes.begin(), notes.end(), [](const nlohmann::json& n) {
+        return n.get<std::string>().find("drag difference") != std::string::npos &&
+               n.get<std::string>().find("iteration swing") != std::string::npos;
+    }));
+    // The same lift in both runs, with no swing, is no change, not noise.
+    CHECK(std::none_of(notes.begin(), notes.end(), [](const nlohmann::json& n) {
+        return n.get<std::string>().find("lift difference") != std::string::npos;
+    }));
+
+    const auto far = runs.compare(a, c);
+    INFO(far.dump());
+    CHECK_FALSE(far.at("forces").at("dragN").at("withinNoise").get<bool>());
+    CHECK_FALSE(far.at("forces").at("liftN").at("withinNoise").get<bool>());
+    for (const auto& n : far.at("notes"))
+        CHECK(n.get<std::string>().find("iteration swing") == std::string::npos);
+}
+
+TEST_CASE("Aero balance: front and rear axle lift of a car with wheels (CAD-194)", "[cfd][wheels]")
+{
+    for (const double yaw : {0.0, 5.0}) {
+        CAPTURE(yaw);
+        TempDir tmp;
+        cfd::RunManager runs(tmp.path());
+        cfd::Settings s;
+        s.flowDirection = "+X";
+        s.ground = true;
+        s.rotatingWheels = true;
+        s.yaw = yaw;
+        cfd::CaseGeometry g;
+        g.part = car();
+        const std::string id = runs.prepare(g, s, {});
+        const auto info = runs.caseInfo(id);
+        REQUIRE(info);
+        REQUIRE(info->wheels.size() == 4);
+        fakeFinishedRun(tmp.path() / id, 0.8, 1.0, -2.0);
+
+        // Contacts of the front (axle 0) and rear axle on the floor, in the case frame (m).
+        core::Vec3 front{}, rear{};
+        for (const auto& w : info->wheels)
+            (w.axle == 0 ? front : rear) =
+                (w.axle == 0 ? front : rear) + core::Vec3{w.centre.x, w.centre.y, w.centre.z - w.radius} * 0.5;
+        const double wheelbase = std::hypot(front.x - rear.x, front.y - rear.y);
+        // 100 N of downforce a quarter of the wheelbase behind the front axle, and 10 N of drag
+        // acting h above that point: 75 / 25 N on the axles, and the drag lifts the front by
+        // 10 h cos(yaw) / wheelbase (the axle line turns by the yaw against the drag).
+        const core::Vec3 q = front + (rear - front) * 0.25;
+        const double h = 0.05;
+        const core::Vec3 down{0, 0, -100}, drag{10, 0, 0};
+        const core::Vec3 c = info->partBounds.center();
+        const core::Vec3 m = (q - c).cross(down) + (q + core::Vec3{0, 0, h} - c).cross(drag);
+        std::ostringstream forces, moments;
+        forces.precision(12);
+        moments.precision(12);
+        forces << "# Time total_x total_y total_z pressure_x pressure_y pressure_z viscous_x viscous_y viscous_z\n";
+        moments << "# Time total_x total_y total_z\n";
+        for (int i = 1; i <= 100; ++i) {
+            forces << i << " 10 0 -100 9 0 -100 1 0 0\n";
+            moments << i << ' ' << m.x << ' ' << m.y << ' ' << m.z << '\n';
+        }
+        write(tmp.path() / id / "postProcessing" / "forces" / "0" / "force.dat", forces.str());
+        write(tmp.path() / id / "postProcessing" / "forces" / "0" / "moment.dat", moments.str());
+        // The wheels' own forces (CAD-202): 3 N of the drag, 1 N of lift.
+        std::ostringstream wheelForces;
+        wheelForces
+            << "# Time total_x total_y total_z pressure_x pressure_y pressure_z viscous_x viscous_y viscous_z\n";
+        for (int i = 1; i <= 100; ++i)
+            wheelForces << i << " 3 0 1 2.5 0 1 0.5 0 0\n";
+        write(tmp.path() / id / "postProcessing" / "wheelForces" / "0" / "force.dat", wheelForces.str());
+        {
+            std::ifstream in(tmp.path() / id / "system" / "controlDict");
+            const std::string dict(std::istreambuf_iterator<char>(in), {});
+            CHECK(dict.find("wheelForces") != std::string::npos);
+            CHECK(dict.find("patches (wheels0 wheels1);") != std::string::npos);
+        }
+
+        const auto summary = runs.results(id).at("summary");
+        INFO(summary.dump());
+        CHECK(summary.at("wheelDragN").get<double>() == Approx(3.0));
+        CHECK(summary.at("wheelLiftN").get<double>() == Approx(1.0));
+        CHECK(summary.at("spread").at("wheelDragN").get<double>() == Approx(0.0).margin(1e-9));
+        const double expectedFront = -75.0 + 10.0 * h * std::cos(yaw * 3.14159265358979323846 / 180.0) / wheelbase;
+        CHECK(summary.at("frontLiftN").get<double>() == Approx(expectedFront).epsilon(1e-6));
+        CHECK(summary.at("rearLiftN").get<double>() == Approx(-100.0 - expectedFront).epsilon(1e-6));
+        CHECK(summary.at("frontShare").get<double>() == Approx(100.0 * expectedFront / -100.0).epsilon(1e-6));
+        CHECK(summary.at("spread").at("frontLiftN").get<double>() == Approx(0.0).margin(1e-9));
+        {
+            // A run that did not finish has no final balance and no swing, even with complete
+            // force and moment histories (Codex review on #166).
+            write(tmp.path() / id / "aerocad.status", "failed: solve\n");
+            const auto failed = runs.results(id).at("summary");
+            CHECK(failed.at("frontLiftN").is_null());
+            CHECK(failed.at("rearLiftN").is_null());
+            CHECK(failed.at("frontShare").is_null());
+            CHECK(failed.at("wheelDragN").is_null());
+            CHECK(failed.at("spread").is_null());
+            write(tmp.path() / id / "aerocad.status", "finished\n");
+        }
+
+        // A/B: the axle loads compare like the other forces.
+        const std::string b = runs.prepare(g, s, {});
+        fakeFinishedRun(tmp.path() / b, 0.8, 1.0, -2.0);
+        write(tmp.path() / b / "postProcessing" / "forces" / "0" / "force.dat", forces.str());
+        write(tmp.path() / b / "postProcessing" / "forces" / "0" / "moment.dat", moments.str());
+        write(tmp.path() / b / "postProcessing" / "wheelForces" / "0" / "force.dat", wheelForces.str());
+        const auto cmp = runs.compare(id, b);
+        CHECK(cmp.at("forces").at("wheelDragN").at("difference").get<double>() == Approx(0.0).margin(1e-9));
+        // The swing of the wheel forces feeds the noise check like the other forces (Codex on #173).
+        CHECK(cmp.at("forces").at("wheelDragN").contains("noise"));
+        CHECK(cmp.at("forces").contains("wheelLiftN"));
+        CHECK(cmp.at("forces").at("frontLiftN").at("difference").get<double>() == Approx(0.0).margin(1e-9));
+        CHECK(cmp.at("forces").contains("rearLiftN"));
+
+        // Both CSV exports carry the balance.
+        const auto read = [](const fs::path& p) {
+            std::ifstream in(p, std::ios::binary);
+            return std::string(std::istreambuf_iterator<char>(in), {});
+        };
+        runs.exportResultsCsv(id, tmp.path() / "run.csv");
+        const std::string runCsv = read(tmp.path() / "run.csv");
+        INFO(runCsv.substr(0, 2000));
+        CHECK(runCsv.find("\r\nFront axle lift (N),") != std::string::npos);
+        CHECK(runCsv.find("\r\nFront share of lift (%),") != std::string::npos);
+        CHECK(runCsv.find("\r\nWheel drag (N),3\r\n") != std::string::npos);
+        runs.exportComparisonCsv(id, b, tmp.path() / "ab.csv");
+        const std::string abCsv = read(tmp.path() / "ab.csv");
+        CHECK(abCsv.find("\r\nRear axle lift (N),") != std::string::npos);
+        CHECK(abCsv.find("\r\nWheel lift (N),1,1,0,0,") != std::string::npos);
+    }
+}
+
+TEST_CASE("Aero balance of a car whose wheels do not turn (CAD-196)", "[cfd][wheels]")
+{
+    for (const bool moving : {false, true}) {
+        CAPTURE(moving);
+        TempDir tmp;
+        cfd::RunManager runs(tmp.path());
+        cfd::Settings s;
+        s.flowDirection = "+X";
+        s.ground = true;
+        s.groundMoving = moving;
+        cfd::CaseGeometry g;
+        g.part = car();
+        const std::string id = runs.prepare(g, s, {});
+        const auto info = runs.caseInfo(id);
+        REQUIRE(info);
+        CHECK(info->wheels.empty());
+        REQUIRE(info->standingWheels.size() == 4);
+        CHECK(info->standingWheels[0].axle == 0);
+        CHECK(info->standingWheels[3].axle == 1);
+        // Nothing in the case changes: no wheel surfaces of their own.
+        CHECK_FALSE(fs::exists(tmp.path() / id / "constant/triSurface/wheels0.stl"));
+
+        fakeFinishedRun(tmp.path() / id, 0.8, 1.0, -2.0);
+        // 100 N of downforce right between the axles, no moment about that point.
+        core::Vec3 mid{};
+        for (const auto& w : info->standingWheels)
+            mid = mid + core::Vec3{w.centre.x, w.centre.y, w.centre.z - w.radius} * 0.25;
+        const core::Vec3 m = (mid - info->partBounds.center()).cross(core::Vec3{0, 0, -100});
+        std::ostringstream forces, moments;
+        forces.precision(12);
+        moments.precision(12);
+        forces << "# Time total_x total_y total_z pressure_x pressure_y pressure_z viscous_x viscous_y viscous_z\n";
+        moments << "# Time total_x total_y total_z\n";
+        for (int i = 1; i <= 100; ++i) {
+            forces << i << " 0 0 -100 0 0 -100 0 0 0\n";
+            moments << i << ' ' << m.x << ' ' << m.y << ' ' << m.z << '\n';
+        }
+        write(tmp.path() / id / "postProcessing" / "forces" / "0" / "force.dat", forces.str());
+        write(tmp.path() / id / "postProcessing" / "forces" / "0" / "moment.dat", moments.str());
+        const auto summary = runs.results(id).at("summary");
+        INFO(summary.dump());
+        CHECK(summary.at("frontLiftN").get<double>() == Approx(-50.0).epsilon(1e-6));
+        CHECK(summary.at("rearLiftN").get<double>() == Approx(-50.0).epsilon(1e-6));
+        CHECK(summary.at("frontShare").get<double>() == Approx(50.0).epsilon(1e-6));
+        // Standing wheels are part of the part: no wheel forces of their own (CAD-202).
+        CHECK(summary.at("wheelDragN").is_null());
+        std::ifstream in(tmp.path() / id / "system" / "controlDict");
+        CHECK(std::string(std::istreambuf_iterator<char>(in), {}).find("wheelForces") == std::string::npos);
+    }
+    // No floor: a part is not standing on anything, so no axles are looked for.
+    TempDir tmp;
+    cfd::RunManager runs(tmp.path());
+    cfd::Settings s;
+    s.flowDirection = "+X";
+    cfd::CaseGeometry g;
+    g.part = car();
+    const auto info = runs.caseInfo(runs.prepare(g, s, {}));
+    REQUIRE(info);
+    CHECK(info->standingWheels.empty());
+}
+
+TEST_CASE("A/B shows the aero balance shift in percentage points (CAD-197)", "[cfd][wheels]")
+{
+    TempDir tmp;
+    cfd::RunManager runs(tmp.path());
+    cfd::Settings s;
+    s.flowDirection = "+X";
+    s.ground = true;
+    cfd::CaseGeometry g;
+    g.part = car();
+    // 100 N of downforce at `t` along the wheelbase from the front axle: front share 100 (1 - t) %.
+    const auto run = [&](double t) {
+        const std::string id = runs.prepare(g, s, {});
+        const auto info = runs.caseInfo(id);
+        REQUIRE(info);
+        REQUIRE(info->standingWheels.size() == 4);
+        fakeFinishedRun(tmp.path() / id, 0.8, 1.0, -2.0);
+        core::Vec3 front{}, rear{};
+        for (const auto& w : info->standingWheels)
+            (w.axle == 0 ? front : rear) =
+                (w.axle == 0 ? front : rear) + core::Vec3{w.centre.x, w.centre.y, w.centre.z - w.radius} * 0.5;
+        const core::Vec3 q = front + (rear - front) * t;
+        const core::Vec3 m = (q - info->partBounds.center()).cross(core::Vec3{0, 0, -100});
+        std::ostringstream forces, moments;
+        forces.precision(12);
+        moments.precision(12);
+        forces << "# Time total_x total_y total_z pressure_x pressure_y pressure_z viscous_x viscous_y viscous_z\n";
+        moments << "# Time total_x total_y total_z\n";
+        for (int i = 1; i <= 100; ++i) {
+            forces << i << " 0 0 -100 0 0 -100 0 0 0\n"; // No drag: no moment from above the floor.
+            moments << i << ' ' << m.x << ' ' << m.y << ' ' << m.z << '\n';
+        }
+        write(tmp.path() / id / "postProcessing" / "forces" / "0" / "force.dat", forces.str());
+        write(tmp.path() / id / "postProcessing" / "forces" / "0" / "moment.dat", moments.str());
+        return id;
+    };
+    const std::string a = run(0.5), b = run(0.4); // 50 % and 60 % on the front axle.
+    const auto cmp = runs.compare(a, b);
+    INFO(cmp.dump());
+    REQUIRE(cmp.contains("balance"));
+    CHECK(cmp.at("balance").at("a").get<double>() == Approx(50.0).epsilon(1e-6));
+    CHECK(cmp.at("balance").at("b").get<double>() == Approx(60.0).epsilon(1e-6));
+    CHECK(cmp.at("balance").at("difference").get<double>() == Approx(10.0).epsilon(1e-6));
+    CHECK(cmp.at("balance").at("percent").is_null()); // Not a % of a %.
+
+    runs.exportComparisonCsv(a, b, tmp.path() / "ab.csv");
+    std::ifstream in(tmp.path() / "ab.csv", std::ios::binary);
+    const std::string csv(std::istreambuf_iterator<char>(in), {});
+    INFO(csv);
+    const auto row = csv.find("\r\nAero balance front (%; B - A in percentage points),");
+    REQUIRE(row != std::string::npos);
+    // A, B, B - A and an empty change in %.
+    CHECK(csv.substr(row, csv.find("\r\n", row + 2) - row).find(",50,60,10,,") != std::string::npos);
+}
+
+TEST_CASE("Aero balance is left out without two axles or moments (CAD-194)", "[cfd][wheels]")
+{
+    TempDir tmp;
+    cfd::RunManager runs(tmp.path());
+    cfd::Settings s;
+    s.flowDirection = "+X";
+    cfd::CaseGeometry g;
+    g.part = box({0, 0, 0}, {200, 80, 60});
+    const std::string box = runs.prepare(g, s, {}); // No wheels.
+    fakeFinishedRun(tmp.path() / box, 0.8, 1.0, -2.0);
+    write(tmp.path() / box / "postProcessing" / "forces" / "0" / "moment.dat",
+          "# Time total_x total_y total_z\n1 0 0 0\n");
+    auto summary = runs.results(box).at("summary");
+    CHECK(summary.at("frontLiftN").is_null());
+    CHECK(summary.at("frontShare").is_null());
+
+    s.ground = true;
+    s.rotatingWheels = true;
+    g.part = car();
+    const std::string noMoments = runs.prepare(g, s, {});
+    fakeFinishedRun(tmp.path() / noMoments, 0.8, 1.0, -2.0); // Writes no moment.dat.
+    summary = runs.results(noMoments).at("summary");
+    CHECK(summary.at("frontLiftN").is_null());
+    CHECK(summary.at("rearLiftN").is_null());
+    CHECK_FALSE(runs.compare(box, noMoments).at("forces").contains("frontLiftN"));
+    CHECK_FALSE(runs.compare(box, noMoments).contains("balance")); // CAD-197
+    runs.exportResultsCsv(box, tmp.path() / "box.csv");
+    std::ifstream in(tmp.path() / "box.csv", std::ios::binary);
+    CHECK(std::string(std::istreambuf_iterator<char>(in), {}).find("Front axle lift") == std::string::npos);
 }
 
 namespace {
@@ -1330,12 +2507,70 @@ TEST_CASE("A target-part variant of another size is compared on a different doma
     CHECK(cmp.at("sameConditions") == false);
     CHECK(cmp.at("sameDomain") == false);
     CHECK(cmp.at("differingConditions") == nlohmann::json::array({"domain"}));
+    CHECK(cmp.at("conditionChanges") == nlohmann::json::array({"Flow domain: different size or position (see below)"}));
     CHECK(cmp.at("verdict") == "different domains");
     CHECK_FALSE(cmp.at("forces").empty()); // the variant is still compared
     bool noted = false;
     for (const auto& n : cmp.at("notes"))
-        noted = noted || n.get<std::string>().find("flow domains differ") != std::string::npos;
+        noted = noted || n.get<std::string>().find("because the part differs in size or position") != std::string::npos;
     CHECK(noted);
+}
+
+TEST_CASE("A/B blames a domain change from another flow direction on the flow, not the part (CAD-159)", "[cfd]")
+{
+    TempDir tmp;
+    cfd::RunManager runs(tmp.path());
+    cfd::Settings s;
+    cfd::CaseGeometry g;
+    g.part = box({0, 0, 0}, {200, 80, 60});
+    s.flowDirection = "+X";
+    const std::string a = runs.prepare(g, s, {});
+    s.flowDirection = "+Y";
+    const std::string b = runs.prepare(g, s, {});
+    for (const auto& id : {a, b})
+        fakeFinishedRun(tmp.path() / id, 0.8, 1.0);
+    const auto cmp = runs.compare(a, b);
+    INFO(cmp.dump());
+    REQUIRE(contains(cmp.at("differingConditions"), "domain"));
+    CHECK(contains(cmp.at("conditionChanges"), "Flow direction: A +X, B +Y"));
+    bool flowNamed = false, partBlamed = false;
+    for (const auto& n : cmp.at("notes")) {
+        const auto text = n.get<std::string>();
+        flowNamed = flowNamed || text.find("because the flow direction differs;") != std::string::npos;
+        partBlamed = partBlamed || text.find("part differs") != std::string::npos;
+    }
+    CHECK(flowNamed);
+    CHECK_FALSE(partBlamed);
+}
+
+TEST_CASE("A/B names a floor-height difference with both heights and as the domain's cause (CAD-159)", "[cfd]")
+{
+    TempDir tmp;
+    cfd::RunManager runs(tmp.path());
+    cfd::Settings s;
+    s.flowDirection = "+X";
+    s.ground = true;
+    cfd::CaseGeometry g;
+    g.part = box({0, 0, 0}, {200, 80, 60});
+    s.groundHeight = -40.0;
+    const std::string a = runs.prepare(g, s, {});
+    s.groundHeight = -150.0;
+    const std::string b = runs.prepare(g, s, {});
+    for (const auto& id : {a, b})
+        fakeFinishedRun(tmp.path() / id, 0.8, 1.0);
+    const auto cmp = runs.compare(a, b);
+    INFO(cmp.dump());
+    CHECK(contains(cmp.at("differingConditions"), "groundHeight"));
+    CHECK(contains(cmp.at("conditionChanges"), "Floor height: A -40 mm, B -150 mm"));
+    CHECK(cmp.at("verdict") == "not comparable");
+    bool cause = false, wrongCause = false;
+    for (const auto& n : cmp.at("notes")) {
+        const auto text = n.get<std::string>();
+        cause = cause || text.find("because the floor differs") != std::string::npos;
+        wrongCause = wrongCause || text.find("part differs") != std::string::npos;
+    }
+    CHECK(cause);
+    CHECK_FALSE(wrongCause);
 }
 
 TEST_CASE("The same surroundings given in another part order are the same context (CAD-84)", "[cfd]")
@@ -1361,4 +2596,137 @@ TEST_CASE("The same surroundings given in another part order are the same contex
     INFO(cmp.dump());
     CHECK(cmp.at("sameConditions") == true);
     CHECK(cmp.at("verdict") == "comparable");
+}
+
+TEST_CASE("A failed run says why: fatal mesh defects or a diverged solve (CAD-103)", "[cfd]")
+{
+    TempDir tmp;
+    cfd::RunManager runs(tmp.path());
+    cfd::CaseGeometry g;
+    g.part = box({0, 0, 0}, {200, 80, 60});
+    const std::string id = runs.prepare(g, cfd::Settings{}, cfd::RunSource{});
+    const fs::path dir = tmp.path() / id;
+
+    // Stopped by the check: the fatal reports, not the warnings or the "Failed N" count.
+    write(dir / "log.checkMesh", kBrokenMeshLog);
+    write(dir / "aerocad.status", "failed check\n");
+    auto st = runs.status(id);
+    REQUIRE(st);
+    CHECK(st->state == cfd::RunState::Failed);
+    INFO(st->message);
+    CHECK(st->message.find("solve was not started") != std::string::npos);
+    CHECK(st->message.find("Zero or negative cell volume detected.") != std::string::npos);
+    CHECK(st->message.find("..") == std::string::npos);
+    CHECK(st->message.find("Number of negative volume cells: 3") != std::string::npos);
+    CHECK(st->message.find("Error in face pyramids: 24 faces are incorrectly oriented.") != std::string::npos);
+    CHECK(st->message.find("skewness") == std::string::npos);
+    CHECK(st->message.find("non-orthogonality") == std::string::npos);
+    CHECK(st->message.find("log.checkMesh") != std::string::npos);
+
+    // A solver that diverged and died of SIGFPE in a parallel run: the reason, not the
+    // MPI separator line or a stack frame.
+    const std::string crash = "Time = 254\n\nsmoothSolver:  Solving for Ux, Initial residual = 0.9\n\nTime = 255\n\n"
+                              "[3] #0  Foam::error::printStack(Foam::Ostream&) at ??:?\n"
+                              "[3] #1  Foam::sigFpe::sigHandler(int) at ??:?\n"
+                              "[3] #2  ? in /lib/x86_64-linux-gnu/libc.so.6\n";
+    const std::string separator = "--------------------------------------------------------------------------\n";
+    for (const std::string& tail :
+         {std::string(), separator,
+          separator +
+              "prterun noticed that process rank 3 with PID 0 on node x exited on signal 8 (Floating "
+              "point exception).\n" +
+              separator}) {
+        write(dir / "log.simpleFoam", crash + tail);
+        write(dir / "aerocad.status", "failed solve\n");
+        st = runs.status(id);
+        REQUIRE(st);
+        INFO(st->message);
+        CHECK(st->message.find("Step 'solve' failed (log.simpleFoam)") != std::string::npos);
+        CHECK(st->message.find("floating-point exception: the solution diverged at iteration 255") !=
+              std::string::npos);
+        CHECK(st->message.find("----") == std::string::npos);
+    }
+
+    // OpenFOAM's start-up banner when trapping is on is not a crash: a later segmentation
+    // fault keeps its own reason.
+    write(dir / "log.simpleFoam",
+          "sigFpe : Enabling floating point exception trapping (FOAM_SIGFPE).\nTime = 12\n\n"
+          "[2] #0  Foam::error::printStack(Foam::Ostream&) at ??:?\n[2] #1  Foam::sigSegv::sigHandler(int) at ??:?\n" +
+              separator +
+              "prterun noticed that process rank 2 with PID 0 on node x exited on signal 11 (Segmentation "
+              "fault).\n" +
+              separator);
+    st = runs.status(id);
+    INFO(st->message);
+    CHECK(st->message.find("diverged") == std::string::npos);
+    CHECK(st->message.find("Segmentation fault") != std::string::npos);
+
+    // A fatal error keeps its first line; a mesh check without fatal reports keeps the old summary.
+    write(dir / "log.simpleFoam", "--> FOAM FATAL ERROR: (openfoam-2506)\n\n    Unknown patch type wall2\n\n"
+                                  "    From Foam::fvPatch::New\n");
+    st = runs.status(id);
+    CHECK(st->message.find("Unknown patch type wall2") != std::string::npos);
+    write(dir / "log.checkMesh", "Checking geometry...\n\nEnd\n");
+    write(dir / "aerocad.status", "failed check\n");
+    st = runs.status(id);
+    CHECK(st->message == "Step 'check' failed (log.checkMesh): End");
+}
+
+TEST_CASE("Part sizes outside a wind tunnel's range are flagged (CAD-109)", "[cfd]")
+{
+    CHECK(cfd::partSizeWarning(0.2).empty());
+    CHECK(cfd::partSizeWarning(cfd::kMinPlausiblePartLength).empty());
+    CHECK(cfd::partSizeWarning(cfd::kMaxPlausiblePartLength).empty());
+    CHECK(cfd::partSizeWarning(0.0).empty());
+    CHECK(cfd::partSizeWarning(0.00112).find("only 1.12 mm long") != std::string::npos);
+    CHECK(cfd::partSizeWarning(4600.0).find("4600 m long") != std::string::npos);
+}
+
+TEST_CASE("The status of a finished run carries its final result, as in Results (CAD-205)", "[cfd]")
+{
+    TempDir tmp;
+    cfd::RunManager runs(tmp.path());
+    cfd::CaseGeometry g;
+    g.part = box({0, 0, 0}, {200, 80, 60});
+    const std::string id = runs.prepare(g, {}, {});
+    fakeFinishedRun(tmp.path() / id, 0.8, 1.0, -2.0);
+    auto st = runs.status(id);
+    REQUIRE(st);
+    REQUIRE(st->state == cfd::RunState::Finished);
+    const auto summary = runs.results(id).at("summary");
+    const auto final = st->toJson().at("final");
+    INFO(final.dump());
+    // The mean of the last 20 %, not the last iteration (0.8 + 0.5 / 100).
+    CHECK(final.at("cd").get<double>() == Approx(summary.at("cd").get<double>()).epsilon(1e-12));
+    CHECK(final.at("cl").get<double>() == Approx(summary.at("cl").get<double>()).epsilon(1e-12));
+    CHECK(final.at("dragN").get<double>() == Approx(summary.at("dragN").get<double>()).epsilon(1e-12));
+    CHECK(final.at("liftN").get<double>() == Approx(-2.0));
+    CHECK(final.at("cd").get<double>() != Approx(*st->cd).epsilon(1e-9));
+    // The list carries it too.
+    const auto list = runs.list();
+    REQUIRE(list.size() == 1);
+    CHECK(list[0].toJson().at("final").at("cd") == final.at("cd"));
+
+    // Like Results: a missing value of the eight (here the viscous drag) means no final result.
+    {
+        std::ifstream in(tmp.path() / id / "postProcessing" / "forces" / "0" / "force.dat");
+        std::string text(std::istreambuf_iterator<char>(in), {});
+        const auto at = text.find("viscous_x");
+        REQUIRE(at != std::string::npos);
+        text.replace(at, 9, "friction_");
+        write(tmp.path() / id / "postProcessing" / "forces" / "0" / "force.dat", text);
+        CHECK(runs.results(id).at("finalResults").at("available") == false);
+        CHECK(runs.status(id)->toJson().at("final").is_null());
+        text.replace(at, 9, "viscous_x");
+        write(tmp.path() / id / "postProcessing" / "forces" / "0" / "force.dat", text);
+    }
+    // A failed run, or one whose outputs are cut off, has no final result.
+    write(tmp.path() / id / "aerocad.status", "failed: solve\n");
+    CHECK(runs.status(id)->toJson().at("final").is_null());
+    write(tmp.path() / id / "aerocad.status", "finished\n");
+    CHECK(runs.status(id)->toJson().at("final").is_object());
+    {
+        std::ofstream(tmp.path() / id / "postProcessing" / "forces" / "0" / "force.dat", std::ios::app) << "101 1.0";
+    }
+    CHECK(runs.status(id)->toJson().at("final").is_null());
 }

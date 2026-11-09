@@ -1,0 +1,16 @@
+# CAD-111: undoing a delete puts the part back in its place in the Browser, with real keys:
+# three parts, the first one is deleted with Delete and put back with Ctrl+Z; its Browser
+# row is first again (before this it came back at the end of the list).
+# Run: AeroCAD --ui-script <this file>
+Qt.createQmlObject('import QtQuick; Item { objectName: "uoTest"; visible: false; property var s: ({}); function rows() { return s.ids.map(id => { const r = browser.rowItem(id); return r ? r.mapToItem(null, 0, 0).y : NaN }) } function check(label) { const y = rows(); ui.log(label + ": row y " + y.map(v => v.toFixed(0)).join(", ")); if (!(y[0] < y[1] && y[1] < y[2])) ui.fail(label + ": Browser rows are not in their original order") } }', window.contentItem)
+ui.wait(800)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "uoTest"); for (const [cmd, args] of [["feature.box", { size: [40, 30, 6] }], ["feature.plane", { offset: 10 }], ["feature.cylinder", { radius: 5, height: 10, center: [100, 0, 0] }]]) { const r = controller.execute(cmd, args); if (!r.ok) ui.fail(cmd + ": " + r.error) } t.s.ids = controller.execute("document.parts").result.parts.map(p => p.id); if (t.s.ids.length !== 3) ui.fail("expected 3 parts, got " + t.s.ids.length); window.selectPart(t.s.ids[0]) })()
+ui.wait(300)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "uoTest").check("before") })()
+ui.key("Delete")
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "uoTest"); const n = controller.execute("document.parts").result.parts.length; ui.log("after Delete: " + n + " parts"); if (n !== 2) ui.fail("Delete did not remove the part") })()
+ui.key("Z", "ctrl")
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "uoTest"); const ids = controller.execute("document.parts").result.parts.map(p => p.id); if (ids.join() !== t.s.ids.join()) ui.fail("undo order " + ids.join() + ", expected " + t.s.ids.join()); t.check("after Ctrl+Z") })()
+ui.shot("build/undo-order.png")

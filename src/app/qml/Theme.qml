@@ -73,11 +73,14 @@ QtObject {
     readonly property color edgeColor: pick("#242a31", "#14171b")
     readonly property color selectedColor: pick("#6ea4ff", "#78a9ff")
     readonly property color hoverColor: pick("#9cc0ff", "#9cc0ff")
+    /// Laid over a part's colour under the pointer: lighter than the selection, still grey.
+    readonly property color hoverTint: Qt.rgba(0.43, 0.64, 1.0, 0.4)
     readonly property color sketchColor: pick("#1f5fd6", "#62a0ff")
     readonly property color sketchProfile: Qt.rgba(1.0, 0.72, 0.38, 0.40)
     /// Construction planes: translucent orange squares, like Fusion.
     readonly property color planeFill: Qt.rgba(0.95, 0.62, 0.25, 0.22)
     readonly property color planeSelected: Qt.rgba(0.5, 0.7, 1.0, 0.3)
+    readonly property color planeHover: Qt.rgba(0.6, 0.78, 1.0, 0.22)
     readonly property color planeEdge: pick("#c77a2a", "#e0954a")
     readonly property color regionColor: "#ff9a3c"
     /// Overlay palettes drawn over the 3D view (navigation bar, selection tools).
@@ -141,13 +144,13 @@ QtObject {
     readonly property var commandIcons: ({
         "undo": "undo", "redo": "redo", "import": "import", "open": "open", "save": "save",
         "to body": "mesh-to-body", "sketch": "sketch", "extrude": "extrude", "revolve": "revolve",
-        "box": "box", "cylinder": "cylinder", "hole": "hole", "line": "line", "rectangle": "rectangle",
-        "circle": "circle", "arc": "arc", "polygon": "polygon", "slot": "slot", "dimension": "dimension",
-        "finish sketch": "finish-sketch", "fillet": "fillet", "chamfer": "chamfer", "shell": "shell",
-        "combine": "combine", "parameters": "parameters", "show/hide": "visible", "delete": "delete",
+        "box": "box", "cylinder": "cylinder", "sphere": "sphere", "torus": "torus", "hole": "hole", "line": "line", "rectangle": "rectangle",
+        "circle": "circle", "arc": "arc", "center rectangle": "center-rectangle", "3-point rectangle": "rectangle-3point", "center arc": "center-arc", "2-point circle": "circle-2point", "3-point circle": "circle-3point", "polygon": "polygon", "slot": "slot", "spline": "spline", "dimension": "dimension",
+        "finish sketch": "finish-sketch", "press pull": "extrude", "fillet": "fillet", "chamfer": "chamfer", "shell": "shell",
+        "combine": "combine", "split body": "section", "delete face": "delete", "draft": "shell", "parameters": "parameters", "show/hide": "visible", "delete": "delete",
         "selected": "export", "all": "export", "export": "export", "fit": "fit", "home": "home",
         "ortho": "ortho", "sweep": "sweep", "loft": "loft", "mirror": "mirror", "pattern": "pattern",
-        "circular pattern": "circular-pattern", "plane": "plane", "measure": "measure",
+        "circular pattern": "circular-pattern", "plane": "plane", "midplane": "plane", "measure": "measure",
         "clearance": "clearance", "section": "section", "deviation": "deviation",
         "thickness": "thickness", "a/b": "variants", "new": "duplicate", "variant": "variants"
     })
@@ -166,11 +169,18 @@ QtObject {
         "hole": qsTr("Drill a round hole into a body at a point on a face."),
         "box": qsTr("Add a block whose size you type in."),
         "cylinder": qsTr("Add a cylinder whose size you type in."),
+        "sphere": qsTr("Add a ball whose diameter you type in."),
+        "torus": qsTr("Add a ring (doughnut) whose ring and tube diameters you type in."),
+        "press pull": qsTr("Move faces of a body in or out by a distance; a curved face is offset (Fusion: Press Pull, Q)."),
         "fillet": qsTr("Round the selected edges of a body."),
         "chamfer": qsTr("Bevel (cut off at an angle) the selected edges of a body."),
         "shell": qsTr("Hollow out a body, leaving walls of the thickness you type."),
         "move/rotate": qsTr("Turn the selected part about an axis and move it by a distance (Fusion: Move/Copy, M)."),
         "combine": qsTr("Join, cut or intersect two bodies."),
+        "midplane": qsTr("Add a construction plane halfway between two parallel faces or planes, e.g. a part's symmetry plane (Fusion: Midplane)."),
+        "draft": qsTr("Tilt faces of a body by an angle from a fixed plane, e.g. mould walls (Fusion: Draft)."),
+        "delete face": qsTr("Remove faces of a body (a hole, a fillet, a boss) and close the gap from the faces around them (Fusion: Delete)."),
+        "split body": qsTr("Cut a body with a plane into two bodies, e.g. to print a part larger than the printer bed (Fusion: Split Body)."),
         "parameters": qsTr("Named values (e.g. wall = 2 mm) that dimensions can use; change one to update the design."),
         "delete": qsTr("Delete the selected part. Undo brings it back."),
         "import": qsTr("Open a scan or model: STL, OBJ, PLY, 3MF or STEP."),
@@ -182,10 +192,16 @@ QtObject {
         "finish sketch": qsTr("Close the sketch and go back to the 3D design."),
         "line": qsTr("Click points to draw connected lines; click the first point to close the outline."),
         "rectangle": qsTr("Drag two corners."),
+        "center rectangle": qsTr("Click the centre, then a corner; the rectangle is symmetric about the centre."),
+        "3-point rectangle": qsTr("Click both ends of one side (at any angle), then the far side."),
+        "2-point circle": qsTr("Click both ends of a diameter."),
+        "3-point circle": qsTr("Click three points on the circle."),
+        "center arc": qsTr("Click the centre, the start (sets the radius) and the end; the arc runs counter-clockwise."),
         "circle": qsTr("Click the centre, then the radius."),
         "arc": qsTr("Click start, end and a point on the arc."),
         "polygon": qsTr("Regular polygon: click the centre, then a corner."),
         "slot": qsTr("Rounded slot: click the two centres, then the width."),
+        "spline": qsTr("Smooth curve through the points you click; Enter ends it, the first point closes it."),
         "dimension": qsTr("Click a line, circle or two points to fix a size; type the value."),
         "measure": qsTr("Measure distances and angles between points, edges and faces."),
         "section": qsTr("Cut the view with a plane to look inside."),
@@ -202,11 +218,11 @@ QtObject {
     function featureIcon(type) {
         const map = {
             sketch: "sketch", extrude: "extrude", revolve: "revolve", fillet: "fillet",
-            chamfer: "chamfer", shell: "shell", combine: "combine", box: "box", cylinder: "cylinder",
+            chamfer: "chamfer", shell: "shell", combine: "combine", box: "box", cylinder: "cylinder", sphere: "sphere", torus: "torus",
             hole: "hole", base_body: "mesh-to-body", sweep: "sweep", loft: "loft", mirror: "mirror",
             pattern: "pattern", rectangular_pattern: "pattern", circular_pattern: "circular-pattern",
             plane: "plane", body: "body", imported: "mesh", mesh: "mesh",
-            part_on_surface: "surface", fin_on_surface: "surface", move: "move"
+            part_on_surface: "surface", fin_on_surface: "surface", move: "move", press_pull: "extrude", split: "section", delete_faces: "delete", draft: "shell"
         }
         return map[type] || "tool"
     }

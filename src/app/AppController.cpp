@@ -6,6 +6,8 @@
 #include "JsonBridge.hpp"
 
 #include "aerocad/BuildInfo.hpp"
+#include "aerocad/cfd/Settings.hpp"
+#include "aerocad/core/MeshCheck.hpp"
 #include "aerocad/core/Path.hpp"
 
 #include <cmath>
@@ -17,6 +19,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QLocale>
 #include <QSettings>
 #include <QStandardPaths>
@@ -37,6 +40,11 @@ QString toLocalPath(const QUrl& url)
 }
 
 } // namespace
+
+QString AppController::localPath(const QUrl& url) const
+{
+    return toLocalPath(url);
+}
 
 AppController::AppController(QObject* parent) : QObject(parent), m_parts(m_session.document())
 {
@@ -139,6 +147,30 @@ bool AppController::sectionCuts(quint64 id) const
     return p != nullptr && p->kind != model::PartKind::Sketch && m_session.inspect().section().cuts(id);
 }
 
+QString AppController::partSizeWarning(quint64 id) const
+{
+    const model::Part* p = part(id);
+    if (p == nullptr || !p->mesh || p->mesh->isEmpty())
+        return {};
+    const core::Vec3 size = p->mesh->bounds().size();
+    // Model millimetres to metres, as the case writer converts them.
+    return QString::fromStdString(cfd::partSizeWarning(std::max({size.x, size.y, size.z}) / 1000.0));
+}
+
+QString AppController::partOpenWarning(quint64 id) const
+{
+    const model::Part* p = part(id);
+    if (p == nullptr || !p->mesh || p->mesh->isEmpty() || p->kind == model::PartKind::Sketch ||
+        p->kind == model::PartKind::Plane)
+        return {};
+    // A scan can have millions of triangles: check each mesh once.
+    if (m_openEdgesMesh.lock() != p->mesh) {
+        m_openEdgesMesh = p->mesh;
+        m_openEdges = core::checkMesh(*p->mesh).boundaryEdges;
+    }
+    return QString::fromStdString(cfd::openPartWarning(m_openEdges));
+}
+
 bool AppController::showsHeatMap(quint64 id) const
 {
     const auto& h = m_session.inspect().heatMap();
@@ -228,11 +260,21 @@ bool AppController::historyApplied(double id) const
     return id > 0 && m_session.undoStack().isApplied(static_cast<std::uint64_t>(id));
 }
 
+bool AppController::historyExpired(double id) const
+{
+    return id > 0 && m_session.undoStack().isExpired(static_cast<std::uint64_t>(id));
+}
+
 bool AppController::undoIfTop(double id)
 {
     if (id <= 0 || m_session.undoStack().topId() != static_cast<std::uint64_t>(id))
         return false;
     return execute(QStringLiteral("edit.undo")).value(QStringLiteral("ok")).toBool();
+}
+
+bool AppController::addToSelectionHeld() const
+{
+    return (QGuiApplication::keyboardModifiers() & (Qt::ControlModifier | Qt::ShiftModifier)) != 0;
 }
 
 bool AppController::mergeHistoryIds(const QVariantList& ids, const QString& label)
@@ -617,6 +659,7 @@ QVariantMap AppController::partInfo(quint64 id) const
         {QStringLiteral("name"), QString::fromStdString(p->name)},
         {QStringLiteral("source"), QString::fromStdString(p->source)},
         {QStringLiteral("visible"), p->visible},
+        {QStringLiteral("color"), QString::fromStdString(p->color)},
         {QStringLiteral("vertices"), QVariant::fromValue<qulonglong>(p->mesh ? p->mesh->vertexCount() : 0)},
         {QStringLiteral("triangles"), QVariant::fromValue<qulonglong>(p->mesh ? p->mesh->triangleCount() : 0)},
         {QStringLiteral("hasBrep"), p->shape.has_value()},
@@ -769,7 +812,12 @@ QVariantMap AppController::pickNearSurface(const QVector3D& origin, const QVecto
     for (const auto& p : m_session.document().parts()) {
         if (!p.visible || !p.mesh)
             continue;
-        const auto hit = core::nearestToRay(*p.mesh, o, d, maxAngleDeg);
+        // Section view: only the kept half is drawn, so only it can be snapped to (CAD-96).
+        const commands::SectionAnalysis& section = m_session.inspect().section();
+        std::function<bool(const core::Vec3&)> kept;
+        if (p.kind != model::PartKind::Sketch && section.cuts(p.id))
+            kept = [&section](const core::Vec3& v) { return section.plane.distance(v) <= 1e-9; };
+        const auto hit = core::nearestToRay(*p.mesh, o, d, maxAngleDeg, kept);
         if (!hit)
             continue;
         const core::Vec3 w = hit->point - o;
@@ -916,12 +964,17 @@ void AppController::setStatusMessage(const QString& message)
     emit statusMessageChanged();
 }
 
-QVariantList AppController::colormap(const QString& scalar) const
+QVariantList AppController::colormap(const QString& scalar, const QString& palette) const
 {
     QVariantList out;
-    for (int i = 0; i <= 8; ++i)
-        out.append(FieldGeometry::mapColor(scalar, i / 8.0));
+    for (int i = 0; i <= 16; ++i)
+        out.append(FieldGeometry::mapColor(scalar, i / 16.0, palette));
     return out;
+}
+
+double AppController::fieldScalePosition(const QString& scalar, double value, double lo, double hi) const
+{
+    return FieldGeometry::scalePosition(scalar, value, lo, hi);
 }
 
 } // namespace aerocad::app

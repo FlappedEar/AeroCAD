@@ -10,11 +10,13 @@
 #include "aerocad/geometry/Transform.hpp"
 #include "aerocad/io/Import.hpp"
 
+#include <cctype>
 #include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace aerocad::commands {
 
@@ -138,18 +140,29 @@ void registerPartCommands(CommandRegistry& r)
           });
 
     r.add({"part.duplicate", "Duplicate part",
-           "Copies an imported part (mesh and exact geometry) as a new part, e.g. to keep the original next to "
-           "a modified copy. Bodies and sketches are duplicated with variant.create instead.",
+           "Copies a part (mesh and exact geometry) as a new part, e.g. to keep the original next to a modified "
+           "copy (Copy / Paste). A body of the timeline is copied as a fixed solid outside the timeline: it keeps "
+           "its shape but not its features. Sketches and planes cannot be copied.",
            objectSchema({{"id", idParam()}, {"name", {{"type", "string"}, {"minLength", 1}}}}, {"id"}), true},
           [](CommandContext& ctx, const Json& params) {
               model::Document& doc = ctx.document;
               const model::Part& source = requirePart(doc, params);
-              requireImported(source, "duplicate");
+              if (source.kind == model::PartKind::Sketch || source.kind == model::PartKind::Plane)
+                  throw CommandError("Cannot duplicate a sketch or plane: copy the body made from it");
+              if (!source.mesh)
+                  throw CommandError("Part has no geometry to copy");
               // `source` dangles once addPart() reallocates the part list.
               const std::string label = "Duplicate " + source.name;
               model::Part copy = source;
               copy.id = 0;
               copy.revision = 0;
+              copy.selection = nullptr;
+              if (copy.kind == model::PartKind::Body) {
+                  // A fixed copy: the timeline does not rebuild or remove it.
+                  copy.kind = model::PartKind::Imported;
+                  copy.featureId = 0;
+                  copy.source = "copy of " + source.name;
+              }
               copy.name = params.contains("name") ? params["name"].get<std::string>() : source.name + " (copy)";
               const model::PartId id = doc.addPart(copy);
               copy.id = id;
@@ -169,6 +182,69 @@ void registerPartCommands(CommandRegistry& r)
               pushPartStateUndo(ctx, after.visible ? "Show " + before.name : "Hide " + before.name, before.id, before,
                                 *ctx.document.part(before.id));
               return partToJson(*ctx.document.part(before.id));
+          });
+
+    r.add({"part.set_color", "Appearance",
+           "Sets the colour a part is shown in (Fusion's Appearance): \"#rrggbb\", or \"\" for the default "
+           "colour of its kind. Saved with the project; timeline bodies keep it through edits.",
+           objectSchema({{"id", idParam()},
+                         {"color", {{"type", "string"}, {"description", "\"#rrggbb\" or \"\" (default)"}}}},
+                        {"id", "color"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              const model::Part before = requirePart(ctx.document, params);
+              std::string color = params.at("color").get<std::string>();
+              if (!color.empty() && !model::isPartColor(color))
+                  throw CommandError("Colour must be \"#rrggbb\" or empty, got \"" + color + "\"");
+              for (auto& ch : color)
+                  ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+              ctx.document.modifyPart(before.id, [&](model::Part& p) { p.color = color; });
+              pushPartStateUndo(ctx, "Appearance of " + before.name, before.id, before, *ctx.document.part(before.id));
+              return partToJson(*ctx.document.part(before.id));
+          });
+
+    r.add({"part.isolate", "Isolate part",
+           "Shows only this part and hides all the others (Fusion's Isolate), as one undo step. Returns the ids "
+           "it hid in 'hidden': pass them to part.unisolate to bring back what was visible before.",
+           objectSchema({{"id", idParam()}}, {"id"}), true},
+          [](CommandContext& ctx, const Json& params) {
+              const model::Part target = requirePart(ctx.document, params);
+              std::vector<model::PartId> hidden;
+              for (const auto& p : ctx.document.parts())
+                  if (p.id != target.id && p.visible)
+                      hidden.push_back(p.id);
+              const bool shown = !target.visible;
+              auto apply = [&doc = ctx.document, id = target.id, hidden, shown](bool isolate) {
+                  if (shown)
+                      doc.modifyPart(id, [&](model::Part& p) { p.visible = isolate; });
+                  for (const auto h : hidden)
+                      doc.modifyPart(h, [&](model::Part& p) { p.visible = !isolate; });
+              };
+              apply(true);
+              ctx.undoStack.push({"Isolate " + target.name, [apply]() { apply(false); }, [apply]() { apply(true); }});
+              return Json{{"id", target.id}, {"hidden", hidden}};
+          });
+
+    r.add({"part.unisolate", "Unisolate",
+           "Shows the given parts again (the 'hidden' list of part.isolate), as one undo step. Ids of parts that "
+           "no longer exist are skipped.",
+           objectSchema({{"ids", {{"type", "array"}, {"items", idParam()}}}}, {"ids"}), true},
+          [](CommandContext& ctx, const Json& params) {
+              std::vector<model::PartId> shown;
+              for (const auto& j : params.at("ids")) {
+                  const auto id = j.get<model::PartId>();
+                  const model::Part* p = ctx.document.part(id);
+                  if (p != nullptr && !p->visible)
+                      shown.push_back(id);
+              }
+              auto apply = [&doc = ctx.document, shown](bool visible) {
+                  for (const auto id : shown)
+                      doc.modifyPart(id, [&](model::Part& p) { p.visible = visible; });
+              };
+              apply(true);
+              if (!shown.empty())
+                  ctx.undoStack.push({"Unisolate", [apply]() { apply(false); }, [apply]() { apply(true); }});
+              return Json{{"shown", shown}};
           });
 
     r.add({"part.rename", "Rename part", "Renames a part.",

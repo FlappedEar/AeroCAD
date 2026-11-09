@@ -1,0 +1,94 @@
+# CAD-156: several parts selected at once (Fusion), with real clicks:
+#  - Ctrl + click and Shift + click in the view add a part to the selection, Ctrl + click on
+#    a selected part takes it out, a plain click selects only the part clicked, a click on
+#    empty space clears the selection, Ctrl + click on empty space keeps it;
+#  - Ctrl + click in the Browser does the same;
+#  - V hides all selected parts and Ctrl+Z shows them all again (one undo step);
+#  - a right-click on a selected part, in the view or the Browser, keeps the selection;
+#  - Ctrl+A selects every visible part; Delete removes them all (timeline bodies and a
+#    copied solid) and one Ctrl+Z brings them all back;
+#  - a sketch and its extruded body, picked in that order: Delete removes both features.
+# Run: AeroCAD --ui-script <this file>
+Qt.createQmlObject('import QtQuick; Item { objectName: "msTest"; visible: false; property var s: ({}); function at(i) { const c = Qt.vector3d(40 * i + 10, 10, 10); const v = viewport.viewPoint(c); return viewport.mapToItem(null, v.x, v.y) } function clickPart(i, mods) { const p = at(i); ui.click(p.x, p.y, "left", mods || "") } function clickRow(i, mods, button) { const r = browser.rowItem(s.ids[i]); const p = r.mapToItem(null, r.width / 3, r.height / 2); ui.click(p.x, p.y, button || "left", mods || "") } function sel() { return window.selectedPartIds.map(id => s.ids.indexOf(id)) } function check(label, want) { const got = sel(); ui.log(label + ": selected " + got.join(",") + " (last " + s.ids.indexOf(window.selectedPartId) + ")"); if (got.slice().sort().join() !== want.slice().sort().join()) ui.fail(label + ": selected " + got.join() + ", expected " + want.join()); if (want.length && window.selectedPartId !== s.ids[want[want.length - 1]]) ui.fail(label + ": last picked part is " + s.ids.indexOf(window.selectedPartId) + ", expected " + want[want.length - 1]); if (!want.length && window.selectedPartId) ui.fail(label + ": a part is still the current one") } function vis() { return s.ids.map(id => controller.partInfo(id).visible) } function count() { return controller.execute("document.parts").result.parts.length } }', window.contentItem)
+ui.wait(800)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "msTest"); for (let i = 0; i < 3; ++i) { const r = controller.execute("feature.box", { size: [20, 20, 20], corner: [40 * i, 0, 0] }); if (!r.ok) ui.fail("box: " + r.error) } t.s.ids = controller.execute("document.parts").result.parts.filter(p => p.kind === "body").map(p => p.id); const d = controller.execute("part.duplicate", { id: t.s.ids[0] }); if (!d.ok) ui.fail("duplicate: " + d.error); controller.execute("part.set_visible", { id: d.result.id, visible: false }); t.s.copy = d.result.id; viewport.fitAll() })()
+ui.wait(500)
+# In the view.
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "msTest").clickPart(0) })()
+ui.wait(300)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "msTest").check("click", [0]) })()
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "msTest").clickPart(1, "ctrl") })()
+ui.wait(300)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "msTest").check("Ctrl+click", [0, 1]) })()
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "msTest").clickPart(2, "shift") })()
+ui.wait(300)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "msTest").check("Shift+click", [0, 1, 2]) })()
+ui.shot("build/multi_select.png")
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "msTest").clickPart(1, "ctrl") })()
+ui.wait(300)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "msTest").check("Ctrl+click a selected part", [0, 2]) })()
+(() => { const p = viewport.mapToItem(null, 30, viewport.height / 2); ui.click(p.x, p.y, "left", "ctrl") })()
+ui.wait(300)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "msTest").check("Ctrl+click on empty space", [0, 2]) })()
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "msTest").clickPart(1) })()
+ui.wait(300)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "msTest").check("plain click", [1]) })()
+(() => { const p = viewport.mapToItem(null, 30, viewport.height / 2); ui.click(p.x, p.y) })()
+ui.wait(300)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "msTest").check("click on empty space", []) })()
+# In the Browser.
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "msTest").clickRow(0) })()
+ui.wait(300)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "msTest").clickRow(2, "ctrl") })()
+ui.wait(300)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "msTest").check("Ctrl+click in the Browser", [0, 2]) })()
+# V hides both, one Ctrl+Z shows both.
+ui.key("V")
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "msTest"); const v = t.vis(); ui.log("V: visible " + v.join(",")); if (v.join() !== "false,true,false") ui.fail("V: visible " + v.join() + ", expected false,true,false") })()
+(() => { if (!undoAction.trigger) ui.fail("no undo action"); undoAction.trigger() })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "msTest"); const v = t.vis(); ui.log("Ctrl+Z: visible " + v.join(",")); if (v.join() !== "true,true,true") ui.fail("one Ctrl+Z after V: visible " + v.join() + ", expected all") })()
+# Right-click on a selected part keeps the selection.
+(() => { const p = Array.from(window.contentItem.children).find(c => c.objectName === "msTest").at(2); ui.click(p.x, p.y, "right") })()
+ui.wait(300)
+(() => { if (!partMenu.visible) ui.fail("right-click on a part opened no menu") })()
+ui.wait(300)
+ui.key("Escape")
+ui.wait(200)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "msTest").check("right-click on a selected part", [0, 2]) })()
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "msTest").clickRow(0, "", "right") })()
+ui.wait(300)
+(() => { if (!partMenu.visible) ui.fail("right-click on a Browser row opened no menu") })()
+ui.key("Escape")
+ui.wait(200)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "msTest").check("right-click on a selected Browser row", [2, 0]) })()
+# Ctrl+A, Delete, one Ctrl+Z.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "msTest"); controller.execute("part.set_visible", { id: t.s.copy, visible: true }); t.s.ids.push(t.s.copy); t.clickPart(1) })()
+ui.wait(300)
+ui.key("A", "ctrl")
+ui.wait(300)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "msTest").check("Ctrl+A", [0, 1, 2, 3]) })()
+ui.key("Delete")
+ui.wait(500)
+(() => { const n = Array.from(window.contentItem.children).find(c => c.objectName === "msTest").count(); ui.log("Delete: " + n + " parts left"); if (n !== 0) ui.fail("Delete left " + n + " parts"); if (window.selectedPartIds.length || window.selectedPartId) ui.fail("deleted parts still selected") })()
+(() => { undoAction.trigger() })()
+ui.wait(500)
+(() => { const n = Array.from(window.contentItem.children).find(c => c.objectName === "msTest").count(); ui.log("Ctrl+Z: " + n + " parts"); if (n !== 4) ui.fail("one Ctrl+Z after Delete brought back " + n + " parts, expected 4") })()
+ui.log("multi-select OK")
+# A sketch and the body extruded from it, picked in that order: Delete removes both
+# features (Codex: deleting the sketch first made the body vanish and its feature stay).
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "msTest"); let r = controller.execute("sketch.create", { plane: "XY", curves: [{ type: "center_rectangle", center: [0, 100], width: 20, height: 20 }] }); if (!r.ok) ui.fail("sketch: " + r.error); t.s.sketchFeature = r.result.id; r = controller.execute("feature.extrude", { sketch: r.result.id, distance: 10 }); if (!r.ok) ui.fail("extrude: " + r.error); t.s.extrudeFeature = r.result.id; const parts = controller.execute("document.parts").result.parts; t.s.ids = [parts.find(p => p.kind === "sketch" && p.featureId === t.s.sketchFeature).id, parts.find(p => p.kind === "body" && p.featureId === t.s.extrudeFeature).id] })()
+ui.wait(400)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "msTest").clickRow(0) })()
+ui.wait(300)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "msTest").clickRow(1, "ctrl") })()
+ui.wait(300)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "msTest").check("sketch, then its body", [0, 1]) })()
+ui.key("Delete")
+ui.wait(600)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "msTest"); const left = controller.execute("timeline.list").result.features.filter(f => f.id === t.s.sketchFeature || f.id === t.s.extrudeFeature); ui.log("Delete sketch + body: " + left.length + " of their features left"); if (left.length) ui.fail("Delete left " + left.map(f => f.name + " (" + f.status + ")").join(", ") + " in the timeline") })()
+(() => { undoAction.trigger() })()
+ui.wait(600)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "msTest"); const back = controller.execute("timeline.list").result.features.filter(f => (f.id === t.s.sketchFeature || f.id === t.s.extrudeFeature) && f.status === "ok"); ui.log("Ctrl+Z: " + back.length + " features back"); if (back.length !== 2) ui.fail("one Ctrl+Z brought back " + back.length + " of 2 features") })()
+ui.log("multi-select sketch + body OK")

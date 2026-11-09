@@ -6,6 +6,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -66,8 +67,11 @@ struct RayHit {
 /// opening, or just past its edge): the mesh vertex seen closest to the ray from `origin`,
 /// within `maxAngleDeg` of it, as a hit on a triangle using that vertex. `distance` is along
 /// the ray, in units of |direction|. Empty when no vertex in front of `origin` is that close.
+/// `accept`, when given, limits the candidates to the vertices it accepts (e.g. the half a
+/// section view keeps), so nothing that is not drawn can be snapped to.
 [[nodiscard]] std::optional<RayHit> nearestToRay(const TriangleMesh& mesh, const Vec3& origin, const Vec3& direction,
-                                                 double maxAngleDeg);
+                                                 double maxAngleDeg,
+                                                 const std::function<bool(const Vec3&)>& accept = {});
 
 /// A mesh seen from outside along one direction: triangles binned in a grid across it, for
 /// fast queries on scans of millions of triangles (build: under a second; queries:
@@ -195,5 +199,8 @@ void normalizeSelection(TriangleSet& selection);
 
 /// Total area of the selected triangles (mm^2).
 [[nodiscard]] double selectionArea(const TriangleMesh& mesh, const TriangleSet& selection);
+
+/// Bounding box of the selected triangles (empty when nothing valid is selected).
+[[nodiscard]] BoundingBox selectionBounds(const TriangleMesh& mesh, const TriangleSet& selection);
 
 } // namespace aerocad::core

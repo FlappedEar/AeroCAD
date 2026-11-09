@@ -42,6 +42,156 @@ Pane {
         return out
     }
 
+    /// Extrude: the distance arrow on the profile, along the sketch normal (Viewport
+    /// distanceArrow), or null. The distance is signed: negative means Flip.
+    readonly property var distanceArrow: {
+        if (type === "fillet" || type === "chamfer" || type === "shell" || type === "press_pull")
+            return sizeArrow()
+        if (type !== "extrude" || values.sketch === undefined || values.extent === "to_object")
+            return null
+        const d = Number(values.distance)
+        if (!isFinite(d))
+            return null // an expression: typed, not dragged
+        const r = controller.execute("sketch.profiles", { sketch: values.sketch })
+        if (!r.ok || r.result.profiles.length === 0)
+            return null
+        const pl = r.result.plane
+        let base
+        const picks = values.points || []
+        if (picks.length > 0) {
+            const uv = picks[0]
+            base = [0, 1, 2].map(i => pl.origin[i] + pl.xDir[i] * uv[0] + pl.yDir[i] * uv[1])
+        } else {
+            // Area-weighted centre of all profiles.
+            let a = 0
+            base = [0, 0, 0]
+            for (const p of r.result.profiles) {
+                a += p.area
+                for (let i = 0; i < 3; ++i)
+                    base[i] += p.centroidWorld[i] * p.area
+            }
+            base = base.map(x => a > 0 ? x / a : 0)
+        }
+        return { base: base, direction: pl.normal, distance: values.flip ? -d : d }
+    }
+
+    /// The value the size arrow of Fillet / Chamfer / Shell drags.
+    readonly property string sizeKey: type === "fillet" ? "radius" : type === "shell" ? "thickness" : type === "press_pull" ? "distance"
+                                     : type === "chamfer" && (values.type === undefined || values.type === "equal_distance") ? "distance" : ""
+
+    /// Fillet / Chamfer: an arrow on the first picked edge, into the corner between its faces;
+    /// Shell: on the first removed face, into the body (Fusion's drag handles). Null without
+    /// a pick or when the size is an expression.
+    function sizeArrow() {
+        if (sizeKey === "" || values.body === undefined)
+            return null
+        const size = Number(values[sizeKey])
+        if (!isFinite(size))
+            return null
+        const pick = ((type === "shell" || type === "press_pull" ? values.faces : values.edges) || [])[0]
+        if (!pick || !pick.point)
+            return null
+        // Where the arrow sits is found once per pick, on the body without the preview (with
+        // it, the body already has the fillet or shell and its edges are not the picked ones).
+        // The values just changed, so the preview is run again right after.
+        const key = JSON.stringify([type, values.body, pick.point])
+        if (sizeArrowPlace.key !== key) {
+            sizeArrowPlace.key = key
+            undoPreview()
+            sizeArrowPlace.place = sizeArrowAt(pick.point)
+        }
+        const place = sizeArrowPlace.place
+        return place ? { base: place.base, direction: place.direction, distance: size } : null
+    }
+    /// Cache of sizeArrow(): {key, place}. Mutated in place, not a binding dependency.
+    readonly property var sizeArrowPlace: ({ key: "", place: null })
+
+    /// Params of body.edges / body.faces for the picked body: when editing a feature, the
+    /// body as it was before it (the picks were made there; Fusion rolls back the same way).
+    function bodyQuery(extra) {
+        const q = Object.assign({ body: values.body }, extra)
+        if (editId)
+            q.before = editId
+        return q
+    }
+
+    /// {base, direction} of the size arrow for the pick at `point`, or null.
+    function sizeArrowAt(point) {
+        const v3 = a => Qt.vector3d(a[0], a[1], a[2])
+        const arr = q => [q.x, q.y, q.z]
+        if (type === "shell" || type === "press_pull") {
+            // The face nearest the pick, with its normal at the pick (curved faces too): into
+            // the body for Shell, out of it for Press Pull (its distance is signed).
+            const r = controller.execute("body.faces", bodyQuery({ point: point }))
+            if (!r.ok || !r.result.nearest || !r.result.nearest.normal)
+                return null
+            const n = v3(r.result.nearest.normal).normalized()
+            return { base: point, direction: arr(type === "shell" ? n.times(-1) : n) }
+        }
+        const r = controller.execute("body.edges", bodyQuery({ point: point }))
+        if (!r.ok || !r.result.nearest)
+            return null
+        // By its index: degenerate edges (a cone's apex) are not listed, so it is not the position.
+        const edge = r.result.edges.find(e => e.index === r.result.nearest.index)
+        if (!edge)
+            return null
+        const mid = v3(edge.middle)
+        const along = v3(edge.end).minus(v3(edge.start))
+        const dirAlong = along.length() > 1e-9 ? along.normalized() : Qt.vector3d(0, 0, 0)
+        // The two faces whose planes hold the edge (nearest first): the arrow goes against
+        // the sum of their normals, into the corner.
+        const fr = controller.execute("body.faces", bodyQuery({}))
+        const faces = fr.ok ? fr.result.faces : []
+        const scale = Math.max(1e-3, along.length())
+        const holding = faces.filter(f => {
+            const n = v3(f.normal)
+            return Math.abs(n.dotProduct(mid.minus(v3(f.center)))) < 1e-4 * Math.max(1, scale) && Math.abs(n.dotProduct(dirAlong)) < 1e-4
+        }).sort((a, b) => v3(a.center).minus(mid).length() - v3(b.center).minus(mid).length())
+        let dir = null
+        if (holding.length >= 2) {
+            const s = v3(holding[0].normal).plus(v3(holding[1].normal))
+            if (s.length() > 1e-6)
+                dir = s.times(-1).normalized()
+        }
+        if (!dir) {
+            // Towards the middle of the body.
+            let c = Qt.vector3d(0, 0, 0), a = 0
+            for (const f of faces) { c = c.plus(v3(f.center).times(f.area)); a += f.area }
+            const toC = a > 0 ? c.times(1 / a).minus(mid) : Qt.vector3d(0, 0, 1)
+            dir = toC.minus(dirAlong.times(toC.dotProduct(dirAlong)))
+            dir = dir.length() > 1e-9 ? dir.normalized() : Qt.vector3d(0, 0, 1)
+        }
+        return { base: edge.middle, direction: arr(dir) }
+    }
+
+    /// The distance arrow was dragged to signed distance `t` (mm): set Distance and Flip.
+    function dragDistance(t) {
+        if (type === "press_pull") {
+            // Signed: out of the body or into it; never zero (Press Pull would refuse it).
+            const d = Math.round(t * 1e4) / 1e4
+            const v = Object.assign({}, values)
+            v.distance = Math.abs(d) < 0.01 ? (t < 0 ? -0.01 : 0.01) : d
+            values = v
+            return
+        }
+        if (sizeKey !== "") {
+            // A size is never negative or zero: the smallest drag step stays.
+            const v = Object.assign({}, values)
+            v[sizeKey] = Math.max(0.01, Math.round(Math.abs(t) * 1e4) / 1e4)
+            values = v
+            return
+        }
+        if (type !== "extrude")
+            return
+        const v = Object.assign({}, values)
+        v.distance = Math.round(Math.abs(t) * 1e4) / 1e4
+        if (t < 0)
+            v.flip = true
+        else
+            delete v.flip
+        values = v
+    }
+
     visible: type !== ""
     padding: Theme.space3
     width: 300
@@ -66,18 +216,20 @@ Pane {
         extrude: { title: qsTr("Extrude"), command: "feature.extrude", fields: [
             { key: "sketch", type: "sketch", label: qsTr("Sketch") },
             { key: "points", type: "profilePicks", label: qsTr("Profiles"), hint: qsTr("All profiles (click inside profiles to pick)") },
-            { key: "distance", type: "expr", label: qsTr("Distance"), init: 10 },
-            { key: "extent", type: "choice", label: qsTr("Direction"), init: "one_side", options: [
+            { key: "distance", type: "expr", label: qsTr("Distance"), init: 10, showIf: v => v.extent !== "to_object" },
+            { key: "extent", type: "choice", label: qsTr("Extent"), init: "one_side", options: [
                 { value: "one_side", label: qsTr("One Side") }, { value: "symmetric", label: qsTr("Symmetric") },
-                { value: "two_sides", label: qsTr("Two Sides") }] },
+                { value: "two_sides", label: qsTr("Two Sides") }, { value: "to_object", label: qsTr("To Object") }] },
+            { key: "to", type: "objectPick", label: qsTr("Object"), hint: qsTr("Click the face, body, surface or scan to extrude up to"),
+              showIf: v => v.extent === "to_object" },
             { key: "distance2", type: "expr", label: qsTr("Distance 2"), showIf: v => v.extent === "two_sides" },
+            { key: "taper", type: "expr", label: qsTr("Taper Angle (deg)"), init: 0, showIf: v => v.extent !== "to_object" },
             { key: "flip", type: "bool", label: qsTr("Flip") },
             { key: "operation", type: "choice", label: qsTr("Operation"), init: "new_body", options: operations }] },
         revolve: { title: qsTr("Revolve"), command: "feature.revolve", fields: [
             { key: "sketch", type: "sketch", label: qsTr("Sketch") },
             { key: "points", type: "profilePicks", label: qsTr("Profiles"), hint: qsTr("All profiles (click inside profiles to pick)") },
-            { key: "axis", type: "choice", label: qsTr("Axis"), init: "Z", options: [
-                { value: "X", label: "X" }, { value: "Y", label: "Y" }, { value: "Z", label: "Z" }] },
+            { key: "axis", type: "axisPick", label: qsTr("Axis"), init: "Z", hint: qsTr("Click a sketch line or a straight edge") },
             { key: "angle", type: "expr", label: qsTr("Angle (deg)"), init: 360 },
             { key: "operation", type: "choice", label: qsTr("Operation"), init: "new_body", options: operations }] },
         fillet: { title: qsTr("Fillet"), command: "feature.fillet", fields: [
@@ -95,6 +247,18 @@ Pane {
             { key: "distance2", type: "expr", label: qsTr("Distance 2"), init: 1, showIf: v => v.type === "two_distances" },
             { key: "angle", type: "expr", label: qsTr("Angle (deg)"), init: 45, showIf: v => v.type === "distance_angle" },
             { key: "flip", type: "bool", label: qsTr("Flip"), showIf: v => v.type !== undefined && v.type !== "equal_distance" }] },
+        press_pull: { title: qsTr("Press Pull"), command: "feature.press_pull", fields: [
+            { key: "body", type: "body", label: qsTr("Body") },
+            { key: "faces", type: "facePicks", label: qsTr("Faces"), hint: qsTr("Click faces to move") },
+            { key: "distance", type: "expr", label: qsTr("Distance (negative: push in)"), init: 5 }] },
+        draft: { title: qsTr("Draft"), command: "feature.draft", fields: [
+            { key: "body", type: "body", label: qsTr("Body") },
+            { key: "faces", type: "facePicks", label: qsTr("Faces to tilt"), hint: qsTr("Click the side faces") },
+            { key: "plane", type: "planePick", label: qsTr("Fixed plane"), init: "XY", hint: qsTr("Origin plane, construction plane, or click a planar face") },
+            { key: "angle", type: "expr", label: qsTr("Angle (deg, negative: outwards)"), init: 3 }] },
+        delete_faces: { title: qsTr("Delete Face"), command: "feature.delete_faces", fields: [
+            { key: "body", type: "body", label: qsTr("Body") },
+            { key: "faces", type: "facePicks", label: qsTr("Faces to delete"), hint: qsTr("Click every face of the hole, fillet or boss") }] },
         shell: { title: qsTr("Shell"), command: "feature.shell", fields: [
             { key: "body", type: "body", label: qsTr("Body") },
             { key: "faces", type: "facePicks", label: qsTr("Faces to remove"), hint: qsTr("Click faces (none: closed hollow)") },
@@ -119,6 +283,15 @@ Pane {
             { key: "diameter", type: "expr", label: qsTr("Diameter"), init: 20 },
             { key: "height", type: "expr", label: qsTr("Height"), init: 20 },
             { key: "operation", type: "choice", label: qsTr("Operation"), init: "new_body", options: operations }] },
+        sphere: { title: qsTr("Sphere"), command: "feature.sphere", fields: [
+            { key: "center", type: "vec3", label: qsTr("Centre"), init: [0, 0, 0] },
+            { key: "diameter", type: "expr", label: qsTr("Diameter"), init: 20 },
+            { key: "operation", type: "choice", label: qsTr("Operation"), init: "new_body", options: operations }] },
+        torus: { title: qsTr("Torus"), command: "feature.torus", fields: [
+            { key: "center", type: "vec3", label: qsTr("Centre"), init: [0, 0, 0] },
+            { key: "diameter", type: "expr", label: qsTr("Ring diameter"), init: 40 },
+            { key: "tube_diameter", type: "expr", label: qsTr("Tube diameter"), init: 10 },
+            { key: "operation", type: "choice", label: qsTr("Operation"), init: "new_body", options: operations }] },
         loft: { title: qsTr("Loft"), command: "feature.loft", fields: [
             { key: "sections", type: "sketchList", label: qsTr("Profiles (in order)") },
             { key: "ruled", type: "bool", label: qsTr("Straight between profiles") },
@@ -128,6 +301,9 @@ Pane {
             { key: "points", type: "profilePicks", label: qsTr("Profiles"), hint: qsTr("All profiles (click inside profiles to pick)") },
             { key: "path", type: "pathSketch", label: qsTr("Path sketch") },
             { key: "operation", type: "choice", label: qsTr("Operation"), init: "new_body", options: operations }] },
+        midplane: { title: qsTr("Midplane"), command: "feature.plane", fields: [
+            { key: "base", type: "planePick", label: qsTr("First plane or face"), hint: qsTr("Click a planar face, or choose a plane"), required: true },
+            { key: "base2", type: "planePick", label: qsTr("Second plane or face"), hint: qsTr("Click the opposite face, or choose a plane"), required: true }] },
         plane: { title: qsTr("Construction Plane"), command: "feature.plane", fields: [
             { key: "base", type: "planePick", label: qsTr("Base plane"), init: "XY", hint: qsTr("Origin plane, construction plane, or click a planar face") },
             { key: "offset", type: "expr", label: qsTr("Offset"), init: 10 },
@@ -141,6 +317,10 @@ Pane {
             { key: "angle", type: "expr", label: qsTr("Angle (deg)"), init: 90 },
             { key: "translate", type: "vec3", label: qsTr("Move by"), init: [0, 0, 0] },
             { key: "scale", type: "expr", label: qsTr("Scale (factor)"), init: 1 }] },
+        split: { title: qsTr("Split Body"), command: "feature.split", fields: [
+            { key: "body", type: "body", label: qsTr("Body to split") },
+            { key: "plane", type: "planePick", label: qsTr("Splitting plane"), init: "YZ", hint: qsTr("Origin plane, construction plane, or click a planar face") },
+            { key: "offset", type: "expr", label: qsTr("Offset"), init: 0 }] },
         mirror: { title: qsTr("Mirror"), command: "feature.mirror", fields: [
             { key: "body", type: "body", label: qsTr("Body") },
             { key: "plane", type: "choice", label: qsTr("Mirror plane"), init: "YZ", options: planes },
@@ -194,6 +374,12 @@ Pane {
     /// `featureId`, to edit an existing one with its current params.
     function open(featureType, initial, featureId) {
         refreshTimeline()
+        // Earlier features may have changed the body since the arrow was last placed.
+        sizeArrowPlace.key = ""
+        sizeArrowPlace.place = null
+        // A plane made halfway between two (Construct > Midplane) is edited in its own dialog.
+        if (featureType === "plane" && featureId && initial && initial.base2 !== undefined)
+            featureType = "midplane"
         const s = specs[featureType]
         if (!s)
             return false
@@ -235,7 +421,7 @@ Pane {
         // The first selection still to make receives viewport picks (Combine with a target
         // already set starts with the tools).
         const pickFields = s.fields.filter(f => f.type.endsWith("Picks") || f.type === "pointPick" || f.type === "planePick"
-                                                || f.type === "targetPick")
+                                                || f.type === "targetPick" || f.type === "axisPick" || f.type === "objectPick")
         const firstPick = pickFields.find(f => v[f.key] === undefined) || pickFields[0]
         pickKey = firstPick ? firstPick.key : ""
         previewTimer.restart()
@@ -273,7 +459,7 @@ Pane {
     property bool previewApplied: false
     property var previewFeatureId: -1
     /// The plane being created or edited must not catch the clicks meant for faces behind it.
-    readonly property var ownPlane: type !== "plane" ? -1 : editId ? editId : previewFeatureId
+    readonly property var ownPlane: type !== "plane" && type !== "midplane" ? -1 : editId ? editId : previewFeatureId
 
     /// What viewport clicks should hit while the dialog waits for picks: profiles live on
     /// sketches, edges/faces/points on bodies (the preview body would hide the sketch).
@@ -285,6 +471,10 @@ Pane {
             return "" // faces of bodies and construction planes
         if (f.type === "toolPicks")
             return "" // bodies, solids, surfaces and scans
+        if (f.type === "axisPick")
+            return "axis" // lines of sketches, straight edges of bodies other than the preview
+        if (f.type === "objectPick")
+            return "object" // bodies other than the preview, surfaces, solids and scans
         // "solid": bodies and exact solids outside the timeline, made editable when picked.
         return f.type === "profilePicks" ? "sketch" : "solid"
     }
@@ -344,6 +534,9 @@ Pane {
         else
             v[key] = value
         values = v
+        // Extrude "To Object" (Fusion): the object is picked next.
+        if (key === "extent" && value === "to_object" && v.to === undefined && spec && spec.fields.some(f => f.key === "to"))
+            pickKey = "to"
     }
 
     function parseExpr(text) {
@@ -385,6 +578,83 @@ Pane {
         return { id: body.partId, kind: "body", featureId: body.id }
     }
 
+    /// Revolve axis from a click at view position (x, y) of `view` (the Viewport): a line of
+    /// the dialog's sketch within a few pixels ({line: index}), else the nearest straight
+    /// edge of the body under the cursor ({origin, direction}); the dialog's own preview
+    /// body is looked through. Returns false when the click found neither.
+    function pickAxisAt(view, x, y) {
+        if (!spec || !pickKey)
+            return false
+        const field = spec.fields.find(f => f.key === pickKey)
+        if (!field || field.type !== "axisPick")
+            return false
+        let axis = null
+        if (values.sketch !== undefined) {
+            const pr = controller.execute("sketch.profiles", { sketch: values.sketch })
+            const cr = controller.execute("sketch.curves", { sketch: values.sketch })
+            if (pr.ok && cr.ok) {
+                const pl = pr.result.plane
+                const v3 = a => Qt.vector3d(a[0], a[1], a[2])
+                const w = view.planePoint(x, y, v3(pl.origin), v3(pl.normal))
+                if (w) {
+                    const d = w.minus(v3(pl.origin))
+                    const uv = [d.dotProduct(v3(pl.xDir)), d.dotProduct(v3(pl.yDir))]
+                    const tol = 8 * view.worldPerPixelAt(w)
+                    let bestD = tol
+                    for (const c of cr.result.curves) {
+                        if (c.kind !== "line")
+                            continue
+                        const p0 = c.points[0], p1 = c.points[1]
+                        const dx = p1[0] - p0[0], dy = p1[1] - p0[1]
+                        const l2 = dx * dx + dy * dy
+                        const t = l2 > 0 ? Math.max(0, Math.min(1, ((uv[0] - p0[0]) * dx + (uv[1] - p0[1]) * dy) / l2)) : 0
+                        const dist = Math.hypot(uv[0] - p0[0] - t * dx, uv[1] - p0[1] - t * dy)
+                        if (dist <= bestD) { axis = { line: c.index }; bestD = dist }
+                    }
+                }
+            }
+        }
+        if (!axis) {
+            // Only bodies (not the preview) take the click: planes, sketches and scans in
+            // front are clicked through.
+            const parts = controller.execute("document.parts")
+            const ids = parts.ok ? parts.result.parts.filter(p => p.kind === "body" && p.featureId !== previewFeatureId).map(p => p.id) : []
+            const hit = view.pickPartAmong(x, y, ids)
+            const info = hit ? controller.partInfo(hit.partId) : null
+            if (info && info.kind === "body")
+                axis = edgeAxis(info.featureId, hit.point)
+        }
+        if (!axis) {
+            controller.showStatus(qsTr("Click a line of the sketch or a straight edge of a body"))
+            return false
+        }
+        setValue(pickKey, axis)
+        return true
+    }
+
+    /// The straight edge of body `featureId` nearest to `point`, as {origin, direction}.
+    function edgeAxis(featureId, point) {
+        const er = controller.execute("body.edges", { body: featureId })
+        if (!er.ok)
+            return null
+        let best = null, bestD = Infinity
+        for (const e of er.result.edges) {
+            if (e.type !== "line")
+                continue
+            const a = e.start, b = e.end
+            const ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]]
+            const ap = [point.x - a[0], point.y - a[1], point.z - a[2]]
+            const l2 = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2]
+            const t = l2 > 0 ? Math.max(0, Math.min(1, (ap[0] * ab[0] + ap[1] * ab[1] + ap[2] * ab[2]) / l2)) : 0
+            const dist = Math.hypot(ap[0] - t * ab[0], ap[1] - t * ab[1], ap[2] - t * ab[2])
+            if (dist < bestD) { best = e; bestD = dist }
+        }
+        if (!best)
+            return null
+        const r4 = x => Math.round(x * 1e4) / 1e4
+        return { origin: best.start.map(r4), direction: [0, 1, 2].map(i => r4(best.end[i] - best.start[i])) }
+    }
+
     /// Viewport pick while the dialog is open: `part` is controller.partInfo().
     function addPick(part, point) {
         if (!spec || !pickKey || !part || !part.id)
@@ -419,11 +689,32 @@ Pane {
             setValue(pickKey, list)
             return
         }
+        if (field.type === "axisPick")
+            return // handled by pickAxisAt
+        if (field.type === "objectPick") {
+            // A body: up to the clicked face of it; a surface, solid or scan: up to it.
+            if (part.kind === "body" && part.featureId !== previewFeatureId)
+                setValue(pickKey, { body: part.featureId, faces: [{ point: [point.x, point.y, point.z].map(x => Math.round(x * 1e4) / 1e4) }] })
+            else if (part.kind === "imported")
+                setValue(pickKey, { part: part.id })
+            return
+        }
         if (field.type === "planePick") {
+            // The body the preview made (Split Body's front piece) is gone when the step is
+            // recomputed, so a face of it cannot hold the plane.
+            if (part.kind === "body" && part.featureId === previewFeatureId)
+                return
+            const key = pickKey
             if (part.kind === "plane")
-                setValue(pickKey, { plane: part.featureId })
+                setValue(key, { plane: part.featureId })
             else if ((part = asBody(part)))
-                setValue(pickKey, { body: part.featureId, point: [point.x, point.y, point.z].map(x => Math.round(x * 1e4) / 1e4) })
+                setValue(key, { body: part.featureId, point: [point.x, point.y, point.z].map(x => Math.round(x * 1e4) / 1e4) })
+            else
+                return
+            // Midplane: the next click fills the second plane.
+            const next = spec.fields.find(f => f.type === "planePick" && f.key !== key && values[f.key] === undefined)
+            if (next)
+                pickKey = next.key
             return
         }
         if (field.type === "pointPick") {
@@ -449,8 +740,17 @@ Pane {
             if (values.sketch !== part.featureId) {
                 setValue("sketch", part.featureId)
                 list.length = 0
+                if (values.axis && values.axis.line !== undefined)
+                    setValue("axis", "Z")
             }
             list.push(uv.map(x => Math.round(x * 1e4) / 1e4))
+            // Revolve (Fusion): the axis is picked next, unless one was clicked already.
+            const axisField = spec.fields.find(f => f.type === "axisPick")
+            if (axisField && list.length === 1 && typeof values[axisField.key] !== "object") {
+                setValue(pickKey, list)
+                pickKey = axisField.key
+                return
+            }
         } else {
             if (!(part = asBody(part)))
                 return
@@ -466,6 +766,11 @@ Pane {
 
     /// Runs the feature command (create, or edit of `editId`) with the current values.
     function submit(quiet) {
+        // A field the command would otherwise default (Midplane's planes fall back to XY)
+        // must be filled in: nothing is made until it is.
+        const missing = spec.fields.find(f => f.required && values[f.key] === undefined)
+        if (missing)
+            return { ok: false, error: qsTr("%1: pick the %2").arg(spec.title).arg(missing.label.toLowerCase()) }
         const run = (name, args) => quiet ? controller.preview(name, args) : controller.execute(name, args)
         const params = Object.assign({}, values)
         for (const f of spec.fields) {
@@ -550,10 +855,12 @@ Pane {
                         case "body": return bodyEditor
                         case "bodyList": return bodyListEditor
                         case "targetPick": return namedPickEditor
+                        case "objectPick": return namedPickEditor
                         case "toolPicks": return namedPickEditor
                         case "sketchList": return sketchListEditor
                         case "pathSketch": return pathSketchEditor
                         case "planePick": return planeEditor
+                        case "axisPick": return axisEditor
                         case "vec3": return vec3Editor
                         default: return pickEditor
                         }
@@ -618,7 +925,13 @@ Pane {
             textRole: "name"
             valueRole: "id"
             currentIndex: items.findIndex(s => s.id === root.values[field.key])
-            onActivated: { root.setValue(field.key, currentValue); root.setValue("points", undefined) }
+            onActivated: {
+                root.setValue(field.key, currentValue)
+                root.setValue("points", undefined)
+                // A picked sketch line belongs to the old sketch.
+                if (root.values.axis && root.values.axis.line !== undefined)
+                    root.setValue("axis", "Z")
+            }
         }
     }
     Component {
@@ -658,9 +971,15 @@ Pane {
     }
     Component {
         id: planeEditor
-        // Origin planes and construction planes; a face clicked in the view shows as an extra entry.
-        ComboBox {
+        // Origin planes and construction planes; a face clicked in the view shows as an extra
+        // entry. "Pick in the view" sends the next click here, when the dialog also picks
+        // faces or edges (Draft) or has two planes (Midplane).
+        ColumnLayout {
             property var field: parent ? parent.field : ({})
+            spacing: 2
+            ComboBox {
+            Layout.fillWidth: true
+            readonly property var field: parent.field
             readonly property var current: root.values[field.key]
             readonly property var items: {
                 const out = [{ name: "XY", value: "XY" }, { name: "XZ", value: "XZ" }, { name: "YZ", value: "YZ" }]
@@ -676,7 +995,46 @@ Pane {
             }
             model: items.map(i => i.name)
             currentIndex: items.findIndex(i => JSON.stringify(i.value) === JSON.stringify(current))
+            displayText: currentIndex < 0 ? (field.hint || "") : currentText
             onActivated: index => root.setValue(field.key, items[index].value)
+            }
+            Button {
+                Layout.fillWidth: true
+                visible: root.spec && root.spec.fields.filter(f => f.type.endsWith("Picks") || f.type.endsWith("Pick")).length > 1
+                checkable: true
+                checked: root.pickKey === field.key
+                text: root.pickKey === field.key ? qsTr("Click a planar face or plane in the view") : qsTr("Pick in the view")
+                onClicked: root.pickKey = field.key
+            }
+        }
+    }
+    Component {
+        id: axisEditor
+        // Revolve axis (Fusion: Axis selection): X / Y / Z, or a line / edge clicked in the view.
+        ColumnLayout {
+            property var field: parent ? parent.field : ({})
+            readonly property var current: root.values[field.key]
+            spacing: 2
+            ComboBox {
+                Layout.fillWidth: true
+                readonly property var items: {
+                    const out = [{ name: "X", value: "X" }, { name: "Y", value: "Y" }, { name: "Z", value: "Z" }]
+                    if (current && typeof current === "object")
+                        out.push({ name: current.line !== undefined ? qsTr("Sketch line %1").arg(current.line + 1)
+                                                                   : qsTr("Picked edge"), value: current })
+                    return out
+                }
+                model: items.map(i => i.name)
+                currentIndex: items.findIndex(i => JSON.stringify(i.value) === JSON.stringify(current))
+                onActivated: index => root.setValue(field.key, items[index].value)
+            }
+            Button {
+                Layout.fillWidth: true
+                checkable: true
+                checked: root.pickKey === field.key
+                text: root.pickKey === field.key ? field.hint : qsTr("Pick in the view")
+                onClicked: root.pickKey = field.key
+            }
         }
     }
     Component {
@@ -705,6 +1063,8 @@ Pane {
     }
     /// Name of a picked body (feature id) or part ({part: id}).
     function pickName(ref) {
+        if (typeof ref === "object" && ref && ref.body !== undefined)
+            return ref.faces ? qsTr("Face of %1").arg(pickName(ref.body)) : pickName(ref.body)
         if (typeof ref === "object" && ref)
             return controller.partInfo(ref.part).name || qsTr("Part %1").arg(ref.part)
         const b = (timeline.bodies || []).find(b => b.id === ref)

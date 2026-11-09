@@ -1,0 +1,107 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CAD-127..129, CAD-134, CAD-135 on a real coarse OpenFOAM v2506 run made in the app (about a
+# minute): the results in 3D have one colour bar per quantity and the forces card, the guide
+# bar steps aside, the sections and streamlines are cropped to the region around the part,
+# the dense rakes give many streamlines, the pointer reads the value under it, and the
+# pressure colours and Cp range can be changed, and the section across the flow can be
+# moved along the wake (CAD-148).
+# Run: AEROCAD_CFD_DIR=<empty dir> AeroCAD tests/data/box_200x80x60.stl --ui-script <this file>
+ui.wait(800)
+(() => { const p = controller.execute("document.parts").result.parts[0]; window.selectPart(p.id) })()
+window.simulationVisible = true
+ui.wait(500)
+(() => { const r = controller.execute("simulation.run", { id: 1, mesh: "coarse", label: "results 3d" }); if (!r.ok) ui.fail("simulation.run: " + r.error); else { simulationPanel.refreshRuns(); simulationPanel.selectRun(r.result.id) } })()
+# Up to 3 minutes for the run.
+(() => { simulationPanel.refreshRuns(); const s = simulationPanel.activeStatus; if (s && (s.state === "running" || s.state === "prepared")) ui.wait(5000) })()
+(() => { simulationPanel.refreshRuns(); const s = simulationPanel.activeStatus; if (s && (s.state === "running" || s.state === "prepared")) ui.wait(5000) })()
+(() => { simulationPanel.refreshRuns(); const s = simulationPanel.activeStatus; if (s && (s.state === "running" || s.state === "prepared")) ui.wait(5000) })()
+(() => { simulationPanel.refreshRuns(); const s = simulationPanel.activeStatus; if (s && (s.state === "running" || s.state === "prepared")) ui.wait(5000) })()
+(() => { simulationPanel.refreshRuns(); const s = simulationPanel.activeStatus; if (s && (s.state === "running" || s.state === "prepared")) ui.wait(5000) })()
+(() => { simulationPanel.refreshRuns(); const s = simulationPanel.activeStatus; if (s && (s.state === "running" || s.state === "prepared")) ui.wait(5000) })()
+(() => { simulationPanel.refreshRuns(); const s = simulationPanel.activeStatus; if (s && (s.state === "running" || s.state === "prepared")) ui.wait(5000) })()
+(() => { simulationPanel.refreshRuns(); const s = simulationPanel.activeStatus; if (s && (s.state === "running" || s.state === "prepared")) ui.wait(5000) })()
+(() => { simulationPanel.refreshRuns(); const s = simulationPanel.activeStatus; if (s && (s.state === "running" || s.state === "prepared")) ui.wait(5000) })()
+(() => { simulationPanel.refreshRuns(); const s = simulationPanel.activeStatus; if (s && (s.state === "running" || s.state === "prepared")) ui.wait(5000) })()
+(() => { simulationPanel.refreshRuns(); const s = simulationPanel.activeStatus; if (s && (s.state === "running" || s.state === "prepared")) ui.wait(5000) })()
+(() => { simulationPanel.refreshRuns(); const s = simulationPanel.activeStatus; if (s && (s.state === "running" || s.state === "prepared")) ui.wait(5000) })()
+(() => { simulationPanel.refreshRuns(); const s = simulationPanel.activeStatus; if (s && (s.state === "running" || s.state === "prepared")) ui.wait(5000) })()
+(() => { simulationPanel.refreshRuns(); const s = simulationPanel.activeStatus; if (s && (s.state === "running" || s.state === "prepared")) ui.wait(5000) })()
+(() => { simulationPanel.refreshRuns(); const s = simulationPanel.activeStatus; if (s && (s.state === "running" || s.state === "prepared")) ui.wait(5000) })()
+(() => { simulationPanel.refreshRuns(); const s = simulationPanel.activeStatus; if (s && (s.state === "running" || s.state === "prepared")) ui.wait(5000) })()
+(() => { simulationPanel.refreshRuns(); const s = simulationPanel.activeStatus; if (s && (s.state === "running" || s.state === "prepared")) ui.wait(5000) })()
+(() => { simulationPanel.refreshRuns(); const s = simulationPanel.activeStatus; if (s && (s.state === "running" || s.state === "prepared")) ui.wait(5000) })()
+(() => { simulationPanel.refreshRuns(); const s = simulationPanel.activeStatus; if (s && (s.state === "running" || s.state === "prepared")) ui.wait(5000) })()
+(() => { simulationPanel.refreshRuns(); const s = simulationPanel.activeStatus; if (s && (s.state === "running" || s.state === "prepared")) ui.wait(5000) })()
+(() => { simulationPanel.refreshRuns(); const s = simulationPanel.activeStatus; if (s && (s.state === "running" || s.state === "prepared")) ui.wait(5000) })()
+(() => { simulationPanel.refreshRuns(); const s = simulationPanel.activeStatus; if (s && (s.state === "running" || s.state === "prepared")) ui.wait(5000) })()
+(() => { simulationPanel.refreshRuns(); const s = simulationPanel.activeStatus; if (s && (s.state === "running" || s.state === "prepared")) ui.wait(5000) })()
+(() => { simulationPanel.refreshRuns(); const s = simulationPanel.activeStatus; if (s && (s.state === "running" || s.state === "prepared")) ui.wait(5000) })()
+(() => { simulationPanel.refreshRuns(); const s = simulationPanel.activeStatus; if (s && (s.state === "running" || s.state === "prepared")) ui.wait(5000) })()
+(() => { simulationPanel.refreshRuns(); const s = simulationPanel.activeStatus; if (s && (s.state === "running" || s.state === "prepared")) ui.wait(5000) })()
+(() => { simulationPanel.refreshRuns(); const s = simulationPanel.activeStatus; if (s && (s.state === "running" || s.state === "prepared")) ui.wait(5000) })()
+(() => { simulationPanel.refreshRuns(); const s = simulationPanel.activeStatus; if (s && (s.state === "running" || s.state === "prepared")) ui.wait(5000) })()
+(() => { simulationPanel.refreshRuns(); const s = simulationPanel.activeStatus; if (s && (s.state === "running" || s.state === "prepared")) ui.wait(5000) })()
+(() => { simulationPanel.refreshRuns(); const s = simulationPanel.activeStatus; if (s && (s.state === "running" || s.state === "prepared")) ui.wait(5000) })()
+(() => { simulationPanel.refreshRuns(); const s = simulationPanel.activeStatus; if (s && (s.state === "running" || s.state === "prepared")) ui.wait(5000) })()
+(() => { simulationPanel.refreshRuns(); const s = simulationPanel.activeStatus; if (s && (s.state === "running" || s.state === "prepared")) ui.wait(5000) })()
+(() => { simulationPanel.refreshRuns(); const s = simulationPanel.activeStatus; if (s && (s.state === "running" || s.state === "prepared")) ui.wait(5000) })()
+(() => { simulationPanel.refreshRuns(); const s = simulationPanel.activeStatus; if (s && (s.state === "running" || s.state === "prepared")) ui.wait(5000) })()
+(() => { simulationPanel.refreshRuns(); const s = simulationPanel.activeStatus; if (s && (s.state === "running" || s.state === "prepared")) ui.wait(5000) })()
+(() => { simulationPanel.refreshRuns(); const s = simulationPanel.activeStatus; if (s && (s.state === "running" || s.state === "prepared")) ui.wait(5000) })()
+(() => { simulationPanel.refreshRuns(); const s = simulationPanel.activeStatus; ui.log("run " + (s ? s.id + " " + s.state : "missing")); if (!s || s.state !== "finished") ui.fail("the run did not finish") })()
+(() => { simulationPanel.tab = 1; simulationPanel.setField(1, true); simulationPanel.setField(2, true) })()
+ui.wait(1500)
+(() => { const l = cfdOverlay.legends; ui.log("LEGENDS " + JSON.stringify(l)); if (l.length !== 2) ui.fail("expected a Cp and a speed legend, got " + l.length); const sp = l.find(x => x.scalar === "speed"); if (!sp || sp.kinds.length !== 3) ui.fail("sections and streamlines should share one speed scale") })()
+(() => { if (contextBar.visible) ui.fail("the guide bar covers the results") })()
+# CAD-173: wrapped lines of the Results tab (conditions, quality) get their full height, so a
+# warning that wraps to two lines does not overlap the next one.
+(() => { const low = []; function walk(it) { for (let i = 0; i < it.children.length; ++i) { const c = it.children[i]; if (c.visible && c.wrapMode !== undefined && c.lineCount > 0 && c.height < c.implicitHeight - 1) low.push(c.height + " < " + c.implicitHeight + " " + String(c.text).slice(0, 40)); walk(c) } } walk(simulationPanel); ui.log("LOW LABELS " + low.length); if (low.length) ui.fail("labels lower than their text: " + low.join("; ")) })()
+(() => { const s = simulationPanel.results.summary; ui.log("DRAG " + s.dragN); if (!(s.dragN > 0)) ui.fail("no drag on the card") })()
+ui.clickText("Pressure coefficient Cp")
+ui.clickText("results 3d (" + new Date(simulationPanel.activeStatus.created).toLocaleTimeString(Qt.locale(), "HH:mm") + ")")
+(() => { const id = simulationPanel.activeRun; const c = simulationPanel.results.conditions; const L = c.characteristicLength * 1000; for (const kind of ["sectionHorizontal", "sectionVertical"]) { const r = controller.execute("simulation.field", { run: id, kind: kind }).result; const b = r.bounds; const size = [0, 1, 2].map(i => b.max[i] - b.min[i]); ui.log("SECTION " + kind + " size " + JSON.stringify(size) + " L " + L); if (Math.max(...size) > 3.5 * L) ui.fail(kind + " is not cropped around the part: " + JSON.stringify(size)) } })()
+(() => { const r = controller.execute("simulation.field", { run: simulationPanel.activeRun, kind: "streamlines" }).result; ui.log("STREAMLINES " + r.lines + " lines"); if (r.lines < 100) ui.fail("expected the dense rakes, got " + r.lines + " streamlines") })()
+# The value under the pointer, on the top of the part (sections off: the vertical one passes
+# through the same point).
+(() => { simulationPanel.setField(1, false); simulationPanel.setField(2, false) })()
+ui.wait(500)
+(() => { const b = controller.execute("simulation.field", { run: simulationPanel.activeRun, kind: "surface" }).result.bounds; const v = viewport.viewPoint(Qt.vector3d((b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2, b.max[2])); const w = viewport.mapToItem(null, v.x, v.y); ui.move(w.x, w.y) })()
+ui.wait(400)
+(() => { const p = viewport.fieldProbe; ui.log("PROBE " + JSON.stringify(p)); if (!p || p.kind !== "surface" || p.values.Cp === undefined) ui.fail("no pressure value under the pointer on the part") })()
+ui.clickText(viewport.probeText(viewport.fieldProbe))
+ui.shot("cfd-results-3d.png")
+(() => { simulationPanel.pressurePalette = "coolwarm"; simulationPanel.setRangeOverride("Cp", -1, 1) })()
+ui.wait(500)
+(() => { const l = cfdOverlay.legends.find(x => x.scalar === "Cp"); ui.log("CP LEGEND " + JSON.stringify(l)); if (!l || l.palette !== "coolwarm" || l.min !== -1 || l.max !== 1) ui.fail("pressure colours or Cp range not applied") })()
+# CAD-148: the run wrote stacks of sections; the section across the flow is shown at its
+# default position just behind the part and a click at the end of its slider moves it to
+# the last plane of the wake.
+(() => { const st = simulationPanel.results.fields.sections; ui.log("STACKS " + JSON.stringify(st.map(x => [x.axis, x.positions.length, x.defaultIndex]))); if (st.length !== 3 || st.some(x => x.positions.length < 5)) ui.fail("section stacks missing") })()
+(() => { const i = simulationPanel.fieldChoices.findIndex(f => f.kind === "sectionCross"); simulationPanel.setField(i, true) })()
+ui.wait(800)
+(() => { const f = simulationPanel.viewportFields.find(x => x.kind.indexOf("sectionX_") === 0); ui.log("CROSS " + JSON.stringify(f)); if (!f || f.kind !== "sectionX_12") ui.fail("the section across the flow is not drawn at its default position") })()
+(() => { const find = i => { if (!i) return null; if (i.objectName === "sectionSlider_x") return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = find(ch[k]); if (r) return r } return null }; const sl = find(simulationPanel); if (!sl || !sl.visible) { ui.fail("no slider for the section across the flow"); return } let f = sl.parent; while (f && f.contentY === undefined) f = f.parent; if (f) { const y = sl.mapToItem(f.contentItem, 0, 0).y; f.contentY = Math.max(0, Math.min(y - 100, f.contentHeight - f.height)) } })()
+ui.wait(300)
+(() => { const find = i => { if (!i) return null; if (i.objectName === "sectionSlider_x") return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = find(ch[k]); if (r) return r } return null }; const sl = find(simulationPanel); const x0 = sl.leftPadding + sl.availableWidth * sl.visualPosition; const a = sl.mapToItem(null, x0, sl.height / 2); const b = sl.mapToItem(null, sl.width - 2, sl.height / 2); ui.drag(a.x, a.y, b.x, b.y, "left", "", 20) })()
+ui.wait(1000)
+(() => { const f = simulationPanel.viewportFields.find(x => x.kind.indexOf("sectionX_") === 0); ui.log("CROSS END " + JSON.stringify(f)); if (!f || f.kind !== "sectionX_14") ui.fail("dragging the slider did not move the section through the planes to the end of the wake"); const r = controller.execute("simulation.field", { run: simulationPanel.activeRun, kind: f.kind }).result; const b = controller.execute("simulation.field", { run: simulationPanel.activeRun, kind: "surface" }).result.bounds; ui.log("CROSS BOUNDS " + JSON.stringify(r.bounds) + " part " + JSON.stringify(b)); if (!(r.bounds.min[1] > b.max[1])) ui.fail("the last section should lie behind the part (+Y flow)") })()
+ui.clickText(simulationPanel.sectionPositionText("x", simulationPanel.sectionPosition(simulationPanel.fieldChoices.find(f => f.kind === "sectionCross"))))
+(() => { const l = cfdOverlay.legends.find(x => x.scalar === "speed"); const names = l ? l.kinds.map(k => cfdOverlay.kindName(k)) : []; ui.log("SPEED LEGEND " + names.join(", ")); if (names.indexOf("section across the flow") < 0) ui.fail("the speed legend does not name the section across the flow") })()
+# CAD-165: the wake surface (total pressure lost, Cp0 = 0) is drawn see-through, coloured
+# by speed and named in the speed legend; this run has it, so no "run again" note.
+(() => { const i = simulationPanel.fieldChoices.findIndex(f => f.kind === "sectionCross"); simulationPanel.setField(i, false); const w = simulationPanel.fieldChoices.findIndex(f => f.kind === "wake"); simulationPanel.setField(w, true) })()
+ui.wait(1200)
+(() => { const f = simulationPanel.viewportFields.find(x => x.kind === "wake"); ui.log("WAKE " + JSON.stringify(f) + " stats " + JSON.stringify(simulationPanel.fieldStats[simulationPanel.activeRun + "/wake"])); if (!f || f.scalar !== "speed") ui.fail("the wake surface is not drawn") })()
+(() => { const find = (i, n) => { if (!i) return null; if (i.objectName === n) return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = find(ch[k], n); if (r) return r } return null }; const m = viewport.simulationFieldModel("wake"); ui.log("WAKE MODEL " + (m ? m.materials[0].opacity : "missing")); if (!m || !(m.materials[0].opacity < 1)) ui.fail("the wake surface is not see-through in the viewport"); const note = find(simulationPanel, "wakeMissing"); if (!note || note.visible) ui.fail("the run-again note shows for a run that has the wake") })()
+(() => { const l = cfdOverlay.legends.find(x => x.scalar === "speed"); const names = l ? l.kinds.map(k => cfdOverlay.kindName(k)) : []; ui.log("SPEED LEGEND " + names.join(", ")); if (names.indexOf("wake (Cp0 = 0)") < 0) ui.fail("the speed legend does not name the wake") })()
+ui.shot("cfd-wake-3d.png")
+# CAD-175: the run has the vortex cores (Q-criterion), named in the legend when drawn.
+(() => { const find = (i, n) => { if (!i) return null; if (i.objectName === n) return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = find(ch[k], n); if (r) return r } return null }; ui.log("VORTICES " + simulationPanel.results.fields.vortices + " " + cfdOverlay.kindName("vortices")); if (!simulationPanel.results.fields.vortices) ui.fail("the run has no vortex cores"); const note = find(simulationPanel, "vorticesMissing"); if (!note || note.visible) ui.fail("the run-again note shows for a run that has the vortex cores"); if (cfdOverlay.kindName("vortices") !== "vortex cores") ui.fail("legend name") })()
+# CAD-170: smoke streamlines are grey, half as thick, with their own legend; the sections
+# keep their speed colours.
+(() => { const w = simulationPanel.fieldChoices.findIndex(f => f.kind === "wake"); simulationPanel.setField(w, false); simulationPanel.setField(1, true); simulationPanel.streamlineStyle = "smoke" })()
+ui.wait(1200)
+(() => { const st = simulationPanel.viewportFields.find(x => x.kind === "streamlines"); const sec = simulationPanel.viewportFields.find(x => x.kind.indexOf("section") === 0); ui.log("SMOKE " + JSON.stringify(st) + " SECTION " + JSON.stringify(sec)); if (!st || st.palette.indexOf("smoke") !== 0 || !(Math.abs(st.tubeRadius - simulationPanel.tubeRadius / 2) < 1e-9)) ui.fail("streamlines are not drawn as smoke"); if (!sec || sec.palette !== "") ui.fail("the section lost its speed colours"); const l = cfdOverlay.legends.filter(x => x.scalar === "speed"); if (l.length !== 2) ui.fail("expected a smoke legend and a section speed legend, got " + JSON.stringify(l)); const m = viewport.simulationFieldModel("streamlines"); if (!m || !(m.materials[0].opacity > 0.55)) ui.fail("smoke streamlines are not drawn stronger") })()
+ui.shot("cfd-smoke-3d.png")
+(() => { simulationPanel.streamlineStyle = "speed"; simulationPanel.setField(1, false) })()
+ui.log("cfd results 3d done")

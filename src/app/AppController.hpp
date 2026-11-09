@@ -103,18 +103,25 @@ public:
     Q_INVOKABLE double historyTopId() const;
     /// Whether the step with token `id` is still applied.
     Q_INVOKABLE bool historyApplied(double id) const;
+    /// Whether the step with token `id` left the history while applied (UndoStack::isExpired).
+    Q_INVOKABLE bool historyExpired(double id) const;
     /// Undoes the last step only if its token is `id`. Returns true if it did.
     Q_INVOKABLE bool undoIfTop(double id);
     /// Joins the steps `ids` (oldest first) into one called `label`, only if they are exactly
     /// the last applied steps (see UndoStack::mergeIds).
     Q_INVOKABLE bool mergeHistoryIds(const QVariantList& ids, const QString& label);
     Q_INVOKABLE bool previewActive() const { return m_session.previewActive(); }
+    /// Whether Ctrl (Cmd on macOS) or Shift is held, as of the last input event: a click
+    /// with it adds a part to the selection or takes it out (Fusion).
+    Q_INVOKABLE bool addToSelectionHeld() const;
     /// Convenience wrapper around document.import for file dialogs and drag & drop.
     Q_INVOKABLE bool importFile(const QUrl& url);
     /// Convenience wrapper around document.export for the save dialog. `ids` empty means
     /// all visible parts. Returns {ok, error?, warnings: [string]}; the status bar shows
     /// the outcome.
     Q_INVOKABLE QVariantMap exportFile(const QUrl& url, const QVariantList& ids = {});
+    /// Local file path of a file-dialog URL, for commands that take a path.
+    Q_INVOKABLE QString localPath(const QUrl& url) const;
     /// Runs a JSON command script: an array of {"name": ..., "params": {...}} objects (the
     /// same calls an MCP client makes). Stops at the first failing command. Returns false
     /// and sets the status message on errors.
@@ -146,7 +153,10 @@ public:
     Q_INVOKABLE void setStatus(const QString& message) { setStatusMessage(message); }
 
     /// Colour map stops (low to high) used for a result scalar, for legends.
-    Q_INVOKABLE QVariantList colormap(const QString& scalar) const;
+    Q_INVOKABLE QVariantList colormap(const QString& scalar, const QString& palette = {}) const;
+    /// Where `value` sits on a result colour scale [lo, hi], 0 (bottom) to 1 (top); pressure
+    /// scales keep zero in the middle (FieldGeometry::scalePosition).
+    Q_INVOKABLE double fieldScalePosition(const QString& scalar, double value, double lo, double hi) const;
     /// Part details for the properties panel ({} for unknown ids).
     Q_INVOKABLE QVariantMap partInfo(quint64 id) const;
 
@@ -195,6 +205,11 @@ public:
     Q_INVOKABLE QVariantMap inspectInfo() const;
     /// True when the section analysis cuts this part.
     Q_INVOKABLE bool sectionCuts(quint64 id) const;
+    /// Warning shown in the Wind tunnel panel when the part's size is implausible for a run
+    /// (most likely the wrong unit, CAD-109); empty when it is fine.
+    Q_INVOKABLE QString partSizeWarning(quint64 id) const;
+    /// Wind tunnel warning when the part's mesh is not closed (CAD-145), else empty.
+    Q_INVOKABLE QString partOpenWarning(quint64 id) const;
     /// True when the heat map is shown on this part (and still matches its mesh).
     Q_INVOKABLE bool showsHeatMap(quint64 id) const;
     /// Heat map colour for t in [0, 1], for the legend.
@@ -232,6 +247,8 @@ private:
                                                           const core::Vec3& outward) const;
     mutable std::shared_ptr<const core::TriangleMesh> m_projectorMesh;
     mutable std::unique_ptr<core::MeshProjector> m_projector;
+    mutable std::weak_ptr<const core::TriangleMesh> m_openEdgesMesh; ///< Mesh m_openEdges was counted on.
+    mutable std::size_t m_openEdges = 0;
 
     void setStatusMessage(const QString& message);
     /// Runs the heat map again after its parts changed (or clears it when they are gone).

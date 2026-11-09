@@ -1,0 +1,63 @@
+# Rename in the Browser, with real mouse and keys:
+#  - a double click on a row's name edits it in place; typing (letters such as V and M,
+#    Backspace, Delete) edits the text only, never hides, moves or deletes the part;
+#    Enter renames, as one undo step;
+#  - Esc keeps the old name and does not clear the selection;
+#  - F2 renames the selected part; clicking elsewhere applies the typed name;
+#  - Rename is in the part's right-click menu; a renamed body keeps its name after a timeline
+#    edit and in the saved project.
+# Run: AeroCAD --ui-script <this file>
+Qt.createQmlObject('import QtQuick; Item { objectName: "brTest"; visible: false; property var s: ({}); function part() { return controller.execute("document.parts").result.parts.find(p => p.id === s.id) } function find(i, test) { if (!i) return null; if (test(i)) return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = find(ch[k], test); if (r) return r } return null } function nameItem() { return browser.rowItem(s.id) } function field() { const r = browser.rowItem(s.id); return r && r.nameField.visible ? r.nameField : null } function centre(i) { const p = i.mapToItem(null, i.width / 3, i.height / 2); return Qt.point(p.x, p.y) } }', window.contentItem)
+ui.wait(800)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "brTest"); const r = controller.execute("feature.box", { size: [40, 30, 6] }); if (!r.ok) { ui.fail("box: " + r.error); return } t.s.id = controller.execute("document.parts").result.parts.find(p => p.kind === "body").id; t.s.old = t.part().name })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "brTest"); const n = t.nameItem(); if (!n) { ui.fail("no Browser row for " + t.s.old); return } const c = t.centre(n); ui.doubleClick(c.x, c.y) })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "brTest"); const f = t.field(); ui.log("double click: editing " + !!f + ", focused " + (f && f.activeFocus) + ", text " + (f && f.text)); if (!f || !f.activeFocus) ui.fail("a double click on the name does not edit it"); if (f && f.selectedText !== t.s.old) ui.fail("the old name is not selected for typing over") })()
+ui.type("Vane M")
+ui.key("Backspace")
+ui.type("MX")
+ui.key("Left")
+ui.key("Delete")
+ui.wait(100)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "brTest"); const f = t.field(); const p = t.part(); ui.log("typed: " + (f && f.text) + ", visible " + p.visible + ", moving " + viewport.transformActive); if (!f || f.text !== "Vane M") ui.fail("typing did not edit the text: " + (f && f.text)); if (!p.visible) ui.fail("typing V hid the part"); if (viewport.transformActive) ui.fail("typing M opened Move"); if (!t.part()) ui.fail("Delete or Backspace deleted the part") })()
+ui.shot("build/browser-rename-editing.png")
+ui.key("Return")
+ui.wait(200)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "brTest"); ui.log("Enter: name " + t.part().name + ", undo: " + controller.undoText); if (t.part().name !== "Vane M") ui.fail("Enter did not rename"); if (t.field()) ui.fail("the field stayed open after Enter"); if (!/^Rename/.test(controller.undoText)) ui.fail("the rename is not an undo step") })()
+# Esc keeps the name and the selection.
+(() => { window.selectPart(0); window.selectPart(Array.from(window.contentItem.children).find(c => c.objectName === "brTest").s.id) })()
+ui.key("F2")
+ui.wait(200)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "brTest"); if (!t.field()) ui.fail("F2 does not edit the name of the selected part") })()
+ui.type("Nope")
+ui.key("Escape")
+ui.wait(200)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "brTest"); ui.log("Esc: name " + t.part().name + ", selected " + window.selectedPartId); if (t.part().name !== "Vane M") ui.fail("Esc renamed the part"); if (t.field()) ui.fail("Esc did not close the field"); if (window.selectedPartId !== t.s.id) ui.fail("Esc in the field cleared the selection") })()
+# Clicking elsewhere applies the typed name.
+ui.key("F2")
+ui.wait(200)
+ui.type("Fin left")
+(() => { const c = viewport.mapToItem(null, viewport.width * 0.2, viewport.height * 0.5); ui.click(c.x, c.y) })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "brTest"); ui.log("click elsewhere: name " + t.part().name); if (t.part().name !== "Fin left") ui.fail("clicking elsewhere did not apply the name") })()
+ui.shot("build/browser-rename.png")
+# Rename in the right-click menu.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "brTest"); window.selectPart(t.s.id); partMenu.info = controller.partInfo(t.s.id); partMenu.popup(viewport, 200, 200) })()
+ui.wait(300)
+(() => { if (!ui.clickText("Rename")) ui.fail("no Rename in the part's right-click menu") })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "brTest"); if (!t.field()) ui.fail("Rename in the menu does not edit the name") })()
+ui.key("Escape")
+# A timeline edit keeps the name; so does the saved project.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "brTest"); const fid = t.part().featureId; const e = controller.execute("feature.edit", { id: fid, params: { size: [50, 30, 6] } }); if (!e.ok) ui.log("feature.edit: " + e.error); ui.log("after a timeline edit: name " + t.part().name + ", size x " + t.part().bounds.size[0]); if (t.part().name !== "Fin left") ui.fail("a timeline edit lost the name") })()
+# F2 on a part whose Browser row is scrolled out of view: the Browser scrolls to it and edits it.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "brTest"); for (let i = 0; i < 40; ++i) controller.execute("part.duplicate", { id: t.s.id }); const ps = controller.execute("document.parts").result.parts; t.s.last = ps[ps.length - 1].id; ui.log("parts: " + ps.length + ", last row created: " + !!browser.rowItem(t.s.last)); window.selectPart(t.s.last); viewport.forceActiveFocus() })()
+ui.wait(300)
+ui.key("F2")
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "brTest"); const r = browser.rowItem(t.s.last); ui.log("F2 on the last part: row " + !!r + ", editing " + !!(r && r.nameField.visible && r.nameField.activeFocus)); if (!r || !r.nameField.visible || !r.nameField.activeFocus) ui.fail("F2 does not edit a part whose row was scrolled out of view") })()
+ui.type("Far")
+ui.key("Return")
+ui.wait(200)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "brTest"); const p = controller.execute("document.parts").result.parts.find(x => x.id === t.s.last); ui.log("renamed far part: " + p.name + ", renaming " + browser.renamingId); if (p.name !== "Far") ui.fail("the far part was not renamed"); if (browser.renamingId) ui.fail("the Browser stayed in renaming") })()

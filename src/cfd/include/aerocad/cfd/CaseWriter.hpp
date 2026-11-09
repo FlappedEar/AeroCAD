@@ -2,12 +2,14 @@
 #pragma once
 
 #include "aerocad/cfd/Settings.hpp"
+#include "aerocad/cfd/Wheels.hpp"
 #include "aerocad/core/Mesh.hpp"
 
 #include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace aerocad::cfd {
 
@@ -20,8 +22,12 @@ namespace aerocad::cfd {
 struct CaseFrame {
     core::Vec3 origin; ///< Model point (mm) that becomes the case origin.
     int quarterTurns = 0; ///< Rotation about +Z applied to model vectors, in 90 degree steps.
+    /// Yaw in degrees (CAD-188): after the quarter turns, model vectors are turned by -yaw
+    /// about +Z, so air arriving yaw degrees counter-clockwise of the flow direction runs
+    /// along +X in the case.
+    double yaw = 0.0;
 
-    static CaseFrame forFlow(std::string_view flowDirection, const core::Vec3& origin);
+    static CaseFrame forFlow(std::string_view flowDirection, const core::Vec3& origin, double yaw = 0.0);
 
     [[nodiscard]] core::Vec3 rotate(const core::Vec3& v) const;   ///< Model -> case direction.
     [[nodiscard]] core::Vec3 unrotate(const core::Vec3& v) const; ///< Case -> model direction.
@@ -57,10 +63,44 @@ struct CaseInfo {
     /// was recorded.
     std::optional<std::uint64_t> contextHash;
     std::string openfoam; ///< Engine version the case was written for (case.json "openfoam").
+    /// Wheels turning with the floor (settings.rotatingWheels, CAD-154), case frame.
+    std::vector<Wheel> wheels;
+    /// Tyres standing on the part's bottom when the floor is on but the wheels do not turn
+    /// (CAD-196), case frame: only for the aero balance, never written into the case.
+    std::vector<Wheel> standingWheels;
 
     [[nodiscard]] Json toJson() const;
     static CaseInfo fromJson(const Json& json);
 };
+
+/// Region around the part kept in the result view, in the case frame (m): 0.4
+/// characteristic lengths ahead, beside and above the part, `wake` lengths behind it, down
+/// to the floor when the case has one (CAD-129, CAD-135). Empty when the part bounds are.
+[[nodiscard]] core::BoundingBox resultRegion(const CaseInfo& info, double wake = 1.5);
+
+/// Size of the coarsest cells on the part surface for the run's mesh level, in the case
+/// frame (m): the background cell halved per surface refinement level.
+[[nodiscard]] double surfaceCellSize(const CaseInfo& info);
+
+/// Q-criterion isosurface threshold of the vortex cores (CAD-175), in 1/s²: Q = kVortexQ
+/// (U / L)², so the same structures show at any speed and size.
+inline constexpr double kVortexQ = 20.0;
+[[nodiscard]] double vortexQ(const CaseInfo& info);
+
+/// Velocity sections written by each run for the result view (CAD-148): stacks of planes
+/// normal to an axis of the case frame, at fractions of the part's size along that axis
+/// (0 = the part's minimum, 1 = its maximum), cropped to resultRegion(). Axis 'x' gives
+/// planes across the flow (fractions past 1 lie in the wake), 'y' vertical planes along
+/// the flow, 'z' horizontal planes.
+struct SectionStack {
+    char axis = 'x';
+    std::vector<double> fractions;
+    int defaultIndex = 0; ///< Position shown first.
+};
+[[nodiscard]] const std::vector<SectionStack>& sectionStacks();
+/// Name of a section plane in the case ("sectionX_3"), also its VTK file name without
+/// the extension.
+[[nodiscard]] std::string sectionName(char axis, int index);
 
 /// Area of the projection of a mesh onto the plane normal to +X (case frame), computed by
 /// rasterising the projected triangles on a grid of `resolution` x `resolution` cells over

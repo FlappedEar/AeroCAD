@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CAD-207: the run list can be ranked by the final drag, Cd or downforce (CAD-205's final
+# result); runs without one follow, newest first. Injected runs, no engine.
+Qt.createQmlObject('import QtQuick; Item { objectName: "cfTest"; visible: false; function find(i, name) { if (!i) return null; if (i.objectName === name) return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = find(ch[k], name); if (r) return r } return null } function order() { const ids = ["r1", "r2", "r3", "r4"]; return ids.map(id => ({ id: id, y: find(simulationPanel, "runSummary_" + id).mapToItem(null, 0, 0).y })).sort((a, b) => a.y - b.y).map(e => e.id).join(",") } }', window.contentItem)
+ui.wait(800)
+ui.clickText("SIMULATE")
+ui.wait(300)
+ui.clickText("Wind Tunnel")
+ui.wait(800)
+# r1 oldest ... r4 newest; r3 failed (no final result).
+(() => { const run = (id, created, label, state, fin) => ({ id: id, created: created, state: state, sourceInDocument: true, source: { label: label, partName: "car" }, latest: {}, final: fin }); simulationPanel.runs = [run("r1", "2026-11-09T01:00:00Z", "base", "finished", { cd: 0.30, cl: -0.5, dragN: 30, liftN: -50 }), run("r2", "2026-11-09T02:00:00Z", "long splitter", "finished", { cd: 0.32, cl: -0.9, dragN: 29, liftN: -90 }), run("r3", "2026-11-09T03:00:00Z", "broken", "failed", null), run("r4", "2026-11-09T04:00:00Z", "small wing", "finished", { cd: 0.28, cl: -0.7, dragN: 31, liftN: -70 })]; simulationPanel.tab = 0 })()
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const o = t.order(); ui.log("NEWEST " + o); if (o !== "r4,r3,r2,r1") ui.fail("newest: " + o) })()
+(() => { simulationPanel.runSort = "drag" })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const o = t.order(); ui.log("DRAG " + o); if (o !== "r2,r1,r4,r3") ui.fail("drag: " + o) })()
+(() => { simulationPanel.runSort = "cd" })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const o = t.order(); ui.log("CD " + o); if (o !== "r4,r1,r2,r3") ui.fail("cd: " + o) })()
+# Choose "Most downforce" in the box itself.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const b = t.find(simulationPanel, "cfdRunSort"); if (!b.visible) ui.fail("no Sort box"); const p = b.mapToItem(null, b.width / 2, b.height / 2); ui.click(p.x, p.y) })()
+ui.wait(400)
+ui.clickText("Most downforce")
+ui.wait(400)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const o = t.order(); ui.log("DOWNFORCE " + o + " sort " + simulationPanel.runSort); if (simulationPanel.runSort !== "downforce" || o !== "r2,r4,r1,r3") ui.fail("downforce: " + o) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const l = t.find(simulationPanel, "runSummary_r2"); const f = t.find(simulationPanel, "cfdPanelScroll").contentItem; f.contentY = Math.max(0, Math.min(f.contentHeight - f.height, l.mapToItem(f.contentItem, 0, 0).y - 120)) })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const l = t.find(simulationPanel, "runSummary_r2"); ui.log("ROW " + l.text); if (l.text !== "finished · Cd 0.320 · drag 29.000 N · lift -90.000 N") ui.fail("row: " + l.text) })()
+ui.shot("cfd-run-sort.png")
+ui.log("cfd run sort done")

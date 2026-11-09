@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CAD-162: "Use the settings of A" fills the New run form with the selected run's conditions
+# (speed, flow, mesh, fixed floor and its height), so a variant B runs exactly as A. Prepared
+# cases only: no engine is started.
+Qt.createQmlObject('import QtQuick; Item { objectName: "cfTest"; visible: false; function find(i, name) { if (!i) return null; if (i.objectName === name) return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = find(ch[k], name); if (r) return r } return null } }', window.contentItem)
+ui.wait(800)
+(() => { for (const r of controller.execute("simulation.list").result.runs) controller.execute("simulation.delete", { run: r.id }) })()
+(() => { const p = controller.execute("document.parts").result.parts[0]; window.selectPart(p.id); const d = controller.execute("part.duplicate", { id: p.id }); const support = d.result.id; controller.execute("part.duplicate", { id: p.id }); const r = controller.execute("simulation.run", { id: p.id, speed: 35, flowDirection: "+X", mesh: "medium", ground: true, groundHeight: -40, groundMoving: false, density: 1.1, turbulenceIntensity: 0.05, context: [support], label: "A run", prepareOnly: true }); if (!r.ok) ui.fail("prepare: " + r.error) })()
+ui.clickText("SIMULATE")
+ui.wait(300)
+ui.clickText("Wind Tunnel")
+ui.wait(1000)
+(() => { simulationPanel.refreshRuns(); const r = simulationPanel.runs.find(x => x.source.label === "A run"); simulationPanel.selectRun(r.id); simulationPanel.tab = 0 })()
+ui.wait(600)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const b = t.find(simulationPanel, "cfdUseSettingsOfA"); if (!b || !b.visible) ui.fail("no Use the settings button"); if (b.text.indexOf("Use the settings of A run (") !== 0) ui.fail("button text: " + b.text); const p = b.mapToItem(null, b.width / 2, b.height / 2); ui.click(p.x, p.y) })()
+ui.wait(600)
+(() => { const p = simulationPanel.runParams(); ui.log("PARAMS " + JSON.stringify(p)); if (p.speed !== 35 || p.flowDirection !== "+X" || p.mesh !== "medium" || p.ground !== true || p.groundHeight !== -40 || p.groundMoving !== false || p.density !== 1.1 || p.turbulenceIntensity !== 0.05) ui.fail("settings of A not copied: " + JSON.stringify(p)); if (!p.context || p.context.length !== 1) ui.fail("A's surroundings (one part), not every visible part: " + JSON.stringify(p.context)) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const g = t.find(simulationPanel, "cfdGroundBox"); if (g.text !== "Fixed floor under the geometry (as in A)") ui.fail("floor box text: " + g.text) })()
+ui.shot("cfd-use-settings.png")
+# Rotating wheels need a moving floor: ticking them drops the copied fixed floor.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const w = t.find(simulationPanel, "cfdRotatingWheels"); const p = w.mapToItem(null, 12, w.height / 2); ui.click(p.x, p.y) })()
+ui.wait(300)
+(() => { const p = simulationPanel.runParams(); if (p.rotatingWheels !== true || p.groundMoving !== undefined) ui.fail("wheels with the copied fixed floor: " + JSON.stringify(p)) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const w = t.find(simulationPanel, "cfdRotatingWheels"); const p = w.mapToItem(null, 12, w.height / 2); ui.click(p.x, p.y) })()
+ui.wait(300)
+# A's support removed from the design: said, not silently replaced by the visible parts.
+(() => { const r = simulationPanel.runs.find(x => x.source.label === "A run"); controller.execute("part.remove", { id: r.source.contextPartIds[0] }) })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const n = t.find(simulationPanel, "cfdCopiedNote"); ui.log("NOTE " + n.text); const p = simulationPanel.runParams(); if (p.context.length !== 0) ui.fail("removed support still sent: " + JSON.stringify(p.context)) })()
+ui.wait(200)
+ui.clickText("1 part(s) of A's surroundings are no longer in the design, so B's flow differs from A's.")
+# Changing the floor box drops the copied fixed floor again.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const g = t.find(simulationPanel, "cfdGroundBox"); const p = g.mapToItem(null, 12, g.height / 2); ui.click(p.x, p.y) })()
+ui.wait(300)
+(() => { const p = simulationPanel.runParams(); if (p.ground !== false || p.groundMoving !== undefined) ui.fail("floor box change kept the fixed floor: " + JSON.stringify(p)) })()
+# Undo brings the support back: the warning goes away.
+ui.key("Z", "ctrl")
+ui.wait(300)
+(() => { if (simulationPanel.copiedContextMissing !== 0) ui.fail("warning stays after undo"); const p = simulationPanel.runParams(); if (p.context.length !== 1) ui.fail("restored support not sent: " + JSON.stringify(p.context)) })()
+# A run of another design (its part is gone): its surrounding ids are not reused here.
+(() => { const r = simulationPanel.runs.find(x => x.source.label === "A run"); controller.execute("part.remove", { id: r.source.partId }); simulationPanel.refreshRuns(); const a = simulationPanel.runs.find(x => x.source.label === "A run"); if (a.sourceInDocument) ui.fail("run still counted as this design's"); if (!simulationPanel.useSettingsOf(a.id)) ui.fail("settings of another design's run not read"); if (simulationPanel.copiedContext !== null || simulationPanel.copiedContextForeign !== 1) ui.fail("foreign surroundings copied by id: " + JSON.stringify(simulationPanel.copiedContext)); const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const n = t.find(simulationPanel, "cfdCopiedNote"); if (n.text.indexOf("of another design") < 0) ui.fail("no warning: " + n.text) })()
+ui.wait(300)
+(() => { const p = simulationPanel.runParams(); if (p.context && p.context.length) ui.fail("foreign surroundings sent: " + JSON.stringify(p.context)) })()
+# A new document drops what was copied from the old one.
+(() => { simulationPanel.clearSelection(); if (simulationPanel.copiedContext !== null || simulationPanel.copiedContextForeign !== 0 || Object.keys(simulationPanel.copiedSettings).length !== 0 || simulationPanel.groundFixed) ui.fail("copied settings survive a workspace reset") })()
+ui.log("cfd use settings done")

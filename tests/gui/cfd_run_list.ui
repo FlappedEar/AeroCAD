@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CAD-136: the Wind Tunnel run list belongs to the open design. Runs of parts that are not in
+# the document (other designs) are folded under "Runs from other designs" and never picked as
+# A on first show. Prepared runs only (no solver).
+ui.wait(1000)
+(() => { for (const r of controller.execute("simulation.list").result.runs) controller.execute("simulation.delete", { run: r.id }) })()
+# A run of another design: its part is removed afterwards.
+(() => { const p = controller.execute("document.parts").result.parts[0]; const d = controller.execute("part.duplicate", { id: p.id }); if (!d.ok) ui.fail("duplicate: " + d.error); const other = d.result.id; const r = controller.execute("simulation.run", { id: other, prepareOnly: true, label: "other design", speed: 30 }); if (!r.ok) ui.fail("other run: " + r.error); controller.execute("part.remove", { id: other }) })()
+(() => { const p = controller.execute("document.parts").result.parts[0]; const r = controller.execute("simulation.run", { id: p.id, prepareOnly: true, label: "this design" }); if (!r.ok) ui.fail("own run: " + r.error); window.selectPart(p.id) })()
+ui.clickText("SIMULATE")
+ui.wait(300)
+ui.clickText("Wind Tunnel")
+ui.wait(1500)
+(() => { const own = simulationPanel.ownRuns.map(r => r.source.label), other = simulationPanel.otherRuns.map(r => r.source.label); ui.log("OWN " + own + " OTHER " + other); if (own.join() !== "this design" || other.join() !== "other design") ui.fail("run split") })()
+(() => { const a = simulationPanel.runs.find(r => r.id === simulationPanel.activeRun); ui.log("A " + (a ? a.source.label : "none")); if (!a || a.source.label !== "this design") ui.fail("first-show A must be this design's run") })()
+ui.clickText("[A] this design · " + simulationPanel.ownRuns[0].source.partName)
+# The run list may reach below the window: scroll the panel to its end.
+(() => { const find = (i, n) => { if (!i) return null; if (i.objectName === n) return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = find(ch[k], n); if (r) return r } return null }; const f = find(simulationPanel, "cfdPanelScroll").contentItem; f.contentY = Math.max(0, f.contentHeight - f.height) })()
+ui.wait(300)
+ui.clickText("▸ Runs from other designs (1)")
+ui.wait(400)
+(() => { const find = (i, n) => { if (!i) return null; if (i.objectName === n) return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = find(ch[k], n); if (r) return r } return null }; const f = find(simulationPanel, "cfdPanelScroll").contentItem; f.contentY = Math.max(0, f.contentHeight - f.height) })()
+ui.wait(300)
+ui.clickText("other design · " + simulationPanel.otherRuns[0].source.partName)
+ui.shot("cfd-run-list.png")
+# CAD-149: a running run says how long it has run and at most how long is left.
+(() => { const t = simulationPanel.timeText({ state: "running", elapsedSeconds: 380, remainingSeconds: 6861 }); ui.log("time: " + t); if (t !== "6 min so far, at most 1 h 54 min left") ui.fail("time text: " + t); if (simulationPanel.timeText({ state: "running", elapsedSeconds: 45, remainingSeconds: null }) !== "45 s so far") ui.fail("elapsed only"); if (simulationPanel.timeText({ state: "finished", elapsedSeconds: 45 }) !== "") ui.fail("a finished run has no running time") })()
+# CAD-155: a run stopped because its forces settled says so; residuals above 1e-3 are named.
+(() => { const l = simulationPanel.qualityLines({ forcesSettled: true, iterations: 179, warnings: ["Uy: residual has not reached the preset target 1e-3"], finalResiduals: { Uy: 3e-3 }, checks: {} }); ui.log("SETTLED " + JSON.stringify(l)); if (!l.some(x => x.ok && x.text === "Stopped after 179 iterations: Cd and Cl have settled")) ui.fail("settled line"); if (!l.some(x => !x.ok && x.text.indexOf("Forces settled, but residuals are above 1e-3: Uy 3.0e-3") === 0)) ui.fail("residual line of a settled run") })()
+ui.log("cfd run list done")

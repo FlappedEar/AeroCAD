@@ -53,7 +53,7 @@ VariantId VariantSet::add(std::string name, Design::State state)
     if (findByName(name) != nullptr)
         throw DesignError("A variant named '" + name + "' already exists");
     const VariantId id = m_nextId++;
-    m_variants.push_back({id, std::move(name), std::move(state)});
+    m_variants.push_back({id, std::move(name), committedState(std::move(state))});
     return id;
 }
 
@@ -67,7 +67,7 @@ Design::State VariantSet::activate(VariantId id, Design::State current)
     FeatureId nextId = current.nextId;
     for (const auto& v : m_variants)
         nextId = std::max(nextId, v.state.nextId);
-    require(m_active).state = std::move(current);
+    require(m_active).state = committedState(std::move(current));
     m_previous = m_active;
     m_active = id;
     target.state.nextId = nextId;

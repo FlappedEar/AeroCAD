@@ -26,7 +26,7 @@ Item {
     readonly property real pickPixels: 8
 
     readonly property var toolNames: ["dimension", "horizontal", "vertical", "coincident", "tangent",
-        "equal", "parallel", "perpendicular", "concentric", "midpoint", "collinear", "fix"]
+        "equal", "parallel", "perpendicular", "concentric", "midpoint", "collinear", "symmetric", "fix"]
 
     onToolChanged: reset()
     onCurvesChanged: canvas.requestPaint()
@@ -52,6 +52,9 @@ Item {
         case "concentric": return qsTr("Concentric: click two circles or arcs")
         case "midpoint": return qsTr("Midpoint: click a point, then a line")
         case "collinear": return qsTr("Collinear: click two lines")
+        case "symmetric": return picks.length < 2
+            ? qsTr("Symmetric: click two points, two lines, two circles or two arcs, then the symmetry line")
+            : qsTr("Symmetric: click the symmetry line")
         case "fix": return qsTr("Fix: click a point or a curve")
         }
         return ""
@@ -83,6 +86,9 @@ Item {
             if (c.kind === "line" || c.kind === "spline") {
                 out.push({ point: { curve: c.index, point: "start" }, pos: c.points[0] })
                 out.push({ point: { curve: c.index, point: "end" }, pos: c.points[c.points.length - 1] })
+                // The fit points between the ends of a spline (Fusion drags them to reshape it).
+                for (let k = 1; c.kind === "spline" && k + 1 < c.points.length; ++k)
+                    out.push({ point: { curve: c.index, point: "fit", index: k }, pos: c.points[k] })
             } else if (c.kind === "arc") {
                 out.push({ point: { curve: c.index, point: "start" }, pos: c.points[0] })
                 out.push({ point: { curve: c.index, point: "end" }, pos: c.points[2] })
@@ -121,9 +127,11 @@ Item {
                 return Math.abs(dist(p, ctr) - curveRadius(c))
             return Math.min(dist(p, c.points[0]), dist(p, c.points[2]))
         }
+        // A spline: along the real curve (samples), not the chords between its fit points.
+        const pts = c.samples || c.points
         let best = Infinity
-        for (let i = 0; i + 1 < c.points.length; ++i)
-            best = Math.min(best, segmentDistance(p, c.points[i], c.points[i + 1]))
+        for (let i = 0; i + 1 < pts.length; ++i)
+            best = Math.min(best, segmentDistance(p, pts[i], pts[i + 1]))
         return best
     }
 
@@ -132,6 +140,7 @@ Item {
         switch (tool) {
         case "coincident":
         case "midpoint": return picks.length === 0 || tool === "coincident"
+        case "symmetric": return picks.length === 0 || (picks.length === 1 && picks[0].point !== undefined)
         case "dimension":
         case "fix":
         case "horizontal":
@@ -144,6 +153,7 @@ Item {
         switch (tool) {
         case "coincident": return picks.length === 1
         case "midpoint": return picks.length === 1
+        case "symmetric": return picks.length === 0 || picks.length === 2 || picks[0].curve !== undefined
         default: return true
         }
     }
@@ -231,6 +241,33 @@ Item {
         return [u / n, v / n]
     }
 
+    function sameRef(a, b) { return JSON.stringify(a) === JSON.stringify(b) }
+
+    /// The first two picks of Symmetric: two points, two lines, two circles or two arcs.
+    function symmetricPairOk(ps) {
+        if (ps.length < 2)
+            return true
+        const [a, b] = ps
+        if (a.point !== undefined && b.point !== undefined)
+            return !sameRef(a.point, b.point)
+        if (a.curve === undefined || b.curve === undefined || a.curve === b.curve)
+            return false
+        return curves[a.curve].kind === curves[b.curve].kind && (isLine(a.curve) || isCirc(a.curve))
+    }
+
+    /// Symmetric for two items and the symmetry line (Fusion: Symmetry), or null. Two curves are
+    /// sent as {curves, curve}; sketch.add_constraints turns them into the matching point symmetries.
+    function symmetricFor(ps) {
+        if (ps.length !== 3 || !symmetricPairOk(ps))
+            return null
+        const axis = ps[2].curve
+        if (axis === undefined || !isLine(axis) || axis === ps[0].curve || axis === ps[1].curve)
+            return null
+        const [a, b] = ps
+        return a.point !== undefined ? { type: "symmetric", points: [a.point, b.point], curve: axis }
+                                     : { type: "symmetric", curves: [a.curve, b.curve], curve: axis }
+    }
+
     function emit(constraint) {
         constraintAdded(constraint)
         picks = []
@@ -290,6 +327,14 @@ Item {
             else
                 picks = ps.length >= 2 ? [] : ps
             break
+        case "symmetric": {
+            const c = symmetricFor(ps)
+            if (c === null)
+                picks = ps.length >= 3 || !symmetricPairOk(ps) ? [] : ps
+            else
+                emit(c)
+            break
+        }
         default:
             // Two-curve constraints.
             if (curvesPicked.length === 2) {
@@ -339,8 +384,14 @@ Item {
     function pointPos(ref) {
         if (ref === "origin")
             return [0, 0]
+        // Any fit point of a spline, the ends included (the API may name them by index).
+        if (ref.point === "fit") {
+            const c = curves.find(x => x.index === ref.curve)
+            return c && c.kind === "spline" && ref.index < c.points.length ? c.points[ref.index] : null
+        }
         for (const c of pointCandidates()) {
-            if (c.point !== "origin" && c.point.curve === ref.curve && c.point.point === (ref.point || "start"))
+            if (c.point !== "origin" && c.point.curve === ref.curve && c.point.point === (ref.point || "start")
+                    && (ref.point !== "fit" || c.point.index === ref.index))
                 return c.pos
         }
         return null

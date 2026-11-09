@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CAD-158: while a run is running, Results shows the current means of the recorded iterations
+# as provisional values (not dashes); the final summary stays empty. Uses tests/gui/fake-docker.sh
+# with FAKE_DOCKER_HISTORY=1: the run writes 20 iterations of history and then only sleeps.
+Qt.createQmlObject('import QtQuick; Item { objectName: "cfTest"; visible: false; function findText(i, prefix) { if (!i) return null; if (i.visible && typeof i.text === "string" && i.text.indexOf(prefix) === 0) return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = findText(ch[k], prefix); if (r) return r } return null } }', window.contentItem)
+ui.wait(800)
+(() => { for (const r of controller.execute("simulation.list").result.runs) controller.execute("simulation.delete", { run: r.id }) })()
+(() => { const p = controller.execute("document.parts").result.parts[0]; window.selectPart(p.id) })()
+ui.clickText("SIMULATE")
+ui.wait(300)
+ui.clickText("Wind Tunnel")
+ui.wait(800)
+ui.clickText("Run CFD")
+ui.wait(2500)
+(() => { simulationPanel.refreshRuns(); simulationPanel.tab = 1 })()
+ui.wait(800)
+(() => { const r = controller.execute("simulation.results", { run: simulationPanel.activeRun }).result; ui.log("state " + r.run.state + ", current " + JSON.stringify(r.current)); if (r.run.state !== "running") ui.fail("the run is not running"); if (r.summary.cd !== null || r.finalResults.available) ui.fail("partial data became a final result"); if (!r.current || r.current.cd !== 0.8 || r.current.dragN !== 1.5) ui.fail("no current values") })()
+ui.clickText("Current values (provisional): mean of the last 20 % so far")
+ui.clickText("0.800")
+ui.clickText("1.500 N")
+ui.shot("cfd-running-values.png")
+(() => { controller.execute("simulation.cancel", { run: simulationPanel.activeRun }) })()
+ui.wait(1500)
+(() => { simulationPanel.refreshRuns(); ui.log("after cancel: " + simulationPanel.activeStatus.state) })()
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); if (t.findText(simulationPanel, "Current values")) ui.fail("current values are still shown after the run ended") })()
+ui.log("cfd running values done")

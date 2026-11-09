@@ -16,19 +16,146 @@ panel in place of Properties:
 
 - **Run**: the engine status (green = ready), settings for a new run of the part
   selected in the browser (speed, flow direction, mesh, moving floor, other visible
-  parts as surroundings, label) and **Run CFD**. Below, all runs with state, progress,
-  Cd and drag; Cancel / delete; click a run to make it **A**, press **B** on another to
-  compare.
+  parts as surroundings, label) and **Run CFD**. The speed is in m/s or with a unit
+  (`72 km/h`, `45 mph`; a decimal comma works); the line under it shows it in m/s and km/h,
+  and a speed that is not a number or above 150 m/s is named there and disables Run CFD
+  (CAD-180, [speed](images/audit/cad-180-speed-units.png)). *Yaw (°)* turns the oncoming
+  air for a crosswind or a car in a corner (`yaw`, -30 to 30, empty = 0, positive =
+  counter-clockwise seen from above); the tunnel preview turns with it, the frontal area
+  grows, and run rows say "flow +Y, yaw 5°" (CAD-188, [yaw](images/audit/cad-188-yaw.png)).
+  *Ref. area (cm²)* sets the area
+  of Cd/Cl/Cs (`referenceArea`, e.g. a wing's planform area); empty uses the frontal area,
+  which the field shows as "auto: … cm² (frontal)" (CAD-182,
+  [field](images/audit/cad-182-ref-area.png)). With the moving floor on, *Floor at Z
+  (mm)* says where the road is (`groundHeight`); empty puts it just below the parts. For a
+  part mounted on a car give the road's height, as the gap changes the forces (200 mm box,
+  flow +X, 30 m/s, coarse: floor 4 mm below Cd 0.855 / Cl +0.095, 40 mm below Cd 0.839 /
+  Cl −0.070, 150 mm below Cd 0.824 / Cl 0.003, no floor Cd 0.817;
+  [panel](images/audit/cad-147-floor-height.png)). A floor above the part is refused with
+  both heights, shown under **Run CFD** before the run. With a run selected (A), *Use the
+  settings of A* fills in its speed, flow direction, mesh, floor (also a fixed one), floor
+  height and surroundings (A's own context parts, not whatever is visible now; parts since
+  removed are named in a warning; a run of another design cannot bring its surroundings
+  over, since part ids are per design, and says so), and sends A's air, turbulence and reference settings
+  that the form has no fields for, so a variant B runs under the same conditions and the
+  A/B comparison stays comparable (CAD-162, [form](images/audit/cad-162-use-settings.png)).
+  The part's size is shown above the
+  settings; a part under 20 mm or over 50 m gets a warning to check its units first (a
+  model in metres read as millimetres is 1000 times too small). `simulation.propose_run`
+  and `simulation.run` return the same text in `warnings`. A part whose mesh is not closed (a raw scan
+  shell, a surface, holes) is warned about too, with the number of open edges: the mesher
+  cannot tell inside from outside and wraps an open shell in a layer about one cell thick,
+  so its forces depend on the mesh (measured on `dome_scan.stl`, 329 open edges: drag
+  1.83 N open, 0.82 N after *Repair* filled the holes;
+  [warning](images/audit/cad-145-open-part-warning.png)). Close it first with MESH > Scan
+  Tools > Repair (*Fill holes up to* at least that many edges). Below, the runs of this design
+  (newest first) with state, progress, Cd and drag; Cancel / delete (both asked first: deleting removes the run's files, a stopped run cannot
+  be resumed; [confirmation](images/audit/cad-151-confirm-delete.png)); click a run to make it
+  **A**, press **B** on another to compare. Runs whose part is not in the open design are
+  folded under *Runs from other designs (N)* (a run of another design that is A or B stays
+  shown); on first show A is the newest run of this design, never one of another design.
+  While a new run is set up, the view shows the planned **wind tunnel** (dashed outline of
+  the domain) and **arrows of the air** flowing onto the part, so a wrong flow direction is
+  seen before the run; they follow the *Air flows* choice and the part.
+  (`simulation.propose_run` returns them as `partModel`, `domainModel` and `flowModel` in
+  model mm; `checkEngine: false` skips the slow engine check.)
 - **Results**: progress while it runs, then drag/lift/side force in N, Cd/Cl/Cs,
-  pressure vs friction drag, the conditions, the quality status and warnings, and charts
-  of the coefficients, forces and residuals per iteration (updated live). **Show in 3D**:
-  pressure on the part (Cp, blue = suction, red = stagnation), horizontal and vertical
-  velocity sections and streamlines (speed), each with its colour legend. The part
+  pressure vs friction drag, the efficiency L/D (|lift| / drag), CdA / ClA in cm² (Cd and Cl
+  times the reference area, so they compare across runs with different areas), the
+  conditions, the quality status and warnings, and charts
+  of the coefficients, forces and residuals per iteration (updated live). Hovering a chart
+  shows the values of every series at the nearest iteration
+  ([readout](images/audit/cad-177-chart-readout.png)). Lift is along +Z, so a negative lift
+  and its L/D are marked "(downforce)" (CAD-184, [summary](images/audit/cad-184-efficiency.png)).
+  Drag, lift and side show "± x": half of max − min over the same last 20 % of the iterations,
+  so how far the force still swings around the mean (`summary.spread` in `simulation.results`,
+  also for Cd/Cl/Cs; CAD-191, [summary](images/audit/cad-191-swing.png)).
+  **At speed** (CAD-208, [summary](images/audit/cad-208-scale-speed.png)): type another speed
+  (m/s, km/h or mph, as in New run) to read the final drag and lift there, for example
+  "200 km/h" on a 40 m/s run gives "drag 57.9 N · lift -185.2 N · 3.22 kW (×1.93)". The forces are scaled
+  by (speed / run speed)² with the run's own Cd and Cl, and the drag power by (speed / run speed)³;
+  Reynolds-number effects are not
+  included, so for a large change run that speed instead. Final results only. File > New and
+  Open clear the typed speed with the rest of the panel (CAD-211).
+  **Drag power and downforce in kg** (CAD-209, [summary](images/audit/cad-209-drag-power.png)):
+  *Drag power* is the power needed to push the part through the air at the run speed, drag ×
+  speed, in kW and hp (745.7 W): 30 N at 40 m/s is "1.20 kW (1.61 hp)". *Downforce* shows a
+  negative lift as a mass, |lift| / 9.80665: -96 N is "9.79 kg". Not shown without a run speed
+  or for positive lift.
+  **Aero balance** (CAD-194, [summary](images/audit/cad-194-balance.png)): for a car with two
+  axles (turning wheels, or with the floor on, tyres standing on the part's bottom that do not
+  turn, found the same way and kept in case.json as `standingWheels` only for this; CAD-196),
+  the aero force split into vertical loads at the front and rear axle
+  contacts on the floor: *Front / rear axle* "-40.000 / -56.000 N" and *Aero balance (front)*
+  "41.7 %". It takes the
+  moments the solver writes (`moment.dat`, about the part centre) about the rear contact line,
+  along the horizontal axis across the car, so it holds at yaw too; drag acting above the floor
+  lifts the front, as on a real car. The front share is given only when both axles pull the
+  same way. `simulation.results` returns `frontLiftN`, `rearLiftN`, `frontShare` (null for
+  other runs) and their swing; the A/B table, `simulation.compare` and both CSV exports add
+  front and rear axle lift when the runs have them. When both runs have a front share, the
+  A/B table adds *Balance front %* with B − A in percentage points ("+6.4 pp", no % of a %),
+  `simulation.compare` returns `balance` {a, b, difference} and the A/B CSV the row
+  "Aero balance front (%; B - A in percentage points)" (CAD-197,
+  [A/B](images/audit/cad-197-balance-shift.png)).
+  **Wheels** (CAD-202, [summary](images/audit/cad-202-wheel-forces.png)): with rotating
+  wheels the case also records the wheels' own forces (`wheelForces` in controlDict, on the
+  wheel patches only), and Results show *Wheels drag / lift* "7.200 / -3.000 N" and *Wheels
+  share of drag* "24.0 %"; the body has the rest. `simulation.results` returns `wheelDragN`
+  and `wheelLiftN` (null without rotating wheels; standing wheels are part of the part), and
+  the A/B table, `simulation.compare` and both CSV exports add them when both runs have them.
+  On the test car (1 m box body on four
+  wheels, 0.6 m wheelbase, 30 m/s, coarse mesh) a real OpenFOAM v2506 run gave front +30.5 N,
+  rear -11.6 N with 54 N of drag about 0.2 m above the floor (about 18 N of it lifting the
+  front).
+  **Show in 3D**:
+  pressure on the part (Cp), horizontal and vertical velocity sections and streamlines
+  (speed). Pressure is drawn in a high-contrast rainbow map (blue = suction, green = Cp 0,
+  red = stagnation) or, under *Pressure colours*, blue-white-red; Cp 0 sits in the middle
+  of the scale and each side of zero is scaled on its own. The Cp range is the 2nd to 98th
+  percentile of the values (a few extreme points at the stagnation point or a sharp edge
+  do not wash out the map); *Cp range* takes a typed min/max, *Auto* goes back. The
+  pressure map is shaded and the streamlines are drawn as thin, see-through shaded tubes,
+  so the shapes read in 3D; the sections stay flat and unlit so their colours match the
+  legend exactly. Sections are cropped to the region around the part (0.4 part lengths
+  ahead, beside and above, 1.5 lengths of wake), streamlines to 3 lengths of wake.
+  Each run also writes stacks of sections (CAD-148): 15 planes across the flow (from 0.1
+  part lengths ahead of the part to 1.5 lengths behind its front), 5 vertical planes along
+  the flow and 6 horizontal ones, cropped to the same region (about 40 MB on a 2.3 M cell
+  mesh). A slider under each ticked section steps through its planes, with the position
+  in mm next to it; *Section across the flow* shows the wake behind the part and the
+  wakes of wheels and wings. Runs made before the stacks have only the two sections
+  through the part centre.
+  Streamlines start from a 16 x 10 rake just ahead of the part, a little wider and taller
+  than it, and from an 8 x 5 rake just behind it traced both ways, which shows the
+  recirculation in the wake (runs made before this change have 35 lines from far
+  upstream). *Streamline colours* switches them from speed colours to *Smoke* (CAD-170):
+  half as thick and grey, the slowest air in the strongest contrast to the background
+  (near white on the dark theme, near black on the light one), so the wake and the
+  vortices behind wheels and wings stand out and the pressure map stays readable, as in
+  motorsport CFD renders; the smoke has its own legend and the sections keep their
+  colours. Hovering over the pressure map shows Cp and the pressure in Pa at the
+  pointer; over a section, the speed and Cp. The viewport shows a
+  colour bar for each quantity (sections and streamlines share one speed scale) and a card
+  with drag, lift and side force in N, Cd/Cl/Cs and the run conditions; the guide bar
+  steps aside while results are shown. The part
   itself is hidden while its pressure map is shown. The 3D results are drawn only while
   the open design holds the run's part unchanged: deleting or changing the part hides
   them (undo brings them back). File > New and Open start with no run selected.
 - **A/B**: verdict, drag/lift/side of A and B with the difference in N and %, differing
   conditions and notes; *Show B in 3D* shows B's fields on the same colour scales as A.
+  *Difference B − A on the part (ΔCp)* (Results tab, Show in 3D) replaces A's pressure map
+  with the change of pressure: red where B has higher pressure, blue where lower, on a
+  blue–white–red scale symmetric about zero over the 2nd–98th percentile of the change.
+  Points of A with no surface of B within 1 % of the part length (where the shapes differ)
+  are grey. The forces card then adds the change of drag and lift in N and % and of Cd/Cl
+  on A's reference area.
+
+![Horizontal section 13 mm above the floor under an F1 model (fine mesh): the wheel wakes](images/cfd/sections-f1-low.png)
+
+![Section across the flow at 80 % of the car's length](images/cfd/sections-f1-cross.png)
+
+![Pressure change of a 35° against a 25° rear slant on A's part (real coarse runs)](images/cfd/results-3d-difference.png)
 
 Runs continue when the panel or the app is closed.
 
@@ -40,6 +167,35 @@ remain unchanged: restore a valid `run.json` from a backup. The Wind Tunnel pane
 reloads that run when it refreshes, without restarting AeroCAD. A remote run is not
 automatically followed during a refresh; restart AeroCAD to follow it. The panel's
 delete action still removes a run only when explicitly chosen.
+
+While a run runs, Results does not judge it yet: the badge reads *checks: after the run*
+(grey), and neither the quality warnings nor the reasons why final results are missing are
+listed, since every check is still incomplete then
+([running run](images/audit/cad-150-running-checks.png)). The live charts and provisional
+values are shown as before.
+
+Instead of dashes, the force and coefficient grid then shows the *current values*: the
+mean over the last 20 % of the iterations recorded so far, the same averaging as the final
+results, dimmed and headed "Current values (provisional)" (CAD-158,
+[live fine run](images/audit/cad-158-current-values.png)). `simulation.results` returns
+them as `current` only while the run is running; `summary` stays null until it finishes, and
+A/B never uses them.
+
+While a run runs, Results and the run list say how long it has run (`elapsedSeconds`, for
+runs this app started) and, while solving, at most how long is left (`remainingSeconds`):
+the solver's speed since the initialisation ended, applied to the iterations left before
+the limit; it often stops sooner when it converges
+([fine mesh of the 200 mm box on 4 cores](images/audit/cad-149-run-time.png): meshing
+about 13 min, then "at most 1 h 55 min left").
+
+Runs on this computer share its processors: a run starts at once while its solver processes
+fit next to the runs already solving (up to the number of logical cores; each run uses half
+of them by default, so A and B run side by side). Further runs wait in a queue (state
+*running*, stage *queued*) and start by themselves, oldest first, when processors free up:
+oversubscribed OpenFOAM runs are many times slower than the same runs one after the other
+(measured on 4 cores: 4 coarse runs started together had none finished after 200 s; 3
+runs through the queue all finished within about 95 s). A queued run can be cancelled; it does not survive closing the app (it is then
+reported as stopped). Runs on a remote engine are not queued here.
 
 ## Engine: OpenFOAM v2506 in Docker
 
@@ -154,30 +310,62 @@ tunnel:
 | Turbulence | RANS k-omega SST, wall functions |
 | Mesh | `blockMesh` background (cubic cells) + `snappyHexMesh` on the part |
 | Domain | 3 L upstream, 8 L downstream, 2.5 L to the sides, above and below (L = largest part dimension) |
-| Boundaries | fixed velocity inlet, fixed pressure outlet, slip far field; optional floor, moving with the air (`groundMoving`, default) or fixed, just below the geometry or at `groundHeight` (mm, model Z) |
+| Boundaries | fixed velocity inlet, fixed pressure outlet, slip far field; optional floor, moving with the air (`groundMoving`, default) or fixed, just below the geometry or at `groundHeight` (mm, model Z); optional rotating wheels on the moving floor (`rotatingWheels`) |
 | Fluid | air: nu = 1.5e-5 m^2/s, rho = 1.205 kg/m^3 |
 | Inflow turbulence | intensity 1 %, nu_t/nu = 10: k = 1.5 (U I)^2, omega = k / (nu * 10) |
-| Stop | residuals p < 1e-4, U, k, omega < 1e-5, or the iteration limit |
+| Stop | residuals p < 1e-4, U, k, omega < 1e-5; or forces settled: after 100 iterations, the mean of Cd and Cl over the last 50 iterations stays within 5e-4 of its own 50-iteration mean (then residuals need only be below 1e-3); or the iteration limit |
 
 Mesh levels (cells per L in the background mesh / surface refinement levels /
-wake box level / prism layers): coarse 2 / 3-4 / 2 / 0, medium 3 / 4-5 / 3 / 2,
-fine 4 / 5-6 / 4 / 3. Default iteration limits 300 / 500 / 800. Coarse is meant for
+near box level / wake box level / prism layers): coarse 2 / 3-4 / 2 / 1 / 0,
+medium 3 / 4-5 / 3 / 2 / 2, fine 4 / 6-7 / 4 / 3 / 3. The near box holds the part with
+0.1 L around it, 0.15 L ahead and 0.75 L of wake; the wake box reaches 0.5 L around it
+and 3 L behind. Each level halves the cell size: on the fine mesh of a 1.1 m car the
+surface cells are 2.2 to 4.4 mm (CAD-153). Default iteration limits 300 / 500 / 800. Coarse is meant for
 quick A/B checks. The preset is checked against the Ahmed body experiments in
 [cfd-validation.md](cfd-validation.md).
 
+**Rotating wheels** (`rotatingWheels`, CAD-154). For a car on a moving floor, tick
+*Rotating wheels (on the floor)*. The wheels are found on the part itself:
+- Every place where the part rests on its lowest point (a tyre's contact patch) is a
+  candidate.
+- It is a wheel when the surface around it, in the same band across the car, lies on a
+  circle that stands on that point and goes most of the way round it (the tread).
+- The tyre's width is how far along the axle that tread continues.
+- Everything within the tyre's radius and width (tread, rim, hub) turns with it. One
+  patch is written per axle (`wheels0` at the front, `wheels1`, ...), each with a
+  `rotatingWallVelocity` about the axle at speed / radius, so the bottom of each tyre
+  moves with the floor.
+
+The floor is put 1.5 % of the tyre radius above the bottom of the tyres, so each tyre
+meets it in a small contact patch rather than along a line of degenerate cells. A floor
+height cannot be set together with rotating wheels. The forces and the pressure map
+include the wheels. Without the option, the floor lies 2 % of the part's length below
+its lowest point, so the air passes under the tyres. On Arek's F1 model all four wheels
+(radius 76 mm) are found, with their rims; the suspension stays still.
+
 **Units and axes.** The model is in millimetres, the case in metres (converted when the
 case is written). The flow direction is one of `+X`, `-X`, `+Y`, `-Y` in model axes
-(default `+Y`: the air hits the side you see in the Front view); Z is up. The case is
+(default `+Y`: the air hits the side you see in the Front view); Z is up. To set a part
+up, use Move / Rotate / Scale (M): **Lay on Face** puts the face you click on the ground,
+**Face Front** turns the face you click towards the oncoming air ([ui.md](ui.md#move--rotate--scale)). The case is
 rotated so the air flows along its +X axis. Results are reported as **drag** (along the
 flow), **lift** (+Z) and **side** force, and field data is converted back to model
-coordinates.
+coordinates. A **yaw** turns the part in the tunnel by that angle about Z on top
+(CAD-188), like a wind tunnel's turntable: the tunnel stays aligned with the air, forces
+stay in wind axes (drag along the air, side force across it), the frontal area is the one
+seen along the air, and a moving floor moves along the car's heading (the flow direction
+before the yaw) at speed × cos(yaw), the road speed under a crosswind. Rotating wheels
+are found along the car's axes and turned with it: their axles turn by the yaw and they
+roll at speed × cos(yaw) / radius (CAD-190).
 
 **Reference values.** Aref defaults to the frontal area of the part (projection on the
 plane normal to the flow, rasterised), lRef to its length along the flow. Both can be
 set. Forces in N do not depend on them.
 
 **Other parts in the flow** (`context`): e.g. the body section a part is mounted on.
-They are walls in the simulation but not part of the reported forces.
+They are walls in the simulation but not part of the reported forces. Sketches and
+construction planes are drawing aids: they are never put into the flow, and cannot be the
+simulated part either.
 
 ## Running
 
@@ -186,7 +374,29 @@ They are walls in the simulation but not part of the reported forces.
 {"name": "simulation.run", "params": {"id": 1, "speed": 30, "label": "A"}}
 {"name": "simulation.status", "params": {"run": "20261106-140102-rear-wing"}}
 {"name": "simulation.results", "params": {"run": "20261106-140102-rear-wing"}}
+{"name": "simulation.rename", "params": {"run": "20261106-140102-rear-wing", "label": "long splitter"}}
 ```
+
+A run's label can be changed at any time, also while it runs (CAD-174). In the app, click ✎
+on the run in the run list, type the name and press Enter (or click elsewhere); Esc keeps the old one, and an empty
+name removes the label ([run list](images/audit/cad-174-rename-run.png)). The label is saved
+in the run's `run.json`; `simulation.rename` does the same (at most 80 characters, one line).
+
+Each run in the run list has a line with its conditions, for example "55.56 m/s (200 km/h) ·
+flow +X · medium mesh · fixed floor at Z -40 mm" (CAD-181,
+[run list](images/audit/cad-181-run-conditions.png)); `simulation.list` and
+`simulation.status` return them as `settings` (null when the run has no `case.json`).
+A finished run's row shows its final result, "finished · Cd 0.850 · drag 1.600 N": the mean
+over the last 20 % of the iterations, the same numbers as Results (CAD-205,
+[run list](images/audit/cad-205-run-list-final.png)). `simulation.status` and
+`simulation.list` return it as `final` {cd, cl, dragN, liftN} (null while running, after a
+failure or with cut-off outputs); `latest` stays the last iteration, which a running run's
+row shows as "provisional Cd".
+**Sort** above the run list ranks the variants by that final result (CAD-207,
+[run list](images/audit/cad-207-run-sort.png)): *Newest* (default), *Lowest drag*, *Lowest
+Cd* or *Most downforce* (most negative lift, which the rows then show too). Runs without a
+final result (running, failed, prepared) follow, newest first; this design's runs and the
+runs from other designs are each sorted.
 
 `simulation.run` returns at once with a run id; the run continues in the background,
 also when the app is closed (it is picked up again on the next start). Progress is
@@ -194,6 +404,17 @@ estimated from the current step (`aerocad.stage`) and the solver iteration. A ru
 records everything needed to repeat it: `case.json` (settings, frame, reference values,
 geometry hash), `run.json` (source part, its revision and geometry fingerprint, engine command) and the complete
 OpenFOAM case, which can be opened in ParaView through `case.foam`.
+
+`Allrun` stops before `potentialFoam` and `simpleFoam` when `checkMesh` reports a defect
+the solver cannot run on: zero or negative cell volume, incorrectly oriented faces (face
+pyramids), zero or negative face area, open cells, or cells with invalid face labels. The
+run then fails at step `check` with these reports in its message, and `log.checkMesh`
+stays in the case. Other `checkMesh` reports (non-orthogonality, skewness, aspect ratio,
+face tets) are warnings: the solve runs and the quality report flags them. The patterns are
+the `***` reports of OpenFOAM v2506's `primitiveMeshCheck` (`kFatalMeshChecks` in
+`Settings.hpp`). A failed solve shows the first line of an OpenFOAM fatal error, or for a
+floating-point exception (a diverged solution) the iteration it reached, instead of the
+last log line, which is often an MPI separator.
 
 Runs are stored per user, not per project. `sourceInDocument` in the status tells whether
 the open document still has the run's part (same id and same geometry).
@@ -223,12 +444,19 @@ sampling is supported. Numerical quality is assessed separately in the quality r
 - residuals: all final initial residuals must meet the existing `external-flow-v1` targets:
   p below 1e-4 and Ux, Uy, Uz, k and omega below 1e-5,
 - force history: at least 20 complete, finite Cd/Cl/Cs samples; band of Cd over the last
-  20 % of the iterations (at least 10 samples; warning above 2 %).
+  20 % of the iterations (at least 10 samples; warning above 2 %). The report also gives the drift
+  `cdDrift`, the change of the mean of Cd between the two halves of that window. A band
+  above 2 % with a drift below 1 % is reported as an oscillation around a steady mean
+  (the averaged results are that mean) rather than as Cd still changing; it still fails
+  the check.
 
 The quality report's `checks` object records `passed`, `failed` or `missing` for each
 required check. Status is `ok` only when every check passed, `warning` when any failed,
 and otherwise `unknown` because evidence is missing. `warnings` explains failed and missing
-checks in the results panel. Truncated histories, stale residuals/coefficients that do not
+checks in the results panel; the panel shows the residual warnings and the solver's "not converged"
+line as one line with the final residuals, and says when Cd is steady (force stability passed),
+so a usual coarse run reads as two lines instead of seven
+([real coarse run of the 200 mm box](images/audit/cad-116-cfd-results.png)). Truncated histories, stale residuals/coefficients that do not
 reach the final logged iteration, and non-finite data cannot receive a clean verdict.
 Available raw diagnostics remain in the report even if another required check is missing.
 These checks flag results to read with care; they are not a validation of the physics.
@@ -240,16 +468,71 @@ synthetic case's `unknown` verdict and the reasons displayed in the real Results
 
 `simulation.field` summarises the field outputs: `surface` (pressure on the part as
 p, Cp and Pa), `sectionHorizontal` / `sectionVertical` (planes through the part centre,
-speed in m/s and Cp) and `streamlines` (35 lines seeded on a grid upstream).
+speed in m/s and Cp), a plane of a section stack (`sectionX_<i>` across the flow,
+`sectionY_<i>` vertical along it, `sectionZ_<i>` horizontal; `simulation.results` lists
+the run's planes in `fields.sections` with their fraction of the part and position in mm),
+`wake`, `vortices` and `streamlines` (a rake ahead of the part and one in the wake).
+
+The wake surface (CAD-165) is the isosurface of zero total pressure, Cp0 = 0, as in
+motorsport CFD: the air inside it has lost all of its dynamic pressure, so it outlines the
+wake, the separated regions and the vortex cores from wheels and wings. The case computes
+the total pressure (`pressure` function object, `mode total`) and samples the isosurface
+with the other surfaces, cropped to the region around the part. Total pressure is also
+lost in the boundary layer, so the isosurface wraps the whole part in a skin about a cell
+off its surface that would hide the pressure map; the result view drops the parts of it
+closer to the part than one surface cell of the run's mesh, which leaves the wake. "Show in 3D" draws it
+see-through and coloured by speed. Runs made before it say so and need a new run.
+
+The vortex cores (CAD-175) are the isosurface of the Q-criterion, where the rotation of
+the air outweighs its strain, as ParaView and other post-processors show them. The case
+computes Q (`Q` function object) and samples the isosurface at Q = 20 (U / L)², with U the
+speed and L the characteristic length, so the same structures show at any speed and size;
+on the F1 model it picks out the rear wing tip vortices and the wheel wakes. Q is also high
+in the boundary layer, so the result view drops what lies within three surface cells of
+the part. "Show in 3D" draws them like the wake; runs made before need a new run.
+Each scalar has `min`, `max`, `mean` and the 2nd/98th percentiles `p02`/`p98`, which the
+app uses for the pressure colour range.
+
+### Export to CSV
+
+**Results > Export CSV…** writes the selected run to a CSV file for a spreadsheet or a report
+(CAD-167, [panel](images/audit/cad-167-export-csv.png)). The default file name is the run's
+label and id. The file has a `Quantity,Value` block with the run, part, state, conditions
+(speed, flow, mesh, floor, air, reference area and length, the OpenFOAM version the run recorded, or "not recorded") and the final values
+(Cd, Cl, Cs; drag, lift, side, pressure and viscous drag in N; efficiency L/D, CdA and ClA
+in m², CAD-187), and for a finished run how far drag, lift, side, Cd, Cl and Cs still swing
+("Drag swing ± (N)" etc., CAD-191). A run that has not finished
+says so in the `Results` row and gives the current means marked "(provisional)". After a blank
+line comes the full, unsampled history: iteration, Cd, Cl, Cs and the forces in N.
+Numbers use a `.` decimal point, and lines end with CRLF. MCP: `simulation.export_results
+{"run": "<id>", "path": "/path/results.csv"}` returns the path and the number of history rows.
+
+**A/B > Swap A ↔ B** makes B the baseline and A the variant in one click (CAD-204,
+[panel](images/audit/cad-204-swap-ab.png)): the selected run and the compared run change
+places, Results show the new A, and B − A, the % changes and the balance shift flip sign. The
+A/B tab stays open.
+
+**A/B > Export CSV…** writes the comparison (CAD-193, [panel](images/audit/cad-193-export-ab.png)).
+The default file name is "A-label A-id vs B-label B-id". A `Quantity,Value` block lists run A
+(baseline) and B (variant) with their labels and part, the verdict, each differing or unknown
+condition, why the runs are not comparable, the notes (such as a difference within the
+iteration swing) and the mesh check. After a blank line comes the table
+`Quantity,A,B,B - A,Change (%),Swing A+B,Within swing` for drag, lift, side, pressure and
+viscous drag (N), efficiency L/D and Cd/Cl/Cs on the reference area of A. Rows the comparison
+has no values for (runs not comparable) stay empty. MCP: `simulation.export_comparison
+{"a": "<id>", "b": "<id>", "path": "/path/ab.csv"}` returns the path and the number of table
+rows with values.
 
 ## A/B comparison
 
 `simulation.compare {a, b}` returns the force differences in N and %, the coefficients
 of B rescaled to A's reference area, the list of differing conditions (speed, direction,
-mesh, preset, fluid, ground, reference values), the quality of both runs and shared
+mesh, preset, fluid, ground), the quality of both runs and shared
 colour scale ranges (Cp on the surface, speed in the sections). Verdict:
 `comparable`, `difference inconclusive`, `check quality` or `not comparable`. Variants of very different size get
-different domain and mesh sizes, which is reported as a note.
+different domain and mesh sizes, which is reported as a note. The reference area and
+length are not conditions: they only scale the coefficients, so runs that differ only
+there are the same case, and a note names both areas in cm² (CAD-186).
 
 The resolved setup is compared too, not only the requested settings. Each case records a
 fingerprint of its surroundings (context parts in model coordinates, independent of their
@@ -264,6 +547,27 @@ A/B: when the domain is the only difference, the forces are still compared, a no
 difference in mm and the verdict is `different domains` instead of `comparable`. What an
 older run did not record (surroundings, domain or engine) is listed in `unknownConditions`
 and makes the verdict `not comparable`.
+
+The A/B tab's table has drag, lift and side force, pressure drag and friction drag
+(in N), and Cd, Cl and Cs with B on A's reference area (to 4 decimals, so a change of a few
+drag counts shows). Each row has A, B, B − A and the change in %. A value under 2 % of the
+largest one in its group (forces or coefficients) gets no percentage (CAD-171,
+[A/B](images/audit/cad-171-ab-coefficients.png)). The *L/D* row compares the efficiency
+|lift| / drag (`efficiency` in `simulation.compare`; left out without a positive drag;
+CAD-187, [row](images/audit/cad-187-ab-efficiency.png)).
+A difference no larger than the swing of A plus the swing of B shows "noise" in the % column,
+and a note says so for drag and lift: two runs of the same box differed by +0.0006 N drag
+inside a ±0.0007 N swing (`noise` and `withinNoise` per row in `simulation.compare`; equal
+values with no swing are no change, not noise; CAD-191, [A/B](images/audit/cad-191-ab-noise.png)).
+Below it, *Cd per iteration* draws the Cd histories of A and B (B on A's reference area)
+on the same axes, so a difference can be weighed against how much Cd still oscillates;
+hovering it reads both values at an iteration (CAD-179,
+[chart](images/audit/cad-179-ab-convergence.png)).
+
+`conditionChanges` lists the same differences in words with the value of each run, which
+the A/B tab shows (CAD-159), for example "Floor height: A -40 mm, B -150 mm" or "Air speed:
+A 30 m/s, B 40 m/s" ([A/B](images/audit/cad-159-ab-conditions.png)). The note on differing
+domains names what sized them differently: the part, the surroundings or the floor.
 
 Both runs must have final results. Otherwise the verdict is `not comparable`, force
 and coefficient differences and shared colour scales are empty, and `states` / `reasons`
@@ -283,13 +587,26 @@ larger difference, and the message also names the other force when its differenc
 not hold. When a run on one of those two levels has quality warnings the status is
 **check quality** (verdict `check quality`). `simulation.refine` refuses a run whose part or
 other parts in the flow have changed since it ran. Runs count as the same case when the geometry hash and all
-conditions except the mesh level are equal.
+conditions except the mesh level are equal. When A and B themselves are the same case (a
+repeat run), their difference is run-to-run variation and the status is **same case**:
+there is nothing to check on another mesh. While runs of the check are still solving the
+status is **pending** and `runningRuns` lists them; the A/B tab shows their progress.
+
+### Pressure difference on the part
+
+`simulation.field {run: A, kind: "surface", compare: B}` interpolates B's surface values
+onto A's surface points (`cfd::surfaceDifference`: nearest point of B within 1 % of the
+part length, found on a uniform grid) and returns A's surface with scalars `dCp`, `dp` and
+`dpressure` (B − A; NaN where B has no point near enough). The viewport draws NaN grey.
 
 ## Tests
 
 `ctest -L openfoam` runs a box through the whole pipeline in OpenFOAM (about a minute
 with Docker; skipped when no engine is found). On macOS its case goes under `~/.aerocad/test-runs/`,
-because the engine's VM shares only the home directory, not `$TMPDIR`. It is not part of the CI gate. The unit
+because the engine's VM shares only the home directory, not `$TMPDIR`. It is not part of the CI gate. `app_cfd_difference_3d_test` (labels gui, openfoam) runs the
+box twice at once and checks the difference map, its colour bar and the card in the real
+GUI; two parallel runs of the same shape differ by about 0.004 to 0.011 in Cp on 96 % of the part
+(the test allows 0.03). The unit
 tests (`test_cfd`, `test_commands`) cover case generation, parsing, quality checks, the
 run manager and the commands without an engine.
 

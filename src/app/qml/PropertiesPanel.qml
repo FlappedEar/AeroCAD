@@ -14,12 +14,31 @@ Pane {
     required property ActionPopup popup
     property var partId: 0
     property var info: ({})
+    /// Physical properties (Fusion: Properties) of a closed body, solid or mesh:
+    /// geometry.measure kind "part" (volume, surfaceArea, centerOfMass), or null.
+    property var physical: null
+    /// Measuring waits while this is true: geometry.measure would end a Move / Rotate /
+    /// Scale preview (an explicit analysis commits it), so it is left until the tool ends.
+    property bool busy: false
 
     function refresh() {
         info = partId ? controller.partInfo(partId) : ({})
+        physical = null
+        // Bodies and exact solids are cheap to measure; a big scan mesh is left to Measure.
+        const measurable = info.kind === "body" || (info.kind === "imported" && (info.hasBrep ? (info.solids ?? 0) > 0
+                                                                                    : (info.triangles ?? 0) <= 200000))
+        // Measured only while the panel is shown (it runs on the GUI thread).
+        if (!partId || !measurable || !visible || busy)
+            return
+        const r = controller.execute("geometry.measure", { kind: "part", id: partId })
+        if (r.ok && r.result.closed && r.result.volume > 0)
+            physical = r.result
     }
+    function fixed(v, d) { return Number(v).toLocaleString(Qt.locale(), "f", d) }
 
     onPartIdChanged: refresh()
+    onVisibleChanged: if (visible) refresh()
+    onBusyChanged: if (!busy) refresh()
     Connections {
         target: root.controller
         function onPartChanged(id) {
@@ -27,7 +46,7 @@ Pane {
                 root.refresh()
         }
         // A part removed elsewhere (undo, delete) leaves the panel on a stale id.
-        function onHistoryChanged() { root.refresh() }
+        function onHistoryChanged() { Qt.callLater(root.refresh) }
     }
 
     padding: 0
@@ -101,12 +120,43 @@ Pane {
                 Label { text: Preferences.formatLength(Number(root.info.sizeZ ?? 0), Preferences.lengthUnit) }
                 Label { visible: root.info.kind === "imported" && !root.info.hasBrep; text: qsTr("Triangles"); color: Theme.textMuted }
                 Label { visible: root.info.kind === "imported" && !root.info.hasBrep; text: Number(root.info.triangles ?? 0).toLocaleString(Qt.locale(), "f", 0) }
+                Label { visible: !!root.physical; text: qsTr("Volume"); color: Theme.textMuted }
+                Label { visible: !!root.physical; objectName: "propVolume"; text: root.physical ? root.fixed(root.physical.volume / 1000, 3) + " cm³" : "" }
+                Label { visible: !!root.physical; text: qsTr("Surface area"); color: Theme.textMuted }
+                Label { visible: !!root.physical; objectName: "propArea"; text: root.physical ? root.fixed(root.physical.surfaceArea / 100, 2) + " cm²" : "" }
+                Label { visible: !!root.physical && !!root.physical.centerOfMass; text: qsTr("Centre of mass"); color: Theme.textMuted }
+                Label {
+                    visible: !!root.physical && !!root.physical.centerOfMass
+                    objectName: "propCentre"
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    text: root.physical && root.physical.centerOfMass
+                          ? root.physical.centerOfMass.map(v => Preferences.formatLength(v, Preferences.lengthUnit)).join(", ") : ""
+                }
+                Label { visible: !!root.physical; text: qsTr("Material"); color: Theme.textMuted }
+                ComboBox {
+                    visible: !!root.physical
+                    objectName: "propMaterial"
+                    Layout.fillWidth: true
+                    model: Preferences.printMaterials.map(m => m.label + " (" + Number(m.density).toFixed(2) + " g/cm³)")
+                    currentIndex: Preferences.printMaterials.findIndex(m => m.value === Preferences.printMaterial)
+                    onActivated: index => Preferences.printMaterial = Preferences.printMaterials[index].value
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("The mass is for solid material (100 % infill).")
+                }
+                Label { visible: !!root.physical; text: qsTr("Mass"); color: Theme.textMuted }
+                Label {
+                    visible: !!root.physical
+                    objectName: "propMass"
+                    text: root.physical ? qsTr("%1 g (solid)").arg(root.fixed(root.physical.volume / 1000 * Preferences.printDensity, 1)) : ""
+                }
                 Label { text: qsTr("Type"); color: Theme.textMuted }
                 Label {
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
                     text: root.info.kind === "sketch" ? qsTr("Sketch")
                           : root.info.kind === "body" ? qsTr("Body (editable, from the timeline)")
+                          : root.info.kind === "plane" ? qsTr("Construction plane (reference only)")
                           : root.info.hasBrep
                           ? ((root.info.solids ?? 0) > 0 ? qsTr("Exact solid") : ((root.info.faces ?? 0) === 1 ? qsTr("Exact surface (1 face)") : qsTr("Exact surface (%1 faces)").arg(root.info.faces ?? 0)))
                           : qsTr("Triangle mesh")

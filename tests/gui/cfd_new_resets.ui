@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CAD-211: File > New leaves nothing of the CFD panel's state for the closed project: the
+# At speed text, B's results and an unfinished rename are cleared with the runs and results.
+# Injected data, no engine.
+Qt.createQmlObject('import QtQuick; Item { objectName: "cfTest"; visible: false; function find(i, name) { if (!i) return null; if (i.objectName === name) return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = find(ch[k], name); if (r) return r } return null } function clickItem(name) { const b = find(simulationPanel, name); const p = b.mapToItem(null, b.width / 2, b.height / 2); ui.click(p.x, p.y) } }', window.contentItem)
+ui.wait(800)
+ui.clickText("SIMULATE")
+ui.wait(300)
+ui.clickText("Wind Tunnel")
+ui.wait(800)
+(() => { simulationPanel.tab = 1; simulationPanel.results = { summary: { dragN: 30, liftN: -96, sideN: 0.5, cd: 0.25, cl: -0.8, cs: 0.004, pressureDragN: 24, viscousDragN: 6, iterations: 500 }, finalResults: { available: true, reasons: [] }, quality: { status: "ok", checks: {} }, conditions: { settings: { speed: 40, flowDirection: "+X", mesh: "coarse", ground: false }, referenceArea: 0.012, openfoam: "2406" }, fields: {}, history: { iteration: [1, 2], cd: [0.3, 0.25], cl: [-0.7, -0.8] } }; simulationPanel.resultsB = JSON.parse(JSON.stringify(simulationPanel.results)); simulationPanel.renameText = "old name" })()
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const f = t.find(simulationPanel, "cfdScaleSpeed"); if (!f || !f.visible) ui.fail("no At speed field"); t.clickItem("cfdScaleSpeed") })()
+ui.type("200 km/h")
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const r = t.find(simulationPanel, "cfdScaleResult").text; ui.log("BEFORE " + r); if (r.indexOf("drag 57.9 N") !== 0) ui.fail("At speed not set: " + r) })()
+controller.newProject()
+ui.wait(1000)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const bad = []; if (simulationPanel.tab !== 0) bad.push("tab " + simulationPanel.tab + " (CAD-214)"); if (t.find(simulationPanel, "cfdScaleSpeed").text !== "") bad.push("At speed text"); if (simulationPanel.resultsB) bad.push("B results"); if (simulationPanel.results) bad.push("results"); if (simulationPanel.renameText) bad.push("rename text"); ui.log("LEFT " + bad.join(", ")); if (bad.length) ui.fail("left after New: " + bad.join(", ")) })()
+# Final results of a run in the new project: no old speed comes back.
+(() => { simulationPanel.tab = 1; simulationPanel.results = { summary: { dragN: 10, liftN: 2, sideN: 0, cd: 0.3, cl: 0.06, cs: 0, pressureDragN: 8, viscousDragN: 2, iterations: 300 }, finalResults: { available: true, reasons: [] }, quality: { status: "ok", checks: {} }, conditions: { settings: { speed: 20, flowDirection: "+Y", mesh: "coarse", ground: false }, referenceArea: 0.01, openfoam: "2506" }, fields: {}, history: { iteration: [1], cd: [0.3], cl: [0.06] } } })()
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const r = t.find(simulationPanel, "cfdScaleResult").text; if (r !== "") ui.fail("old At speed result in the new project: " + r) })()
+ui.shot("cfd-new-resets.png")
+# CAD-214: New while on A/B, and losing the selected run or the comparison, falls back to an enabled tab.
+(() => { simulationPanel.runs = [{ id: "r2", created: "2026-11-09T02:32:17Z", state: "finished", source: { label: "B", partName: "box" } }, { id: "r1", created: "2026-11-09T02:31:31Z", state: "finished", source: { label: "A", partName: "box" } }]; simulationPanel.comparison = { a: "r1", b: "r2", verdict: "comparable", states: { a: "finished", b: "finished" }, forces: { dragN: { a: 30, b: 31, difference: 1, percent: 3.33 } }, differingConditions: [], unknownConditions: [], reasons: [], notes: [], meshSensitivity: { status: "not assessed", levels: [] }, quality: { a: { status: "ok" }, b: { status: "ok" } } }; simulationPanel.tab = 2 })()
+ui.wait(300)
+controller.newProject()
+ui.wait(1000)
+(() => { ui.log("TAB after New on A/B " + simulationPanel.tab); if (simulationPanel.tab !== 0) ui.fail("still on tab " + simulationPanel.tab + " after New") })()
+(() => { simulationPanel.activeRun = "r1"; simulationPanel.tab = 1 })()
+ui.wait(200)
+(() => { simulationPanel.activeRun = ""; if (simulationPanel.tab !== 0) ui.fail("Results kept without a run: tab " + simulationPanel.tab) })()
+(() => { simulationPanel.activeRun = "r1"; simulationPanel.comparison = { a: "r1", b: "r2", reasons: [], forces: {}, differingConditions: [], unknownConditions: [], notes: [] }; simulationPanel.tab = 2 })()
+ui.wait(200)
+(() => { simulationPanel.comparison = null; if (simulationPanel.tab !== 1) ui.fail("A/B kept without a comparison: tab " + simulationPanel.tab) })()
+ui.shot("cfd-new-resets-tab.png")
+ui.log("cfd new resets done")

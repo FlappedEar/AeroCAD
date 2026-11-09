@@ -1,0 +1,23 @@
+# CAD-156 (Codex): Delete on more parts than the 200-step history holds is still one undo
+# step. 230 copies of a box are selected with Ctrl+A and deleted with Delete; one Ctrl+Z
+# brings every one of them back.
+# CAD-210: and fast. The panels used to refresh once per part (231 times for one Delete):
+# Delete took 42 s, Undo 16 s and making the copies 40 s; now they refresh once per batch.
+# Run: AeroCAD --ui-script <this file>
+ui.wait(800)
+Qt.createQmlObject('import QtQuick; Item { objectName: "msTest"; visible: false; property double t: 0 }', window.contentItem)
+(() => { const r = controller.execute("feature.box", { size: [10, 10, 10] }); if (!r.ok) ui.fail("box: " + r.error); const body = controller.execute("document.parts").result.parts[0].id; const t = Date.now(); for (let i = 0; i < 230; ++i) { const d = controller.execute("part.duplicate", { id: body }); if (!d.ok) ui.fail("duplicate: " + d.error) } const ms = Date.now() - t; ui.log("230 copies: " + ms + " ms"); if (ms > 10000) ui.fail("230 copies took " + ms + " ms"); viewport.fitAll() })()
+ui.wait(300)
+(() => { const p = viewport.mapToItem(null, viewport.width / 2, viewport.height / 2); ui.click(p.x, p.y) })()
+ui.wait(300)
+ui.key("A", "ctrl")
+ui.wait(300)
+(() => { ui.log("Ctrl+A: " + window.selectedPartIds.length + " selected"); if (window.selectedPartIds.length !== 231) ui.fail("Ctrl+A selected " + window.selectedPartIds.length + ", expected 231") })()
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "msTest").t = Date.now() })()
+ui.key("Delete")
+(() => { const ms = Date.now() - Array.from(window.contentItem.children).find(c => c.objectName === "msTest").t; ui.log("Delete: " + ms + " ms"); if (ms > 5000) ui.fail("Delete of 231 parts took " + ms + " ms") })()
+ui.wait(500)
+(() => { const n = controller.execute("document.parts").result.parts.length; ui.log("Delete: " + n + " parts left, undo '" + controller.undoText + "'"); if (n !== 0) ui.fail("Delete left " + n + " parts") })()
+(() => { const t = Date.now(); undoAction.trigger(); const ms = Date.now() - t; ui.log("Undo: " + ms + " ms"); if (ms > 5000) ui.fail("Undo of 231 parts took " + ms + " ms") })()
+ui.wait(800)
+(() => { const n = controller.execute("document.parts").result.parts.length; ui.log("one Ctrl+Z: " + n + " parts"); if (n !== 231) ui.fail("one Ctrl+Z brought back " + n + " parts, expected 231") })()

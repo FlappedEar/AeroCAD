@@ -310,6 +310,158 @@ TEST_CASE("Imported parts can be duplicated", "[commands][project]")
     CHECK(s.document().partCount() == 1);
 }
 
+TEST_CASE("A body is duplicated as a fixed solid that survives timeline edits and saving",
+          "[commands][project]")
+{
+    TempDir dir;
+    commands::Session s;
+    run(s, "feature.box", {{"size", {40, 30, 6}}});
+    model::PartId body = 0;
+    for (const auto& p : s.document().parts())
+        if (p.kind == model::PartKind::Body)
+            body = p.id;
+    REQUIRE(body != 0);
+    const Json copy = run(s, "part.duplicate", {{"id", body}});
+    const auto copyId = copy.at("id").get<model::PartId>();
+    const model::Part* c = s.document().part(copyId);
+    REQUIRE(c);
+    CHECK(c->kind == model::PartKind::Imported);
+    CHECK(c->featureId == 0);
+    CHECK(c->shape.has_value());
+    CHECK(c->mesh->bounds().size().z == Approx(6));
+
+    // Undo / redo of the box feature rebuilds the timeline; the copy stays as it is.
+    run(s, "edit.undo"); // the duplicate
+    CHECK(s.document().part(copyId) == nullptr);
+    run(s, "edit.redo");
+    REQUIRE(s.document().part(copyId));
+    run(s, "project.save", {{"path", dir.file("copy.aerocad")}});
+    commands::Session t;
+    run(t, "project.open", {{"path", dir.file("copy.aerocad")}});
+    int imported = 0;
+    for (const auto& p : t.document().parts())
+        if (p.kind == model::PartKind::Imported && p.shape)
+            ++imported;
+    CHECK(imported == 1);
+
+    // Sketches cannot be copied.
+    run(s, "sketch.create", {{"plane", "XY"}});
+    model::PartId sketchPart = 0;
+    for (const auto& p : s.document().parts())
+        if (p.kind == model::PartKind::Sketch)
+            sketchPart = p.id;
+    if (sketchPart != 0)
+        CHECK_FALSE(s.execute("part.duplicate", {{"id", sketchPart}}).ok);
+}
+
+TEST_CASE("A renamed timeline body keeps its name through edits, undo and saving", "[commands][project]")
+{
+    TempDir dir;
+    commands::Session s;
+    run(s, "feature.box", {{"size", {40, 30, 6}}});
+    const model::Part* body = nullptr;
+    for (const auto& p : s.document().parts())
+        if (p.kind == model::PartKind::Body)
+            body = &p;
+    REQUIRE(body);
+    const model::PartId id = body->id;
+    const auto featureId = body->featureId;
+    run(s, "part.rename", {{"id", id}, {"name", "Fin left"}});
+    run(s, "feature.edit", {{"id", featureId}, {"params", {{"size", {50, 30, 6}}}}});
+    REQUIRE(s.document().part(id));
+    CHECK(s.document().part(id)->name == "Fin left");
+    CHECK(s.document().part(id)->mesh->bounds().size().x == Approx(50));
+    run(s, "edit.undo"); // the edit: the name stays
+    CHECK(s.document().part(id)->name == "Fin left");
+    run(s, "project.save", {{"path", dir.file("renamed.aerocad")}});
+    commands::Session t;
+    run(t, "project.open", {{"path", dir.file("renamed.aerocad")}});
+    int named = 0;
+    for (const auto& p : t.document().parts())
+        if (p.kind == model::PartKind::Body && p.name == "Fin left")
+            ++named;
+    CHECK(named == 1);
+    run(t, "feature.edit", {{"id", featureId}, {"params", {{"size", {60, 30, 6}}}}});
+    named = 0;
+    for (const auto& p : t.document().parts())
+        if (p.kind == model::PartKind::Body && p.name == "Fin left")
+            ++named;
+    CHECK(named == 1);
+}
+
+TEST_CASE("Appearance colours are undoable, kept through timeline edits and saved", "[commands][project]")
+{
+    TempDir dir;
+    commands::Session s;
+    run(s, "feature.box", {{"size", {40, 30, 6}}});
+    const model::Part* body = nullptr;
+    for (const auto& p : s.document().parts())
+        if (p.kind == model::PartKind::Body)
+            body = &p;
+    REQUIRE(body);
+    const model::PartId id = body->id;
+    const auto featureId = body->featureId;
+    const std::string stl = std::string(AEROCAD_TEST_DATA_DIR) + "/tetrahedron.stl";
+    const auto scan = run(s, "document.import", {{"path", stl}}).at("id").get<model::PartId>();
+
+    CHECK(s.document().part(id)->color.empty());
+    CHECK(run(s, "part.set_color", {{"id", id}, {"color", "#3F7FD9"}}).at("color") == "#3f7fd9");
+    run(s, "part.set_color", {{"id", scan}, {"color", "#c94f45"}});
+    CHECK_FALSE(s.execute("part.set_color", {{"id", id}, {"color", "blue"}}).ok);
+    CHECK_FALSE(s.execute("part.set_color", {{"id", id}, {"color", "#12345"}}).ok);
+    run(s, "edit.undo"); // the scan's colour
+    CHECK(s.document().part(scan)->color.empty());
+    run(s, "edit.redo");
+    CHECK(s.document().part(scan)->color == "#c94f45");
+
+    // A timeline edit regenerates the body: the colour stays, also through suppress.
+    run(s, "feature.edit", {{"id", featureId}, {"params", {{"size", {50, 30, 6}}}}});
+    CHECK(s.document().part(id)->color == "#3f7fd9");
+    run(s, "feature.suppress", {{"id", featureId}, {"suppressed", true}});
+    run(s, "feature.suppress", {{"id", featureId}, {"suppressed", false}});
+    REQUIRE(s.document().part(id));
+    CHECK(s.document().part(id)->color == "#3f7fd9");
+
+    run(s, "project.save", {{"path", dir.file("colours.aerocad")}});
+    commands::Session t;
+    run(t, "project.open", {{"path", dir.file("colours.aerocad")}});
+    REQUIRE(t.document().part(id));
+    REQUIRE(t.document().part(scan));
+    CHECK(t.document().part(id)->color == "#3f7fd9");
+    CHECK(t.document().part(scan)->color == "#c94f45");
+    // "" goes back to the default colour.
+    run(t, "part.set_color", {{"id", id}, {"color", ""}});
+    CHECK(t.document().part(id)->color.empty());
+}
+
+TEST_CASE("Undoing a delete puts the part back where it was in the Browser", "[commands][project]")
+{
+    commands::Session s;
+    run(s, "feature.box", {{"size", {40, 30, 6}}});
+    run(s, "feature.plane", {{"offset", 10}});
+    run(s, "feature.cylinder", {{"radius", 5}, {"height", 10}, {"center", {100, 0, 0}}});
+    const auto order = [&] {
+        std::vector<model::PartId> ids;
+        for (const auto& p : s.document().parts())
+            ids.push_back(p.id);
+        return ids;
+    };
+    const auto before = order();
+    REQUIRE(before.size() == 3);
+    const auto first = s.document().parts().front();
+    // Deleting the first feature, suppressing it or rolling the timeline back and undoing
+    // each brings its part back first in the list.
+    run(s, "feature.delete", {{"id", first.featureId}});
+    run(s, "edit.undo");
+    CHECK(order() == before);
+    run(s, "feature.suppress", {{"id", first.featureId}, {"suppressed", true}});
+    run(s, "edit.undo");
+    CHECK(order() == before);
+    run(s, "timeline.set_marker", {{"position", 0}});
+    run(s, "edit.undo");
+    CHECK(order() == before);
+}
+
 TEST_CASE("Kept dimensions follow edits and are saved with the project", "[commands][project][inspect]")
 {
     TempDir dir;
@@ -380,4 +532,66 @@ TEST_CASE("Damaged kept dimensions in a file are skipped", "[commands][project][
     CHECK(dims[2].id == 4);
     CHECK(dims[2].show == "angle");
     CHECK(dims[2].b.is_null());
+}
+
+TEST_CASE("sketch.begin_edit rolls back and sketch.end_edit rolls forward", "[commands][project]")
+{
+    commands::Session s;
+    const Json sk = run(s, "sketch.create", {{"plane", "XY"}, {"curves", Json::array({Json{{"type", "circle"}, {"center", {0, 0}}, {"radius", 5}}})}});
+    const auto sketch = sk.at("id").get<cad::FeatureId>();
+    run(s, "feature.box", {{"corner", {20, 0, 0}}, {"size", {5, 5, 5}}});
+    const auto b = run(s, "feature.box", {{"corner", {40, 0, 0}}, {"size", {5, 5, 5}}}).at("id").get<cad::FeatureId>();
+    run(s, "feature.box", {{"corner", {60, 0, 0}}, {"size", {5, 5, 5}}});
+
+    SECTION("at the end: back to the end")
+    {
+        const Json tl = run(s, "sketch.begin_edit", {{"id", sketch}});
+        CHECK(tl.at("marker") == 1);
+        CHECK(tl.at("sketchEdit").at("restoreTo") == 4);
+        CHECK(run(s, "sketch.end_edit", Json::object()).at("marker") == 4);
+        CHECK(s.design().state().sketchEdit == std::nullopt);
+    }
+    SECTION("an explicit marker move ends the edit without rolling forward")
+    {
+        run(s, "sketch.begin_edit", {{"id", sketch}});
+        run(s, "timeline.set_marker", {{"position", 2}});
+        CHECK(run(s, "sketch.end_edit", Json::object()).at("marker") == 2);
+    }
+    SECTION("rolled-back features stay rolled back when the last active one is deleted")
+    {
+        run(s, "timeline.set_marker", {{"position", 3}}); // Sketch, A, B active; C rolled back
+        run(s, "sketch.begin_edit", {{"id", sketch}});
+        run(s, "feature.delete", {{"id", b}});
+        CHECK(run(s, "sketch.end_edit", Json::object()).at("marker") == 2); // after A, C still rolled back
+    }
+    SECTION("deleting the edited sketch rolls forward")
+    {
+        run(s, "timeline.set_marker", {{"position", 3}});
+        run(s, "sketch.begin_edit", {{"id", sketch}});
+        run(s, "feature.delete", {{"id", sketch}});
+        CHECK(s.design().marker() == 2); // A and B active again, C rolled back
+        CHECK(s.design().state().sketchEdit == std::nullopt);
+    }
+    SECTION("undo of the roll-back restores the marker")
+    {
+        run(s, "sketch.begin_edit", {{"id", sketch}});
+        run(s, "edit.undo", Json::object());
+        CHECK(s.design().marker() == 4);
+    }
+}
+
+TEST_CASE("Saving during a sketch edit stores the rolled-forward marker", "[commands][project]")
+{
+    TempDir dir;
+    commands::Session s;
+    const Json sk = run(s, "sketch.create", {{"plane", "XY"}, {"curves", Json::array({Json{{"type", "circle"}, {"center", {0, 0}}, {"radius", 5}}})}});
+    run(s, "feature.box", {{"corner", {20, 0, 0}}, {"size", {5, 5, 5}}});
+    run(s, "sketch.begin_edit", {{"id", sk.at("id")}});
+    REQUIRE(s.design().marker() == 1);
+    const std::string path = dir.file("edit.aerocad");
+    run(s, "project.save", {{"path", path}});
+    CHECK(s.design().marker() == 1); // the open design stays rolled back
+    run(s, "project.open", {{"path", path}});
+    CHECK(s.design().marker() == 2);
+    CHECK(s.design().state().sketchEdit == std::nullopt);
 }

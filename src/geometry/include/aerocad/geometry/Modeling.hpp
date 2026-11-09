@@ -42,7 +42,21 @@ namespace aerocad::geometry {
 /// `backDistance` > 0 the faces are first moved back by it, so the solid spans
 /// [-backDistance, distance] (symmetric extent: backDistance == distance). Negative
 /// `distance` extrudes in the opposite direction.
-[[nodiscard]] Shape extrude(const Shape& faces, const core::Vec3& direction, double distance, double backDistance = 0.0);
+/// `taperDegrees` (Fusion: Taper Angle) drafts the side faces: positive narrows the profile
+/// away from the sketch plane, negative widens it; holes change the other way. With a taper
+/// the two sides are separate pieces, each drafted away from the sketch plane: one from the
+/// plane to `distance` and, when `backDistance` != 0, one from the plane to -backDistance.
+/// Throws ModelingError when |taper| >= 89 degrees or the profile closes up before the end.
+[[nodiscard]] Shape extrude(const Shape& faces, const core::Vec3& direction, double distance, double backDistance = 0.0,
+                            double taperDegrees = 0.0);
+
+/// Extrudes planar faces along `direction` until they reach `target` (Fusion: Extrude,
+/// Extent "To Object"): a solid body (up to its first face reached), a surface, or the
+/// faces `targetFaces` of `target` when given. Works for curved targets: each profile stops
+/// on the target's shape. `reach` bounds the search (0: from the bounds of both).
+/// Throws ModelingError when the extrusion does not reach the target everywhere.
+[[nodiscard]] Shape extrudeToObject(const Shape& faces, const core::Vec3& direction, const Shape& target,
+                                    const std::vector<std::size_t>& targetFaces = {}, double reach = 0.0);
 
 /// Revolves faces about an axis by `angleDegrees` (360 for a full revolution).
 [[nodiscard]] Shape revolve(const Shape& faces, const core::Vec3& axisOrigin, const core::Vec3& axisDirection,
@@ -87,6 +101,42 @@ struct ChamferOptions {
 
 /// Hollows a solid: removes the given faces and keeps walls of `thickness` (inwards).
 [[nodiscard]] Shape shell(const Shape& shape, const std::vector<std::size_t>& faceIndices, double thickness);
+/// Press Pull (Fusion, Q): moves each face `distance` along its outward normal, adding
+/// material (positive) or removing it (negative). Flat faces are pulled straight; curved
+/// faces are offset (Fusion's Offset Face). Throws ModelingError for a fillet face or a push
+/// deeper than the face's curvature.
+[[nodiscard]] Shape pressPull(const Shape& shape, const std::vector<std::size_t>& faceIndices, double distance);
+
+/// Removes faces of a solid and heals the gap (Fusion: Modify > Delete on faces): the
+/// neighbouring faces grow to close it, so a hole, a fillet or a boss disappears. Throws
+/// ModelingError when the gap cannot be closed (e.g. a face whose neighbours never meet).
+[[nodiscard]] Shape deleteFaces(const Shape& shape, const std::vector<std::size_t>& faceIndices);
+
+/// A ball (Fusion: Create > Sphere) centred at `center`.
+[[nodiscard]] Shape sphere(const core::Vec3& center, double radius);
+
+/// A ring (Fusion: Create > Torus) around the +Z axis through `center`, in the XY plane:
+/// `ringRadius` from the axis to the middle of the tube, `tubeRadius` of the tube itself.
+/// The tube must be thinner than the ring (tubeRadius < ringRadius).
+[[nodiscard]] Shape torus(const core::Vec3& center, double ringRadius, double tubeRadius);
+
+/// Draft (Fusion: Modify > Draft): tilts each face by `angleDegrees` about the line where it
+/// meets the fixed (neutral) plane through `planeOrigin` with `pullDirection` as its normal.
+/// A positive angle tilts the faces inwards along the pull direction (the part narrows away
+/// from the plane, like a mould wall); negative tilts them outwards. Throws ModelingError for
+/// a face that cannot be drafted (e.g. one parallel to the plane).
+[[nodiscard]] Shape draft(const Shape& shape, const std::vector<std::size_t>& faceIndices,
+                          const core::Vec3& planeOrigin, const core::Vec3& pullDirection, double angleDegrees);
+
+/// The two sides of a body cut by a plane (Fusion: Split Body). Each side is a solid, or a
+/// compound when that side has several separate pieces.
+struct SplitResult {
+    Shape back;  ///< behind the plane (against its normal)
+    Shape front; ///< in front of the plane (along its normal)
+};
+/// Cuts `shape` with the infinite plane through `origin` with `normal`. Throws
+/// ModelingError when the plane does not cut through the body.
+[[nodiscard]] SplitResult splitByPlane(const Shape& shape, const core::Vec3& origin, const core::Vec3& normal);
 
 /// True when the shape passes the B-rep validity check.
 [[nodiscard]] bool isValid(const Shape& shape);
@@ -126,6 +176,10 @@ struct EdgeInfo {
 /// Used to keep references stable when earlier features change the topology.
 [[nodiscard]] std::optional<std::size_t> nearestEdge(const Shape& shape, const core::Vec3& point);
 [[nodiscard]] std::optional<std::size_t> nearestFace(const Shape& shape, const core::Vec3& point);
+/// Outward normal of face `faceIndex` at the surface point nearest to `point` (curved faces
+/// too), or std::nullopt for invalid indices and undefined normals.
+[[nodiscard]] std::optional<core::Vec3> faceNormalNear(const Shape& shape, std::size_t faceIndex,
+                                                       const core::Vec3& point);
 /// Distance from a point to every edge / face (same order as edges() / faces();
 /// infinity for degenerate edges).
 [[nodiscard]] std::vector<double> edgeDistances(const Shape& shape, const core::Vec3& point);

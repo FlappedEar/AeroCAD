@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Browser (Fusion's name for the document tree): the parts of the document with their
-// visibility.
+// visibility. A double click on a row (or F2, or Rename in the right-click menu) edits the
+// name in place: Enter or clicking elsewhere renames, Esc keeps the old name.
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -11,9 +12,36 @@ Pane {
 
     required property AppController controller
     property var selectedPartId: 0
+    property var selectedPartIds: []
     signal partSelected(var id)
     /// Right-click on a row: open the part's context menu at x, y in `item`.
     signal partContextRequested(var id, Item item, real x, real y)
+
+    /// Isolate is on ({ id, name, hidden } from the window, or null): a bar says so and
+    /// its Exit button asks to bring the hidden parts back.
+    property var isolation: null
+    signal unisolateRequested()
+
+    /// Part whose name is being edited in place (0 = none).
+    property var renamingId: 0
+    function startRename(id) {
+        // The row may be scrolled out of view (no delegate yet): scroll to it by its model
+        // row, which creates the delegate, then open its editor.
+        const i = controller.parts.rowOf(id)
+        if (i < 0)
+            return
+        list.positionViewAtIndex(i, ListView.Contain)
+        renamingId = id
+    }
+    /// The row of part `id` (null when it is not created), e.g. for tests.
+    function rowItem(id) {
+        for (let i = 0; i < list.count; ++i) {
+            const r = list.itemAtIndex(i)
+            if (r && r.partId === id)
+                return r
+        }
+        return null
+    }
 
     padding: 0
     background: Rectangle { color: Theme.surface }
@@ -30,6 +58,39 @@ Pane {
                 color: Theme.textFaint
                 font.pixelSize: Theme.fontSmall
                 rightPadding: Theme.space2
+            }
+        }
+
+        Rectangle {
+            objectName: "isolationBar"
+            visible: !!root.isolation
+            Layout.fillWidth: true
+            Layout.leftMargin: Theme.space2
+            Layout.rightMargin: Theme.space2
+            Layout.topMargin: Theme.space1
+            implicitHeight: isolationRow.implicitHeight + 2 * Theme.space1
+            radius: 4
+            color: Theme.accentSoft
+            RowLayout {
+                id: isolationRow
+                anchors.fill: parent
+                anchors.leftMargin: Theme.space2
+                anchors.rightMargin: Theme.space1
+                AppIcon { name: "isolate"; size: 14; color: Theme.accent }
+                Label {
+                    Layout.fillWidth: true
+                    elide: Text.ElideRight
+                    text: root.isolation ? qsTr("Isolated: %1").arg(root.isolation.name) : ""
+                    font.pixelSize: Theme.fontSmall
+                }
+                Button {
+                    objectName: "exitIsolation"
+                    text: qsTr("Exit")
+                    flat: true
+                    onClicked: root.unisolateRequested()
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Unisolate: show the parts that Isolate hid")
+                }
             }
         }
 
@@ -50,17 +111,28 @@ Pane {
                 required property var triangles
                 required property string kind
                 required property string shapeKind
+                required property string partColor
 
-                readonly property bool selected: row.partId === root.selectedPartId
+                readonly property bool selected: root.selectedPartIds.indexOf(row.partId) >= 0
 
                 width: ListView.view.width
                 height: 36
                 leftPadding: Theme.space3
                 rightPadding: Theme.space1
+                readonly property bool renaming: root.renamingId === row.partId
+                readonly property alias nameField: nameField
                 onClicked: root.partSelected(row.partId)
-                TapHandler {
+                onDoubleClicked: {
+                    root.partSelected(row.partId)
+                    root.startRename(row.partId)
+                }
+                // Right-click: the part's menu. A MouseArea takes the right button for itself,
+                // so the row's own click (which selects only this part) never sees it and a
+                // multi-selection the part is in is kept for the menu.
+                MouseArea {
+                    anchors.fill: parent
                     acceptedButtons: Qt.RightButton
-                    onTapped: eventPoint => root.partContextRequested(row.partId, row, eventPoint.position.x, eventPoint.position.y)
+                    onClicked: mouse => root.partContextRequested(row.partId, row, mouse.x, mouse.y)
                 }
 
                 background: Rectangle {
@@ -76,7 +148,9 @@ Pane {
                     AppIcon {
                         name: row.shapeKind === "surface" ? "surface" : Theme.featureIcon(row.kind)
                         size: Theme.iconSmall
-                        color: row.selected ? Theme.accent : Theme.icon
+                        objectName: "partIcon"
+                        // The part's Appearance colour, so it is found in the Browser.
+                        color: row.selected ? Theme.accent : row.partColor !== "" ? row.partColor : Theme.icon
                         opacity: row.partVisible ? 1 : 0.45
                     }
                     ColumnLayout {
@@ -84,11 +158,49 @@ Pane {
                         spacing: 0
                         Text {
                             Layout.fillWidth: true
+                            visible: !row.renaming
                             text: row.name
                             color: row.partVisible ? Theme.text : Theme.textFaint
                             font.pixelSize: Theme.fontBody
                             font.weight: row.selected ? Font.DemiBold : Font.Normal
                             elide: Text.ElideRight
+                        }
+                        TextField {
+                            id: nameField
+                            objectName: "renameField"
+                            Layout.fillWidth: true
+                            visible: row.renaming
+                            padding: 2
+                            font.pixelSize: Theme.fontBody
+                            selectByMouse: true
+                            property bool done: false
+                            function begin() {
+                                done = false
+                                text = row.name
+                                selectAll()
+                                forceActiveFocus()
+                            }
+                            onVisibleChanged: if (visible) begin()
+                            // A row created already renaming (scrolled to by startRename).
+                            Component.onCompleted: if (visible) Qt.callLater(begin)
+                            // A row scrolled away while renaming: keep the old name, so the
+                            // Browser does not stay in a renaming state with no field.
+                            Component.onDestruction: if (row.renaming && !done) root.renamingId = 0
+                            function finish(apply) {
+                                if (done || !row.renaming)
+                                    return
+                                done = true
+                                const name = text.trim()
+                                root.renamingId = 0
+                                if (apply && name.length > 0 && name !== row.name)
+                                    root.controller.execute("part.rename", { id: row.partId, name: name })
+                            }
+                            onAccepted: finish(true)
+                            onActiveFocusChanged: if (!activeFocus) finish(true)
+                            Keys.onEscapePressed: event => {
+                                event.accepted = true
+                                finish(false)
+                            }
                         }
                         Text {
                             Layout.fillWidth: true

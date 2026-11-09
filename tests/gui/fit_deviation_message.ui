@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CAD-110: after Fit smooth surface the status bar reports the deviation the tolerance verdict
+# is based on (both directions), with the tolerance and the fit's warnings. On the whole dome
+# scan the mesh is within 0.25 mm of the surface (0.23) but the surface strays 0.53 mm from
+# the mesh at the jagged rim, so the old message said "0.23 mm (more than the tolerance)".
+ui.wait(1200)
+(() => { const p = controller.execute("document.parts").result.parts[0]; window.selectPart(p.id); controller.execute("selection.invert", { id: p.id }) })()
+ui.wait(400)
+(() => { const act = window.selectionActions.find(a => a.id === "fitSurface"); if (!act || !act.enabled) { ui.fail("Fit smooth surface not offered"); return } actionPopup.request(act, window.selectionInfo, null) })()
+ui.wait(400)
+(() => { if (!actionPopup.opened) ui.fail("Fit smooth surface asks for the tolerance") })()
+ui.key("Return")
+ui.wait(3000)
+(() => { const m = controller.statusMessage; ui.log("STATUS " + m); const d = /max deviation ([0-9.]+) mm \((within|more than) the 0.25 mm tolerance\)/.exec(m); if (!d) { ui.fail("no deviation with the tolerance in: " + m); return } const v = Number(d[1]); if ((d[2] === "within") !== (v <= 0.25)) ui.fail("verdict contradicts the number: " + d[0]); if (v < 0.4) ui.fail("reported only the mesh-to-surface direction: " + v); if (m.indexOf("outside the face") < 0) ui.fail("the fit's warnings are not shown") })()
+ui.shot("fit-deviation-message.png")
+ui.log("fit deviation message done")

@@ -18,7 +18,7 @@ use the same operations, and every change is one undo step.
 - **Operation** (extrude, revolve, box, cylinder): `new_body` (default), `join`, `cut`,
   `intersect`. join/cut/intersect act on `bodies`, or on every body the result touches.
 - **Edges and faces** are referenced by index (`body.edges`, `body.faces`) or, more robustly,
-  by a point: `{"point": [x, y, z]}`. Fillet, chamfer and shell store point references
+  by a point: `{"point": [x, y, z]}`. Fillet, chamfer, shell, press pull, delete face and draft store point references
   with matching hints: the point relative to the body's bounding box (`relative`), the edge
   `direction` or face `normal`, and the `kind` (line, circle, plane, ...). Regeneration
   picks the edge/face that best matches them, so a picked corner edge follows the body
@@ -27,6 +27,13 @@ use the same operations, and every change is one undo step.
   rounds every edge that continues it smoothly. When the radius or distance does not fit,
   the error names the largest one that does ("a 30 mm radius does not fit these edges; the
   largest that works is about 9.5 mm"); the dialog shows it while you type.
+- **Shell** with no face picked makes a closed hollow body (Fusion's closed shell): the
+  outer walls stay and a cavity of the given wall thickness is cut inside. Bodies with
+  fillets shell too, also when the removed face is tangent to a fillet (OCCT's own shell
+  cannot open such a face; AeroCAD then cuts the inner offset of the body and opens each
+  removed flat face through the wall). When the walls cannot be made on a shape, the error
+  says so and suggests a thinner wall; the body is never replaced by an empty or broken
+  result.
 - **Exact solids outside the timeline** (fins, fitted solids, STEP imports) can be filleted,
   chamfered, shelled and drilled directly in the UI: the dialog makes them editable
   (`feature.base_body`) on the way.
@@ -40,6 +47,16 @@ use the same operations, and every change is one undo step.
   In the UI: Combine, click the target, then click the tools (bodies, solids, a surface or
   the scan); with a scan or surface selected, "Cut a part to this shape" presets it as the tool.
 - **Marker**: `timeline.set_marker` rolls the model back; new features are inserted at it.
+- **Edit sketch**: `sketch.begin_edit` (`id`) rolls the timeline back to just after the sketch
+  (Fusion: Edit Sketch); `sketch.end_edit` rolls forward again: to the end if the marker was
+  there, else to just after the last feature that was active (deleted ones are skipped,
+  rolled-back ones stay rolled back). Moving the marker meanwhile (`timeline.set_marker`) is
+  the user's choice and ends the edit without rolling forward; deleting the edited sketch
+  rolls forward. Saves and variants always store the rolled-forward marker. `timeline.list`
+  reports `sketchEdit` ({sketch, restoreTo}) while one is open.
+- **Reorder**: `timeline.move_feature` (`id`, `position`) moves a feature in the timeline and
+  regenerates; it is refused, with nothing changed, when a feature that worked would fail in
+  the new order. A feature moved across the marker becomes rolled back or active.
 - **Steps built on a scan** (Part on surface, Fin on surface) are timeline features too: they
   read the scan or fitted surface from the document, so editing their thickness, or the sketch
   before them, rebuilds the part on the same scan; delete, suppress and roll back work as for
@@ -49,6 +66,13 @@ use the same operations, and every change is one undo step.
   bodies (a stacked or mirrored set of fins): the first has the feature's id, the others
   `id | k << 40`; any of them stands for the feature in `feature.*` commands. On opening a
   project their stored results are used while the scan, sketch and params are unchanged.
+  A fit that misses its tolerance is kept and marked as an approximation (CAD-85), except
+  when what is left is the scan's own noise (CAD-141): the noise is estimated from the scan
+  under the outline (`fit.scanNoise`, one standard deviation, mm), and when 99% of the scan
+  is within 3 of it, the rms not above 1.2 of it and the deviations of nearby samples do not
+  correlate (no missed ripple or ridge; `fit.withinScanNoise`), the surface runs
+  through the middle of the noise. Finer control points would only make it follow the noise,
+  so the fit stops there, and it is not called an approximation.
 - Failing features: a new or edited feature that fails is rejected (nothing changes).
   Features that break because of an earlier change stay in the timeline with
   `status: "error"` and a message, like Fusion's red timeline icons.
@@ -65,12 +89,20 @@ rebuilding, AeroCAD reports the problem; Undo restores the previous source.
 |---|---|---|
 | `sketch.create` | Create Sketch | `plane` XY / XZ / YZ / {plane: construction plane id} / {origin, normal, xDir}, or `face` {body, index or point}, or `surface` {part, point / useSelection} (best-fit plane over a curved surface or scan); `offset`; `curves` |
 | `sketch.add_curves` | (draw in sketch) | appends curves |
+| `sketch.offset` | select a chain, Offset, type distance | `curves` (one connected chain), `distance` (> 0 outwards for a closed chain, to the left of an open one): offset curves with rounded corners added at the end of `sketch.curves` |
+| `sketch.project` | in a sketch, Project (P), click a body edge | `sketch`, `body`, `edges` (`[{point}]` or edge references): the edges projected onto the sketch plane as fixed curves (lines, circles/arcs parallel to the plane, otherwise splines), circles and arcs with a radius dimension |
+| `sketch.fillet` | Fillet, click a corner | `curves` [a, b] (two lines meeting at a corner), `radius`: both lines are shortened and joined by an arc held tangent with a radius dimension; the new lines and arc go at the end of `sketch.curves` |
+| `sketch.mirror` | select curves, Mirror, click a line | `curves`, `line`: copies mirrored about the line, added at the end of `sketch.curves`, with symmetry constraints on their points (and equal radii) |
+| `sketch.trim` | Trim (T) | `curve`, `at` [u, v]: the piece of the curve under `at` between its nearest crossings goes (whole curve when it crosses nothing; a circle becomes an arc); the pieces left are added at the end of `sketch.curves`; constraints on the curve are removed |
+| `sketch.set_construction` | select sketch curves, X | `curves` (indices from `sketch.curves`), `construction` (default true): construction curves are dashed and bound no profile; part of a rectangle / polygon / slot becomes lines and arcs that keep its constraints; indices do not change |
+| `sketch.move_point` | drag a sketch point | `point` {curve, point: start / end / center}, or a spline fit point {curve, point: fit, index}, `to` [u, v]: the point goes there and the solver moves the free degrees of freedom; item parameters are rewritten where the curves are now; refused (no change) when the constraints hold the point |
+| `sketch.delete_curves` | select sketch curves, Delete | `curves`: indices from `sketch.curves`; a rectangle, polygon or slot that loses some curves becomes lines and arcs that keep its constraints; constraints on removed curves go, the others (and a revolve axis line or sweep path curves) are re-indexed; a revolve or sweep whose axis or path curve was removed reports an error until it is picked again |
 | `sketch.profiles` | | closed regions with area and centroid |
 | `sketch.add_constraints` | Sketch > Constraints, Sketch Dimension (D) | see Constraints below |
 | `sketch.edit_constraint` | double-click a dimension / delete a constraint | `index`, `value` or `remove` |
 | `sketch.curves` | | solved curves, constraints, degrees of freedom |
-| `feature.extrude` | Extrude (E) | `distance`, `extent` one_side / symmetric / two_sides, `flip`, `profiles` or `points` |
-| `feature.revolve` | Revolve | `axis` X / Y / Z, {line: sketch curve index} or {origin, direction}; `angle` |
+| `feature.extrude` | Extrude (E) | `distance`, `extent` one_side / symmetric / two_sides / to_object, `to` (to_object: `{body, faces?}` or `{part}`; stops on the target's shape, curved too; an error when it is not reached), `flip`, `taper` (degrees, Fusion Taper Angle: positive narrows away from the sketch plane, holes grow; each side of symmetric / two_sides tapers away from the plane; not with to_object; a taper that closes the profile is an error), `profiles` or `points` |
+| `feature.revolve` | Revolve | `axis` X / Y / Z, {line: sketch curve index} or {origin, direction} (the UI sets these from a clicked sketch line or straight body edge); `angle` |
 | `feature.sweep` | Sweep | profiles of `sketch` moved along `path` {sketch, curves} (default: all curves of the path sketch) |
 | `feature.loft` | Loft | `sections`: sketch ids or {sketch, profile}, in order; `solid`, `ruled` |
 | `feature.mirror` | Mirror | `body`, `plane` XY / XZ / YZ / {origin, normal} / planar face, `offset`; join or new_body |
@@ -81,16 +113,21 @@ rebuilding, AeroCAD reports the problem; Undo restores the previous source.
 | `feature.fillet` | Fillet (F) | `edges`, `radius`; tangent chains are rounded with the picked edge |
 | `feature.chamfer` | Chamfer | `edges`, `type` equal_distance (default) / two_distances (`distance`, `distance2`) / distance_angle (`distance`, `angle`), `flip` swaps the first face |
 | `feature.shell` | Shell | `faces` to remove, `thickness` |
+| `feature.press_pull` | Press Pull (Q) | `faces` (flat or curved: a curved face is offset, like Fusion's Offset Face; a fillet face is refused, change its radius instead), `distance` along the outward normal (negative pushes in) |
+| `feature.draft` | Draft | `body`, `faces`, `plane` (fixed plane: XY default / XZ / YZ / construction plane / {origin, normal} / planar face; its normal is the pull direction), `angle` in degrees (positive leans the faces in along the pull direction, negative out) |
+| `feature.delete_faces` | Delete Face | `body`, `faces`: removes them and heals the gap from the neighbouring faces (a hole, fillet or boss disappears); an error when the neighbours cannot close it |
+| `feature.split` | Split Body | `body`, `plane` XY / XZ / YZ / {plane: construction plane} / {origin, normal} / planar face, `offset`; the body keeps what is behind the plane, a new body (the feature's id) gets what is in front |
 | `feature.hole` | Hole (H) | `point` on a planar face, `diameter`, `depth` or through all |
 | `feature.combine` | Combine, Split Body | `target`, `tools` (bodies, or imported parts `{part: id}`), join / cut / intersect, `keepTools`, `flip` |
 | `feature.box`, `feature.cylinder` | Box, Cylinder | primitives with an operation |
+| `feature.sphere`, `feature.torus` | Sphere, Torus | `center` (default origin), `diameter`; torus: ring `diameter` (centre line, around +Z) and `tube_diameter` (smaller than `diameter`); with an operation |
 | `feature.base_body` | Mesh to BRep / base feature | imported part as a body: B-rep as is, meshes as faceted B-rep (coplanar triangles merged, max 50 000 triangles) |
 | `surface.part_from_sketch` → `part_on_surface` | (AeroCAD) Part on surface | timeline step built on a scan or fitted surface: `sketch`, `thickness`, `side`, `profiles`, `tolerance`, `id` (surface part, default: the one the sketch was drawn on) |
 | `surface.fin_from_sketch` → `fin_on_surface` | (AeroCAD) Fin on surface | timeline step: `sketch` (drawn across the surface), `thickness`, `rootFillet`, `count`, `spacing`, `mirror`, `mirrorPlane`; one body per fin |
 | `feature.edit` / `rename` / `suppress` / `delete` | timeline context menu | edit = JSON merge patch of params |
-| `timeline.list`, `timeline.set_marker` | timeline | |
+| `timeline.list`, `timeline.set_marker`, `timeline.move_feature` | timeline | |
 | `parameter.set` / `remove` | Change Parameters | |
-| `body.faces`, `body.edges` | | for picking by index or point |
+| `body.faces`, `body.edges` | | for picking by index or point; `point` adds the nearest edge / face (and the face normal there), `before` lists the body as it is before a feature (rolled back, as when editing it) |
 
 Sketch curves: `line {start, end}`, `rectangle {corner, width, height | opposite}`,
 `center_rectangle {center, width, height}`, `circle {center, radius | diameter}`,

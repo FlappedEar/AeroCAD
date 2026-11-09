@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CAD-139: a scan above "Max. triangles drawn" is drawn simplified (and smooth: averaged
+# normals, flipped triangles turned to their own side). The budget is remembered between
+# sessions, so the test puts back the default (1 M) at the end.
+ui.wait(1200)
+(() => { const p = controller.execute("document.parts").result.parts[0]; window.selectPart(p.id); scan.triangleBudget = Math.floor(p.triangles / 3) })()
+ui.wait(3000)
+(() => { const p = controller.execute("document.parts").result.parts[0]; const shown = scan.displayedTriangles(p.id); ui.log("DISPLAYED " + shown + " of " + p.triangles + " budget " + scan.triangleBudget); if (!(shown > 0 && shown < p.triangles)) ui.fail("the scan is not drawn simplified") })()
+(() => { viewport.setView(-20, 25) })()
+ui.wait(500)
+ui.shot("scan-lod-smooth.png")
+scan.triangleBudget = 1000000
+ui.log("scan lod display done")

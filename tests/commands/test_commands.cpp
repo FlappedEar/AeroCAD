@@ -13,6 +13,7 @@
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <cmath>
 
 #include <filesystem>
 #include <fstream>
@@ -170,6 +171,50 @@ TEST_CASE("Import, modify, undo and redo through commands", "[commands]")
     CHECK(session.document().part(id) != nullptr);
 }
 
+TEST_CASE("Isolate shows one part only and Unisolate brings back what was visible", "[commands]")
+{
+    commands::Session session;
+    for (int i = 0; i < 4; ++i)
+        REQUIRE(session.execute("feature.box", {{"size", {5, 5, 5}}, {"corner", {10.0 * i, 0, 0}}}).ok);
+    std::vector<model::PartId> ids;
+    for (const auto& p : session.document().parts())
+        ids.push_back(p.id);
+    REQUIRE(ids.size() == 4);
+    const auto visible = [&] {
+        std::vector<bool> v;
+        for (const auto id : ids)
+            v.push_back(session.document().part(id)->visible);
+        return v;
+    };
+    // The last box was hidden by hand before: it stays hidden after Unisolate.
+    REQUIRE(session.execute("part.set_visible", {{"id", ids[3]}, {"visible", false}}).ok);
+    // Isolating a hidden part shows it.
+    auto r = session.execute("part.isolate", {{"id", ids[3]}});
+    REQUIRE(r.ok);
+    CHECK(visible() == std::vector<bool>{false, false, false, true});
+    CHECK(r.data.at("hidden") == Json({ids[0], ids[1], ids[2]}));
+    REQUIRE(session.execute("edit.undo").ok); // one step
+    CHECK(visible() == std::vector<bool>{true, true, true, false});
+    REQUIRE(session.execute("edit.redo").ok);
+    CHECK(visible() == std::vector<bool>{false, false, false, true});
+    REQUIRE(session.execute("edit.undo").ok);
+
+    r = session.execute("part.isolate", {{"id", ids[1]}});
+    REQUIRE(r.ok);
+    CHECK(visible() == std::vector<bool>{false, true, false, false});
+    const Json hidden = r.data.at("hidden");
+    CHECK(hidden == Json({ids[0], ids[2]}));
+    r = session.execute("part.unisolate", {{"ids", hidden}});
+    REQUIRE(r.ok);
+    CHECK(visible() == std::vector<bool>{true, true, true, false});
+    REQUIRE(session.execute("edit.undo").ok);
+    CHECK(visible() == std::vector<bool>{false, true, false, false});
+    // Unknown or deleted ids are skipped.
+    CHECK(session.execute("part.unisolate", {{"ids", {ids[0], 9999}}}).ok);
+    CHECK(visible() == std::vector<bool>{true, true, false, false});
+    CHECK_FALSE(session.execute("part.isolate", {{"id", 9999}}).ok);
+}
+
 TEST_CASE("Import of a missing file reports an error", "[commands]")
 {
     commands::Session session;
@@ -224,6 +269,8 @@ TEST_CASE("geometry.measure: distance, part, point and clearance", "[commands][a
     r = session.execute("geometry.measure", {{"kind", "part"}, {"id", a}});
     REQUIRE(r.ok);
     CHECK(r.data.at("volume").get<double>() == Approx(1000.0 / 6.0));
+    REQUIRE(r.data.contains("centerOfMass")); // closed mesh: from the enclosed tetrahedra
+    CHECK(r.data.at("centerOfMass")[0].get<double>() == Approx(2.5));
     CHECK(r.data.at("closed") == true);
     CHECK(r.data.at("warnings").empty());
 
@@ -261,6 +308,11 @@ TEST_CASE("geometry.measure: B-rep parts are closed with exact volume", "[comman
     CHECK(r.data.at("closed") == true);
     CHECK(r.data.at("openEdges") == 0);
     CHECK(r.data.at("volume").get<double>() == Approx(6000.0));
+    CHECK(r.data.at("surfaceArea").get<double>() == Approx(2 * (200.0 + 600.0 + 300.0)));
+    REQUIRE(r.data.contains("centerOfMass"));
+    CHECK(r.data.at("centerOfMass")[0].get<double>() == Approx(5.0));
+    CHECK(r.data.at("centerOfMass")[1].get<double>() == Approx(10.0));
+    CHECK(r.data.at("centerOfMass")[2].get<double>() == Approx(15.0));
     CHECK(core::openEdgeCount(*box.mesh) == 0); // per-face tessellation vertices are welded
 }
 
@@ -294,6 +346,11 @@ TEST_CASE("Selection commands are undoable", "[commands][selection]")
     REQUIRE(r.ok);
     CHECK(r.data.at("selectedTriangles") == 2);
     CHECK(r.data.at("areaMm2").get<double>() == Approx(100.0));
+    // Bounds of the selected top face (for Zoom to Selection).
+    CHECK(r.data.at("bounds").at("min")[2].get<double>() == Approx(10.0));
+    CHECK(r.data.at("bounds").at("max")[2].get<double>() == Approx(10.0));
+    CHECK(r.data.at("bounds").at("center")[0].get<double>() == Approx(5.0));
+    CHECK(r.data.at("bounds").at("diagonal").get<double>() == Approx(std::sqrt(200.0)));
 
     r = session.execute("selection.pick_region", {{"id", id}, {"point", {5, 5, 0}}, {"mode", "add"}});
     REQUIRE(r.ok);
@@ -1392,11 +1449,44 @@ TEST_CASE("A part edit that throws leaves the part untouched (CAD-88)", "[comman
     CHECK(notifications == 0);
 }
 
+TEST_CASE("A fit reports the deviation its tolerance verdict is based on (CAD-110)", "[commands][fit]")
+{
+    // The whole dome scan: the mesh lies within 0.25 mm of the surface, but the surface strays
+    // further from the mesh at the jagged rim and the hole. The verdict uses both directions,
+    // so the reported maxDeviation must too.
+    commands::Session session;
+    auto scan =
+        session.execute("document.import", {{"path", std::string(AEROCAD_TEST_DATA_DIR) + "/models/dome_scan.stl"}});
+    REQUIRE(scan.ok);
+    const auto id = scan.data.at("id").get<model::PartId>();
+    REQUIRE(session.execute("selection.invert", {{"id", id}}).ok); // everything
+    auto r = session.execute("surface.fit_selection", {{"id", id}, {"tolerance", 0.25}});
+    INFO(r.toJson().dump());
+    REQUIRE(r.ok);
+    const auto& fit = r.data.at("fit");
+    const double both = std::max(fit.at("meshToSurfaceMax").get<double>(), fit.at("surfaceToMeshMax").get<double>());
+    CHECK(fit.at("maxDeviation").get<double>() == Approx(both));
+    CHECK(fit.at("withinTolerance").get<bool>() == (fit.at("maxDeviation").get<double>() <= 0.25));
+    CHECK(fit.at("withinTolerance") == false);
+    CHECK(fit.at("meshToSurfaceMax").get<double>() < 0.25); // the number the GUI used to show
+
+    // Scan to solid: the same rule over all patches.
+    REQUIRE(session.execute("selection.clear", {{"id", id}}).ok);
+    auto whole = session.execute("surface.fit_regions", {{"id", id}, {"tolerance", 0.25}});
+    INFO(whole.toJson().dump());
+    REQUIRE(whole.ok);
+    double worst = 0.0;
+    for (const auto& p : whole.data.at("fit").at("patches"))
+        if (p.contains("meshToSurfaceMax"))
+            worst = std::max({worst, p.at("meshToSurfaceMax").get<double>(), p.at("surfaceToMeshMax").get<double>()});
+    CHECK(whole.data.at("fit").at("maxDeviation").get<double>() == Approx(worst));
+}
+
 TEST_CASE("A part whose fit misses the tolerance is kept as a marked approximation (CAD-85)", "[commands][surface]")
 {
     commands::Session session;
     auto scan = session.execute("document.import",
-                                {{"path", std::string(AEROCAD_TEST_DATA_DIR) + "/models/dome_scan.stl"}});
+                                {{"path", std::string(AEROCAD_TEST_DATA_DIR) + "/models/dome.stl"}});
     REQUIRE(scan.ok);
     const auto scanId = scan.data.at("id").get<model::PartId>();
     const Json square = Json::array({{{"type", "line"}, {"start", {-15, -15}}, {"end", {15, -15}}},
@@ -1407,7 +1497,8 @@ TEST_CASE("A part whose fit misses the tolerance is kept as a marked approximati
                               {{"surface", {{"part", scanId}, {"point", {0, 0, 45.7}}}}, {"curves", square}});
     REQUIRE(sk.ok);
 
-    // The audit's case: 0.01 mm cannot be met on the noisy scan.
+    // 0.01 mm cannot be met over the flat triangles of a tessellated dome (CAD-141: a clean
+    // mesh, so this is missed shape, not the scan's noise).
     auto part = session.execute("surface.part_from_sketch",
                                 {{"sketch", sk.data.at("id")}, {"thickness", 2.0}, {"tolerance", 0.01}});
     INFO(part.toJson().dump());
@@ -1443,6 +1534,34 @@ TEST_CASE("A part whose fit misses the tolerance is kept as a marked approximati
     timeline = session.execute("timeline.list");
     for (const auto& f : timeline.data.at("features"))
         if (f.at("id") == loose.data.at("feature"))
+            CHECK_FALSE(f.value("approximate", false));
+}
+
+TEST_CASE("A part on a noisy scan is not an approximation when what is left is the scan's noise (CAD-141)",
+          "[commands][surface]")
+{
+    commands::Session session;
+    auto scan = session.execute("document.import",
+                                {{"path", std::string(AEROCAD_TEST_DATA_DIR) + "/models/dome_scan.stl"}});
+    REQUIRE(scan.ok);
+    const Json square = Json::array({{{"type", "rectangle"}, {"corner", {-15, -15}}, {"opposite", {15, 15}}}});
+    auto sk = session.execute("sketch.create",
+                              {{"surface", {{"part", scan.data.at("id")}, {"point", {0, 0, 45.7}}}}, {"curves", square}});
+    REQUIRE(sk.ok);
+    // The scan has 0.05 mm noise: no surface is within 0.01 mm of it.
+    auto part = session.execute("surface.part_from_sketch",
+                                {{"sketch", sk.data.at("id")}, {"thickness", 2.0}, {"tolerance", 0.01}});
+    INFO(part.toJson().dump());
+    REQUIRE(part.ok);
+    const Json& fit = part.data.at("fit");
+    CHECK(fit.at("p99Deviation").get<double>() > 0.01);
+    CHECK(fit.at("scanNoise").get<double>() > 0.005);
+    CHECK(fit.at("withinScanNoise").get<bool>());
+    CHECK(fit.at("withinTolerance").get<bool>());
+    CHECK(part.data.at("warnings").empty());
+    auto timeline = session.execute("timeline.list");
+    for (const auto& f : timeline.data.at("features"))
+        if (f.at("id") == part.data.at("feature"))
             CHECK_FALSE(f.value("approximate", false));
 }
 
@@ -1488,7 +1607,7 @@ TEST_CASE("CAD-85: fit reports saved before the tolerance was recorded are fitte
     {
         commands::Session session;
         auto scan = session.execute("document.import",
-                                    {{"path", std::string(AEROCAD_TEST_DATA_DIR) + "/models/dome_scan.stl"}});
+                                    {{"path", std::string(AEROCAD_TEST_DATA_DIR) + "/models/dome.stl"}});
         REQUIRE(scan.ok);
         const Json square = Json::array({{{"type", "rectangle"}, {"corner", {-15, -15}}, {"opposite", {15, 15}}}});
         auto sk = session.execute("sketch.create",

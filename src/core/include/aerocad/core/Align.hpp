@@ -81,4 +81,29 @@ struct Plane {
 /// Rotation (about the origin) that turns unit vector `from` onto unit vector `to`.
 [[nodiscard]] Mat3 rotationBetween(const Vec3& from, const Vec3& to);
 
+/// Axis (unit) and angle (radians, 0..pi) of a rotation matrix. Identity gives angle 0
+/// and axis +Z.
+struct AxisAngle {
+    Vec3 axis{0, 0, 1};
+    double angle = 0.0;
+};
+[[nodiscard]] AxisAngle axisAngle(const Mat3& rotation);
+
+/// Normal of the surface of `mesh` around `point` on triangle `triangle`: the normals of
+/// that triangle and of the triangles reaching within `radius` of the point, each weighted
+/// by about the part of it inside that disc and by how closely it faces the same way
+/// (cos^8, so a bevel or the next face of an edge hardly counts, scan noise does). On a
+/// noisy scan this is the normal of the patch, not of one triangle. Zero vector for an
+/// invalid triangle.
+[[nodiscard]] Vec3 patchNormal(const TriangleMesh& mesh, const Vec3& point, std::size_t triangle, double radius);
+
+/// How to turn a part by one of its faces (world normal `normal`):
+enum class FaceTarget {
+    Down,  ///< the face points down (-Z), so the part can lie on it;
+    Front, ///< about Z only, so the face looks at the Front view (-Y); a face pointing
+           ///< nearly straight up or down is turned onto -Y directly.
+};
+/// Rotation (about the origin) for `target`.
+[[nodiscard]] Mat3 faceTurn(const Vec3& normal, FaceTarget target);
+
 } // namespace aerocad::core

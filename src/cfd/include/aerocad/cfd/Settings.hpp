@@ -3,6 +3,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cstddef>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -16,8 +17,29 @@ using Json = nlohmann::json;
 /// only (CAD-50): dictionaries differ between releases and between the openfoam.com and
 /// openfoam.org lines, so supporting more than one would mean testing more than one.
 inline constexpr std::string_view kOpenFoamVersion = "v2506";
+/// checkMesh failures (the text after its "***" marker, as printed by OpenFOAM v2506's
+/// primitiveMeshCheck) that make the solver diverge or crash. Allrun stops before the solve
+/// when log.checkMesh reports one (CAD-103); every other "***" report is a warning. An
+/// extended regular expression alternation, also matched literally by RunManager.
+inline constexpr std::string_view kFatalMeshChecks =
+    "Zero or negative cell volume|Error in face pyramids|Zero or negative face area|Open cells found|"
+    "Cells with invalid face labels";
 /// Official multi-arch (amd64 + arm64) image of that release, from OpenCFD on Docker Hub.
 inline constexpr std::string_view kDockerImage = "opencfd/openfoam-default:2506";
+
+/// Largest part dimensions (m) a wind tunnel run treats as plausible (CAD-109). A part outside
+/// is most likely in the wrong unit, such as an STL in metres read as millimetres.
+inline constexpr double kMinPlausiblePartLength = 0.02;
+inline constexpr double kMaxPlausiblePartLength = 50.0;
+
+/// A warning when a part whose largest dimension is `length` metres is implausibly small or
+/// large for a wind tunnel run, else empty.
+[[nodiscard]] std::string partSizeWarning(double length);
+
+/// A warning when the part's mesh is not closed (`openEdges` edges used by one triangle only,
+/// such as a raw scan shell or a surface), else empty. The mesher then wraps the shell in a
+/// layer of cells about one cell thick, so the forces depend on the mesh, not on the part.
+[[nodiscard]] std::string openPartWarning(std::size_t openEdges);
 
 /// Identifier of the only preset so far: steady incompressible external flow around the
 /// selected part (simpleFoam, k-omega SST, snappyHexMesh). Bump the suffix when the
@@ -37,6 +59,11 @@ struct Settings {
     /// Direction the air flows in, in model coordinates (Z up): "+X", "-X", "+Y" or "-Y".
     /// Default "+Y": the app's Front view looks from -Y, so the air hits the front.
     std::string flowDirection = "+Y";
+    /// Yaw (crosswind) in degrees, -30..30 (CAD-188): the oncoming air turns this far
+    /// counter-clockwise, seen from above, from flowDirection. Forces stay in wind axes
+    /// (drag along the air, side force across it); a moving floor moves along flowDirection
+    /// (the car's heading) at speed * cos(yaw), and rotating wheels roll with it (CAD-190).
+    double yaw = 0.0;
     /// Kinematic viscosity, m^2/s (air at about 20 degC).
     double kinematicViscosity = 1.5e-5;
     /// Density used to turn kinematic pressure and forces into Pa and N, kg/m^3.
@@ -56,6 +83,10 @@ struct Settings {
     /// Height of the floor in model Z (mm); empty = just below the lowest point of the
     /// geometry. Must not be above the part; context parts (e.g. supports) may reach below it.
     std::optional<double> groundHeight;
+    /// The wheels turn with the moving floor (CAD-154): wheels standing on the bottom of the
+    /// part are found, the floor is put just above the bottom of the tyres so they touch it,
+    /// and their surfaces move at the floor's speed where they touch it. Needs a moving floor.
+    bool rotatingWheels = false;
     /// Reference area for Cd/Cl in m^2; empty = frontal area of the part (computed).
     std::optional<double> referenceArea;
     /// Reference length for moment coefficients in m; empty = part length along the flow.
@@ -83,5 +114,10 @@ struct Settings {
 /// names of the differing settings (empty = comparable). Reference area/length are
 /// compared on their effective values, which the caller passes in.
 [[nodiscard]] std::vector<std::string> differingConditions(const Json& a, const Json& b);
+
+/// One differing condition in words, with the value of each run (CAD-159), e.g.
+/// "Floor height: A -40 mm, B -150 mm". `key` is a name from differingConditions(); `a`/`b`
+/// are the two settings objects.
+[[nodiscard]] std::string describeCondition(const std::string& key, const Json& a, const Json& b);
 
 } // namespace aerocad::cfd

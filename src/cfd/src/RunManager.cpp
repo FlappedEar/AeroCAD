@@ -5,13 +5,18 @@
 #include <cctype>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <ctime>
 #include <fstream>
 #include <limits>
+#include <locale>
+#include <map>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <stdexcept>
+#include <thread>
 
 #ifndef _WIN32
 #include <unistd.h>
@@ -48,6 +53,10 @@ std::string_view runStateName(RunState state)
 // --- Environment ------------------------------------------------------------------------
 
 namespace {
+
+/// How far from the part, in surface cells, the vortex cores start (CAD-175): closer, Q
+/// marks the boundary layer, not a vortex.
+constexpr double kVortexSkin = 3.0;
 
 std::string env(const char* name)
 {
@@ -257,7 +266,11 @@ Environment detectEnvironment(const std::string& remoteHost)
         e.recommended = Backend::Local;
         e.message = "Using the local OpenFOAM installation " + e.openfoamBashrc.string() + ".";
     } else if (!e.docker.empty()) {
-        e.message = "Docker is installed but not running. Start its engine (Colima: colima start) and try again.";
+        // Say how to start it on this system: Colima on macOS, the system service on Linux.
+        e.message = currentPlatform() == Platform::MacOS
+                        ? "Docker is installed but not running. Start its engine (Colima: colima start) and try again."
+                        : "Docker is installed but not running. Start it (sudo systemctl start docker) and try "
+                          "again.";
     } else {
         e.message = "No simulation engine found. Install Docker (on macOS: brew install docker colima, then "
                     "colima start); AeroCAD runs OpenFOAM " +
@@ -350,7 +363,7 @@ SetupStep planEngineSetup(const Environment& env, Platform platform, const Setup
                 "docker command line tool and Colima."};
     }
     if (!env.docker.empty())
-        return {"manual", {}, "Docker is installed but not running: start it (sudo systemctl start docker)."};
+        return {"manual", {}, env.message}; // the engine line already says how to start it
     return {"browser", {"xdg-open", linuxInstall},
             "Opening the Docker Engine install page: install it, start it, then press Install for me again."};
 }
@@ -370,6 +383,12 @@ struct RunManager::Run {
     fs::path docker;
     std::string dockerHost; ///< Remote engine the run was started on, empty = this machine.
     std::string metadataError; ///< Kept visible without trusting or resuming an invalid run.json.
+    int processes = 0;      ///< Solver processes of a run started (or queued) by this manager.
+    std::vector<std::string> queuedArgv; ///< Engine command of a run waiting for processors.
+    std::uint64_t queueOrder = 0;        ///< Submission order of a queued run (first in, first out).
+    std::string launchError;             ///< Why a queued run could not start.
+    /// When this manager started the engine on this computer (for the elapsed time).
+    std::optional<std::chrono::steady_clock::time_point> started;
     RunStatus status;
 };
 
@@ -534,35 +553,92 @@ std::string stageLog(const std::string& stage)
     if (stage == "background") return "log.blockMesh";
     if (stage == "decompose") return "log.decomposePar";
     if (stage == "mesh") return "log.snappyHexMesh";
+    if (stage == "check") return "log.checkMesh";
     if (stage == "initialise") return "log.potentialFoam";
     if (stage == "solve") return "log.simpleFoam";
     if (stage == "reconstruct") return "log.reconstructPar";
     return "log.aerocad";
 }
 
-/// First line of an OpenFOAM fatal error message in a log, or the last non-empty line.
+/// A log line without an MPI rank prefix such as "[1] ".
+std::string stripRank(std::string line)
+{
+    if (line.size() > 2 && line[0] == '[') {
+        const auto close = line.find("] ");
+        if (close != std::string::npos && close < 8)
+            line = line.substr(close + 2);
+    }
+    return line;
+}
+
+std::string trimmed(const std::string& s)
+{
+    const auto b = s.find_first_not_of(" \t\r");
+    if (b == std::string::npos)
+        return {};
+    return s.substr(b, s.find_last_not_of(" \t\r") - b + 1);
+}
+
+/// The fatal checkMesh reports in a log (kFatalMeshChecks), "; "-separated, or empty.
+std::string meshDefects(const fs::path& log)
+{
+    std::vector<std::string> fatal;
+    for (std::string_view rest = kFatalMeshChecks; !rest.empty();) {
+        const auto bar = rest.find('|');
+        fatal.emplace_back(rest.substr(0, bar));
+        rest = bar == std::string_view::npos ? std::string_view{} : rest.substr(bar + 1);
+    }
+    std::ifstream in(log);
+    std::string line, found;
+    while (std::getline(in, line)) {
+        const auto mark = line.find("***");
+        if (mark == std::string::npos)
+            continue;
+        std::string report = trimmed(line.substr(mark + 3));
+        while (!report.empty() && report.back() == '.')
+            report.pop_back();
+        const bool isFatal =
+            std::any_of(fatal.begin(), fatal.end(), [&](const std::string& f) { return report.rfind(f, 0) == 0; });
+        if (isFatal)
+            found += (found.empty() ? "" : "; ") + report;
+    }
+    return found;
+}
+
+/// Why an application stopped, from its log: the first line of an OpenFOAM fatal error, a
+/// floating-point exception (the solution diverged) with the last iteration reached, or the
+/// last line that carries text. Separator lines ("-----") and stack frames are not reasons.
 std::string errorSummary(const fs::path& log)
 {
     std::ifstream in(log);
-    std::string line, last, fatal;
-    bool next = false;
+    std::string line, last, fatal, time;
+    bool next = false, fpe = false;
     while (std::getline(in, line)) {
-        // Strip MPI rank prefixes such as "[1] ".
-        if (line.size() > 2 && line[0] == '[') {
-            const auto close = line.find("] ");
-            if (close != std::string::npos && close < 8)
-                line = line.substr(close + 2);
-        }
-        if (next && fatal.empty() && line.find_first_not_of(' ') != std::string::npos) {
-            fatal = line;
+        line = stripRank(line);
+        const std::string text = trimmed(line);
+        if (next && fatal.empty() && !text.empty()) {
+            fatal = text;
             next = false;
         }
         if (line.find("FOAM FATAL") != std::string::npos)
             next = true;
-        if (line.find_first_not_of(" \t") != std::string::npos)
-            last = line;
+        if (line.find("sigFpe::sigHandler") != std::string::npos ||
+            line.find("Floating point exception") != std::string::npos)
+            fpe = true;
+        if (line.rfind("Time = ", 0) == 0)
+            time = trimmed(line.substr(7));
+        const bool frame = text.size() > 1 && text[0] == '#' && std::isdigit(static_cast<unsigned char>(text[1]));
+        const bool hasText = std::any_of(text.begin(), text.end(), [](unsigned char c) { return std::isalnum(c); });
+        if (hasText && !frame)
+            last = text;
     }
-    return fatal.empty() ? last : fatal;
+    if (!fatal.empty())
+        return fatal;
+    if (fpe)
+        return "floating-point exception: the solution diverged" +
+               (time.empty() ? std::string() : " at iteration " + time) +
+               ". Check the mesh (log.checkMesh) and the model scale.";
+    return last;
 }
 
 /// Newest write time of the logs, or nullopt when there are none.
@@ -586,6 +662,22 @@ std::optional<fs::file_time_type> newestLogTime(const fs::path& dir)
     return any ? std::optional(newest) : std::nullopt;
 }
 
+/// Mean over the last 20 % of the iterations (at least the last one). Every retained
+/// sample must be finite, including those before the averaging window.
+std::optional<double> tailMean(const std::vector<double>* v)
+{
+    if (v == nullptr || v->empty() || !std::all_of(v->begin(), v->end(), [](double x) { return std::isfinite(x); }))
+        return std::nullopt;
+    const std::size_t start = v->size() - std::max<std::size_t>(1, v->size() / 5);
+    double sum = 0;
+    for (std::size_t i = start; i < v->size(); ++i) {
+        sum += (*v)[i];
+        if (!std::isfinite(sum))
+            return std::nullopt;
+    }
+    return sum / static_cast<double>(v->size() - start);
+}
+
 std::optional<double> lastOf(const Table& t, std::string_view column)
 {
     const auto* c = t.column(column);
@@ -599,24 +691,33 @@ std::optional<double> lastOf(const Table& t, std::string_view column)
 Json RunStatus::toJson() const
 {
     auto opt = [](const std::optional<double>& v) { return v ? Json(*v) : Json(nullptr); };
-    return Json{{"id", id},
-                {"state", runStateName(state)},
-                {"stage", stage},
-                {"progress", std::round(progress * 1000.0) / 1000.0},
-                {"iteration", iteration},
-                {"maxIterations", maxIterations},
-                {"message", message},
-                {"created", created},
-                {"backend", backendName(backend)},
-                {"caseDir", caseDir.string()},
-                {"source", sourceJson(source)},
-                {"latest",
-                 {{"cd", opt(cd)},
-                  {"cl", opt(cl)},
-                  {"cs", opt(cs)},
-                  {"dragN", opt(dragN)},
-                  {"liftN", opt(liftN)},
-                  {"sideN", opt(sideN)}}}};
+    return Json{
+        {"id", id},
+        {"state", runStateName(state)},
+        {"stage", stage},
+        {"progress", std::round(progress * 1000.0) / 1000.0},
+        {"iteration", iteration},
+        {"maxIterations", maxIterations},
+        {"message", message},
+        {"created", created},
+        {"elapsedSeconds", elapsedSeconds ? Json(*elapsedSeconds) : Json(nullptr)},
+        {"remainingSeconds", remainingSeconds ? Json(*remainingSeconds) : Json(nullptr)},
+        {"backend", backendName(backend)},
+        {"caseDir", caseDir.string()},
+        {"source", sourceJson(source)},
+        {"latest",
+         {{"cd", opt(cd)},
+          {"cl", opt(cl)},
+          {"cs", opt(cs)},
+          {"dragN", opt(dragN)},
+          {"liftN", opt(liftN)},
+          {"sideN", opt(sideN)}}},
+        // The final result of a finished run (CAD-205): the same means as the summary
+        // of simulation.results, so the run list and Results show the same numbers.
+        {"final",
+         finalCd
+             ? Json{{"cd", opt(finalCd)}, {"cl", opt(finalCl)}, {"dragN", opt(finalDragN)}, {"liftN", opt(finalLiftN)}}
+             : Json(nullptr)}};
 }
 
 // --- RunManager -------------------------------------------------------------------------
@@ -630,7 +731,11 @@ fs::path RunManager::defaultRoot()
 }
 
 // At start-up the session takes over the remote runs that continue on their host.
-RunManager::RunManager(fs::path root) : m_root(std::move(root)) { scan(true); }
+RunManager::RunManager(fs::path root)
+    : m_root(std::move(root)), m_processorLimit(static_cast<int>(std::max(1U, std::thread::hardware_concurrency())))
+{
+    scan(true);
+}
 
 RunManager::~RunManager() = default;
 
@@ -818,9 +923,58 @@ std::string RunManager::start(const CaseGeometry& geometry, const Settings& sett
         j["dockerHost"] = run.dockerHost;
     j["command"] = remote ? Json::array({"remote", run.dockerHost, containerName(id)}) : Json(argv);
     std::ofstream(run.dir / "run.json") << j.dump(2) << "\n";
+    run.processes = effective.effectiveProcesses();
+    if (!remote) {
+        // Wait behind earlier queued runs, or while the processors are taken (CAD-144).
+        const bool queueAhead = std::any_of(m_runs.begin(), m_runs.end(), [&](const auto& r) {
+            return r.first != id && !r.second->queuedArgv.empty();
+        });
+        const int inUse = localProcessesInUse();
+        if (queueAhead || (inUse > 0 && inUse + run.processes > m_processorLimit)) {
+            run.queuedArgv = argv;
+            run.queueOrder = ++m_queueCounter;
+            std::ofstream(run.caseDir / "aerocad.stage") << "queued\n";
+            return id;
+        }
+    }
     std::ofstream(run.caseDir / "aerocad.stage") << "starting\n";
     run.process = Process::start(argv, run.caseDir, run.dir / "log.aerocad");
+    run.started = std::chrono::steady_clock::now();
     return id;
+}
+
+int RunManager::localProcessesInUse()
+{
+    int n = 0;
+    for (auto& [id, run] : m_runs)
+        if (run->dockerHost.empty() && run->process && run->process->running())
+            n += std::max(1, run->processes);
+    return n;
+}
+
+void RunManager::startQueued()
+{
+    // Submission order, not id order: ids of runs created within one second sort by part name.
+    std::vector<Run*> queue;
+    for (auto& [id, run] : m_runs)
+        if (!run->queuedArgv.empty())
+            queue.push_back(run.get());
+    std::sort(queue.begin(), queue.end(), [](const Run* a, const Run* b) { return a->queueOrder < b->queueOrder; });
+    for (Run* run : queue) {
+        const int inUse = localProcessesInUse();
+        if (inUse > 0 && inUse + run->processes > m_processorLimit)
+            return; // First in, first out.
+        std::vector<std::string> argv;
+        argv.swap(run->queuedArgv); // Leaves the queue whether or not it starts.
+        try {
+            std::ofstream(run->caseDir / "aerocad.stage") << "starting\n";
+            run->process = Process::start(argv, run->caseDir, run->dir / "log.aerocad");
+            run->started = std::chrono::steady_clock::now();
+        } catch (const std::exception& e) {
+            // One run that cannot start must not block listing, cancelling or deleting the others.
+            run->launchError = e.what();
+        }
+    }
 }
 
 std::string RunManager::importCase(const fs::path& caseDir, const std::string& label)
@@ -855,6 +1009,8 @@ void RunManager::refresh(Run& run)
     s.backend = run.backend;
     s.caseDir = run.caseDir;
     s.message.clear();
+    s.elapsedSeconds = s.remainingSeconds = std::nullopt;
+    s.finalCd = s.finalCl = s.finalDragN = s.finalLiftN = std::nullopt;
 
     if (!run.metadataError.empty()) {
         s.state = RunState::Failed;
@@ -874,6 +1030,21 @@ void RunManager::refresh(Run& run)
 
     if (const auto info = caseInfo(run.id))
         s.maxIterations = info->settings.effectiveIterations();
+    if (!run.queuedArgv.empty()) { // Waiting for processors (CAD-144).
+        s.state = RunState::Running;
+        s.stage = "queued";
+        s.progress = 0.0;
+        s.iteration = 0;
+        s.cd = s.cl = s.cs = s.dragN = s.liftN = s.sideN = std::nullopt;
+        s.message = "Waiting for the other runs on this computer to finish: one after the other they finish "
+                    "sooner than all at once.";
+        return;
+    }
+    if (!run.launchError.empty()) {
+        s.state = RunState::Failed;
+        s.message = "The simulation engine could not start after waiting in the queue: " + run.launchError;
+        return;
+    }
 
     const Table coeffs = readTable(run.caseDir / "postProcessing" / "forceCoeffs" / "0" / "coefficient.dat");
     const Table forces = readTable(run.caseDir / "postProcessing" / "forces" / "0" / "force.dat");
@@ -887,6 +1058,22 @@ void RunManager::refresh(Run& run)
 
     if (status == "finished") {
         s.state = RunState::Finished;
+        // The same gate as results(): complete outputs over the same iterations and every
+        // final value (all eight of its result keys) finite (Codex review on #177).
+        if (!coeffs.incomplete && !forces.incomplete && !coeffs.invalidTime && !forces.invalidTime && !coeffs.empty() &&
+            coeffs.time == forces.time) {
+            const auto cd = tailMean(coeffs.column("Cd")), cl = tailMean(coeffs.column("Cl"));
+            const auto drag = tailMean(forces.column("total_x")), lift = tailMean(forces.column("total_z"));
+            const bool all = cd && cl && drag && lift && tailMean(coeffs.column("Cs")) &&
+                             tailMean(forces.column("total_y")) && tailMean(forces.column("pressure_x")) &&
+                             tailMean(forces.column("viscous_x"));
+            if (all) {
+                s.finalCd = cd;
+                s.finalCl = cl;
+                s.finalDragN = drag;
+                s.finalLiftN = lift;
+            }
+        }
     } else if (status == "prepared") {
         s.state = RunState::Interrupted;
         s.message = "Case written only; run ./Allrun in an OpenFOAM " + std::string(kOpenFoamVersion) +
@@ -895,7 +1082,11 @@ void RunManager::refresh(Run& run)
         s.state = RunState::Failed;
         const std::string step = status.size() > 7 ? status.substr(7) : std::string("unknown");
         const std::string log = stageLog(step);
-        s.message = "Step '" + step + "' failed (" + log + "): " + errorSummary(run.caseDir / log);
+        const std::string defects = step == "check" ? meshDefects(run.caseDir / log) : std::string();
+        s.message = !defects.empty()
+                        ? "The mesh has defects the solver cannot run on, so the solve was not started: " + defects +
+                              ". Check the model scale and the mesh refinement (" + log + ")."
+                        : "Step '" + step + "' failed (" + log + "): " + errorSummary(run.caseDir / log);
     } else if (cancelled) {
         s.state = processRunning ? RunState::Running : RunState::Cancelled;
         s.message = processRunning ? "Stopping..." : "Cancelled";
@@ -928,10 +1119,31 @@ void RunManager::refresh(Run& run)
     if (s.stage == "starting" && s.state == RunState::Running)
         s.message = "Starting OpenFOAM (the first run downloads the image, this can take a few minutes)...";
     s.progress = p;
+
+    // Time so far and, while solving, an upper bound of the time left (CAD-149): the solver
+    // stops at the iteration limit at the latest, often sooner when it converges. Its speed is
+    // measured from the end of the initialisation (potentialFoam's log) to now.
+    if (s.state == RunState::Running) {
+        if (run.started && processRunning) {
+            const auto elapsed = std::chrono::steady_clock::now() - *run.started;
+            s.elapsedSeconds = static_cast<int>(std::chrono::duration_cast<std::chrono::seconds>(elapsed).count());
+        }
+        // Also for a run followed from an earlier session: only the case's files are needed.
+        if (s.stage == "solve" && s.iteration >= 10 && s.maxIterations > s.iteration) {
+            const auto init = fs::last_write_time(run.caseDir / "log.potentialFoam", ec);
+            if (!ec) {
+                const double solving = std::chrono::duration<double>(fs::file_time_type::clock::now() - init).count();
+                if (solving >= 5.0)
+                    s.remainingSeconds =
+                        static_cast<int>(std::ceil(solving / s.iteration * (s.maxIterations - s.iteration)));
+            }
+        }
+    }
 }
 
 std::vector<RunStatus> RunManager::list()
 {
+    startQueued();
     std::vector<RunStatus> out;
     for (auto& [id, run] : m_runs) {
         refresh(*run);
@@ -946,6 +1158,7 @@ std::optional<RunStatus> RunManager::status(const std::string& id)
     Run* run = find(id);
     if (run == nullptr)
         return std::nullopt;
+    startQueued();
     refresh(*run);
     return run->status;
 }
@@ -958,6 +1171,11 @@ bool RunManager::cancel(const std::string& id)
     refresh(*run);
     if (run->status.state != RunState::Running)
         return false;
+    if (!run->queuedArgv.empty()) { // Never started: just leave the queue.
+        run->queuedArgv.clear();
+        std::ofstream(run->caseDir / "aerocad.cancelled") << nowIso() << "\n";
+        return true;
+    }
     // A local engine started by an earlier session of the app cannot be identified
     // safely (process ids are reused), so it is not ours to stop. Docker containers are
     // found by name.
@@ -997,6 +1215,44 @@ bool RunManager::remove(const std::string& id)
     fs::remove_all(run->dir, ec); // An imported case directory itself is left alone.
     m_runs.erase(id);
     return !ec;
+}
+
+bool RunManager::setLabel(const std::string& id, const std::string& label)
+{
+    Run* run = find(id);
+    if (run == nullptr)
+        return false;
+    const fs::path file = run->dir / "run.json";
+    Json j = Json::object();
+    if (std::ifstream in(file); in) {
+        try {
+            in >> j;
+        } catch (const std::exception&) {
+            j = Json::object();
+        }
+    }
+    RunSource source = run->source;
+    source.label = label;
+    j["source"] = sourceJson(source);
+    // Written next to it and renamed over it, so a crash never leaves half a run.json.
+    const fs::path tmp = run->dir / "run.json.tmp";
+    {
+        std::ofstream out(tmp, std::ios::trunc);
+        out << j.dump(2) << "\n";
+        out.close(); // Flush now: a full disk shows here, not after the rename.
+        if (!out) {
+            std::error_code ignored;
+            fs::remove(tmp, ignored);
+            throw std::runtime_error("Cannot write '" + tmp.string() + "'");
+        }
+    }
+    std::error_code ec;
+    fs::rename(tmp, file, ec);
+    if (ec)
+        throw std::runtime_error("Cannot write '" + file.string() + "': " + ec.message());
+    run->source = source;
+    run->status.source = source;
+    return true;
 }
 
 std::optional<CaseInfo> RunManager::caseInfo(const std::string& id)
@@ -1044,23 +1300,67 @@ Json sampled(const std::vector<double>* values, const std::vector<std::size_t>& 
     return out;
 }
 
-/// Mean over the last 20 % of the iterations (at least the last one). Every retained
-/// sample must be finite, including those before the averaging window.
-std::optional<double> tailMean(const std::vector<double>* v)
+/// Half of max − min over the same window as tailMean: how far the value still swings
+/// around the reported mean (CAD-191).
+std::optional<double> tailSpread(const std::vector<double>* v)
 {
-    if (v == nullptr || v->empty() || !std::all_of(v->begin(), v->end(), [](double x) { return std::isfinite(x); }))
+    if (!tailMean(v))
         return std::nullopt;
     const std::size_t start = v->size() - std::max<std::size_t>(1, v->size() / 5);
-    double sum = 0;
-    for (std::size_t i = start; i < v->size(); ++i) {
-        sum += (*v)[i];
-        if (!std::isfinite(sum))
-            return std::nullopt;
-    }
-    return sum / static_cast<double>(v->size() - start);
+    const auto [lo, hi] = std::minmax_element(v->begin() + static_cast<std::ptrdiff_t>(start), v->end());
+    const double spread = 0.5 * (*hi - *lo);
+    return std::isfinite(spread) ? std::optional<double>(spread) : std::nullopt;
 }
 
 Json opt(const std::optional<double>& v) { return v ? Json(*v) : Json(nullptr); }
+
+/// Aero balance (CAD-194): the vertical aero loads at the front and rear axle contacts on
+/// the ground, per iteration, for a car with two axles (turning wheels, or standing ones, CAD-196). Moments of the
+/// aero force about the rear contact line, along the horizontal axis normal to the
+/// wheelbase (so it also holds at yaw): L_front = M_rear . a / wheelbase, L_rear = L - L_front.
+/// Horizontal forces taken at the contacts add no such moment. Empty when the case has no
+/// two axles or the force and moment outputs do not cover the same iterations.
+struct AxleLoads {
+    std::vector<double> front, rear;
+};
+std::optional<AxleLoads> axleLoads(const CaseInfo& info, const Table& forces, const Table& moments)
+{
+    Vec3 contact[2] = {};
+    int count[2] = {0, 0};
+    // The turning wheels, else the tyres a car stands on with fixed wheels (CAD-196).
+    for (const Wheel& w : info.wheels.empty() ? info.standingWheels : info.wheels) {
+        if (w.axle < 0 || w.axle > 1)
+            return std::nullopt; // Only cars with two axles.
+        contact[w.axle] = contact[w.axle] + Vec3{w.centre.x, w.centre.y, w.centre.z - w.radius};
+        ++count[w.axle];
+    }
+    if (count[0] == 0 || count[1] == 0)
+        return std::nullopt;
+    for (int k = 0; k < 2; ++k)
+        contact[k] = contact[k] * (1.0 / count[k]);
+    const Vec3 d = contact[0] - contact[1]; // Rear to front.
+    const double wheelbase = std::hypot(d.x, d.y);
+    if (!(wheelbase > 1e-9))
+        return std::nullopt;
+    const Vec3 a{d.y / wheelbase, -d.x / wheelbase, 0.0};
+    // The forces function object takes moments about the part centre (controlDict CofR).
+    const Vec3 r = info.partBounds.center() - contact[1];
+    const auto *fx = forces.column("total_x"), *fy = forces.column("total_y"), *fz = forces.column("total_z");
+    const auto *mx = moments.column("total_x"), *my = moments.column("total_y"), *mz = moments.column("total_z");
+    if (!fx || !fy || !fz || !mx || !my || !mz || forces.time != moments.time || fx->size() != forces.time.size() ||
+        fy->size() != fx->size() || fz->size() != fx->size() || mx->size() != fx->size() || my->size() != fx->size() ||
+        mz->size() != fx->size())
+        return std::nullopt;
+    AxleLoads loads;
+    for (std::size_t i = 0; i < fx->size(); ++i) {
+        const Vec3 f{(*fx)[i], (*fy)[i], (*fz)[i]};
+        const Vec3 m = Vec3{(*mx)[i], (*my)[i], (*mz)[i]} + r.cross(f);
+        const double front = m.dot(a) / wheelbase;
+        loads.front.push_back(front);
+        loads.rear.push_back(f.z - front);
+    }
+    return loads;
+}
 
 std::pair<double, double> range(const std::vector<double>& v)
 {
@@ -1075,6 +1375,246 @@ std::pair<double, double> range(const std::vector<double>& v)
 
 } // namespace
 
+namespace {
+
+/// One CSV cell: quoted when it holds a comma, a quote or a line break.
+std::string csvCell(const std::string& text)
+{
+    if (text.find_first_of(",\"\r\n") == std::string::npos)
+        return text;
+    std::string out = "\"";
+    for (const char c : text)
+        out += c == '"' ? std::string("\"\"") : std::string(1, c);
+    return out + "\"";
+}
+
+/// A number with 7 significant digits and a '.' decimal point; empty for NaN / null.
+std::string csvNumber(double v)
+{
+    if (!std::isfinite(v))
+        return {};
+    std::ostringstream os;
+    os.imbue(std::locale::classic());
+    os.precision(7);
+    os << v;
+    return os.str();
+}
+
+void writeTextFile(const fs::path& path, const std::string& text)
+{
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    if (!file)
+        throw std::runtime_error("Cannot write '" + path.string() + "'");
+    file << text;
+    file.close();
+    if (!file)
+        throw std::runtime_error("Cannot write '" + path.string() + "'");
+}
+
+std::string csvJson(const Json& v)
+{
+    if (v.is_number())
+        return csvNumber(v.get<double>());
+    if (v.is_boolean())
+        return v.get<bool>() ? "yes" : "no";
+    if (v.is_string())
+        return v.get<std::string>();
+    return {};
+}
+
+} // namespace
+
+std::size_t RunManager::exportResultsCsv(const std::string& id, const fs::path& path)
+{
+    const Json r = results(id, 2);
+    const Run& run = *find(id);
+    const Table coeffs = readTable(run.caseDir / "postProcessing" / "forceCoeffs" / "0" / "coefficient.dat");
+    const Table forces = readTable(run.caseDir / "postProcessing" / "forces" / "0" / "force.dat");
+
+    std::ostringstream out;
+    auto row = [&](const std::string& key, const std::string& value) {
+        out << csvCell(key) << ',' << csvCell(value) << "\r\n";
+    };
+    const Json& st = r.at("run");
+    const Json& source = st.at("source");
+    out << "Quantity,Value\r\n";
+    row("Run",
+        source.value("label", std::string()).empty() ? id : source.at("label").get<std::string>() + " (" + id + ")");
+    row("Part", source.value("partName", std::string()));
+    row("State", st.value("state", std::string()));
+    row("Created (UTC)", st.value("created", std::string()));
+    if (r.contains("conditions")) {
+        const Json& c = r.at("conditions");
+        const Json& s = c.at("settings");
+        row("Air speed (m/s)", csvJson(s.value("speed", Json())));
+        row("Flow direction", csvJson(s.value("flowDirection", Json())));
+        row("Yaw (deg)", csvJson(s.value("yaw", Json(0.0)))); // CAD-188; older runs: 0.
+        row("Mesh", csvJson(s.value("mesh", Json())));
+        const bool ground = s.value("ground", false);
+        row("Floor", !ground ? "off" : !s.value("groundMoving", true) ? "fixed" : "moving");
+        if (ground) {
+            const Json h = s.value("groundHeight", Json());
+            row("Floor height (mm)", h.is_number() ? csvJson(h) : "just under the part");
+            row("Rotating wheels", s.value("rotatingWheels", false) ? "yes" : "no");
+        }
+        row("Air density (kg/m3)", csvJson(s.value("density", Json())));
+        row("Kinematic viscosity (m2/s)", csvJson(s.value("kinematicViscosity", Json())));
+        const Json ti = s.value("turbulenceIntensity", Json());
+        row("Turbulence intensity (%)", ti.is_number() ? csvNumber(100.0 * ti.get<double>()) : std::string());
+        row("Reference area (m2)", csvJson(c.value("referenceArea", Json())));
+        row("Reference length (m)", csvJson(c.value("referenceLength", Json())));
+        // Only the engine recorded by the run itself; the case target is listed apart.
+        const std::string engine = csvJson(c.value("engine", Json()));
+        row("OpenFOAM (ran)", engine.empty() ? "not recorded" : engine);
+        const std::string target = csvJson(c.value("engineTarget", Json()));
+        if (!target.empty())
+            row("OpenFOAM (case written for)", target);
+        row("Axes", csvJson(c.value("axes", Json())));
+    }
+    const bool isFinal = r.at("finalResults").at("available").get<bool>();
+    const Json& values = isFinal ? r.at("summary") : r.at("current");
+    std::string reasons;
+    for (const auto& reason : r.at("finalResults").at("reasons"))
+        reasons += (reasons.empty() ? "" : " ") + reason.get<std::string>();
+    row("Results", isFinal ? "final, mean of the last 20 % of the iterations"
+                           : "provisional (" + reasons + ")" +
+                                 (values.is_object() ? "; values: mean of the last 20 % so far" : std::string()));
+    if (values.is_object()) {
+        const char* suffix = isFinal ? "" : " (provisional)";
+        struct Key {
+            const char* key;
+            const char* name;
+        };
+        for (const Key k : {Key{"cd", "Cd"}, Key{"cl", "Cl"}, Key{"cs", "Cs"}, Key{"dragN", "Drag (N)"},
+                            Key{"liftN", "Lift (N)"}, Key{"sideN", "Side force (N)"},
+                            Key{"pressureDragN", "Pressure drag (N)"}, Key{"viscousDragN", "Viscous drag (N)"}})
+            row(std::string(k.name) + suffix, csvJson(values.value(k.key, Json())));
+        // As in the Results summary (CAD-184, CAD-187): L/D = |lift| / drag, Cd and Cl times
+        // the reference area.
+        const Json drag = values.value("dragN", Json()), lift = values.value("liftN", Json());
+        row(std::string("Efficiency L/D") + suffix, drag.is_number() && lift.is_number() && drag.get<double>() > 0.0
+                                                        ? csvNumber(std::abs(lift.get<double>()) / drag.get<double>())
+                                                        : std::string());
+        const Json area = r.contains("conditions") ? r.at("conditions").value("referenceArea", Json()) : Json();
+        for (const Key k : {Key{"cd", "CdA (m2)"}, Key{"cl", "ClA (m2)"}}) {
+            const Json c = values.value(k.key, Json());
+            row(std::string(k.name) + suffix,
+                c.is_number() && area.is_number() ? csvNumber(c.get<double>() * area.get<double>()) : std::string());
+        }
+        // Aero balance of a car with two axles (CAD-194); left out for other runs.
+        if (values.value("frontLiftN", Json()).is_number())
+            for (const Key k : {Key{"frontLiftN", "Front axle lift (N)"}, Key{"rearLiftN", "Rear axle lift (N)"},
+                                Key{"frontShare", "Front share of lift (%)"}})
+                row(std::string(k.name) + suffix, csvJson(values.value(k.key, Json())));
+        // The turning wheels' share (CAD-202); left out for other runs.
+        if (values.value("wheelDragN", Json()).is_number())
+            for (const Key k : {Key{"wheelDragN", "Wheel drag (N)"}, Key{"wheelLiftN", "Wheel lift (N)"}})
+                row(std::string(k.name) + suffix, csvJson(values.value(k.key, Json())));
+        // How far each value still swings over the averaging window (CAD-191, CAD-193).
+        if (const Json spread = values.value("spread", Json()); spread.is_object())
+            for (const Key k : {Key{"dragN", "Drag swing ± (N)"}, Key{"liftN", "Lift swing ± (N)"},
+                                Key{"sideN", "Side force swing ± (N)"}, Key{"cd", "Cd swing ±"},
+                                Key{"cl", "Cl swing ±"}, Key{"cs", "Cs swing ±"}})
+                row(k.name, csvJson(spread.value(k.key, Json())));
+    }
+    row("Iterations recorded", std::to_string(coeffs.time.size()));
+
+    // History: coefficient rows, with the force row of the same iteration.
+    out << "\r\nIteration,Cd,Cl,Cs,Drag (N),Lift (N),Side force (N),Pressure drag (N),Viscous drag (N)\r\n";
+    std::map<double, std::size_t> forceRow;
+    for (std::size_t i = 0; i < forces.time.size(); ++i)
+        forceRow[forces.time[i]] = i;
+    const auto at = [](const std::vector<double>* col, std::size_t i) {
+        return col && i < col->size() ? (*col)[i] : std::numeric_limits<double>::quiet_NaN();
+    };
+    const auto* cd = coeffs.column("Cd");
+    const auto* cl = coeffs.column("Cl");
+    const auto* cs = coeffs.column("Cs");
+    const auto* fx = forces.column("total_x");
+    const auto* fz = forces.column("total_z");
+    const auto* fy = forces.column("total_y");
+    const auto* px = forces.column("pressure_x");
+    const auto* vx = forces.column("viscous_x");
+    for (std::size_t i = 0; i < coeffs.time.size(); ++i) {
+        const auto f = forceRow.find(coeffs.time[i]);
+        const std::size_t fi = f == forceRow.end() ? forces.time.size() : f->second;
+        out << csvNumber(coeffs.time[i]) << ',' << csvNumber(at(cd, i)) << ',' << csvNumber(at(cl, i)) << ','
+            << csvNumber(at(cs, i)) << ',' << csvNumber(at(fx, fi)) << ',' << csvNumber(at(fz, fi)) << ','
+            << csvNumber(at(fy, fi)) << ',' << csvNumber(at(px, fi)) << ',' << csvNumber(at(vx, fi)) << "\r\n";
+    }
+
+    writeTextFile(path, out.str());
+    return coeffs.time.size();
+}
+
+std::size_t RunManager::exportComparisonCsv(const std::string& a, const std::string& b, const fs::path& path)
+{
+    const Json cmp = compare(a, b);
+    std::ostringstream out;
+    auto row = [&](const std::string& key, const std::string& value) {
+        out << csvCell(key) << ',' << csvCell(value) << "\r\n";
+    };
+    auto title = [&](const std::string& id) {
+        const auto st = status(id);
+        const Json source = st ? st->toJson().value("source", Json::object()) : Json::object();
+        const std::string label = source.value("label", std::string());
+        const std::string part = source.value("partName", std::string());
+        return (label.empty() ? id : label + " (" + id + ")") + (part.empty() ? "" : ", part " + part);
+    };
+    out << "Quantity,Value\r\n";
+    row("Run A (baseline)", title(a));
+    row("Run B (variant)", title(b));
+    row("Verdict", cmp.value("verdict", std::string()));
+    for (const auto& c : cmp.value("conditionChanges", Json::array()))
+        row("Different condition", csvJson(c));
+    for (const auto& c : cmp.value("unknownConditions", Json::array()))
+        row("Unknown condition", csvJson(c));
+    for (const auto& r : cmp.value("reasons", Json::array()))
+        row("Not comparable", csvJson(r));
+    for (const auto& n : cmp.value("notes", Json::array()))
+        row("Note", csvJson(n));
+    const Json mesh = cmp.value("meshSensitivity", Json::object());
+    row("Mesh check", mesh.value("message", mesh.value("status", std::string())));
+
+    out << "\r\nQuantity,A,B,B - A,Change (%),Swing A+B,Within swing\r\n";
+    std::size_t rows = 0;
+    auto table = [&](const std::string& name, const Json& d) {
+        if (!d.is_object()) {
+            out << csvCell(name) << ",,,,,,\r\n";
+            return;
+        }
+        Json percent = d.value("percent", Json());
+        const double va = d.value("a", 0.0);
+        if (!d.contains("percent") && std::abs(va) > 1e-12)
+            percent = 100.0 * d.value("difference", 0.0) / std::abs(va);
+        out << csvCell(name) << ',' << csvJson(d.value("a", Json())) << ',' << csvJson(d.value("b", Json())) << ','
+            << csvJson(d.value("difference", Json())) << ',' << csvJson(percent) << ','
+            << csvJson(d.value("noise", Json())) << ',' << csvJson(d.value("withinNoise", Json())) << "\r\n";
+        ++rows;
+    };
+    const Json forces = cmp.value("forces", Json::object());
+    for (const auto& [key, name] :
+         {std::pair{"dragN", "Drag (N)"}, std::pair{"liftN", "Lift (N)"}, std::pair{"sideN", "Side force (N)"},
+          std::pair{"pressureDragN", "Pressure drag (N)"}, std::pair{"viscousDragN", "Viscous drag (N)"}})
+        table(name, forces.value(key, Json()));
+    // Aero balance (CAD-194) and wheel (CAD-202) rows only when both runs have them.
+    for (const auto& [key, name] :
+         {std::pair{"frontLiftN", "Front axle lift (N)"}, std::pair{"rearLiftN", "Rear axle lift (N)"},
+          std::pair{"wheelDragN", "Wheel drag (N)"}, std::pair{"wheelLiftN", "Wheel lift (N)"}})
+        if (forces.contains(key))
+            table(name, forces.at(key));
+    if (cmp.contains("balance"))
+        table("Aero balance front (%; B - A in percentage points)", cmp.at("balance"));
+    table("Efficiency L/D", cmp.value("efficiency", Json()));
+    const Json coeffs = cmp.value("coefficientsOnReferenceAreaOfA", Json::object());
+    for (const auto& [key, name] :
+         {std::pair{"cd", "Cd (on the reference area of A)"}, std::pair{"cl", "Cl (on the reference area of A)"},
+          std::pair{"cs", "Cs (on the reference area of A)"}})
+        table(name, coeffs.value(key, Json()));
+    writeTextFile(path, out.str());
+    return rows;
+}
+
 Json RunManager::results(const std::string& id, int maxPoints)
 {
     const auto st = status(id);
@@ -1087,6 +1627,14 @@ Json RunManager::results(const std::string& id, int maxPoints)
     const Table coeffs = readTable(run.caseDir / "postProcessing" / "forceCoeffs" / "0" / "coefficient.dat");
     const Table forces = readTable(run.caseDir / "postProcessing" / "forces" / "0" / "force.dat");
     const Table residuals = readTable(run.caseDir / "postProcessing" / "solverInfo" / "0" / "solverInfo.dat");
+    // The turning wheels' own forces (CAD-202), only when they cover the same iterations.
+    const Table wheelForces = readTable(run.caseDir / "postProcessing" / "wheelForces" / "0" / "force.dat");
+    const bool wheelsValid =
+        !wheelForces.empty() && !wheelForces.incomplete && !wheelForces.invalidTime && wheelForces.time == forces.time;
+    auto wheelColumn = [&](const char* name) { return wheelsValid ? wheelForces.column(name) : nullptr; };
+    const auto axles =
+        info ? axleLoads(*info, forces, readTable(run.caseDir / "postProcessing" / "forces" / "0" / "moment.dat"))
+             : std::nullopt;
 
     Json j{{"run", st->toJson()}};
     if (info) {
@@ -1094,6 +1642,13 @@ Json RunManager::results(const std::string& id, int maxPoints)
                            {"openfoam", kOpenFoamVersion},
                            {"referenceArea", info->referenceArea},
                            {"referenceLength", info->referenceLength},
+                           {"wheels", [&] {
+                                // Turning wheels (CAD-154): axle and tyre radius in mm.
+                                Json list = Json::array();
+                                for (const Wheel& w : info->wheels)
+                                    list.push_back({{"axle", w.axle}, {"radiusMm", 1000.0 * w.radius}});
+                                return list;
+                            }()},
                            {"characteristicLength", info->characteristicLength},
                            {"baseCellSize", info->baseCellSize},
                            {"geometryHash", std::to_string(info->geometryHash)},
@@ -1119,7 +1674,32 @@ Json RunManager::results(const std::string& id, int maxPoints)
                     {"pressureDragN", opt(tailMean(forces.column("pressure_x")))},
                     {"viscousDragN", opt(tailMean(forces.column("viscous_x")))},
                     {"iterations", coeffs.time.size()},
-                    {"averaging", "mean over the last 20 % of the iterations"}};
+                    {"averaging", "mean over the last 20 % of the iterations"},
+                    // Half of max − min over the same iterations (CAD-191).
+                    {"spread",
+                     {{"cd", opt(tailSpread(coeffs.column("Cd")))},
+                      {"cl", opt(tailSpread(coeffs.column("Cl")))},
+                      {"cs", opt(tailSpread(coeffs.column("Cs")))},
+                      {"dragN", opt(tailSpread(forces.column("total_x")))},
+                      {"liftN", opt(tailSpread(forces.column("total_z")))},
+                      {"sideN", opt(tailSpread(forces.column("total_y")))},
+                      {"frontLiftN", opt(tailSpread(axles ? &axles->front : nullptr))},
+                      {"rearLiftN", opt(tailSpread(axles ? &axles->rear : nullptr))},
+                      {"wheelDragN", opt(tailSpread(wheelColumn("total_x")))},
+                      {"wheelLiftN", opt(tailSpread(wheelColumn("total_z")))}}}};
+    // Aero balance (CAD-194): front / rear axle lift, and the front's share of the total when
+    // both pull the same way (a share of a lift split into up and down means nothing).
+    {
+        const auto front = tailMean(axles ? &axles->front : nullptr);
+        const auto rear = tailMean(axles ? &axles->rear : nullptr);
+        Json& summary = j["summary"];
+        summary["frontLiftN"] = opt(front);
+        summary["rearLiftN"] = opt(rear);
+        summary["frontShare"] =
+            front && rear && *front * *rear > 0.0 ? Json(100.0 * *front / (*front + *rear)) : Json(nullptr);
+        summary["wheelDragN"] = opt(tailMean(wheelColumn("total_x")));
+        summary["wheelLiftN"] = opt(tailMean(wheelColumn("total_z")));
+    }
 
     // Histories are useful while solving, but their current tail is not a final result.
     // Keep this gate independent of the numerical quality checks: even apparently good
@@ -1141,9 +1721,25 @@ Json RunManager::results(const std::string& id, int maxPoints)
     const bool finalAvailable = reasons.empty();
     j["finalResults"] = {{"available", finalAvailable}, {"reasons", reasons}};
     j["provisional"] = !finalAvailable;
-    if (!finalAvailable)
+    // While a run is still running, the same tail means over the iterations recorded so far
+    // (CAD-158), kept apart from `summary` so they never pass for final results or feed A/B.
+    j["current"] = nullptr;
+    if (!finalAvailable && st->state == RunState::Running && !coeffs.empty()) {
+        Json current = Json::object();
+        for (const char* key : resultKeys)
+            current[key] = j.at("summary").at(key);
+        current["iterations"] = coeffs.time.size();
+        j["current"] = current;
+    }
+    if (!finalAvailable) {
         for (const char* key : resultKeys)
             j["summary"][key] = nullptr;
+        // The optional final values too: the aero balance (CAD-194) and the swing (CAD-191)
+        // of a run that did not finish are no final results either.
+        for (const char* key : {"frontLiftN", "rearLiftN", "frontShare", "wheelDragN", "wheelLiftN"})
+            j["summary"][key] = nullptr;
+        j["summary"]["spread"] = nullptr;
+    }
 
     const auto ci = sampleIndices(coeffs.time.size(), maxPoints);
     const auto fi = sampleIndices(forces.time.size(), maxPoints);
@@ -1164,7 +1760,7 @@ Json RunManager::results(const std::string& id, int maxPoints)
     j["quality"] = assessQuality(run.caseDir).toJson();
 
     Json fields = Json::object();
-    for (const char* kind : {"surface", "sectionHorizontal", "sectionVertical", "streamlines"}) {
+    for (const char* kind : {"surface", "sectionHorizontal", "sectionVertical", "wake", "vortices", "streamlines"}) {
         const bool streamlines = std::string_view(kind) == "streamlines";
         const fs::path base = streamlines ? run.caseDir / "postProcessing" / "sets" / "streamLines"
                                           : run.caseDir / "postProcessing" / "surfaces";
@@ -1175,9 +1771,51 @@ Json RunManager::results(const std::string& id, int maxPoints)
         std::error_code ec;
         fields[kind] = !dirs.empty() && fs::is_regular_file(dirs.back() / file, ec);
     }
+    // Section stacks (CAD-148): the positions written by this run, for the result view's
+    // sliders. Runs made before them have none.
+    Json stacks = Json::array();
+    if (info && !info->partBounds.isEmpty()) {
+        const auto dirs = timeDirectories(run.caseDir / "postProcessing" / "surfaces");
+        const core::Vec3 size = info->partBounds.size();
+        for (const SectionStack& stack : sectionStacks()) {
+            Json positions = Json::array();
+            const int a = stack.axis - 'x';
+            const double extentMm = (a == 0 ? size.x : a == 1 ? size.y : size.z) * 1000.0;
+            for (std::size_t i = 0; i < stack.fractions.size(); ++i) {
+                const std::string name = sectionName(stack.axis, static_cast<int>(i));
+                std::error_code ec;
+                if (dirs.empty() || !fs::is_regular_file(dirs.back() / (name + ".vtk"), ec))
+                    continue;
+                const double f = stack.fractions[i];
+                // x: behind the part's front; y: beside its centre line; z: above its bottom.
+                const double mm = a == 1 ? (f - 0.5) * extentMm : f * extentMm;
+                positions.push_back({{"kind", name}, {"index", i}, {"fraction", f}, {"mm", mm}});
+            }
+            if (!positions.empty())
+                stacks.push_back({{"axis", std::string(1, stack.axis)},
+                                  {"defaultIndex", stack.defaultIndex},
+                                  {"lengthMm", extentMm},
+                                  {"positions", std::move(positions)}});
+        }
+    }
+    fields["sections"] = std::move(stacks);
     j["fields"] = std::move(fields);
     return j;
 }
+
+namespace {
+
+/// "sectionX_3" and the like: a plane of a section stack (CAD-148).
+bool isStackSection(std::string_view kind)
+{
+    for (const SectionStack& stack : sectionStacks())
+        for (std::size_t i = 0; i < stack.fractions.size(); ++i)
+            if (kind == sectionName(stack.axis, static_cast<int>(i)))
+                return true;
+    return false;
+}
+
+} // namespace
 
 PolyData RunManager::field(const std::string& id, std::string_view kind)
 {
@@ -1189,23 +1827,44 @@ PolyData RunManager::field(const std::string& id, std::string_view kind)
     const auto info = caseInfo(id);
     if (!info)
         throw std::runtime_error("Run '" + id + "' has no case.json");
-    fs::path base;
-    std::string file;
+    // Region kept around the part, in the case frame (CAD-129, CAD-135): sections and
+    // streamlines that span the whole wind tunnel would fill the view.
+    const core::BoundingBox region = resultRegion(*info, kind == "streamlines" ? 3.0 : 1.5);
+    PolyData d;
+    std::error_code ec;
     if (kind == "streamlines") {
-        base = run->caseDir / "postProcessing" / "sets" / "streamLines";
-        file = "track0.vtk";
-    } else if (kind == "surface" || kind == "sectionHorizontal" || kind == "sectionVertical") {
-        base = run->caseDir / "postProcessing" / "surfaces";
-        file = kind == "surface" ? "part.vtk" : std::string(kind) + ".vtk";
+        // The rake ahead of the part and, for runs since CAD-135, the wake rake behind it.
+        for (const char* set : {"streamLines", "wakeLines"}) {
+            const auto dirs = timeDirectories(run->caseDir / "postProcessing" / "sets" / set);
+            if (dirs.empty() || !fs::is_regular_file(dirs.back() / "track0.vtk", ec))
+                continue;
+            PolyData lines = readVtk(dirs.back() / "track0.vtk");
+            appendPolyData(d, region.isEmpty() ? lines : cropLines(lines, region));
+        }
+    } else if (kind == "surface" || kind == "sectionHorizontal" || kind == "sectionVertical" || kind == "wake" ||
+               kind == "vortices" || isStackSection(kind)) {
+        const auto dirs = timeDirectories(run->caseDir / "postProcessing" / "surfaces");
+        const std::string file = kind == "surface" ? "part.vtk" : std::string(kind) + ".vtk";
+        if (dirs.empty() || !fs::is_regular_file(dirs.back() / file, ec))
+            return {};
+        d = readVtk(dirs.back() / file);
+        if (kind != "surface" && !region.isEmpty())
+            d = cropPolygons(d, region);
+        // The total pressure is also lost in the boundary layer, so the isosurface wraps
+        // the whole part in a skin about a cell off its surface that would hide the
+        // pressure map; only what lies further away is the wake (CAD-165).
+        if (kind == "wake" && !d.empty() && fs::is_regular_file(dirs.back() / "part.vtk", ec))
+            d = dropNearPoints(d, readVtk(dirs.back() / "part.vtk").points, surfaceCellSize(*info));
+        // Q is also high in the boundary layer, which is a few cells thick (CAD-175).
+        if (kind == "vortices" && !d.empty() && fs::is_regular_file(dirs.back() / "part.vtk", ec))
+            d = dropNearPoints(d, readVtk(dirs.back() / "part.vtk").points, kVortexSkin * surfaceCellSize(*info));
     } else {
         throw std::runtime_error("Unknown field '" + std::string(kind) +
-                                 "' (surface, sectionHorizontal, sectionVertical, streamlines)");
+                                 "' (surface, sectionHorizontal, sectionVertical, wake, vortices, sectionX_<i>, sectionY_<i>, "
+                                 "sectionZ_<i>, streamlines)");
     }
-    const auto dirs = timeDirectories(base);
-    std::error_code ec;
-    if (dirs.empty() || !fs::is_regular_file(dirs.back() / file, ec))
+    if (d.empty())
         return {};
-    PolyData d = readVtk(dirs.back() / file);
     for (auto& p : d.points)
         p = info->frame.toModel(p);
     const double q = 0.5 * info->settings.speed * info->settings.speed;
@@ -1228,6 +1887,17 @@ PolyData RunManager::field(const std::string& id, std::string_view kind)
         d.scalars["pressure"] = std::move(pa);
     }
     return d;
+}
+
+PolyData RunManager::surfaceDifference(const std::string& a, const std::string& b)
+{
+    const PolyData pa = field(a, "surface");
+    const PolyData pb = field(b, "surface");
+    if (pa.empty() || pb.empty())
+        return {};
+    const auto info = caseInfo(a);
+    const double size = info ? info->characteristicLength * 1000.0 : 0.0; // Model space is mm.
+    return cfd::surfaceDifference(pa, pb, std::max(size * 0.01, 1e-6));
 }
 
 bool RunManager::startImagePull(const fs::path& docker, const std::string& host)
@@ -1319,6 +1989,16 @@ Json RunManager::meshSensitivity(const std::string& a, const std::string& b)
     if (!infoA)
         return Json{{"status", "not assessed"}, {"levels", Json::array()}, {"message", "No case information."}};
     const std::string own(meshLevelName(infoA->settings.mesh));
+    // A repeat run (same part, surroundings and conditions): the A/B difference is run-to-run
+    // noise, and A and B share their runs on other levels, so there is nothing to check (CAD-120).
+    const auto infoB = caseInfo(b);
+    if (infoB && infoB->geometryHash == infoA->geometryHash &&
+        differingConditions(toJson(infoA->settings), toJson(infoB->settings)).empty())
+        return Json{{"status", "same case"},
+                    {"levels", Json::array()},
+                    {"message",
+                     "A and B are the same case (same part, surroundings and conditions), so their "
+                     "difference is run-to-run variation: there is no difference to check on another mesh."}};
     auto othersA = sameCaseOnOtherMeshes(a);
     auto othersB = sameCaseOnOtherMeshes(b);
 
@@ -1335,6 +2015,13 @@ Json RunManager::meshSensitivity(const std::string& a, const std::string& b)
                 best = r.id;
         return best;
     };
+    // Runs of the mesh check still running, so the comparison can show their progress.
+    std::set<std::string> runningIds;
+    auto collectRunning = [&](const std::vector<RunStatus>& runs) {
+        for (const RunStatus& r : runs)
+            if (r.state == RunState::Running)
+                runningIds.insert(r.id);
+    };
     for (const auto& [mesh, runsA] : othersA) {
         const auto itB = othersB.find(mesh);
         const auto fa = newestFinished(runsA);
@@ -1343,15 +2030,14 @@ Json RunManager::meshSensitivity(const std::string& a, const std::string& b)
             pairs.push_back({mesh, *fa, *fb});
             continue;
         }
-        auto running = [](const std::vector<RunStatus>& runs) {
-            return std::any_of(runs.begin(), runs.end(), [](const RunStatus& r) { return r.state == RunState::Running; });
-        };
-        pending = pending || running(runsA) || (itB != othersB.end() && running(itB->second));
+        collectRunning(runsA);
+        if (itB != othersB.end())
+            collectRunning(itB->second);
     }
     for (const auto& [mesh, runsB] : othersB)
         if (othersA.count(mesh) == 0)
-            pending = pending || std::any_of(runsB.begin(), runsB.end(),
-                                             [](const RunStatus& r) { return r.state == RunState::Running; });
+            collectRunning(runsB);
+    pending = !runningIds.empty();
     std::sort(pairs.begin(), pairs.end(), [](const Pair& x, const Pair& y) { return meshRank(x.mesh) < meshRank(y.mesh); });
 
     Json levels = Json::array();
@@ -1379,6 +2065,8 @@ Json RunManager::meshSensitivity(const std::string& a, const std::string& b)
     const bool complete = differences["dragN"].size() == pairs.size() && differences["liftN"].size() == pairs.size();
     if (pairs.size() < 2 || !complete) {
         j["status"] = pending ? "pending" : "not assessed";
+        if (pending)
+            j["runningRuns"] = runningIds;
         const int rank = meshRank(own);
         const std::string next = rank < 2 ? std::string(meshLevelName(static_cast<MeshLevel>(rank + 1)))
                                           : std::string(meshLevelName(static_cast<MeshLevel>(rank - 1)));
@@ -1480,10 +2168,41 @@ Json RunManager::compare(const std::string& a, const std::string& b)
         if (!sameDomain) {
             diff.emplace_back("domain");
             const double cell = std::max(ca.value("baseCellSize", 0.0), cb.value("baseCellSize", 0.0));
+            // Name what sized the domains differently (CAD-159): the part, the surroundings or the floor.
+            std::vector<std::string> causes;
+            // geometryHash also covers the surroundings, so the part's own size and placement
+            // decide whether the part is a cause.
+            const auto infoA = caseInfo(a), infoB = caseInfo(b);
+            auto near = [](const core::Vec3& p, const core::Vec3& q, double tol) {
+                return std::abs(p.x - q.x) <= tol && std::abs(p.y - q.y) <= tol && std::abs(p.z - q.z) <= tol;
+            };
+            // In model coordinates (mm): the case frame turns with the flow direction.
+            auto modelBox = [](const CaseInfo& info) {
+                const core::Vec3 p = info.frame.toModel(info.partBounds.min);
+                const core::Vec3 q = info.frame.toModel(info.partBounds.max);
+                return std::pair{core::Vec3{std::min(p.x, q.x), std::min(p.y, q.y), std::min(p.z, q.z)},
+                                 core::Vec3{std::max(p.x, q.x), std::max(p.y, q.y), std::max(p.z, q.z)}};
+            };
+            bool partDiffers = !infoA || !infoB;
+            if (!partDiffers) {
+                const auto boxA = modelBox(*infoA), boxB = modelBox(*infoB);
+                partDiffers = !near(boxA.first, boxB.first, 1e-3) || !near(boxA.second, boxB.second, 1e-3);
+            }
+            if (partDiffers)
+                causes.emplace_back("the part differs in size or position");
+            if (std::find(diff.begin(), diff.end(), "flowDirection") != diff.end())
+                causes.emplace_back("the flow direction differs");
+            if (ctxA != ctxB)
+                causes.emplace_back("the surroundings differ");
+            if (std::any_of(diff.begin(), diff.end(),
+                            [](const std::string& c) { return c == "ground" || c == "groundHeight"; }))
+                causes.emplace_back("the floor differs");
+            std::string because = causes.empty() ? "the geometry differs in size or position" : causes[0];
+            for (std::size_t k = 1; k < causes.size(); ++k)
+                because += (k + 1 == causes.size() ? " and " : ", ") + causes[k];
             notes.emplace_back("The flow domains differ by up to " + std::to_string(std::lround(worst * 1000.0)) +
-                               " mm (" + (worst <= cell ? "within" : "more than") +
-                               " one background cell), because the geometry differs in size or position; forces "
-                               "are compared on different domains.");
+                               " mm (" + (worst <= cell ? "within" : "more than") + " one background cell), because " +
+                               because + "; forces are compared on different domains.");
         }
     }
     j["sameDomain"] = sameDomain;
@@ -1502,6 +2221,22 @@ Json RunManager::compare(const std::string& a, const std::string& b)
                            " was not recorded (older case), so it could not be compared.");
     j["sameConditions"] = diff.empty() && unknown.empty();
     j["differingConditions"] = diff;
+    // The same, in words and with each run's value, for the panel (CAD-159).
+    Json changes = Json::array();
+    for (const auto& c : diff) {
+        if (c == "context")
+            changes.push_back("Surroundings: different context geometry in the flow");
+        else if (c == "engine")
+            changes.push_back("OpenFOAM version: A " +
+                              (engineA.is_string() ? engineA.get<std::string>() : engineA.dump()) + ", B " +
+                              (engineB.is_string() ? engineB.get<std::string>() : engineB.dump()));
+        else if (c == "domain")
+            changes.push_back("Flow domain: different size or position (see below)");
+        else
+            changes.push_back(
+                describeCondition(c, ca.value("settings", Json::object()), cb.value("settings", Json::object())));
+    }
+    j["conditionChanges"] = std::move(changes);
     j["unknownConditions"] = unknown;
     // Only a domain difference still allows comparing the forces (a target-part variant).
     const bool blocking = !unknown.empty() || std::any_of(diff.begin(), diff.end(), [](const std::string& c) {
@@ -1513,16 +2248,62 @@ Json RunManager::compare(const std::string& a, const std::string& b)
         notes.emplace_back("The parts differ in size by more than 10 %, so the domain and mesh sizes differ too.");
 
     const Json sa = ra.at("summary"), sb = rb.at("summary");
+    // CAD-191: a difference no larger than the swing of A plus the swing of B over the
+    // averaging window is inside the iteration noise. scaleB puts B's swing on A's area.
+    auto addNoise = [&](Json& d, const char* key, double scaleB) {
+        // The spread is null for a run without final results.
+        auto spread = [&](const Json& summary) {
+            const Json p = summary.value("spread", Json());
+            return p.is_object() ? p.value(key, Json()) : Json();
+        };
+        const Json pa = spread(sa), pb = spread(sb);
+        if (!pa.is_number() || !pb.is_number())
+            return;
+        const double noise = pa.get<double>() + pb.get<double>() * scaleB;
+        d["noise"] = noise;
+        d["withinNoise"] = std::abs(d.at("difference").get<double>()) <= noise;
+    };
     Json deltas = Json::object();
-    for (const char* key : {"dragN", "liftN", "sideN", "pressureDragN", "viscousDragN"}) {
-        if (sa.at(key).is_number() && sb.at(key).is_number()) {
+    for (const char* key : {"dragN", "liftN", "sideN", "pressureDragN", "viscousDragN", "frontLiftN", "rearLiftN",
+                            "wheelDragN", "wheelLiftN"}) {
+        if (sa.value(key, Json()).is_number() && sb.value(key, Json()).is_number()) {
             const double va = sa.at(key).get<double>(), vb = sb.at(key).get<double>();
             Json d{{"a", va}, {"b", vb}, {"difference", vb - va}};
             d["percent"] = std::abs(va) > 1e-12 ? Json(100.0 * (vb - va) / std::abs(va)) : Json(nullptr);
+            addNoise(d, key, 1.0);
             deltas[key] = std::move(d);
         }
     }
+    for (const auto& [key, name] : {std::pair{"dragN", "drag"}, std::pair{"liftN", "lift"}}) {
+        // Equal values in steady runs (no swing) are no change, not noise.
+        if (!deltas.contains(key) || !deltas[key].value("withinNoise", false) ||
+            !(deltas[key].value("noise", 0.0) > 0.0))
+            continue;
+        char text[160];
+        std::snprintf(text, sizeof text,
+                      "The %s difference (%+.3g N) is within the iteration swing of the runs (±%.3g N)", name,
+                      deltas[key].at("difference").get<double>(), deltas[key].at("noise").get<double>());
+        notes.emplace_back(std::string(text) + ": it may be noise, not a real change.");
+    }
     j["forces"] = std::move(deltas);
+    // Efficiency L/D = |lift| / drag (CAD-187), only with a positive drag in both runs.
+    auto efficiency = [](const Json& summary) -> std::optional<double> {
+        const Json d = summary.value("dragN", Json()), l = summary.value("liftN", Json());
+        if (!d.is_number() || !l.is_number() || !(d.get<double>() > 0.0))
+            return std::nullopt;
+        return std::abs(l.get<double>()) / d.get<double>();
+    };
+    if (const auto ea = efficiency(sa), eb = efficiency(sb); ea && eb) {
+        Json e{{"a", *ea}, {"b", *eb}, {"difference", *eb - *ea}};
+        e["percent"] = *ea > 1e-12 ? Json(100.0 * (*eb - *ea) / *ea) : Json(nullptr);
+        j["efficiency"] = std::move(e);
+    }
+    // Aero balance shift (CAD-197): the front share of lift in % of each run and B − A in
+    // percentage points; only when both runs have a balance (cars with two axles).
+    if (const Json fa = sa.value("frontShare", Json()), fb = sb.value("frontShare", Json());
+        fa.is_number() && fb.is_number())
+        j["balance"] = {
+            {"a", fa}, {"b", fb}, {"difference", fb.get<double>() - fa.get<double>()}, {"percent", nullptr}};
     // Coefficients of B on A's reference area, so Cd/Cl compare like the forces do.
     Json coeffs = Json::object();
     for (const char* key : {"cd", "cl", "cs"}) {
@@ -1530,12 +2311,20 @@ Json RunManager::compare(const std::string& a, const std::string& b)
             const double va = sa.at(key).get<double>();
             const double vb = sb.at(key).get<double>() * areaB / areaA;
             coeffs[key] = {{"a", va}, {"b", vb}, {"difference", vb - va}};
+            addNoise(coeffs[key], key, areaB / areaA);
         }
     }
     j["coefficientsOnReferenceAreaOfA"] = std::move(coeffs);
-    if (areaA > 0 && areaB > 0 && std::abs(areaA - areaB) > 1e-9 * std::max(areaA, areaB))
-        notes.emplace_back("Reference areas differ (" + std::to_string(areaA) + " vs " + std::to_string(areaB) +
-                           " m^2); coefficients of B are rescaled to the area of A.");
+    if (areaA > 0 && areaB > 0 && std::abs(areaA - areaB) > 1e-9 * std::max(areaA, areaB)) {
+        // Not a differing condition (CAD-186): it only scales the coefficients.
+        auto cm2 = [](double m2) {
+            char text[32];
+            std::snprintf(text, sizeof text, "%.4g", m2 * 1e4);
+            return std::string(text) + " cm²";
+        };
+        notes.emplace_back("Reference areas differ (A " + cm2(areaA) + ", B " + cm2(areaB) +
+                           "): Cd/Cl/Cs of B are rescaled to the area of A; forces in N do not depend on it.");
+    }
     j["quality"] = {{"a", ra.at("quality")}, {"b", rb.at("quality")}};
     const Json sensitivity = finalAvailable && !blocking
                                  ? meshSensitivity(a, b)

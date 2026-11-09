@@ -70,6 +70,14 @@ Json selectionSummary(const model::Part& p, bool includeTriangles = false)
              {"selectedTriangles", sel.size()},
              {"totalTriangles", p.mesh ? p.mesh->triangleCount() : 0},
              {"areaMm2", p.mesh ? core::selectionArea(*p.mesh, sel) : 0.0}};
+    if (p.mesh && !sel.empty()) {
+        const core::BoundingBox box = core::selectionBounds(*p.mesh, sel);
+        if (!box.isEmpty())
+            out["bounds"] = {{"min", {box.min.x, box.min.y, box.min.z}},
+                             {"max", {box.max.x, box.max.y, box.max.z}},
+                             {"center", {box.center().x, box.center().y, box.center().z}},
+                             {"diagonal", box.diagonal()}};
+    }
     if (includeTriangles)
         out["triangles"] = sel;
     return out;
@@ -93,8 +101,8 @@ Json applySelection(CommandContext& ctx, const model::Part& part, core::Triangle
 void registerSelectionCommands(CommandRegistry& r)
 {
     r.add({"selection.get", "Get selection",
-           "Returns the region selection of a part: number of selected triangles, their area, and optionally the "
-           "triangle indices.",
+           "Returns the region selection of a part: number of selected triangles, their area, their bounds "
+           "(min, max, center, diagonal; when something is selected), and optionally the triangle indices.",
            objectSchema({{"id", idParam()},
                          {"includeTriangles",
                           {{"type", "boolean"}, {"description", "Include triangle indices. Default false."}}}},

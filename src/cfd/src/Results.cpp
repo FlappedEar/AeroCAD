@@ -2,10 +2,12 @@
 #include "aerocad/cfd/Results.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <charconv>
 #include <cmath>
 #include <fstream>
+#include <iomanip>
 #include <limits>
 #include <locale>
 #include <sstream>
@@ -226,6 +228,237 @@ PolyData readVtk(const fs::path& path)
     return data;
 }
 
+namespace {
+
+/// The polygons of `data` whose centre passes `keep`, with only the points they use
+/// (scalars and vectors follow). Lines are dropped.
+template <typename Keep>
+PolyData keepPolygons(const PolyData& data, Keep keep)
+{
+    PolyData out;
+    constexpr auto unused = std::numeric_limits<std::uint32_t>::max();
+    std::vector<std::uint32_t> remap(data.points.size(), unused);
+    std::vector<std::uint32_t> kept; // Old indices of the kept points, in new order.
+    for (const auto& poly : data.polygons) {
+        if (poly.empty())
+            continue;
+        core::Vec3 c;
+        for (const auto i : poly)
+            c = c + data.points[i];
+        if (!keep(c * (1.0 / static_cast<double>(poly.size()))))
+            continue;
+        std::vector<std::uint32_t> mapped;
+        mapped.reserve(poly.size());
+        for (const auto i : poly) {
+            if (remap[i] == unused) {
+                remap[i] = static_cast<std::uint32_t>(kept.size());
+                kept.push_back(i);
+            }
+            mapped.push_back(remap[i]);
+        }
+        out.polygons.push_back(std::move(mapped));
+    }
+    out.points.reserve(kept.size());
+    for (const auto i : kept)
+        out.points.push_back(data.points[i]);
+    for (const auto& [name, values] : data.scalars) {
+        auto& v = out.scalars[name];
+        v.reserve(kept.size());
+        for (const auto i : kept)
+            v.push_back(i < values.size() ? values[i] : std::nan(""));
+    }
+    for (const auto& [name, values] : data.vectors) {
+        auto& v = out.vectors[name];
+        v.reserve(kept.size());
+        for (const auto i : kept)
+            v.push_back(i < values.size() ? values[i] : core::Vec3{});
+    }
+    return out;
+}
+
+} // namespace
+
+PolyData cropPolygons(const PolyData& data, const core::BoundingBox& box)
+{
+    return keepPolygons(data, [&](const core::Vec3& p) {
+        return p.x >= box.min.x && p.x <= box.max.x && p.y >= box.min.y && p.y <= box.max.y &&
+               p.z >= box.min.z && p.z <= box.max.z;
+    });
+}
+
+PolyData dropNearPoints(const PolyData& data, const std::vector<core::Vec3>& points, double distance)
+{
+    if (points.empty() || !(distance > 0.0))
+        return data;
+    // Points hashed on a grid of `distance` cells: a closer point lies in one of the 27
+    // cells around the query.
+    const auto cellOf = [&](const core::Vec3& p) {
+        return std::array<long, 3>{static_cast<long>(std::floor(p.x / distance)),
+                                   static_cast<long>(std::floor(p.y / distance)),
+                                   static_cast<long>(std::floor(p.z / distance))};
+    };
+    std::map<std::array<long, 3>, std::vector<core::Vec3>> grid;
+    for (const auto& p : points)
+        grid[cellOf(p)].push_back(p);
+    const double d2 = distance * distance;
+    return keepPolygons(data, [&](const core::Vec3& p) {
+        const auto c = cellOf(p);
+        for (long dx = -1; dx <= 1; ++dx)
+            for (long dy = -1; dy <= 1; ++dy)
+                for (long dz = -1; dz <= 1; ++dz) {
+                    const auto it = grid.find({c[0] + dx, c[1] + dy, c[2] + dz});
+                    if (it == grid.end())
+                        continue;
+                    for (const auto& q : it->second) {
+                        const core::Vec3 v = q - p;
+                        if (v.dot(v) < d2)
+                            return false;
+                    }
+                }
+        return true;
+    });
+}
+
+PolyData cropLines(const PolyData& data, const core::BoundingBox& box)
+{
+    PolyData out;
+    constexpr auto unused = std::numeric_limits<std::uint32_t>::max();
+    std::vector<std::uint32_t> remap(data.points.size(), unused);
+    std::vector<std::uint32_t> kept;
+    auto inside = [&](const core::Vec3& p) {
+        return p.x >= box.min.x && p.x <= box.max.x && p.y >= box.min.y && p.y <= box.max.y &&
+               p.z >= box.min.z && p.z <= box.max.z;
+    };
+    for (const auto& line : data.lines) {
+        std::vector<std::uint32_t> piece;
+        auto flush = [&] {
+            if (piece.size() >= 2)
+                out.lines.push_back(piece);
+            piece.clear();
+        };
+        for (const auto i : line) {
+            if (i >= data.points.size() || !inside(data.points[i])) {
+                flush();
+                continue;
+            }
+            if (remap[i] == unused) {
+                remap[i] = static_cast<std::uint32_t>(kept.size());
+                kept.push_back(i);
+            }
+            piece.push_back(remap[i]);
+        }
+        flush();
+    }
+    out.points.reserve(kept.size());
+    for (const auto i : kept)
+        out.points.push_back(data.points[i]);
+    for (const auto& [name, values] : data.scalars) {
+        auto& v = out.scalars[name];
+        for (const auto i : kept)
+            v.push_back(i < values.size() ? values[i] : std::nan(""));
+    }
+    for (const auto& [name, values] : data.vectors) {
+        auto& v = out.vectors[name];
+        for (const auto i : kept)
+            v.push_back(i < values.size() ? values[i] : core::Vec3{});
+    }
+    return out;
+}
+
+void appendPolyData(PolyData& data, const PolyData& other)
+{
+    if (other.empty())
+        return;
+    if (data.empty()) {
+        data = other;
+        return;
+    }
+    const auto offset = static_cast<std::uint32_t>(data.points.size());
+    const std::size_t before = data.points.size();
+    data.points.insert(data.points.end(), other.points.begin(), other.points.end());
+    auto shifted = [offset](std::vector<std::uint32_t> v) {
+        for (auto& i : v)
+            i += offset;
+        return v;
+    };
+    for (const auto& p : other.polygons)
+        data.polygons.push_back(shifted(p));
+    for (const auto& l : other.lines)
+        data.lines.push_back(shifted(l));
+    for (auto it = data.scalars.begin(); it != data.scalars.end();) {
+        auto o = other.scalars.find(it->first);
+        if (o == other.scalars.end()) {
+            it = data.scalars.erase(it);
+            continue;
+        }
+        it->second.resize(before, std::nan(""));
+        it->second.insert(it->second.end(), o->second.begin(), o->second.end());
+        it->second.resize(data.points.size(), std::nan(""));
+        ++it;
+    }
+    for (auto it = data.vectors.begin(); it != data.vectors.end();) {
+        auto o = other.vectors.find(it->first);
+        if (o == other.vectors.end()) {
+            it = data.vectors.erase(it);
+            continue;
+        }
+        it->second.resize(before);
+        it->second.insert(it->second.end(), o->second.begin(), o->second.end());
+        it->second.resize(data.points.size());
+        ++it;
+    }
+}
+
+PolyData surfaceDifference(const PolyData& a, const PolyData& b, double maxDistance)
+{
+    PolyData out;
+    out.points = a.points;
+    out.polygons = a.polygons;
+    if (a.empty() || b.empty() || !(maxDistance > 0))
+        return out;
+    // Uniform grid over b with cells of maxDistance: the nearest point within maxDistance
+    // is in the 27 cells around the query.
+    auto key = [maxDistance](const core::Vec3& p) {
+        return std::array<std::int64_t, 3>{static_cast<std::int64_t>(std::floor(p.x / maxDistance)),
+                                           static_cast<std::int64_t>(std::floor(p.y / maxDistance)),
+                                           static_cast<std::int64_t>(std::floor(p.z / maxDistance))};
+    };
+    std::map<std::array<std::int64_t, 3>, std::vector<std::uint32_t>> grid;
+    for (std::uint32_t i = 0; i < b.points.size(); ++i)
+        grid[key(b.points[i])].push_back(i);
+    std::vector<std::int64_t> nearest(a.points.size(), -1);
+    for (std::size_t i = 0; i < a.points.size(); ++i) {
+        const auto k = key(a.points[i]);
+        double best = maxDistance * maxDistance;
+        for (std::int64_t dx = -1; dx <= 1; ++dx)
+            for (std::int64_t dy = -1; dy <= 1; ++dy)
+                for (std::int64_t dz = -1; dz <= 1; ++dz) {
+                    const auto it = grid.find({k[0] + dx, k[1] + dy, k[2] + dz});
+                    if (it == grid.end())
+                        continue;
+                    for (const auto j : it->second) {
+                        const core::Vec3 d = b.points[j] - a.points[i];
+                        const double d2 = d.dot(d);
+                        if (d2 <= best) {
+                            best = d2;
+                            nearest[i] = j;
+                        }
+                    }
+                }
+    }
+    for (const auto& [name, av] : a.scalars) {
+        const auto bit = b.scalars.find(name);
+        if (bit == b.scalars.end())
+            continue;
+        auto& dv = out.scalars["d" + name];
+        dv.resize(a.points.size(), std::nan(""));
+        for (std::size_t i = 0; i < a.points.size(); ++i)
+            if (nearest[i] >= 0 && i < av.size() && static_cast<std::size_t>(nearest[i]) < bit->second.size())
+                dv[i] = bit->second[static_cast<std::size_t>(nearest[i])] - av[i];
+    }
+    return out;
+}
+
 std::vector<fs::path> timeDirectories(const fs::path& dir)
 {
     std::vector<std::pair<double, fs::path>> found;
@@ -249,14 +482,17 @@ Json QualityReport::toJson() const
 {
     Json j{{"status", status},
            {"solverConverged", solverConverged},
+           {"forcesSettled", forcesSettled},
            {"failedMeshChecks", failedMeshChecks},
            {"finalResiduals", finalResiduals},
            {"checks", checks},
            {"warnings", warnings}};
     j["meshOk"] = meshOk ? Json(*meshOk) : Json(nullptr);
     j["cells"] = cells ? Json(*cells) : Json(nullptr);
+    j["iterations"] = iterations ? Json(*iterations) : Json(nullptr);
     j["continuityError"] = continuityError ? Json(*continuityError) : Json(nullptr);
     j["cdFluctuation"] = cdFluctuation ? Json(*cdFluctuation) : Json(nullptr);
+    j["cdDrift"] = cdDrift ? Json(*cdDrift) : Json(nullptr);
     return j;
 }
 
@@ -347,13 +583,18 @@ QualityReport assessQuality(const fs::path& caseDir)
     if (lastStep.starts_with("Time = "))
         iteration = numberAfter(lastStep, "Time = ");
     q.solverConverged = lastStep.find("SIMPLE solution converged") != std::string_view::npos;
+    // runTimeControl forcesSettled (CaseWriter) ends the run once the forces have settled.
+    q.forcesSettled = !q.solverConverged && lastStep.find("forces condition satisfied") != std::string_view::npos &&
+                      lastStep.find("Stopping calculation") != std::string_view::npos;
+    if (iteration && std::isfinite(*iteration))
+        q.iterations = static_cast<int>(*iteration);
     const bool ended = lastStep.find("\nEnd\n") != std::string_view::npos || lastStep.ends_with("\nEnd");
     if (lastStep.find("FOAM FATAL") != std::string_view::npos) {
         q.solverConverged = false;
         record("convergence", "failed", "solver: fatal error in the final solver step");
     } else if (!ended || !iteration || !std::isfinite(*iteration)) {
         record("convergence", "missing", "solver: missing or incomplete final solver log");
-    } else if (!q.solverConverged) {
+    } else if (!q.solverConverged && !q.forcesSettled) {
         record("convergence", "failed", "solver: finished without reaching the preset convergence targets");
     } else {
         record("convergence", "passed");
@@ -384,7 +625,10 @@ QualityReport assessQuality(const fs::path& caseDir)
             record(name, "failed", std::string(field) + ": invalid residual data");
         } else if (!col || col->empty() || residuals.incomplete || !iteration || residuals.time.back() != *iteration) {
             record(name, "missing", std::string(field) + ": no complete residual for the final solver step");
-        } else if (const double target = std::string_view(field) == "p" ? 1e-4 : 1e-5; col->back() >= target) {
+        } else if (q.forcesSettled && col->back() >= 1e-3) {
+            record(name, "failed", std::string(field) + ": residual has not reached the preset target 1e-3");
+        } else if (const double target = std::string_view(field) == "p" ? 1e-4 : 1e-5;
+                   !q.forcesSettled && col->back() >= target) {
             // Match external-flow-v1 residualControl in CaseWriter, including velocity and turbulence.
             record(name, "failed", std::string(field) + ": residual has not reached the preset target " +
                                       (std::string_view(field) == "p" ? "1e-4" : "1e-5"));
@@ -407,18 +651,25 @@ QualityReport assessQuality(const fs::path& caseDir)
     // Keep a usable Cd diagnostic even when other required evidence is missing.
     if (const auto* cd = coeffs.column("Cd"); !invalidCoefficients && cd && cd->size() >= 20) {
         const std::size_t start = cd->size() - std::max<std::size_t>(cd->size() / 5, 10);
-        double lo = std::numeric_limits<double>::max(), hi = std::numeric_limits<double>::lowest(), sum = 0;
+        const std::size_t half = start + (cd->size() - start) / 2;
+        double lo = std::numeric_limits<double>::max(), hi = std::numeric_limits<double>::lowest(), sum = 0,
+               firstHalf = 0;
         for (std::size_t i = start; i < cd->size(); ++i) {
             lo = std::min(lo, (*cd)[i]);
             hi = std::max(hi, (*cd)[i]);
             sum += (*cd)[i];
+            if (i < half)
+                firstHalf += (*cd)[i];
         }
         const double mean = sum / static_cast<double>(cd->size() - start);
+        const double drift = std::abs((sum - firstHalf) / static_cast<double>(cd->size() - half) -
+                                      firstHalf / static_cast<double>(half - start));
         if (!std::isfinite(sum) || !std::isfinite(hi - lo)) {
             invalidCoefficients = true;
         } else if (std::abs(mean) > 1e-12) {
             q.cdFluctuation = (hi - lo) / std::abs(mean);
-            invalidCoefficients = !std::isfinite(*q.cdFluctuation);
+            q.cdDrift = drift / std::abs(mean);
+            invalidCoefficients = !std::isfinite(*q.cdFluctuation) || !std::isfinite(*q.cdDrift);
         }
     }
     if (invalidCoefficients) {
@@ -429,6 +680,15 @@ QualityReport assessQuality(const fs::path& caseDir)
     } else if (!q.cdFluctuation) {
         record("forceStability", "missing",
                "force coefficients: Cd is too close to zero to assess relative fluctuation");
+    } else if (*q.cdFluctuation > 0.02 && q.cdDrift && *q.cdDrift < 0.01) {
+        // CAD-168: a band of more than 2 % without a drift is an oscillation around a
+        // steady mean, which is what the results report; the band still fails the check.
+        std::ostringstream t;
+        t.imbue(std::locale::classic());
+        t << std::fixed << std::setprecision(1) << "Cd oscillates by " << *q.cdFluctuation * 100.0
+          << " % (more than 2 %) over the last 20 % of the iterations around a steady mean (drift "
+          << *q.cdDrift * 100.0 << " %); the results are that mean";
+        record("forceStability", "failed", t.str());
     } else if (*q.cdFluctuation > 0.02) {
         record("forceStability", "failed",
                "Cd still changes by more than 2 % over the last 20 % of the iterations");

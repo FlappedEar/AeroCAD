@@ -59,7 +59,7 @@ Pane {
         Keys.onEscapePressed: {
             typed = false
             text = root.fmt(value, decimals)
-            root.viewport.finishTransform(false)
+            root.viewport.cancelTransform()
         }
     }
 
@@ -102,17 +102,17 @@ Pane {
             ValueField {
                 objectName: "moveX"
                 value: root.viewport.transformMove.x
-                onEdited: v => root.viewport.transformMove = Qt.vector3d(v, root.viewport.transformMove.y, root.viewport.transformMove.z)
+                onEdited: v => { root.viewport.transformMove = Qt.vector3d(v, root.viewport.transformMove.y, root.viewport.transformMove.z); root.viewport.keepPreviewInView() }
             }
             ValueField {
                 objectName: "moveY"
                 value: root.viewport.transformMove.y
-                onEdited: v => root.viewport.transformMove = Qt.vector3d(root.viewport.transformMove.x, v, root.viewport.transformMove.z)
+                onEdited: v => { root.viewport.transformMove = Qt.vector3d(root.viewport.transformMove.x, v, root.viewport.transformMove.z); root.viewport.keepPreviewInView() }
             }
             ValueField {
                 objectName: "moveZ"
                 value: root.viewport.transformMove.z
-                onEdited: v => root.viewport.transformMove = Qt.vector3d(root.viewport.transformMove.x, root.viewport.transformMove.y, v)
+                onEdited: v => { root.viewport.transformMove = Qt.vector3d(root.viewport.transformMove.x, root.viewport.transformMove.y, v); root.viewport.keepPreviewInView() }
             }
 
             Label { text: qsTr("Rotate (°)") }
@@ -141,8 +141,38 @@ Pane {
                 visible: root.t ? root.t.canScale : false
                 decimals: 1
                 value: root.viewport.transformScale * 100
-                onEdited: v => { if (v > 0) root.viewport.transformScale = v / 100 }
+                onEdited: v => { if (v > 0) { root.viewport.transformScale = v / 100; root.viewport.keepPreviewInView() } }
             }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            Button {
+                objectName: "layOnFace"
+                text: qsTr("Lay on Face")
+                checkable: true
+                checked: root.viewport.transformPickMode === "lay"
+                onClicked: root.viewport.transformPickMode = checked ? "lay" : ""
+                ToolTip.visible: hovered
+                ToolTip.delay: 500
+                ToolTip.text: qsTr("Click a face of the part: it is laid down on that face, on the ground")
+            }
+            Button {
+                objectName: "faceFront"
+                text: qsTr("Face Front")
+                checkable: true
+                checked: root.viewport.transformPickMode === "front"
+                onClicked: root.viewport.transformPickMode = checked ? "front" : ""
+                ToolTip.visible: hovered
+                ToolTip.delay: 500
+                ToolTip.text: qsTr("Click a face of the part: it turns to the front, where the wind tunnel air comes from (+Y flow)")
+            }
+        }
+        Label {
+            visible: root.viewport.transformPickMode !== ""
+            text: qsTr("Click a face of the part (Esc: back).")
+            color: Theme.accent
+            font.pixelSize: Theme.fontSmall
         }
 
         RowLayout {
@@ -155,7 +185,7 @@ Pane {
             Item { Layout.fillWidth: true }
             Button {
                 text: qsTr("Cancel")
-                onClicked: root.viewport.finishTransform(false)
+                onClicked: root.viewport.cancelTransform()
             }
             Button {
                 text: qsTr("Done")

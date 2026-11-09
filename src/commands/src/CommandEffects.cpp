@@ -50,6 +50,9 @@ void declareCommandEffects(CommandRegistry& r)
     importRun.readsFiles = true;
     importRun.writesFiles = true; // registers the case in the runs folder
 
+    CommandEffects saveRunLabel;
+    saveRunLabel.writesFiles = true; // run.json of the run
+
     // Undoable, but removes user data from the document.
     CommandEffects removePart;
     removePart.destructive = true;
@@ -71,6 +74,9 @@ void declareCommandEffects(CommandRegistry& r)
         {"simulation.install_engine", installEngine},
         {"simulation.delete", deleteRun},
         {"simulation.import", importRun},
+        {"simulation.export_results", writeFiles},
+        {"simulation.export_comparison", writeFiles},
+        {"simulation.rename", saveRunLabel},
     };
     for (const auto& [name, effects] : table)
         r.setEffects(name, effects);

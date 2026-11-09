@@ -72,6 +72,26 @@ TEST_CASE("Sketch and extrude a new body", "[cad][design]")
     CHECK(d.sketches().at(sk).consumed);
 }
 
+TEST_CASE("Extrude taper angle", "[cad][design]")
+{
+    Design d;
+    d.setParameter("draft", "3");
+    const auto sk = d.addFeature("sketch", rectSketch(40, 20));
+    const auto ex = d.addFeature("extrude", {{"sketch", sk}, {"distance", 10}, {"taper", "draft"}});
+    CHECK(bodyVolume(d, ex) < 8000);
+    CHECK(bodyVolume(d, ex) > 7000);
+    const auto sym = d.addFeature("extrude", {{"sketch", sk}, {"distance", 5}, {"extent", "symmetric"}, {"taper", 3},
+                                              {"operation", "new_body"}});
+    // Each 5 mm half narrows from the full profile, so less is drafted away than over 10 mm.
+    CHECK(bodyVolume(d, sym) > bodyVolume(d, ex));
+    CHECK(bodyVolume(d, sym) < 8000);
+    CHECK_THROWS_AS(d.editFeature(ex, {{"taper", 60}}), cad::DesignError); // closes up
+    CHECK(d.evaluate(d.feature(ex)->params.at("taper")) == Approx(3));
+    CHECK_THROWS_AS(d.addFeature("extrude", {{"sketch", sk}, {"extent", "to_object"}, {"to", {{"body", ex}}},
+                                             {"taper", 2}}),
+                    cad::DesignError);
+}
+
 TEST_CASE("Failing features are rejected and leave the design unchanged", "[cad][design]")
 {
     Design d;
@@ -188,6 +208,103 @@ TEST_CASE("Revolve, shell, chamfer, combine", "[cad][design]")
     d.addFeature("combine", {{"target", tube}, {"tools", {pin}}, {"operation", "cut"}});
     CHECK(d.bodies().size() == 2);
     CHECK(bodyVolume(d, tube) == Approx(pi * (100 - 49) * 10).epsilon(1e-6));
+}
+
+TEST_CASE("Press Pull in the timeline follows an edited box", "[cad][design]")
+{
+    Design d;
+    const auto block = d.addFeature("box", {{"size", {10, 10, 10}}});
+    const auto pp = d.addFeature("press_pull", {{"body", block},
+                                               {"faces", Json::array({{{"point", {5, 5, 10}}}})},
+                                               {"distance", 4}});
+    CHECK(bodyVolume(d, block) == Approx(1400).epsilon(1e-6));
+    d.editFeature(pp, {{"body", block}, {"faces", Json::array({{{"point", {5, 5, 10}}}})}, {"distance", -2}});
+    CHECK(bodyVolume(d, block) == Approx(800).epsilon(1e-6));
+}
+
+TEST_CASE("Split Body in the timeline makes a second body and follows an edited box", "[cad][design]")
+{
+    Design d;
+    const auto block = d.addFeature("box", {{"size", {40, 20, 10}}});
+    const auto split = d.addFeature("split", {{"body", block}, {"plane", "YZ"}, {"offset", 15}});
+    CHECK(d.bodies().size() == 2);
+    CHECK(bodyVolume(d, block) == Approx(15 * 200).epsilon(1e-6));
+    CHECK(bodyVolume(d, split) == Approx(25 * 200).epsilon(1e-6));
+    d.editFeature(block, {{"size", {60, 20, 10}}});
+    CHECK(bodyVolume(d, block) == Approx(15 * 200).epsilon(1e-6));
+    CHECK(bodyVolume(d, split) == Approx(45 * 200).epsilon(1e-6));
+    d.editFeature(split, {{"offset", 30}});
+    CHECK(bodyVolume(d, block) == Approx(30 * 200).epsilon(1e-6));
+    CHECK(bodyVolume(d, split) == Approx(30 * 200).epsilon(1e-6));
+    // The new body takes features like any other.
+    d.addFeature("press_pull", {{"body", split}, {"faces", Json::array({{{"point", {60, 10, 5}}}})}, {"distance", 5}});
+    CHECK(bodyVolume(d, split) == Approx(35 * 200).epsilon(1e-6));
+    CHECK_THROWS_AS(d.addFeature("split", {{"body", block}, {"plane", "YZ"}, {"offset", 100}}), cad::DesignError);
+}
+
+TEST_CASE("Delete Face in the timeline removes a hole and follows an edited box", "[cad][design]")
+{
+    Design d;
+    const auto block = d.addFeature("box", {{"size", {40, 20, 10}}});
+    const auto pin = d.addFeature("cylinder", {{"center", {20, 10, -10}}, {"radius", 3}, {"height", 40}});
+    d.addFeature("combine", {{"target", block}, {"tools", {pin}}, {"operation", "cut"}});
+    CHECK(bodyVolume(d, block) < 8000);
+    const auto del = d.addFeature("delete_faces", {{"body", block}, {"faces", Json::array({{{"point", {23, 10, 5}}}})}});
+    CHECK(bodyVolume(d, block) == Approx(8000).epsilon(1e-6));
+    d.editFeature(block, {{"size", {40, 20, 20}}});
+    CHECK(bodyVolume(d, block) == Approx(16000).epsilon(1e-6));
+    CHECK_THROWS_AS(d.editFeature(del, {{"body", block}, {"faces", Json::array({{{"point", {20, 10, 20}}}})}}), cad::DesignError);
+}
+
+TEST_CASE("Centre of mass and area of an L-shaped body", "[cad][design]")
+{
+    // 20 x 10 x 10 block with a 10 x 10 x 10 block on its left half: volumes 2000 and 1000,
+    // centres (10, 5, 5) and (5, 5, 15).
+    Design d;
+    const auto base = d.addFeature("box", {{"size", {20, 10, 10}}});
+    d.addFeature("box", {{"corner", {0, 0, 10}}, {"size", {10, 10, 10}}, {"operation", "join"}});
+    const auto& shape = d.bodies().at(base).shape;
+    CHECK(shape.volume() == Approx(3000));
+    const auto c = shape.centerOfMass();
+    REQUIRE(c.has_value());
+    CHECK(c->x == Approx((2000 * 10 + 1000 * 5) / 3000.0));
+    CHECK(c->y == Approx(5));
+    CHECK(c->z == Approx((2000 * 5 + 1000 * 15) / 3000.0));
+    // Bottom 200, low and high tops 100 each, front and back L 300 each, left 10 x 20,
+    // right 10 x 10 and the step between the tops 10 x 10.
+    CHECK(shape.surfaceArea() == Approx(200 + 100 + 100 + 2 * 300 + 200 + 100 + 100));
+    CHECK_FALSE(geometry::Shape{}.centerOfMass().has_value());
+}
+
+TEST_CASE("Sphere and torus in the timeline", "[cad][design]")
+{
+    const double pi = std::numbers::pi;
+    Design d;
+    const auto ball = d.addFeature("sphere", {{"center", {0, 0, 10}}, {"diameter", 20}});
+    CHECK(bodyVolume(d, ball) == Approx(4.0 / 3.0 * pi * 1000).epsilon(1e-6));
+    // A groove: a ring cut inside a plate.
+    const auto plate = d.addFeature("box", {{"corner", {-30, -30, 0}}, {"size", {60, 60, 4}}});
+    d.addFeature("torus", {{"center", {0, 0, 2}}, {"diameter", 40}, {"tube_diameter", 3},
+                           {"operation", "cut"}, {"bodies", Json::array({plate})}});
+    CHECK(bodyVolume(d, plate) == Approx(60 * 60 * 4 - 2 * pi * pi * 20 * 1.5 * 1.5).epsilon(1e-6));
+    d.editFeature(ball, {{"diameter", 10}});
+    CHECK(bodyVolume(d, ball) == Approx(4.0 / 3.0 * pi * 125).epsilon(1e-6));
+    CHECK_THROWS_AS(d.addFeature("torus", {{"diameter", 10}, {"tube_diameter", 12}}), cad::DesignError);
+    CHECK_THROWS_AS(d.addFeature("sphere", {{"diameter", -1}}), cad::DesignError);
+}
+
+TEST_CASE("Draft in the timeline tilts a side and follows an edited angle", "[cad][design]")
+{
+    Design d;
+    const auto block = d.addFeature("box", {{"size", {20, 20, 10}}});
+    const auto dr = d.addFeature("draft", {{"body", block}, {"faces", Json::array({{{"point", {20, 10, 5}}}})},
+                                           {"plane", "XY"}, {"angle", 10}});
+    const double t = std::tan(10 * std::numbers::pi / 180);
+    CHECK(bodyVolume(d, block) == Approx(4000 - 0.5 * 10 * 10 * t * 20).epsilon(1e-6));
+    d.editFeature(dr, {{"angle", -10}});
+    CHECK(bodyVolume(d, block) == Approx(4000 + 0.5 * 10 * 10 * t * 20).epsilon(1e-6));
+    CHECK_THROWS_AS(d.addFeature("draft", {{"body", block}, {"faces", Json::array({{{"point", {10, 10, 10}}}})},
+                                           {"angle", 5}}), cad::DesignError);
 }
 
 TEST_CASE("Chamfer types in the timeline", "[cad][design]")

@@ -1,0 +1,76 @@
+# CAD-164: editing an earlier sketch rolls the timeline back to just after it (Fusion); Finish
+# Sketch rolls forward and the extrude follows the edited sketch. A new sketch at the end
+# changes nothing.
+# Run: AeroCAD --ui-script <this file>
+ui.wait(800)
+(() => { const s = controller.execute("sketch.create", { plane: "XY", curves: [{ type: "rectangle", corner: [0, 0], width: 40, height: 20 }] }); if (!s.ok) ui.fail("sketch: " + s.error); const e = controller.execute("feature.extrude", { sketch: s.result.id, distance: 10 }); if (!e.ok) ui.fail("extrude: " + e.error); controller.execute("feature.box", { corner: [100, 0, 0], size: [10, 10, 10] }) })()
+ui.wait(500)
+# Double-click the sketch chip in the timeline.
+(() => { const p = timelineBar.chipPoint(0); ui.doubleClick(p.x, p.y) })()
+ui.wait(800)
+(() => { const tl = controller.execute("timeline.list").result; ui.log("while editing: marker " + tl.marker + ", bodies " + tl.bodies.length); if (!activeSketch || activeSketch.id !== tl.features[0].id) ui.fail("the sketch did not open"); if (tl.marker !== 1) ui.fail("the timeline was not rolled back to the sketch: " + tl.marker); if (tl.bodies.length !== 0) ui.fail("later bodies are still shown") })()
+ui.shot("sketch-edit-rolled-back.png")
+(() => { const c = controller.execute("sketch.add_constraints", { sketch: activeSketch.id, constraints: [{ type: "length", curve: 0, value: 60 }] }); if (!c.ok) ui.fail("dimension: " + c.error) })()
+ui.wait(300)
+(() => { if (!ui.clickText("Finish Sketch")) ui.fail("no Finish Sketch") })()
+ui.wait(800)
+(() => { const tl = controller.execute("timeline.list").result; const ex = tl.bodies.find(b => Math.abs(b.volume - 60 * 20 * 10) < 1); ui.log("after finish: marker " + tl.marker + ", bodies " + JSON.stringify(tl.bodies.map(b => b.volume))); if (activeSketch) ui.fail("the sketch is still open"); if (tl.marker !== 3) ui.fail("Finish Sketch did not roll forward: " + tl.marker); if (!ex) ui.fail("the extrude did not follow the edited sketch") })()
+ui.shot("sketch-edit-rolled-forward.png")
+# If the user moves the marker while editing, Finish leaves it there.
+(() => { editFeature(controller.execute("timeline.list").result.features[0]) })()
+ui.wait(500)
+(() => { const e = controller.execute("timeline.list").result.sketchEdit; if (!e || e.restoreTo !== 3) ui.fail("while editing, saves should store marker 3: " + JSON.stringify(e)); controller.execute("timeline.set_marker", { position: 2 }) })()
+ui.wait(200)
+(() => { const e = controller.execute("timeline.list").result.sketchEdit; if (e) ui.fail("after the user moved the marker, the sketch edit still overrides saves: " + JSON.stringify(e)) })()
+(() => { finishSketch(false) })()
+ui.wait(300)
+(() => { const tl = controller.execute("timeline.list").result; if (tl.marker !== 2) ui.fail("Finish moved a marker the user had set: " + tl.marker) })()
+(() => { controller.execute("timeline.set_marker", {}) })()
+# Codex on PR #134: deleting a later feature while editing the sketch still rolls forward to
+# the (new) end on Finish.
+(() => { editFeature(controller.execute("timeline.list").result.features[0]) })()
+ui.wait(500)
+(() => { const tl = controller.execute("timeline.list").result; const box = tl.features[2]; if (box.type !== "box") ui.fail("expected the box third: " + box.type); const r = controller.execute("feature.delete", { id: box.id }); if (!r.ok) ui.fail("delete: " + r.error) })()
+(() => { finishSketch(false) })()
+ui.wait(300)
+(() => { const tl = controller.execute("timeline.list").result; ui.log("after delete + finish: marker " + tl.marker + " of " + tl.features.length); if (tl.marker !== tl.features.length) ui.fail("Finish did not roll forward after a later feature was deleted: " + tl.marker) })()
+# Codex on PR #134: saving while an earlier sketch is edited stores the marker from before the
+# edit, not the temporary roll-back.
+(() => { editFeature(controller.execute("timeline.list").result.features[0]) })()
+ui.wait(500)
+(() => { const tl = controller.execute("timeline.list").result; if (tl.marker !== 1) ui.fail("not rolled back before saving: " + tl.marker); if (!controller.saveProjectAs(Qt.resolvedUrl("file:///tmp/aerocad-rollback-saved.aerocad"))) ui.fail("save failed"); if (controller.execute("timeline.list").result.marker !== 1) ui.fail("saving changed the rolled-back marker") })()
+(() => { finishSketch(false); if (!controller.openPath("/tmp/aerocad-rollback-saved.aerocad")) ui.fail("open failed") })()
+ui.wait(800)
+(() => { const tl = controller.execute("timeline.list").result; ui.log("reopened saved-while-editing: marker " + tl.marker + " of " + tl.features.length); if (tl.marker !== tl.features.length) ui.fail("the roll-back was saved: marker " + tl.marker) })()
+# Codex on PR #134: deleting a feature before the sketch while editing it still rolls forward.
+(() => { const b = controller.execute("feature.box", { corner: [300, 0, 0], size: [5, 5, 5] }); const tl = controller.execute("timeline.list").result; controller.execute("timeline.move_feature", { id: b.result.id, position: 0 }); const t2 = controller.execute("timeline.list").result; if (t2.features[0].type !== "box" || t2.marker !== t2.features.length) ui.fail("setup: box first, marker at the end") })()
+(() => { const tl = controller.execute("timeline.list").result; editFeature(tl.features.find(f => f.type === "sketch")) })()
+ui.wait(500)
+(() => { const tl = controller.execute("timeline.list").result; if (tl.marker !== 2) ui.fail("not rolled back to the sketch at index 1: " + tl.marker); const r = controller.execute("feature.delete", { id: tl.features[0].id }); if (!r.ok) ui.fail("delete: " + r.error) })()
+ui.wait(300)
+(() => { finishSketch(false) })()
+ui.wait(300)
+(() => { const tl = controller.execute("timeline.list").result; ui.log("after upstream delete + finish: marker " + tl.marker + " of " + tl.features.length); if (tl.marker !== tl.features.length) ui.fail("Finish did not roll forward after a feature before the sketch was deleted: " + tl.marker) })()
+# A new sketch at the end does not roll anything back.
+(() => { const s = controller.execute("sketch.create", { plane: "XY", curves: [{ type: "circle", center: [200, 0], radius: 5 }] }); enterSketch(s.result.id) })()
+ui.wait(500)
+(() => { const tl = controller.execute("timeline.list").result; if (tl.marker !== tl.features.length) ui.fail("a new sketch rolled the timeline back"); finishSketch(false); const t2 = controller.execute("timeline.list").result; if (t2.marker !== t2.features.length) ui.fail("finishing a new sketch moved the marker") })()
+# Codex on PR #134: Sketch, Box A, Box B, Box C with the marker after B; edit Sketch, delete B,
+# finish: the marker goes back after A, and C stays rolled back.
+(() => { const sk = controller.execute("sketch.create", { plane: "XY", curves: [{ type: "circle", center: [400, 0], radius: 5 }] }); const a = controller.execute("feature.box", { corner: [500, 0, 0], size: [5, 5, 5] }); const b = controller.execute("feature.box", { corner: [520, 0, 0], size: [5, 5, 5] }); controller.execute("feature.box", { corner: [540, 0, 0], size: [5, 5, 5] }); const tl = controller.execute("timeline.list").result; const bi = tl.features.findIndex(f => f.id === b.result.id); controller.execute("timeline.set_marker", { position: bi + 1 }); timelineBar.objectName = sk.result.id + "," + a.result.id + "," + b.result.id })()
+(() => { const ids = timelineBar.objectName.split(",").map(Number); editFeature(controller.execute("timeline.list").result.features.find(f => f.id === ids[0])) })()
+ui.wait(500)
+(() => { const ids = timelineBar.objectName.split(",").map(Number); const r = controller.execute("feature.delete", { id: ids[2] }); if (!r.ok) ui.fail("delete B: " + r.error) })()
+ui.wait(300)
+(() => { const ids = timelineBar.objectName.split(",").map(Number); const tl = controller.execute("timeline.list").result; const ai = tl.features.findIndex(f => f.id === ids[1]); const e = tl.sketchEdit; if (!e || e.restoreTo !== ai + 1) ui.fail("saves should store the marker after A (" + (ai + 1) + "): " + JSON.stringify(e)); finishSketch(false) })()
+ui.wait(300)
+(() => { const ids = timelineBar.objectName.split(",").map(Number); const tl = controller.execute("timeline.list").result; const ai = tl.features.findIndex(f => f.id === ids[1]); ui.log("after deleting the last active feature + finish: marker " + tl.marker + " of " + tl.features.length); if (tl.marker !== ai + 1) ui.fail("expected the marker after A (" + (ai + 1) + "), C must stay rolled back: " + tl.marker); controller.execute("timeline.set_marker", {}) })()
+# Codex on PR #134: opening another project while an earlier sketch is edited must not roll
+# the opened design forward. That project has the same sketch id and index, saved at marker 1.
+(() => { controller.execute("timeline.set_marker", { position: 1 }); if (!controller.saveProjectAs(Qt.resolvedUrl("file://" + "/tmp/aerocad-rollback-other.aerocad"))) ui.fail("save failed"); controller.execute("timeline.set_marker", {}) })()
+(() => { editFeature(controller.execute("timeline.list").result.features[0]) })()
+ui.wait(500)
+(() => { const tl = controller.execute("timeline.list").result; if (tl.marker !== 1) ui.fail("not rolled back before opening: " + tl.marker) })()
+(() => { if (!controller.openPath("/tmp/aerocad-rollback-other.aerocad")) ui.fail("open failed") })()
+ui.wait(800)
+(() => { const tl = controller.execute("timeline.list").result; ui.log("opened project marker " + tl.marker + " of " + tl.features.length); if (activeSketch) ui.fail("the sketch is still open after opening a project"); if (tl.marker !== 1) ui.fail("the opened project was rolled forward to " + tl.marker) })()

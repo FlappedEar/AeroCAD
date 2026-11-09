@@ -33,6 +33,9 @@ Item {
     property real zoomStep: 1.0015 // per wheel angle unit (1/8 degree)
     property real dragZoomStep: 1.005 // per pixel of vertical drag
 
+    /// The view is a parallel projection (same pose; the scale matches the pivot's depth).
+    property bool orthographic: false
+
     property real pitch: -30
     property real yaw: 45
 
@@ -56,6 +59,8 @@ Item {
 
     /// A right click that did not move (a right drag orbits): open the context menu.
     signal contextClicked(real x, real y)
+    /// Middle button double click (Fusion: zoom to fit).
+    signal fitAllRequested()
     property bool contextMenuEnabled: true
 
     /// Point the current drag orbits around (scene space), when `orbitAroundPoint`.
@@ -100,9 +105,31 @@ Item {
         return 2 * distance * Math.tan(camera.fieldOfView * Math.PI / 360) / Math.max(1, height)
     }
 
+    /// World units per pixel of the pan being dragged (0 = none: use the pivot's depth).
+    property real _panScale: 0
+
+    /// Starts a pan that keeps the point under view position (x, y) under the pointer: the
+    /// model there, else the point at the pivot's depth. With perspective a near point moves
+    /// fewer world units per pixel than a far one, so the scale is taken at its depth.
+    function beginPanAt(x, y) {
+        _panScale = 0
+        if (orthographic)
+            return
+        const p = pointUnder ? pointUnder(x, y, false) : null
+        if (!p)
+            return
+        const depth = p.minus(camera.scenePosition).dotProduct(camera.forward)
+        if (depth > 0)
+            _panScale = 2 * depth * Math.tan(camera.fieldOfView * Math.PI / 360) / Math.max(1, height)
+    }
+
+    function endPan() {
+        _panScale = 0
+    }
+
     function pan(dx, dy) {
         _zoomAnchor = null
-        const s = worldPerPixel()
+        const s = _panScale > 0 ? _panScale : worldPerPixel()
         pivot.position = pivot.position.minus(pivot.right.times(dx * s)).plus(pivot.up.times(dy * s))
     }
 
@@ -224,7 +251,9 @@ Item {
         signal finished()
         property point last
         onActiveChanged: {
-            last = centroid.position
+            // From the press: the movement before the drag threshold counts too, so the
+            // point grabbed stays under the pointer.
+            last = active ? centroid.pressPosition : centroid.position
             if (active)
                 started(centroid.pressPosition.x, centroid.pressPosition.y)
             else
@@ -242,6 +271,8 @@ Item {
     DeltaDragHandler {
         acceptedButtons: Qt.MiddleButton
         acceptedModifiers: root.panModifiers
+        onStarted: (x, y) => root.beginPanAt(x, y)
+        onFinished: root.endPan()
         onMoved: (dx, dy) => root.pan(dx, dy)
     }
 
@@ -251,6 +282,15 @@ Item {
         onStarted: (x, y) => root.beginOrbitAt(x, y)
         onFinished: root.endOrbit()
         onMoved: (dx, dy) => root.orbit(dx, dy)
+    }
+
+    // Middle button double click fits everything, as in Fusion. A tap takes no grab, so the
+    // middle drag handlers above still pan / orbit.
+    TapHandler {
+        acceptedButtons: Qt.MiddleButton
+        gesturePolicy: TapHandler.DragThreshold
+        grabPermissions: PointerHandler.ApprovesTakeOverByAnything
+        onDoubleTapped: root.fitAllRequested()
     }
 
     // Right button: drag = orbit (Shift: pan), click = context menu. PointHandlers only
@@ -302,7 +342,16 @@ Item {
 
     RightDragWatcher {
         acceptedModifiers: Qt.ShiftModifier
+        onStarted: (x, y) => root.beginPanAt(x, y)
+        onFinished: root.endPan()
         onMoved: (dx, dy) => root.pan(dx, dy)
+    }
+
+    /// A mouse button is held over the view (orbit, pan, a drag or a click on its way).
+    readonly property bool buttonHeld: anyButton.active
+    PointHandler {
+        id: anyButton
+        acceptedButtons: Qt.AllButtons
     }
 
     // Zoom by dragging (not in the Fusion scheme, which zooms with the wheel only).
@@ -317,8 +366,16 @@ Item {
     DeltaDragHandler {
         enabled: root.leftDragMode !== ""
         acceptedButtons: Qt.LeftButton
-        onStarted: (x, y) => { if (root.leftDragMode === "orbit") root.beginOrbitAt(x, y) }
-        onFinished: root.endOrbit()
+        onStarted: (x, y) => {
+            if (root.leftDragMode === "orbit")
+                root.beginOrbitAt(x, y)
+            else if (root.leftDragMode === "pan")
+                root.beginPanAt(x, y)
+        }
+        onFinished: {
+            root.endOrbit()
+            root.endPan()
+        }
         onMoved: (dx, dy) => {
             if (root.leftDragMode === "orbit")
                 root.orbit(dx, dy)

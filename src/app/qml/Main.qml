@@ -16,6 +16,10 @@ ApplicationWindow {
     required property AppController controller
     required property ScanController scan
     property var selectedPartId: 0
+    /// Every selected part (Fusion: Ctrl / Shift + click adds or takes out one, Ctrl+A takes
+    /// all). `selectedPartId` is the last one picked: tools for one part work on it, Delete,
+    /// Hide (V) and Export on all of them.
+    property var selectedPartIds: []
     readonly property bool isMac: Qt.platform.os === "osx" || Qt.platform.os === "macos"
 
     property bool browserVisible: true
@@ -75,11 +79,71 @@ ApplicationWindow {
     /// or Discard.
     property var afterUnsavedCheck: null
 
-    function selectPart(id) {
+    function selectPart(id, additive) {
         // Picking another part (or empty space) applies a running Move / Rotate / Scale.
         if (viewport.transformActive && id !== viewport.transformTarget.partId)
             viewport.finishTransform(true)
+        if (additive && !id)
+            return // Ctrl / Shift + click on empty space keeps the selection.
+        if (additive && selectedPartIds.indexOf(id) >= 0) {
+            const rest = selectedPartIds.filter(p => p !== id)
+            selectedPartIds = rest
+            selectedPartId = rest.length ? rest[rest.length - 1] : 0
+            return
+        }
+        selectedPartIds = !id ? [] : additive ? selectedPartIds.concat([id]) : [id]
         selectedPartId = id
+        if (additive)
+            controller.showStatus(qsTr("%1 parts selected: Delete, Hide (V) and Export act on all").arg(selectedPartIds.length))
+    }
+
+    /// A right-click on a part keeps a selection it is part of (the menu then acts on all).
+    function selectPartForMenu(id) {
+        if (!id || selectedPartIds.indexOf(id) < 0)
+            selectPart(id)
+        else if (selectedPartId !== id)
+            selectedPartId = id
+    }
+
+    /// Ctrl+A (Fusion: Select All): every visible part.
+    function selectAllParts() {
+        const r = controller.execute("document.parts")
+        const ids = r.ok ? r.result.parts.filter(p => p.visible).map(p => p.id) : []
+        if (viewport.transformActive)
+            viewport.finishTransform(true)
+        selectedPartIds = ids
+        selectedPartId = ids.length ? ids[ids.length - 1] : 0
+        if (ids.length > 1)
+            controller.showStatus(qsTr("%1 parts selected").arg(ids.length))
+    }
+
+    /// Selected parts that still exist, the last picked one last.
+    function selectedExisting() {
+        return selectedPartIds.filter(id => controller.partInfo(id).id)
+    }
+
+    /// Runs `step(id)` for every selected part and joins what they did into one undo step.
+    /// The steps are joined every 50 parts on the way, so a large selection never pushes
+    /// its first steps out of the 200-step history before they are joined.
+    function forEachSelected(label, step, items) {
+        let tokens = []
+        let done = 0
+        const join = () => {
+            if (tokens.length > 1 && controller.mergeHistoryIds(tokens, label.arg(done)))
+                tokens = [controller.historyTopId()]
+        }
+        for (const id of (items ?? selectedExisting())) {
+            const before = controller.historyTopId()
+            step(id)
+            const after = controller.historyTopId()
+            if (after && after !== before) {
+                tokens.push(after)
+                ++done
+            }
+            if (tokens.length >= 50)
+                join()
+        }
+        join()
     }
 
     /// A tool that picks in the view or edits the design: opening one applies a running
@@ -111,7 +175,7 @@ ApplicationWindow {
             controller.showStatus(qsTr("Sketches and planes move with the body they belong to."))
             return null
         }
-        controller.showStatus(qsTr("Drag an arrow to move, a ring to rotate, the square to scale (Shift snaps). Enter applies, Esc cancels."))
+        viewport.transformStatus(qsTr("Drag an arrow to move, a ring to rotate, the square to scale (Shift snaps). Enter applies, Esc cancels."))
         return null
     }
 
@@ -141,6 +205,82 @@ ApplicationWindow {
         registry: contextActions
     }
 
+    // Right click in a sketch (Fusion's sketch marking menu): end the curve, the drawing
+    // tools, Look At, Undo, Finish Sketch. Right drag still orbits.
+    Menu {
+        id: sketchMenu
+        objectName: "sketchMenu"
+        property bool drawing: false
+        component SketchMenuItem: MenuItem {
+            height: visible ? implicitHeight : 0
+        }
+        SketchMenuItem {
+            objectName: "endCurve"
+            text: qsTr("End Curve (Esc)")
+            visible: sketchMenu.drawing
+            font.bold: true
+            onTriggered: viewport.endSketchCurve()
+        }
+        MenuSeparator { visible: sketchMenu.drawing; height: visible ? implicitHeight : 0 }
+        SketchMenuItem {
+            objectName: "deleteCurves"
+            text: qsTr("Delete (Del)")
+            icon.source: Theme.iconUrl("delete")
+            visible: !sketchMenu.drawing && viewport.sketchOverlay.selectedCurves.length > 0
+            font.bold: true
+            onTriggered: viewport.sketchOverlay.deleteSelection()
+        }
+        SketchMenuItem {
+            objectName: "constructionCurves"
+            text: qsTr("Construction (X)")
+            icon.source: Theme.iconUrl("construction")
+            visible: !sketchMenu.drawing && viewport.sketchOverlay.selectedCurves.length > 0
+            onTriggered: viewport.sketchOverlay.toggleConstruction()
+        }
+        MenuSeparator {
+            visible: !sketchMenu.drawing && viewport.sketchOverlay.selectedCurves.length > 0
+            height: visible ? implicitHeight : 0
+        }
+        SketchMenuItem { action: lineAction; icon.source: Theme.iconUrl("line") }
+        SketchMenuItem { action: rectangleAction; icon.source: Theme.iconUrl("rectangle") }
+        SketchMenuItem { action: centerRectangleAction; icon.source: Theme.iconUrl("center-rectangle") }
+        SketchMenuItem { action: rectangle3PointAction; icon.source: Theme.iconUrl("rectangle-3point") }
+        SketchMenuItem { action: circleAction; icon.source: Theme.iconUrl("circle") }
+        SketchMenuItem { action: circle2PointAction; icon.source: Theme.iconUrl("circle-2point") }
+        SketchMenuItem { action: circle3PointAction; icon.source: Theme.iconUrl("circle-3point") }
+        SketchMenuItem { action: arcAction; icon.source: Theme.iconUrl("arc") }
+        SketchMenuItem { action: centerArcAction; icon.source: Theme.iconUrl("center-arc") }
+        SketchMenuItem { action: polygonAction; icon.source: Theme.iconUrl("polygon") }
+        SketchMenuItem { action: slotAction; icon.source: Theme.iconUrl("slot") }
+        SketchMenuItem { action: splineAction; icon.source: Theme.iconUrl("spline") }
+        SketchMenuItem { action: dimensionAction; icon.source: Theme.iconUrl("dimension") }
+        MenuSeparator {}
+        SketchMenuItem {
+            objectName: "lookAt"
+            text: qsTr("Look At")
+            icon.source: Theme.iconUrl("plane")
+            onTriggered: window.lookAtSketch(null)
+        }
+        SketchMenuItem {
+            text: qsTr("Fit All (F6)")
+            icon.source: Theme.iconUrl("fit")
+            onTriggered: viewport.fitAll()
+        }
+        SketchMenuItem {
+            text: controller.canUndo ? qsTr("Undo %1").arg(controller.undoText) : qsTr("Undo")
+            icon.source: Theme.iconUrl("undo")
+            enabled: controller.canUndo
+            onTriggered: controller.execute("edit.undo")
+        }
+        MenuSeparator {}
+        SketchMenuItem {
+            objectName: "finishSketch"
+            action: finishSketchAction
+            icon.source: Theme.iconUrl("finish-sketch")
+            font.bold: !sketchMenu.drawing
+        }
+    }
+
     PartContextMenu {
         id: partMenu
         registry: contextActions
@@ -148,22 +288,121 @@ ApplicationWindow {
     }
 
     function toggleSelectedVisibility() {
-        if (!selectedPartId)
+        const ids = selectedExisting()
+        if (!ids.length)
             return
-        const info = controller.partInfo(selectedPartId)
-        if (info.id)
-            controller.execute("part.set_visible", { id: selectedPartId, visible: !info.visible })
+        // Several parts: hide them all if any is shown, otherwise show them all.
+        const show = !ids.some(id => controller.partInfo(id).visible)
+        forEachSelected(show ? qsTr("Show %1 parts") : qsTr("Hide %1 parts"), id => {
+            if (controller.partInfo(id).visible !== show)
+                controller.execute("part.set_visible", { id: id, visible: show })
+        })
+    }
+
+    /// Isolate (Fusion): only part `id` is shown, and Unisolate brings back what it hid.
+    /// `isolationRecords` lists the Isolates still in the history, oldest first, each
+    /// { id, name, hidden: [ids], step, exitStep }: step / exitStep are the history tokens of
+    /// the Isolate and of the Unisolate that ended it. `isolation` ({ id, name, hidden, step }
+    /// or null) is the newest record whose Isolate is done (applied, or aged out of the
+    /// history) and whose Unisolate is not, so
+    /// Undo / Redo bring the Exit controls back with the hidden parts, also across several
+    /// Isolates. Hiding or deleting the isolated part keeps it on, so the parts it hid can
+    /// still be brought back.
+    property var isolationRecords: []
+    property var isolation: null
+    function isolatePart(id) {
+        if (!id)
+            return
+        if (isolation)
+            unisolate() // isolating another part starts from the scene as it was
+        const r = controller.execute("part.isolate", { id: id })
+        if (!r.ok)
+            return
+        // Undone Isolates past the last step can never be redone again: forget them, and keep
+        // the list short.
+        const kept = isolationRecords.filter(rec => controller.historyApplied(rec.step)
+                                                    || controller.historyExpired(rec.step)).slice(-19)
+        kept.push({ id: id, name: controller.partInfo(id).name, hidden: r.result.hidden,
+                    step: controller.historyTopId(), exitStep: 0 })
+        isolationRecords = kept
+        checkIsolation()
+        selectPart(id)
+    }
+    /// Appearance (A): swatches for part `id`, at the pointer when it is over the view.
+    function openAppearance(id) {
+        const p = viewHover.hovered ? viewport.mapToItem(Overlay.overlay, viewHover.point.position.x, viewHover.point.position.y)
+                                    : viewport.mapToItem(Overlay.overlay, 24, 60)
+        return appearancePopup.openFor(id, p.x, p.y)
+    }
+    function unisolate() {
+        const iso = isolation
+        if (!iso)
+            return
+        const r = controller.execute("part.unisolate", { ids: iso.hidden })
+        if (r.ok) {
+            const exit = controller.historyTopId()
+            isolationRecords = isolationRecords.map(rec => rec.step === iso.step
+                                                    ? Object.assign({}, rec, { exitStep: exit }) : rec)
+        }
+        checkIsolation()
+    }
+    /// An isolation is on while its Isolate is applied, its Unisolate is not, and a part it
+    /// hid is still hidden (it ends when they have all been shown again or deleted by hand).
+    function checkIsolation() {
+        // A step is done while applied, and also once it has aged out of the history (its
+        // change is kept for good: an Isolate 200 edits ago still hides the other parts).
+        const done = step => controller.historyApplied(step) || controller.historyExpired(step)
+        let found = null
+        for (let i = isolationRecords.length - 1; i >= 0 && !found; --i) {
+            const rec = isolationRecords[i]
+            if (!done(rec.step) || done(rec.exitStep))
+                continue
+            if (rec.hidden.length === 0
+                    || rec.hidden.some(h => { const info = controller.partInfo(h); return info.id && !info.visible }))
+                found = rec
+        }
+        if (!found) {
+            if (isolation)
+                isolation = null
+            return
+        }
+        if (!isolation || isolation.step !== found.step)
+            isolation = { id: found.id, name: found.name, hidden: found.hidden, step: found.step }
+    }
+    Connections {
+        target: controller
+        function onHistoryChanged() { Qt.callLater(window.checkIsolation) }
     }
 
     function deleteSelected() {
-        if (!selectedPartId)
+        if (activeSketch) {
+            viewport.sketchOverlay.deleteSelection()
             return
-        const info = controller.partInfo(selectedPartId)
-        // Bodies, sketches and planes come from the timeline: delete the feature that made them.
-        if (info.kind === "body" || info.kind === "sketch" || info.kind === "plane")
-            controller.execute("feature.delete", { id: info.featureId })
-        else
-            controller.execute("part.remove", { id: selectedPartId })
+        }
+        // What to delete is read before anything goes: deleting a sketch makes the body
+        // extruded from it fail and vanish from the parts, yet its feature stays in the
+        // timeline. Bodies, sketches and planes come from the timeline, so their features
+        // are deleted, the last in the timeline first (a feature never needs a later one).
+        const tl = controller.execute("timeline.list")
+        const order = tl.ok ? tl.result.features.map(f => f.id) : []
+        const features = [], parts = []
+        for (const id of selectedExisting()) {
+            const info = controller.partInfo(id)
+            if (info.kind === "body" || info.kind === "sketch" || info.kind === "plane") {
+                if (features.indexOf(info.featureId) < 0)
+                    features.push(info.featureId)
+            } else {
+                parts.push(id)
+            }
+        }
+        features.sort((a, b) => order.indexOf(b) - order.indexOf(a))
+        const items = features.map(f => ({ feature: f })).concat(parts.map(p => ({ part: p })))
+        forEachSelected(qsTr("Delete %1 parts"), item => {
+            if (item.feature !== undefined)
+                controller.execute("feature.delete", { id: item.feature })
+            else if (controller.partInfo(item.part).id)
+                controller.execute("part.remove", { id: item.part })
+        }, items)
     }
 
     // --- View (right-click menu on empty space) ----------------------------------------
@@ -185,11 +424,85 @@ ApplicationWindow {
                 controller.execute("part.set_visible", { id: p.id, visible: true })
     }
 
+    /// Zoom to Selection: fills the view with the selected area of part `id` (default: the
+    /// selected part) when it has one, else with the whole part; nothing selected fits all.
+    function zoomToSelection(id) {
+        const pid = id || selectedPartId
+        if (!pid) {
+            viewport.fitAll()
+            return
+        }
+        const sel = controller.execute("selection.get", { id: pid })
+        const b = sel.ok ? sel.result.bounds : null
+        if (b)
+            frameOnPart(pid, b.center, b.diagonal / 2)
+        else
+            zoomToPart(pid)
+    }
+
+    /// Parts that Copy takes: bodies and imported parts, not sketches or planes.
+    function canCopyPart(id) {
+        const kind = controller.partInfo(id).kind
+        return kind === "body" || kind === "imported"
+    }
+
+    /// Paste: a copy of the copied part, selected and open in Move / Rotate / Scale (Fusion).
+    function pastePart() {
+        viewport.finishTransform(true)
+        const r = controller.execute("part.duplicate", { id: copiedPartId })
+        if (!r.ok) {
+            controller.showStatus(qsTr("Nothing to paste: %1").arg(r.error))
+            copiedPartId = 0
+            return
+        }
+        selectPart(r.result.id)
+        startTransform(r.result.id)
+        if (viewport.transformActive)
+            viewport.transformPasted = true
+    }
+
+    /// Grow / shrink / invert the area selected on the selected scan.
+    function changeSelection(command, params) {
+        const info = selectedInfo()
+        if (info.kind !== "imported" || !(info.triangles > 0)) {
+            controller.showStatus(qsTr("Select a scan first."))
+            return
+        }
+        if (command === "selection.grow" && !(info.selectedTriangles > 0)) {
+            controller.showStatus(qsTr("Select an area of the scan first (1, 2 or 3)."))
+            return
+        }
+        const r = controller.execute(command, Object.assign({ id: info.id }, params))
+        if (!r.ok)
+            controller.showStatus(r.error)
+    }
+
+    /// Renames part `id` in place in the Browser (Fusion: Rename in the Browser).
+    function renamePart(id) {
+        if (!id)
+            return
+        window.browserVisible = true
+        selectPart(id)
+        browser.startRename(id)
+    }
+
     /// Fills the view with part `id`.
     function zoomToPart(id) {
         const info = controller.partInfo(id)
         if (info.center && info.center.length === 3)
-            viewport.frameAround(info.center, Math.max((info.diagonal ?? 0) / 2, 1))
+            frameOnPart(id, info.center, (info.diagonal ?? 0) / 2)
+    }
+
+    /// Frames a sphere of part `id` (model mm) where it is shown: a part being moved is
+    /// framed at its preview.
+    function frameOnPart(id, center, radius) {
+        let c = Qt.vector3d(center[0], center[1], center[2])
+        let r = radius
+        if (viewport.transformActive && viewport.transformTarget.partId === id) {
+            c = viewport.previewPoint(id, c)
+            r *= viewport.transformScale
+        }
+        viewport.frameAround([c.x, c.y, c.z], Math.max(r, 1))
     }
 
     function selectedInfo() {
@@ -247,15 +560,25 @@ ApplicationWindow {
         viewport.sketchDegreesOfFreedom = r.result.degreesOfFreedom
     }
 
+    /// Editing an earlier sketch rolls the timeline back to just after it (Fusion): what came
+    /// later is hidden and cannot be snapped to or projected. Finishing rolls forward again;
+    /// the command layer keeps track of it (sketch.begin_edit / sketch.end_edit).
+    /// Only called when it changes something, so opening a sketch at the end does not mark
+    /// the project modified.
     function enterSketch(id) {
+        const tl = controller.execute("timeline.list")
+        if (tl.ok && (tl.result.sketchEdit || tl.result.features.findIndex(f => f.id === id) + 1 < tl.result.marker))
+            controller.execute("sketch.begin_edit", { id: id })
         const r = controller.execute("sketch.profiles", { sketch: id, surfaceLine: true })
-        if (!r.ok)
+        if (!r.ok) {
+            endSketchEdit()
             return
+        }
         const pl = r.result.plane
         const on = r.result.onSurface
         activeSketch = { id: id, origin: pl.origin, normal: pl.normal, xDir: pl.xDir, yDir: pl.yDir,
                          surfacePart: on ? on.part : 0, across: !!(on && on.across),
-                         surfaceLine: r.result.surfaceLine || [] }
+                         surfaceLine: r.result.surfaceLine || [], onPoint: on && on.point ? on.point : null }
         sketchTool = "line"
         refreshSketchSnaps()
         // Show the sketch while editing it (Fusion hides sketches once they are used).
@@ -268,17 +591,33 @@ ApplicationWindow {
         // Show the sketch while editing it, and look at it.
         for (let row = 0; row < controller.parts.count; ++row) {
             }
-        viewport.setViewDirection(Qt.vector3d(pl.normal[0], pl.normal[1], pl.normal[2]))
-        // On a scan, look at the clicked place: the whole model would leave it tiny.
-        if (on && on.point && controller.sceneRadius > 0)
-            viewport.frameAround(on.point, controller.sceneRadius * 0.35)
+        lookAtSketch(on && on.point ? on.point : null)
+    }
+
+    /// Look At (Fusion): the view turns to face the sketch plane. On a scan it frames the
+    /// place the sketch was started (`point`, or the sketch's own), else everything.
+    function lookAtSketch(point) {
+        if (!activeSketch)
+            return
+        const n = activeSketch.normal
+        viewport.setViewDirection(Qt.vector3d(n[0], n[1], n[2]))
+        const at = point || activeSketch.onPoint
+        if (at && controller.sceneRadius > 0)
+            viewport.frameAround(at, controller.sceneRadius * 0.35)
         else
             viewport.fitAll()
     }
 
     /// Ends sketch editing. With `offerPart` (the user finished it), a closed outline drawn
     /// over a surface or scan offers to make the part on that surface right away.
+    function endSketchEdit() {
+        const tl = controller.execute("timeline.list")
+        if (tl.ok && tl.result.sketchEdit)
+            controller.execute("sketch.end_edit")
+    }
+
     function finishSketch(offerPart) {
+        endSketchEdit()
         // Any other way out (new project, variant switch, a feature dialog) drops the offer.
         partOnSurfaceSketch = null
         if (offerPart && activeSketch) {
@@ -316,7 +655,7 @@ ApplicationWindow {
         // editable first, so its edges can be rounded or bevelled in one step. The dialog
         // owns the conversion: Cancel undoes it, OK makes it one undo step with the feature.
         const convert = info.kind !== "body" && info.kind !== "sketch" && info.hasBrep && (info.solids ?? 0) > 0
-                        && ["fillet", "chamfer", "shell", "hole", "combine"].includes(type)
+                        && ["fillet", "chamfer", "shell", "press_pull", "hole", "combine", "split", "delete_faces", "draft"].includes(type)
         if (convert) {
             const b = featureDialog.convertToBody(info.id)
             if (b) {
@@ -333,8 +672,8 @@ ApplicationWindow {
         if (info.kind === "body") {
             if (type === "combine")
                 initial.target = info.featureId
-            else if (["fillet", "chamfer", "shell", "hole", "move", "mirror", "rectangular_pattern",
-                      "circular_pattern"].includes(type))
+            else if (["fillet", "chamfer", "shell", "press_pull", "hole", "move", "mirror", "rectangular_pattern",
+                      "circular_pattern", "split", "delete_faces", "draft"].includes(type))
                 initial.body = info.featureId
         }
         pickingSketchPlane = false
@@ -516,6 +855,7 @@ ApplicationWindow {
         property var partIds: []
         title: partIds.length ? qsTr("Export selected part") : qsTr("Export visible parts")
         fileMode: FileDialog.SaveFile
+        acceptLabel: qsTr("Export")
         nameFilters: window.controller.exportNameFilters
         defaultSuffix: selectedNameFilter.extensions.length ? selectedNameFilter.extensions[0] : "stl"
         onAccepted: {
@@ -587,6 +927,14 @@ ApplicationWindow {
 
     function openExport(ids) {
         exportDialog.partIds = ids
+        // Suggest a file name as Fusion does: the part's name, or the project's for all
+        // visible parts (CAD-115).
+        const parts = window.controller.execute("document.parts")
+        const part = ids.length === 1 && parts.ok ? parts.result.parts.find(p => p.id === ids[0]) : null
+        const base = (part ? part.name : window.controller.projectName) || qsTr("export")
+        const safe = base.replace(/[\\/:*?"<>|]+/g, "_").trim()
+        const folder = exportDialog.currentFolder.toString().replace(/\/$/, "")
+        exportDialog.selectedFile = folder + "/" + encodeURIComponent(safe) + "." + exportDialog.defaultSuffix
         exportDialog.open()
     }
 
@@ -659,7 +1007,7 @@ ApplicationWindow {
         text: qsTr("&Export Selected...")
         enabled: !!window.selectedPartId
         shortcut: "Ctrl+E" // Fusion has no default export shortcut
-        onTriggered: window.openExport([window.selectedPartId])
+        onTriggered: window.openExport(window.selectedExisting())
     }
     Action {
         id: exportAllAction
@@ -697,7 +1045,7 @@ ApplicationWindow {
         onTriggered: {
             // Undo inside Move / Rotate / Scale drops the preview first (as Fusion's Esc).
             if (viewport.transformActive)
-                viewport.finishTransform(false)
+                viewport.cancelTransform()
             else
                 window.controller.execute("edit.undo")
         }
@@ -713,9 +1061,18 @@ ApplicationWindow {
     Action {
         id: deleteAction
         text: qsTr("&Delete")
-        enabled: !!window.selectedPartId
+        // In a sketch, Delete removes the selected sketch curves, never a part.
+        enabled: window.activeSketch ? viewport.sketchOverlay.selectedCurves.length > 0 : !!window.selectedPartId
         shortcut: "Delete" // Fusion: Del
         onTriggered: window.deleteSelected()
+    }
+    Action {
+        id: selectAllAction
+        text: qsTr("Select &All")
+        // In a sketch the keys stay with the sketch; text fields keep their own Ctrl+A.
+        enabled: !window.activeSketch
+        shortcut: StandardKey.SelectAll // Fusion: Ctrl+A / Cmd+A
+        onTriggered: window.selectAllParts()
     }
     Action {
         id: visibilityAction
@@ -723,6 +1080,32 @@ ApplicationWindow {
         enabled: !!window.selectedPartId
         shortcut: "V" // Fusion: V
         onTriggered: window.toggleSelectedVisibility()
+    }
+    Action {
+        id: appearanceAction
+        text: qsTr("&Appearance...")
+        enabled: !!window.selectedPartId && !window.activeSketch
+        shortcut: "A" // Fusion: A
+        onTriggered: window.openAppearance(window.selectedPartId)
+    }
+    Action {
+        id: isolateAction
+        text: qsTr("&Isolate")
+        enabled: !!window.selectedPartId
+        onTriggered: window.isolatePart(window.selectedPartId)
+    }
+    Action {
+        id: unisolateAction
+        text: qsTr("&Unisolate")
+        enabled: !!window.isolation
+        onTriggered: window.unisolate()
+    }
+    Action {
+        id: renameAction
+        text: qsTr("Re&name")
+        enabled: !!window.selectedPartId
+        shortcut: "F2" // the system rename key; Fusion renames from the Browser
+        onTriggered: window.renamePart(window.selectedPartId)
     }
     Action {
         id: moveAction
@@ -737,6 +1120,72 @@ ApplicationWindow {
         // Fusion lists F6 for Zoom to Fit (Electronics workspace); F is Fillet in Fusion.
         shortcut: "F6"
         onTriggered: viewport.fitAll()
+    }
+    Action {
+        id: zoomSelectionAction
+        text: qsTr("&Zoom to Selection")
+        enabled: !!window.selectedPartId
+        onTriggered: window.zoomToSelection(0)
+    }
+    // Copy / Paste a part (Fusion: Ctrl+C / Ctrl+V; the pasted copy opens in Move, as there).
+    // Text fields keep Ctrl+C / Ctrl+V for their text.
+    property var copiedPartId: 0
+    Action {
+        id: copyAction
+        text: qsTr("&Copy")
+        shortcut: StandardKey.Copy
+        enabled: !!window.selectedPartId && !window.activeSketch && window.canCopyPart(window.selectedPartId)
+        onTriggered: {
+            window.copiedPartId = window.selectedPartId
+            window.controller.showStatus(qsTr("Copied %1: Ctrl+V pastes it").arg(window.controller.partInfo(window.copiedPartId).name))
+        }
+    }
+    Action {
+        id: pasteAction
+        text: qsTr("&Paste")
+        shortcut: StandardKey.Paste
+        enabled: !!window.copiedPartId && !window.activeSketch
+        onTriggered: window.pastePart()
+    }
+    Action {
+        id: zoomInAction
+        text: qsTr("Zoom &In")
+        shortcut: StandardKey.ZoomIn // Fusion (Windows): Ctrl++
+        onTriggered: viewport.zoomView(1 / 1.25)
+    }
+    Action {
+        id: zoomOutAction
+        text: qsTr("Zoom &Out")
+        shortcut: StandardKey.ZoomOut // Fusion (Windows): Ctrl+-
+        onTriggered: viewport.zoomView(1.25)
+    }
+    // On most layouts + shares a key with =: Ctrl+= (no Shift) zooms in too.
+    Shortcut {
+        sequence: "Ctrl+="
+        onActivated: zoomInAction.trigger()
+    }
+    // Area selection on a scan (Fusion Direct Mesh: Shift+Up / Shift+Down grow / shrink,
+    // Alt+N invert).
+    Action {
+        id: growSelectionAction
+        text: qsTr("&Grow Selection")
+        shortcut: "Shift+Up"
+        enabled: !!window.selectedPartId && !window.activeSketch
+        onTriggered: window.changeSelection("selection.grow", { steps: 1 })
+    }
+    Action {
+        id: shrinkSelectionAction
+        text: qsTr("S&hrink Selection")
+        shortcut: "Shift+Down"
+        enabled: !!window.selectedPartId && !window.activeSketch
+        onTriggered: window.changeSelection("selection.grow", { steps: -1 })
+    }
+    Action {
+        id: invertSelectionAction
+        text: qsTr("&Invert Selection")
+        shortcut: "Alt+N"
+        enabled: !!window.selectedPartId && !window.activeSketch
+        onTriggered: window.changeSelection("selection.invert", {})
     }
     Action {
         id: homeAction
@@ -775,12 +1224,24 @@ ApplicationWindow {
     Action { id: revolveAction; text: qsTr("Re&volve"); onTriggered: window.openFeature("revolve") }
     Action { id: boxAction; text: qsTr("&Box"); onTriggered: window.openFeature("box") }
     Action { id: cylinderAction; text: qsTr("C&ylinder"); onTriggered: window.openFeature("cylinder") }
+    Action { id: sphereAction; text: qsTr("Sp&here"); onTriggered: window.openFeature("sphere") }
+    Action { id: torusAction; text: qsTr("T&orus"); onTriggered: window.openFeature("torus") }
+    // Fusion: Press Pull, Q (moves faces in or out; a curved face is offset).
+    Action { id: pressPullAction; text: qsTr("&Press Pull"); shortcut: "Q"; enabled: !window.activeSketch; onTriggered: window.openFeature("press_pull") }
     Action { id: filletAction; text: qsTr("&Fillet"); shortcut: "F"; enabled: !window.activeSketch; onTriggered: window.openFeature("fillet") }
     Action { id: holeAction; text: qsTr("H&ole"); shortcut: "H"; enabled: !window.activeSketch; onTriggered: window.openFeature("hole") }
     Action { id: chamferAction; text: qsTr("C&hamfer"); onTriggered: window.openFeature("chamfer") }
     Action { id: shellAction; text: qsTr("S&hell"); onTriggered: window.openFeature("shell") }
+    // Fusion: Modify > Draft (tilt faces by an angle from a fixed plane).
+    Action { id: draftAction; text: qsTr("D&raft"); enabled: !window.activeSketch; onTriggered: window.openFeature("draft") }
+    // Fusion: Modify > Delete on faces (the gap heals from the neighbours).
+    Action { id: deleteFacesAction; text: qsTr("&Delete Face"); enabled: !window.activeSketch; onTriggered: window.openFeature("delete_faces") }
+    // Fusion: Modify > Split Body (by a plane: origin plane, construction plane or flat face).
+    Action { id: splitAction; text: qsTr("Spli&t Body"); enabled: !window.activeSketch; onTriggered: window.openFeature("split") }
     Action { id: combineAction; text: qsTr("Co&mbine"); onTriggered: window.openFeature("combine") }
     Action { id: planeAction; text: qsTr("Construction &Plane"); enabled: !window.activeSketch; onTriggered: window.openFeature("plane") }
+    // Fusion: Construct > Midplane (halfway between two parallel faces or planes).
+    Action { id: midplaneAction; text: qsTr("&Midplane"); enabled: !window.activeSketch; onTriggered: window.openFeature("midplane") }
     Action { id: loftAction; text: qsTr("&Loft"); enabled: !window.activeSketch; onTriggered: window.openFeature("loft") }
     Action { id: sweepAction; text: qsTr("S&weep"); enabled: !window.activeSketch; onTriggered: window.openFeature("sweep") }
     Action { id: mirrorAction; text: qsTr("M&irror"); enabled: !window.activeSketch; onTriggered: window.openFeature("mirror") }
@@ -833,8 +1294,22 @@ ApplicationWindow {
     Action { id: perpendicularAction; text: qsTr("Perpendicular"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "perpendicular"; onTriggered: window.sketchTool_("perpendicular") }
     Action { id: concentricAction; text: qsTr("Concentric"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "concentric"; onTriggered: window.sketchTool_("concentric") }
     Action { id: midpointAction; text: qsTr("Midpoint"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "midpoint"; onTriggered: window.sketchTool_("midpoint") }
+    Action { id: symmetricAction; text: qsTr("Symmetric"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "symmetric"; onTriggered: window.sketchTool_("symmetric") }
     Action { id: collinearAction; text: qsTr("Collinear"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "collinear"; onTriggered: window.sketchTool_("collinear") }
+    // Fusion: Construction (X) switches the selected sketch curves.
+    Action { id: constructionAction; text: qsTr("Construction"); shortcut: "X"; enabled: !!window.activeSketch && viewport.sketchOverlay.selectedCurves.length > 0; onTriggered: viewport.sketchOverlay.toggleConstruction() }
     Action { id: fixAction; text: qsTr("Fix/Unfix"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "fix"; onTriggered: window.sketchTool_("fix") }
+    Action { id: trimAction; text: qsTr("&Trim"); shortcut: "T"; enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "trim"; onTriggered: window.sketchTool_("trim") }
+    Action { id: sketchFilletAction; text: qsTr("&Fillet"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "fillet"; onTriggered: window.sketchTool_("fillet") }
+    Action { id: sketchProjectAction; text: qsTr("&Project"); shortcut: "P"; enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "project"; onTriggered: window.sketchTool_("project") }
+    Action { id: sketchOffsetAction; text: qsTr("&Offset"); shortcut: "O"; enabled: !!window.activeSketch && (viewport.sketchOverlay.selectedCurves.length > 0 || window.sketchTool === "offset"); checkable: true; checked: window.sketchTool === "offset"; onTriggered: { if (window.sketchTool !== "offset") viewport.sketchOverlay.startOffset(); else window.sketchTool_("") } }
+    Action { id: sketchMirrorAction; text: qsTr("&Mirror"); enabled: !!window.activeSketch && (viewport.sketchOverlay.selectedCurves.length > 0 || window.sketchTool === "mirror"); checkable: true; checked: window.sketchTool === "mirror"; onTriggered: { if (window.sketchTool !== "mirror") viewport.sketchOverlay.startMirror(); else window.sketchTool_("") } }
+    Action { id: centerRectangleAction; text: qsTr("Center Rectan&gle"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "center_rectangle"; onTriggered: window.sketchTool_("center_rectangle") }
+    Action { id: rectangle3PointAction; text: qsTr("3-Po&int Rectangle"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "rectangle_3point"; onTriggered: window.sketchTool_("rectangle_3point") }
+    Action { id: circle2PointAction; text: qsTr("&2-Point Circle"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "circle_2point"; onTriggered: window.sketchTool_("circle_2point") }
+    Action { id: circle3PointAction; text: qsTr("&3-Point Circle"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "circle_3point"; onTriggered: window.sketchTool_("circle_3point") }
+    Action { id: centerArcAction; text: qsTr("C&enter Point Arc"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "center_arc"; onTriggered: window.sketchTool_("center_arc") }
+    Action { id: splineAction; text: qsTr("Spli&ne"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "spline"; onTriggered: window.sketchTool_("spline") }
     Action { id: slotAction; text: qsTr("Sl&ot"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "slot"; onTriggered: window.sketchTool_("slot") }
 
     // Scan area selection tools (shortcuts 1/2/3 are in Viewport.qml).
@@ -885,6 +1360,9 @@ ApplicationWindow {
         window.partOnSurfaceSketch = null
         window.finishSketch()
         window.selectPart(0)
+        window.copiedPartId = 0 // part ids restart in the next project: never paste another part
+        window.isolationRecords = [] // the hidden parts belong to the previous project
+        window.isolation = null
         closeToolPanels()
         scanPanel.reset()
         heatMapPanel.result = null
@@ -963,9 +1441,15 @@ ApplicationWindow {
 
     Shortcut {
         sequence: "Esc"
+        // A name being edited in the Browser takes its own Esc (keep the old name).
+        enabled: !browser.renamingId
         onActivated: {
+            if (viewport.transformPickMode) {
+                viewport.transformPickMode = ""
+                return
+            }
             if (viewport.transformActive) {
-                viewport.finishTransform(false)
+                viewport.cancelTransform()
                 return
             }
             if (viewport.leaveSelectionTool())
@@ -980,8 +1464,16 @@ ApplicationWindow {
                 scanPanel.close()
             else if (window.pickingSketchPlane)
                 window.pickingSketchPlane = false
-            else if (window.activeSketch && viewport.sketchOverlay.points.length > 0)
-                viewport.sketchOverlay.reset()
+            // In a sketch, as in Fusion: Esc ends what is being drawn, then the tool, then
+            // clears the curve selection; only then does it leave the sketch.
+            else if (window.activeSketch && viewport.sketchOverlay.pointDragging)
+                viewport.sketchOverlay.cancelPointDrag() // the drag is dropped, the point goes back
+            else if (window.activeSketch && viewport.sketchOverlay.drawing)
+                viewport.sketchOverlay.endCurrent()
+            else if (window.activeSketch && window.sketchTool !== "")
+                window.sketchTool = ""
+            else if (window.activeSketch && viewport.sketchOverlay.selectedCurves.length > 0)
+                viewport.sketchOverlay.clearSelection()
             else if (window.activeSketch)
                 window.finishSketch(true)
             else if (window.partOnSurfaceSketch)
@@ -1046,8 +1538,17 @@ ApplicationWindow {
             MenuItem { action: undoAction }
             MenuItem { action: redoAction }
             MenuSeparator {}
+            MenuItem { action: copyAction }
+            MenuItem { action: pasteAction }
+            MenuSeparator {}
             MenuItem { action: visibilityAction }
+            MenuItem { action: renameAction }
+            MenuItem { action: appearanceAction }
             MenuItem { action: deleteAction }
+            MenuSeparator {}
+            MenuItem { action: growSelectionAction }
+            MenuItem { action: shrinkSelectionAction }
+            MenuItem { action: invertSelectionAction }
             MenuSeparator {}
             MenuItem { action: agentAccessAction }
             MenuItem { action: preferencesAction }
@@ -1063,6 +1564,8 @@ ApplicationWindow {
             MenuItem { action: loftAction }
             MenuItem { action: boxAction }
             MenuItem { action: cylinderAction }
+            MenuItem { action: sphereAction }
+            MenuItem { action: torusAction }
             MenuItem { action: holeAction }
             MenuSeparator {}
             MenuItem { action: mirrorAction }
@@ -1075,13 +1578,18 @@ ApplicationWindow {
         Menu {
             title: qsTr("C&onstruct")
             MenuItem { action: planeAction }
+            MenuItem { action: midplaneAction }
         }
         Menu {
             title: qsTr("&Modify")
+            MenuItem { action: pressPullAction }
             MenuItem { action: filletAction }
             MenuItem { action: chamferAction }
             MenuItem { action: shellAction }
             MenuItem { action: combineAction }
+            MenuItem { action: splitAction }
+            MenuItem { action: deleteFacesAction }
+            MenuItem { action: draftAction }
             MenuSeparator {}
             MenuItem { action: parametersAction }
             MenuSeparator {}
@@ -1095,10 +1603,23 @@ ApplicationWindow {
             title: qsTr("&Sketch")
             MenuItem { action: lineAction }
             MenuItem { action: rectangleAction }
+            MenuItem { action: centerRectangleAction }
+            MenuItem { action: rectangle3PointAction }
             MenuItem { action: circleAction }
+            MenuItem { action: circle2PointAction }
+            MenuItem { action: circle3PointAction }
             MenuItem { action: arcAction }
+            MenuItem { action: centerArcAction }
             MenuItem { action: polygonAction }
             MenuItem { action: slotAction }
+            MenuItem { action: splineAction }
+            MenuSeparator {}
+            MenuItem { action: sketchFilletAction }
+            MenuItem { action: trimAction }
+            MenuItem { action: sketchOffsetAction }
+            MenuItem { action: sketchProjectAction }
+            MenuItem { action: sketchMirrorAction }
+            MenuItem { action: constructionAction }
             MenuSeparator {}
             MenuItem { action: dimensionAction }
             Menu {
@@ -1113,6 +1634,7 @@ ApplicationWindow {
                 MenuItem { action: concentricAction }
                 MenuItem { action: midpointAction }
                 MenuItem { action: collinearAction }
+                MenuItem { action: symmetricAction }
                 MenuItem { action: fixAction }
             }
             MenuSeparator {}
@@ -1136,7 +1658,13 @@ ApplicationWindow {
         Menu {
             title: qsTr("&View")
             MenuItem { action: fitAction }
+            MenuItem { action: zoomSelectionAction }
+            MenuItem { action: zoomInAction }
+            MenuItem { action: zoomOutAction }
             MenuItem { action: homeAction }
+            MenuSeparator {}
+            MenuItem { action: isolateAction }
+            MenuItem { action: unisolateAction }
             MenuSeparator {}
             Action { text: qsTr("Front"); onTriggered: viewport.setView(0, 0) }
             Action { text: qsTr("Back"); onTriggered: viewport.setView(0, 180) }
@@ -1337,6 +1865,8 @@ ApplicationWindow {
                 ToolCommand { action: holeAction; text: qsTr("Hole"); iconName: "hole" }
                 ToolCommand { action: boxAction; text: qsTr("Box"); iconName: "box" }
                 ToolCommand { action: cylinderAction; text: qsTr("Cylinder"); iconName: "cylinder" }
+                ToolCommand { action: sphereAction; text: qsTr("Sphere"); iconName: "sphere" }
+                ToolCommand { action: torusAction; text: qsTr("Torus"); iconName: "torus" }
                 ToolCommand { action: sweepAction; text: qsTr("Sweep"); iconName: "sweep" }
                 ToolCommand { action: loftAction; text: qsTr("Loft"); iconName: "loft" }
                 ToolCommand { action: mirrorAction; text: qsTr("Mirror"); iconName: "mirror" }
@@ -1348,10 +1878,12 @@ ApplicationWindow {
                 caption: qsTr("MODIFY")
                 maxVisible: 6
                 ToolCommand { action: moveAction; text: qsTr("Move/Rotate"); iconName: "move" }
+                ToolCommand { action: pressPullAction; text: qsTr("Press Pull"); iconName: "extrude" }
                 ToolCommand { action: filletAction; text: qsTr("Fillet"); iconName: "fillet" }
                 ToolCommand { action: chamferAction; text: qsTr("Chamfer"); iconName: "chamfer" }
                 ToolCommand { action: shellAction; text: qsTr("Shell"); iconName: "shell" }
                 ToolCommand { action: combineAction; text: qsTr("Combine"); iconName: "combine" }
+                ToolCommand { action: splitAction; text: qsTr("Split Body"); iconName: "section" }
                 ToolCommand { action: parametersAction; text: qsTr("Parameters"); iconName: "parameters" }
                 ToolCommand { action: deleteAction; text: qsTr("Delete"); iconName: "delete" }
                 ToolCommand { action: visibilityAction; text: qsTr("Show/Hide"); iconName: "visible" }
@@ -1360,6 +1892,7 @@ ApplicationWindow {
             ToolGroup {
                 caption: qsTr("CONSTRUCT")
                 ToolCommand { action: planeAction; text: qsTr("Plane"); iconName: "plane" }
+                ToolCommand { action: midplaneAction; text: qsTr("Midplane"); iconName: "plane" }
             }
             ToolSeparator {}
             ToolGroup {
@@ -1533,7 +2066,26 @@ ApplicationWindow {
                 ToolCommand { action: arcAction; text: qsTr("Arc"); iconName: "arc" }
                 ToolCommand { action: polygonAction; text: qsTr("Polygon"); iconName: "polygon" }
                 ToolCommand { action: slotAction; text: qsTr("Slot"); iconName: "slot" }
+                ToolCommand { action: splineAction; text: qsTr("Spline"); iconName: "spline" }
                 ToolCommand { action: dimensionAction; text: qsTr("Dimension"); iconName: "dimension" }
+                // Past maxVisible: in the CREATE caption menu (Fusion keeps them in the
+                // Rectangle / Circle / Arc drop-downs).
+                ToolCommand { action: centerRectangleAction; text: qsTr("Center Rectangle"); iconName: "center-rectangle" }
+                ToolCommand { action: rectangle3PointAction; text: qsTr("3-Point Rectangle"); iconName: "rectangle-3point" }
+                ToolCommand { action: circle2PointAction; text: qsTr("2-Point Circle"); iconName: "circle-2point" }
+                ToolCommand { action: circle3PointAction; text: qsTr("3-Point Circle"); iconName: "circle-3point" }
+                ToolCommand { action: centerArcAction; text: qsTr("Center Arc"); iconName: "center-arc" }
+            }
+            ToolSeparator { tab: "sketch" }
+            ToolGroup {
+                tab: "sketch"
+                caption: qsTr("MODIFY")
+                ToolCommand { action: sketchFilletAction; text: qsTr("Fillet"); iconName: "fillet" }
+                ToolCommand { action: trimAction; text: qsTr("Trim"); iconName: "trim" }
+                ToolCommand { action: sketchOffsetAction; text: qsTr("Offset"); iconName: "offset" }
+                ToolCommand { action: sketchProjectAction; text: qsTr("Project"); iconName: "project" }
+                ToolCommand { action: sketchMirrorAction; text: qsTr("Mirror"); iconName: "mirror" }
+                ToolCommand { action: constructionAction; text: qsTr("Construction"); iconName: "construction" }
             }
             ToolSeparator { tab: "sketch" }
             ToolGroup {
@@ -1550,6 +2102,7 @@ ApplicationWindow {
                 ToolCommand { action: concentricAction; text: qsTr("Concentric"); iconName: "concentric" }
                 ToolCommand { action: midpointAction; text: qsTr("Midpoint"); iconName: "midpoint" }
                 ToolCommand { action: collinearAction; text: qsTr("Collinear"); iconName: "collinear" }
+                ToolCommand { action: symmetricAction; text: qsTr("Symmetric"); iconName: "symmetric" }
                 ToolCommand { action: fixAction; text: qsTr("Fix/Unfix"); iconName: "fix" }
             }
             ToolSeparator { tab: "sketch" }
@@ -1581,9 +2134,12 @@ ApplicationWindow {
             SplitView.minimumWidth: 180
             controller: window.controller
             selectedPartId: window.selectedPartId
-            onPartSelected: id => window.selectPart(id)
+            selectedPartIds: window.selectedPartIds
+            isolation: window.isolation
+            onUnisolateRequested: window.unisolate()
+            onPartSelected: id => window.selectPart(id, window.controller.addToSelectionHeld())
             onPartContextRequested: (id, item, x, y) => {
-                window.selectPart(id)
+                window.selectPartForMenu(id)
                 partMenu.info = window.controller.partInfo(id)
                 partMenu.popup(item, x, y)
             }
@@ -1592,9 +2148,11 @@ ApplicationWindow {
         Viewport {
             id: viewport
             objectName: "viewport"
+            HoverHandler { id: viewHover } // where the command search (S) opens
             SplitView.fillWidth: true
             controller: window.controller
             selectedPartId: window.selectedPartId
+            selectedPartIds: window.selectedPartIds
             sketch: window.activeSketch
             sketchTool: window.sketchTool
             selectionToolsEnabled: !featureDialog.visible && !window.pickingSketchPlane && !measurePanel.active
@@ -1607,16 +2165,32 @@ ApplicationWindow {
             pickKind: featureDialog.visible ? featureDialog.pickKind : ""
             shownSketch: featureDialog.shownSketch
             unpickablePlane: featureDialog.visible ? featureDialog.ownPlane : -1
+            unpickableBody: featureDialog.visible ? featureDialog.previewFeatureId : -1
+            distanceArrow: featureDialog.visible ? featureDialog.distanceArrow : null
+            onDistanceArrowDragged: t => featureDialog.dragDistance(t)
             simulationFields: window.simulationVisible ? simulationPanel.viewportFields : []
             hiddenPartIds: window.simulationVisible ? simulationPanel.hiddenPartIds : []
             overlayLines: measurePanel.keptLines.concat(measurePanel.overlayLines)
             pickSketchLines: measurePanel.active
             onSectionDragged: delta => sectionPanel.moveBy(delta)
-            onPartPicked: id => {
-                window.selectPart(id)
+            onPartPicked: (id, additive, forMenu) => {
+                if (forMenu)
+                    window.selectPartForMenu(id)
+                else
+                    window.selectPart(id, additive)
                 // A click through a hole of a scan, or next to the model, while choosing where to sketch.
                 if (!id && window.pickingSketchPlane)
                     window.controller.showStatus(qsTr("Nothing there to sketch on: click on or next to the surface"))
+            }
+            onZoomToPartRequested: id => window.zoomToSelection(id)
+            cfdPreview: simulationPanel.visible ? simulationPanel.proposal : null
+            onAxisClicked: (x, y) => {
+                if (featureDialog.visible)
+                    featureDialog.pickAxisAt(viewport, x, y)
+            }
+            onSketchContextRequested: (x, y) => {
+                sketchMenu.drawing = viewport.sketchDrawing
+                sketchMenu.popup(viewport, x, y)
             }
             onPartContextRequested: (id, x, y) => {
                 partMenu.info = id ? window.controller.partInfo(id) : ({})
@@ -1672,6 +2246,78 @@ ApplicationWindow {
                     window.controller.execute("sketch.edit_constraint", { sketch: window.activeSketch.id, index: index, remove: true })
                 window.refreshSketchSnaps()
             }
+            // Dragging a sketch point (CAD-123): a live preview while moving, one undo step
+            // on release; the solver keeps the constraints and dimensions.
+            onSketchPointDragCancelled: {
+                window.controller.cancelPreview()
+                window.refreshSketchSnaps()
+            }
+            onSketchPointDragged: (point, to, done) => {
+                if (!window.activeSketch)
+                    return
+                const args = { sketch: window.activeSketch.id, point: point, to: to }
+                if (done) {
+                    window.controller.cancelPreview()
+                    const r = window.controller.execute("sketch.move_point", args)
+                    if (!r.ok)
+                        window.controller.showStatus(r.error)
+                } else {
+                    window.controller.preview("sketch.move_point", args)
+                }
+                window.refreshSketchSnaps()
+            }
+            onSketchConstructionToggled: (list, on) => {
+                if (window.activeSketch)
+                    window.controller.execute("sketch.set_construction", { sketch: window.activeSketch.id, curves: list, construction: on })
+                window.refreshSketchSnaps()
+            }
+            onSketchProjectRequested: (body, point) => {
+                if (!window.activeSketch)
+                    return
+                const r = window.controller.execute("sketch.project", { sketch: window.activeSketch.id, body: body, edges: [{ point: point.map(x => Math.round(x * 1e4) / 1e4) }] })
+                if (!r.ok)
+                    window.controller.showStatus(r.error)
+                window.refreshSketchSnaps()
+            }
+            onSketchOffsetRequested: (curves, distance) => {
+                if (!window.activeSketch)
+                    return
+                const r = window.controller.execute("sketch.offset", { sketch: window.activeSketch.id, curves: curves, distance: distance })
+                if (!r.ok)
+                    window.controller.showStatus(r.error)
+                window.refreshSketchSnaps()
+            }
+            onSketchFilletRequested: (curves, radius) => {
+                if (!window.activeSketch)
+                    return
+                const r = window.controller.execute("sketch.fillet", { sketch: window.activeSketch.id, curves: curves, radius: radius })
+                if (!r.ok)
+                    window.controller.showStatus(r.error)
+                else
+                    window.controller.showStatus(qsTr("Fillet R%1: edit its radius under Constraints").arg(radius))
+                window.refreshSketchSnaps()
+            }
+            onSketchMirrorRequested: (curves, line) => {
+                if (!window.activeSketch)
+                    return
+                const r = window.controller.execute("sketch.mirror", { sketch: window.activeSketch.id, curves: curves, line: line })
+                if (!r.ok)
+                    window.controller.showStatus(r.error)
+                window.refreshSketchSnaps()
+            }
+            onSketchTrimRequested: (curve, at) => {
+                if (!window.activeSketch)
+                    return
+                const r = window.controller.execute("sketch.trim", { sketch: window.activeSketch.id, curve: curve, at: at })
+                if (!r.ok)
+                    window.controller.showStatus(r.error)
+                window.refreshSketchSnaps()
+            }
+            onSketchCurvesDeleted: list => {
+                if (window.activeSketch)
+                    window.controller.execute("sketch.delete_curves", { sketch: window.activeSketch.id, curves: list })
+                window.refreshSketchSnaps()
+            }
 
             // What can be done with the selection, next to it (ContextActions.qml).
             ContextBar {
@@ -1683,7 +2329,7 @@ ApplicationWindow {
                 maximumWidth: parent.width - 2 * Theme.space4
                 width: Math.min(implicitWidth, maximumWidth)
                 visible: !!window.selectedPartId && !window.activeSketch && !featureDialog.visible
-                         && !window.pickingSketchPlane
+                         && !window.pickingSketchPlane && !cfdOverlay.visible
                 registry: contextActions
                 popup: actionPopup
                 info: window.selectionInfo
@@ -1741,6 +2387,17 @@ ApplicationWindow {
                 anchors.bottom: parent.bottom
                 anchors.margins: 8
                 controller: window.controller
+            }
+            // Wind tunnel results: colour bars and the forces of the run shown in 3D.
+            CfdResultsOverlay {
+                id: cfdOverlay
+                objectName: "cfdOverlay"
+                anchors.fill: parent
+                controller: window.controller
+                fields: viewport.simulationFields
+                results: simulationPanel.displayedRun === simulationPanel.activeRun ? simulationPanel.results : null
+                runTitle: simulationPanel.displayedRunTitle
+                comparison: simulationPanel.differenceShown ? simulationPanel.comparison : null
             }
 
             ScanPanel {
@@ -1988,6 +2645,7 @@ ApplicationWindow {
         PropertiesPanel {
             id: properties
             visible: window.propertiesVisible && !window.simulationVisible
+            busy: viewport.transformActive
             SplitView.preferredWidth: 280
             SplitView.minimumWidth: 200
             controller: window.controller
@@ -2087,6 +2745,7 @@ ApplicationWindow {
             const g = qsTr("Viewport")
             const rows = [
                 { group: g, name: qsTr("Cancel tool / clear selection"), keys: "Esc" },
+                { group: g, name: qsTr("Search commands"), keys: "S" },
                 { group: g, name: qsTr("Region select tool"), keys: "1" },
                 { group: g, name: qsTr("Lasso select tool"), keys: "2" },
                 { group: g, name: qsTr("Brush select tool"), keys: "3" },
@@ -2095,6 +2754,30 @@ ApplicationWindow {
             if (window.isMac)
                 rows.push({ group: g, name: qsTr("Delete"), keys: "⌫" })
             return rows
+        }
+    }
+
+    // S (Fusion): search the commands and run one, in a box at the pointer. Text fields keep
+    // the key (they accept it as a ShortcutOverride).
+    AppearancePopup {
+        id: appearancePopup
+        objectName: "appearancePopup"
+        parent: Overlay.overlay
+        controller: window.controller
+    }
+    CommandSearch {
+        id: commandSearch
+        objectName: "commandSearch"
+        parent: Overlay.overlay
+        menuBar: window.menuBar
+    }
+    Shortcut {
+        sequence: "S"
+        enabled: !commandSearch.visible
+        onActivated: {
+            const p = viewHover.hovered ? viewport.mapToItem(Overlay.overlay, viewHover.point.position.x, viewHover.point.position.y)
+                                        : viewport.mapToItem(Overlay.overlay, viewport.width / 2 - commandSearch.width / 2, 60)
+            commandSearch.openAt(p.x, p.y)
         }
     }
 
@@ -2112,14 +2795,21 @@ ApplicationWindow {
             viewport.restoreCameraState(view)
         }
         // Undo/redo and edits elsewhere (timeline, parameters) change the sketch too.
-        function onHistoryChanged() { window.refreshSketchSnaps() }
+        function onHistoryChanged() {
+            Qt.callLater(window.refreshSketchSnaps)
+        }
         function onPartImported(id) {
             window.selectPart(id)
             viewport.fitAll()
         }
         function onPartChanged(id) {
-            if (window.selectedPartId === id && window.controller.parts.rowOf(id) < 0)
-                window.selectPart(0)
+            if (window.controller.parts.rowOf(id) >= 0)
+                return
+            if (window.selectedPartIds.indexOf(id) >= 0)
+                window.selectedPartIds = window.selectedPartIds.filter(p => p !== id)
+            if (window.selectedPartId === id)
+                window.selectedPartId = window.selectedPartIds.length
+                        ? window.selectedPartIds[window.selectedPartIds.length - 1] : 0
         }
     }
 }

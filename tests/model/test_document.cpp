@@ -9,6 +9,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace aerocad;
@@ -87,6 +88,31 @@ TEST_CASE("Document keeps explicit ids when re-adding", "[model]")
     CHECK(doc.addPart(copy) != a);
 }
 
+TEST_CASE("A part put back keeps its place in the list", "[model]")
+{
+    Document doc;
+    const auto a = doc.addPart(makePart("a"));
+    const auto b = doc.addPart(makePart("b"));
+    const auto c = doc.addPart(makePart("c"));
+    std::vector<std::pair<Document::Change, std::size_t>> rows;
+    doc.addObserver([&](Document::Change change, model::PartId id) {
+        if (change == Document::Change::AboutToAdd)
+            rows.emplace_back(change, doc.indexFor(id));
+    });
+    auto removed = doc.removePart(b);
+    REQUIRE(removed);
+    CHECK(doc.addPart(*removed) == b);
+    REQUIRE(rows.size() == 1);
+    CHECK(rows[0].second == 1); // announced at the row it lands on
+    REQUIRE(doc.partCount() == 3);
+    CHECK(doc.parts()[0].id == a);
+    CHECK(doc.parts()[1].id == b);
+    CHECK(doc.parts()[2].id == c);
+    // New parts still go at the end.
+    const auto d = doc.addPart(makePart("d"));
+    CHECK(doc.parts().back().id == d);
+}
+
 TEST_CASE("Restoring an older snapshot still bumps the revision", "[model]")
 {
     Document doc;
@@ -142,6 +168,35 @@ TEST_CASE("UndoStack respects its limit", "[model]")
         stack.push({std::to_string(i), [] {}, [] {}});
     CHECK(stack.size() == 3);
     CHECK(stack.undoLabel() == "4");
+}
+
+TEST_CASE("UndoStack tells an expired entry from an undone one", "[model]")
+{
+    model::UndoStack stack(3);
+    stack.push({"a", [] {}, [] {}});
+    const auto a = stack.topId();
+    stack.push({"b", [] {}, [] {}});
+    const auto b = stack.topId();
+    CHECK_FALSE(stack.isExpired(a));
+    REQUIRE(stack.undo()); // b undone: neither applied nor expired
+    CHECK_FALSE(stack.isApplied(b));
+    CHECK_FALSE(stack.isExpired(b));
+    stack.push({"c", [] {}, [] {}}); // b discarded
+    CHECK_FALSE(stack.isExpired(b));
+    stack.push({"d", [] {}, [] {}});
+    stack.push({"e", [] {}, [] {}}); // a dropped past the limit, still done
+    CHECK_FALSE(stack.isApplied(a));
+    CHECK(stack.isExpired(a));
+    for (int i = 0; i < 5; ++i)
+        stack.push({"f", [] {}, [] {}}); // everything older than b is gone by now
+    CHECK_FALSE(stack.isExpired(b)); // undone, so not done for good, however old
+    const auto e = stack.topId();
+    REQUIRE(stack.undo());
+    const auto before = stack.topId();
+    stack.clear(); // the applied entries expire, the undone one does not
+    CHECK(stack.isExpired(before));
+    CHECK_FALSE(stack.isExpired(e));
+    CHECK_FALSE(stack.isExpired(0));
 }
 
 TEST_CASE("Document revision increases on every change", "[model]")

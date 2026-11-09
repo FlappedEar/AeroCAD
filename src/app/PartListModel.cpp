@@ -58,6 +58,8 @@ QVariant PartListModel::data(const QModelIndex& index, int role) const
         if (!p.shape || p.shape->isNull())
             return QString();
         return p.shape->solidCount() > 0 ? QStringLiteral("solid") : QStringLiteral("surface");
+    case ColorRole:
+        return QString::fromStdString(p.color);
     default:
         return {};
     }
@@ -69,7 +71,7 @@ QHash<int, QByteArray> PartListModel::roleNames() const
         {PartIdRole, "partId"},       {NameRole, "name"},       {VisibleRole, "partVisible"},
         {TrianglesRole, "triangles"}, {HasBrepRole, "hasBrep"}, {SourceRole, "source"},
         {RevisionRole, "revision"},   {KindRole, "kind"},       {FeatureIdRole, "featureId"},
-        {ShapeKindRole, "shapeKind"},
+        {ShapeKindRole, "shapeKind"}, {ColorRole, "partColor"},
     };
 }
 
@@ -88,7 +90,8 @@ void PartListModel::onDocumentChanged(model::Document::Change change, model::Par
     using Change = model::Document::Change;
     switch (change) {
     case Change::AboutToAdd: {
-        const int row = rowCount(); // new parts are appended
+        // In id order: new parts at the end, parts put back by undo where they were.
+        const int row = static_cast<int>(m_document.indexFor(id));
         beginInsertRows({}, row, row);
         break;
     }

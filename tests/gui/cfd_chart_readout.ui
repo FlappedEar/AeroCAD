@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CAD-177: hovering a Results chart shows the values of every series at the nearest iteration.
+# Uses tests/gui/fake-docker.sh with FAKE_DOCKER_HISTORY=1 (20 iterations, still running).
+Qt.createQmlObject('import QtQuick; Item { objectName: "cfTest"; visible: false; function find(i, name) { if (!i) return null; if (i.objectName === name) return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = find(ch[k], name); if (r) return r } return null } function show(item) { let fl = item.parent; while (fl && fl.contentY === undefined) fl = fl.parent; if (fl) { const q = item.mapToItem(fl.contentItem, 0, 0); fl.contentY = Math.max(0, Math.min(fl.contentHeight - fl.height, q.y + item.height / 2 - fl.height / 2)) } } }', window.contentItem)
+ui.wait(800)
+(() => { for (const r of controller.execute("simulation.list").result.runs) controller.execute("simulation.delete", { run: r.id }) })()
+(() => { const p = controller.execute("document.parts").result.parts[0]; window.selectPart(p.id) })()
+ui.clickText("SIMULATE")
+ui.wait(300)
+ui.clickText("Wind Tunnel")
+ui.wait(800)
+ui.clickText("Run CFD")
+ui.wait(2500)
+(() => { simulationPanel.refreshRuns(); simulationPanel.tab = 1 })()
+ui.wait(800)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const c = t.find(simulationPanel, "cfdChartCoefficients"); if (!c || !c.visible) ui.fail("no coefficient chart"); t.show(c) })()
+ui.wait(300)
+# Not hovered: no readout.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const b = t.find(simulationPanel, "cfdChartCoefficients"); if (b.readout) ui.fail("readout without hover") })()
+# Hover the middle of the plot: iteration about 10 of 1..20, all three coefficients.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const c = t.find(simulationPanel, "cfdChartCoefficients"); const p = c.layoutPlot(c.width, c.height - 20); const q = c.mapToItem(null, p.left + p.w / 2, c.height / 2); ui.move(q.x, q.y) })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const c = t.find(simulationPanel, "cfdChartCoefficients"); const r = c.readout; ui.log("READOUT " + JSON.stringify(r ? { x: r.x, values: r.values.map(v => v.name + "=" + v.value) } : null)); if (!r) ui.fail("no readout on hover"); if (r.x < 9 || r.x > 12) ui.fail("iteration: " + r.x); if (r.values.map(v => v.name).join(",") !== "Cd,Cl,Cs") ui.fail("series: " + r.values.map(v => v.name)); const box = t.find(c, "chartReadout"); const title = t.find(c, "chartReadoutTitle"); if (!box.visible || title.text !== "Iteration " + r.x) ui.fail("box: " + box.visible + " " + title.text); if (box.x < 0 || box.x + box.width > c.width) ui.fail("box outside the chart") })()
+ui.shot("cfd-chart-readout.png")
+# Near the right edge the box flips to the left of the line and stays inside.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const c = t.find(simulationPanel, "cfdChartCoefficients"); const p = c.layoutPlot(c.width, c.height - 20); const q = c.mapToItem(null, p.left + p.w - 2, c.height / 2); ui.move(q.x, q.y) })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const c = t.find(simulationPanel, "cfdChartCoefficients"); const r = c.readout; const box = t.find(c, "chartReadout"); ui.log("EDGE x " + (r && r.x) + " box " + box.x + "+" + box.width + " of " + c.width); if (!r || r.x !== 20) ui.fail("last iteration: " + (r && r.x)); if (box.x + box.width > c.width || box.x + box.width > r.px) ui.fail("box not left of the line") })()
+# Leaving the chart hides it.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const c = t.find(simulationPanel, "cfdChartCoefficients"); const q = c.mapToItem(null, c.width / 2, -40); ui.move(q.x, q.y) })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const c = t.find(simulationPanel, "cfdChartCoefficients"); if (c.readout || t.find(c, "chartReadout").visible) ui.fail("readout after leaving") })()
+# Long runs: the title shows the exact iteration, not one rounded like the axis ticks.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const c = t.find(simulationPanel, "cfdChartCoefficients"); c.series = [{ name: "Cd", color: "#ff0000", x: [12344, 12345, 12346], y: [0.81, 0.82, 0.83] }]; const p = c.layoutPlot(c.width, c.height - 20); const q = c.mapToItem(null, p.left + p.w / 2, c.height / 2); ui.move(q.x, q.y) })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const c = t.find(simulationPanel, "cfdChartCoefficients"); const title = t.find(c, "chartReadoutTitle"); ui.log("LONG " + title.text); if (title.text !== "Iteration 12345") ui.fail("title: " + title.text) })()
+(() => { controller.execute("simulation.cancel", { run: simulationPanel.activeRun }) })()
+ui.wait(1000)
+ui.log("cfd chart readout done")

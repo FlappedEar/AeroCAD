@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -26,6 +27,12 @@ public:
 
     /// Volume in mm^3 (0 for shapes without solids).
     [[nodiscard]] double volume() const;
+
+    /// Area of all faces in mm^2 (exact, not from the display mesh).
+    [[nodiscard]] double surfaceArea() const;
+
+    /// Centre of mass of the solids (uniform density); nullopt for shapes without solids.
+    [[nodiscard]] std::optional<core::Vec3> centerOfMass() const;
 
     [[nodiscard]] const Impl* impl() const { return m_impl.get(); }
 

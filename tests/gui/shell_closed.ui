@@ -1,0 +1,15 @@
+# CAD-112: Shell with no face picked makes a closed hollow body (Fusion), with real clicks:
+# SOLID > Shell on a box, no face clicked, OK. Before, OCCT returned only the inner
+# offset, so the body silently became the cavity. A shell that cannot be made gives a clear
+# error and leaves the body as it was.
+# Run: AeroCAD --ui-script <this file>
+ui.wait(800)
+(() => { const r = controller.execute("feature.box", { size: [40, 30, 20] }); if (!r.ok) ui.fail("box: " + r.error) })()
+ui.wait(300)
+(() => { if (!ui.clickText("Shell")) ui.fail("no Shell button in the ribbon") })()
+ui.wait(400)
+ui.shot("build/shell-closed-dialog.png")
+(() => { if (!ui.clickText("OK")) ui.fail("no OK button") })()
+ui.wait(800)
+(() => { const p = controller.execute("document.parts").result.parts.find(x => x.kind === "body"); const i = controller.partInfo(p.id); ui.log("closed shell: faces " + i.faces + ", solids " + i.solids + ", size " + [i.sizeX, i.sizeY, i.sizeZ].map(v => v.toFixed(1)).join(" x ") + ", status: " + controller.statusMessage); if (i.faces !== 12) ui.fail("expected 6 outer + 6 inner faces, got " + i.faces); if (Math.abs(i.sizeX - 40) > 1e-6 || Math.abs(i.sizeZ - 20) > 1e-6) ui.fail("the outer walls changed") })()
+ui.shot("build/shell-closed.png")

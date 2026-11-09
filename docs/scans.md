@@ -13,12 +13,17 @@ command, available to scripts and to an AI agent over MCP (`commands.list`).
 | `part.convert_units {"id", "from", "to"}` | Fix a part imported in the wrong unit: `from: "m"` scales by 1000 (about the world origin). `to` defaults to `mm`. |
 | `part.calibrate {"id", "a", "b", "distance", "units"}` | Scale so that the distance between two points (picked on the model) equals a known dimension. Point `a` stays fixed. Returns the applied `factor`. |
 
+In the app, a scan whose longest side is under 20 mm or over 50 m starts its guide with
+"Check the size": it names the unit the file was most likely saved in (the one that makes it
+0.1 to 10 m long) and converts it in one click (CAD-140).
+
 ## Orientation
 
 | Command | What it does |
 | --- | --- |
 | `part.align {"id", "points" \| "triangles" \| "normal"+"origin", "target", "origin", "xDirection", "flip", "keepPosition"}` | Fit a plane to 3+ picked points or to a triangle region (e.g. a selection), turn it onto a world plane (`xy` default: normal to +Z; `xz`: +Y; `yz`: +X) and move its origin to the world origin. `xDirection` fixes the in-plane rotation. Returns the 4x4 `transform` and the fit `fitRms`. |
 | `part.transform {"id", "axis", "angle", "scale", "center", "translate"}` | Move, rotation (degrees, right-hand rule) and uniform scale; scale and rotation about `center` (default the box centre) first, then the move. |
+| `part.face_orientation {"id", "point", "mode", "triangle", "radius", + a pending transform}` | Read-only: how to turn the part by the face at `point`. `down` lays it on that face on the ground (lowest point Z 0), `front` turns it about Z so the face looks at the Front view (-Y), keeping its height. The face direction is the normal of the patch around the point (cos^8-weighted, so bevels and noise do not tilt it). Returns `center`, `axis`, `angle`, `scale`, `translate` for `part.transform` / `feature.move`. Lay on Face and Face Front in the Move / Rotate / Scale tool use it. |
 | `part.place {"id", "onFloor"}` | Centre the bounding box on the origin in X/Y and rest it on Z = 0 (or centre it in Z). |
 
 To put a picked face of a scan on the floor, align with that face's triangles and
@@ -64,6 +69,8 @@ modelling over them.
 
 Meshes above the "Max. triangles drawn" budget (Scan Tools > Display, default 1 M,
 remembered between sessions) are drawn simplified by vertex clustering, computed in the
-background. The document keeps the full mesh, so picking snaps, selection, fitting and
+background. The simplified mesh is drawn with smooth (averaged) normals: its vertices are
+averages per grid cell, and flat shading showed bands where the surface crosses a grid
+plane (CAD-139). The document keeps the full mesh, so picking snaps, selection, fitting and
 modelling always use all the scan data. A 5 M-triangle PLY imports and renders in about
 5 s in the cloud CI container with software OpenGL.

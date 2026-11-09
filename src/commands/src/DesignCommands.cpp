@@ -72,14 +72,15 @@ Json curveSchema()
         {"type", "object"},
         {"description",
          "A sketch curve. type selects the fields: line {start, end}; rectangle {corner, width, height} or "
-         "{corner, opposite}; center_rectangle {center, width, height}; circle {center, radius | diameter}; "
+         "{corner, opposite}; center_rectangle {center, width, height}; three_point_rectangle {start, end, height} (a side "
+         "at any angle, then the other side; height is signed, positive to the left of start -> end); circle {center, radius | diameter}; "
          "arc {start, through, end} (three-point arc); center_arc {center, radius, startAngle, endAngle} "
          "(degrees, counter-clockwise); polygon {center, radius, sides, angle?}; slot {start, end, width} "
          "(centre-to-centre); spline {points, closed?}. construction: true excludes it from profiles."},
         {"properties",
          {{"type",
            {{"type", "string"},
-            {"enum", {"line", "rectangle", "center_rectangle", "circle", "arc", "center_arc", "polygon", "slot",
+            {"enum", {"line", "rectangle", "center_rectangle", "three_point_rectangle", "circle", "arc", "center_arc", "polygon", "slot",
                       "spline"}}}},
           {"start", point2("Start point.")},
           {"end", point2("End point.")},
@@ -105,9 +106,11 @@ Json curveSchema()
 Json constraintPointSchema()
 {
     return Json{{"type", Json::array({"string", "object"})},
-                {"description", "\"origin\" (sketch origin) or {curve: index, point: start | end | center}."},
+                {"description", "\"origin\" (sketch origin) or {curve: index, point: start | end | center}, "
+                                "or a fit point of a spline {curve, point: fit, index} (0 = first fit point)."},
                 {"properties", {{"curve", {{"type", "integer"}, {"minimum", 0}}},
-                                {"point", {{"type", "string"}, {"enum", {"start", "end", "center"}}}}}}};
+                                {"point", {{"type", "string"}, {"enum", {"start", "end", "center", "fit"}}}},
+                                {"index", {{"type", "integer"}, {"minimum", 0}}}}}};
 }
 
 Json constraintSchema()
@@ -119,7 +122,8 @@ Json constraintSchema()
          "lines, a slot two lines and two arcs). Geometric: coincident {points: 2}; point_on_curve {point, curve}; "
          "midpoint {point, curve: line}; horizontal / vertical {curve: line} or {points: 2}; parallel, "
          "perpendicular, collinear {curves: 2 lines}; tangent {curves: line/arc/circle + arc/circle}; equal "
-         "{curves: 2 lines or 2 arcs/circles}; concentric {curves: 2}; symmetric {points: 2, curve: line}; fix "
+         "{curves: 2 lines or 2 arcs/circles}; concentric {curves: 2}; symmetric {points: 2, curve: line}, or {curves: 2 lines, 2 circles "
+         "or 2 arcs, curve: line} (stored as the matching point symmetries, plus equal radii); fix "
          "{points and/or curves}. Dimensions (value: number or expression): distance {points: 2} or {point, "
          "curve: line}; horizontal_distance / vertical_distance {points: 2}; length {curve: line}; radius / "
          "diameter {curve}; angle {curves: 2 lines} (degrees)."},
@@ -296,8 +300,14 @@ Json timelineToJson(const cad::Design& d, const model::Document& doc)
         }
         params.push_back(pj);
     }
+    Json sketchEdit = nullptr;
+    if (const auto& e = d.state().sketchEdit) {
+        const auto target = cad::sketchEditTarget(d.state());
+        sketchEdit = {{"sketch", e->sketch}, {"restoreTo", target ? Json(*target) : Json(nullptr)}};
+    }
     return Json{{"features", features},
                 {"marker", d.marker()},
+                {"sketchEdit", sketchEdit},
                 {"parameters", params},
                 {"bodies", bodiesToJson(d, doc)}};
 }
@@ -511,31 +521,26 @@ Json featureParams(const Json& params)
     return p;
 }
 
-/// Adds matching hints to {point} edge/face references of fillet, chamfer and shell: the
+/// Adds matching hints to {point} edge/face references in `items` on the body `bodyRef`: the
 /// point relative to the body's bounding box, the edge direction or face normal, and the
-/// edge/face type. Regeneration then finds the same edge after dimensions change (see
-/// matchTopology in Design.cpp). References that already carry hints are left alone.
-Json describeTopologyRefs(const cad::Design& d, const std::string& type, Json params)
+/// edge/face type. Regeneration then finds the same edge or face after dimensions change
+/// (see matchTopology in Design.cpp). References that already carry hints are left alone.
+void addTopologyHints(const cad::Design& d, const Json& bodyRef, Json& items, bool edgesWanted)
 {
-    const bool edgesWanted = type == "fillet" || type == "chamfer";
-    if (!edgesWanted && type != "shell")
-        return params;
-    const char* key = edgesWanted ? "edges" : "faces";
-    if (!params.contains(key) || !params[key].is_array() || !params.contains("body"))
-        return params;
+    if (!items.is_array())
+        return;
     const cad::Body* body = nullptr;
     for (const auto& [bid, b] : d.bodies()) {
-        const Json& ref = params["body"];
-        if ((ref.is_number_integer() && ref.get<cad::FeatureId>() == bid) ||
-            (ref.is_string() && ref.get<std::string>() == b.name))
+        if ((bodyRef.is_number_integer() && bodyRef.get<cad::FeatureId>() == bid) ||
+            (bodyRef.is_string() && bodyRef.get<std::string>() == b.name))
             body = &b;
     }
     if (body == nullptr)
-        return params;
+        return;
     const auto box = body->shape.bounds();
     const core::Vec3 size = box.size();
     auto rel = [&](double v, double lo, double extent) { return extent > 1e-9 ? (v - lo) / extent : 0.0; };
-    for (auto& item : params[key]) {
+    for (auto& item : items) {
         if (!item.is_object() || !item.contains("point") || item.contains("relative") || !item["point"].is_array())
             continue;
         bool numeric = true;
@@ -564,6 +569,20 @@ Json describeTopologyRefs(const cad::Design& d, const std::string& type, Json pa
             item["normal"] = vec(info.normal);
         }
     }
+}
+
+/// Topology hints for the picked references of fillet / chamfer (edges), shell (faces) and an
+/// extrude up to faces of a body (to.faces).
+Json describeTopologyRefs(const cad::Design& d, const std::string& type, Json params)
+{
+    if ((type == "fillet" || type == "chamfer") && params.contains("edges") && params.contains("body"))
+        addTopologyHints(d, params["body"], params["edges"], true);
+    else if ((type == "shell" || type == "press_pull" || type == "delete_faces" || type == "draft") && params.contains("faces") &&
+             params.contains("body"))
+        addTopologyHints(d, params["body"], params["faces"], false);
+    else if (type == "extrude" && params.contains("to") && params["to"].is_object() &&
+             params["to"].contains("faces") && params["to"].contains("body"))
+        addTopologyHints(d, params["to"]["body"], params["to"]["faces"], false);
     return params;
 }
 
@@ -623,7 +642,8 @@ std::optional<geometry::Vec2> arcCenter(const geometry::SketchCurve& c)
                           (aa * (e.x - b.x) + bb * (a.x - e.x) + ee * (b.x - a.x)) / den};
 }
 
-/// Position of a constraint point reference ("origin" or {curve, point}) in solved curves.
+/// Position of a constraint point reference ("origin", {curve, point} or a spline fit point
+/// {curve, point: fit, index}) in solved curves.
 geometry::Vec2 pointPosition(const std::vector<geometry::SketchCurve>& curves, const Json& ref)
 {
     if (ref.is_string())
@@ -639,6 +659,10 @@ geometry::Vec2 pointPosition(const std::vector<geometry::SketchCurve>& curves, c
             return c.points[0];
         if (const auto ctr = arcCenter(c))
             return *ctr;
+    } else if (which == "fit") {
+        const auto k = ref.value("index", std::size_t{0});
+        if (c.kind == K::Spline && k < c.points.size())
+            return c.points[k];
     } else if (c.kind != K::Circle && !c.points.empty()) {
         return which == "end" ? c.points.back() : c.points.front();
     }
@@ -648,6 +672,58 @@ geometry::Vec2 pointPosition(const std::vector<geometry::SketchCurve>& curves, c
 /// A new fix constraint holds the geometry where it is now (after earlier dimensions),
 /// not where it was drawn: curves are expanded to their points and the solved positions
 /// are stored in "at". A fixed circle also keeps its radius.
+/// Symmetric on two whole items, {curves: [a, b], curve: line} (Fusion: Symmetry on curves), as the
+/// point constraints it stands for: two lines get each end of `a` held symmetric to the end of `b`
+/// nearer its mirror image (so a line drawn the other way is not flipped); two circles get
+/// symmetric centres and equal radii; two arcs get symmetric ends (by direction), centres and
+/// equal radii, so the whole arc is mirrored. Other constraints are returned unchanged.
+Json resolveSymmetric(const std::vector<geometry::SketchCurve>& curves, const Json& c)
+{
+    if (c.value("type", std::string()) != "symmetric" || !c.contains("curves"))
+        return Json::array({c});
+    using K = geometry::SketchCurve::Kind;
+    const auto& ids = c.at("curves");
+    if (ids.size() != 2 || !c.contains("curve"))
+        throw CommandError("symmetric: give two curves and the symmetry line (curve)");
+    const auto a = ids[0].get<std::size_t>(), b = ids[1].get<std::size_t>(), axis = c.at("curve").get<std::size_t>();
+    for (const std::size_t i : {a, b, axis})
+        if (i >= curves.size())
+            throw CommandError("No curve " + std::to_string(i) + " in the sketch");
+    if (curves[axis].kind != K::Line)
+        throw CommandError("symmetric: the symmetry curve must be a line");
+    if (a == b || axis == a || axis == b)
+        throw CommandError("symmetric: the two curves and the symmetry line must all be different");
+    const auto ref = [](std::size_t i, const char* point) { return Json{{"curve", i}, {"point", point}}; };
+    const auto sym = [&](const char* pa, const char* pb) {
+        return Json{{"type", "symmetric"}, {"points", {ref(a, pa), ref(b, pb)}}, {"curve", axis}};
+    };
+    const K ka = curves[a].kind, kb = curves[b].kind;
+    if (ka != kb || (ka != K::Line && ka != K::Circle && ka != K::Arc))
+        throw CommandError("symmetric: pick two lines, two circles or two arcs");
+    if (ka == K::Circle)
+        return Json::array({sym("center", "center"), {{"type", "equal"}, {"curves", {a, b}}}});
+    if (ka == K::Arc) {
+        // A mirror image runs the other way round: with both arcs counter-clockwise (or both
+        // clockwise) the start of one is the mirrored end of the other; else start to start.
+        // Ends and centres symmetric (and equal radii, as Sketch Mirror) fix the whole arc.
+        const auto ccw = [](const geometry::SketchCurve& k) {
+            const auto& p = k.points;
+            return (p[1].x - p[0].x) * (p[2].y - p[0].y) - (p[1].y - p[0].y) * (p[2].x - p[0].x) > 0;
+        };
+        const bool swap = ccw(curves[a]) == ccw(curves[b]);
+        return Json::array({sym("start", swap ? "end" : "start"), sym("end", swap ? "start" : "end"),
+                            sym("center", "center"), {{"type", "equal"}, {"curves", {a, b}}}});
+    }
+    // Lines: the start of `a` mirrored about the axis, matched with the nearer end of `b`.
+    const auto p0 = curves[axis].points[0], p1 = curves[axis].points[1], q = curves[a].points[0];
+    const double dx = p1.x - p0.x, dy = p1.y - p0.y, l2 = dx * dx + dy * dy;
+    const double t = l2 > 0 ? ((q.x - p0.x) * dx + (q.y - p0.y) * dy) / l2 : 0.0;
+    const double mx = 2 * (p0.x + t * dx) - q.x, my = 2 * (p0.y + t * dy) - q.y;
+    const auto d = [&](const geometry::Vec2& v) { return std::hypot(v.x - mx, v.y - my); };
+    const bool same = d(curves[b].points[0]) <= d(curves[b].points[1]);
+    return Json::array({sym("start", same ? "start" : "end"), sym("end", same ? "end" : "start")});
+}
+
 Json resolveFix(const std::vector<geometry::SketchCurve>& curves, const Json& c)
 {
     Json out = Json::array();
@@ -674,6 +750,9 @@ Json resolveFix(const std::vector<geometry::SketchCurve>& curves, const Json& c)
         } else {
             points.push_back({{"curve", i}, {"point", "start"}});
             points.push_back({{"curve", i}, {"point", "end"}});
+            // A fixed spline holds its fit points between the ends too (they can be dragged).
+            for (std::size_t f = 1; k.kind == K::Spline && f + 1 < k.points.size(); ++f)
+                points.push_back({{"curve", i}, {"point", "fit"}, {"index", f}});
             if (k.kind == K::Arc)
                 points.push_back({{"curve", i}, {"point", "center"}});
         }
@@ -751,6 +830,178 @@ void registerSketchCommands(CommandRegistry& r)
                   for (const auto& c : params.at("curves"))
                       curves.push_back(c);
                   d.editFeature(id, {{"curves", curves}});
+                  return Json{};
+              });
+              return addedFeature(design(ctx), ctx.document, id);
+          });
+
+    r.add({"sketch.delete_curves", "Delete Sketch Curves",
+           "Removes curves from a sketch (Fusion: select sketch curves, Delete). curves are indices from "
+           "sketch.curves. A rectangle, polygon or slot that loses some curves becomes separate lines and "
+           "arcs that keep their horizontal/vertical/equal/parallel/tangent constraints. Constraints on the "
+           "removed curves are removed; the other constraints are re-indexed.",
+           objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
+                         {"curves",
+                          {{"type", "array"},
+                           {"minItems", 1},
+                           {"items", {{"type", "integer"}, {"minimum", 0}}},
+                           {"description", "Curve indices as sketch.curves lists them."}}}},
+                        {"sketch", "curves"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              const auto id = params.at("sketch").get<cad::FeatureId>();
+              const auto curves = params.at("curves").get<std::vector<std::size_t>>();
+              designChange(ctx, curves.size() == 1 ? "Delete Sketch Curve" : "Delete Sketch Curves",
+                           [&](cad::Design& d) {
+                               (void)sketchFeature(d, id);
+                               d.deleteSketchCurves(id, curves);
+                               return Json{};
+                           });
+              return addedFeature(design(ctx), ctx.document, id);
+          });
+
+    r.add({"sketch.mirror", "Mirror Sketch Curves",
+           "Mirrors sketch curves about a line of the same sketch (Fusion: Sketch > Mirror). The copies are added "
+           "at the end of sketch.curves and held symmetric to the originals (symmetry constraints, equal radii), "
+           "so they follow dimension changes.",
+           objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
+                         {"curves", {{"type", "array"}, {"items", {{"type", "integer"}}}, {"minItems", 1}}},
+                         {"line", {{"type", "integer"}, {"description", "Index of the mirror line (sketch.curves)."}}}},
+                        {"sketch", "curves", "line"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              const auto id = params.at("sketch").get<cad::FeatureId>();
+              designChange(ctx, "Mirror Sketch Curves", [&](cad::Design& d) {
+                  (void)sketchFeature(d, id);
+                  d.mirrorSketchCurves(id, params.at("curves").get<std::vector<std::size_t>>(), params.at("line").get<std::size_t>());
+                  return Json{};
+              });
+              return addedFeature(design(ctx), ctx.document, id);
+          });
+
+    r.add({"sketch.project", "Project",
+           "Projects edges of a body onto a sketch's plane (Fusion: Sketch > Project): lines, circles and arcs "
+           "parallel to the plane stay so, other edges become splines. The curves are added at the end of "
+           "sketch.curves, fixed where they are; they do not follow later changes of the body.",
+           objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
+                         {"body", bodyRefSchema("Body whose edges are projected.")},
+                         {"edges", {{"type", "array"}, {"minItems", 1},
+                                    {"description", "Edge indices (body.edges) or {point: [x,y,z]} near each edge."}}}},
+                        {"sketch", "body", "edges"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              const auto id = params.at("sketch").get<cad::FeatureId>();
+              designChange(ctx, "Project", [&](cad::Design& d) {
+                  (void)sketchFeature(d, id);
+                  d.projectToSketch(id, requireBody(d, params.at("body")).id, params.at("edges"));
+                  return Json{};
+              });
+              return addedFeature(design(ctx), ctx.document, id);
+          });
+
+    r.add({"sketch.offset", "Sketch Offset",
+           "Offsets a connected chain of sketch curves (Fusion: Sketch > Offset): `distance` > 0 outwards for a "
+           "closed chain (to the left of an open one), < 0 the other way. Corners are rounded. The offset curves "
+           "are added at the end of sketch.curves.",
+           objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
+                         {"curves", {{"type", "array"}, {"items", {{"type", "integer"}}}, {"minItems", 1}}},
+                         {"distance", {{"type", "number"}}}},
+                        {"sketch", "curves", "distance"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              const auto id = params.at("sketch").get<cad::FeatureId>();
+              designChange(ctx, "Sketch Offset", [&](cad::Design& d) {
+                  (void)sketchFeature(d, id);
+                  d.offsetSketchCurves(id, params.at("curves").get<std::vector<std::size_t>>(), params.at("distance").get<double>());
+                  return Json{};
+              });
+              return addedFeature(design(ctx), ctx.document, id);
+          });
+
+    r.add({"sketch.fillet", "Sketch Fillet",
+           "Rounds the corner where two sketch lines meet (Fusion: Sketch > Fillet): both lines are shortened "
+           "and joined by a tangent arc with a radius dimension (edit it like any dimension). The two lines and the "
+           "arc are added at the end of sketch.curves; constraints on the old lines are removed, horizontal or "
+           "vertical lines stay so.",
+           objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
+                         {"curves", {{"type", "array"}, {"items", {{"type", "integer"}}}, {"minItems", 2}, {"maxItems", 2},
+                                     {"description", "The two lines (indices from sketch.curves)."}}},
+                         {"radius", {{"type", "number"}, {"exclusiveMinimum", 0}}}},
+                        {"sketch", "curves", "radius"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              const auto id = params.at("sketch").get<cad::FeatureId>();
+              const auto curves = params.at("curves").get<std::vector<std::size_t>>();
+              if (curves.size() != 2)
+                  throw CommandError("Give the two lines of the corner");
+              designChange(ctx, "Sketch Fillet", [&](cad::Design& d) {
+                  (void)sketchFeature(d, id);
+                  d.filletSketchCorner(id, curves[0], curves[1], params.at("radius").get<double>());
+                  return Json{};
+              });
+              return addedFeature(design(ctx), ctx.document, id);
+          });
+
+    r.add({"sketch.trim", "Trim",
+           "Trims a sketch curve (Fusion: Trim, T): removes the piece of `curve` nearest to `at` (sketch "
+           "coordinates) between its nearest crossings with other curves; a curve crossing nothing is removed "
+           "whole. Lines, arcs and circles (a circle becomes an arc). The remaining pieces are added at the end of "
+           "sketch.curves; constraints on the trimmed curve are removed.",
+           objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
+                         {"curve", {{"type", "integer"}, {"description", "Index from sketch.curves."}}},
+                         {"at", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", {{"type", "number"}}}}}},
+                        {"sketch", "curve", "at"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              const auto id = params.at("sketch").get<cad::FeatureId>();
+              const Json& at = params.at("at");
+              designChange(ctx, "Trim", [&](cad::Design& d) {
+                  (void)sketchFeature(d, id);
+                  d.trimSketchCurve(id, params.at("curve").get<std::size_t>(), {at[0].get<double>(), at[1].get<double>()});
+                  return Json{};
+              });
+              return addedFeature(design(ctx), ctx.document, id);
+          });
+
+    r.add({"sketch.set_construction", "Construction",
+           "Turns sketch curves into construction geometry or back (Fusion: Construction, X). Construction "
+           "curves are drawn dashed and bound no profile; they still take constraints. One side of a rectangle, "
+           "polygon or slot can be switched: the shape becomes lines and arcs that keep its constraints. Curve "
+           "indices (sketch.curves) do not change.",
+           objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
+                         {"curves", {{"type", "array"}, {"items", {{"type", "integer"}}}, {"minItems", 1}}},
+                         {"construction", {{"type", "boolean"}, {"description", "true (default): construction; false: normal."}}}},
+                        {"sketch", "curves"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              const auto id = params.at("sketch").get<cad::FeatureId>();
+              const auto curves = params.at("curves").get<std::vector<std::size_t>>();
+              const bool on = params.value("construction", true);
+              designChange(ctx, on ? "Construction" : "Normal Geometry", [&](cad::Design& d) {
+                  (void)sketchFeature(d, id);
+                  d.setSketchConstruction(id, curves, on);
+                  return Json{};
+              });
+              return addedFeature(design(ctx), ctx.document, id);
+          });
+
+    r.add({"sketch.move_point", "Drag Sketch Point",
+           "Drags a point of a sketch (Fusion: drag sketch geometry): the point goes to `to` (sketch "
+           "coordinates) and the solver moves what its constraints leave free; dimensions and other "
+           "constraints keep holding. Refused when the constraints do not let the point move there.",
+           objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
+                         {"point",
+                          {{"type", "object"},
+                           {"description", "{curve: index from sketch.curves, point: start | end | center}"}}},
+                         {"to", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", {{"type", "number"}}}}}},
+                        {"sketch", "point", "to"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              const auto id = params.at("sketch").get<cad::FeatureId>();
+              const Json& to = params.at("to");
+              designChange(ctx, "Drag Sketch Point", [&](cad::Design& d) {
+                  (void)sketchFeature(d, id);
+                  d.moveSketchPoint(id, params.at("point"), {to[0].get<double>(), to[1].get<double>()});
                   return Json{};
               });
               return addedFeature(design(ctx), ctx.document, id);
@@ -851,8 +1102,9 @@ void registerSketchCommands(CommandRegistry& r)
                           list.push_back(c);
                           continue;
                       }
-                      for (const auto& resolved : resolveFix(solved->second.curves, c))
-                          list.push_back(resolved);
+                      for (const auto& sym : resolveSymmetric(solved->second.curves, c))
+                          for (const auto& resolved : resolveFix(solved->second.curves, sym))
+                              list.push_back(resolved);
                   }
                   d.editFeature(id, {{"constraints", list}});
                   return Json{};
@@ -892,7 +1144,8 @@ void registerSketchCommands(CommandRegistry& r)
 
     r.add({"sketch.curves", "Sketch curves",
            "Lists the solved curves of a sketch (index, kind, points in sketch coordinates) and its constraints, "
-           "with the remaining degrees of freedom. Use the indices in sketch.add_constraints.",
+           "with the remaining degrees of freedom; a spline also has samples, points along the real curve. "
+           "Use the indices in sketch.add_constraints.",
            objectSchema({{"sketch", featureIdSchema("Sketch feature id.")}}, {"sketch"})},
           [](CommandContext& ctx, const Json& params) {
               const auto id = params.at("sketch").get<cad::FeatureId>();
@@ -913,6 +1166,18 @@ void registerSketchCommands(CommandRegistry& r)
                           {"construction", c.construction}};
                   if (c.kind == geometry::SketchCurve::Kind::Circle)
                       cj["radius"] = c.radius;
+                  if (c.kind == geometry::SketchCurve::Kind::Spline) {
+                      cj["closed"] = c.closed;
+                      // The real curve for drawing (points holds only the fit points).
+                      try {
+                          Json samples = Json::array();
+                          for (const auto& p : geometry::sampleSpline(c))
+                              samples.push_back(Json::array({p.x, p.y}));
+                          cj["samples"] = samples;
+                      } catch (const geometry::ModelingError&) {
+                          // Left out: the fit points are drawn instead.
+                      }
+                  }
                   if (const auto ctr = arcCenter(c))
                       cj["center"] = Json::array({ctr->x, ctr->y});
                   curves.push_back(cj);
@@ -946,14 +1211,24 @@ void registerFeatureCommands(CommandRegistry& r)
         merged(profileSelection(),
                {{"distance", numberOrExpr("Distance along the sketch normal (mm); negative goes the other way.")},
                 {"extent", {{"type", "string"},
-                            {"enum", {"one_side", "symmetric", "two_sides"}},
+                            {"enum", {"one_side", "symmetric", "two_sides", "to_object"}},
                             {"description", "one_side (default); symmetric: `distance` on both sides; two_sides: "
-                                            "`distance` forwards and `distance2` backwards."}}},
+                                            "`distance` forwards and `distance2` backwards; to_object: up to `to` "
+                                            "(no `distance`)."}}},
+                {"to", {{"type", "object"},
+                        {"description", "For extent to_object (Fusion: To Object): {body: id} (up to the first "
+                                        "face reached), {body: id, faces: [index or {point: [x,y,z]}]} (up to "
+                                        "those faces) or {part: id} (an imported surface, solid or scan). Curved "
+                                        "targets are followed."}}},
                 {"distance2", numberOrExpr("Backward distance for two_sides (mm).")},
                 {"flip", {{"type", "boolean"}, {"description", "Extrude against the sketch normal."}}},
+                {"taper", numberOrExpr("Taper angle in degrees (Fusion: Taper Angle), default 0: positive narrows "
+                                       "the profile away from the sketch plane, negative widens it; with symmetric "
+                                       "or two_sides each side tapers away from the plane. |taper| < 89; not with "
+                                       "to_object.")},
                 {"operation", operationSchema()},
                 {"bodies", bodiesSchema()}}),
-        {"sketch", "distance"});
+        {"sketch"});
 
     addFeatureCommand(
         r, "revolve", "Revolve",
@@ -983,6 +1258,37 @@ void registerFeatureCommands(CommandRegistry& r)
                                                   "face {body, index | point}."}}},
                        {"offset", numberOrExpr("Offset of the mirror plane along its normal (mm).")},
                        {"operation", patternOperation}},
+                      {"body"});
+
+    addFeatureCommand(r, "draft", "Draft",
+                      "Tilts faces of a body by an angle (Fusion: Modify > Draft), e.g. the walls of a part that "
+                      "must come out of a mould. Each face pivots about the line where it meets the fixed plane; "
+                      "the plane's normal is the pull direction. A positive angle leans the faces in going along "
+                      "the pull direction (the part narrows away from the plane), a negative one leans them out.",
+                      {{"body", bodyRefSchema("Body.")},
+                       {"faces", topologyListSchema("face")},
+                       {"plane", {{"type", Json::array({"string", "object"})},
+                                  {"description", "Fixed plane: \"XY\" (default), \"XZ\", \"YZ\", {plane: construction "
+                                                  "plane id or name}, {origin, normal}, or a planar face {body, index | point}."}}},
+                       {"angle", numberOrExpr("Draft angle in degrees (negative leans the faces out).")}},
+                      {"body", "faces", "angle"});
+
+    addFeatureCommand(r, "delete_faces", "Delete Face",
+                      "Removes faces of a body and heals the gap from the neighbouring faces (Fusion: Modify > "
+                      "Delete on faces): pick all faces of a hole, fillet or boss to make it disappear, e.g. to "
+                      "clean an imported part. Fails with a clear error when the neighbours cannot close the gap.",
+                      {{"body", bodyRefSchema("Body.")}, {"faces", topologyListSchema("face")}},
+                      {"body", "faces"});
+
+    addFeatureCommand(r, "split", "Split Body",
+                      "Cuts a body with a plane into two bodies (Fusion: Modify > Split Body), e.g. to print a "
+                      "part larger than the printer bed. The body keeps what is behind the plane; a new body "
+                      "gets what is in front of it (along the plane's normal). The result's id is the new body.",
+                      {{"body", bodyRefSchema("Body to split.")},
+                       {"plane", {{"type", Json::array({"string", "object"})},
+                                  {"description", "\"XY\", \"XZ\", \"YZ\" (default), {plane: construction plane id or "
+                                                  "name}, {origin, normal}, or a planar face {body, index | point}."}}},
+                       {"offset", numberOrExpr("Offset of the plane along its normal (mm).")}},
                       {"body"});
 
     addFeatureCommand(r, "move", "Move/Rotate",
@@ -1095,6 +1401,15 @@ void registerFeatureCommands(CommandRegistry& r)
                        {"thickness", numberOrExpr("Wall thickness (mm).")}},
                       {"body", "thickness"});
 
+    addFeatureCommand(r, "press_pull", "Press Pull",
+                      "Moves faces of a body along their outward normal (Fusion: Press Pull, shortcut Q): a "
+                      "positive distance adds material, a negative one removes it. A curved face is offset (Fusion's "
+                      "Offset Face); a fillet face is refused (change the fillet's radius instead).",
+                      {{"body", bodyRefSchema("Body.")},
+                       {"faces", topologyListSchema("face")},
+                       {"distance", numberOrExpr("Distance (mm) along the outward normal; negative pushes in.")}},
+                      {"body", "faces", "distance"});
+
     addFeatureCommand(
         r, "combine", "Combine",
         "Boolean between bodies (Fusion: Combine): joins, cuts or intersects the target with the tool bodies. A tool "
@@ -1130,6 +1445,21 @@ void registerFeatureCommands(CommandRegistry& r)
                        {"operation", operationSchema()},
                        {"bodies", bodiesSchema()}},
                       {"height"});
+
+    addFeatureCommand(r, "sphere", "Sphere", "Creates a ball (Fusion: Sphere).",
+                      {{"center", point3("Centre, default origin.")},
+                       {"diameter", numberOrExpr("Diameter (mm).")},
+                       {"operation", operationSchema()},
+                       {"bodies", bodiesSchema()}},
+                      {"diameter"});
+
+    addFeatureCommand(r, "torus", "Torus", "Creates a ring around +Z, lying in the XY plane (Fusion: Torus).",
+                      {{"center", point3("Centre of the ring, default origin.")},
+                       {"diameter", numberOrExpr("Diameter of the ring's centre line (mm).")},
+                       {"tube_diameter", numberOrExpr("Diameter of the tube (mm); smaller than `diameter`.")},
+                       {"operation", operationSchema()},
+                       {"bodies", bodiesSchema()}},
+                      {"diameter", "tube_diameter"});
 
     addFeatureCommand(r, "hole", "Hole",
                       "Drills a round hole into a body, normal to the planar face at `point` (Fusion: Hole, "
@@ -1194,7 +1524,17 @@ void registerFeatureCommands(CommandRegistry& r)
               // The body id of a second fin stands for the step that made it.
               const auto id = design(ctx).owningFeature(params.at("id").get<cad::FeatureId>());
               designChange(ctx, "Edit Feature", [&](cad::Design& d) {
-                  d.editFeature(id, params.at("params"));
+                  // Picked edges / faces in the patch get the same matching hints as when added.
+                  Json patch = params.at("params");
+                  if (const auto* f = d.feature(id); f != nullptr && patch.is_object()) {
+                      Json merged = f->params;
+                      merged.merge_patch(patch);
+                      const Json described = describeTopologyRefs(d, f->type, merged);
+                      for (const char* key : {"edges", "faces", "to"})
+                          if (patch.contains(key) && !patch[key].is_null() && described.contains(key))
+                              patch[key] = described[key];
+                  }
+                  d.editFeature(id, patch);
                   return Json{};
               });
               return addedFeature(design(ctx), ctx.document, id);
@@ -1230,6 +1570,23 @@ void registerFeatureCommands(CommandRegistry& r)
               return addedFeature(design(ctx), ctx.document, id);
           });
 
+    r.add({"timeline.move_feature", "Move Feature",
+           "Moves a feature to another place in the timeline (Fusion: drag a feature in the timeline); position is "
+           "its new index in timeline.list features. Refused, with the design unchanged, when a feature would then "
+           "fail (moved before something it uses, or after a feature that uses it).",
+           objectSchema({{"id", featureIdSchema("Feature id.")},
+                         {"position", {{"type", "integer"}, {"minimum", 0}, {"description", "New index in the timeline."}}}},
+                        {"id", "position"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              const auto id = design(ctx).owningFeature(params.at("id").get<cad::FeatureId>());
+              designChange(ctx, "Move Feature", [&](cad::Design& d) {
+                  d.moveFeature(id, params.at("position").get<std::size_t>());
+                  return Json{};
+              });
+              return timelineToJson(design(ctx), ctx.document);
+          });
+
     r.add({"feature.delete", "Delete Feature",
            "Deletes a feature from the timeline. Features that depended on it report errors (see timeline.list).",
            objectSchema({{"id", featureIdSchema("Feature id.")}}, {"id"}), true},
@@ -1252,6 +1609,54 @@ void registerTimelineCommands(CommandRegistry& r)
            "fit missed the requested tolerance has approximate: true and says so in report.warnings.",
            objectSchema(Json::object())},
           [](CommandContext& ctx, const Json&) { return timelineToJson(design(ctx), ctx.document); });
+
+    r.add({"sketch.begin_edit", "Edit Sketch",
+           "Starts editing an existing sketch (Fusion: Edit Sketch): when features after it are active, the "
+           "timeline is rolled back to just after the sketch, so the sketch is edited without the solids built "
+           "from it. sketch.end_edit rolls forward again, to the end or to just after the last feature that was "
+           "active (deleted features are skipped, rolled-back ones stay rolled back), unless the marker was moved "
+           "meanwhile. Deleting the edited sketch also rolls forward. Saves and variants store the rolled-forward "
+           "marker. Starting another edit ends the previous one.",
+           objectSchema({{"id", {{"type", "integer"}, {"description", "The sketch feature."}}}}, {"id"}), true},
+          [](CommandContext& ctx, const Json& params) {
+              const auto id = params.at("id").get<cad::FeatureId>();
+              const cad::Design& cur = design(ctx);
+              const auto& fs = cur.features();
+              const auto it = std::find_if(fs.begin(), fs.end(), [&](const cad::Feature& f) { return f.id == id; });
+              if (it == fs.end())
+                  throw CommandError("No feature with id " + std::to_string(id));
+              const bool rollsBack = static_cast<std::size_t>(it - fs.begin()) + 1 < cur.marker();
+              if (rollsBack || cur.state().sketchEdit) {
+                  designChange(ctx, "Edit Sketch", [&](cad::Design& d) {
+                      d.beginSketchEdit(id);
+                      return Json{};
+                  });
+              } else if (it->type != "sketch") {
+                  throw CommandError(it->name + " is not a sketch");
+              }
+              return timelineToJson(design(ctx), ctx.document);
+          });
+
+    r.add({"sketch.end_edit", "Finish Sketch",
+           "Ends the sketch edit started by sketch.begin_edit: rolls the timeline forward to where it was, unless "
+           "the marker was moved meanwhile. Does nothing without a sketch edit.",
+           objectSchema(Json::object()), true},
+          [](CommandContext& ctx, const Json&) {
+              cad::Design& d = design(ctx);
+              if (d.state().sketchEdit && cad::sketchEditTarget(d.state()).value_or(d.marker()) != d.marker()) {
+                  designChange(ctx, "Finish Sketch", [&](cad::Design& dd) {
+                      dd.endSketchEdit();
+                      return Json{};
+                  });
+              } else if (d.state().sketchEdit) {
+                  // Nothing to roll forward: drop the edit without an undo step.
+                  cad::Design::State st = d.state();
+                  st.sketchEdit.reset();
+                  d.restore(std::move(st));
+                  d.syncDocument(ctx.document);
+              }
+              return timelineToJson(design(ctx), ctx.document);
+          });
 
     r.add({"timeline.set_marker", "Move Timeline Marker",
            "Moves the timeline marker (Fusion: roll back). Features after it are not evaluated and new features "
@@ -1285,6 +1690,14 @@ void registerTimelineCommands(CommandRegistry& r)
               return timelineToJson(design(ctx), ctx.document);
           });
 
+    r.add({"parameter.evaluate", "Evaluate Expression",
+           "Evaluates a number or an expression with the user parameters and units (as a dimension would) "
+           "without changing the design; returns {value} in mm (or degrees, or a plain number).",
+           objectSchema({{"expression", {{"type", Json::array({"string", "number"})}}}}, {"expression"})},
+          [](CommandContext& ctx, const Json& params) {
+              return Json{{"value", design(ctx).evaluate(params.at("expression"))}};
+          });
+
     r.add({"parameter.remove", "Remove Parameter", "Removes a user parameter.",
            objectSchema({{"name", {{"type", "string"}, {"minLength", 1}}}}, {"name"}), true},
           [](CommandContext& ctx, const Json& params) {
@@ -1297,14 +1710,38 @@ void registerTimelineCommands(CommandRegistry& r)
           });
 }
 
+/// The design as it is just before feature `params.before` (Fusion rolls the timeline back to
+/// the feature being edited), or null without `before`. Evaluated on a copy; the design and
+/// its undo history are unchanged.
+std::optional<cad::Design> rolledBack(const cad::Design& d, const Json& params)
+{
+    if (!params.contains("before"))
+        return std::nullopt;
+    const auto id = d.owningFeature(params.at("before").get<cad::FeatureId>());
+    const auto& fs = d.features();
+    const auto it = std::find_if(fs.begin(), fs.end(), [&](const cad::Feature& f) { return f.id == id; });
+    if (it == fs.end())
+        throw CommandError("Unknown feature " + std::to_string(id));
+    const auto index = static_cast<std::size_t>(it - fs.begin());
+    if (index >= d.marker())
+        return std::nullopt;
+    std::optional<cad::Design> copy(d);
+    copy->setMarker(index);
+    return copy;
+}
+
 void registerBodyCommands(CommandRegistry& r)
 {
     r.add({"body.faces", "Body faces",
            "Lists the faces of a body: index, surface type, area, centre and outward normal. Use the index or "
-           "the centre as {point} in sketch.create face, feature.shell faces.",
-           objectSchema({{"body", bodyRefSchema("Body.")}}, {"body"})},
+           "the centre as {point} in sketch.create face, feature.shell faces. With {point}, also gives "
+           "nearest: the face closest to it and the outward normal there (curved faces too).",
+           objectSchema({{"body", bodyRefSchema("Body.")}, {"point", point3("Point on or near the body.")},
+                         {"before", {{"type", "integer"}, {"minimum", 1}, {"description", "Feature id: the body as it is just before this feature (when editing it)."}}}},
+                        {"body"})},
           [](CommandContext& ctx, const Json& params) {
-              const cad::Body& b = requireBody(design(ctx), params.at("body"));
+              const auto rolled = rolledBack(design(ctx), params);
+              const cad::Body& b = requireBody(rolled ? *rolled : design(ctx), params.at("body"));
               Json out = Json::array();
               for (const auto& f : geometry::faces(b.shape)) {
                   out.push_back({{"index", f.index},
@@ -1313,15 +1750,30 @@ void registerBodyCommands(CommandRegistry& r)
                                  {"center", vec(f.center)},
                                  {"normal", vec(f.normal)}});
               }
-              return Json{{"body", b.id}, {"name", b.name}, {"faces", out}};
+              Json result{{"body", b.id}, {"name", b.name}, {"faces", out}};
+              if (params.contains("point")) {
+                  const auto& pt = params.at("point");
+                  const core::Vec3 p{pt.at(0).get<double>(), pt.at(1).get<double>(), pt.at(2).get<double>()};
+                  if (const auto idx = geometry::nearestFace(b.shape, p)) {
+                      Json nearest{{"index", *idx}};
+                      if (const auto n = geometry::faceNormalNear(b.shape, *idx, p))
+                          nearest["normal"] = vec(*n);
+                      result["nearest"] = nearest;
+                  }
+              }
+              return result;
           });
 
     r.add({"body.edges", "Body edges",
            "Lists the edges of a body: index, curve type, length, start, middle and end points. Use the index "
-           "or the middle as {point} in feature.fillet / feature.chamfer edges.",
-           objectSchema({{"body", bodyRefSchema("Body.")}}, {"body"})},
+           "or the middle as {point} in feature.fillet / feature.chamfer edges. With {point}, also gives "
+           "nearest: the index of the edge closest to it.",
+           objectSchema({{"body", bodyRefSchema("Body.")}, {"point", point3("Point on or near the body.")},
+                         {"before", {{"type", "integer"}, {"minimum", 1}, {"description", "Feature id: the body as it is just before this feature (when editing it)."}}}},
+                        {"body"})},
           [](CommandContext& ctx, const Json& params) {
-              const cad::Body& b = requireBody(design(ctx), params.at("body"));
+              const auto rolled = rolledBack(design(ctx), params);
+              const cad::Body& b = requireBody(rolled ? *rolled : design(ctx), params.at("body"));
               Json out = Json::array();
               for (const auto& e : geometry::edges(b.shape)) {
                   out.push_back({{"index", e.index},
@@ -1331,7 +1783,14 @@ void registerBodyCommands(CommandRegistry& r)
                                  {"middle", vec(e.middle)},
                                  {"end", vec(e.end)}});
               }
-              return Json{{"body", b.id}, {"name", b.name}, {"edges", out}};
+              Json result{{"body", b.id}, {"name", b.name}, {"edges", out}};
+              if (params.contains("point")) {
+                  const auto& pt = params.at("point");
+                  const core::Vec3 p{pt.at(0).get<double>(), pt.at(1).get<double>(), pt.at(2).get<double>()};
+                  if (const auto idx = geometry::nearestEdge(b.shape, p))
+                      result["nearest"] = Json{{"index", *idx}};
+              }
+              return result;
           });
 }
 

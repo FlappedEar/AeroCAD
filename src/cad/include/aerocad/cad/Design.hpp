@@ -137,6 +137,17 @@ struct ConstructionPlane {
 
 class Design {
 public:
+    /// The timeline was rolled back to just after a sketch so it can be edited (Fusion: Edit
+    /// Sketch). Tracked by feature id, so deleting or reordering other features meanwhile
+    /// does not lose it.
+    struct SketchEdit {
+        FeatureId sketch = 0;
+        /// The marker was at the end of the timeline before the edit.
+        bool atEnd = false;
+        /// Features after the sketch that were active (before the marker) before the edit.
+        std::vector<FeatureId> active;
+    };
+
     /// Everything that is undoable. Cheap to copy.
     struct State {
         std::vector<Feature> features;
@@ -146,6 +157,8 @@ public:
         /// back (not evaluated). New features are inserted at the marker.
         std::size_t marker = 0;
         std::vector<ReferenceFrame> frames;
+        /// Set while an earlier sketch is edited (beginSketchEdit); not stored in files.
+        std::optional<SketchEdit> sketchEdit;
     };
 
     [[nodiscard]] const State& state() const { return m_state; }
@@ -167,10 +180,64 @@ public:
     void editFeature(FeatureId id, const Json& patch);
     void renameFeature(FeatureId id, std::string name);
     void setSuppressed(FeatureId id, bool suppressed);
+    /// Moves a feature to index `position` of the timeline (Fusion: drag a feature in the
+    /// timeline) and regenerates. A feature dragged across the marker becomes rolled back or
+    /// active. Throws DesignError (and leaves the design unchanged) when a feature that worked
+    /// fails in the new order, i.e. the move would put a feature before something it uses.
+    void moveFeature(FeatureId id, std::size_t position);
     /// Removes a feature. Later features that depended on it will report errors.
     void removeFeature(FeatureId id);
-    /// Moves the timeline marker (0 = before the first feature, size() = at the end).
+    /// Removes curves from a sketch (Fusion: select sketch curves, Delete). `curves` are
+    /// indices of the evaluated sketch (as Sketch::curves lists them). A rectangle, polygon
+    /// or slot that loses some of its curves becomes separate lines and arcs that keep the
+    /// shape's own constraints (horizontal, vertical, equal, parallel, tangent).
+    /// Constraints on removed curves are dropped and the others re-indexed, as are the
+    /// revolve axis line and the sweep path curves of features that use the sketch.
+    /// Throws DesignError (and leaves the design unchanged) when the sketch then fails.
+    void deleteSketchCurves(FeatureId sketch, const std::vector<std::size_t>& curves);
+    /// Turns sketch curves (indices of the solved curves) into construction geometry or
+    /// back (Fusion: Construction, X). Construction curves are drawn dashed and bound no
+    /// profile. One side of a rectangle (polygon, slot) can be switched: the shape becomes
+    /// lines and arcs that keep its constraints; curve indices do not change.
+    void setSketchConstruction(FeatureId sketch, const std::vector<std::size_t>& curves, bool construction);
+    /// Trims a sketch curve (Fusion: Trim, T): the piece of curve `curve` under `at`
+    /// (sketch coordinates) between its nearest intersections with other curves is removed;
+    /// a curve that crosses nothing is removed whole. Lines, arcs and circles. Constraints
+    /// on the trimmed curve go; the remaining pieces are added as new curves at the end.
+    void trimSketchCurve(FeatureId sketch, std::size_t curve, const geometry::Vec2& at);
+    /// Mirrors sketch curves about sketch line `line` (Fusion: Sketch Mirror): the copies
+    /// are added at the end and held symmetric to the originals (symmetry constraints on
+    /// their points, equal radii), so they follow when the originals change.
+    void mirrorSketchCurves(FeatureId sketch, const std::vector<std::size_t>& curves, std::size_t line);
+    /// Rounds the corner where sketch lines `a` and `b` meet with an arc of `radius`
+    /// (Fusion: Sketch Fillet): both lines are shortened to the tangent points and the arc
+    /// is held tangent to them with a radius dimension. Lines that were horizontal or
+    /// vertical stay so. The new lines and arc are added at the end of the curves.
+    void filletSketchCorner(FeatureId sketch, std::size_t a, std::size_t b, double radius);
+    /// Offsets a connected chain of sketch curves by `distance` (Fusion: Sketch Offset):
+    /// positive outwards (closed chain) or to the left (open chain). The offset curves are
+    /// added at the end; corners are rounded.
+    void offsetSketchCurves(FeatureId sketch, const std::vector<std::size_t>& curves, double distance);
+    /// Projects edges of body `body` onto the sketch plane (Fusion: Sketch > Project): the
+    /// projected curves are added at the end, fixed where they are. `edges` as feature
+    /// edge references (indices or {point}). They do not follow later changes of the body.
+    void projectToSketch(FeatureId sketch, FeatureId body, const Json& edges);
+    /// Drags a sketch point (Fusion: drag sketch geometry). `point` is a constraint point
+    /// reference ({curve, point: start | end | center}); it is held at `to` (sketch
+    /// coordinates) while the solver moves the free degrees of freedom, and the sketch keeps
+    /// the result. Throws DesignError (design unchanged) when the constraints do not allow it.
+    void moveSketchPoint(FeatureId sketch, const Json& point, const geometry::Vec2& to);
+    /// Moves the timeline marker (0 = before the first feature, size() = at the end). This
+    /// is an explicit choice: it ends a sketch edit without rolling forward.
     void setMarker(std::size_t marker);
+    /// Starts editing a sketch (Fusion: Edit Sketch): if features after it are active, the
+    /// marker is rolled back to just after the sketch and the edit is remembered so
+    /// endSketchEdit() can roll forward. Ends a previous sketch edit first. Returns true when
+    /// the marker moved.
+    bool beginSketchEdit(FeatureId sketch);
+    /// Ends the sketch edit: rolls the marker forward to where it was (see sketchEditTarget),
+    /// unless the user moved it meanwhile. Returns true when the marker moved.
+    bool endSketchEdit();
 
     /// Creates or updates a user parameter. Throws DesignError for invalid names, invalid
     /// expressions or cycles; the design is unchanged then.
@@ -210,8 +277,9 @@ public:
     void clear();
 
     /// Seeds the document part of a timeline feature before the first syncDocument() of a
-    /// loaded project, so parts keep their saved ids, names and visibility.
-    void setPartInfo(FeatureId feature, model::PartId part, std::string name, bool visible);
+    /// loaded project, so parts keep their saved ids, names, visibility and colour.
+    void setPartInfo(FeatureId feature, model::PartId part, std::string name, bool visible,
+                     std::string color = {});
 
     /// Part bookkeeping retained by syncDocument(): every timeline feature that had a
     /// document part in this session, including features that are now suppressed, rolled
@@ -221,6 +289,7 @@ public:
         model::PartId part = 0;
         std::string name;
         bool visible = true;
+        std::string color;
     };
     [[nodiscard]] std::vector<PartInfo> partInfos() const;
 
@@ -272,6 +341,7 @@ private:
     struct PartMeta {
         std::string name;
         bool visible = true;
+        std::string color;
     };
     std::map<FeatureId, PartMeta> m_partMeta;
     PartLookup m_partLookup;
@@ -308,8 +378,18 @@ private:
 
 [[nodiscard]] std::string_view toString(FeatureStatus::State state);
 
+/// Where the marker goes back to when the sketch edit of `state` ends: the end if it was
+/// there, else just after the last surviving feature that was active, so features that were
+/// rolled back before the edit stay rolled back. std::nullopt without a sketch edit, or when
+/// the marker no longer sits just after the edited sketch (the user moved it, or added a
+/// feature there).
+[[nodiscard]] std::optional<std::size_t> sketchEditTarget(const Design::State& state);
+/// `state` with its sketch edit ended: the marker as endSketchEdit() would leave it. Saves and
+/// variants store this, never the temporary roll-back.
+[[nodiscard]] Design::State committedState(Design::State state);
+
 /// JSON form of the undoable design state (features, parameters, frames, marker), as
-/// stored in project files.
+/// stored in project files. A sketch edit is stored as ended (committedState).
 [[nodiscard]] Json stateToJson(const Design::State& state);
 /// Reads stateToJson() output. Throws DesignError for malformed data.
 [[nodiscard]] Design::State stateFromJson(const Json& json);

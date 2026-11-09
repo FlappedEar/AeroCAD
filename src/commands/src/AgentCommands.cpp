@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstddef>
 #include <limits>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -85,11 +86,12 @@ Json measurePart(const model::Document& doc, const Json& params)
     const core::TriangleMesh& mesh = *p.mesh;
     Json warnings = Json::array();
 
-    const std::size_t openEdges = core::openEdgeCount(mesh);
     double volume = 0.0;
     std::string volumeMethod;
-    // Closedness of exact geometry comes from its topology (solids), not from the mesh.
+    // Closedness of exact geometry comes from its topology (solids), not from the mesh, so
+    // the mesh edge scan (slow on a big display mesh) is left out for solids.
     const bool hasSolid = p.shape && p.shape->solidCount() > 0;
+    const std::size_t openEdges = hasSolid ? 0 : core::openEdgeCount(mesh);
     const bool closed = hasSolid || openEdges == 0;
     if (hasSolid) {
         volume = p.shape->volume();
@@ -102,18 +104,31 @@ Json measurePart(const model::Document& doc, const Json& params)
                                " open or non-manifold edges): the volume is not reliable.");
     }
 
-    return Json{{"kind", "part"},
-                {"id", p.id},
-                {"name", p.name},
-                {"bounds", bounds(mesh.bounds())},
-                {"surfaceArea", mesh.surfaceArea()},
-                {"volume", volume},
-                {"closed", closed},
-                {"openEdges", hasSolid ? std::size_t{0} : openEdges},
-                {"triangles", mesh.triangleCount()},
-                {"units", {{"length", "mm"}, {"area", "mm^2"}, {"volume", "mm^3"}}},
-                {"method", "Bounds and surface area from the display mesh. " + volumeMethod},
-                {"warnings", warnings}};
+    // Centre of mass (uniform density): exact for solids, from the enclosed mesh otherwise
+    // (only when the mesh is closed, else it means nothing).
+    std::optional<core::Vec3> centre;
+    if (hasSolid)
+        centre = p.shape->centerOfMass();
+    else if (closed)
+        centre = core::enclosedCentroid(mesh);
+    const bool exactArea = p.shape && !p.shape->isNull();
+    Json out{{"kind", "part"},
+             {"id", p.id},
+             {"name", p.name},
+             {"bounds", bounds(mesh.bounds())},
+             {"surfaceArea", exactArea ? p.shape->surfaceArea() : mesh.surfaceArea()},
+             {"volume", volume},
+             {"closed", closed},
+             {"openEdges", openEdges},
+             {"triangles", mesh.triangleCount()},
+             {"units", {{"length", "mm"}, {"area", "mm^2"}, {"volume", "mm^3"}}},
+             {"method", std::string(exactArea ? "Bounds from the display mesh, surface area exact from the B-rep faces. "
+                                              : "Bounds and surface area from the display mesh. ")
+                            + volumeMethod + " Centre of mass for uniform density."},
+             {"warnings", warnings}};
+    if (centre)
+        out["centerOfMass"] = vec(*centre);
+    return out;
 }
 
 Json measurePointToPart(const model::Document& doc, const Json& params)
@@ -225,7 +240,8 @@ void registerMeasure(CommandRegistry& r)
 {
     r.add({"geometry.measure", "Measure",
            "Measures geometry. All lengths in millimetres. kind='distance': distance between two points "
-           "(needs 'points'). kind='part': bounds, surface area, volume and closedness of a part (needs 'id'). "
+           "(needs 'points'). kind='part': bounds, surface area, volume, closedness and centre of mass "
+           "(uniform density) of a part (needs 'id'). "
            "kind='point_to_part': distance from a point to the surface of a part (needs 'id', 'point'). "
            "kind='clearance': minimum distance between two parts (needs 'id', 'other_id'). The result names the "
            "method used and lists data-quality warnings.",

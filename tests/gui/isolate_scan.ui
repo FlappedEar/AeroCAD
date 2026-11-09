@@ -1,0 +1,17 @@
+# CAD-118: Isolate from a scan's right-click menu (under More), with real clicks: the scan
+# alone is shown, Exit in the Browser brings the box back.
+# Run: AeroCAD tests/data/box_200x80x60.stl --ui-script <this file>
+Qt.createQmlObject('import QtQuick; Item { objectName: "isTest"; visible: false; property var s: ({}); function find(i, name) { if (!i) return null; if (i.objectName === name) return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = find(ch[k], name); if (r) return r } return null } }', window.contentItem)
+ui.wait(800)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "isTest"); t.s.scan = controller.execute("document.parts").result.parts[0].id; const r = controller.execute("feature.box", { size: [20, 20, 20], corner: [300, 0, 0] }); if (!r.ok) ui.fail("box: " + r.error); t.s.box = controller.execute("document.parts").result.parts.find(p => p.id !== t.s.scan).id; viewport.fitAll() })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "isTest"); const r = browser.rowItem(t.s.scan); const p = r.mapToItem(null, r.width / 3, r.height / 2); ui.click(p.x, p.y, "right") })()
+ui.wait(300)
+(() => { if (!ui.clickText("More")) ui.fail("no More in the scan's right-click menu") })()
+ui.wait(300)
+(() => { if (!ui.clickText("Isolate")) ui.fail("no Isolate under More in the scan's right-click menu") })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "isTest"); const sv = controller.partInfo(t.s.scan).visible, bv = controller.partInfo(t.s.box).visible; ui.log("isolated scan: scan " + sv + ", box " + bv + ", bar " + t.find(browser, "isolationBar").visible); if (!sv || bv) ui.fail("Isolate on the scan did not hide only the box"); if (!t.find(browser, "isolationBar").visible) ui.fail("no isolation bar") })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "isTest"); const b = t.find(browser, "exitIsolation"); const p = b.mapToItem(null, b.width / 2, b.height / 2); ui.click(p.x, p.y) })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "isTest"); ui.log("exit: box " + controller.partInfo(t.s.box).visible); if (!controller.partInfo(t.s.box).visible) ui.fail("Exit did not show the box again") })()

@@ -31,11 +31,11 @@ From [Tabler Icons](https://github.com/tabler/tabler-icons) 3.19.0, MIT licence 
 | perspective, ortho | perspective, square-rotated |
 | grid | grid-4x4 |
 | menu, save, open, keyboard, close, check | menu-2, device-floppy, folder-open, keyboard, x, check |
-| variants, duplicate, warning | stack-2, copy-plus, alert-triangle |
+| variants, duplicate, warning, rename, isolate, appearance | stack-2, copy-plus, alert-triangle, pencil, focus-2, palette |
 
 ## Drawn for AeroCAD (GPL-3.0-or-later)
 
 sketch, extrude, revolve, hole, fillet, chamfer, shell, combine, mesh-to-body, mesh, body,
 slot, arc, dimension, sweep, loft, mirror, pattern, circular-pattern, plane, section,
-deviation, thickness, clearance, tool, wind-tunnel, and the sketch constraints horizontal, vertical,
-coincident, tangent, equal, parallel, perpendicular, concentric, midpoint, collinear, fix.
+deviation, thickness, clearance, tool, wind-tunnel, fit-selection, and the sketch constraints horizontal, vertical,
+coincident, tangent, equal, parallel, perpendicular, concentric, midpoint, collinear, fix, trim, construction, offset, project, sphere, torus, spline, center-rectangle, center-arc, circle-2point, circle-3point, rectangle-3point.

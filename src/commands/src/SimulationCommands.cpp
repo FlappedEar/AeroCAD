@@ -6,8 +6,10 @@
 #include "aerocad/commands/Session.hpp"
 
 #include "aerocad/cfd/RunManager.hpp"
+#include "aerocad/core/MeshCheck.hpp"
 #include "aerocad/core/Path.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <limits>
@@ -17,6 +19,17 @@
 namespace aerocad::commands {
 
 namespace {
+
+/// Warnings about the part to show before a run starts: size (CAD-109), open mesh (CAD-145).
+Json partWarnings(double characteristicLength, const core::TriangleMesh& part)
+{
+    Json w = Json::array();
+    if (const std::string size = cfd::partSizeWarning(characteristicLength); !size.empty())
+        w.push_back(size);
+    if (const std::string open = cfd::openPartWarning(core::checkMesh(part).boundaryEdges); !open.empty())
+        w.push_back(open);
+    return w;
+}
 
 Json objectSchema(Json properties, Json required = Json::array())
 {
@@ -60,6 +73,10 @@ Json statusJson(const CommandContext& ctx, const cfd::RunStatus& status)
 {
     Json j = status.toJson();
     j["sourceInDocument"] = sourceInDocument(ctx, status.source);
+    // The conditions it runs at, so a run list can tell runs apart (CAD-181); null for a
+    // run without case information.
+    const auto info = ctx.simulations != nullptr ? ctx.simulations->caseInfo(status.id) : std::nullopt;
+    j["settings"] = info ? cfd::toJson(info->settings) : Json(nullptr);
     return j;
 }
 
@@ -75,6 +92,41 @@ struct RunInput {
     cfd::Settings settings;
 };
 
+/// A box of the case frame (m) as an axis-aligned box in model coordinates (mm): exact for
+/// quarter turns; at a yaw (CAD-188) it is the box around the turned corners.
+Json modelBox(const cfd::CaseFrame& frame, const core::BoundingBox& caseBox)
+{
+    core::BoundingBox out;
+    for (int i = 0; i < 8; ++i) {
+        const core::Vec3 c{i & 1 ? caseBox.max.x : caseBox.min.x, i & 2 ? caseBox.max.y : caseBox.min.y,
+                           i & 4 ? caseBox.max.z : caseBox.min.z};
+        out.extend(frame.toModel(c));
+    }
+    return {{"min", {out.min.x, out.min.y, out.min.z}}, {"max", {out.max.x, out.max.y, out.max.z}}};
+}
+
+/// The 8 corners of a case-frame box (m) in model coordinates (mm), corner i at
+/// (i & 1 ? max.x : min.x, i & 2 ? max.y : min.y, i & 4 ? max.z : min.z) of the case box:
+/// the tunnel as it stands, also when turned by a yaw (CAD-188).
+Json modelCorners(const cfd::CaseFrame& frame, const core::BoundingBox& caseBox)
+{
+    Json out = Json::array();
+    for (int i = 0; i < 8; ++i) {
+        const core::Vec3 c =
+            frame.toModel({i & 1 ? caseBox.max.x : caseBox.min.x, i & 2 ? caseBox.max.y : caseBox.min.y,
+                           i & 4 ? caseBox.max.z : caseBox.min.z});
+        out.push_back({c.x, c.y, c.z});
+    }
+    return out;
+}
+
+/// Direction the air flows in model coordinates (unit vector): +X in the case frame.
+Json flowVector(const cfd::CaseFrame& frame)
+{
+    const core::Vec3 v = frame.unrotate({1.0, 0.0, 0.0});
+    return {v.x, v.y, v.z};
+}
+
 RunInput collectInput(CommandContext& ctx, const Json& params)
 {
     RunInput in;
@@ -86,6 +138,8 @@ RunInput collectInput(CommandContext& ctx, const Json& params)
         throw CommandError("Part '" + part->name + "' has no surface to simulate");
     if (part->kind == model::PartKind::Sketch)
         throw CommandError("'" + part->name + "' is a sketch; simulate a body or an imported part");
+    if (part->kind == model::PartKind::Plane)
+        throw CommandError("'" + part->name + "' is a construction plane; simulate a body or an imported part");
     in.geometry.part = *part->mesh;
     in.source.partId = part->id;
     in.source.partName = part->name;
@@ -98,7 +152,8 @@ RunInput collectInput(CommandContext& ctx, const Json& params)
         const model::Part* cp = ctx.document.part(cid);
         if (cp == nullptr)
             throw CommandError("No part with id " + std::to_string(cid) + " (context)");
-        if (cp->mesh && cp->kind != model::PartKind::Sketch)
+        // Sketches and construction planes are drawing aids, not walls in the flow (CAD-130).
+        if (cp->mesh && cp->kind != model::PartKind::Sketch && cp->kind != model::PartKind::Plane)
             in.geometry.context.append(*cp->mesh);
         in.source.contextPartIds.push_back(cid);
     }
@@ -123,6 +178,16 @@ Json runParams()
     return props;
 }
 
+/// simulation.propose_run: the run parameters, and whether to check the engine (slow: it
+/// asks Docker, over SSH for a remote engine). The wind tunnel panel previews without it.
+Json proposeParams()
+{
+    Json props = runParams();
+    props["checkEngine"] = {{"type", "boolean"},
+                            {"description", "Also check the simulation engine (default true; slow when remote)."}};
+    return props;
+}
+
 Json polyDataSummary(const cfd::PolyData& d)
 {
     Json scalars = Json::object();
@@ -136,8 +201,19 @@ Json polyDataSummary(const cfd::PolyData& d)
                 sum += v;
                 ++n;
             }
-        if (n > 0)
-            scalars[name] = {{"min", lo}, {"max", hi}, {"mean", sum / static_cast<double>(n)}};
+        if (n > 0) {
+            // Robust range for colour scales (CAD-135): a few extreme points at the stagnation
+            // point or a sharp edge should not wash out the rest of the map.
+            std::vector<double> sorted;
+            sorted.reserve(n);
+            for (const double v : values)
+                if (std::isfinite(v))
+                    sorted.push_back(v);
+            std::sort(sorted.begin(), sorted.end());
+            auto at = [&](double q) { return sorted[static_cast<std::size_t>(q * static_cast<double>(n - 1) + 0.5)]; };
+            scalars[name] = {{"min", lo}, {"max", hi}, {"mean", sum / static_cast<double>(n)},
+                             {"p02", at(0.02)}, {"p98", at(0.98)}};
+        }
     }
     core::BoundingBox box;
     for (const auto& p : d.points)
@@ -233,8 +309,11 @@ void registerSimulationCommands(CommandRegistry& r)
     r.add({"simulation.propose_run", "Propose simulation",
            "Prepares the settings of a wind tunnel run for a part without starting it: resolved settings, "
            "reference area, domain and engine check, so they can be reviewed before simulation.run.",
-           objectSchema(runParams(), {"id"})},
-          [](CommandContext& ctx, const Json& params) {
+           objectSchema(proposeParams(), {"id"})},
+          [](CommandContext& ctx, const Json& given) {
+              Json params = given;
+              const bool checkEngine = params.value("checkEngine", true);
+              params.erase("checkEngine");
               const RunInput in = collectInput(ctx, params);
               cfd::CaseInfo plan;
               try {
@@ -249,9 +328,13 @@ void registerSimulationCommands(CommandRegistry& r)
                      {"referenceLength", plan.referenceLength},
                      {"characteristicLength", plan.characteristicLength},
                      {"baseCellSize", plan.baseCellSize},
-                     {"domainSize",
-                      {plan.domain.size().x, plan.domain.size().y, plan.domain.size().z}},
-                     {"environment", cfd::detectEnvironment().toJson()},
+                     {"domainSize", {plan.domain.size().x, plan.domain.size().y, plan.domain.size().z}},
+                     {"domainModel", modelBox(plan.frame, plan.domain)},
+                     {"domainCorners", modelCorners(plan.frame, plan.domain)},
+                     {"partModel", modelBox(plan.frame, plan.partBounds)},
+                     {"flowModel", flowVector(plan.frame)},
+                     {"environment", checkEngine ? cfd::detectEnvironment().toJson() : Json()},
+                     {"warnings", partWarnings(plan.characteristicLength, in.geometry.part)},
                      {"next", "Call simulation.run with the same parameters to start it."}};
               return j;
           });
@@ -286,7 +369,10 @@ void registerSimulationCommands(CommandRegistry& r)
               } catch (const std::exception& e) {
                   throw CommandError(e.what());
               }
-              return statusJson(ctx, *runs(ctx).status(id));
+              Json j = statusJson(ctx, *runs(ctx).status(id));
+              const auto info = runs(ctx).caseInfo(id);
+              j["warnings"] = partWarnings(info ? info->characteristicLength : 0.0, in.geometry.part);
+              return j;
           });
 
     r.add({"simulation.refine", "Run on another mesh",
@@ -340,7 +426,8 @@ void registerSimulationCommands(CommandRegistry& r)
 
     r.add({"simulation.status", "Simulation status",
            "State (running, finished, failed, cancelled, interrupted), step, progress 0..1, iteration and the latest "
-           "Cd/Cl and forces in N of a run.",
+           "Cd/Cl and forces in N of a run (last iteration); final: the finished run's final cd, cl, dragN, liftN "
+           "(mean of the last 20 %, as in simulation.results), null otherwise.",
            objectSchema({{"run", runIdParam()}}, {"run"})},
           [](CommandContext& ctx, const Json& params) {
               return statusJson(ctx, *runs(ctx).status(requireRun(ctx, params)));
@@ -377,23 +464,101 @@ void registerSimulationCommands(CommandRegistry& r)
               return Json{{"deleted", id}};
           });
 
-    r.add({"simulation.results", "Simulation results",
-           "Results of a run: summary (Cd, Cl, Cs; drag, lift, side force in N, averaged over the last 20 % of the "
-           "iterations), histories per iteration, residuals, quality checks (mesh, mass balance, residuals, force "
-           "convergence) and the simulation conditions. Summary values are null until the run finishes successfully "
-           "with complete finite force/coefficient outputs; finalResults gives availability and reasons. "
-           "Histories remain available and provisional is true until final results are available.",
-           objectSchema({{"run", runIdParam()},
-                         {"maxPoints",
-                          {{"type", "integer"},
-                           {"minimum", 2},
-                           {"maximum", 5000},
-                           {"description", "Maximum points per history (default 200)."}}}},
-                        {"run"})},
+    r.add({"simulation.rename", "Rename simulation run",
+           "Sets the label of a run (the name shown in the run list, Results and A/B), also while it runs. "
+           "An empty label clears it. Saved with the run.",
+           objectSchema(
+               {{"run", runIdParam()},
+                {"label", {{"type", "string"}, {"maxLength", 80}, {"description", "New label; \"\" clears it."}}}},
+               {"run", "label"})},
           [](CommandContext& ctx, const Json& params) {
               const std::string id = requireRun(ctx, params);
+              std::string label = params.at("label").get<std::string>();
+              const auto first = label.find_first_not_of(" \t\r\n");
+              label = first == std::string::npos ? std::string()
+                                                 : label.substr(first, label.find_last_not_of(" \t\r\n") - first + 1);
+              if (label.find_first_of("\r\n") != std::string::npos)
+                  throw CommandError("label must be one line");
+              // Characters, not UTF-8 bytes: count the bytes that start a character.
+              if (std::count_if(label.begin(), label.end(), [](char c) { return (c & 0xC0) != 0x80; }) > 80)
+                  throw CommandError("label is longer than 80 characters");
               try {
-                  return runs(ctx).results(id, params.value("maxPoints", 200));
+                  if (!runs(ctx).setLabel(id, label))
+                      throw CommandError("No simulation run '" + id + "'");
+              } catch (const CommandError&) {
+                  throw;
+              } catch (const std::exception& e) {
+                  throw CommandError(e.what());
+              }
+              return Json{{"run", id}, {"label", label}};
+          });
+
+    r.add(
+        {"simulation.results", "Simulation results",
+         "Results of a run: summary (Cd, Cl, Cs; drag, lift, side force in N, averaged over the last 20 % of the "
+         "iterations; for a car with two axles frontLiftN, rearLiftN, frontShare; with rotating wheels the wheels' own "
+         "wheelDragN, wheelLiftN), histories per iteration, residuals, quality checks (mesh, mass balance, residuals, "
+         "force "
+         "convergence) and the simulation conditions. Summary values are null until the run finishes successfully "
+         "with complete finite force/coefficient outputs; finalResults gives availability and reasons. "
+         "Histories remain available and provisional is true until final results are available. While the run is "
+         "running, current gives the same means over the iterations recorded so far (never final; null otherwise).",
+         objectSchema({{"run", runIdParam()},
+                       {"maxPoints",
+                        {{"type", "integer"},
+                         {"minimum", 2},
+                         {"maximum", 5000},
+                         {"description", "Maximum points per history (default 200)."}}}},
+                      {"run"})},
+        [](CommandContext& ctx, const Json& params) {
+            const std::string id = requireRun(ctx, params);
+            try {
+                return runs(ctx).results(id, params.value("maxPoints", 200));
+            } catch (const std::exception& e) {
+                throw CommandError(e.what());
+            }
+        });
+
+    r.add({"simulation.export_results", "Export simulation results (CSV)",
+           "Write a run's results to a CSV file: a Quantity,Value block with the run, its conditions and its "
+           "final values (Cd, Cl, Cs; drag, lift, side, pressure and viscous drag in N; or the provisional means "
+           "while it is not finished), a blank line, then the full history per iteration. Returns the path and "
+           "the number of history rows.",
+           objectSchema({{"run", runIdParam()},
+                         {"path", {{"type", "string"}, {"description", "File to write (.csv), overwritten."}}}},
+                        {"run", "path"})},
+          [](CommandContext& ctx, const Json& params) {
+              const std::string id = requireRun(ctx, params);
+              const std::string path = params.at("path").get<std::string>();
+              if (path.empty())
+                  throw CommandError("path is empty");
+              try {
+                  const std::size_t rows = runs(ctx).exportResultsCsv(id, core::pathFromUtf8(path));
+                  return Json{{"path", path}, {"rows", rows}};
+              } catch (const std::exception& e) {
+                  throw CommandError(e.what());
+              }
+          });
+
+    r.add({"simulation.export_comparison", "Export A/B comparison (CSV)",
+           "Write the A/B comparison of two runs (as simulation.compare) to a CSV file: a Quantity,Value block "
+           "with run A and B, the verdict, differing and unknown conditions, reasons, notes and the mesh check, a "
+           "blank line, then the table Quantity,A,B,B - A,Change (%),Swing A+B,Within swing for drag, lift, side, "
+           "pressure and viscous drag (N), efficiency L/D and Cd/Cl/Cs on the reference area of A. Returns the path "
+           "and the number of table rows with values.",
+           objectSchema({{"a", runIdParam("Run A (baseline).")},
+                         {"b", runIdParam("Run B (variant).")},
+                         {"path", {{"type", "string"}, {"description", "File to write (.csv), overwritten."}}}},
+                        {"a", "b", "path"})},
+          [](CommandContext& ctx, const Json& params) {
+              const std::string a = requireRun(ctx, params, "a");
+              const std::string b = requireRun(ctx, params, "b");
+              const std::string path = params.at("path").get<std::string>();
+              if (path.empty())
+                  throw CommandError("path is empty");
+              try {
+                  const std::size_t rows = runs(ctx).exportComparisonCsv(a, b, core::pathFromUtf8(path));
+                  return Json{{"path", path}, {"rows", rows}};
               } catch (const std::exception& e) {
                   throw CommandError(e.what());
               }
@@ -402,16 +567,29 @@ void registerSimulationCommands(CommandRegistry& r)
     r.add({"simulation.field", "Simulation field summary",
            "Statistics of a result field in model coordinates (mm): surface (pressure on the part: p, Cp, "
            "pressure in Pa), sectionHorizontal / sectionVertical (velocity sections through the part centre: speed "
-           "in m/s, Cp) or streamlines. available = false until the run has written it.",
+           "in m/s, Cp), a plane of a section stack (sectionX_<i> across the flow, sectionY_<i> vertical along "
+           "it, sectionZ_<i> horizontal; positions in simulation.results fields.sections), wake (isosurface of zero "
+           "total pressure, Cp0 = 0, around and behind the part: speed, Cp), vortices (vortex cores: isosurface of "
+           "the Q-criterion at 20 (U / L)^2, from three surface cells off the part: speed, Cp) or streamlines. "
+           "available = false until the run has written it. Scalars have min, max, "
+           "mean and the 2nd/98th percentiles p02/p98. With compare (run B) and kind surface: the pressure "
+           "difference B - A on run's part surface (dCp, dpressure in Pa), NaN where B's part has no surface "
+           "within 1 % of the part size.",
            objectSchema({{"run", runIdParam()},
                          {"kind",
                           {{"type", "string"},
-                           {"enum", {"surface", "sectionHorizontal", "sectionVertical", "streamlines"}}}}},
+                           {"pattern", "^(surface|sectionHorizontal|sectionVertical|wake|vortices|streamlines|section[XYZ]_[0-9]+)$"}}},
+                         {"compare", runIdParam("Run B: return the surface difference B - A.")}},
                         {"run", "kind"})},
           [](CommandContext& ctx, const Json& params) {
               const std::string id = requireRun(ctx, params);
               try {
-                  const auto data = runs(ctx).field(id, params.at("kind").get<std::string>());
+                  const std::string kind = params.at("kind").get<std::string>();
+                  if (params.contains("compare") && kind != "surface")
+                      throw CommandError("compare works with kind surface only");
+                  const auto data = params.contains("compare")
+                                        ? runs(ctx).surfaceDifference(id, requireRun(ctx, params, "compare"))
+                                        : runs(ctx).field(id, kind);
                   if (data.empty())
                       return Json{{"available", false}}; // Written at the end of a run.
                   Json j = polyDataSummary(data);
@@ -423,8 +601,13 @@ void registerSimulationCommands(CommandRegistry& r)
           });
 
     r.add({"simulation.compare", "Compare simulations",
-           "A/B comparison of two runs: drag/lift/side force differences in N and %, coefficients on a shared "
-           "reference area, whether the conditions match (settings such as speed, direction, mesh and preset, and "
+           "A/B comparison of two runs: drag/lift/side force differences in N and %, efficiency L/D (|lift|/drag), "
+           "per force and coefficient the iteration swing of A plus B (noise) and whether the difference is within it "
+           "(withinNoise), "
+           "for two cars front/rear axle lift and balance (front share of lift in %, difference in percentage points) "
+           "and the rotating wheels' own drag/lift (wheelDragN, wheelLiftN), "
+           "coefficients on a shared reference area, whether the conditions match (settings such as speed, direction, "
+           "mesh and preset, and "
            "the resolved setup: surroundings/context geometry, flow domain and engine; unknownConditions lists what an "
            "older run did not record), quality of both, "
            "and shared colour scale ranges. Both runs need successful completion and complete finite force/coefficient "

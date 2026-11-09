@@ -48,6 +48,29 @@ struct PolyData {
 /// Throws std::runtime_error on a malformed file.
 [[nodiscard]] PolyData readVtk(const std::filesystem::path& path);
 
+/// The polygons of `data` whose centre lies inside `box`, with only the points they use
+/// (scalars and vectors follow). Lines are dropped. Used to keep a cutting plane through
+/// the whole wind tunnel to the region around the part.
+[[nodiscard]] PolyData cropPolygons(const PolyData& data, const core::BoundingBox& box);
+
+/// The polygons of `data` whose centre is at least `distance` from every one of `points`,
+/// with only the points they use (CAD-165: the wake surface without the skin it forms in
+/// the boundary layer on the part).
+[[nodiscard]] PolyData dropNearPoints(const PolyData& data, const std::vector<core::Vec3>& points,
+                                      double distance);
+
+/// The parts of the lines of `data` inside `box` (a line that leaves the box and comes
+/// back becomes two lines), with only the points they use. Polygons are dropped.
+[[nodiscard]] PolyData cropLines(const PolyData& data, const core::BoundingBox& box);
+
+/// Appends `other` to `data` (points, polygons, lines; per-point fields present in both).
+void appendPolyData(PolyData& data, const PolyData& other);
+
+/// A/B difference on a surface (CAD-141): `a` with, for each of its points, the scalars of
+/// the nearest point of `b` minus its own, as "d<name>" (dCp, dpressure, ...). Points with
+/// no point of `b` within `maxDistance` (the variant's shape differs there) get NaN.
+[[nodiscard]] PolyData surfaceDifference(const PolyData& a, const PolyData& b, double maxDistance);
+
 /// Directories that OpenFOAM writes a function object's output into, sorted by time.
 [[nodiscard]] std::vector<std::filesystem::path> timeDirectories(const std::filesystem::path& functionObjectDir);
 
@@ -57,10 +80,17 @@ struct QualityReport {
     std::optional<std::int64_t> cells;   ///< Volume mesh cells.
     int failedMeshChecks = 0;
     bool solverConverged = false;        ///< Residual targets reached before the iteration limit.
+    /// The solver stopped because Cd and Cl had settled (CAD-155); residuals then only need
+    /// to be below 1e-3.
+    bool forcesSettled = false;
+    std::optional<int> iterations;       ///< Last solver iteration.
     std::optional<double> continuityError; ///< Last "sum local" time step continuity error.
     std::map<std::string, double> finalResiduals; ///< Initial residual of the last iteration.
     /// Relative band (max - min) / |mean| of Cd over the last 20 % of the iterations.
     std::optional<double> cdFluctuation;
+    /// Change of the mean of Cd between the halves of that window, relative to its mean
+    /// (CAD-168): small while Cd only oscillates around a steady mean.
+    std::optional<double> cdDrift;
     std::vector<std::string> warnings;
     /// Required evidence: "passed", "failed" or "missing" for each check.
     std::map<std::string, std::string> checks;

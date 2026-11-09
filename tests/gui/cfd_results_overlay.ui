@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CAD-127, CAD-128: wind tunnel results in the viewport have a colour bar per quantity (title,
+# unit, ticks, Cp = 0 in the neutral middle) and a card with the forces; the guide bar does not
+# cover them. The overlay is fed values of a real coarse OpenFOAM v2506 run (a 1044 mm
+# Ahmed-like body at 40 m/s); tests/gui/cfd_results_3d.ui checks it on a run made in the app.
+ui.wait(1000)
+(() => { const p = controller.execute("document.parts").result.parts[0]; window.selectPart(p.id) })()
+ui.wait(300)
+(() => { if (!contextBar.visible) ui.fail("the guide bar should show for a selected part before any results") })()
+(() => { cfdOverlay.fields = [{ run: "r1", kind: "surface", scalar: "Cp", min: -1.06, max: 0.95 }, { run: "r1", kind: "sectionVertical", scalar: "speed", min: 0, max: 49.1 }, { run: "r1", kind: "streamlines", scalar: "speed", min: 0, max: 49.1 }]; cfdOverlay.results = { summary: { dragN: 55.806, liftN: 42.656, sideN: -0.362, cd: 0.517, cl: 0.395, cs: -0.003 }, conditions: { settings: { speed: 40, flowDirection: "+X", mesh: "coarse" } } }; cfdOverlay.runTitle = "car coarse (15:38)" })()
+ui.wait(500)
+(() => { const l = cfdOverlay.legends; ui.log("LEGENDS " + JSON.stringify(l)); if (l.length !== 2) ui.fail("one legend per quantity expected, got " + l.length); if (l[1] && l[1].kinds.length !== 2) ui.fail("sections and streamlines should share the speed legend") })()
+(() => { const z = controller.fieldScalePosition("Cp", 0, -1.06, 0.95); const lo = controller.fieldScalePosition("Cp", -1.06, -1.06, 0.95); const hi = controller.fieldScalePosition("Cp", 0.95, -1.06, 0.95); const s = controller.fieldScalePosition("speed", 24.55, 0, 49.1); ui.log("POSITIONS Cp0 " + z + " lo " + lo + " hi " + hi + " speed mid " + s); if (Math.abs(z - 0.5) > 1e-9) ui.fail("Cp = 0 is not the neutral middle of the scale: " + z); if (Math.abs(lo) > 1e-9 || Math.abs(hi - 1) > 1e-9) ui.fail("Cp ends"); if (Math.abs(s - 0.5) > 1e-9) ui.fail("speed scale is linear") })()
+(() => { const t = cfdOverlay.ticks(cfdOverlay.legends[0]); ui.log("CP TICKS " + JSON.stringify(t)); if (t.indexOf(0) < 0) ui.fail("Cp ticks lack 0") })()
+ui.clickText("Pressure coefficient Cp")
+ui.clickText("Air speed (m/s)")
+ui.clickText("vertical section, streamlines")
+ui.clickText("0.00")
+ui.clickText("55.81 N")
+ui.clickText("40 m/s · flow +X · coarse mesh")
+(() => { if (contextBar.visible) ui.fail("the guide bar covers the results") })()
+ui.shot("cfd-results-overlay.png")
+(() => { cfdOverlay.fields = []; cfdOverlay.results = null })()
+ui.wait(300)
+(() => { if (cfdOverlay.visible) ui.fail("overlay still shown without results"); if (!contextBar.visible) ui.fail("the guide bar does not come back") })()
+# CAD-148: section kinds are resolved per run; a run made before the section stacks (B
+# here) keeps its centre sections and has no section across the flow.
+(() => { simulationPanel.runSections = { a: [{ axis: "z", defaultIndex: 3, lengthMm: 60, positions: [{ kind: "sectionZ_0", index: 0, fraction: 0.05, mm: 3 }, { kind: "sectionZ_3", index: 3, fraction: 0.5, mm: 30 }] }, { axis: "x", defaultIndex: 12, lengthMm: 80, positions: [{ kind: "sectionX_12", index: 12, fraction: 1.1, mm: 88 }] }], b: [] }; const h = simulationPanel.fieldChoices.find(f => f.kind === "sectionHorizontal"); const c = simulationPanel.fieldChoices.find(f => f.kind === "sectionCross"); const k = [simulationPanel.fieldKind(h, "a"), simulationPanel.fieldKind(h, "b"), simulationPanel.fieldKind(c, "a"), simulationPanel.fieldKind(c, "b"), simulationPanel.fieldKind(Object.assign({}, h, { pos: 0 }), "a")]; ui.log("SECTION KINDS " + JSON.stringify(k)); if (JSON.stringify(k) !== JSON.stringify(["sectionZ_3", "sectionHorizontal", "sectionX_12", null, "sectionZ_0"])) ui.fail("section kinds per run"); simulationPanel.runSections = ({}) })()
+ui.log("cfd results overlay done")

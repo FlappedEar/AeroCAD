@@ -89,6 +89,12 @@ public:
         press(x, y, button, mods);
         release(x, y, button, mods);
     }
+    /// Two clicks within the double-click interval, as a real double click arrives.
+    Q_INVOKABLE void doubleClick(qreal x, qreal y, const QString& button = "left", const QString& mods = "")
+    {
+        move(x, y, mods);
+        QTest::mouseDClick(m_window, toButton(button), modifiers(mods), QPointF(x, y).toPoint());
+    }
     Q_INVOKABLE void drag(qreal x0, qreal y0, qreal x1, qreal y1, const QString& button = "left",
                           const QString& mods = "", int steps = 10)
     {
@@ -149,6 +155,22 @@ public:
                 std::fprintf(stderr, "ui-script: window did not become active for a key press\n");
         }
         QTest::keyClick(m_window.data(), seq[0].key(), modifiers(mods));
+    }
+
+    /// Types `text` into the focused item, one key press per character as a keyboard does.
+    Q_INVOKABLE void type(const QString& text)
+    {
+        if (QGuiApplication::focusWindow() != m_window) {
+            m_window->requestActivate();
+            if (!QTest::qWaitForWindowActive(m_window.data(), 1000))
+                std::fprintf(stderr, "ui-script: window did not become active for typing\n");
+        }
+        for (const QChar c : text) {
+            const auto key = static_cast<Qt::Key>(c.toUpper().unicode());
+            const Qt::KeyboardModifiers mods = c.isUpper() ? Qt::ShiftModifier : Qt::NoModifier;
+            QTest::sendKeyEvent(QTest::Press, m_window.data(), key, QString(c), mods);
+            QTest::sendKeyEvent(QTest::Release, m_window.data(), key, QString(c), mods);
+        }
     }
 
     /// Drops files at (x, y) as a file manager does: drag enter, move and drop events with
@@ -236,6 +258,8 @@ private:
             m |= Qt::ShiftModifier;
         if (mods.contains("ctrl"))
             m |= Qt::ControlModifier;
+        if (mods.contains("alt"))
+            m |= Qt::AltModifier;
         return m;
     }
 

@@ -180,7 +180,7 @@ std::optional<RayHit> raycast(const TriangleMesh& mesh, const Vec3& origin, cons
 }
 
 std::optional<RayHit> nearestToRay(const TriangleMesh& mesh, const Vec3& origin, const Vec3& direction,
-                                   double maxAngleDeg)
+                                   double maxAngleDeg, const std::function<bool(const Vec3&)>& accept)
 {
     const double len = direction.length();
     if (!(len > 0.0) || !(maxAngleDeg > 0.0) || maxAngleDeg >= 90.0)
@@ -199,6 +199,8 @@ std::optional<RayHit> nearestToRay(const TriangleMesh& mesh, const Vec3& origin,
                 continue;
             const double off = (w - d * depth).length();
             if (off > bestRatio * depth)
+                continue;
+            if (accept && !accept(v[i]))
                 continue;
             bestRatio = off / depth;
             best = RayHit{static_cast<std::uint32_t>(t), depth / len, v[i]};
@@ -968,6 +970,19 @@ double selectionArea(const TriangleMesh& mesh, const TriangleSet& selection)
         area += 0.5 * (v[tri[1]] - v[tri[0]]).cross(v[tri[2]] - v[tri[0]]).length();
     }
     return area;
+}
+
+BoundingBox selectionBounds(const TriangleMesh& mesh, const TriangleSet& selection)
+{
+    const auto& v = mesh.vertices();
+    BoundingBox box;
+    for (const auto t : selection) {
+        if (t >= mesh.triangleCount())
+            continue;
+        for (const auto i : mesh.triangles()[t])
+            box.extend(v[i]);
+    }
+    return box;
 }
 
 } // namespace aerocad::core

@@ -1,0 +1,30 @@
+# CAD-122: in a sketch, Esc ends the tool (not the sketch), a click selects a curve and
+# Delete removes it (Fusion). Before, Esc left the sketch and curves could not be picked.
+# Run: AeroCAD --ui-script <this file>
+ui.wait(800)
+(() => { const r = controller.execute("sketch.create", { plane: "XY", curves: [{ type: "rectangle", corner: [0, 0], width: 40, height: 20 }, { type: "circle", center: [20, 10], radius: 4 }] }); if (!r.ok) ui.fail("sketch: " + r.error) })()
+ui.wait(300)
+(() => { enterSketch(controller.execute("timeline.list").result.features[0].id); if (sketchTool !== "line") ui.fail("entering a sketch starts Line") })()
+ui.wait(800)
+# Esc with the Line tool: the tool ends, the sketch stays.
+ui.key("Esc")
+ui.wait(300)
+(() => { if (!activeSketch) ui.fail("Esc left the sketch"); if (sketchTool !== "") ui.fail("Esc kept the tool " + sketchTool) })()
+# Click on the top side of the rectangle (sketch y = 20) in window coordinates.
+(() => { const o = viewport.sketchOverlay; const p = o.toScreen([20, 20]); const w = o.mapToItem(null, p.x, p.y); ui.click(w.x, w.y) })()
+ui.wait(300)
+(() => { const sel = viewport.sketchOverlay.selectedCurves; ui.log("selected " + JSON.stringify(sel)); if (sel.length !== 1 || sel[0] !== 2) ui.fail("expected the top side (curve 2) selected, got " + JSON.stringify(sel)) })()
+# Shift+click the circle adds it.
+(() => { const o = viewport.sketchOverlay; const p = o.toScreen([24, 10]); const w = o.mapToItem(null, p.x, p.y); ui.click(w.x, w.y, "left", "shift") })()
+ui.wait(300)
+(() => { if (viewport.sketchOverlay.selectedCurves.length !== 2) ui.fail("Shift+click did not add the circle: " + JSON.stringify(viewport.sketchOverlay.selectedCurves)) })()
+ui.shot("sketch-select.png")
+ui.key("Delete")
+ui.wait(500)
+(() => { const r = controller.execute("sketch.curves", { sketch: activeSketch.id }).result; ui.log("curves left " + r.curves.length + ": " + r.curves.map(c => c.kind).join(", ")); if (r.curves.length !== 3) ui.fail("expected 3 sides left, got " + r.curves.length); if (!activeSketch) ui.fail("Delete left the sketch"); if (controller.execute("document.parts").result.parts.filter(p => p.kind === "sketch").length !== 1) ui.fail("Delete removed the sketch part") })()
+ui.shot("sketch-deleted.png")
+# Esc with nothing selected and no tool leaves the sketch; Undo brings the curves back.
+ui.key("Esc")
+ui.wait(300)
+(() => { if (activeSketch) ui.fail("second Esc did not leave the sketch") })()
+(() => { controller.execute("edit.undo"); const r = controller.execute("sketch.curves", { sketch: controller.execute("timeline.list").result.features[0].id }).result; if (r.curves.length !== 5) ui.fail("undo did not restore the curves: " + r.curves.length) })()

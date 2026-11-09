@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <stdexcept>
 #include <thread>
 
@@ -29,6 +30,32 @@ int Settings::effectiveProcesses() const
     // Half of the logical cores (leave room for the UI), at least 1, at most 8: beyond
     // that the coarse meshes are too small to scale.
     return static_cast<int>(std::clamp(hw / 2U, 1U, 8U));
+}
+
+std::string partSizeWarning(double length)
+{
+    if (!(length > 0.0) || (length >= kMinPlausiblePartLength && length <= kMaxPlausiblePartLength))
+        return {};
+    char size[32];
+    if (length < kMinPlausiblePartLength)
+        std::snprintf(size, sizeof size, "only %.3g mm", length * 1000.0);
+    else
+        std::snprintf(size, sizeof size, "%.0f m", length);
+    const std::string what = std::string(size) + " long";
+    return "The part is " + what +
+           ". Check its units: a model saved in metres or inches comes in at the wrong size. Convert it first "
+           "(MESH > Scan Tools > \"This part is in\" > Convert); the simulation runs at the size shown.";
+}
+
+std::string openPartWarning(std::size_t openEdges)
+{
+    if (openEdges == 0)
+        return {};
+    return "The part is not closed (" + std::to_string(openEdges) +
+           " open edges: holes, or a scan shell or surface with no inside). The wind tunnel needs a closed "
+           "body: around an open shell the mesh makes a layer about one cell thick, so the forces depend on the "
+           "mesh, not on the part. Close it first (MESH > Scan Tools > Repair, with \"Fill holes up to\" at least " +
+           std::to_string(openEdges) + " edges), or give a surface thickness.";
 }
 
 std::string_view meshLevelName(MeshLevel level)
@@ -63,6 +90,7 @@ Json toJson(const Settings& s)
         {"preset", s.preset},
         {"speed", s.speed},
         {"flowDirection", s.flowDirection},
+        {"yaw", s.yaw},
         {"kinematicViscosity", s.kinematicViscosity},
         {"density", s.density},
         {"turbulenceIntensity", s.turbulenceIntensity},
@@ -71,6 +99,7 @@ Json toJson(const Settings& s)
         {"iterations", s.effectiveIterations()},
         {"ground", s.ground},
         {"groundMoving", s.groundMoving},
+        {"rotatingWheels", s.rotatingWheels},
         {"processes", s.effectiveProcesses()},
     };
     j["groundHeight"] = s.groundHeight ? Json(*s.groundHeight) : Json(nullptr);
@@ -112,6 +141,12 @@ Settings settingsFromJson(const Json& j)
         if (!isValidFlowDirection(s.flowDirection))
             throw std::invalid_argument("flowDirection must be one of +X, -X, +Y, -Y");
     }
+    if (j.contains("yaw") && !j.at("yaw").is_null()) {
+        const double yaw = j.at("yaw").get<double>();
+        if (!std::isfinite(yaw) || std::abs(yaw) > 30.0)
+            throw std::invalid_argument("yaw must be between -30 and 30 degrees");
+        s.yaw = yaw;
+    }
     s.kinematicViscosity = positive(j, "kinematicViscosity", s.kinematicViscosity);
     s.density = positive(j, "density", s.density);
     s.turbulenceIntensity = positive(j, "turbulenceIntensity", s.turbulenceIntensity);
@@ -128,6 +163,8 @@ Settings settingsFromJson(const Json& j)
         s.ground = j.at("ground").get<bool>();
     if (j.contains("groundMoving"))
         s.groundMoving = j.at("groundMoving").get<bool>();
+    if (j.contains("rotatingWheels"))
+        s.rotatingWheels = j.at("rotatingWheels").get<bool>();
     if (j.contains("groundHeight") && !j.at("groundHeight").is_null()) {
         const double z = j.at("groundHeight").get<double>();
         if (!std::isfinite(z))
@@ -154,6 +191,9 @@ Json settingsSchema()
           {"enum", {"+X", "-X", "+Y", "-Y"}},
           {"description", "Direction the air flows in, model axes (Z up). Default +Y (air hits the side seen in "
                           "the Front view)."}}},
+        {"yaw", num("Yaw (crosswind) in degrees, -30..30 (default 0): the air turns this far counter-clockwise, "
+                    "seen from above, from flowDirection. Forces are in wind axes; a moving floor moves along "
+                    "flowDirection at speed * cos(yaw), and rotating wheels roll with it.")},
         {"mesh",
          {{"type", "string"},
           {"enum", {"coarse", "medium", "fine"}},
@@ -170,6 +210,11 @@ Json settingsSchema()
         {"groundHeight",
          num("Floor height in model Z, mm (default: just below the lowest point). Not above the part; context "
              "parts such as supports may reach below it.")},
+        {"rotatingWheels",
+         {{"type", "boolean"},
+          {"description", "Turn the wheels with the moving floor: wheels standing on the part's bottom are found, "
+                          "the floor touches the tyres and their surfaces move with it (default false; needs "
+                          "ground and groundMoving)."}}},
         {"referenceArea", num("Reference area for Cd/Cl in m^2 (default: frontal area of the part).")},
         {"referenceLength", num("Reference length in m (default: part length along the flow).")},
         {"kinematicViscosity", num("Kinematic viscosity in m^2/s (default 1.5e-5, air).")},
@@ -180,16 +225,76 @@ Json settingsSchema()
     };
 }
 
+std::string describeCondition(const std::string& key, const Json& a, const Json& b)
+{
+    struct Label {
+        const char* key;
+        const char* name;
+        const char* unit; ///< Appended to numbers; empty for none.
+        double factor;    ///< Shown value = stored value * factor.
+    };
+    static constexpr std::array labels{
+        Label{"preset", "Setup preset", "", 1.0},
+        Label{"speed", "Air speed", " m/s", 1.0},
+        Label{"flowDirection", "Flow direction", "", 1.0},
+        Label{"yaw", "Yaw", "°", 1.0},
+        Label{"kinematicViscosity", "Air viscosity", " m²/s", 1.0},
+        Label{"density", "Air density", " kg/m³", 1.0},
+        Label{"turbulenceIntensity", "Turbulence intensity", " %", 100.0},
+        Label{"viscosityRatio", "Turbulent viscosity ratio", "", 1.0},
+        Label{"mesh", "Mesh", "", 1.0},
+        Label{"ground", "Floor", "", 1.0},
+        Label{"groundMoving", "Floor motion", "", 1.0},
+        Label{"groundHeight", "Floor height", " mm", 1.0},
+        Label{"referenceArea", "Reference area", " cm²", 1e4},
+        Label{"referenceLength", "Reference length", " mm", 1e3},
+    };
+    const auto it = std::find_if(labels.begin(), labels.end(), [&](const Label& l) { return key == l.key; });
+    if (it == labels.end())
+        return key;
+    auto value = [&](const Json& settings) -> std::string {
+        const Json v = settings.value(key, Json());
+        if (key == "ground")
+            return v.is_boolean() && v.get<bool>() ? "on" : "off";
+        if (key == "groundMoving")
+            return v.is_boolean() && !v.get<bool>() ? "fixed" : "moving";
+        if (key == "groundHeight" && v.is_null())
+            return "just under the part";
+        if ((key == "referenceArea" || key == "referenceLength") && v.is_null())
+            return "from the part";
+        if (v.is_number()) {
+            char text[48];
+            std::snprintf(text, sizeof text, "%g", v.get<double>() * it->factor);
+            return text + std::string(it->unit);
+        }
+        if (v.is_string())
+            return v.get<std::string>();
+        return v.is_null() ? "not set" : v.dump();
+    };
+    return std::string(it->name) + ": A " + value(a) + ", B " + value(b);
+}
+
 std::vector<std::string> differingConditions(const Json& a, const Json& b)
 {
     // Everything that defines the flow problem. Processes and iterations do not change
-    // a converged result, so they are not compared.
-    static constexpr std::array keys{"preset",  "speed",         "flowDirection", "kinematicViscosity",
-                                     "density", "turbulenceIntensity", "viscosityRatio", "mesh",
-                                     "ground",  "groundMoving", "groundHeight", "referenceArea",
-                                     "referenceLength"};
+    // a converged result, so they are not compared; neither are the reference area and
+    // length, which only scale the coefficients (forces in N do not depend on them, CAD-186).
+    static constexpr std::array keys{"preset",
+                                     "speed",
+                                     "flowDirection",
+                                     "yaw",
+                                     "kinematicViscosity",
+                                     "density",
+                                     "turbulenceIntensity",
+                                     "viscosityRatio",
+                                     "mesh",
+                                     "ground",
+                                     "groundMoving",
+                                     "groundHeight",
+                                     "rotatingWheels"};
     // Runs written before a setting existed used what is now its default.
-    static const Json defaults{{"groundMoving", true}, {"groundHeight", nullptr}};
+    static const Json defaults{
+        {"groundMoving", true}, {"groundHeight", nullptr}, {"rotatingWheels", false}, {"yaw", 0.0}};
     std::vector<std::string> diff;
     for (const char* key : keys) {
         const Json fallback = defaults.value(key, Json());

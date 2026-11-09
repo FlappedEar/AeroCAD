@@ -6,6 +6,7 @@
 #include "aerocad/cfd/Results.hpp"
 #include "aerocad/cfd/Settings.hpp"
 
+#include <cstdint>
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -108,12 +109,18 @@ struct RunStatus {
     int maxIterations = 0;
     std::string message;  ///< Failure reason or hint.
     std::string created;  ///< ISO 8601 UTC.
+    /// While a run started by this app runs: seconds since its engine started, and, while
+    /// solving, at most how many seconds are left (the solver may converge sooner).
+    std::optional<int> elapsedSeconds, remainingSeconds;
     RunSource source;
     Backend backend = Backend::Docker;
     std::filesystem::path caseDir;
     /// Latest values (empty until the solver writes the first iteration). Forces in N
     /// along the flow (drag), up (lift) and to the side.
     std::optional<double> cd, cl, cs, dragN, liftN, sideN;
+    /// A finished run's final result (CAD-205): the means over the last 20 % of the
+    /// iterations, as in the results summary; empty otherwise.
+    std::optional<double> finalCd, finalCl, finalDragN, finalLiftN;
 
     [[nodiscard]] Json toJson() const;
 };
@@ -137,9 +144,17 @@ public:
     [[nodiscard]] const std::filesystem::path& root() const { return m_root; }
 
     /// Generates the case and starts the engine. Returns the new run id. Throws
-    /// std::runtime_error (no engine, bad geometry, I/O).
+    /// std::runtime_error (no engine, bad geometry, I/O). A run on this computer waits
+    /// (state running, stage "queued") while starting it would use more solver processes than
+    /// the processor limit next to the runs already solving here; it starts by itself when
+    /// they finish (list() / status() start it). Oversubscribed MPI runs are many times slower
+    /// than the same runs one after the other.
     std::string start(const CaseGeometry& geometry, const Settings& settings, const RunSource& source,
                       std::optional<Backend> backend = std::nullopt);
+
+    /// Solver processes that may run at once on this computer (default: the logical cores).
+    void setProcessorLimit(int processes) { m_processorLimit = processes; }
+    [[nodiscard]] int processorLimit() const { return m_processorLimit; }
 
     /// Only writes the case (no engine), e.g. to run it elsewhere. Returns the run id.
     std::string prepare(const CaseGeometry& geometry, const Settings& settings, const RunSource& source);
@@ -160,6 +175,10 @@ public:
     bool cancel(const std::string& id);
     /// Deletes a finished run and its files. Returns false when unknown or still running.
     bool remove(const std::string& id);
+    /// Renames a run (CAD-174): sets its label ("" clears it) and saves it in run.json, also
+    /// while the run is running. Returns false for an unknown run; throws std::runtime_error
+    /// when run.json cannot be written.
+    bool setLabel(const std::string& id, const std::string& label);
 
     [[nodiscard]] std::optional<CaseInfo> caseInfo(const std::string& id);
 
@@ -169,10 +188,29 @@ public:
     /// final results are unavailable. Throws std::runtime_error for unknown ids.
     [[nodiscard]] Json results(const std::string& id, int maxPoints = 400);
 
+    /// Writes a run's results as CSV (CAD-167): a "Quantity,Value" block with the run, its
+    /// conditions and its final values (or the provisional means while it is not finished),
+    /// a blank line, then the full, unsampled history per iteration (Cd, Cl, Cs and the
+    /// forces in N). Returns the number of history rows. Throws std::runtime_error for
+    /// unknown ids or when the file cannot be written.
+    std::size_t exportResultsCsv(const std::string& id, const std::filesystem::path& path);
+    /// Writes the A/B comparison (compare(a, b)) as CSV (CAD-193): a "Quantity,Value" block
+    /// with the runs, the verdict, differing / unknown conditions, reasons, notes and the mesh
+    /// check, a blank line, then the table: A, B, B - A, change in %, swing of A plus B and
+    /// whether the difference is within it, for the forces, L/D and Cd/Cl/Cs on A's
+    /// reference area. Returns the number of table rows with values. Throws std::runtime_error
+    /// for unknown ids or when the file cannot be written.
+    std::size_t exportComparisonCsv(const std::string& a, const std::string& b, const std::filesystem::path& path);
+
     /// Field data for the result view, converted to model coordinates (mm):
     /// kind "surface" (pressure on the part), "sectionHorizontal", "sectionVertical",
-    /// "streamlines". Empty PolyData when the run has not written it (yet).
+    /// a plane of a section stack ("sectionX_3", see sectionStacks()), "wake" (the
+    /// total pressure isosurface Cp0 = 0, CAD-165), "streamlines". Empty PolyData when the run has not written it (yet).
     [[nodiscard]] PolyData field(const std::string& id, std::string_view kind);
+    /// Pressure difference B - A on A's part surface (CAD-141): dCp, dpressure, dp at A's
+    /// points from the nearest point of B's surface within 1 % of A's part size; NaN where
+    /// B's part has no surface that close (its shape differs there).
+    [[nodiscard]] PolyData surfaceDifference(const std::string& a, const std::string& b);
 
     /// Downloads the OpenFOAM image in the background (`docker pull`, log in
     /// <root>/image-pull.log). Returns false when a download is already running.
@@ -207,6 +245,10 @@ private:
     void loadRun(const std::filesystem::path& dir, bool follow = false);
     void scan(bool follow);
     void refresh(Run& run);
+    /// Solver processes of the local runs this manager is running now.
+    int localProcessesInUse();
+    /// Starts queued local runs, oldest first, while they fit under the processor limit.
+    void startQueued();
     std::string newRunId(const std::string& partName);
     std::string create(const CaseGeometry& geometry, const Settings& settings, const RunSource& source,
                        std::optional<Backend> backend);
@@ -214,6 +256,8 @@ private:
     std::filesystem::path m_root;
     std::map<std::string, std::unique_ptr<Run>> m_runs;
     std::optional<Process> m_imagePull;
+    int m_processorLimit = 0; ///< Set in the constructor.
+    std::uint64_t m_queueCounter = 0; ///< Last submission number given to a queued run.
 };
 
 } // namespace aerocad::cfd

@@ -183,6 +183,44 @@ TEST_CASE("part.transform scales, rotates and moves in one undo step", "[command
     CHECK(back["min"][2].get<double>() == Approx(0));
 }
 
+TEST_CASE("part.face_orientation lays a part on a face and turns a face to the front", "[commands][scan]")
+{
+    const TempMesh file(box(10, 20, 30));
+    commands::Session s;
+    const auto id = importBox(s, file);
+    // Lay on the +X face: X points down, the box lies on the ground.
+    auto o = run(s, "part.face_orientation", {{"id", id}, {"point", {10, 10, 15}}, {"mode", "down"}});
+    CHECK(o["normal"][0].get<double>() == Approx(1));
+    auto applied = run(s, "part.transform",
+                       {{"id", id}, {"center", o["center"]}, {"axis", o["axis"]}, {"angle", o["angle"]},
+                        {"translate", o["translate"]}});
+    auto b = applied["bounds"];
+    CHECK(b["size"][0].get<double>() == Approx(30));
+    CHECK(b["size"][2].get<double>() == Approx(10));
+    CHECK(b["min"][2].get<double>() == Approx(0).margin(1e-9));
+    const double height = b["min"][2].get<double>();
+
+    // Face Front with the face that is at +Y now: it ends up at the front (min Y), height kept.
+    const double yMax = b["max"][1].get<double>();
+    const double cx = (b["min"][0].get<double>() + b["max"][0].get<double>()) / 2;
+    o = run(s, "part.face_orientation", {{"id", id}, {"point", {cx, yMax, 5}}, {"mode", "front"}});
+    applied = run(s, "part.transform",
+                  {{"id", id}, {"center", o["center"]}, {"axis", o["axis"]}, {"angle", o["angle"]},
+                   {"translate", o["translate"]}});
+    b = applied["bounds"];
+    CHECK(b["size"][1].get<double>() == Approx(20));
+    CHECK(b["min"][2].get<double>() == Approx(height).margin(1e-9));
+    // The picked point (on the +Y face before) is now on the -Y side: half a turn about Z
+    // through the centre moves yMax to the minimum.
+    CHECK(b["min"][1].get<double>() == Approx(2 * o["center"][1].get<double>() - yMax));
+
+    // A pending transform is taken into account: lay down on top of a 90 degree turn.
+    o = run(s, "part.face_orientation",
+            {{"id", id}, {"point", {cx, yMax, 5}}, {"mode", "down"}, {"axis", {0, 0, 1}}, {"angle", 90}});
+    CHECK(o["angle"].get<double>() > 0);
+    CHECK_FALSE(s.execute("part.face_orientation", {{"id", 999}, {"point", {0, 0, 0}}, {"mode", "down"}}).ok);
+}
+
 TEST_CASE("part.align puts a tilted face on the XY plane", "[commands][scan]")
 {
     const TempMesh file(box(10, 20, 30));

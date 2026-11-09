@@ -120,10 +120,11 @@ TEST_CASE("simulation.* commands are registered with schemas", "[commands][simul
 {
     RunsDir dir;
     commands::Session session;
-    for (const char* name : {"simulation.environment", "simulation.propose_run", "simulation.run", "simulation.status",
-                             "simulation.list", "simulation.cancel", "simulation.delete", "simulation.results",
-                             "simulation.field", "simulation.compare", "simulation.import",
-                             "simulation.install_engine", "simulation.refine", "simulation.set_engine"}) {
+    for (const char* name :
+         {"simulation.environment", "simulation.propose_run", "simulation.run", "simulation.status", "simulation.list",
+          "simulation.cancel", "simulation.delete", "simulation.results", "simulation.field", "simulation.compare",
+          "simulation.import", "simulation.install_engine", "simulation.refine", "simulation.set_engine",
+          "simulation.export_results", "simulation.export_comparison"}) {
         INFO(name);
         const auto* info = session.registry().info(name);
         REQUIRE(info != nullptr);
@@ -152,6 +153,27 @@ TEST_CASE("simulation.propose_run and a prepared run", "[commands][simulation]")
     // 200 x 80 x 60 mm box, flow along X: frontal area 80 x 60 mm.
     CHECK(std::abs(r.data.at("referenceArea").get<double>() - 0.0048) < 0.0048 * 0.01);
     CHECK(std::abs(r.data.at("characteristicLength").get<double>() - 0.2) < 1e-9);
+    // The tunnel and the flow in model coordinates (mm), for drawing them in the view; the
+    // part box is the imported box.
+    const Json& part = r.data.at("partModel");
+    CHECK(std::abs(part.at("max")[0].get<double>() - part.at("min")[0].get<double>() - 200.0) < 1e-6);
+    CHECK(std::abs(part.at("max")[2].get<double>() - part.at("min")[2].get<double>() - 60.0) < 1e-6);
+    const Json& tunnel = r.data.at("domainModel");
+    for (int i = 0; i < 3; ++i) {
+        CHECK(tunnel.at("min")[i].get<double>() <= part.at("min")[i].get<double>() + 1e-6);
+        CHECK(tunnel.at("max")[i].get<double>() >= part.at("max")[i].get<double>() - 1e-6);
+    }
+    CHECK(r.data.at("flowModel")[0] == 1.0);
+    CHECK(r.data.at("warnings").empty());
+    // Without the (slow) engine check, as the wind tunnel panel previews it.
+    auto quick = session.execute("simulation.propose_run",
+                                 {{"id", id}, {"speed", 30.0}, {"flowDirection", "+X"}, {"checkEngine", false}});
+    REQUIRE(quick.ok);
+    CHECK(quick.data.at("environment").is_null());
+    CHECK(quick.data.at("domainModel") == r.data.at("domainModel"));
+    auto turned = session.execute("simulation.propose_run", {{"id", id}, {"flowDirection", "-Y"}});
+    REQUIRE(turned.ok);
+    CHECK(std::abs(turned.data.at("flowModel")[1].get<double>() + 1.0) < 1e-12);
 
     CHECK_FALSE(session.execute("simulation.propose_run", {{"id", 999}}).ok);
     CHECK_FALSE(session.execute("simulation.propose_run", {{"id", id}, {"speed", -5.0}}).ok);
@@ -235,6 +257,36 @@ TEST_CASE("simulation.propose_run and a prepared run", "[commands][simulation]")
     CHECK_FALSE(session.execute("simulation.import", {{"path", dir.path().string()}}).ok);
 }
 
+TEST_CASE("construction planes are not walls in the flow (CAD-130)", "[commands][simulation]")
+{
+    RunsDir dir;
+    commands::Session session;
+    const auto id = importBox(session);
+    auto r = session.execute("simulation.run", {{"id", id}, {"prepareOnly", true}});
+    REQUIRE(r.ok);
+    const std::string alone = r.data.at("id");
+
+    auto plane = session.execute("feature.plane", {{"base", "XZ"}, {"offset", 200}});
+    REQUIRE(plane.ok);
+    std::uint64_t planeId = 0;
+    for (const auto& p : session.document().parts())
+        if (p.kind == model::PartKind::Plane)
+            planeId = p.id;
+    REQUIRE(planeId != 0);
+
+    // As other geometry in the flow it is left out: the same case as the part alone.
+    r = session.execute("simulation.run", {{"id", id}, {"context", {planeId}}, {"prepareOnly", true}});
+    REQUIRE(r.ok);
+    const std::string withPlane = r.data.at("id");
+    CHECK(session.simulations().caseInfo(withPlane)->geometryHash ==
+          session.simulations().caseInfo(alone)->geometryHash);
+
+    // As the part to simulate it is refused.
+    r = session.execute("simulation.run", {{"id", planeId}, {"prepareOnly", true}});
+    CHECK_FALSE(r.ok);
+    CHECK(r.error.find("construction plane") != std::string::npos);
+}
+
 TEST_CASE("simulation results require successful completion independently of output files", "[commands][simulation]")
 {
     const std::string state = GENERATE("prepared", "running", "interrupted", "cancelled", "failed", "finished");
@@ -273,6 +325,13 @@ TEST_CASE("simulation results require successful completion independently of out
     CHECK(result.data.at("history").at("iteration").size() == 20);
     CHECK(result.data.at("history").at("cd")[0] == 0.8);
     CHECK(result.data.at("provisional") == !finished);
+    // CAD-158: only a running run reports its current tail means, apart from the summary.
+    REQUIRE(result.data.at("current").is_object() == (state == "running"));
+    if (state == "running") {
+        CHECK(result.data.at("current").at("cd") == 0.8);
+        CHECK(result.data.at("current").at("dragN").is_number());
+        CHECK(result.data.at("current").at("iterations") == 20);
+    }
     // A partial run is excluded on either side, and two partial runs cannot validate each other.
     for (const auto& pair : {std::pair{a, b}, std::pair{b, a}, std::pair{a, a}}) {
         const auto comparison = session.execute("simulation.compare", {{"a", pair.first}, {"b", pair.second}});
@@ -284,6 +343,184 @@ TEST_CASE("simulation results require successful completion independently of out
         CHECK(comparison.data.at("reasons").empty() == finished);
         CHECK(comparison.data.at("states").at(pair.first == a ? "a" : "b") == expected);
     }
+}
+
+TEST_CASE("simulation.export_results writes conditions, final values and the full history as CSV",
+          "[commands][simulation]")
+{
+    RunsDir dir;
+    commands::Session session;
+    const auto part = importBox(session);
+    const auto a = prepareRun(session, part);
+    writeResultFixture(dir.path() / a, false, 1, 450); // More rows than results() samples.
+    writeOutput(dir.path() / a / "aerocad.engine", "v2506\n");
+    const auto read = [](const fs::path& p) {
+        std::ifstream in(p, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(in), {});
+    };
+    const fs::path file = dir.path() / "a results.csv";
+
+    // Not finished: says provisional, no final values, history still written.
+    writeOutput(dir.path() / a / "aerocad.status", "failed: solve\n");
+    auto r = session.execute("simulation.export_results", {{"run", a}, {"path", file.string()}});
+    REQUIRE(r.ok);
+    CHECK(r.data.at("rows") == 450);
+    std::string csv = read(file);
+    CHECK(csv.rfind("Quantity,Value\r\n", 0) == 0);
+    CHECK(csv.find("Results,provisional (The run has not finished successfully (failed).)") != std::string::npos);
+    CHECK(csv.find("\r\nCd,") == std::string::npos);
+
+    writeOutput(dir.path() / a / "aerocad.status", "finished\n");
+    r = session.execute("simulation.export_results", {{"run", a}, {"path", file.string()}});
+    REQUIRE(r.ok);
+    csv = read(file);
+    CHECK(csv.find("\r\nState,finished\r\n") != std::string::npos);
+    CHECK(csv.find("\r\nAir speed (m/s),") != std::string::npos);
+    CHECK(csv.find("\r\nYaw (deg),0\r\n") != std::string::npos); // CAD-188
+    CHECK(csv.find("\r\nResults,\"final, mean of the last 20 % of the iterations\"\r\n") != std::string::npos);
+    CHECK(csv.find("\r\nCd,0.8\r\n") != std::string::npos);
+    CHECK(csv.find("\r\nDrag (N),1\r\n") != std::string::npos);
+    CHECK(csv.find("\r\nPressure drag (N),0.9\r\n") != std::string::npos);
+    // As in the Results summary (CAD-187): L/D = |0.2| / 1, Cd and Cl times the reference area.
+    CHECK(csv.find("\r\nEfficiency L/D,0.2\r\n") != std::string::npos);
+    {
+        const double area =
+            session.execute("simulation.results", {{"run", a}}).data.at("conditions").at("referenceArea").get<double>();
+        std::ostringstream cdA, clA;
+        cdA.precision(7);
+        clA.precision(7);
+        cdA << "\r\nCdA (m2)," << 0.8 * area << "\r\n";
+        clA << "\r\nClA (m2)," << 0.1 * area << "\r\n";
+        INFO(csv.substr(0, 1500));
+        CHECK(csv.find(cdA.str()) != std::string::npos);
+        CHECK(csv.find(clA.str()) != std::string::npos);
+    }
+    CHECK(csv.find("\r\nOpenFOAM (ran),v2506\r\n") != std::string::npos);
+    CHECK(csv.find("\r\n\r\nIteration,Cd,Cl,Cs,Drag (N),Lift (N),Side force (N),Pressure drag (N),Viscous drag (N)\r\n"
+                   "1,0.8,0.1,0.01,1,0.2,0.01,0.9,0.1\r\n") != std::string::npos);
+    CHECK(csv.find("\r\n450,0.8,0.1,0.01,1,0.2,0.01,0.9,0.1\r\n") != std::string::npos);
+
+    // A run that never recorded its engine does not claim one.
+    fs::remove(dir.path() / a / "aerocad.engine");
+    REQUIRE(session.execute("simulation.export_results", {{"run", a}, {"path", file.string()}}).ok);
+    CHECK(read(file).find("\r\nOpenFOAM (ran),not recorded\r\n") != std::string::npos);
+
+    CHECK_FALSE(session.execute("simulation.export_results", {{"run", "nope"}, {"path", file.string()}}).ok);
+    CHECK_FALSE(session.execute("simulation.export_results", {{"run", a}, {"path", ""}}).ok);
+    CHECK_FALSE(
+        session
+            .execute("simulation.export_results", {{"run", a}, {"path", (dir.path() / "no/such/dir/x.csv").string()}})
+            .ok);
+}
+
+TEST_CASE("simulation.export_comparison writes the A/B verdict and table as CSV (CAD-193)", "[commands][simulation]")
+{
+    RunsDir dir;
+    commands::Session session;
+    const auto part = importBox(session);
+    const auto a = prepareRun(session, part), b = prepareRun(session, part);
+    for (const auto& id : {a, b}) {
+        writeResultFixture(dir.path() / id);
+        writeOutput(dir.path() / id / "aerocad.status", "finished\n");
+        writeOutput(dir.path() / id / "aerocad.engine", "v2506\n");
+    }
+    REQUIRE(session.execute("simulation.rename", {{"run", b}, {"label", "B"}}).ok);
+    const fs::path file = dir.path() / "a vs b.csv";
+    const auto r = session.execute("simulation.export_comparison", {{"a", a}, {"b", b}, {"path", file.string()}});
+    REQUIRE(r.ok);
+    CHECK(r.data.at("rows") == 9); // 5 forces, L/D, Cd/Cl/Cs.
+    std::ifstream in(file, std::ios::binary);
+    const std::string csv(std::istreambuf_iterator<char>(in), {});
+    INFO(csv);
+    const auto verdict =
+        session.execute("simulation.compare", {{"a", a}, {"b", b}}).data.at("verdict").get<std::string>();
+    CHECK(csv.rfind("Quantity,Value\r\nRun A (baseline),\"" + a + ", part ", 0) == 0);
+    CHECK(csv.find("\r\nRun B (variant),\"B (" + b + "), part ") != std::string::npos);
+    CHECK(csv.find("\r\nVerdict," + verdict + "\r\n") != std::string::npos);
+    CHECK(csv.find("\r\nMesh check,") != std::string::npos);
+    // Constant fixture histories: no swing, so an equal value is within it.
+    CHECK(csv.find("\r\n\r\nQuantity,A,B,B - A,Change (%),Swing A+B,Within swing\r\n"
+                   "Drag (N),1,1,0,0,0,yes\r\n") != std::string::npos);
+    CHECK(csv.find("\r\nEfficiency L/D,0.2,0.2,0,0,,\r\n") != std::string::npos);
+    CHECK(csv.find("\r\nCd (on the reference area of A),0.8,0.8,0,0,0,yes\r\n") != std::string::npos);
+
+    // The per-run CSV has the swing rows too.
+    const fs::path one = dir.path() / "a.csv";
+    REQUIRE(session.execute("simulation.export_results", {{"run", a}, {"path", one.string()}}).ok);
+    std::ifstream in1(one, std::ios::binary);
+    const std::string runCsv(std::istreambuf_iterator<char>(in1), {});
+    CHECK(runCsv.find("\r\nDrag swing ± (N),0\r\n") != std::string::npos);
+    CHECK(runCsv.find("\r\nCs swing ±,0\r\n") != std::string::npos);
+
+    CHECK_FALSE(session.execute("simulation.export_comparison", {{"a", a}, {"b", "nope"}, {"path", file.string()}}).ok);
+    CHECK_FALSE(session.execute("simulation.export_comparison", {{"a", a}, {"b", b}, {"path", ""}}).ok);
+    CHECK_FALSE(session
+                    .execute("simulation.export_comparison",
+                             {{"a", a}, {"b", b}, {"path", (dir.path() / "no/such/dir/x.csv").string()}})
+                    .ok);
+}
+
+TEST_CASE("simulation.rename sets, trims and clears a run's label and keeps it on reload", "[commands][simulation]")
+{
+    RunsDir dir;
+    std::string id;
+    {
+        commands::Session session;
+        const auto part = importBox(session);
+        id = prepareRun(session, part);
+        auto r = session.execute("simulation.rename", {{"run", id}, {"label", "  long splitter "}});
+        REQUIRE(r.ok);
+        CHECK(r.data.at("label") == "long splitter");
+        r = session.execute("simulation.status", {{"run", id}});
+        REQUIRE(r.ok);
+        CHECK(r.data.at("source").at("label") == "long splitter");
+        CHECK_FALSE(session.execute("simulation.rename", {{"run", "nope"}, {"label", "x"}}).ok);
+        CHECK_FALSE(session.execute("simulation.rename", {{"run", id}, {"label", "a\nb"}}).ok);
+        CHECK_FALSE(session.execute("simulation.rename", {{"run", id}, {"label", std::string(81, 'x')}}).ok);
+    }
+    {
+        // A new session reads the runs folder again: the label was saved with the run.
+        commands::Session session;
+        auto r = session.execute("simulation.status", {{"run", id}});
+        REQUIRE(r.ok);
+        CHECK(r.data.at("source").at("label") == "long splitter");
+        CHECK(r.data.at("source").at("partName").get<std::string>().size() > 0);
+        REQUIRE(session.execute("simulation.rename", {{"run", id}, {"label", ""}}).ok);
+        r = session.execute("simulation.list");
+        REQUIRE(r.ok);
+        CHECK(r.data.at("runs")[0].at("source").at("label") == "");
+    }
+}
+
+TEST_CASE("simulation.list and simulation.status name each run's conditions", "[commands][simulation]")
+{
+    RunsDir dir;
+    commands::Session session;
+    const auto part = importBox(session);
+    auto r = session.execute("simulation.run", {{"id", part},
+                                                {"speed", 35},
+                                                {"flowDirection", "+X"},
+                                                {"mesh", "medium"},
+                                                {"ground", true},
+                                                {"prepareOnly", true}});
+    REQUIRE(r.ok);
+    const std::string id = r.data.at("id");
+    r = session.execute("simulation.status", {{"run", id}});
+    REQUIRE(r.ok);
+    const auto& st = r.data.at("settings");
+    CHECK(st.at("speed") == 35.0);
+    CHECK(st.at("flowDirection") == "+X");
+    CHECK(st.at("mesh") == "medium");
+    CHECK(st.at("ground") == true);
+    r = session.execute("simulation.list");
+    REQUIRE(r.ok);
+    REQUIRE(r.data.at("runs").size() == 1);
+    CHECK(r.data.at("runs")[0].at("settings").at("speed") == 35.0);
+    // A run folder without case information lists no settings.
+    std::filesystem::remove(dir.path() / id / "case.json");
+    r = session.execute("simulation.list");
+    REQUIRE(r.ok);
+    CHECK(r.data.at("runs")[0].at("settings").is_null());
 }
 
 TEST_CASE("prepared simulation coefficients cannot produce final comparison values", "[commands][simulation]")
@@ -541,4 +778,88 @@ TEST_CASE("simulation.set_engine tests the remote engine before saving it", "[co
     REQUIRE(r.ok);
     CHECK(cfd::engineHost().empty());
     CHECK(r.data.at("remoteHost") == "");
+}
+
+TEST_CASE("A run warns about a part at an implausible size (CAD-109)", "[commands][simulation]")
+{
+    RunsDir dir;
+    commands::Session session;
+    const auto id = importBox(session);
+
+    // 200 mm: plausible, no warning.
+    auto r = session.execute("simulation.propose_run", {{"id", id}});
+    REQUIRE(r.ok);
+    CHECK(r.data.at("warnings").empty());
+
+    // The same box read from a file in metres as millimetres: 0.2 mm long.
+    REQUIRE(session.execute("part.convert_units", {{"id", id}, {"from", "mm"}, {"to", "m"}}).ok);
+    r = session.execute("simulation.propose_run", {{"id", id}});
+    REQUIRE(r.ok);
+    REQUIRE(r.data.at("warnings").size() == 1);
+    const std::string warning = r.data.at("warnings")[0];
+    CHECK(warning.find("only 0.2 mm long") != std::string::npos);
+    CHECK(warning.find("Scan Tools") != std::string::npos);
+
+    // simulation.run reports it too and still prepares the case.
+    r = session.execute("simulation.run", {{"id", id}, {"prepareOnly", true}});
+    REQUIRE(r.ok);
+    REQUIRE(r.data.at("warnings").size() == 1);
+    CHECK(r.data.at("warnings")[0] == warning);
+}
+
+TEST_CASE("A run warns about a part that is not closed (CAD-145)", "[commands][simulation]")
+{
+    RunsDir dir;
+    commands::Session session;
+    const auto warningsOf = [&](std::uint64_t id) {
+        const auto r = session.execute("simulation.propose_run", {{"id", id}});
+        INFO(r.error);
+        REQUIRE(r.ok);
+        return r.data.at("warnings");
+    };
+
+    // A closed mesh: no warning.
+    CHECK(warningsOf(importBox(session)).empty());
+
+    // Solids from the timeline, curved faces and a fillet included: their tessellation is closed.
+    auto r = session.execute(
+        "sketch.create",
+        {{"plane", "XY"},
+         {"curves", Json::array({{{"type", "center_rectangle"}, {"center", {0, 0}}, {"width", 60}, {"height", 40}},
+                                 {{"type", "circle"}, {"center", {100, 0}}, {"radius", 20}}})}});
+    REQUIRE(r.ok);
+    r = session.execute("feature.extrude", {{"sketch", r.data.at("id")}, {"distance", 30}});
+    REQUIRE(r.ok);
+    REQUIRE_FALSE(r.data.at("bodies").empty());
+    const auto bodyId = r.data.at("id").get<std::uint64_t>();
+    REQUIRE(session
+                .execute("feature.fillet",
+                         {{"body", bodyId}, {"edges", Json::array({{{"point", {30, 20, 15}}}})}, {"radius", 5}})
+                .ok);
+    const auto parts = session.execute("document.parts"); // Keeps the result alive while iterating.
+    int bodies = 0;
+    for (const auto& p : parts.data.at("parts"))
+        if (p.at("kind") == "body") {
+            ++bodies;
+            CHECK(warningsOf(p.at("id").get<std::uint64_t>()).empty());
+        }
+    CHECK(bodies > 0);
+
+    // A raw scan shell, open underneath: warned, with the number of open edges and the fix.
+    r = session.execute("document.import", {{"path", AEROCAD_TEST_DATA_DIR "/models/dome_scan.stl"}});
+    REQUIRE(r.ok);
+    const auto scan = r.data.at("id").get<std::uint64_t>();
+    const Json w = warningsOf(scan);
+    REQUIRE(w.size() == 1);
+    const std::string warning = w[0];
+    CHECK(warning.find("not closed (329 open edges") != std::string::npos);
+    CHECK(warning.find("Repair") != std::string::npos);
+    r = session.execute("simulation.run", {{"id", scan}, {"prepareOnly", true}});
+    REQUIRE(r.ok);
+    REQUIRE(r.data.at("warnings").size() == 1);
+    CHECK(r.data.at("warnings")[0] == warning);
+
+    // Filling the holes as the warning says removes it.
+    REQUIRE(session.execute("mesh.repair", {{"id", scan}, {"maxHoleEdges", 329}}).ok);
+    CHECK(warningsOf(scan).empty());
 }
