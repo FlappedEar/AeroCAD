@@ -1098,116 +1098,160 @@ Json keepExpressions(const Eval& ev, const Json& item, Json out)
     return out;
 }
 
-/// For each curve end the solver welds by position (SketchSolver's endPoint: line and arc
-/// ends unless their join is off, open spline ends), the earlier end it is welded to.
-/// Returns pairs of curve indices that share an end.
-std::vector<std::pair<std::size_t, std::size_t>> weldedCurves(const std::vector<SketchCurve>& curves)
+/// The curve ends the solver welds by position (SketchSolver's endPoint: line and arc ends
+/// unless their join is off, open spline ends; an end joins an earlier one within 1e-6), as
+/// pairs of end ids (curve * 2 + 0 for the start, + 1 for the end).
+std::vector<std::pair<std::size_t, std::size_t>> weldedEnds(const std::vector<SketchCurve>& curves)
 {
     struct End {
         Vec2 at;
-        std::size_t curve;
+        std::size_t id;
     };
     std::vector<End> ends;
     std::vector<std::pair<std::size_t, std::size_t>> pairs;
-    auto end = [&](const Vec2& at, std::size_t curve, bool join) {
+    auto end = [&](const Vec2& at, std::size_t id, bool join) {
         if (join) {
             for (const auto& e : ends) {
                 if (std::hypot(e.at.x - at.x, e.at.y - at.y) < 1e-6) {
-                    pairs.emplace_back(e.curve, curve);
+                    pairs.emplace_back(e.id, id);
                     break;
                 }
             }
         }
-        ends.push_back({at, curve});
+        ends.push_back({at, id});
     };
     for (std::size_t i = 0; i < curves.size(); ++i) {
         const auto& c = curves[i];
         if (c.kind == SketchCurve::Kind::Line && c.points.size() == 2) {
-            end(c.points[0], i, c.joinStart);
-            end(c.points[1], i, c.joinEnd);
+            end(c.points[0], 2 * i, c.joinStart);
+            end(c.points[1], 2 * i + 1, c.joinEnd);
         } else if (c.kind == SketchCurve::Kind::Arc && c.points.size() == 3) {
-            end(c.points[0], i, c.joinStart);
-            end(c.points[2], i, c.joinEnd);
+            end(c.points[0], 2 * i, c.joinStart);
+            end(c.points[2], 2 * i + 1, c.joinEnd);
         } else if (c.kind == SketchCurve::Kind::Spline && !c.closed && !c.points.empty()) {
-            end(c.points.front(), i, true);
+            end(c.points.front(), 2 * i, true);
             if (c.points.size() > 1)
-                end(c.points.back(), i, true);
+                end(c.points.back(), 2 * i + 1, true);
         }
     }
     return pairs;
 }
 
+/// Groups (union-find roots) of `n` elements joined by `pairs`.
+std::vector<std::size_t> groupsOf(std::size_t n, const std::vector<std::pair<std::size_t, std::size_t>>& pairs)
+{
+    std::vector<std::size_t> g(n);
+    for (std::size_t i = 0; i < n; ++i)
+        g[i] = i;
+    auto root = [&](std::size_t i) {
+        while (g[i] != i)
+            i = g[i] = g[g[i]];
+        return i;
+    };
+    for (const auto& [a, b] : pairs)
+        if (a < n && b < n)
+            g[root(a)] = root(b);
+    for (std::size_t i = 0; i < n; ++i)
+        g[i] = root(i);
+    return g;
+}
+
 /// The sketch items rewritten where `solved` (the curves they make, in order) has them.
 /// Items whose curves match `shown` (the curves before the change; nullptr: none match)
-/// stay as written. With `exact`, an item that cannot make its solved curves again (a
-/// polygon pulled out of regular, a slot with unequal ends) also stays as written, and so
-/// do the items welded to it by their stored ends (directly or through others): rewriting
-/// only some of them would part ends the solver joins by stored position.
+/// stay as written. With `exact`, the solver's welds of curve ends (by stored position) are
+/// kept as they are: an item that cannot make its solved curves again (a polygon pulled out
+/// of regular) stays as written, and so do the items welded to it, and items whose
+/// rewritten ends would weld to ends they were not welded to (two ends that only meet after
+/// solving) or part from ends they were.
 Json itemsFromSolved(const Eval& ev, const Json& items, const std::vector<SketchCurve>* shown,
                      const std::vector<SketchCurve>& solved, bool exact)
 {
-    std::vector<Json> out;
-    std::vector<bool> keep;              // moved, but kept as written
-    std::vector<std::size_t> itemOf;     // curve -> item
-    std::vector<SketchCurve> drawn;
+    const std::size_t n = items.size();
+    std::vector<Json> out(n);
+    std::vector<std::vector<SketchCurve>> drawnOf(n), nowOf(n); // as written / as rewritten
+    std::vector<bool> keep(n, false);
+    std::vector<std::size_t> itemOf; // curve -> item
     std::size_t first = 0;
-    for (const auto& item : items) {
-        std::vector<SketchCurve> made;
+    for (std::size_t k = 0; k < n; ++k) {
+        const Json& item = items[k];
         std::vector<SketchConstraint> implicit;
-        appendCurves(ev, item, made, implicit);
-        if (first + made.size() > solved.size())
+        appendCurves(ev, item, drawnOf[k], implicit);
+        const std::size_t m = drawnOf[k].size();
+        if (first + m > solved.size())
             throw DesignError("Sketch changed while it was solved");
         bool moved = shown == nullptr || shown->size() != solved.size();
-        for (std::size_t i = 0; i < made.size() && !moved; ++i)
+        for (std::size_t i = 0; i < m && !moved; ++i)
             moved = !sameCurve((*shown)[first + i], solved[first + i], 1e-7);
-        Json o = item;
-        bool kept = false;
+        out[k] = item;
+        nowOf[k] = drawnOf[k];
         if (moved) {
-            o = keepExpressions(ev, item, itemFromSolved(item, solved.data() + first, made.size()));
+            out[k] = keepExpressions(ev, item, itemFromSolved(item, solved.data() + first, m));
             if (exact) {
                 std::vector<SketchCurve> again;
                 std::vector<SketchConstraint> unused;
                 try {
-                    appendCurves(ev, o, again, unused);
+                    appendCurves(ev, out[k], again, unused);
                 } catch (const DesignError&) {
                     again.clear();
                 }
-                bool same = again.size() == made.size();
-                for (std::size_t i = 0; i < again.size() && same; ++i)
+                bool same = again.size() == m;
+                for (std::size_t i = 0; i < m && same; ++i)
                     same = sameCurve(again[i], solved[first + i], 1e-6);
-                if (!same) {
-                    o = item;
-                    kept = true;
-                }
+                if (same)
+                    nowOf[k] = std::move(again);
+                else
+                    keep[k] = true;
             }
         }
-        for (auto& c : made) {
-            itemOf.push_back(out.size());
-            drawn.push_back(std::move(c));
-        }
-        out.push_back(std::move(o));
-        keep.push_back(kept);
-        first = drawn.size();
+        for (std::size_t i = 0; i < m; ++i)
+            itemOf.push_back(k);
+        first += m;
     }
-    if (exact && std::find(keep.begin(), keep.end(), true) != keep.end()) {
-        // Items welded by stored ends form groups; a group with a kept item stays as written.
-        std::vector<std::size_t> group(out.size());
-        for (std::size_t i = 0; i < group.size(); ++i)
-            group[i] = i;
-        auto root = [&](std::size_t i) {
-            while (group[i] != i)
-                i = group[i] = group[group[i]];
-            return i;
-        };
-        for (const auto& [a, b] : weldedCurves(drawn))
-            group[root(itemOf[a])] = root(itemOf[b]);
-        std::set<std::size_t> keptGroups;
-        for (std::size_t i = 0; i < out.size(); ++i)
-            if (keep[i])
-                keptGroups.insert(root(i));
-        for (std::size_t i = 0; i < out.size(); ++i)
-            if (keptGroups.count(root(i)) != 0)
-                out[i] = items[i];
+    if (exact) {
+        std::vector<SketchCurve> drawn;
+        for (const auto& d : drawnOf)
+            drawn.insert(drawn.end(), d.begin(), d.end());
+        const auto drawnPairs = weldedEnds(drawn);
+        const auto drawnGroups = groupsOf(2 * drawn.size(), drawnPairs);
+        // Items welded together as drawn: a kept item keeps its whole group as written.
+        const auto itemGroups = [&] {
+            std::vector<std::pair<std::size_t, std::size_t>> p;
+            for (const auto& [a, b] : drawnPairs)
+                p.emplace_back(itemOf[a / 2], itemOf[b / 2]);
+            return groupsOf(n, p);
+        }();
+        for (bool changed = true; changed;) {
+            changed = false;
+            std::set<std::size_t> keptGroups;
+            for (std::size_t k = 0; k < n; ++k)
+                if (keep[k])
+                    keptGroups.insert(itemGroups[k]);
+            for (std::size_t k = 0; k < n; ++k)
+                if (!keep[k] && keptGroups.count(itemGroups[k]) != 0)
+                    keep[k] = changed = true;
+            std::vector<SketchCurve> now;
+            for (std::size_t k = 0; k < n; ++k) {
+                const auto& c = keep[k] ? drawnOf[k] : nowOf[k];
+                now.insert(now.end(), c.begin(), c.end());
+            }
+            const auto nowPairs = weldedEnds(now);
+            const auto nowGroups = groupsOf(2 * now.size(), nowPairs);
+            auto keepBoth = [&](std::size_t a, std::size_t b) {
+                for (const std::size_t e : {a, b}) {
+                    if (!keep[itemOf[e / 2]])
+                        keep[itemOf[e / 2]] = changed = true;
+                }
+            };
+            for (const auto& [a, b] : nowPairs)
+                if (drawnGroups[a] != drawnGroups[b])
+                    keepBoth(a, b); // would weld ends that were apart
+            for (const auto& [a, b] : drawnPairs)
+                if (nowGroups[a] != nowGroups[b])
+                    keepBoth(a, b); // would part welded ends
+        }
+        for (std::size_t k = 0; k < n; ++k)
+            if (keep[k])
+                out[k] = items[k];
     }
     Json newItems = Json::array();
     for (auto& o : out)

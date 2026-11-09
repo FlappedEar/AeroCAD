@@ -1914,4 +1914,28 @@ TEST_CASE("Design commands: sketch edits start from the solved geometry (CAD-216
         CHECK(line[0].get<double>() == Approx(3).margin(1e-6));
         CHECK(line[1].get<double>() == Approx(7).margin(1e-6));
     }
+
+    // Codex (#190): ends that only meet after solving are not welded by the write-back. Line A
+    // ends at (10, 0) by its length; line B, drawn at (20, 0)-(30, 0), is fixed at (10, 0)-(20, 0).
+    // A later edit must not join them, so A's length can still change.
+    const Json f = run(s, "sketch.create",
+                       {{"plane", "XY"},
+                        {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {10, 0}}},
+                                                {{"type", "line"}, {"start", {20, 0}}, {"end", {30, 0}}}})},
+                        {"constraints", Json::array({{{"type", "fix"}, {"points", Json::array({{{"curve", 0}, {"point", "start"}}})}},
+                                                     {{"type", "horizontal"}, {"curve", 0}},
+                                                     {{"type", "length"}, {"curve", 0}, {"value", 10}},
+                                                     {{"type", "fix"},
+                                                      {"points", Json::array({{{"curve", 1}, {"point", "start"}}, {{"curve", 1}, {"point", "end"}}})},
+                                                      {"at", Json::array({Json::array({10, 0}), Json::array({20, 0})})}}})}});
+    const auto fid = f.at("id").get<std::uint64_t>();
+    run(s, "sketch.add_curves",
+        {{"sketch", fid}, {"curves", Json::array({{{"type", "line"}, {"start", {0, 40}}, {"end", {10, 40}}}})}});
+    run(s, "sketch.edit_constraint", {{"sketch", fid}, {"index", 2}, {"value", 15}});
+    {
+        const Json c3 = run(s, "sketch.curves", {{"sketch", fid}});
+        INFO(c3.dump());
+        CHECK(c3.at("curves")[0].at("points")[1][0].get<double>() == Approx(15).margin(1e-6));
+        CHECK(c3.at("curves")[1].at("points")[0][0].get<double>() == Approx(10).margin(1e-6));
+    }
 }
