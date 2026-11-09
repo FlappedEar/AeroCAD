@@ -85,7 +85,14 @@ panel in place of Properties:
   A/B table adds *Balance front %* with B − A in percentage points ("+6.4 pp", no % of a %),
   `simulation.compare` returns `balance` {a, b, difference} and the A/B CSV the row
   "Aero balance front (%; B - A in percentage points)" (CAD-197,
-  [A/B](images/audit/cad-197-balance-shift.png)). On the test car (1 m box body on four
+  [A/B](images/audit/cad-197-balance-shift.png)).
+  **Wheels** (CAD-202, [summary](images/audit/cad-202-wheel-forces.png)): with rotating
+  wheels the case also records the wheels' own forces (`wheelForces` in controlDict, on the
+  wheel patches only), and Results show *Wheels drag / lift* "7.200 / -3.000 N" and *Wheels
+  share of drag* "24.0 %"; the body has the rest. `simulation.results` returns `wheelDragN`
+  and `wheelLiftN` (null without rotating wheels; standing wheels are part of the part), and
+  the A/B table, `simulation.compare` and both CSV exports add them when both runs have them.
+  On the test car (1 m box body on four
   wheels, 0.6 m wheelbase, 30 m/s, coarse mesh) a real OpenFOAM v2506 run gave front +30.5 N,
   rear -11.6 N with 54 N of drag about 0.2 m above the floor (about 18 N of it lifting the
   front).

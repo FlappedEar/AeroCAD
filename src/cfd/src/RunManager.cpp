@@ -1441,6 +1441,10 @@ std::size_t RunManager::exportResultsCsv(const std::string& id, const fs::path& 
             for (const Key k : {Key{"frontLiftN", "Front axle lift (N)"}, Key{"rearLiftN", "Rear axle lift (N)"},
                                 Key{"frontShare", "Front share of lift (%)"}})
                 row(std::string(k.name) + suffix, csvJson(values.value(k.key, Json())));
+        // The turning wheels' share (CAD-202); left out for other runs.
+        if (values.value("wheelDragN", Json()).is_number())
+            for (const Key k : {Key{"wheelDragN", "Wheel drag (N)"}, Key{"wheelLiftN", "Wheel lift (N)"}})
+                row(std::string(k.name) + suffix, csvJson(values.value(k.key, Json())));
         // How far each value still swings over the averaging window (CAD-191, CAD-193).
         if (const Json spread = values.value("spread", Json()); spread.is_object())
             for (const Key k : {Key{"dragN", "Drag swing ± (N)"}, Key{"liftN", "Lift swing ± (N)"},
@@ -1528,9 +1532,10 @@ std::size_t RunManager::exportComparisonCsv(const std::string& a, const std::str
          {std::pair{"dragN", "Drag (N)"}, std::pair{"liftN", "Lift (N)"}, std::pair{"sideN", "Side force (N)"},
           std::pair{"pressureDragN", "Pressure drag (N)"}, std::pair{"viscousDragN", "Viscous drag (N)"}})
         table(name, forces.value(key, Json()));
-    // Aero balance rows only when both runs have it (CAD-194).
+    // Aero balance (CAD-194) and wheel (CAD-202) rows only when both runs have them.
     for (const auto& [key, name] :
-         {std::pair{"frontLiftN", "Front axle lift (N)"}, std::pair{"rearLiftN", "Rear axle lift (N)"}})
+         {std::pair{"frontLiftN", "Front axle lift (N)"}, std::pair{"rearLiftN", "Rear axle lift (N)"},
+          std::pair{"wheelDragN", "Wheel drag (N)"}, std::pair{"wheelLiftN", "Wheel lift (N)"}})
         if (forces.contains(key))
             table(name, forces.at(key));
     if (cmp.contains("balance"))
@@ -1555,6 +1560,11 @@ Json RunManager::results(const std::string& id, int maxPoints)
     const Table coeffs = readTable(run.caseDir / "postProcessing" / "forceCoeffs" / "0" / "coefficient.dat");
     const Table forces = readTable(run.caseDir / "postProcessing" / "forces" / "0" / "force.dat");
     const Table residuals = readTable(run.caseDir / "postProcessing" / "solverInfo" / "0" / "solverInfo.dat");
+    // The turning wheels' own forces (CAD-202), only when they cover the same iterations.
+    const Table wheelForces = readTable(run.caseDir / "postProcessing" / "wheelForces" / "0" / "force.dat");
+    const bool wheelsValid =
+        !wheelForces.empty() && !wheelForces.incomplete && !wheelForces.invalidTime && wheelForces.time == forces.time;
+    auto wheelColumn = [&](const char* name) { return wheelsValid ? wheelForces.column(name) : nullptr; };
     const auto axles =
         info ? axleLoads(*info, forces, readTable(run.caseDir / "postProcessing" / "forces" / "0" / "moment.dat"))
              : std::nullopt;
@@ -1618,6 +1628,8 @@ Json RunManager::results(const std::string& id, int maxPoints)
         summary["rearLiftN"] = opt(rear);
         summary["frontShare"] =
             front && rear && *front * *rear > 0.0 ? Json(100.0 * *front / (*front + *rear)) : Json(nullptr);
+        summary["wheelDragN"] = opt(tailMean(wheelColumn("total_x")));
+        summary["wheelLiftN"] = opt(tailMean(wheelColumn("total_z")));
     }
 
     // Histories are useful while solving, but their current tail is not a final result.
@@ -1655,7 +1667,7 @@ Json RunManager::results(const std::string& id, int maxPoints)
             j["summary"][key] = nullptr;
         // The optional final values too: the aero balance (CAD-194) and the swing (CAD-191)
         // of a run that did not finish are no final results either.
-        for (const char* key : {"frontLiftN", "rearLiftN", "frontShare"})
+        for (const char* key : {"frontLiftN", "rearLiftN", "frontShare", "wheelDragN", "wheelLiftN"})
             j["summary"][key] = nullptr;
         j["summary"]["spread"] = nullptr;
     }
@@ -2181,7 +2193,8 @@ Json RunManager::compare(const std::string& a, const std::string& b)
         d["withinNoise"] = std::abs(d.at("difference").get<double>()) <= noise;
     };
     Json deltas = Json::object();
-    for (const char* key : {"dragN", "liftN", "sideN", "pressureDragN", "viscousDragN", "frontLiftN", "rearLiftN"}) {
+    for (const char* key : {"dragN", "liftN", "sideN", "pressureDragN", "viscousDragN", "frontLiftN", "rearLiftN",
+                            "wheelDragN", "wheelLiftN"}) {
         if (sa.value(key, Json()).is_number() && sb.value(key, Json()).is_number()) {
             const double va = sa.at(key).get<double>(), vb = sb.at(key).get<double>();
             Json d{{"a", va}, {"b", vb}, {"difference", vb - va}};

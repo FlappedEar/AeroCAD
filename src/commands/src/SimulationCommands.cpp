@@ -492,28 +492,31 @@ void registerSimulationCommands(CommandRegistry& r)
               return Json{{"run", id}, {"label", label}};
           });
 
-    r.add({"simulation.results", "Simulation results",
-           "Results of a run: summary (Cd, Cl, Cs; drag, lift, side force in N, averaged over the last 20 % of the "
-           "iterations), histories per iteration, residuals, quality checks (mesh, mass balance, residuals, force "
-           "convergence) and the simulation conditions. Summary values are null until the run finishes successfully "
-           "with complete finite force/coefficient outputs; finalResults gives availability and reasons. "
-           "Histories remain available and provisional is true until final results are available. While the run is "
-           "running, current gives the same means over the iterations recorded so far (never final; null otherwise).",
-           objectSchema({{"run", runIdParam()},
-                         {"maxPoints",
-                          {{"type", "integer"},
-                           {"minimum", 2},
-                           {"maximum", 5000},
-                           {"description", "Maximum points per history (default 200)."}}}},
-                        {"run"})},
-          [](CommandContext& ctx, const Json& params) {
-              const std::string id = requireRun(ctx, params);
-              try {
-                  return runs(ctx).results(id, params.value("maxPoints", 200));
-              } catch (const std::exception& e) {
-                  throw CommandError(e.what());
-              }
-          });
+    r.add(
+        {"simulation.results", "Simulation results",
+         "Results of a run: summary (Cd, Cl, Cs; drag, lift, side force in N, averaged over the last 20 % of the "
+         "iterations; for a car with two axles frontLiftN, rearLiftN, frontShare; with rotating wheels the wheels' own "
+         "wheelDragN, wheelLiftN), histories per iteration, residuals, quality checks (mesh, mass balance, residuals, "
+         "force "
+         "convergence) and the simulation conditions. Summary values are null until the run finishes successfully "
+         "with complete finite force/coefficient outputs; finalResults gives availability and reasons. "
+         "Histories remain available and provisional is true until final results are available. While the run is "
+         "running, current gives the same means over the iterations recorded so far (never final; null otherwise).",
+         objectSchema({{"run", runIdParam()},
+                       {"maxPoints",
+                        {{"type", "integer"},
+                         {"minimum", 2},
+                         {"maximum", 5000},
+                         {"description", "Maximum points per history (default 200)."}}}},
+                      {"run"})},
+        [](CommandContext& ctx, const Json& params) {
+            const std::string id = requireRun(ctx, params);
+            try {
+                return runs(ctx).results(id, params.value("maxPoints", 200));
+            } catch (const std::exception& e) {
+                throw CommandError(e.what());
+            }
+        });
 
     r.add({"simulation.export_results", "Export simulation results (CSV)",
            "Write a run's results to a CSV file: a Quantity,Value block with the run, its conditions and its "
@@ -600,7 +603,8 @@ void registerSimulationCommands(CommandRegistry& r)
            "A/B comparison of two runs: drag/lift/side force differences in N and %, efficiency L/D (|lift|/drag), "
            "per force and coefficient the iteration swing of A plus B (noise) and whether the difference is within it "
            "(withinNoise), "
-           "for two cars front/rear axle lift and balance (front share of lift in %, difference in percentage points), "
+           "for two cars front/rear axle lift and balance (front share of lift in %, difference in percentage points) "
+           "and the rotating wheels' own drag/lift (wheelDragN, wheelLiftN), "
            "coefficients on a shared reference area, whether the conditions match (settings such as speed, direction, "
            "mesh and preset, and "
            "the resolved setup: surroundings/context geometry, flow domain and engine; unknownConditions lists what an "

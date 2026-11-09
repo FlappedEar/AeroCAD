@@ -1751,6 +1751,31 @@ Pane {
                         // No share when one axle is pushed down and the other lifted.
                         text: typeof parent.s.frontShare === "number" ? root.num(parent.s.frontShare, 1) + " %" : "–"
                     }
+                    // The turning wheels' own forces (CAD-202); the body has the rest.
+                    Label {
+                        text: qsTr("Wheels drag / lift")
+                        opacity: 0.7
+                        Layout.columnSpan: 2
+                        visible: typeof parent.s.wheelDragN === "number"
+                    }
+                    Label {
+                        objectName: "cfdSummaryWheels"
+                        Layout.columnSpan: 2
+                        visible: typeof parent.s.wheelDragN === "number"
+                        text: !visible ? "" : root.num(parent.s.wheelDragN, 3) + " / " + root.num(parent.s.wheelLiftN, 3) + " N"
+                    }
+                    Label {
+                        text: qsTr("Wheels share of drag")
+                        opacity: 0.7
+                        Layout.columnSpan: 2
+                        visible: typeof parent.s.wheelDragN === "number"
+                    }
+                    Label {
+                        objectName: "cfdSummaryWheelShare"
+                        Layout.columnSpan: 2
+                        visible: typeof parent.s.wheelDragN === "number"
+                        text: !visible ? "" : parent.s.dragN > 0 ? root.num(100 * parent.s.wheelDragN / parent.s.dragN, 1) + " %" : "–"
+                    }
                     Label { text: qsTr("Pressure / friction"); opacity: 0.7; Layout.columnSpan: 2 }
                     Label {
                         Layout.columnSpan: 2
@@ -2053,6 +2078,8 @@ Pane {
                                .concat(root.comparison && root.comparison.forces && root.comparison.forces.frontLiftN
                                        ? [["frontLiftN", qsTr("Front axle lift N")], ["rearLiftN", qsTr("Rear axle lift N")]] : [])
                                .concat(root.comparison && root.comparison.balance ? [["balance", qsTr("Balance front %")]] : [])
+                               .concat(root.comparison && root.comparison.forces && root.comparison.forces.wheelDragN
+                                       ? [["wheelDragN", qsTr("Wheels drag N")], ["wheelLiftN", qsTr("Wheels lift N")]] : [])
                                .concat([["efficiency", qsTr("L/D")], ["cd", "Cd"], ["cl", "Cl"], ["cs", "Cs"]])
                         delegate: Repeater {
                             id: rowRep
