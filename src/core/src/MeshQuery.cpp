@@ -4,6 +4,9 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <atomic>
+#include <condition_variable>
+#include <mutex>
 #include <thread>
 
 namespace aerocad::core {
@@ -289,6 +292,89 @@ std::optional<MeshRayHit> MeshBvh::raycast(const Vec3& origin, const Vec3& direc
         stack.push_back(node.right);
     }
     return result;
+}
+
+struct MeshPickCache::Build {
+    std::atomic<bool> ready{false};
+    std::mutex mutex;
+    std::condition_variable finished;
+    std::shared_ptr<const MeshBvh> bvh; ///< Set once, before `ready`.
+};
+
+MeshPickCache::Entry& MeshPickCache::entryFor(const std::shared_ptr<const TriangleMesh>& mesh)
+{
+    for (auto& e : m_entries)
+        if (e.key == mesh.get())
+            return e;
+    auto build = std::make_shared<Build>();
+    if (mesh->triangleCount() <= kSyncTriangles) {
+        build->bvh = std::make_shared<const MeshBvh>(mesh);
+        build->ready = true;
+    } else {
+        // The thread owns what it uses (the build state and the mesh), so dropping the
+        // entry while it runs is safe and never waits for it.
+        std::thread([build, mesh] {
+            auto bvh = std::make_shared<const MeshBvh>(mesh);
+            {
+                const std::lock_guard lock(build->mutex);
+                build->bvh = std::move(bvh);
+                build->ready = true;
+            }
+            build->finished.notify_all();
+        }).detach();
+    }
+    m_entries.push_back({mesh.get(), std::move(build)});
+    return m_entries.back();
+}
+
+void MeshPickCache::prepare(const std::shared_ptr<const TriangleMesh>& mesh)
+{
+    if (mesh && !mesh->isEmpty())
+        (void)entryFor(mesh);
+}
+
+std::shared_ptr<const MeshBvh> MeshPickCache::bvh(const std::shared_ptr<const TriangleMesh>& mesh)
+{
+    if (!mesh || mesh->isEmpty())
+        return nullptr;
+    Build& b = *entryFor(mesh).build;
+    if (!b.ready.load(std::memory_order_acquire))
+        return nullptr;
+    const std::lock_guard lock(b.mutex);
+    return b.bvh;
+}
+
+std::optional<RayHit> MeshPickCache::raycast(const std::shared_ptr<const TriangleMesh>& mesh, const Vec3& origin,
+                                             const Vec3& direction)
+{
+    if (!mesh || mesh->isEmpty())
+        return std::nullopt;
+    const std::shared_ptr<const MeshBvh> index = bvh(mesh);
+    if (!index)
+        return core::raycast(*mesh, origin, direction);
+    const double len = direction.length();
+    if (!(len > 0.0))
+        return std::nullopt;
+    // The hierarchy takes t > 0 only; a hit exactly at the origin is not a pick anyway.
+    const auto hit = index->raycast(origin, direction);
+    if (!hit)
+        return std::nullopt;
+    return RayHit{static_cast<std::uint32_t>(hit->triangle), hit->t / len, hit->point};
+}
+
+void MeshPickCache::retain(const std::vector<const TriangleMesh*>& alive)
+{
+    std::erase_if(m_entries, [&alive](const Entry& e) {
+        return std::find(alive.begin(), alive.end(), e.key) == alive.end();
+    });
+}
+
+void MeshPickCache::waitForBuilds()
+{
+    for (const auto& e : m_entries) {
+        std::unique_lock lock(e.build->mutex);
+        e.build->finished.wait(lock, [&e] { return e.build->ready.load(); });
+    }
 }
 
 std::optional<SurfaceDistance> minimumDistance(const MeshBvh& a, const MeshBvh& b)

@@ -78,6 +78,16 @@ AppController::AppController(QObject* parent) : QObject(parent), m_parts(m_sessi
         using Change = model::Document::Change;
         if (change == Change::AboutToAdd || change == Change::AboutToRemove)
             return;
+        m_bounds.reset();
+        // Drop the pick hierarchies of replaced meshes; start one for a new big mesh, so
+        // hovering it is fast from the start.
+        std::vector<const core::TriangleMesh*> meshes;
+        for (const auto& p : m_session.document().parts())
+            if (p.mesh)
+                meshes.push_back(p.mesh.get());
+        m_pickCache.retain(meshes);
+        if (const model::Part* changed = part(id); changed != nullptr && changed->mesh)
+            m_pickCache.prepare(changed->mesh);
         emit partChanged(id);
         emit boundsChanged();
         // A heat map belongs to a mesh: recompute it when its parts change. Queued, because
@@ -203,16 +213,25 @@ QColor AppController::heatColor(double t) const
     return QColor::fromRgbF(c[0], c[1], c[2], c[3]);
 }
 
+const core::BoundingBox& AppController::documentBounds() const
+{
+    if (!m_bounds || m_boundsRevision != m_session.document().revision()) {
+        m_bounds = m_session.document().bounds();
+        m_boundsRevision = m_session.document().revision();
+    }
+    return *m_bounds;
+}
+
 QVector3D AppController::sceneCenter() const
 {
-    const core::Vec3 c = m_session.document().bounds().center();
+    const core::Vec3 c = documentBounds().center();
     // Z-up model -> Y-up scene: (x, y, z) -> (x, z, -y).
     return {static_cast<float>(c.x), static_cast<float>(c.z), static_cast<float>(-c.y)};
 }
 
 double AppController::sceneRadius() const
 {
-    return m_session.document().bounds().diagonal() * 0.5;
+    return documentBounds().diagonal() * 0.5;
 }
 
 bool AppController::canUndo() const
@@ -811,18 +830,18 @@ QVariantMap AppController::pickSurface(const QVector3D& origin, const QVector3D&
             if (s > 0.0) {
                 if (ds < 0.0) {
                     const double t0 = s / -ds; // where the ray enters the kept half
-                    hit = core::raycast(*p.mesh, o + d * t0, d);
+                    hit = m_pickCache.raycast(p.mesh, o + d * t0, d);
                     if (hit)
                         hit->distance += t0;
                 }
             } else {
-                hit = core::raycast(*p.mesh, o, d);
+                hit = m_pickCache.raycast(p.mesh, o, d);
                 if (hit && section.plane.distance(hit->point) > 1e-9) {
                     hit.reset();
                 }
             }
         } else {
-            hit = core::raycast(*p.mesh, o, d);
+            hit = m_pickCache.raycast(p.mesh, o, d);
         }
         if (hit && (!best || hit->distance < best->distance)) {
             best = hit;

@@ -30,6 +30,9 @@ Item {
     implicitHeight: 130
 
     property int hovered: -1
+    /// The pointer is over the cube or drags it: the view under it is not hovered then, so
+    /// no model picks compete with the cube for the pointer (dense scans).
+    readonly property bool active: hover.hovered || cubeDrag.active
 
     // Cube of edge 100: faces are 64 x 64 plates, edges 64 x 18 x 18 bars, corners 18^3 blocks.
     readonly property real half: 50
@@ -200,6 +203,7 @@ Item {
     }
 
     DragHandler {
+        id: cubeDrag
         target: null
         acceptedButtons: Qt.LeftButton
         property point last

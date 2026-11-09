@@ -72,7 +72,12 @@ ctest --preset dev
 To check a workflow on a real file, `--ui-script <file>` drives the running application:
 each line is a JavaScript statement evaluated in `Main.qml`, with a `ui` object for real
 mouse events (`ui.click`, `ui.doubleClick`, `ui.drag`, `ui.clickText`), `ui.wheel`, `ui.drop(x, y, [files])` (a file drop), `ui.shot(path)`, `ui.wait(ms)` and
-`ui.log`. See `src/app/UiScript.cpp`. The application exits after the last line.
+`ui.log`, and for performance checks `ui.startClock()` / `ui.elapsedPrecise()` (ms) and
+`ui.uiThreadCpu()` (CPU time of the UI thread in ms, independent of how fast the GPU draws).
+See `src/app/UiScript.cpp`. The application exits after the last line.
+
+`app_large_model_navigation_test` checks navigation on a generated 1.5 M triangle scan
+(`make_dense_mesh`): pick, camera move, wheel zoom and ViewCube costs on the UI thread.
 
 ## Command scripts and export validation
 

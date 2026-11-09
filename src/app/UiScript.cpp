@@ -43,6 +43,10 @@
 #include <type_traits>
 #include <vector>
 
+#if !defined(_WIN32)
+#include <time.h>
+#endif
+
 namespace aerocad::app {
 
 namespace {
@@ -66,6 +70,21 @@ public:
     }
     Q_INVOKABLE qint64 elapsed() const { return m_clock.elapsed(); }
     Q_INVOKABLE void startClock() { m_clock.start(); }
+    /// Milliseconds since startClock(), with sub-millisecond precision.
+    Q_INVOKABLE double elapsedPrecise() const { return static_cast<double>(m_clock.nsecsElapsed()) / 1e6; }
+    /// CPU time the UI thread has used (ms), for performance checks that do not depend on
+    /// how fast the GPU draws; -1 where the platform has no per-thread clock.
+    Q_INVOKABLE double uiThreadCpu() const
+    {
+#if defined(_WIN32)
+        return -1.0;
+#else
+        timespec ts{};
+        if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts) != 0)
+            return -1.0;
+        return static_cast<double>(ts.tv_sec) * 1e3 + static_cast<double>(ts.tv_nsec) / 1e6;
+#endif
+    }
 
     Q_INVOKABLE void shot(const QString& path)
     {
