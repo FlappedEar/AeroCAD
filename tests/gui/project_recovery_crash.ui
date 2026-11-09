@@ -6,7 +6,12 @@ ui.wait(800)
 # #196): the copy must hold the current isolation, not the one saved last.
 (() => { window.isolatePart(controller.execute("document.parts").result.parts.find(p => p.kind === "body").id) })()
 ui.wait(300)
+(() => { viewport.restoreCameraState({ pivot: [100, 40, 30], pitch: -20, yaw: 10, distance: 700, orthographic: false }) })()
+ui.wait(300)
 (() => { if (!controller.saveProjectAs("wing.aerocad", window.projectView())) ui.fail("save failed") })()
+# A second, clearly different camera after the save: recovery must bring this one back.
+(() => { viewport.restoreCameraState({ pivot: [100, 40, 30], pitch: -55, yaw: 120, distance: 450, orthographic: true }) })()
+ui.wait(300)
 (() => { controller.execute("part.set_color", { id: 1, color: "#00ff00" }); window.isolatePart(1) })()
 ui.wait(300)
 (() => { ui.log("AUTOSAVED " + controller.autosaveNow()) })()
