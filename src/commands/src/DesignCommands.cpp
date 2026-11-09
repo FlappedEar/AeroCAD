@@ -1533,6 +1533,87 @@ void registerSketchCommands(CommandRegistry& r)
               return addedFeature(design(ctx), ctx.document, id);
           });
 
+    r.add({"sketch.circular_pattern", "Sketch Circular Pattern",
+           "Copies sketch curves around a centre point (Fusion: Sketch > Circular Pattern): `count` instances "
+           "including the originals, spread over `angle` degrees counterclockwise (default 360: evenly around "
+           "the full circle; less: the first and last instances `angle` apart). The copies are added at the end of "
+           "sketch.curves with the constraints among them; they are not linked to the originals afterwards.",
+           objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
+                         {"curves", {{"type", "array"}, {"items", {{"type", "integer"}}}, {"minItems", 1},
+                                     {"description", "Curve indices from sketch.curves."}}},
+                         {"center", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", {{"type", "number"}}},
+                                     {"description", "Centre of the pattern, [u, v] in sketch coordinates."}}},
+                         {"count", {{"type", "integer"}, {"minimum", 2}, {"maximum", 360},
+                                    {"description", "Number of instances, the originals included."}}},
+                         {"angle", {{"type", "number"}, {"description", "Total angle in degrees, default 360."}}}},
+                        {"sketch", "curves", "center", "count"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              const auto id = params.at("sketch").get<cad::FeatureId>();
+              const int count = params.at("count").get<int>();
+              const double total = params.value("angle", 360.0);
+              if (count < 2)
+                  throw CommandError("A pattern needs at least 2 instances");
+              if (std::abs(total) < 1e-9 || std::abs(total) > 360.0 + 1e-9)
+                  throw CommandError("The pattern angle must be between 0 and 360 degrees");
+              // Full circle: the last instance would land on the first.
+              const bool full = std::abs(std::abs(total) - 360.0) < 1e-9;
+              const double step = full ? total / count : total / (count - 1);
+              const geometry::Vec2 center{params.at("center")[0].get<double>(), params.at("center")[1].get<double>()};
+              std::vector<cad::SketchPlacement> places;
+              for (int i = 1; i < count; ++i)
+                  places.push_back({{0, 0}, step * i, center});
+              designChange(ctx, "Sketch Circular Pattern", [&](cad::Design& d) {
+                  (void)sketchFeature(d, id);
+                  d.patternSketchCurves(id, params.at("curves").get<std::vector<std::size_t>>(), places);
+                  return Json{};
+              });
+              return addedFeature(design(ctx), ctx.document, id);
+          });
+
+    r.add({"sketch.rectangular_pattern", "Sketch Rectangular Pattern",
+           "Copies sketch curves in rows and columns (Fusion: Sketch > Rectangular Pattern): `count_x` instances "
+           "`spacing_x` mm apart along the first direction and `count_y` instances `spacing_y` mm apart along the "
+           "second, the originals included (a negative spacing goes the other way). The first direction is the "
+           "sketch's x turned by `angle` degrees, the second is at right angles to it. The copies are added at "
+           "the end of sketch.curves with the constraints among them; they are not linked to the originals afterwards.",
+           objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
+                         {"curves", {{"type", "array"}, {"items", {{"type", "integer"}}}, {"minItems", 1},
+                                     {"description", "Curve indices from sketch.curves."}}},
+                         {"count_x", {{"type", "integer"}, {"minimum", 1}, {"maximum", 1000},
+                                      {"description", "Instances along the first direction, default 1."}}},
+                         {"spacing_x", {{"type", "number"}, {"description", "Distance between them (mm)."}}},
+                         {"count_y", {{"type", "integer"}, {"minimum", 1}, {"maximum", 1000},
+                                      {"description", "Instances along the second direction, default 1."}}},
+                         {"spacing_y", {{"type", "number"}, {"description", "Distance between them (mm)."}}},
+                         {"angle", {{"type", "number"}, {"description", "Direction of the first row (degrees from the sketch's x), default 0."}}}},
+                        {"sketch", "curves"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              const auto id = params.at("sketch").get<cad::FeatureId>();
+              const int nx = params.value("count_x", 1), ny = params.value("count_y", 1);
+              const double sx = params.value("spacing_x", 0.0), sy = params.value("spacing_y", 0.0);
+              if (nx < 1 || ny < 1 || nx * ny < 2)
+                  throw CommandError("A pattern needs at least 2 instances");
+              if (nx * ny > 1000)
+                  throw CommandError("A pattern can have at most 1000 instances");
+              if ((nx > 1 && std::abs(sx) < 1e-9) || (ny > 1 && std::abs(sy) < 1e-9))
+                  throw CommandError("Give the spacing between the instances");
+              const double a = params.value("angle", 0.0) * std::numbers::pi / 180.0;
+              const geometry::Vec2 u{std::cos(a), std::sin(a)}, v{-std::sin(a), std::cos(a)};
+              std::vector<cad::SketchPlacement> places;
+              for (int j = 0; j < ny; ++j)
+                  for (int i = 0; i < nx; ++i)
+                      if (i != 0 || j != 0)
+                          places.push_back({{u.x * sx * i + v.x * sy * j, u.y * sx * i + v.y * sy * j}, 0.0, {0, 0}});
+              designChange(ctx, "Sketch Rectangular Pattern", [&](cad::Design& d) {
+                  (void)sketchFeature(d, id);
+                  d.patternSketchCurves(id, params.at("curves").get<std::vector<std::size_t>>(), places);
+                  return Json{};
+              });
+              return addedFeature(design(ctx), ctx.document, id);
+          });
+
     r.add({"sketch.profiles", "Sketch profiles",
            "Lists the closed profiles of a sketch with their area and centroid (sketch and world coordinates), "
            "to pick profiles for extrude/revolve.",

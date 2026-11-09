@@ -63,6 +63,19 @@ Item {
     property var moveCurves: []
     property real moveAngle: 0
     property bool moveCopy: false
+    /// Circular / Rectangular Pattern (Fusion: Sketch > Circular / Rectangular Pattern):
+    /// copies of `curves` around `center` (`count` instances over `angle` degrees), or in
+    /// rows and columns (`countX` x `countY`, `spacingX` / `spacingY` mm apart).
+    signal circularPatternRequested(var curves, var center, int count, real angle)
+    signal rectangularPatternRequested(var curves, int countX, real spacingX, int countY, real spacingY)
+    /// Curves the pattern tools copy (the selection when they started) and their settings.
+    property var patternCurves: []
+    property var patternCenter: null
+    property int patternCount: 3
+    property real patternAngle: 360
+    property int patternCountY: 1
+    property real patternSpacingX: 10
+    property real patternSpacingY: 10
     /// A point is being dragged in select mode (CAD-123): `point` is a constraint point
     /// reference, `to` where it is now (sketch coordinates); `done` on release.
     signal pointDragged(var point, var to, bool done)
@@ -114,6 +127,10 @@ Item {
         if (tool !== "move") {
             moveCurves = []
             moveAngle = 0
+        }
+        if (tool !== "circular_pattern" && tool !== "rectangular_pattern") {
+            patternCurves = []
+            patternCenter = null
         }
         piecePreview = null
     }
@@ -252,6 +269,67 @@ Item {
         return true
     }
 
+    /// Circular or Rectangular Pattern (`kind` "circular_pattern" / "rectangular_pattern")
+    /// of the selection: the circular one waits for a click on the centre; both apply with
+    /// Enter or OK, the instances previewed as the settings change.
+    function startPattern(kind) {
+        if (selectedCurves.length === 0)
+            return false
+        const list = selectedCurves.slice()
+        toolRequested(kind)
+        patternCurves = list
+        patternCenter = null
+        patternCount = 3
+        patternAngle = 360
+        patternCountY = 1
+        // Rows start one and a half times the curves' size apart, so the copies do not overlap.
+        const b = curvesBounds(list)
+        const round = v => v > 0 ? Math.round(v * 1.5 * 100) / 100 : 10
+        patternSpacingX = round(b.hi[0] - b.lo[0])
+        patternSpacingY = round(b.hi[1] - b.lo[1])
+        canvas.requestPaint()
+        return true
+    }
+
+    /// Where the pattern's copies go: [{ d, angle, pivot }] as movedCurve takes them (the
+    /// originals not included), the same placements sketch.*_pattern makes.
+    function patternPlacements() {
+        const out = []
+        if (tool === "circular_pattern" && patternCenter !== null && patternCount >= 2) {
+            const total = patternAngle
+            if (Math.abs(total) < 1e-9 || Math.abs(total) > 360 + 1e-9)
+                return out
+            const full = Math.abs(Math.abs(total) - 360) < 1e-9
+            const step = full ? total / patternCount : total / (patternCount - 1)
+            for (let i = 1; i < patternCount; ++i)
+                out.push({ d: [0, 0], angle: step * i, pivot: patternCenter })
+        } else if (tool === "rectangular_pattern") {
+            if ((patternCount > 1 && patternSpacingX === 0) || (patternCountY > 1 && patternSpacingY === 0))
+                return out
+            for (let j = 0; j < patternCountY; ++j)
+                for (let i = 0; i < patternCount; ++i)
+                    if (i !== 0 || j !== 0)
+                        out.push({ d: [patternSpacingX * i, patternSpacingY * j], angle: 0, pivot: [0, 0] })
+        }
+        return out
+    }
+
+    /// Ends the pattern tool and asks for the copies, if its settings make any.
+    function applyPattern() {
+        const list = patternCurves.slice()
+        if (list.length === 0 || patternPlacements().length === 0)
+            return false
+        const kind = tool
+        const center = patternCenter, count = patternCount, angle = patternAngle
+        const countY = patternCountY, sx = patternSpacingX, sy = patternSpacingY
+        toolRequested("")
+        if (kind === "circular_pattern")
+            circularPatternRequested(list, center, count, angle)
+        else
+            rectangularPatternRequested(list, count, sx, countY, sy)
+        return true
+    }
+
     /// Ends Move/Copy with the given offset (the turn and Copy from the panel).
     function applyMove(dx, dy) {
         const list = moveCurves.slice()
@@ -263,8 +341,8 @@ Item {
         return true
     }
 
-    /// The middle of the curves' bounds (the turn's centre, as sketch.move_curves takes it).
-    function curvesMiddle(list) {
+    /// The curves' bounds { lo, hi } (circles by their radius); lo > hi when there are none.
+    function curvesBounds(list) {
         let lo = [Infinity, Infinity], hi = [-Infinity, -Infinity]
         for (const c of sketchCurves) {
             if (list.indexOf(c.index) < 0)
@@ -275,7 +353,13 @@ Item {
                 hi = [Math.max(hi[0], p[0] + r), Math.max(hi[1], p[1] + r)]
             }
         }
-        return lo[0] <= hi[0] ? [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2] : [0, 0]
+        return { lo: lo, hi: hi }
+    }
+
+    /// The middle of the curves' bounds (the turn's centre, as sketch.move_curves takes it).
+    function curvesMiddle(list) {
+        const b = curvesBounds(list)
+        return b.lo[0] <= b.hi[0] ? [(b.lo[0] + b.hi[0]) / 2, (b.lo[1] + b.hi[1]) / 2] : [0, 0]
     }
 
     /// A sketch curve (sketch.curves format) moved by `d` after turning by `angle` about `pivot`.
@@ -694,6 +778,14 @@ Item {
     }
 
     function click(p) {
+        if (tool === "circular_pattern") {
+            // The centre (it snaps to points); a later click moves it.
+            patternCenter = p
+            canvas.requestPaint()
+            return
+        }
+        if (tool === "rectangular_pattern")
+            return // set in the panel
         if (tool === "move") {
             // From a base point to where it goes.
             if (points.length === 0) {
@@ -1073,6 +1165,9 @@ Item {
         } else if (tool === "spline" && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)) {
             finishSpline(false)
             event.accepted = true
+        } else if ((tool === "circular_pattern" || tool === "rectangular_pattern") && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)) {
+            applyPattern()
+            event.accepted = true
         } else if (active && !constraintTool && tool !== "spline" && tool !== "tangent_arc" && (points.length > 0 || tool === "offset" || tool === "move") && /^[0-9.(\-]$/.test(event.text)) {
             dimension.text = event.text
             dimension.forceActiveFocus()
@@ -1121,6 +1216,7 @@ Item {
             for (const c of root.sketchCurves) {
                 const sel = root.selectedCurves.indexOf(c.index) >= 0 || root.mirrorCurves.indexOf(c.index) >= 0
                             || root.offsetCurves.indexOf(c.index) >= 0 || root.moveCurves.indexOf(c.index) >= 0
+                            || root.patternCurves.indexOf(c.index) >= 0
                 if (!sel && c.index !== root.hoverCurve)
                     continue
                 ctx.lineWidth = sel ? 3.5 : 3
@@ -1143,6 +1239,26 @@ Item {
                     }
                     ctx.setLineDash([])
                     ctx.globalAlpha = 1
+                }
+            }
+            // Pattern: the copies the tool would make, and the circular pattern's centre.
+            if ((root.tool === "circular_pattern" || root.tool === "rectangular_pattern") && root.patternCurves.length > 0) {
+                ctx.lineWidth = 2
+                ctx.strokeStyle = Theme.accent
+                ctx.globalAlpha = 0.7
+                for (const place of root.patternPlacements()) {
+                    for (const c of root.sketchCurves) {
+                        if (root.patternCurves.indexOf(c.index) >= 0)
+                            root.strokeCurve(ctx, root.movedCurve(c, place.d, place.angle, place.pivot))
+                    }
+                }
+                ctx.globalAlpha = 1
+                if (root.tool === "circular_pattern" && root.patternCenter !== null) {
+                    const q = root.toScreen(root.patternCenter)
+                    ctx.fillStyle = Theme.accent
+                    ctx.beginPath()
+                    ctx.arc(q.x, q.y, 4, 0, 2 * Math.PI)
+                    ctx.fill()
                 }
             }
             // Extend: the lengthened curve the click would make; Break: the piece it splits off.
@@ -1345,6 +1461,11 @@ Item {
                     : root.tool === "move" ? (root.points.length === 0
                         ? qsTr("Move/Copy %n curve(s): click a base point, or type dx, dy and press Enter", "", root.moveCurves.length)
                         : qsTr("Move/Copy: click where the base point goes"))
+                    : root.tool === "circular_pattern" ? (root.patternCenter === null
+                        ? qsTr("Circular Pattern of %n curve(s): click the centre", "", root.patternCurves.length)
+                        : qsTr("Circular Pattern: set the count and angle, then OK or Enter (click again to move the centre)"))
+                    : root.tool === "rectangular_pattern"
+                        ? qsTr("Rectangular Pattern of %n curve(s): set counts and spacing (negative goes left / down), then OK or Enter", "", root.patternCurves.length)
                     : root.tool === "fillet" ? qsTr("Fillet: click a corner of two lines; then edit its radius under Constraints")
                     : root.tool === "mirror" ? qsTr("Mirror: click the line to mirror the %n selected curve(s) about", "", root.mirrorCurves.length)
                     : root.tool === "trim" ? qsTr("Trim: click the piece of a curve to remove (up to where other curves cross it)")
@@ -1398,7 +1519,7 @@ Item {
                 }
             }
             RowLayout {
-                visible: root.active && !root.constraintTool && root.tool !== "trim" && root.tool !== "extend" && root.tool !== "break" && root.tool !== "point" && root.tool !== "mirror" && root.tool !== "fillet" && root.tool !== "project" && root.tool !== "spline"
+                visible: root.active && !root.constraintTool && root.tool !== "trim" && root.tool !== "circular_pattern" && root.tool !== "rectangular_pattern" && root.tool !== "extend" && root.tool !== "break" && root.tool !== "point" && root.tool !== "mirror" && root.tool !== "fillet" && root.tool !== "project" && root.tool !== "spline"
                          && root.tool !== "tangent_arc"
                          && root.tool !== "circle_3point"
                 Label { text: root.tool === "rectangle" || root.tool === "center_rectangle" ? qsTr("Width, height")
@@ -1458,6 +1579,67 @@ Item {
                     to: 64
                     value: root.polygonSides
                     onValueModified: root.polygonSides = value
+                }
+            }
+            // Pattern settings (Fusion: Quantity, Angle / Distance).
+            RowLayout {
+                visible: root.tool === "circular_pattern" || root.tool === "rectangular_pattern"
+                Label { text: root.tool === "circular_pattern" ? qsTr("Count") : qsTr("Columns") }
+                SpinBox {
+                    objectName: "sketchPatternCount"
+                    from: root.tool === "circular_pattern" ? 2 : 1
+                    to: root.tool === "circular_pattern" ? 360 : 1000
+                    editable: true
+                    value: root.patternCount
+                    onValueModified: { root.patternCount = value; canvas.requestPaint() }
+                }
+                Label { text: root.tool === "circular_pattern" ? qsTr("Angle") : qsTr("Spacing") }
+                TextField {
+                    objectName: "sketchPatternAngle"
+                    Layout.preferredWidth: 70
+                    text: String(root.tool === "circular_pattern" ? root.patternAngle : root.patternSpacingX)
+                    onTextEdited: {
+                        const v = Number(text)
+                        if (!isFinite(v) || text.trim().length === 0)
+                            return
+                        if (root.tool === "circular_pattern")
+                            root.patternAngle = v
+                        else
+                            root.patternSpacingX = v
+                        canvas.requestPaint()
+                    }
+                    onAccepted: { root.applyPattern(); root.forceActiveFocus() }
+                }
+                Label { visible: root.tool === "rectangular_pattern"; text: qsTr("Rows") }
+                SpinBox {
+                    objectName: "sketchPatternRows"
+                    visible: root.tool === "rectangular_pattern"
+                    from: 1
+                    to: 1000
+                    editable: true
+                    value: root.patternCountY
+                    onValueModified: { root.patternCountY = value; canvas.requestPaint() }
+                }
+                Label { visible: root.tool === "rectangular_pattern"; text: qsTr("Spacing") }
+                TextField {
+                    objectName: "sketchPatternRowSpacing"
+                    visible: root.tool === "rectangular_pattern"
+                    Layout.preferredWidth: 70
+                    text: String(root.patternSpacingY)
+                    onTextEdited: {
+                        const v = Number(text)
+                        if (isFinite(v) && text.trim().length > 0) {
+                            root.patternSpacingY = v
+                            canvas.requestPaint()
+                        }
+                    }
+                    onAccepted: { root.applyPattern(); root.forceActiveFocus() }
+                }
+                Button {
+                    objectName: "sketchPatternOk"
+                    text: qsTr("OK")
+                    enabled: root.patternPlacements().length > 0
+                    onClicked: root.applyPattern()
                 }
             }
             Label {
