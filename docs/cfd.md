@@ -438,10 +438,12 @@ Numbers use a `.` decimal point, and lines end with CRLF. MCP: `simulation.expor
 
 `simulation.compare {a, b}` returns the force differences in N and %, the coefficients
 of B rescaled to A's reference area, the list of differing conditions (speed, direction,
-mesh, preset, fluid, ground, reference values), the quality of both runs and shared
+mesh, preset, fluid, ground), the quality of both runs and shared
 colour scale ranges (Cp on the surface, speed in the sections). Verdict:
 `comparable`, `difference inconclusive`, `check quality` or `not comparable`. Variants of very different size get
-different domain and mesh sizes, which is reported as a note.
+different domain and mesh sizes, which is reported as a note. The reference area and
+length are not conditions: they only scale the coefficients, so runs that differ only
+there are the same case, and a note names both areas in cm² (CAD-186).
 
 The resolved setup is compared too, not only the requested settings. Each case records a
 fingerprint of its surroundings (context parts in model coordinates, independent of their

@@ -266,11 +266,11 @@ std::string describeCondition(const std::string& key, const Json& a, const Json&
 std::vector<std::string> differingConditions(const Json& a, const Json& b)
 {
     // Everything that defines the flow problem. Processes and iterations do not change
-    // a converged result, so they are not compared.
-    static constexpr std::array keys{"preset",  "speed",         "flowDirection", "kinematicViscosity",
-                                     "density", "turbulenceIntensity", "viscosityRatio", "mesh",
-                                     "ground",  "groundMoving", "groundHeight", "rotatingWheels",
-                                     "referenceArea", "referenceLength"};
+    // a converged result, so they are not compared; neither are the reference area and
+    // length, which only scale the coefficients (forces in N do not depend on them, CAD-186).
+    static constexpr std::array keys{
+        "preset",         "speed", "flowDirection", "kinematicViscosity", "density",      "turbulenceIntensity",
+        "viscosityRatio", "mesh",  "ground",        "groundMoving",       "groundHeight", "rotatingWheels"};
     // Runs written before a setting existed used what is now its default.
     static const Json defaults{{"groundMoving", true}, {"groundHeight", nullptr}, {"rotatingWheels", false}};
     std::vector<std::string> diff;
