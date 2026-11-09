@@ -1402,3 +1402,47 @@ TEST_CASE("Design commands: symmetric on two lines or two circles (CAD-206)", "[
         CHECK_FALSE(r.ok);
     }
 }
+
+TEST_CASE("Design commands: symmetric on two arcs mirrors the whole arc (CAD-206)", "[commands][cad][solver]")
+{
+    commands::Session s;
+    // Axis x = 0 (fixed). Arcs 1 and 2 both counter-clockwise (the start of 1 pairs with the end
+    // of 2); arcs 3 (counter-clockwise) and 4 (clockwise) pair start to start. Circle 5.
+    const auto arc = [](Json st, Json th, Json en) { return Json{{"type", "arc"}, {"start", st}, {"through", th}, {"end", en}}; };
+    const Json sk = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "line"}, {"start", {0, -80}}, {"end", {0, 80}}, {"construction", true}},
+                                                 arc({30, -30}, {40, -25}, {30, -20}),
+                                                 arc({-31, -21}, {-41, -26}, {-30, -31}),
+                                                 arc({50, 30}, {60, 35}, {50, 40}),
+                                                 arc({-50, 29}, {-61, 34}, {-51, 39}),
+                                                 {{"type", "circle"}, {"center", {20, 60}}, {"radius", 4}}})},
+                         {"constraints", Json::array({{{"type", "fix"}, {"curves", {0}}}})}});
+    const auto id = sk.at("id").get<std::uint64_t>();
+    run(s, "sketch.add_constraints",
+        {{"sketch", id},
+         {"constraints", Json::array({{{"type", "symmetric"}, {"curves", {1, 2}}, {"curve", 0}},
+                                      {{"type", "symmetric"}, {"curves", {3, 4}}, {"curve", 0}}})}});
+    // The whole arc (start, middle, end) is the mirror image, also after a dimension change.
+    const auto check = [&]() {
+        const Json c = run(s, "sketch.curves", {{"sketch", id}}).at("curves");
+        const auto mirrored = [](const Json& p, const Json& q) {
+            CHECK(p[0].get<double>() == Approx(-q[0].get<double>()).margin(1e-6));
+            CHECK(p[1].get<double>() == Approx(q[1].get<double>()).margin(1e-6));
+        };
+        for (int k = 0; k < 3; ++k) {
+            mirrored(c[1].at("points")[k], c[2].at("points")[2 - k]); // same direction: reversed
+            mirrored(c[3].at("points")[k], c[4].at("points")[k]);     // opposite direction
+        }
+        const auto& p = c[1].at("points");
+        CHECK(std::hypot(p[0][0].get<double>() - p[1][0].get<double>(), p[0][1].get<double>() - p[1][1].get<double>()) > 1);
+    };
+    check();
+    run(s, "sketch.add_constraints",
+        {{"sketch", id}, {"constraints", Json::array({{{"type", "radius"}, {"curve", 1}, {"value", 9}}, {{"type", "radius"}, {"curve", 3}, {"value", 7}}})}});
+    check();
+    // A circle and an arc cannot be mirror images.
+    const auto r = s.execute("sketch.add_constraints",
+                             {{"sketch", id}, {"constraints", Json::array({{{"type", "symmetric"}, {"curves", {5, 1}}, {"curve", 0}}})}});
+    CHECK_FALSE(r.ok);
+}

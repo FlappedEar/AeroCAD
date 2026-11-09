@@ -53,7 +53,7 @@ Item {
         case "midpoint": return qsTr("Midpoint: click a point, then a line")
         case "collinear": return qsTr("Collinear: click two lines")
         case "symmetric": return picks.length < 2
-            ? qsTr("Symmetric: click two points, two lines or two circles/arcs, then the symmetry line")
+            ? qsTr("Symmetric: click two points, two lines, two circles or two arcs, then the symmetry line")
             : qsTr("Symmetric: click the symmetry line")
         case "fix": return qsTr("Fix: click a point or a curve")
         }
@@ -243,7 +243,7 @@ Item {
 
     function sameRef(a, b) { return JSON.stringify(a) === JSON.stringify(b) }
 
-    /// The first two picks of Symmetric: two points, two lines or two circles/arcs.
+    /// The first two picks of Symmetric: two points, two lines, two circles or two arcs.
     function symmetricPairOk(ps) {
         if (ps.length < 2)
             return true
@@ -252,7 +252,7 @@ Item {
             return !sameRef(a.point, b.point)
         if (a.curve === undefined || b.curve === undefined || a.curve === b.curve)
             return false
-        return (isLine(a.curve) && isLine(b.curve)) || (isCirc(a.curve) && isCirc(b.curve))
+        return curves[a.curve].kind === curves[b.curve].kind && (isLine(a.curve) || isCirc(a.curve))
     }
 
     /// Symmetric for two items and the symmetry line (Fusion: Symmetry), or null. Two curves are
