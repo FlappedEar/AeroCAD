@@ -178,10 +178,11 @@ Pane {
     readonly property bool activeRunning: !!activeStatus && activeStatus.state === "running"
     // Re-read after any change of the parts (a Scale changes the size shown, CAD-109).
     property int partRevision: 0
+    function bumpParts() { partRevision++ }
     readonly property Connections _partWatch: Connections {
         target: root.controller
-        function onPartChanged() { root.partRevision++ }
-        function onHistoryChanged() { root.partRevision++ }
+        function onPartChanged() { Qt.callLater(root.bumpParts) }
+        function onHistoryChanged() { Qt.callLater(root.bumpParts) }
     }
     readonly property var partInfo: {
         void partRevision
@@ -1049,7 +1050,7 @@ Pane {
         target: root.controller
         function onHistoryChanged() {
             if (root.visible)
-                root.refreshRuns()
+                Qt.callLater(root.refreshRuns)
         }
     }
 

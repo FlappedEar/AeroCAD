@@ -29,10 +29,11 @@ QtObject {
     /// Changes whenever the document changes, so bindings that call guide() / actions()
     /// re-evaluate.
     property int revision: 0
+    function bump() { revision++ }
     readonly property Connections _watch: Connections {
         target: root.controller
-        function onPartChanged() { root.revision++ }
-        function onHistoryChanged() { root.revision++ }
+        function onPartChanged() { Qt.callLater(root.bump) }
+        function onHistoryChanged() { Qt.callLater(root.bump) }
     }
 
     // --- Classification ----------------------------------------------------------------

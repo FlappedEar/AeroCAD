@@ -46,7 +46,7 @@ Pane {
                 root.refresh()
         }
         // A part removed elsewhere (undo, delete) leaves the panel on a stale id.
-        function onHistoryChanged() { root.refresh() }
+        function onHistoryChanged() { Qt.callLater(root.refresh) }
     }
 
     padding: 0

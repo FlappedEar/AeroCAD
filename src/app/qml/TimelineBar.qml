@@ -110,7 +110,7 @@ Rectangle {
     Component.onCompleted: refresh()
     Connections {
         target: root.controller
-        function onHistoryChanged() { root.refresh() }
+        function onHistoryChanged() { Qt.callLater(root.refresh) }
     }
 
     implicitHeight: 40

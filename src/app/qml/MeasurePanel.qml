@@ -91,7 +91,7 @@ Pane {
     Connections {
         target: root.controller
         function onInspectChanged() { root.refreshKept() }
-        function onHistoryChanged() { root.refreshKept() }
+        function onHistoryChanged() { Qt.callLater(root.refreshKept) }
         function onBoundsChanged() { root.refreshKept() }
     }
     Component.onCompleted: refreshKept()
