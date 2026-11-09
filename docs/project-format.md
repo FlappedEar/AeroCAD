@@ -50,7 +50,9 @@ Manifest (version 1):
   the body's id.
 - `timelineParts` keeps the part ids, names and visibility of bodies and sketches, so ids
   that scripts or an agent hold stay valid after reopening.
-- `view` is the camera, opaque to the format (written by the UI).
+- `view` is the camera, opaque to the format (written by the UI). While a part is isolated
+  the UI also stores `view.isolation` (`id`, `name`, `hidden`: the ids Isolate hid), so after
+  reopening Unisolate still brings those parts back (CAD-224).
 - `originalPath` is set only on copies (autosave): the project the copy belongs to.
 
 **Versioning.** Readers accept every version up to their own and refuse newer files with
@@ -105,7 +107,11 @@ While there are unsaved changes, the app writes a copy every 120 s (QSettings
 `~/Library/Application Support/FlappedEar/AeroCAD/autosave`). Ctrl+Shift+S (Fusion's
 Recovery Save) writes it immediately. A lock file marks copies owned by a running
 instance. Saving, opening, New Design and a normal exit remove the copy; after a crash the
-next start offers to recover it.
+next start offers to recover it, naming the design and the time of the copy ("Recover the
+unsaved changes to “wing”? Recovery copy from 9 Nov 2026 12:00."). Copies store the current
+view (camera, isolation), so a recovered project opens as it was on screen (CAD-226,
+[question](images/audit/cad-226-recovery-question.png),
+[recovered view](images/audit/cad-226-recovery-restored.png)).
 
 Recent projects: File > Open Recent (last 10, QSettings `project/recent`).
 

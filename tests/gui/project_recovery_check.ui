@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Second half of tests/gui/project_recovery.sh: the recovery question and the recovered project.
+ui.wait(1500)
+(() => { ui.log("QUESTION " + recoveryDialog.visible + " | " + recoveryDialog.text + " | " + recoveryDialog.informativeText); if (!recoveryDialog.visible) ui.fail("no recovery question"); if (recoveryDialog.text.indexOf("“wing”") < 0) ui.fail("question does not name the design: " + recoveryDialog.text); if (recoveryDialog.informativeText.indexOf("/") >= 0 || recoveryDialog.informativeText.indexOf("Recovery copy from ") !== 0) ui.fail("informative text: " + recoveryDialog.informativeText) })()
+ui.shot("project-recovery-question.png")
+ui.clickText("Yes")
+ui.wait(1500)
+(() => { const parts = controller.execute("document.parts").result.parts; const box = parts.find(p => p.id === 1); const body = parts.find(p => p.kind === "body"); ui.log("RECOVERED colour " + box.color + " body visible " + body.visible + " dirty " + controller.projectDirty + " isolation " + JSON.stringify(window.isolation)); if (box.color !== "#00ff00") ui.fail("unsaved colour not recovered"); if (!controller.projectDirty) ui.fail("recovered project must be unsaved"); if (!window.isolation || window.isolation.id !== 1) ui.fail("isolation not recovered") })()
+(() => { const c = viewport.cameraState(); ui.log("RECOVERED camera " + JSON.stringify(c)); const near = (a, b) => Math.abs(a - b) < 0.01; if (!near(c.pitch, -55) || !near(c.yaw, 120) || !near(c.distance, 450) || !c.orthographic || !near(c.pivot[1], 40) || !near(c.pivot[2], 30)) ui.fail("recovered camera is not the one at the time of the recovery copy") })()
+ui.shot("project-recovery-restored.png")
+(() => { window.unisolate() })()
+ui.wait(300)
+(() => { const body = controller.execute("document.parts").result.parts.find(p => p.kind === "body"); if (!body.visible) ui.fail("Unisolate after recovery did not show the body") })()
+ui.log("project recovery done")

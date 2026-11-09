@@ -8,6 +8,7 @@
 #include "aerocad/core/MeshSelection.hpp"
 
 #include <QColor>
+#include <QJSValue>
 #include <QLockFile>
 #include <QObject>
 #include <QStringList>
@@ -55,6 +56,9 @@ class AppController : public QObject {
     /// Variants of the design: [{id, name, active}], see variant.list.
     Q_PROPERTY(QVariantList variants READ variants NOTIFY projectChanged)
     Q_PROPERTY(QString activeVariantName READ activeVariantName NOTIFY projectChanged)
+    /// A function the UI sets that returns the project view (camera, isolation) to store in
+    /// autosave copies, so a recovered project opens as it was on screen (CAD-226).
+    Q_PROPERTY(QJSValue viewProvider READ viewProvider WRITE setViewProvider)
     /// Autosave interval in seconds (QSettings project/autosaveSeconds, default 120; 0 = off).
     Q_PROPERTY(int autosaveSeconds READ autosaveSeconds WRITE setAutosaveSeconds NOTIFY autosaveSecondsChanged)
 
@@ -84,6 +88,8 @@ public:
     [[nodiscard]] QStringList openNameFilters() const;
     [[nodiscard]] QVariantList variants() const;
     [[nodiscard]] QString activeVariantName() const;
+    [[nodiscard]] QJSValue viewProvider() const { return m_viewProvider; }
+    void setViewProvider(const QJSValue& provider) { m_viewProvider = provider; }
     [[nodiscard]] int autosaveSeconds() const;
     void setAutosaveSeconds(int seconds);
 
@@ -140,6 +146,10 @@ public:
     Q_INVOKABLE bool saveProjectAs(const QUrl& url, const QVariantMap& view = {});
     /// Autosave copies left by a previous session that did not exit cleanly, newest first.
     Q_INVOKABLE QStringList autosaveFiles() const;
+    /// What a recovery copy is, for the recovery question (CAD-226): {name: the project's file
+    /// name without extension, or "" for an untitled design; saved: when the copy was written,
+    /// as a local date and time}.
+    Q_INVOKABLE QVariantMap autosaveInfo(const QString& path) const;
     /// Opens an autosave copy as an unsaved project with its original path.
     Q_INVOKABLE bool recoverAutosave(const QString& path);
     /// Deletes all autosave copies (the user declined recovery) or, with `currentOnly`, the
@@ -290,6 +300,7 @@ private:
     McpAccess m_mcp{*this};
     QStringList m_recent;
     QTimer m_autosaveTimer;
+    QJSValue m_viewProvider;
     /// Held while this process owns an autosave file, so other instances do not offer it
     /// for recovery.
     std::unique_ptr<QLockFile> m_autosaveLock;

@@ -63,7 +63,11 @@ ApplicationWindow {
 
     font.pixelSize: Theme.fontBody
     color: Theme.chrome
-    Component.onCompleted: applyTheme()
+    Component.onCompleted: {
+        applyTheme()
+        // Autosave copies store the view too: a recovered project opens as it was on screen (CAD-226).
+        controller.viewProvider = () => window.projectView()
+    }
     Connections {
         target: Theme
         function onDarkChanged() { window.applyTheme() }
@@ -321,13 +325,32 @@ ApplicationWindow {
             return
         // Undone Isolates past the last step can never be redone again: forget them, and keep
         // the list short.
-        const kept = isolationRecords.filter(rec => controller.historyApplied(rec.step)
+        // An Isolate restored from the project file (step -1) is kept too, so undoing this
+        // Isolate and its Unisolate brings it back (CAD-224).
+        const kept = isolationRecords.filter(rec => rec.step < 0 || controller.historyApplied(rec.step)
                                                     || controller.historyExpired(rec.step)).slice(-19)
         kept.push({ id: id, name: controller.partInfo(id).name, hidden: r.result.hidden,
                     step: controller.historyTopId(), exitStep: 0 })
         isolationRecords = kept
         checkIsolation()
         selectPart(id)
+    }
+    /// The view saved with the project: the camera and, while a part is isolated, the
+    /// isolation, so Exit Isolate still brings back the hidden parts after reopening (CAD-224).
+    function projectView() {
+        const v = viewport.cameraState()
+        if (isolation)
+            v.isolation = { id: isolation.id, name: isolation.name, hidden: isolation.hidden }
+        return v
+    }
+    /// Takes back the isolation of an opened project (projectView()); it only counts while a
+    /// part it hid is still hidden, as checkIsolation() decides.
+    function restoreIsolation(saved) {
+        if (!saved || !saved.id || !Array.isArray(saved.hidden))
+            return
+        isolationRecords = [{ id: saved.id, name: saved.name || controller.partInfo(saved.id).name || "",
+                              hidden: saved.hidden, step: -1, exitStep: 0 }]
+        checkIsolation()
     }
     /// Appearance (A): swatches for part `id`, at the pointer when it is over the view.
     function openAppearance(id) {
@@ -351,8 +374,9 @@ ApplicationWindow {
     /// hid is still hidden (it ends when they have all been shown again or deleted by hand).
     function checkIsolation() {
         // A step is done while applied, and also once it has aged out of the history (its
-        // change is kept for good: an Isolate 200 edits ago still hides the other parts).
-        const done = step => controller.historyApplied(step) || controller.historyExpired(step)
+        // change is kept for good: an Isolate 200 edits ago still hides the other parts). An
+        // Isolate restored from the project file (step -1, CAD-224) is done for good too.
+        const done = step => step < 0 || controller.historyApplied(step) || controller.historyExpired(step)
         let found = null
         for (let i = isolationRecords.length - 1; i >= 0 && !found; --i) {
             const rec = isolationRecords[i]
@@ -744,7 +768,7 @@ ApplicationWindow {
     }
 
     function saveProject(then) {
-        if (controller.saveProject(viewport.cameraState())) {
+        if (controller.saveProject(projectView())) {
             if (then)
                 then()
             return
@@ -811,9 +835,12 @@ ApplicationWindow {
     MessageDialog {
         id: recoveryDialog
         property string file
+        // The design and the time of the copy, not the path of the copy (CAD-226).
+        readonly property var info: file ? window.controller.autosaveInfo(file) : ({ name: "", saved: "" })
         title: qsTr("Recover unsaved changes")
-        text: qsTr("AeroCAD did not close properly. Recover the unsaved changes?")
-        informativeText: file
+        text: info.name ? qsTr("AeroCAD did not close properly. Recover the unsaved changes to “%1”?").arg(info.name)
+                        : qsTr("AeroCAD did not close properly. Recover the unsaved untitled design?")
+        informativeText: qsTr("Recovery copy from %1. No deletes it.").arg(info.saved)
         buttons: MessageDialog.Yes | MessageDialog.No
         onButtonClicked: (button, role) => {
             if (button === MessageDialog.Yes) {
@@ -841,7 +868,7 @@ ApplicationWindow {
         defaultSuffix: "aerocad"
         nameFilters: [qsTr("AeroCAD projects (*.aerocad)")]
         onAccepted: {
-            if (window.controller.saveProjectAs(selectedFile, viewport.cameraState()) && then)
+            if (window.controller.saveProjectAs(selectedFile, window.projectView()) && then)
                 then()
             then = null
         }
@@ -2829,6 +2856,7 @@ ApplicationWindow {
         function onEditingContextChanged() { window.resetWorkspace() }
         function onProjectOpened(view) {
             viewport.restoreCameraState(view)
+            window.restoreIsolation(view ? view.isolation : null)
         }
         // Undo/redo and edits elsewhere (timeline, parameters) change the sketch too.
         function onHistoryChanged() {
