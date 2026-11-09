@@ -1979,6 +1979,54 @@ TEST_CASE("simulation compare reports the efficiency L/D of A and B (CAD-187)", 
     CHECK_FALSE(runs.compare(a, c).contains("efficiency"));
 }
 
+TEST_CASE("Results give the iteration swing; A/B flags differences inside it (CAD-191)", "[cfd]")
+{
+    TempDir tmp;
+    cfd::RunManager runs(tmp.path());
+    cfd::Settings s;
+    s.flowDirection = "+X";
+    cfd::CaseGeometry g;
+    g.part = box({0, 0, 0}, {200, 80, 60});
+    const std::string a = runs.prepare(g, s, {});
+    const std::string b = runs.prepare(g, s, {});
+    const std::string c = runs.prepare(g, s, {});
+    fakeFinishedRun(tmp.path() / a, 0.8, 1.0, -2.0);
+    fakeFinishedRun(tmp.path() / b, 0.8, 1.0005, -2.0); // Inside the swing.
+    fakeFinishedRun(tmp.path() / c, 0.8, 1.25, -3.0);   // Well outside it.
+
+    // The fake drag is 1.0 * (0.8 + 0.5 / i) / 0.8 for i = 1..100; the window is i = 81..100.
+    // The files hold 6 significant digits, hence the 1 % tolerance.
+    const auto ra = runs.results(a);
+    const auto& spread = ra.at("summary").at("spread");
+    const double dragSpread = 0.5 * (1.0 / 0.8) * (0.5 / 81 - 0.5 / 100);
+    CHECK(spread.at("dragN").get<double>() == Approx(dragSpread).epsilon(0.01));
+    CHECK(spread.at("cd").get<double>() == Approx(0.5 * (0.5 / 81 - 0.5 / 100)).epsilon(0.01));
+    CHECK(spread.at("liftN").get<double>() == Approx(0.0).margin(1e-12)); // Constant lift.
+
+    const auto near = runs.compare(a, b);
+    INFO(near.dump());
+    const auto& drag = near.at("forces").at("dragN");
+    CHECK(drag.at("noise").get<double>() == Approx(dragSpread * (1.0 + 1.0005)).epsilon(0.01));
+    CHECK(drag.at("withinNoise").get<bool>());
+    CHECK(near.at("coefficientsOnReferenceAreaOfA").at("cd").contains("withinNoise"));
+    const auto& notes = near.at("notes");
+    CHECK(std::any_of(notes.begin(), notes.end(), [](const nlohmann::json& n) {
+        return n.get<std::string>().find("drag difference") != std::string::npos &&
+               n.get<std::string>().find("iteration swing") != std::string::npos;
+    }));
+    // The same lift in both runs, with no swing, is no change, not noise.
+    CHECK(std::none_of(notes.begin(), notes.end(), [](const nlohmann::json& n) {
+        return n.get<std::string>().find("lift difference") != std::string::npos;
+    }));
+
+    const auto far = runs.compare(a, c);
+    INFO(far.dump());
+    CHECK_FALSE(far.at("forces").at("dragN").at("withinNoise").get<bool>());
+    CHECK_FALSE(far.at("forces").at("liftN").at("withinNoise").get<bool>());
+    for (const auto& n : far.at("notes"))
+        CHECK(n.get<std::string>().find("iteration swing") == std::string::npos);
+}
+
 namespace {
 
 void editCaseJson(const fs::path& runDir, const std::function<void(nlohmann::json&)>& edit)

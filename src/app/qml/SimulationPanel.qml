@@ -303,8 +303,15 @@ Pane {
         if (!d)
             return null
         const percent = d.percent !== undefined ? d.percent : Math.abs(d.a) > 1e-12 ? 100 * d.difference / Math.abs(d.a) : null
+        // Inside the iteration swing of A plus B (CAD-191); equal steady values are no change.
         return { a: d.a, b: d.b, difference: d.difference,
-                 percent: percent === null || noiseLevel(d.a, coefficient) ? null : percent }
+                 percent: percent === null || noiseLevel(d.a, coefficient) ? null : percent,
+                 withinNoise: d.withinNoise === true && d.noise > 0 }
+    }
+    /// " ± 0.012" (CAD-191): how far a final result still swings over the averaging window.
+    function spreadText(summary, key, digits) {
+        const v = summary && summary.spread ? summary.spread[key] : undefined
+        return typeof v === "number" ? " ± " + num(v, digits) : ""
     }
 
     /// A run's conditions in one line for the run list (CAD-181): "35 m/s (126 km/h) · flow +X ·
@@ -1638,20 +1645,25 @@ Pane {
                     readonly property var s: !root.results ? ({}) : current ? root.results.current : root.results.summary
                     opacity: current ? 0.75 : 1.0
                     Label { text: qsTr("Drag"); opacity: 0.7 }
-                    Label { text: root.num(parent.s.dragN, 3) + " N"; font.bold: true }
+                    Label {
+                        objectName: "cfdSummaryDrag"
+                        text: root.num(parent.s.dragN, 3) + root.spreadText(parent.s, "dragN", 3) + " N"
+                        font.bold: true
+                    }
                     Label { text: "Cd"; opacity: 0.7 }
                     Label { text: root.num(parent.s.cd, 3); font.bold: true }
                     Label { text: qsTr("Lift"); opacity: 0.7 }
                     Label {
                         objectName: "cfdSummaryLift"
                         // Lift is along +Z: a negative lift is downforce (CAD-184).
-                        text: root.num(parent.s.liftN, 3) + " N" + (parent.s.liftN < 0 ? qsTr(" (downforce)") : "")
+                        text: root.num(parent.s.liftN, 3) + root.spreadText(parent.s, "liftN", 3) + " N"
+                              + (parent.s.liftN < 0 ? qsTr(" (downforce)") : "")
                         font.bold: true
                     }
                     Label { text: "Cl"; opacity: 0.7 }
                     Label { text: root.num(parent.s.cl, 3); font.bold: true }
                     Label { text: qsTr("Side"); opacity: 0.7 }
-                    Label { text: root.num(parent.s.sideN, 3) + " N"; font.bold: true }
+                    Label { text: root.num(parent.s.sideN, 3) + root.spreadText(parent.s, "sideN", 3) + " N"; font.bold: true }
                     Label { text: "Cs"; opacity: 0.7 }
                     Label { text: root.num(parent.s.cs, 3); font.bold: true }
                     Label { text: qsTr("Efficiency L/D"); opacity: 0.7; Layout.columnSpan: 2 }
@@ -1978,11 +1990,13 @@ Pane {
                             delegate: Label {
                                 required property int index
                                 font.bold: index === 3
+                                color: index === 4 && rowRep.d && rowRep.d.withinNoise ? Theme.textMuted : Theme.text
                                 text: index === 0 ? rowRep.modelData[1]
                                     : !rowRep.d ? "–"
                                     : index === 1 ? root.num(rowRep.d.a, rowRep.digits)
                                     : index === 2 ? root.num(rowRep.d.b, rowRep.digits)
                                     : index === 3 ? (rowRep.d.difference >= 0 ? "+" : "") + root.num(rowRep.d.difference, rowRep.digits)
+                                    : rowRep.d.withinNoise ? qsTr("noise")
                                     : rowRep.d.percent === null ? "–"
                                     : Math.abs(rowRep.d.percent) < 0.05 ? "0.0" // not "-0.0"
                                     : (rowRep.d.percent >= 0 ? "+" : "") + root.num(rowRep.d.percent, 1)
