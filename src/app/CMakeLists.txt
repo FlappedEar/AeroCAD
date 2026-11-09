@@ -167,6 +167,13 @@ if(AEROCAD_BUILD_TESTS)
     set_tests_properties(app_import_after_project_replaced_test PROPERTIES LABELS gui TIMEOUT 90
         FIXTURES_REQUIRED gui_drop RESOURCE_LOCK gui_drop_dir
         ENVIRONMENT "XDG_DATA_HOME=${_drop}/data;XDG_CONFIG_HOME=${_drop}/data")
+    # CAD-12: a persisted unitless-file setting cannot rescale embedded file units.
+    set(_import_units ${CMAKE_CURRENT_BINARY_DIR}/gui-import-units)
+    add_test(NAME app_import_file_units_test
+        COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:aerocad> -DOUTPUT_DIR=${_import_units}
+                -P ${PROJECT_SOURCE_DIR}/tests/gui/import_file_units.cmake)
+    set_tests_properties(app_import_file_units_test PROPERTIES LABELS gui TIMEOUT 90
+        ENVIRONMENT "XDG_DATA_HOME=${_import_units}/data;XDG_CONFIG_HOME=${_import_units}/config")
     # Wheel zoom towards the pointer, right-drag orbit, right-click menus, touchpad, Move/Rotate.
     add_test(NAME app_navigation_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl

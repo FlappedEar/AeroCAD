@@ -56,13 +56,14 @@ void registerDocumentCommands(CommandRegistry& r)
 
     r.add({"document.import", "Import 3D file",
            "Imports a 3D file (STL, OBJ, PLY, 3MF, STEP, IGES, BREP) as a new part. The document works in "
-           "millimetres; pass `units` when the file was written in another unit (mesh formats such as STL and "
-           "PLY carry none) and the geometry is scaled to millimetres.",
+           "millimetres. STEP, IGES and 3MF use their file units automatically. For unitless STL, OBJ, PLY "
+           "and BREP files, `units` selects the source unit to convert to millimetres.",
            objectSchema({{"path", {{"type", "string"}, {"minLength", 1}, {"description", "Absolute path of the file."}}},
                          {"name", {{"type", "string"}, {"description", "Optional part name; defaults to the file name."}}},
                          {"units", {{"type", "string"},
                                     {"enum", {"um", "mm", "cm", "m", "in", "ft"}},
-                                    {"description", "Unit the file coordinates are in (default mm)."}}}},
+                                    {"description", "Source unit for unitless files (default mm); ignored for STEP, "
+                                                    "IGES and 3MF, whose file units are used automatically."}}}},
                         {"path"}),
            true},
           [](CommandContext& ctx, const Json& params) {
@@ -81,8 +82,14 @@ void registerDocumentCommands(CommandRegistry& r)
                       throw CommandError(e.what());
                   }
               }
+              // These readers already normalize both the mesh and exact shape to millimetres.
+              // Use the parsed format, also for worker-thread results consumed from ImportStage.
+              const bool fileUnits = imported.format == io::FileFormat::Step ||
+                                     imported.format == io::FileFormat::Iges || imported.format == io::FileFormat::ThreeMf;
               const core::LengthUnit unit =
-                  core::parseLengthUnit(params.value("units", std::string("mm"))).value_or(core::LengthUnit::Millimetre);
+                  fileUnits ? core::LengthUnit::Millimetre
+                            : core::parseLengthUnit(params.value("units", std::string("mm")))
+                                  .value_or(core::LengthUnit::Millimetre);
               const double unitScale = core::toMillimetres(unit);
               if (unitScale != 1.0) {
                   imported.mesh.scale(unitScale, core::Vec3{});
@@ -106,6 +113,8 @@ void registerDocumentCommands(CommandRegistry& r)
               Json result = partToJson(*doc.part(id));
               result["format"] = std::string(io::formatName(imported.format));
               result["units"] = std::string(core::unitSymbol(unit));
+              result["unitSource"] = fileUnits ? "file" : "importSetting";
+              result["outputUnits"] = "mm";
               result["warnings"] = imported.warnings;
               return result;
           });

@@ -192,13 +192,15 @@ Pane {
             // --- Units and scale -------------------------------------------------------
             Section { text: qsTr("UNITS AND SCALE") }
             RowLayout {
-                Label { text: qsTr("New imports in") }
+                Label { text: qsTr("Unitless files in") }
                 ComboBox {
+                    objectName: "unitlessImportUnits"
                     model: root.scan.unitSymbols
                     currentIndex: Math.max(0, root.scan.unitSymbols.indexOf(root.scan.importUnits))
                     onActivated: root.scan.importUnits = currentText
                 }
             }
+            Hint { text: qsTr("STEP, IGES and 3MF use their file units automatically.") }
             RowLayout {
                 enabled: root.editable
                 Label { text: qsTr("This part is in") }
