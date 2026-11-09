@@ -63,6 +63,14 @@ struct ReferenceFrame {
 };
 
 /// Result of evaluating one feature during regeneration.
+/// Where a copy of sketch curves goes: each point p to pivot + R(angleDegrees) (p - pivot)
+/// + offset (sketch coordinates, degrees counterclockwise).
+struct SketchPlacement {
+    geometry::Vec2 offset;
+    double angleDegrees = 0.0;
+    geometry::Vec2 pivot;
+};
+
 struct FeatureStatus {
     enum class State { Ok, Error, Suppressed, RolledBack };
     State state = State::Ok;
@@ -260,6 +268,12 @@ public:
     /// DesignError (design unchanged) when the constraints do not allow the move.
     void moveSketchCurves(FeatureId sketch, const std::vector<std::size_t>& curves, const geometry::Vec2& offset,
                           double angleDegrees, const geometry::Vec2& pivot, bool copy);
+    /// Adds one copy of sketch curves per placement (Fusion: Sketch > Rectangular / Circular
+    /// Pattern; Move/Copy with Copy is one placement), in one edit. Copies are made as by
+    /// moveSketchCurves with copy. Throws DesignError (design unchanged) when the copies'
+    /// constraints do not let them sit where they were placed.
+    void patternSketchCurves(FeatureId sketch, const std::vector<std::size_t>& curves,
+                             const std::vector<SketchPlacement>& placements);
     /// Moves the timeline marker (0 = before the first feature, size() = at the end). This
     /// is an explicit choice: it ends a sketch edit without rolling forward.
     void setMarker(std::size_t marker);

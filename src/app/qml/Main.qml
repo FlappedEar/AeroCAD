@@ -248,6 +248,20 @@ ApplicationWindow {
             visible: !sketchMenu.drawing && viewport.sketchOverlay.selectedCurves.length > 0
             onTriggered: viewport.sketchOverlay.startMove()
         }
+        SketchMenuItem {
+            objectName: "circularPatternCurves"
+            text: qsTr("Circular Pattern")
+            icon.source: Theme.iconUrl("circular-pattern")
+            visible: !sketchMenu.drawing && viewport.sketchOverlay.selectedCurves.length > 0
+            onTriggered: viewport.sketchOverlay.startPattern("circular_pattern")
+        }
+        SketchMenuItem {
+            objectName: "rectangularPatternCurves"
+            text: qsTr("Rectangular Pattern")
+            icon.source: Theme.iconUrl("pattern")
+            visible: !sketchMenu.drawing && viewport.sketchOverlay.selectedCurves.length > 0
+            onTriggered: viewport.sketchOverlay.startPattern("rectangular_pattern")
+        }
         MenuSeparator {
             visible: !sketchMenu.drawing && viewport.sketchOverlay.selectedCurves.length > 0
             height: visible ? implicitHeight : 0
@@ -1443,6 +1457,9 @@ ApplicationWindow {
     Action { id: sketchOffsetAction; text: qsTr("&Offset"); shortcut: "O"; enabled: !!window.activeSketch && (viewport.sketchOverlay.selectedCurves.length > 0 || window.sketchTool === "offset"); checkable: true; checked: window.sketchTool === "offset"; onTriggered: { if (window.sketchTool !== "offset") viewport.sketchOverlay.startOffset(); else window.sketchTool_("") } }
     // Fusion: Sketch > Move/Copy (M): the selected curves move or are copied.
     Action { id: sketchMoveAction; text: qsTr("Mo&ve/Copy"); shortcut: "M"; enabled: !!window.activeSketch && (viewport.sketchOverlay.selectedCurves.length > 0 || window.sketchTool === "move"); checkable: true; checked: window.sketchTool === "move"; onTriggered: { if (window.sketchTool !== "move") viewport.sketchOverlay.startMove(); else window.sketchTool_("") } }
+    // Fusion: Sketch > Circular / Rectangular Pattern: copies of the selected curves.
+    Action { id: sketchCircularPatternAction; text: qsTr("Circular Pattern"); enabled: !!window.activeSketch && (viewport.sketchOverlay.selectedCurves.length > 0 || window.sketchTool === "circular_pattern"); checkable: true; checked: window.sketchTool === "circular_pattern"; onTriggered: { if (window.sketchTool !== "circular_pattern") viewport.sketchOverlay.startPattern("circular_pattern"); else window.sketchTool_("") } }
+    Action { id: sketchRectangularPatternAction; text: qsTr("Rectangular Pattern"); enabled: !!window.activeSketch && (viewport.sketchOverlay.selectedCurves.length > 0 || window.sketchTool === "rectangular_pattern"); checkable: true; checked: window.sketchTool === "rectangular_pattern"; onTriggered: { if (window.sketchTool !== "rectangular_pattern") viewport.sketchOverlay.startPattern("rectangular_pattern"); else window.sketchTool_("") } }
     Action { id: sketchMirrorAction; text: qsTr("&Mirror"); enabled: !!window.activeSketch && (viewport.sketchOverlay.selectedCurves.length > 0 || window.sketchTool === "mirror"); checkable: true; checked: window.sketchTool === "mirror"; onTriggered: { if (window.sketchTool !== "mirror") viewport.sketchOverlay.startMirror(); else window.sketchTool_("") } }
     Action { id: centerRectangleAction; text: qsTr("Center Rectan&gle"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "center_rectangle"; onTriggered: window.sketchTool_("center_rectangle") }
     Action { id: rectangle3PointAction; text: qsTr("3-Po&int Rectangle"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "rectangle_3point"; onTriggered: window.sketchTool_("rectangle_3point") }
@@ -1771,6 +1788,8 @@ ApplicationWindow {
             MenuItem { action: sketchProjectAction }
             MenuItem { action: sketchMoveAction }
             MenuItem { action: sketchMirrorAction }
+            MenuItem { action: sketchCircularPatternAction }
+            MenuItem { action: sketchRectangularPatternAction }
             MenuItem { action: constructionAction }
             MenuSeparator {}
             MenuItem { action: dimensionAction }
@@ -2229,6 +2248,9 @@ ApplicationWindow {
                 ToolCommand { action: circle3PointAction; text: qsTr("3-Point Circle"); iconName: "circle-3point" }
                 ToolCommand { action: centerArcAction; text: qsTr("Center Arc"); iconName: "center-arc" }
                 ToolCommand { action: tangentArcAction; text: qsTr("Tangent Arc"); iconName: "tangent-arc" }
+                // Fusion: Create > Rectangular / Circular Pattern.
+                ToolCommand { action: sketchRectangularPatternAction; text: qsTr("Rectangular Pattern"); iconName: "pattern" }
+                ToolCommand { action: sketchCircularPatternAction; text: qsTr("Circular Pattern"); iconName: "circular-pattern" }
             }
             ToolSeparator { tab: "sketch" }
             ToolGroup {
@@ -2466,6 +2488,22 @@ ApplicationWindow {
                 if (!window.activeSketch)
                     return
                 const r = window.controller.execute("sketch.move_curves", { sketch: window.activeSketch.id, curves: curves, dx: dx, dy: dy, angle: angle, copy: copy })
+                if (!r.ok)
+                    window.controller.showStatus(r.error)
+                window.refreshSketchSnaps()
+            }
+            onSketchCircularPatternRequested: (curves, center, count, angle) => {
+                if (!window.activeSketch)
+                    return
+                const r = window.controller.execute("sketch.circular_pattern", { sketch: window.activeSketch.id, curves: curves, center: center, count: count, angle: angle })
+                if (!r.ok)
+                    window.controller.showStatus(r.error)
+                window.refreshSketchSnaps()
+            }
+            onSketchRectangularPatternRequested: (curves, countX, spacingX, countY, spacingY) => {
+                if (!window.activeSketch)
+                    return
+                const r = window.controller.execute("sketch.rectangular_pattern", { sketch: window.activeSketch.id, curves: curves, count_x: countX, spacing_x: spacingX, count_y: countY, spacing_y: spacingY })
                 if (!r.ok)
                     window.controller.showStatus(r.error)
                 window.refreshSketchSnaps()

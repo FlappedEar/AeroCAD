@@ -2589,3 +2589,105 @@ TEST_CASE("Design commands: sketch Move/Copy (CAD-244)", "[commands][cad][solver
         CHECK(c.at("constraints").size() == 3); // the copy's length, not its horizontal
     }
 }
+
+TEST_CASE("Design commands: sketch Circular and Rectangular Pattern (CAD-251)", "[commands][cad][solver]")
+{
+    commands::Session s;
+    auto near = [](const Json& p, double x, double y) {
+        return std::hypot(p[0].get<double>() - x, p[1].get<double>() - y) < 1e-6;
+    };
+    // A 40 x 20 rectangle at the origin (curves 0-3) and a circle with a diameter dimension (4).
+    const Json sk = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "rectangle"}, {"corner", {0, 0}}, {"width", 40}, {"height", 20}},
+                                                 {{"type", "circle"}, {"center", {60, 10}}, {"radius", 5}}})},
+                         {"constraints", Json::array({{{"type", "diameter"}, {"curve", 4}, {"value", 10}}})}});
+    const auto id = sk.at("id").get<std::uint64_t>();
+    auto curves = [&] { return run(s, "sketch.curves", {{"sketch", id}}); };
+
+    SECTION("circular, full circle: evenly around the centre, one undo step")
+    {
+        run(s, "sketch.circular_pattern", {{"sketch", id}, {"curves", {4}}, {"center", {60, 0}}, {"count", 4}});
+        const Json c = curves();
+        REQUIRE(c.at("curves").size() == 8);
+        CHECK(near(c.at("curves")[4].at("points")[0], 60, 10)); // the original stays
+        CHECK(near(c.at("curves")[5].at("points")[0], 50, 0));  // 90 degrees counterclockwise
+        CHECK(near(c.at("curves")[6].at("points")[0], 60, -10));
+        CHECK(near(c.at("curves")[7].at("points")[0], 70, 0));
+        for (std::size_t i = 5; i < 8; ++i)
+            CHECK(std::abs(c.at("curves")[i].at("radius").get<double>() - 5) < 1e-6);
+        // The diameter dimension comes along with each copy.
+        std::size_t diameters = 0;
+        for (const auto& k : c.at("constraints"))
+            diameters += k.at("type") == "diameter" ? 1 : 0;
+        CHECK(diameters == 4);
+        run(s, "edit.undo");
+        CHECK(curves().at("curves").size() == 5);
+    }
+    SECTION("circular over part of a circle: first and last instances the angle apart")
+    {
+        run(s, "sketch.circular_pattern",
+            {{"sketch", id}, {"curves", {4}}, {"center", {60, 0}}, {"count", 3}, {"angle", 90}});
+        const Json c = curves();
+        REQUIRE(c.at("curves").size() == 7);
+        CHECK(near(c.at("curves")[5].at("points")[0], 60 - 10 * std::sqrt(0.5), 10 * std::sqrt(0.5)));
+        CHECK(near(c.at("curves")[6].at("points")[0], 50, 0));
+        // Clockwise with a negative angle.
+        run(s, "edit.undo");
+        run(s, "sketch.circular_pattern",
+            {{"sketch", id}, {"curves", {4}}, {"center", {60, 0}}, {"count", 2}, {"angle", -90}});
+        CHECK(near(curves().at("curves")[5].at("points")[0], 70, 0));
+    }
+    SECTION("circular pattern of a whole rectangle: turned copies stay closed rectangles")
+    {
+        run(s, "sketch.circular_pattern", {{"sketch", id}, {"curves", {0, 1, 2, 3}}, {"center", {0, 0}}, {"count", 4}});
+        const Json c = curves();
+        REQUIRE(c.at("curves").size() == 5 + 12);
+        // The 90 degree copy: (40, 0) -> (0, 40), (40, 20) -> (-20, 40).
+        CHECK(near(c.at("curves")[5].at("points")[0], 0, 0));
+        CHECK(near(c.at("curves")[5].at("points")[1], 0, 40));
+        CHECK(near(c.at("curves")[6].at("points")[1], -20, 40));
+        // The 180 degree copy.
+        CHECK(near(c.at("curves")[9].at("points")[1], -40, 0));
+        CHECK(near(c.at("curves")[10].at("points")[1], -40, -20));
+        const Json p = run(s, "sketch.profiles", {{"sketch", id}});
+        CHECK(p.at("profiles").size() == 5); // four rectangles and the circle
+    }
+    SECTION("rectangular: rows and columns, negative spacing goes the other way")
+    {
+        run(s, "sketch.rectangular_pattern",
+            {{"sketch", id}, {"curves", {4}}, {"count_x", 3}, {"spacing_x", 15}, {"count_y", 2}, {"spacing_y", -20}});
+        const Json c = curves();
+        REQUIRE(c.at("curves").size() == 10);
+        CHECK(near(c.at("curves")[5].at("points")[0], 75, 10));
+        CHECK(near(c.at("curves")[6].at("points")[0], 90, 10));
+        CHECK(near(c.at("curves")[7].at("points")[0], 60, -10));
+        CHECK(near(c.at("curves")[8].at("points")[0], 75, -10));
+        CHECK(near(c.at("curves")[9].at("points")[0], 90, -10));
+        run(s, "edit.undo");
+        CHECK(curves().at("curves").size() == 5);
+    }
+    SECTION("rectangular along a turned direction; a whole rectangle stays a rectangle")
+    {
+        run(s, "sketch.rectangular_pattern",
+            {{"sketch", id}, {"curves", {4}}, {"count_x", 2}, {"spacing_x", 10}, {"angle", 90}});
+        CHECK(near(curves().at("curves")[5].at("points")[0], 60, 20));
+        run(s, "sketch.rectangular_pattern", {{"sketch", id}, {"curves", {0, 1, 2, 3}}, {"count_y", 2}, {"spacing_y", 30}});
+        const Json c = curves();
+        REQUIRE(c.at("curves").size() == 6 + 4);
+        CHECK(near(c.at("curves")[6].at("points")[0], 0, 30));
+        CHECK(near(c.at("curves")[8].at("points")[0], 40, 50));
+    }
+    SECTION("refused without enough instances, a spacing or an angle; nothing changes")
+    {
+        CHECK_FALSE(s.execute("sketch.circular_pattern", {{"sketch", id}, {"curves", {4}}, {"center", {0, 0}}, {"count", 1}}).ok);
+        CHECK_FALSE(s.execute("sketch.circular_pattern",
+                              {{"sketch", id}, {"curves", {4}}, {"center", {0, 0}}, {"count", 3}, {"angle", 0}}).ok);
+        CHECK_FALSE(s.execute("sketch.circular_pattern",
+                              {{"sketch", id}, {"curves", {4}}, {"center", {0, 0}}, {"count", 3}, {"angle", 400}}).ok);
+        CHECK_FALSE(s.execute("sketch.rectangular_pattern", {{"sketch", id}, {"curves", {4}}, {"count_x", 1}}).ok);
+        CHECK_FALSE(s.execute("sketch.rectangular_pattern", {{"sketch", id}, {"curves", {4}}, {"count_x", 3}}).ok);
+        CHECK_FALSE(s.execute("sketch.rectangular_pattern", {{"sketch", id}, {"curves", {9}}, {"count_x", 2}, {"spacing_x", 5}}).ok);
+        CHECK(curves().at("curves").size() == 5);
+    }
+}

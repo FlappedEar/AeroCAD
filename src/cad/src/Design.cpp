@@ -1473,11 +1473,46 @@ bool sameShape(const SketchCurve& a, const SketchCurve& b, double tol)
            close(curvePointAt(a, c), curvePointAt(b, c));
 }
 
+// `c` moved to a placement: each point p goes to pivot + R(angle) (p - pivot) + offset.
+SketchCurve placedCurve(SketchCurve c, const SketchPlacement& place)
+{
+    const double a = place.angleDegrees * kDegToRad;
+    const double ca = std::cos(a), sa = std::sin(a);
+    for (auto& p : c.points) {
+        const Vec2 d = p - place.pivot;
+        p = Vec2{place.pivot.x + ca * d.x - sa * d.y + place.offset.x, place.pivot.y + sa * d.x + ca * d.y + place.offset.y};
+    }
+    return c;
+}
+
+// Each sketch item's curves as [first, first + count), in sketch.curves order.
+std::vector<std::pair<std::size_t, std::size_t>> itemRanges(const Eval& ev, const Json& items, std::size_t curveCount,
+                                                            const std::string& name)
+{
+    std::vector<std::pair<std::size_t, std::size_t>> ranges;
+    std::size_t first = 0;
+    for (const auto& item : items) {
+        std::vector<SketchCurve> made;
+        std::vector<SketchConstraint> implicit;
+        appendCurves(ev, item, made, implicit);
+        ranges.emplace_back(first, made.size());
+        first += made.size();
+    }
+    if (first != curveCount)
+        throw DesignError(name + " changed while it was solved");
+    return ranges;
+}
+
+
 } // namespace
 
 void Design::moveSketchCurves(FeatureId sketchId, const std::vector<std::size_t>& picked, const Vec2& offset,
                               double angleDegrees, const Vec2& pivot, bool copy)
 {
+    if (copy) {
+        patternSketchCurves(sketchId, picked, {SketchPlacement{offset, angleDegrees, pivot}});
+        return;
+    }
     const State before = m_state;
     keepSolvedSketch(sketchId);
     Feature& f = m_state.features[indexOf(sketchId)];
@@ -1510,20 +1545,7 @@ void Design::moveSketchCurves(FeatureId sketchId, const std::vector<std::size_t>
     const Eval ev{*this};
     Json items = f.params.value("curves", Json::array());
     const Json constraints = f.params.value("constraints", Json::array());
-    // Each item's curves: [first, first + count).
-    std::vector<std::pair<std::size_t, std::size_t>> ranges;
-    {
-        std::size_t first = 0;
-        for (const auto& item : items) {
-            std::vector<SketchCurve> made;
-            std::vector<SketchConstraint> implicit;
-            appendCurves(ev, item, made, implicit);
-            ranges.emplace_back(first, made.size());
-            first += made.size();
-        }
-        if (first != curves.size())
-            throw DesignError(f.name + " changed while it was solved");
-    }
+    const auto ranges = itemRanges(ev, items, curves.size(), f.name);
     auto whole = [&](std::size_t k) {
         for (std::size_t i = 0; i < ranges[k].second; ++i)
             if (!sel[ranges[k].first + i])
@@ -1538,60 +1560,6 @@ void Design::moveSketchCurves(FeatureId sketchId, const std::vector<std::size_t>
             return asThreePointRectangle(items[k], curves.data() + ranges[k].first);
         return items[k];
     };
-
-    if (copy) {
-        // The copies at the end: whole items stay items (a rectangle stays a rectangle);
-        // single curves of a shape become lines, arcs or points.
-        std::vector<std::optional<std::size_t>> map(curves.size());
-        std::size_t next = curves.size();
-        for (std::size_t k = 0; k < ranges.size(); ++k) { // the copies go after these
-            const auto [first, count] = ranges[k];
-            if (whole(k)) {
-                std::vector<SketchCurve> now;
-                for (std::size_t i = 0; i < count; ++i)
-                    now.push_back(movedCurve(curves[first + i]));
-                items.push_back(itemFromSolved(turnable(k), now.data(), count));
-                for (std::size_t i = 0; i < count; ++i)
-                    map[first + i] = next++;
-                continue;
-            }
-            for (std::size_t i = 0; i < count; ++i) {
-                if (!sel[first + i])
-                    continue;
-                items.push_back(curveItem(movedCurve(curves[first + i])));
-                map[first + i] = next++;
-            }
-        }
-        // Constraints among the copied curves come along; ones tied to the origin or that
-        // fix a point stay with the originals, and so do directions along the sketch axes
-        // (horizontal, a horizontal distance) when the copy is turned.
-        Json all = constraints;
-        for (auto c : constraints) {
-            const std::string type = lower(c.value("type", std::string()));
-            if (type == "fix" || c.dump().find("\"origin\"") != std::string::npos)
-                continue;
-            if (a != 0.0 && (type == "horizontal" || type == "vertical" || type == "horizontal_distance" ||
-                             type == "vertical_distance"))
-                continue;
-            if (remapConstraint(c, map))
-                all.push_back(c);
-        }
-        f.params["curves"] = items;
-        if (!all.empty())
-            f.params["constraints"] = all;
-        regenerateChecked(sketchId, before);
-        // The copies must be where they were asked to go (as the preview shows them).
-        it = m_sketches.find(sketchId);
-        for (std::size_t i = 0; i < curves.size() && it != m_sketches.end(); ++i) {
-            if (map[i] && (*map[i] >= it->second.curves.size() ||
-                           !sameShape(it->second.curves[*map[i]], movedCurve(curves[i]), 1e-6))) {
-                m_state = before;
-                regenerate();
-                throw DesignError("The copied curves' constraints do not let them sit there");
-            }
-        }
-        return;
-    }
 
     // Move: hold every point of the picked curves where it goes and let the solver move the
     // rest (connected curves stretch), as a drag does.
@@ -1645,6 +1613,105 @@ void Design::moveSketchCurves(FeatureId sketchId, const std::vector<std::size_t>
             m_state = before;
             regenerate();
             throw DesignError("Those curves cannot move there: their shape holds them");
+        }
+    }
+}
+
+void Design::patternSketchCurves(FeatureId sketchId, const std::vector<std::size_t>& picked,
+                                 const std::vector<SketchPlacement>& placements)
+{
+    const State before = m_state;
+    keepSolvedSketch(sketchId);
+    Feature& f = m_state.features[indexOf(sketchId)];
+    if (f.type != "sketch")
+        throw DesignError("Feature " + std::to_string(sketchId) + " is not a sketch");
+    auto it = m_sketches.find(sketchId);
+    if (it == m_sketches.end())
+        throw DesignError(f.name + " is not evaluated");
+    const std::vector<SketchCurve> curves = it->second.curves;
+    std::vector<bool> sel(curves.size(), false);
+    for (const std::size_t i : picked) {
+        if (i >= curves.size())
+            throw DesignError(f.name + " has no curve " + std::to_string(i));
+        sel[i] = true;
+    }
+    if (picked.empty())
+        throw DesignError("Select the sketch curves to copy");
+    if (placements.empty())
+        throw DesignError("Nothing to copy: no placements");
+
+    const Eval ev{*this};
+    Json items = f.params.value("curves", Json::array());
+    const Json constraints = f.params.value("constraints", Json::array());
+    const auto ranges = itemRanges(ev, items, curves.size(), f.name);
+    auto whole = [&](std::size_t k) {
+        for (std::size_t i = 0; i < ranges[k].second; ++i)
+            if (!sel[ranges[k].first + i])
+                return false;
+        return ranges[k].second > 0;
+    };
+
+    // One copy per placement, each at the end: whole items stay items (a rectangle stays a
+    // rectangle, turned it becomes a 3-point rectangle); single curves of a shape become
+    // lines, arcs or points. Constraints among the copied curves come along; ones tied to
+    // the origin or that fix a point stay with the originals, and so do directions along
+    // the sketch axes (horizontal, a horizontal distance) when the copy is turned.
+    Json all = constraints;
+    std::vector<std::vector<std::optional<std::size_t>>> maps;
+    std::size_t next = curves.size();
+    for (const SketchPlacement& place : placements) {
+        const bool turned = place.angleDegrees != 0.0;
+        std::vector<std::optional<std::size_t>> map(curves.size());
+        for (std::size_t k = 0; k < ranges.size(); ++k) {
+            const auto [first, count] = ranges[k];
+            if (whole(k)) {
+                const std::string type = lower(items[k].at("type").get<std::string>());
+                const Json item = turned && (type == "rectangle" || type == "center_rectangle")
+                                      ? asThreePointRectangle(items[k], curves.data() + first)
+                                      : items[k];
+                std::vector<SketchCurve> now;
+                for (std::size_t i = 0; i < count; ++i)
+                    now.push_back(placedCurve(curves[first + i], place));
+                items.push_back(itemFromSolved(item, now.data(), count));
+                for (std::size_t i = 0; i < count; ++i)
+                    map[first + i] = next++;
+                continue;
+            }
+            for (std::size_t i = 0; i < count; ++i) {
+                if (!sel[first + i])
+                    continue;
+                items.push_back(curveItem(placedCurve(curves[first + i], place)));
+                map[first + i] = next++;
+            }
+        }
+        for (auto c : constraints) {
+            const std::string type = lower(c.value("type", std::string()));
+            if (type == "fix" || c.dump().find("\"origin\"") != std::string::npos)
+                continue;
+            if (turned && (type == "horizontal" || type == "vertical" || type == "horizontal_distance" ||
+                           type == "vertical_distance"))
+                continue;
+            if (remapConstraint(c, map))
+                all.push_back(c);
+        }
+        maps.push_back(std::move(map));
+    }
+    f.params["curves"] = items;
+    if (!all.empty())
+        f.params["constraints"] = all;
+    regenerateChecked(sketchId, before);
+    // The copies must be where they were asked to go (as the preview shows them).
+    it = m_sketches.find(sketchId);
+    for (std::size_t n = 0; n < placements.size(); ++n) {
+        for (std::size_t i = 0; i < curves.size() && it != m_sketches.end(); ++i) {
+            if (!maps[n][i])
+                continue;
+            if (*maps[n][i] >= it->second.curves.size() ||
+                !sameShape(it->second.curves[*maps[n][i]], placedCurve(curves[i], placements[n]), 1e-6)) {
+                m_state = before;
+                regenerate();
+                throw DesignError("The copied curves' constraints do not let them sit there");
+            }
         }
     }
 }

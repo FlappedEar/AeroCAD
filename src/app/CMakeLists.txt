@@ -558,6 +558,11 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_point.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_sketch_point_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-251: Sketch Circular / Rectangular Pattern with real clicks.
+    add_test(NAME app_sketch_pattern_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_pattern.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_sketch_pattern_test PROPERTIES LABELS gui TIMEOUT 60)
     # CAD-249: an empty sketch shows no "Fully constrained" status.
     add_test(NAME app_sketch_empty_status_test
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_empty_status.ui
