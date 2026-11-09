@@ -1220,6 +1220,11 @@ Item {
         } else if ((tool === "circular_pattern" || tool === "rectangular_pattern") && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)) {
             applyPattern()
             event.accepted = true
+        } else if (tool === "scale" && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)) {
+            // After a click on the point that stays the factor field has lost focus:
+            // Enter still applies the factor typed (and previewed).
+            applyScale(scaleFactor)
+            event.accepted = true
         } else if (active && !constraintTool && tool !== "spline" && tool !== "tangent_arc" && (points.length > 0 || tool === "offset" || tool === "move" || tool === "scale") && /^[0-9.(\-]$/.test(event.text)) {
             dimension.text = event.text
             dimension.forceActiveFocus()

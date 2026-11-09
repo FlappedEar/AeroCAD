@@ -1,8 +1,8 @@
 # CAD-253: Sketch Scale (Fusion: Modify > Sketch Scale) with real clicks and keys:
 #  - select a dimensioned circle, right-click > Sketch Scale, type 2 (previewed), Enter: it
 #    doubles about its middle and its diameter dimension follows (one undo);
-#  - select the rectangle's sides, MODIFY > Sketch Scale on the ribbon, click a corner (it
-#    snaps), type 0.5, Enter: the rectangle halves towards that corner.
+#  - select the rectangle's sides, MODIFY > Sketch Scale on the ribbon, type 0.5, click a
+#    corner (it snaps), Enter: the rectangle halves towards that corner.
 # Run: AeroCAD --ui-script <this file>
 Qt.createQmlObject('import QtQuick; Item { objectName: "ssTest"; visible: false; function at(q) { const o = viewport.sketchOverlay; const p = o.toScreen(q); return o.mapToItem(null, p.x, p.y) } function sketch() { return controller.execute("sketch.curves", { sketch: activeSketch.id }).result } }', window.contentItem)
 ui.wait(800)
@@ -42,11 +42,12 @@ ui.wait(400)
 (() => { if (!ui.clickText("Sketch Scale")) ui.fail("no Sketch Scale in the MODIFY menu") })()
 ui.wait(300)
 (() => { if (sketchTool !== "scale" || viewport.sketchOverlay.scaleCurves.length !== 4) ui.fail("Sketch Scale did not start on the 4 sides: " + sketchTool) })()
-(() => { const w = Array.from(window.contentItem.children).find(c => c.objectName === "ssTest").at([-19.6, -9.7]); ui.move(w.x, w.y); ui.wait(100); ui.click(w.x, w.y) })()
-ui.wait(300)
-(() => { const p = viewport.sketchOverlay.scalePoint; ui.log("point " + JSON.stringify(p)); if (!p || Math.hypot(p[0] + 20, p[1] + 10) > 1e-6) ui.fail("the point did not snap to the corner") })()
+# The factor first, then the point that stays: Enter still applies the previewed scale.
 ui.type("0.5")
 ui.wait(300)
+(() => { const w = Array.from(window.contentItem.children).find(c => c.objectName === "ssTest").at([-19.6, -9.7]); ui.move(w.x, w.y); ui.wait(100); ui.click(w.x, w.y) })()
+ui.wait(300)
+(() => { const o = viewport.sketchOverlay; const p = o.scalePoint; ui.log("point " + JSON.stringify(p) + ", factor " + o.scaleFactor); if (!p || Math.hypot(p[0] + 20, p[1] + 10) > 1e-6) ui.fail("the point did not snap to the corner"); if (o.scaleFactor !== 0.5) ui.fail("the typed factor was lost") })()
 ui.key("Return")
 ui.wait(600)
 (() => { const c = Array.from(window.contentItem.children).find(c => c.objectName === "ssTest").sketch().curves; ui.log("sides " + JSON.stringify(c.slice(0, 4).map(k => k.points))); if (Math.hypot(c[0].points[0][0] + 20, c[0].points[0][1] + 10) > 1e-6) ui.fail("the corner that stays moved"); if (Math.hypot(c[1].points[1][0], c[1].points[1][1]) > 1e-6) ui.fail("the far corner is not halfway, at (0, 0)") })()
