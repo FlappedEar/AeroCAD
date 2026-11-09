@@ -492,7 +492,8 @@ if(AEROCAD_BUILD_TESTS)
         ENVIRONMENT "XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/fin-centre-data;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/fin-centre-data")
     # CAD-250: a background recovery copy keeps the status line.
     add_test(NAME app_autosave_keeps_status_test
-        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/autosave_keeps_status.ui
+        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/tetrahedron.stl
+                --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/autosave_keeps_status.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_autosave_keeps_status_test PROPERTIES LABELS gui TIMEOUT 60
         ENVIRONMENT "XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/autosave-status-data;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/autosave-status-data")
