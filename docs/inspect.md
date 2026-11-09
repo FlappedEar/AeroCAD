@@ -91,6 +91,10 @@ are measured against a dense triangulation of it (deflection 1/20 of the toleran
 its size), and every value above 2 % of the tolerance is then measured on the exact faces
 (projection onto each face's surface, inside its trim). The display mesh alone can be off by
 a tenth of a millimetre, more near sewn edges, which is more than a typical fit tolerance.
+The projection is local, started from the nearest of a 25 x 25 grid of samples on each face;
+faces are tried nearest sample first, those whose bounding box is farther than the best distance
+found are skipped, and the points are shared between all cores (CAD-261: 66 s to 5 s on a 21-face fit of
+a bumper scan).
 
 Fitted surfaces and solids (made by Fit smooth surface or Whole scan to solid) have the action
 **Show deviation from the scan**: it colours the scan they were fitted to (range +/- twice the

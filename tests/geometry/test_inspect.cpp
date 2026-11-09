@@ -72,6 +72,30 @@ TEST_CASE("Mesh distances are refined on the exact faces up and down", "[geometr
     CHECK(values[3] == 0.01);
 }
 
+TEST_CASE("Refined distances to curved faces are exact (CAD-261)", "[geometry][inspect]")
+{
+    // Points around a cylinder (radius 20, height 40): the distance to the side is
+    // |r - 20| inside the height; the seeded local projection must find it everywhere.
+    const auto cylinder = geometry::makeCylinder(20, 40);
+    std::vector<core::Vec3> points;
+    std::vector<double> expected;
+    for (int k = 0; k < 2400; ++k) { // enough points for several threads
+        const double a = k * std::numbers::pi / 180.0 * 7.3;
+        const double r = 20.0 + ((k % 2) != 0 ? 1.0 : -1.0) * (0.2 + 0.01 * (k % 50));
+        points.push_back({r * std::cos(a), r * std::sin(a), 10.0 + 20.0 * (k % 7) / 6.0});
+        expected.push_back(r - 20.0);
+    }
+    std::vector<double> values(points.size());
+    for (std::size_t i = 0; i < values.size(); ++i)
+        values[i] = expected[i] > 0 ? 5.0 : -5.0; // the mesh value: wrong but with the sign
+    CHECK(geometry::refineShapeDistances(cylinder, points, values, 0.0, 5000) == points.size());
+    std::size_t wrong = 0;
+    for (std::size_t i = 0; i < values.size(); ++i)
+        if (std::abs(values[i] - expected[i]) > 1e-5)
+            ++wrong;
+    CHECK(wrong == 0);
+}
+
 TEST_CASE("Drawn sketch lines become one edge per smooth stretch", "[geometry][inspect]")
 {
     // A quarter circle of radius 10 in 30 segments, then a sharp turn into a 5 mm line.

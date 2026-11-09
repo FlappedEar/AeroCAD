@@ -25,6 +25,7 @@
 #include <GeomAPI_ProjectPointOnSurf.hxx>
 #include <IntCurvesFace_ShapeIntersector.hxx>
 #include <gp_Lin.hxx>
+#include <BRepTools.hxx>
 #include <BRepTopAdaptor_FClass2d.hxx>
 #include <BRep_Tool.hxx>
 #include <Bnd_Box.hxx>
@@ -43,6 +44,8 @@
 #include <gp_Pln.hxx>
 
 #include <algorithm>
+#include <atomic>
+#include <thread>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -525,51 +528,126 @@ std::size_t refineShapeDistances(const Shape& shape, const std::vector<core::Vec
     if (order.size() > maxCount)
         order.resize(maxCount);
 
-    // Each face: its surface with a cached projection grid, its trim classifier and box.
+    // Each face: its surface, its trim classifier, box, and a grid of surface samples
+    // that seeds a local projection: a global projection per point (ValueOfUV) took a
+    // minute for a deviation map on a scan (CAD-261).
     struct FaceData {
         Handle(ShapeAnalysis_Surface) surface;
         std::unique_ptr<BRepTopAdaptor_FClass2d> classifier;
         Bnd_Box box;
+        std::vector<gp_Pnt> samples;
+        std::vector<gp_Pnt2d> sampleUV;
     };
-    std::vector<FaceData> faces;
-    for (TopExp_Explorer ex(shape.impl()->shape, TopAbs_FACE); ex.More(); ex.Next()) {
-        const TopoDS_Face face = TopoDS::Face(ex.Current());
-        const Handle(Geom_Surface) surface = BRep_Tool::Surface(face);
-        if (surface.IsNull())
-            continue;
-        FaceData f;
-        f.surface = new ShapeAnalysis_Surface(surface);
-        f.classifier = std::make_unique<BRepTopAdaptor_FClass2d>(face, 1e-7);
-        BRepBndLib::Add(face, f.box);
-        faces.push_back(std::move(f));
-    }
-    std::size_t replaced = 0;
-    for (const auto i : order) {
-        const gp_Pnt p(points[i].x, points[i].y, points[i].z);
-        const double current = std::abs(values[i]);
-        // The exact distance replaces the mesh one either way: an inscribed triangulation
-        // can also be closer than the surface (inside a convex reference).
-        double best = std::numeric_limits<double>::infinity();
-        for (auto& f : faces) {
-            Bnd_Box near = f.box;
-            near.Enlarge(2.0 * current + 1e-3);
-            if (near.IsOut(p))
+    constexpr int seedSpans = 24;
+    // Built once per thread: OpenCASCADE's projection and classification objects keep
+    // state and are not shared between threads.
+    const auto buildFaces = [&shape] {
+        std::vector<FaceData> faces;
+        for (TopExp_Explorer ex(shape.impl()->shape, TopAbs_FACE); ex.More(); ex.Next()) {
+            const TopoDS_Face face = TopoDS::Face(ex.Current());
+            const Handle(Geom_Surface) surface = BRep_Tool::Surface(face);
+            if (surface.IsNull())
                 continue;
-            try {
-                const gp_Pnt2d uv = f.surface->ValueOfUV(p, 1e-6);
-                if (f.classifier->Perform(uv) == TopAbs_OUT)
-                    continue; // projects outside the trimmed face: the neighbour covers it
-                best = std::min(best, f.surface->Gap());
-            } catch (const Standard_Failure&) {
-                // keep the mesh distance
+            FaceData f;
+            f.surface = new ShapeAnalysis_Surface(surface);
+            f.classifier = std::make_unique<BRepTopAdaptor_FClass2d>(face, 1e-7);
+            // From the geometry, not the triangulation: a safe bound for skipping the face.
+            BRepBndLib::Add(face, f.box, false);
+            double u0 = 0.0, u1 = 0.0, v0 = 0.0, v1 = 0.0;
+            BRepTools::UVBounds(face, u0, u1, v0, v1);
+            for (int j = 0; j <= seedSpans; ++j)
+                for (int i = 0; i <= seedSpans; ++i) {
+                    const gp_Pnt2d uv(u0 + (u1 - u0) * i / seedSpans, v0 + (v1 - v0) * j / seedSpans);
+                    f.samples.push_back(surface->Value(uv.X(), uv.Y()));
+                    f.sampleUV.push_back(uv);
+                }
+            faces.push_back(std::move(f));
+        }
+        return faces;
+    };
+    std::atomic<std::size_t> replaced{0};
+    std::atomic<std::size_t> next{0};
+    constexpr std::size_t chunk = 64;
+    const auto work = [&] {
+        std::vector<FaceData> faces = buildFaces();
+        for (std::size_t from = next.fetch_add(chunk); from < order.size(); from = next.fetch_add(chunk))
+            for (std::size_t o = from; o < std::min(from + chunk, order.size()); ++o) {
+                const std::size_t i = order[o];
+                const gp_Pnt p(points[i].x, points[i].y, points[i].z);
+                const double current = std::abs(values[i]);
+                // The exact distance replaces the mesh one either way: an inscribed triangulation
+                // can also be closer than the surface (inside a convex reference).
+                // Faces in the order of their nearest sample (likely the closest first). A face
+                // whose bounding box is farther than the best distance found is skipped: the box
+                // is a safe bound, the samples are not (a bulge between them).
+                struct Candidate {
+                    double estimate;
+                    double bound;
+                    std::size_t face;
+                    std::size_t seed;
+                };
+                std::vector<Candidate> candidates;
+                for (std::size_t n = 0; n < faces.size(); ++n) {
+                    const auto& f = faces[n];
+                    Bnd_Box near = f.box;
+                    near.Enlarge(2.0 * current + 1e-3);
+                    if (near.IsOut(p))
+                        continue;
+                    std::size_t seed = 0;
+                    double seedDistance = std::numeric_limits<double>::infinity();
+                    for (std::size_t k = 0; k < f.samples.size(); ++k) {
+                        const double d = f.samples[k].SquareDistance(p);
+                        if (d < seedDistance) {
+                            seedDistance = d;
+                            seed = k;
+                        }
+                    }
+                    double xmin = 0.0, ymin = 0.0, zmin = 0.0, xmax = 0.0, ymax = 0.0, zmax = 0.0;
+                    f.box.Get(xmin, ymin, zmin, xmax, ymax, zmax);
+                    const double dx = std::max({xmin - p.X(), 0.0, p.X() - xmax});
+                    const double dy = std::max({ymin - p.Y(), 0.0, p.Y() - ymax});
+                    const double dz = std::max({zmin - p.Z(), 0.0, p.Z() - zmax});
+                    candidates.push_back({seedDistance, std::sqrt(dx * dx + dy * dy + dz * dz), n, seed});
+                }
+                std::sort(candidates.begin(), candidates.end(),
+                          [](const Candidate& a, const Candidate& b) { return a.estimate < b.estimate; });
+                double best = std::numeric_limits<double>::infinity();
+                for (const auto& c : candidates) {
+                    if (c.bound >= best)
+                        continue;
+                    auto& f = faces[c.face];
+                    try {
+                        // Falls back to a global search by itself when the local one fails,
+                        // and when it lands farther than the dense-mesh distance allows: a
+                        // folded face can have a farther local minimum next to the seed.
+                        const double maxGap = current + std::max(0.25 * current, 0.01);
+                        const gp_Pnt2d uv = f.surface->NextValueOfUV(f.sampleUV[c.seed], p, 1e-6, maxGap);
+                        const double gap = f.surface->Gap();
+                        if (gap >= best)
+                            continue;
+                        if (f.classifier->Perform(uv) == TopAbs_OUT)
+                            continue; // projects outside the trimmed face: the neighbour covers it
+                        best = gap;
+                    } catch (const Standard_Failure&) {
+                        // keep the mesh distance
+                    }
+                }
+                if (std::isfinite(best)) {
+                    values[i] = values[i] < 0.0 ? -best : best;
+                    ++replaced;
+                }
             }
-        }
-        if (std::isfinite(best)) {
-            values[i] = values[i] < 0.0 ? -best : best;
-            ++replaced;
-        }
-    }
-    return replaced;
+    };
+    // Each value is written by one thread only.
+    const std::size_t threads =
+        std::clamp<std::size_t>(order.size() / 500, 1, std::max(1u, std::thread::hardware_concurrency()));
+    std::vector<std::thread> pool;
+    for (std::size_t k = 1; k < threads; ++k)
+        pool.emplace_back(work);
+    work();
+    for (auto& t : pool)
+        t.join();
+    return replaced.load();
 }
 
 } // namespace aerocad::geometry
