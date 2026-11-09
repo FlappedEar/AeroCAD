@@ -160,8 +160,10 @@ Menu {
             _addAction(root, registry.action(id, info || {}), false)
     }
 
-    // Built as soon as the info is set: a Menu without items does not open at all.
-    onInfoChanged: _build()
+    // A Menu without items does not open at all, so it is built once up front; after that it
+    // is rebuilt when it opens (aboutToShow), or at once while it is open. The info changes
+    // with every edit of the selected part, and building the menu takes ~15 ms.
+    onInfoChanged: if (visible || count === 0) _build()
     onAboutToShow: _build()
     Component.onCompleted: _build()
 }

@@ -2,12 +2,16 @@
 #include "MeshGeometry.hpp"
 
 #include "AppController.hpp"
+#include "aerocad/core/Align.hpp"
 #include "aerocad/core/MeshSimplify.hpp"
 #include "ScanController.hpp"
 
 #include <QByteArray>
 #include <QVector3D>
 
+#include <cmath>
+#include <algorithm>
+#include <thread>
 #include <cstring>
 #include <limits>
 #include <vector>
@@ -51,6 +55,77 @@ void MeshGeometry::onPartChanged(quint64 id)
         rebuild();
 }
 
+bool MeshGeometry::moveBuilt(const std::shared_ptr<const core::TriangleMesh>& display)
+{
+    const auto tf = core::affineBetween(*m_builtMesh, *display);
+    if (!tf)
+        return false;
+    const QByteArray old = vertexData();
+    constexpr int floatsPerVertex = 6;
+    const qsizetype vertexCount = old.size() / static_cast<qsizetype>(floatsPerVertex * sizeof(float));
+    if (vertexCount != static_cast<qsizetype>(display->triangleCount()) * 3)
+        return false; // not the per-corner layout this mesh was built with
+    // Normals turn with the inverse transpose; the cofactor matrix is that times the
+    // determinant, so its sign keeps the normals on their side when the transform mirrors.
+    const core::Mat3& l = tf->linear;
+    const double det = l.determinant();
+    if (det == 0.0 || !std::isfinite(det))
+        return false;
+    const double sign = det > 0.0 ? 1.0 : -1.0;
+    const core::Mat3 cof = core::Mat3::fromRows(l.row(1).cross(l.row(2)) * sign, l.row(2).cross(l.row(0)) * sign,
+                                                l.row(0).cross(l.row(1)) * sign);
+    float nm[9];
+    for (int i = 0; i < 9; ++i)
+        nm[i] = static_cast<float>(cof.m[static_cast<std::size_t>(i)]);
+
+    // A new buffer, written from the old one: the old one is still shared with the renderer,
+    // so writing it in place would first copy tens of MB.
+    QByteArray buffer(old.size(), Qt::Uninitialized);
+    const auto* src = reinterpret_cast<const float*>(old.constData());
+    auto* dst = reinterpret_cast<float*>(buffer.data());
+    const bool mirrored = det < 0.0;
+    const core::Affine transform = *tf;
+    // transformMesh reverses the winding of a mirrored mesh, (a, b, c) -> (a, c, b): corner k
+    // of a triangle then comes from corner (3 - k) % 3.
+    auto work = [&](qsizetype firstTriangle, qsizetype endTriangle) {
+        for (qsizetype t = firstTriangle; t < endTriangle; ++t) {
+            for (qsizetype k = 0; k < 3; ++k) {
+                const qsizetype from = t * 3 + (mirrored ? (3 - k) % 3 : k);
+                const float* v = src + from * floatsPerVertex;
+                float* o = dst + (t * 3 + k) * floatsPerVertex;
+                // Positions in double (a scan far from the origin keeps its precision).
+                const core::Vec3 p = transform.apply(core::Vec3{v[0], v[1], v[2]});
+                o[0] = static_cast<float>(p.x);
+                o[1] = static_cast<float>(p.y);
+                o[2] = static_cast<float>(p.z);
+                const float nx = nm[0] * v[3] + nm[1] * v[4] + nm[2] * v[5];
+                const float ny = nm[3] * v[3] + nm[4] * v[4] + nm[5] * v[5];
+                const float nz = nm[6] * v[3] + nm[7] * v[4] + nm[8] * v[5];
+                const float len = std::sqrt(nx * nx + ny * ny + nz * nz);
+                const float inv = len > 0.0f ? 1.0f / len : 0.0f;
+                o[3] = nx * inv;
+                o[4] = ny * inv;
+                o[5] = nz * inv;
+            }
+        }
+    };
+    const qsizetype triangles = vertexCount / 3;
+    const qsizetype chunks = std::clamp<qsizetype>(static_cast<qsizetype>(std::thread::hardware_concurrency()), 1, 8);
+    std::vector<std::thread> threads;
+    for (qsizetype c = 1; c < chunks; ++c)
+        threads.emplace_back(work, triangles * c / chunks, triangles * (c + 1) / chunks);
+    work(0, triangles / chunks);
+    for (auto& th : threads)
+        th.join();
+    setVertexData(buffer);
+    const core::BoundingBox box = display->bounds();
+    setBounds(QVector3D(static_cast<float>(box.min.x), static_cast<float>(box.min.y), static_cast<float>(box.min.z)),
+              QVector3D(static_cast<float>(box.max.x), static_cast<float>(box.max.y), static_cast<float>(box.max.z)));
+    m_builtMesh = display;
+    update();
+    return true;
+}
+
 void MeshGeometry::rebuild()
 {
     const model::Part* part = m_controller ? m_controller->part(m_partId) : nullptr;
@@ -62,6 +137,13 @@ void MeshGeometry::rebuild()
     // Only the drawn mesh (and whether it is a B-rep tessellation) affects the GPU data;
     // other part changes such as the selection or the name do not need a re-upload.
     if (part != nullptr && display == m_builtMesh && part->shape.has_value() == m_builtWithShape)
+        return;
+
+    // A big scan moved, turned or scaled (or its reduced mesh moved along with it): move the
+    // uploaded corners instead of building them again; smoothing the normals of a
+    // million-triangle mesh takes most of a 0.1 s.
+    if (part != nullptr && display && !part->shape && !m_builtWithShape && m_builtMesh &&
+        display->triangleCount() >= kMoveInPlaceTriangles && moveBuilt(display))
         return;
 
     clear();
