@@ -13,7 +13,9 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
+#include <cmath>
 #include <filesystem>
 #include <memory>
 #include <random>
@@ -292,6 +294,123 @@ TEST_CASE("Both sides refuses a fin drawn across the centre plane (it would over
     auto one = scene.session.execute("surface.fin_from_sketch", {{"sketch", sk.data.at("id")}, {"thickness", 3.0}});
     INFO(one.toJson().dump());
     CHECK(one.ok);
+}
+
+namespace {
+
+/// A flat 400 x 400 mm scan at Z = 0, centred on the origin (20 mm grid), with one fin
+/// sketch standing on it at (0, y), level; `inYZ` turns it so its plane is exactly YZ (local
+/// V along world -Y), otherwise it leans as the area's best-fit axis says.
+struct FlatFinScene {
+    commands::Session session;
+    model::PartId scanId = 0;
+
+    FlatFinScene()
+    {
+        std::vector<core::Vec3> v;
+        std::vector<core::TriangleMesh::Triangle> t;
+        const int n = 20;
+        for (int j = 0; j <= n; ++j)
+            for (int i = 0; i <= n; ++i)
+                v.push_back({-200.0 + 20.0 * i, -200.0 + 20.0 * j, 0.0});
+        auto idx = [&](int i, int j) { return static_cast<std::uint32_t>(j * (n + 1) + i); };
+        for (int j = 0; j < n; ++j)
+            for (int i = 0; i < n; ++i) {
+                t.push_back({idx(i, j), idx(i + 1, j), idx(i + 1, j + 1)});
+                t.push_back({idx(i, j), idx(i + 1, j + 1), idx(i, j + 1)});
+            }
+        model::Part scan;
+        scan.name = "Flat";
+        scan.mesh = std::make_shared<const core::TriangleMesh>(core::TriangleMesh(v, t));
+        scanId = session.document().addPart(scan);
+    }
+
+    /// The normal of a sketch's plane, from the timeline.
+    Json planeNormal(const Json& sketchId)
+    {
+        auto tl = session.execute("timeline.list");
+        REQUIRE(tl.ok);
+        for (const auto& f : tl.data.at("features"))
+            if (f.at("id") == sketchId)
+                return f.at("params").at("plane").at("normal");
+        FAIL("sketch not in the timeline");
+        return {};
+    }
+
+    /// Fins from closed rectangles (u0, u1, v0, v1) in sketch coordinates, mirrored in XZ.
+    commands::CommandResult fins(const std::vector<std::array<double, 4>>& rects, double y = 10.0, bool inYZ = false)
+    {
+        auto line = [](double x0, double y0, double x1, double y1) {
+            return Json{{"type", "line"}, {"start", {x0, y0}}, {"end", {x1, y1}}};
+        };
+        Json curves = Json::array();
+        for (const auto& r : rects) {
+            curves.push_back(line(r[0], r[2], r[1], r[2]));
+            curves.push_back(line(r[1], r[2], r[1], r[3]));
+            curves.push_back(line(r[1], r[3], r[0], r[3]));
+            curves.push_back(line(r[0], r[3], r[0], r[2]));
+        }
+        auto create = [&](double angle, const Json& c) {
+            return session.execute("sketch.create", {{"surface", {{"part", scanId}, {"point", {0.0, y, 0.0}}, {"across", true}, {"angle", angle}}},
+                                                     {"curves", c}});
+        };
+        double angle = 0.0;
+        if (inYZ) {
+            // Turn the fin about Z until its plane is exactly YZ (its normal along X).
+            auto probe = create(0.0, Json::array());
+            REQUIRE(probe.ok);
+            const Json n = planeNormal(probe.data.at("id"));
+            const double ux = n.at(0).get<double>(), uy = n.at(1).get<double>();
+            angle = std::atan2(uy, ux) * -180.0 / 3.14159265358979323846;
+        }
+        auto sk = create(angle, curves);
+        INFO(sk.toJson().dump());
+        REQUIRE(sk.ok);
+        if (inYZ)
+            REQUIRE(std::abs(planeNormal(sk.data.at("id")).at(0).get<double>()) > 0.9999);
+        return session.execute("surface.fin_from_sketch",
+                               {{"sketch", sk.data.at("id")}, {"thickness", 3.0}, {"mirror", true}, {"mirrorPlane", "xz"}});
+    }
+
+    [[nodiscard]] std::size_t bodies() const
+    {
+        std::size_t n = 0;
+        for (const auto& q : session.document().parts())
+            n += q.kind == model::PartKind::Body ? 1 : 0;
+        return n;
+    }
+};
+
+} // namespace
+
+// CAD-246 (Codex review): the plane check is per profile, so two outlines on opposite
+// sides of the mirror plane, each clear of every mirrored copy, are fine.
+TEST_CASE("Both sides keeps two separate outlines on opposite sides of the mirror plane", "[commands][fit][canard]")
+{
+    FlatFinScene scene;
+    auto r = scene.fins({{-15, 30, -65, -55}, {-15, 30, 17, 27}});
+    INFO(r.toJson().dump());
+    REQUIRE(r.ok);
+    CHECK(scene.bodies() == 2);
+}
+
+// CAD-246: an outline that runs into the mirrored copy of another one is refused, even
+// though neither crosses the plane.
+TEST_CASE("Both sides refuses an outline that overlaps another outline's mirrored copy", "[commands][fit][canard]")
+{
+    FlatFinScene scene;
+    // A fin in the YZ plane from y = 20: V -15..-5 is Y 25..35 and V 40..50 is Y -30..-20,
+    // so the second one's mirror image lands on the first.
+    auto r = scene.fins({{-15, 30, -15, -5}, {-15, 30, 40, 50}}, 20.0, true);
+    INFO(r.toJson().dump());
+    REQUIRE_FALSE(r.ok);
+    CHECK(r.error.find("overlaps the mirrored copy") != std::string::npos);
+    CHECK(scene.bodies() == 0);
+    // Exactly on top of it (V 45..55 is Y -35..-25).
+    auto same = scene.fins({{-15, 30, -15, -5}, {-15, 30, 45, 55}}, 20.0, true);
+    INFO(same.toJson().dump());
+    REQUIRE_FALSE(same.ok);
+    CHECK(same.error.find("overlaps the mirrored copy") != std::string::npos);
 }
 
 TEST_CASE("Canards exported for printing: one STL and one STEP per fin", "[commands][fit][canard][export]")

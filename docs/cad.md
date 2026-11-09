@@ -127,7 +127,7 @@ rebuilding, AeroCAD reports the problem; Undo restores the previous source.
 | `feature.sphere`, `feature.torus` | Sphere, Torus | `center` (default origin), `diameter`; torus: ring `diameter` (centre line, around +Z) and `tube_diameter` (smaller than `diameter`); with an operation |
 | `feature.base_body` | Mesh to BRep / base feature | imported part as a body: B-rep as is, meshes as faceted B-rep (coplanar triangles merged, max 50 000 triangles) |
 | `surface.part_from_sketch` → `part_on_surface` | (AeroCAD) Part on surface | timeline step built on a scan or fitted surface: `sketch`, `thickness`, `side`, `profiles`, `tolerance`, `id` (surface part, default: the one the sketch was drawn on) |
-| `surface.fin_from_sketch` → `fin_on_surface` | (AeroCAD) Fin on surface | timeline step: `sketch` (drawn across the surface), `thickness`, `rootFillet`, `count`, `spacing`, `mirror`, `mirrorPlane`; one body per fin. With `mirror`, a fin that reaches more than 0.5 mm across the mirror plane is refused, since it would overlap its mirrored copy (CAD-246) |
+| `surface.fin_from_sketch` → `fin_on_surface` | (AeroCAD) Fin on surface | timeline step: `sketch` (drawn across the surface), `thickness`, `rootFillet`, `count`, `spacing`, `mirror`, `mirrorPlane`; one body per fin. With `mirror`, an outline that reaches more than 0.5 mm across the mirror plane, or runs into the mirrored copy of another outline, is refused, since the bodies would overlap (CAD-246); separate outlines on both sides of the plane are fine |
 | `feature.edit` / `rename` / `suppress` / `delete` | timeline context menu | edit = JSON merge patch of params |
 | `timeline.list`, `timeline.set_marker`, `timeline.move_feature` | timeline | |
 | `parameter.set` / `remove` | Change Parameters | |
