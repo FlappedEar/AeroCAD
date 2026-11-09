@@ -21,6 +21,32 @@ const QString kInvertOrbitKey = QStringLiteral("navigation/invertOrbit");
 const QString kTouchpadScrollKey = QStringLiteral("navigation/touchpadScrollPans");
 const QString kAutosaveKey = QStringLiteral("project/autosaveSeconds");
 const QString kMinWallKey = QStringLiteral("export/minWallThickness");
+const QString kPrintMaterialKey = QStringLiteral("properties/printMaterial");
+const QString kDefaultPrintMaterial = QStringLiteral("pla");
+
+struct PrintMaterial {
+    const char* key;
+    const char* label;
+    double density; // g/cm^3, solid
+};
+// Typical datasheet densities of solid material.
+constexpr PrintMaterial kPrintMaterials[] = {
+    {"pla", QT_TRANSLATE_NOOP("Preferences", "PLA"), 1.24},
+    {"petg", QT_TRANSLATE_NOOP("Preferences", "PETG"), 1.27},
+    {"abs", QT_TRANSLATE_NOOP("Preferences", "ABS"), 1.04},
+    {"asa", QT_TRANSLATE_NOOP("Preferences", "ASA"), 1.07},
+    {"pa12", QT_TRANSLATE_NOOP("Preferences", "Nylon PA12"), 1.01},
+    {"aluminium", QT_TRANSLATE_NOOP("Preferences", "Aluminium"), 2.70},
+};
+
+const PrintMaterial* findPrintMaterial(const QString& key)
+{
+    for (const auto& m : kPrintMaterials) {
+        if (key == QLatin1String(m.key))
+            return &m;
+    }
+    return nullptr;
+}
 
 const QString kDefaultUnit = QStringLiteral("mm");
 const QString kDefaultTheme = QStringLiteral("system");
@@ -60,6 +86,9 @@ Preferences::Preferences(QObject* parent) : QObject(parent)
     m_touchpadScrollPans = s.value(kTouchpadScrollKey, false).toBool();
     m_autosaveSeconds = std::clamp(s.value(kAutosaveKey, kDefaultAutosave).toInt(), 0, kMaxAutosave);
     m_minWallThickness = std::clamp(s.value(kMinWallKey, kDefaultMinWall).toDouble(), 0.0, kMaxMinWall);
+    m_printMaterial = s.value(kPrintMaterialKey, kDefaultPrintMaterial).toString();
+    if (findPrintMaterial(m_printMaterial) == nullptr)
+        m_printMaterial = kDefaultPrintMaterial;
 
 }
 
@@ -142,6 +171,32 @@ void Preferences::setMinWallThickness(double mm)
     emit minWallThicknessChanged();
 }
 
+void Preferences::setPrintMaterial(const QString& material)
+{
+    if (material == m_printMaterial || findPrintMaterial(material) == nullptr)
+        return;
+    m_printMaterial = material;
+    QSettings().setValue(kPrintMaterialKey, material);
+    emit printMaterialChanged();
+}
+
+double Preferences::printDensity() const
+{
+    const PrintMaterial* m = findPrintMaterial(m_printMaterial);
+    return m != nullptr ? m->density : kPrintMaterials[0].density;
+}
+
+QVariantList Preferences::printMaterials()
+{
+    QVariantList out;
+    for (const auto& m : kPrintMaterials) {
+        QVariantMap o = option(QString::fromLatin1(m.key), tr(m.label));
+        o.insert(QStringLiteral("density"), m.density);
+        out.push_back(o);
+    }
+    return out;
+}
+
 QVariantList Preferences::lengthUnits()
 {
     return {option(QStringLiteral("mm"), tr("Millimetres (mm)")), option(QStringLiteral("cm"), tr("Centimetres (cm)")),
@@ -217,6 +272,7 @@ void Preferences::resetToDefaults()
     setTouchpadScrollPans(false);
     setAutosaveSeconds(kDefaultAutosave);
     setMinWallThickness(kDefaultMinWall);
+    setPrintMaterial(kDefaultPrintMaterial);
 }
 
 } // namespace aerocad::app

@@ -25,6 +25,10 @@ struct MeshPoint {
 /// Only meaningful for closed meshes, see openEdgeCount().
 [[nodiscard]] double enclosedVolume(const TriangleMesh& mesh);
 
+/// Centre of mass of the solid a closed triangle mesh encloses (uniform density), from
+/// the signed tetrahedra to the origin. nullopt when the enclosed volume is (near) zero.
+[[nodiscard]] std::optional<Vec3> enclosedCentroid(const TriangleMesh& mesh);
+
 /// Number of edges not shared by exactly two triangles (boundary or non-manifold edges).
 /// 0 means the mesh is closed (watertight). Vertices with identical coordinates count as
 /// one, so meshes with per-face vertices (tessellated B-rep) are handled.

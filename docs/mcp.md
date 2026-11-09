@@ -79,7 +79,7 @@ replaced by `_` (`document.import` -> `document_import`). New commands (CAD tool
 | Tool | What it does |
 |---|---|
 | `project_get_context` | Units, axes, document revision, parts (id, name, bounds, revision), undo state. The agent calls it first. |
-| `geometry_measure` | `distance` between points, `part` (bounds, area, volume, closed?), `point_to_part`, `clearance` between two parts. Returns the method and data-quality warnings. |
+| `geometry_measure` | `distance` between points, `part` (bounds, area, volume, closed?, centre of mass), `point_to_part`, `clearance` between two parts. Returns the method and data-quality warnings. |
 | `document_import`, `document_parts`, `document_bounds` | Import STL/OBJ/3MF/STEP/IGES/BREP, list parts, bounds. |
 | `part_scale`, `part_rename`, `part_set_visible`, `part_remove` | Part edits (undoable). |
 | `part_set_color` | Appearance: `"#rrggbb"`, or `""` for the default colour (undoable, saved). |

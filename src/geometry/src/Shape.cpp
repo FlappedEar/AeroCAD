@@ -63,6 +63,31 @@ std::size_t Shape::solidCount() const
     return isNull() ? 0 : countSubShapes(m_impl->shape, TopAbs_SOLID);
 }
 
+double Shape::surfaceArea() const
+{
+    if (isNull())
+        return 0.0;
+    GProp_GProps props;
+    BRepGProp::SurfaceProperties(m_impl->shape, props, 1e-6);
+    return props.Mass();
+}
+
+std::optional<core::Vec3> Shape::centerOfMass() const
+{
+    if (isNull() || solidCount() == 0)
+        return std::nullopt;
+    GProp_GProps all;
+    for (TopExp_Explorer ex(m_impl->shape, TopAbs_SOLID); ex.More(); ex.Next()) {
+        GProp_GProps props;
+        BRepGProp::VolumeProperties(ex.Current(), props, 1e-6);
+        all.Add(props);
+    }
+    if (all.Mass() <= 0.0)
+        return std::nullopt;
+    const gp_Pnt c = all.CentreOfMass();
+    return core::Vec3{c.X(), c.Y(), c.Z()};
+}
+
 double Shape::volume() const
 {
     if (isNull() || solidCount() == 0)

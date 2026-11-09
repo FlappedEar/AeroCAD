@@ -269,6 +269,8 @@ TEST_CASE("geometry.measure: distance, part, point and clearance", "[commands][a
     r = session.execute("geometry.measure", {{"kind", "part"}, {"id", a}});
     REQUIRE(r.ok);
     CHECK(r.data.at("volume").get<double>() == Approx(1000.0 / 6.0));
+    REQUIRE(r.data.contains("centerOfMass")); // closed mesh: from the enclosed tetrahedra
+    CHECK(r.data.at("centerOfMass")[0].get<double>() == Approx(2.5));
     CHECK(r.data.at("closed") == true);
     CHECK(r.data.at("warnings").empty());
 
@@ -306,6 +308,11 @@ TEST_CASE("geometry.measure: B-rep parts are closed with exact volume", "[comman
     CHECK(r.data.at("closed") == true);
     CHECK(r.data.at("openEdges") == 0);
     CHECK(r.data.at("volume").get<double>() == Approx(6000.0));
+    CHECK(r.data.at("surfaceArea").get<double>() == Approx(2 * (200.0 + 600.0 + 300.0)));
+    REQUIRE(r.data.contains("centerOfMass"));
+    CHECK(r.data.at("centerOfMass")[0].get<double>() == Approx(5.0));
+    CHECK(r.data.at("centerOfMass")[1].get<double>() == Approx(10.0));
+    CHECK(r.data.at("centerOfMass")[2].get<double>() == Approx(15.0));
     CHECK(core::openEdgeCount(*box.mesh) == 0); // per-face tessellation vertices are welded
 }
 

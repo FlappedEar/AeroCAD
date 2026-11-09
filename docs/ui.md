@@ -395,7 +395,10 @@ nobody needs to know the commands beforehand:
 - **Properties** shows a step-by-step guide for the selection: what the part is (scan,
   surface, sketch, body, solid), numbered steps with one sentence each, the buttons for
   each step, a check mark on finished steps and, under a disabled button, why it is
-  disabled ("Select an area of the scan first (step 1)"). Below it: name and size.
+  disabled ("Select an area of the scan first (step 1)"). Below it: name and size, and for
+  a closed body, solid or mesh its physical properties (Fusion: Properties): volume, surface
+  area, centre of mass and the mass in the chosen print material (PLA, PETG, ABS, ASA,
+  Nylon PA12, Aluminium; solid material, the choice is remembered).
 - The **context bar** above the navigation bar repeats the recommended next step as a
   highlighted button, a few other actions and a menu with all of them.
 - **Right-click** a part in the view or the Browser for the same actions.

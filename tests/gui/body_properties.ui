@@ -1,0 +1,49 @@
+# CAD-192: physical properties of a body (Fusion: Properties) with real clicks:
+#  - a click selects an L-shaped body; the Properties panel shows its volume (3 cm³), surface
+#    area (14 cm²), centre of mass and mass in PLA (3 cm³ x 1.24 g/cm³ = 3.7 g);
+#  - choosing Aluminium in the material list changes the mass (8.1 g) and is remembered.
+# Run: AeroCAD --ui-script <this file>
+Qt.createQmlObject('import QtQuick; Item { objectName: "bpTest"; visible: false; function clickAt(x, y, z) { const v = viewport.viewPoint(Qt.vector3d(x, y, z)); const p = viewport.mapToItem(null, v.x, v.y); ui.click(p.x, p.y) } function find(it, name) { for (let i = 0; i < it.children.length; ++i) { const h = find(it.children[i], name); if (h) return h } return it.objectName === name ? it : null } function text(name) { const t = find(properties, name); return t && t.visible ? t.text : "" } }', window.contentItem)
+ui.wait(800)
+(() => { Preferences.printMaterial = "pla"; const a = controller.execute("feature.box", { size: [20, 10, 10] }); const b = controller.execute("feature.box", { corner: [0, 0, 10], size: [10, 10, 10], operation: "join" }); if (!a.ok || !b.ok) ui.fail("setup"); viewport.fitAll() })()
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "bpTest"); t.clickAt(15, 5, 10) })()
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "bpTest"); const v = t.text("propVolume"), a = t.text("propArea"), c = t.text("propCentre"), m = t.text("propMass"); ui.log("volume '" + v + "', area '" + a + "', centre '" + c + "', mass '" + m + "'"); if (!/^3[.,]000 cm³$/.test(v)) ui.fail("no volume 3 cm³"); if (!/^14[.,]00 cm²$/.test(a)) ui.fail("no area 14 cm²"); if (!/8[.,]33.*5[.,]00.*8[.,]33/.test(c)) ui.fail("wrong centre of mass"); if (!/^3[.,]7 g/.test(m)) ui.fail("no PLA mass 3.7 g") })()
+# Hidden (View > Show Properties off), the panel measures nothing; shown again, it does.
+(() => { window.propertiesVisible = false })()
+ui.wait(200)
+(() => { properties.refresh(); if (properties.physical !== null) ui.fail("the hidden panel still measured the body") })()
+(() => { window.propertiesVisible = true })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "bpTest"); if (!/^3[.,]000 cm³$/.test(t.text("propVolume"))) ui.fail("shown again, the panel has no volume: '" + t.text("propVolume") + "'") })()
+# Showing the panel during a Move preview must not end the move (an explicit
+# geometry.measure would commit it): it waits, and Esc still cancels the move.
+(() => { window.propertiesVisible = false })()
+ui.wait(200)
+ui.key("M")
+ui.wait(400)
+(() => { if (!viewport.transformActive) ui.fail("M did not start Move"); window.propertiesVisible = true })()
+ui.wait(300)
+(() => { if (!viewport.transformActive) ui.fail("showing Properties ended the Move preview"); if (properties.physical !== null) ui.fail("the panel measured during the Move preview") })()
+ui.key("Esc")
+ui.wait(400)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "bpTest"); if (viewport.transformActive) ui.fail("Esc did not cancel Move"); if (!/^3[.,]000 cm³$/.test(t.text("propVolume"))) ui.fail("after Move the panel has no volume: '" + t.text("propVolume") + "'") })()
+# Scroll the panel down to the details, as a user would.
+(() => { const p = properties.mapToItem(null, properties.width / 2, properties.height / 2); ui.mouseWheel(p.x, p.y, -3) })()
+ui.wait(150)
+(() => { const p = properties.mapToItem(null, properties.width / 2, properties.height / 2); ui.mouseWheel(p.x, p.y, -3) })()
+ui.wait(150)
+(() => { const p = properties.mapToItem(null, properties.width / 2, properties.height / 2); ui.mouseWheel(p.x, p.y, -3) })()
+ui.wait(150)
+(() => { const p = properties.mapToItem(null, properties.width / 2, properties.height / 2); ui.mouseWheel(p.x, p.y, -3) })()
+ui.wait(150)
+ui.wait(400)
+ui.shot("build/body-properties.png")
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "bpTest"); const box = t.find(properties, "propMaterial"); const p = box.mapToItem(null, box.width / 2, box.height / 2); ui.click(p.x, p.y) })()
+ui.wait(400)
+(() => { if (!ui.clickText("Aluminium (2.70 g/cm³)")) ui.fail("no Aluminium in the material list") })()
+ui.wait(400)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "bpTest"); const m = t.text("propMass"); ui.log("aluminium: '" + m + "', preference " + Preferences.printMaterial); if (!/^8[.,]1 g/.test(m)) ui.fail("the mass did not follow the material"); if (Preferences.printMaterial !== "aluminium") ui.fail("the material is not remembered") })()
+(() => { Preferences.printMaterial = "pla" })()
+ui.log("body properties OK")

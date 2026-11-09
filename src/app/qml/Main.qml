@@ -2616,6 +2616,7 @@ ApplicationWindow {
         PropertiesPanel {
             id: properties
             visible: window.propertiesVisible && !window.simulationVisible
+            busy: viewport.transformActive
             SplitView.preferredWidth: 280
             SplitView.minimumWidth: 200
             controller: window.controller
