@@ -15,6 +15,12 @@ namespace aerocad::commands {
 
 namespace {
 
+Json withDescription(Json schema, const std::string& text)
+{
+    schema["description"] = text;
+    return schema;
+}
+
 Json pointSchema(const char* description)
 {
     return Json{{"type", "array"},
@@ -216,7 +222,7 @@ void registerSelectionCommands(CommandRegistry& r)
                   {"items", {{"type", "array"}, {"items", {{"type", "number"}}}, {"minItems", 2}, {"maxItems", 2}}},
                   {"description", "Polygon [[x, y], ...] in normalized viewport coordinates."}}},
                 {"view",
-                 objectSchema(
+                 withDescription(objectSchema(
                      {{"eye", pointSchema("Camera position in mm.")},
                       {"forward", pointSchema("Viewing direction.")},
                       {"up", pointSchema("Screen up direction.")},
@@ -233,7 +239,8 @@ void registerSelectionCommands(CommandRegistry& r)
                        {{"type", "number"},
                         {"exclusiveMinimum", 0},
                         {"description", "Orthographic only: viewport height in mm."}}}},
-                     {"eye", "forward", "up", "fov", "aspect"})},
+                     {"eye", "forward", "up", "fov", "aspect"}),
+                     "Camera the polygon was drawn in (pinhole, model coordinates, mm).")},
                 {"visibleOnly",
                  {{"type", "boolean"},
                   {"description",

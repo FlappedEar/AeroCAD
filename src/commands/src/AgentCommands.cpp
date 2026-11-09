@@ -4,6 +4,7 @@
 // method used and data-quality warnings.
 #include "aerocad/commands/Session.hpp"
 
+#include "aerocad/core/Align.hpp"
 #include "aerocad/core/Measure.hpp"
 
 #include "CommandHelpers.hpp"
@@ -141,14 +142,30 @@ Json measurePointToPart(const model::Document& doc, const Json& params)
     const auto hit = core::closestPointOnMesh(*p.mesh, toVec(params["point"]));
     Json warnings = Json::array();
     addTessellationWarning(p, warnings);
-    return Json{{"kind", "point_to_part"},
-                {"id", p.id},
-                {"distance", hit->distance},
-                {"closestPoint", vec(hit->point)},
-                {"normal", vec(p.mesh->faceNormal(hit->triangle))},
-                {"unit", "mm"},
-                {"method", "Exact point-to-triangle distance to the closest triangle of the part mesh."},
-                {"warnings", warnings}};
+    const core::Vec3 triangleNormal = p.mesh->faceNormal(hit->triangle);
+    Json out{{"kind", "point_to_part"},
+             {"id", p.id},
+             {"distance", hit->distance},
+             {"closestPoint", vec(hit->point)},
+             {"triangleNormal", vec(triangleNormal)},
+             {"unit", "mm"},
+             {"method", "Exact point-to-triangle distance to the closest triangle of the part mesh."},
+             {"warnings", warnings}};
+    const bool exact = p.shape && !p.shape->isNull();
+    if (exact && !params.contains("normal_radius")) {
+        // A B-rep face is smooth already; averaging would blur its edges.
+        out["normal"] = vec(triangleNormal);
+        out["normalMethod"] = "Normal of the closest triangle of the exact part's tessellation.";
+    } else {
+        const double radius = params.contains("normal_radius") ? params.at("normal_radius").get<double>()
+                                                               : core::defaultNormalRadius(*p.mesh, hit->triangle);
+        out["normal"] = vec(core::patchNormal(*p.mesh, hit->point, hit->triangle, radius));
+        out["normalRadius"] = radius;
+        out["normalMethod"] = "Mean of the triangle normals within normalRadius mm of the closest point, each "
+                              "weighted by its area inside that disc and by how closely it faces the same way (scan "
+                              "noise smoothed out); triangleNormal is the closest triangle's own.";
+    }
+    return out;
 }
 
 /// Minimum distance between two parts. Exact for the vertex-to-surface pairs it checks;
@@ -251,7 +268,8 @@ void registerMeasure(CommandRegistry& r)
            "Measures geometry. All lengths in millimetres. kind='distance': distance between two points "
            "(needs 'points'). kind='part': bounds, surface area, volume, closedness and centre of mass "
            "(uniform density) of a part (needs 'id'). "
-           "kind='point_to_part': distance from a point to the surface of a part (needs 'id', 'point'). "
+           "kind='point_to_part': distance from a point to the surface of a part, the closest point and the surface "
+           "normal there, smoothed on scans (needs 'id', 'point'). "
            "kind='clearance': minimum distance between two parts (needs 'id', 'other_id'). The result names the "
            "method used and lists data-quality warnings.",
            Json{{"type", "object"},
@@ -269,7 +287,12 @@ void registerMeasure(CommandRegistry& r)
                   {"point", pointSchema("kind='point_to_part': [x, y, z] in mm.")},
                   {"id", {{"type", "integer"}, {"minimum", 1}, {"description", "Part id (see project.get_context)."}}},
                   {"other_id",
-                   {{"type", "integer"}, {"minimum", 1}, {"description", "kind='clearance': the second part id."}}}}},
+                   {{"type", "integer"}, {"minimum", 1}, {"description", "kind='clearance': the second part id."}}},
+                  {"normal_radius",
+                   {{"type", "number"},
+                    {"exclusiveMinimum", 0},
+                    {"description", "kind='point_to_part': smooth the normal over this radius (mm). Default: "
+                                    "automatic on scans and meshes; exact parts use the face normal."}}}}},
                 {"required", {"kind"}},
                 {"additionalProperties", false}}},
           [](CommandContext& ctx, const Json& params) {
@@ -344,7 +367,8 @@ void registerViewCommands(CommandRegistry& r)
     r.add({"view.pick", "Pick in view",
            "What is under positions of the last view_screenshot (area viewport): for each [x, y] (0..1 from the "
            "left and from the top of the image) the part hit, the 3D point on its surface (mm) and the surface "
-           "normal there, or null when the ray misses. Use it to turn \"the corner of the bumper there\" into "
+           "normal there (smoothed over nearby triangles on scans; triangleNormal is the hit triangle's own), or "
+           "null when the ray misses. Use it to turn \"the corner of the bumper there\" into "
            "coordinates for sketch_create (surface: {part, point}) or selection tools. The camera must not have "
            "moved since the screenshot.",
            objectSchema({{"points",

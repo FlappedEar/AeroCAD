@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cctype>
 #include <string>
+#include <utility>
 
 namespace aerocad::commands {
 
@@ -43,6 +44,19 @@ std::string acceptedKeys(const nlohmann::json& props, const std::string& key)
         std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
         return s;
     };
+    // Words agents use for what AeroCAD calls otherwise (feature_hole center -> point).
+    static const std::pair<const char*, const char*> synonyms[] = {
+        {"center", "point"},    {"centre", "point"},     {"position", "point"}, {"location", "point"},
+        {"length", "distance"}, {"depth", "distance"},   {"amount", "distance"}, {"offset", "distance"},
+        {"part", "id"},         {"part_id", "id"},       {"partid", "id"},       {"body_id", "body"},
+        {"sketch_id", "sketch"}, {"feature", "id"},      {"file", "path"},       {"filename", "path"},
+        {"dir", "folder"},      {"directory", "folder"}, {"r", "radius"},        {"d", "diameter"},
+        {"axis", "direction"},  {"vector", "direction"}, {"title", "name"},      {"label", "name"}};
+    for (const auto& [from, to] : synonyms)
+        if (lower(key) == from && props.contains(to)) {
+            guess = to;
+            break;
+        }
     for (auto it = props.begin(); it != props.end(); ++it) {
         list += (list.empty() ? "" : ", ") + it.key();
         const std::string a = lower(it.key()), b = lower(key);
@@ -110,6 +124,17 @@ std::optional<std::string> validateParams(const nlohmann::json& schema, const nl
 
     if (value.is_object()) {
         const auto props = schema.find("properties");
+        for (const auto& [key, item] : value.items()) {
+            if (props != schema.end() && props->contains(key)) {
+                if (auto err = validateParams((*props)[key], item, path + "." + key))
+                    return err;
+            } else if (auto ap = schema.find("additionalProperties"); ap != schema.end() && ap->is_boolean() && !ap->get<bool>()) {
+                return path + "." + key + ": unknown parameter" +
+                       acceptedKeys(props != schema.end() ? *props : nlohmann::json::object(), key);
+            }
+        }
+        // After the unknown keys: a misspelt key usually is the missing required one, and
+        // its message names the right key.
         if (auto it = schema.find("required"); it != schema.end() && it->is_array()) {
             for (const auto& key : *it) {
                 if (!value.contains(key.get<std::string>()))
@@ -118,15 +143,6 @@ std::optional<std::string> validateParams(const nlohmann::json& schema, const nl
                                     (*props)[key.get<std::string>()].contains("description")
                                 ? " (" + (*props)[key.get<std::string>()]["description"].get<std::string>() + ")"
                                 : std::string());
-            }
-        }
-        for (const auto& [key, item] : value.items()) {
-            if (props != schema.end() && props->contains(key)) {
-                if (auto err = validateParams((*props)[key], item, path + "." + key))
-                    return err;
-            } else if (auto ap = schema.find("additionalProperties"); ap != schema.end() && ap->is_boolean() && !ap->get<bool>()) {
-                return path + "." + key + ": unknown parameter" +
-                       acceptedKeys(props != schema.end() ? *props : nlohmann::json::object(), key);
             }
         }
     }

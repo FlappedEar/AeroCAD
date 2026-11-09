@@ -185,7 +185,7 @@ Json point3(const std::string& description)
 
 Json partIdSchema(const std::string& description)
 {
-    return Json{{"type", "integer"}, {"minimum", 1}, {"description", description + " Part id (see document.parts)."}};
+    return Json{{"type", "integer"}, {"minimum", 1}, {"description", description + " Part id."}};
 }
 
 Json vec(const core::Vec3& v)
@@ -280,17 +280,18 @@ Json entitySchema(const std::string& description)
              " Either a free point {point}, or a part selection {part, ...}: {part, point, pick?} picks the "
              "vertex, edge or face of a B-rep part under a surface point (pick: auto = vertex/edge within "
              "tolerance, else face; point = the point itself; body = the whole part), {part, face | edge | "
-             "vertex} selects by index (see feature.faces / feature.edges), {part} alone is the whole body. "
+             "vertex} selects by index (see body.faces / body.edges), {part} alone is the whole body. "
              "Mesh parts (scans, STL) have no faces or edges: picks on them are points, or the body."},
         {"properties",
          {{"part", partIdSchema("Part to measure on.")},
           {"point", point3("Point on the part surface (e.g. a click) or a free point.")},
-          {"pick", {{"type", "string"}, {"enum", {"auto", "point", "vertex", "edge", "face", "body"}}}},
+          {"pick", {{"type", "string"}, {"enum", {"auto", "point", "vertex", "edge", "face", "body"}},
+                    {"description", "With part + point: what to pick there (default auto)."}}},
           {"tolerance", {{"type", "number"}, {"exclusiveMinimum", 0},
                          {"description", "Pick radius for vertices and edges (mm). Default: 1% of the part size."}}},
-          {"face", {{"type", "integer"}, {"minimum", 0}}},
-          {"edge", {{"type", "integer"}, {"minimum", 0}}},
-          {"vertex", {{"type", "integer"}, {"minimum", 0}}}}},
+          {"face", {{"type", "integer"}, {"minimum", 0}, {"description", "Face index (body.faces)."}}},
+          {"edge", {{"type", "integer"}, {"minimum", 0}, {"description", "Edge index (body.edges)."}}},
+          {"vertex", {{"type", "integer"}, {"minimum", 0}, {"description", "Vertex index."}}}}},
         {"additionalProperties", false}};
 }
 
@@ -887,7 +888,9 @@ void registerMeasure(CommandRegistry& r)
 
     r.add({"inspect.remove_dimension", "Remove Dimension",
            "Removes a kept dimension by id, or all of them (all: true).",
-           objectSchema({{"id", {{"type", "integer"}, {"minimum", 1}}}, {"all", {{"type", "boolean"}}}}), true},
+           objectSchema({{"id", {{"type", "integer"}, {"minimum", 1}, {"description", "Dimension id (inspect.dimensions)."}}},
+                         {"all", {{"type", "boolean"}, {"description", "true removes every kept dimension."}}}}),
+           true},
           [](CommandContext& ctx, const Json& params) {
               InspectState& st = state(ctx);
               if (params.value("all", false)) {
@@ -912,7 +915,8 @@ void registerSection(CommandRegistry& r)
            "along the normal). Returns per part the section curves, their length and the enclosed area, so "
            "scan and part sections can be compared. enabled: false turns the section off.",
            objectSchema({{"enabled", {{"type", "boolean"}, {"description", "Default true."}}},
-                         {"plane", {{"type", "string"}, {"enum", {"xy", "xz", "yz"}}}},
+                         {"plane", {{"type", "string"}, {"enum", {"xy", "xz", "yz"}},
+                                    {"description", "Principal cut plane (instead of origin + normal)."}}},
                          {"origin", point3("Point on the plane.")},
                          {"normal", point3("Plane normal, towards the removed half.")},
                          {"offset", {{"type", "number"}, {"description", "mm, see the description."}}},

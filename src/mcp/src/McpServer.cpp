@@ -2,6 +2,7 @@
 #include "aerocad/mcp/McpServer.hpp"
 
 #include <algorithm>
+#include <map>
 #include <cctype>
 #include <string>
 #include <utility>
@@ -31,10 +32,15 @@ Json errorResponse(const Json& id, int code, const std::string& message)
     return Json{{"jsonrpc", "2.0"}, {"id", id}, {"error", {{"code", code}, {"message", message}}}};
 }
 
+/// Sub-schemas at least this long (JSON characters) are listed once; later uses point to it.
+constexpr std::size_t kSharedSchemaMinChars = 400;
+
 constexpr const char* kInstructions =
     "AeroCAD is a CAD application. These tools run the same commands as its user interface, on the project "
     "that is open in the AeroCAD window; the user sees every change live in the 3D view and can undo it. "
-    "Units: millimetres (mm) for lengths, degrees for angles; axes are right-handed with Z up. "
+    "Units: millimetres (mm) for lengths, degrees for angles; axes are right-handed with Z up. Part ids come from "
+    "project_get_context or document_parts. A value marked \"(or expression)\" takes a number or an expression "
+    "with user parameters (parameter_set) and units, e.g. \"width / 2\". "
     "Start with project_get_context to learn the part ids, sizes and the document revision, and call it again "
     "after changes; timeline_list lists the design features (sketches, extrudes, fits) by feature id. "
     "agent_guide gives step-by-step recipes for the common tasks (scan, part on a curved surface, fin/canard, "
@@ -42,9 +48,11 @@ constexpr const char* kInstructions =
     "view_screenshot shows you the 3D view as the user sees it, view_set turns the camera, and view_pick turns "
     "positions in the screenshot into 3D points on the model: look at the result after each important step "
     "instead of assuming it worked. Use geometry_measure to check dimensions and clearances instead of guessing. "
-    "When a tool fails, its message says why; fix the parameters it names rather than retrying unchanged. Every "
-    "document change is recorded in the undo history (edit_undo / edit_redo), except project_new and "
-    "project_open, which replace the document and clear it. Files written or deleted and programs started are "
+    "When a tool fails, its message says why; fix the parameters it names rather than retrying unchanged. "
+    "Parameters not in a tool's schema are rejected. A schema part marked \"same as <tool> <parameter>\" has "
+    "the fields of that tool's parameter. Every document change (tools marked \"Undoable.\") is recorded in "
+    "the undo history (edit_undo / edit_redo), except project_new and project_open, which replace the document "
+    "and clear it. Files written or deleted and programs started are "
     "never undone; each tool's description and annotations say what it does outside the document. File paths "
     "are absolute paths on the user's computer.";
 
@@ -112,7 +120,7 @@ Json toolDefinition(const commands::CommandInfo& info)
     if (info.name == "edit.undo" || info.name == "edit.redo")
         ; // the history commands themselves: their descriptions say what they do
     else if (info.modifiesDocument && e.undoable)
-        description += " Changes the document (undoable with edit_undo).";
+        description += " Undoable."; // edit_undo; see the server instructions
     else if (info.modifiesDocument)
         description += " Replaces the document and clears the undo history: it cannot be undone with edit_undo.";
     if (e.writesFiles || e.deletesFiles || e.runsProcesses || e.network || e.installsSoftware) {
@@ -140,15 +148,16 @@ Json toolDefinition(const commands::CommandInfo& info)
         !info.modifiesDocument && !e.writesFiles && !e.deletesFiles && !e.runsProcesses && !e.installsSoftware;
     const bool destructive = e.destructive || e.deletesFiles || (info.modifiesDocument && !e.undoable);
 
+    // The title is given once (not again in annotations), and destructiveHint only where it
+    // means something: every listed character costs every agent session tokens (CAD-233).
+    Json annotations{{"readOnlyHint", readOnly}, {"openWorldHint", e.network}};
+    if (!readOnly)
+        annotations["destructiveHint"] = destructive;
     return Json{{"name", toolNameForCommand(info.name)},
                 {"title", info.title},
                 {"description", description},
                 {"inputSchema", schema},
-                {"annotations",
-                 {{"title", info.title},
-                  {"readOnlyHint", readOnly},
-                  {"destructiveHint", destructive},
-                  {"openWorldHint", e.network}}}};
+                {"annotations", annotations}};
 }
 
 const std::vector<std::string>& McpServer::supportedProtocolVersions()
@@ -234,15 +243,64 @@ Json McpServer::initialize(const Json& params)
                 {"instructions", kInstructions}};
 }
 
+namespace {
+
+/// A parameter schema made smaller for tools/list (CAD-231/233): descriptions name tools,
+/// additionalProperties is left out (the server instructions say unknown parameters are
+/// rejected, and the command still rejects them), and a large sub-schema that an earlier
+/// tool (or parameter) already listed is replaced by a pointer to it.
+void compactSchema(Json& schema, const std::string& where, std::map<std::string, std::string>& seen,
+                   const commands::CommandRegistry& registry)
+{
+    if (!schema.is_object())
+        return;
+    schema.erase("additionalProperties");
+    if (auto d = schema.find("description"); d != schema.end() && d->is_string())
+        *d = withToolNames(d->get<std::string>(), registry);
+    auto visit = [&](Json& sub, const std::string& subWhere) {
+        if (!sub.is_object())
+            return;
+        Json body = sub;
+        body.erase("description");
+        const std::string key = body.dump();
+        if (key.size() >= kSharedSchemaMinChars) {
+            if (const auto it = seen.find(key); it != seen.end()) {
+                const std::string own = sub.value("description", std::string());
+                Json ref{{"description", withToolNames(own, registry) + (own.empty() ? "" : " ") + "Same as " +
+                                             it->second + "."}};
+                if (sub.contains("type"))
+                    ref["type"] = sub["type"];
+                sub = std::move(ref);
+                return;
+            }
+            seen.emplace(key, subWhere);
+        }
+        compactSchema(sub, subWhere, seen, registry);
+    };
+    if (auto p = schema.find("properties"); p != schema.end() && p->is_object())
+        for (auto it = p->begin(); it != p->end(); ++it)
+            visit(it.value(), where + " " + it.key());
+    if (auto items = schema.find("items"); items != schema.end())
+        compactSchema(*items, where + "[]", seen, registry);
+    for (const char* alt : {"oneOf", "anyOf"})
+        if (auto a = schema.find(alt); a != schema.end() && a->is_array())
+            for (auto& branch : *a)
+                compactSchema(branch, where, seen, registry);
+}
+
+} // namespace
+
 Json McpServer::listTools() const
 {
     Json tools = Json::array();
+    std::map<std::string, std::string> seen; // sub-schema -> "tool parameter" that listed it first
     for (const auto& info : m_registry.list()) {
         if (!isExposedAsTool(info))
             continue;
         // Descriptions name other commands (sketch.create); the agent knows them as tools.
         Json tool = toolDefinition(info);
         tool["description"] = withToolNames(tool["description"].get<std::string>(), m_registry);
+        compactSchema(tool["inputSchema"], tool["name"].get<std::string>(), seen, m_registry);
         tools.push_back(std::move(tool));
     }
     return Json{{"tools", tools}};

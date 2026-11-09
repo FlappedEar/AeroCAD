@@ -21,6 +21,10 @@ struct MeshPoint {
 /// std::nullopt for an empty mesh.
 [[nodiscard]] std::optional<MeshPoint> closestPointOnMesh(const TriangleMesh& mesh, const Vec3& p);
 
+/// A neighbourhood for a picked normal (patchNormal, Align.hpp): twice the longest edge of `triangle`, and at least
+/// 0.2 % of the mesh's bounding-box diagonal.
+[[nodiscard]] double defaultNormalRadius(const TriangleMesh& mesh, std::size_t triangle);
+
 /// Signed volume enclosed by the mesh (mm^3), positive for outward-facing triangles.
 /// Only meaningful for closed meshes, see openEdgeCount().
 [[nodiscard]] double enclosedVolume(const TriangleMesh& mesh);

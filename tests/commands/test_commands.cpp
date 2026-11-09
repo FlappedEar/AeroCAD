@@ -277,6 +277,14 @@ TEST_CASE("geometry.measure: distance, part, point and clearance", "[commands][a
     r = session.execute("geometry.measure", {{"kind", "point_to_part"}, {"id", a}, {"point", {2, 2, -4}}});
     REQUIRE(r.ok);
     CHECK(r.data.at("distance").get<double>() == Approx(4.0));
+    // CAD-232: a mesh part gets a smoothed normal and keeps the triangle's own one.
+    CHECK(r.data.contains("triangleNormal"));
+    CHECK(r.data.at("normal")[2].get<double>() < 0.0); // the base faces -Z
+    CHECK(r.data.at("normalRadius").get<double>() > 0.0);
+    r = session.execute("geometry.measure",
+                        {{"kind", "point_to_part"}, {"id", a}, {"point", {2, 2, -4}}, {"normal_radius", 0.5}});
+    REQUIRE(r.ok);
+    CHECK(r.data.at("normalRadius").get<double>() == Approx(0.5));
 
     // Second tetrahedron, half size, moved to x = 15..20: 5 mm from the first one.
     const auto b = session.execute("document.import", {{"path", file.utf8()}}).data.at("id").get<std::uint64_t>();
@@ -1684,6 +1692,13 @@ TEST_CASE("Parameter errors tell an agent what the command accepts", "[commands]
     r = s.execute("geometry.measure", {{"kind", 3}});
     REQUIRE_FALSE(r.ok);
     CHECK(r.error.find("expected string, got number") != std::string::npos);
+    // A misnamed key is reported before the required key it stands for, with the right name.
+    r = s.execute("feature.hole", {{"body", 1}, {"center", {0, 0, 0}}, {"diameter", 8}});
+    REQUIRE_FALSE(r.ok);
+    CHECK(r.error.find("center: unknown parameter - did you mean 'point'?") != std::string::npos);
+    r = s.execute("feature.extrude", {{"sketch", 1}, {"length", 20}});
+    REQUIRE_FALSE(r.ok);
+    CHECK(r.error.find("did you mean 'distance'?") != std::string::npos);
 }
 
 TEST_CASE("project.get_context says what each part is and which feature made it", "[commands]")

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "aerocad/core/Align.hpp"
 #include "aerocad/core/Measure.hpp"
 
 #include <catch2/catch_approx.hpp>
@@ -63,4 +64,49 @@ TEST_CASE("openEdgeCount welds per-face vertices", "[core][measure]")
     }
     CHECK(split.vertexCount() == 12);
     CHECK(openEdgeCount(split) == 0);
+}
+
+TEST_CASE("A picked normal on a noisy scan is the surface's, not one triangle's (CAD-232)", "[measure]")
+{
+    // A 40 x 40 mm grid in z = 0 with +-0.3 mm noise on 2 mm cells, like a scan.
+    std::vector<Vec3> v;
+    std::vector<TriangleMesh::Triangle> t;
+    const int n = 21;
+    std::uint32_t seed = 12345;
+    auto noise = [&seed]() {
+        seed = seed * 1664525u + 1013904223u;
+        return (static_cast<double>(seed >> 8) / static_cast<double>(1u << 24) - 0.5) * 0.6;
+    };
+    for (int j = 0; j < n; ++j)
+        for (int i = 0; i < n; ++i)
+            v.push_back({2.0 * i, 2.0 * j, noise()});
+    for (int j = 0; j + 1 < n; ++j)
+        for (int i = 0; i + 1 < n; ++i) {
+            const auto a = static_cast<std::uint32_t>(j * n + i);
+            t.push_back({a, a + 1, a + static_cast<std::uint32_t>(n) + 1});
+            t.push_back({a, a + static_cast<std::uint32_t>(n) + 1, a + static_cast<std::uint32_t>(n)});
+        }
+    // The far wall of a thin shell, 1 mm below and facing down.
+    auto base = static_cast<std::uint32_t>(v.size());
+    v.push_back({0, 0, -1});
+    v.push_back({40, 0, -1});
+    v.push_back({0, 40, -1});
+    t.push_back({base, base + 2, base + 1});
+    // A large triangle tilted by 45 degrees that just reaches the neighbourhood: only its
+    // part inside it may count, not its whole area.
+    base = static_cast<std::uint32_t>(v.size());
+    v.push_back({23.5, 0, 0.5});
+    v.push_back({23.5, 40, 0.5});
+    v.push_back({123.5, 20, 100.5});
+    t.push_back({base, base + 2, base + 1});
+    const TriangleMesh mesh(v, t);
+
+    const auto hit = closestPointOnMesh(mesh, {20.3, 20.7, 5.0});
+    REQUIRE(hit);
+    const Vec3 raw = mesh.faceNormal(hit->triangle);
+    const double radius = defaultNormalRadius(mesh, hit->triangle);
+    CHECK(radius >= 2.0 * 2.0);
+    const Vec3 smooth = patchNormal(mesh, hit->point, hit->triangle, radius);
+    CHECK(smooth.z > raw.z);
+    CHECK(smooth.z > 0.99); // within about 8 degrees of the surface normal
 }

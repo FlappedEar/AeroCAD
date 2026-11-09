@@ -75,6 +75,17 @@ std::optional<MeshPoint> closestPointOnMesh(const TriangleMesh& mesh, const Vec3
     return best;
 }
 
+double defaultNormalRadius(const TriangleMesh& mesh, std::size_t triangle)
+{
+    const auto& t = mesh.triangles().at(triangle);
+    const auto& v = mesh.vertices();
+    const double longest = std::max({(v[t[1]] - v[t[0]]).length(), (v[t[2]] - v[t[1]]).length(),
+                                     (v[t[0]] - v[t[2]]).length()});
+    const auto box = mesh.bounds();
+    const double diagonal = (box.max - box.min).length();
+    return std::max(2.0 * longest, 0.002 * diagonal);
+}
+
 double enclosedVolume(const TriangleMesh& mesh)
 {
     const auto& v = mesh.vertices();

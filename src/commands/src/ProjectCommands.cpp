@@ -417,7 +417,7 @@ void registerVariantCommands(CommandRegistry& r)
            "variant (default name: the next free letter, B, C, ...) and activates it unless activate is false. "
            "Then change parameters or features and switch with variant.activate / variant.toggle; the camera is "
            "not moved.",
-           objectSchema({{"name", {{"type", "string"}, {"minLength", 1}}},
+           objectSchema({{"name", {{"type", "string"}, {"minLength", 1}, {"description", "Variant name (default: next free letter)."}}},
                          {"from", variantRefSchema("Variant to copy; default the active one.")},
                          {"activate", {{"type", "boolean"}, {"description", "Default true."}}}}),
            true},
@@ -470,7 +470,7 @@ void registerVariantCommands(CommandRegistry& r)
           });
 
     r.add({"variant.rename", "Rename Variant", "Renames a variant.",
-           objectSchema({{"variant", variantRefSchema("Variant.")}, {"name", {{"type", "string"}, {"minLength", 1}}}},
+           objectSchema({{"variant", variantRefSchema("Variant.")}, {"name", {{"type", "string"}, {"minLength", 1}, {"description", "New name."}}}},
                         {"variant", "name"}),
            true},
           [](CommandContext& ctx, const Json& params) {

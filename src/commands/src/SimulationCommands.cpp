@@ -335,6 +335,18 @@ void registerSimulationCommands(CommandRegistry& r)
                      {"flowModel", flowVector(plan.frame)},
                      {"environment", checkEngine ? cfd::detectEnvironment().toJson() : Json()},
                      {"warnings", partWarnings(plan.characteristicLength, in.geometry.part)},
+                     // Solver values are SI, model positions mm: say which is which, so an agent
+                     // does not read a 0.008 m^2 reference area as mm^2.
+                     {"units",
+                      {{"referenceArea", "m^2"},
+                       {"referenceLength", "m"},
+                       {"characteristicLength", "m"},
+                       {"baseCellSize", "m"},
+                       {"domainSize", "m, solver axes (x along the flow, z up)"},
+                       {"domainModel", "mm, model coordinates"},
+                       {"domainCorners", "mm, model coordinates"},
+                       {"partModel", "mm, model coordinates"},
+                       {"settings", "SI: speed m/s, density kg/m^3, kinematicViscosity m^2/s, yaw degrees"}}},
                      {"next", "Call simulation.run with the same parameters to start it."}};
               return j;
           });
@@ -578,7 +590,8 @@ void registerSimulationCommands(CommandRegistry& r)
            objectSchema({{"run", runIdParam()},
                          {"kind",
                           {{"type", "string"},
-                           {"pattern", "^(surface|sectionHorizontal|sectionVertical|wake|vortices|streamlines|section[XYZ]_[0-9]+)$"}}},
+                           {"pattern", "^(surface|sectionHorizontal|sectionVertical|wake|vortices|streamlines|section[XYZ]_[0-9]+)$"},
+                           {"description", "Field name, see above (e.g. surface, wake, sectionX_2)."}}},
                          {"compare", runIdParam("Run B: return the surface difference B - A.")}},
                         {"run", "kind"})},
           [](CommandContext& ctx, const Json& params) {
@@ -631,7 +644,7 @@ void registerSimulationCommands(CommandRegistry& r)
            "Registers an AeroCAD OpenFOAM case directory that was run outside the app (for example on a cluster) "
            "so its results can be viewed and compared.",
            objectSchema({{"path", {{"type", "string"}, {"minLength", 1}, {"description", "Case directory."}}},
-                         {"label", {{"type", "string"}}}},
+                         {"label", {{"type", "string"}, {"description", "Optional label shown with the run."}}}},
                         {"path"})},
           [](CommandContext& ctx, const Json& params) {
               try {

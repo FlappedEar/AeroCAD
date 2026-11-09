@@ -151,7 +151,7 @@ Json objectSchema(Json properties, Json required = Json::array())
 Json numberOrExpr(const std::string& description)
 {
     return Json{{"type", Json::array({"number", "string"})},
-                {"description", description + " Number or expression with user parameters, e.g. \"width / 2\"."}};
+                {"description", description + " (or expression)"}};
 }
 
 Json point2(const std::string& description)
@@ -180,8 +180,7 @@ Json featureIdSchema(const std::string& description)
 Json bodyRefSchema(const std::string& description)
 {
     return Json{{"type", Json::array({"integer", "string"})},
-                {"description", description + " Body id (the id of the feature that created it, see "
-                                              "timeline.list / document.parts featureId) or body name."}};
+                {"description", description + " Body id (its feature id, see timeline.list) or name."}};
 }
 
 Json curveSchema()
@@ -201,6 +200,7 @@ Json curveSchema()
         {"properties",
          {{"type",
            {{"type", "string"},
+            {"description", "Curve kind; selects which other fields apply."},
             {"enum", {"line", "rectangle", "center_rectangle", "three_point_rectangle", "circle", "arc", "center_arc", "polygon", "slot",
                       "spline", "point", "tangent_arc"}}}},
           {"from", {{"type", "object"},
@@ -220,9 +220,10 @@ Json curveSchema()
           {"endAngle", numberOrExpr("End angle (degrees).")},
           {"sides", numberOrExpr("Number of polygon sides.")},
           {"angle", numberOrExpr("Polygon rotation (degrees).")},
-          {"points", {{"type", "array"}, {"items", point2("Fit point.")}, {"minItems", 2}}},
-          {"closed", {{"type", "boolean"}}},
-          {"construction", {{"type", "boolean"}}},
+          {"points", {{"type", "array"}, {"items", point2("Fit point.")}, {"minItems", 2},
+                      {"description", "spline: fit points, at least 2."}}},
+          {"closed", {{"type", "boolean"}, {"description", "spline: true joins the last point to the first."}}},
+          {"construction", {{"type", "boolean"}, {"description", "true = construction geometry, not part of profiles."}}},
           {"join_start",
            {{"type", "boolean"},
             {"description", "arc: false = its start is joined only by constraints, not to another curve end "
@@ -237,9 +238,11 @@ Json constraintPointSchema()
     return Json{{"type", Json::array({"string", "object"})},
                 {"description", "\"origin\" (sketch origin) or {curve: index, point: start | end | center}, "
                                 "or a fit point of a spline {curve, point: fit, index} (0 = first fit point)."},
-                {"properties", {{"curve", {{"type", "integer"}, {"minimum", 0}}},
-                                {"point", {{"type", "string"}, {"enum", {"start", "end", "center", "fit"}}}},
-                                {"index", {{"type", "integer"}, {"minimum", 0}}}}}};
+                {"properties", {{"curve", {{"type", "integer"}, {"minimum", 0}, {"description", "Curve index in sketch.curves."}}},
+                                {"point", {{"type", "string"}, {"enum", {"start", "end", "center", "fit"}},
+                                           {"description", "Which point of the curve."}}},
+                                {"index", {{"type", "integer"}, {"minimum", 0},
+                                           {"description", "point: fit only: fit point index (0 = first)."}}}}}};
 }
 
 Json constraintSchema()
@@ -259,14 +262,16 @@ Json constraintSchema()
         {"properties",
          {{"type",
            {{"type", "string"},
+            {"description", "Constraint or dimension kind; selects which other fields apply."},
             {"enum", {"coincident", "point_on_curve", "midpoint", "horizontal", "vertical", "parallel",
                       "perpendicular", "collinear", "tangent", "equal", "concentric", "symmetric", "fix",
                       "distance", "horizontal_distance", "vertical_distance", "length", "radius", "diameter",
                       "angle"}}}},
-          {"curve", {{"type", "integer"}, {"minimum", 0}}},
-          {"curves", {{"type", "array"}, {"items", {{"type", "integer"}, {"minimum", 0}}}}},
+          {"curve", {{"type", "integer"}, {"minimum", 0}, {"description", "Curve index in sketch.curves."}}},
+          {"curves", {{"type", "array"}, {"items", {{"type", "integer"}, {"minimum", 0}}},
+                      {"description", "Curve indices in sketch.curves."}}},
           {"point", constraintPointSchema()},
-          {"points", {{"type", "array"}, {"items", constraintPointSchema()}}},
+          {"points", {{"type", "array"}, {"items", constraintPointSchema()}, {"description", "Points, see point."}}},
           {"value", numberOrExpr("Dimension value (mm, or degrees for angle).")},
           {"side", {{"type", "integer"},
                     {"enum", {-2, -1, 1}},
@@ -306,7 +311,7 @@ Json faceRefSchema()
     return Json{{"type", "object"},
                 {"description", "Planar face of a body to sketch on: {body, index} or {body, point: [x,y,z]} "
                                 "(the face nearest to the point; robust when earlier features change)."},
-                {"properties", {{"body", bodyRefSchema("Body.")}, {"index", {{"type", "integer"}, {"minimum", 0}}},
+                {"properties", {{"body", bodyRefSchema("Body.")}, {"index", {{"type", "integer"}, {"minimum", 0}, {"description", "Face index (body.faces)."}}},
                                 {"point", point3("Point on the face.")}}},
                 {"required", {"body"}},
                 {"additionalProperties", false}};
@@ -1236,7 +1241,8 @@ void registerSketchCommands(CommandRegistry& r)
            "at the end of sketch.curves and held symmetric to the originals (symmetry constraints, equal radii), "
            "so they follow dimension changes.",
            objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
-                         {"curves", {{"type", "array"}, {"items", {{"type", "integer"}}}, {"minItems", 1}}},
+                         {"curves", {{"type", "array"}, {"items", {{"type", "integer"}}}, {"minItems", 1},
+                                     {"description", "Curve indices from sketch.curves."}}},
                          {"line", {{"type", "integer"}, {"description", "Index of the mirror line (sketch.curves)."}}}},
                         {"sketch", "curves", "line"}),
            true},
@@ -1275,8 +1281,9 @@ void registerSketchCommands(CommandRegistry& r)
            "closed chain (to the left of an open one), < 0 the other way. Corners are rounded. The offset curves "
            "are added at the end of sketch.curves.",
            objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
-                         {"curves", {{"type", "array"}, {"items", {{"type", "integer"}}}, {"minItems", 1}}},
-                         {"distance", {{"type", "number"}}}},
+                         {"curves", {{"type", "array"}, {"items", {{"type", "integer"}}}, {"minItems", 1},
+                                     {"description", "Curve indices from sketch.curves."}}},
+                         {"distance", {{"type", "number"}, {"description", "Offset in mm; sign picks the side (see above)."}}}},
                         {"sketch", "curves", "distance"}),
            true},
           [](CommandContext& ctx, const Json& params) {
@@ -1297,7 +1304,7 @@ void registerSketchCommands(CommandRegistry& r)
            objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
                          {"curves", {{"type", "array"}, {"items", {{"type", "integer"}}}, {"minItems", 2}, {"maxItems", 2},
                                      {"description", "The two lines (indices from sketch.curves)."}}},
-                         {"radius", {{"type", "number"}, {"exclusiveMinimum", 0}}}},
+                         {"radius", {{"type", "number"}, {"exclusiveMinimum", 0}, {"description", "Fillet radius in mm."}}}},
                         {"sketch", "curves", "radius"}),
            true},
           [](CommandContext& ctx, const Json& params) {
@@ -1320,7 +1327,8 @@ void registerSketchCommands(CommandRegistry& r)
            "sketch.curves; constraints on the trimmed curve are removed.",
            objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
                          {"curve", {{"type", "integer"}, {"description", "Index from sketch.curves."}}},
-                         {"at", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", {{"type", "number"}}}}}},
+                         {"at", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", {{"type", "number"}}},
+                                 {"description", "[u, v] in sketch coordinates (mm) near the piece or end to act on."}}}},
                         {"sketch", "curve", "at"}),
            true},
           [](CommandContext& ctx, const Json& params) {
@@ -1341,7 +1349,8 @@ void registerSketchCommands(CommandRegistry& r)
            "at the end of sketch.curves; constraints on the curve are removed. Refused when nothing crosses it.",
            objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
                          {"curve", {{"type", "integer"}, {"description", "Index from sketch.curves."}}},
-                         {"at", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", {{"type", "number"}}}}}},
+                         {"at", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", {{"type", "number"}}},
+                                 {"description", "[u, v] in sketch coordinates (mm) near the piece or end to act on."}}}},
                         {"sketch", "curve", "at"}),
            true},
           [](CommandContext& ctx, const Json& params) {
@@ -1361,7 +1370,8 @@ void registerSketchCommands(CommandRegistry& r)
            "reason}.",
            objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
                          {"curve", {{"type", "integer"}, {"description", "Index from sketch.curves."}}},
-                         {"at", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", {{"type", "number"}}}}}},
+                         {"at", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", {{"type", "number"}}},
+                                 {"description", "[u, v] in sketch coordinates (mm) near the piece or end to act on."}}}},
                         {"sketch", "curve", "at"})},
           [](CommandContext& ctx, const Json& params) {
               const auto id = params.at("sketch").get<cad::FeatureId>();
@@ -1387,7 +1397,8 @@ void registerSketchCommands(CommandRegistry& r)
            "another curve, or the curve is a side of a rectangle, polygon or slot.",
            objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
                          {"curve", {{"type", "integer"}, {"description", "Index from sketch.curves."}}},
-                         {"at", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", {{"type", "number"}}}}}},
+                         {"at", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", {{"type", "number"}}},
+                                 {"description", "[u, v] in sketch coordinates (mm) near the piece or end to act on."}}}},
                         {"sketch", "curve", "at"}),
            true},
           [](CommandContext& ctx, const Json& params) {
@@ -1406,7 +1417,8 @@ void registerSketchCommands(CommandRegistry& r)
            "points} of the lengthened curve, or {extendable: false, reason}.",
            objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
                          {"curve", {{"type", "integer"}, {"description", "Index from sketch.curves."}}},
-                         {"at", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", {{"type", "number"}}}}}},
+                         {"at", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", {{"type", "number"}}},
+                                 {"description", "[u, v] in sketch coordinates (mm) near the piece or end to act on."}}}},
                         {"sketch", "curve", "at"})},
           [](CommandContext& ctx, const Json& params) {
               const auto id = params.at("sketch").get<cad::FeatureId>();
@@ -1433,7 +1445,8 @@ void registerSketchCommands(CommandRegistry& r)
            "polygon or slot can be switched: the shape becomes lines and arcs that keep its constraints. Curve "
            "indices (sketch.curves) do not change.",
            objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
-                         {"curves", {{"type", "array"}, {"items", {{"type", "integer"}}}, {"minItems", 1}}},
+                         {"curves", {{"type", "array"}, {"items", {{"type", "integer"}}}, {"minItems", 1},
+                                     {"description", "Curve indices from sketch.curves."}}},
                          {"construction", {{"type", "boolean"}, {"description", "true (default): construction; false: normal."}}}},
                         {"sketch", "curves"}),
            true},
@@ -1457,7 +1470,8 @@ void registerSketchCommands(CommandRegistry& r)
                          {"point",
                           {{"type", "object"},
                            {"description", "{curve: index from sketch.curves, point: start | end | center}"}}},
-                         {"to", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", {{"type", "number"}}}}}},
+                         {"to", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", {{"type", "number"}}},
+                                 {"description", "New position, [u, v] in sketch coordinates (mm)."}}}},
                         {"sketch", "point", "to"}),
            true},
           [](CommandContext& ctx, const Json& params) {
@@ -1591,9 +1605,10 @@ void registerSketchCommands(CommandRegistry& r)
            "Changes the value of a sketch dimension, or removes a constraint (remove: true). index is the "
            "position in sketch.curves' constraints list.",
            objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
-                         {"index", {{"type", "integer"}, {"minimum", 0}}},
+                         {"index", {{"type", "integer"}, {"minimum", 0},
+                                    {"description", "Position in the constraints list of sketch.curves."}}},
                          {"value", numberOrExpr("New dimension value.")},
-                         {"remove", {{"type", "boolean"}}}},
+                         {"remove", {{"type", "boolean"}, {"description", "true deletes the constraint."}}}},
                         {"sketch", "index"}),
            true},
           [](CommandContext& ctx, const Json& params) {
@@ -1824,7 +1839,8 @@ void registerFeatureCommands(CommandRegistry& r)
                           {"description", "{sketch: id, curves: [indices]} (default: all curves of that sketch); "
                                           "the curves must connect."},
                           {"properties", {{"sketch", featureIdSchema("Path sketch.")},
-                                          {"curves", {{"type", "array"}, {"items", {{"type", "integer"}}}}}}},
+                                          {"curves", {{"type", "array"}, {"items", {{"type", "integer"}}},
+                                                       {"description", "Curve indices (default: all)."}}}}},
                           {"required", {"sketch"}}}},
                 {"operation", operationSchema()},
                 {"bodies", bodiesSchema()}}),
@@ -1895,6 +1911,7 @@ void registerFeatureCommands(CommandRegistry& r)
         "scan, a smooth surface is fitted to the scan around the target first, so the cut face is clean.",
         {{"target", bodyRefSchema("Target body.")},
          {"tools", {{"type", "array"},
+                    {"description", "Tool bodies or {part: id}."},
                     {"items", {{"oneOf", Json::array({bodyRefSchema("Tool body."),
                                                       {{"type", "object"},
                                                        {"properties", {{"part", {{"type", "integer"}, {"minimum", 1},
@@ -2017,7 +2034,7 @@ void registerFeatureCommands(CommandRegistry& r)
           });
 
     r.add({"feature.rename", "Rename Feature", "Renames a timeline feature.",
-           objectSchema({{"id", featureIdSchema("Feature id.")}, {"name", {{"type", "string"}, {"minLength", 1}}}},
+           objectSchema({{"id", featureIdSchema("Feature id.")}, {"name", {{"type", "string"}, {"minLength", 1}, {"description", "New name."}}}},
                         {"id", "name"}),
            true},
           [](CommandContext& ctx, const Json& params) {
@@ -2032,7 +2049,7 @@ void registerFeatureCommands(CommandRegistry& r)
 
     r.add({"feature.suppress", "Suppress Feature",
            "Suppresses (skips) or unsuppresses a feature; the model regenerates without it.",
-           objectSchema({{"id", featureIdSchema("Feature id.")}, {"suppressed", {{"type", "boolean"}}}},
+           objectSchema({{"id", featureIdSchema("Feature id.")}, {"suppressed", {{"type", "boolean"}, {"description", "true skips the feature, false restores it."}}}},
                         {"id", "suppressed"}),
            true},
           [](CommandContext& ctx, const Json& params) {
@@ -2137,7 +2154,8 @@ void registerTimelineCommands(CommandRegistry& r)
     r.add({"timeline.set_marker", "Move Timeline Marker",
            "Moves the timeline marker (Fusion: roll back). Features after it are not evaluated and new features "
            "are inserted at it. 0 = before the first feature; omit position to move to the end.",
-           objectSchema({{"position", {{"type", "integer"}, {"minimum", 0}}}}), true},
+           objectSchema({{"position", {{"type", "integer"}, {"minimum", 0},
+                                       {"description", "Number of features before the marker (default: all)."}}}}), true},
           [](CommandContext& ctx, const Json& params) {
               designChange(ctx, "Move Timeline Marker", [&](cad::Design& d) {
                   d.setMarker(params.contains("position") ? params.at("position").get<std::size_t>()
@@ -2150,9 +2168,10 @@ void registerTimelineCommands(CommandRegistry& r)
     r.add({"parameter.set", "Set Parameter",
            "Creates or changes a user parameter (Fusion: Change Parameters). The expression may use other "
            "parameters and units (mm, cm, m, in, deg). Features using it regenerate.",
-           objectSchema({{"name", {{"type", "string"}, {"minLength", 1}}},
-                         {"expression", {{"type", Json::array({"string", "number"})}}},
-                         {"comment", {{"type", "string"}}}},
+           objectSchema({{"name", {{"type", "string"}, {"minLength", 1}, {"description", "Parameter name, e.g. width."}}},
+                         {"expression", {{"type", Json::array({"string", "number"})},
+                                         {"description", "Value or expression, e.g. 40, \"30 mm\", \"width / 2\"."}}},
+                         {"comment", {{"type", "string"}, {"description", "Free-text note."}}}},
                         {"name", "expression"}),
            true},
           [](CommandContext& ctx, const Json& params) {
@@ -2169,13 +2188,15 @@ void registerTimelineCommands(CommandRegistry& r)
     r.add({"parameter.evaluate", "Evaluate Expression",
            "Evaluates a number or an expression with the user parameters and units (as a dimension would) "
            "without changing the design; returns {value} in mm (or degrees, or a plain number).",
-           objectSchema({{"expression", {{"type", Json::array({"string", "number"})}}}}, {"expression"})},
+           objectSchema({{"expression", {{"type", Json::array({"string", "number"})},
+                                         {"description", "Number or expression, e.g. \"width / 2 + 5 mm\"."}}}},
+                        {"expression"})},
           [](CommandContext& ctx, const Json& params) {
               return Json{{"value", design(ctx).evaluate(params.at("expression"))}};
           });
 
     r.add({"parameter.remove", "Remove Parameter", "Removes a user parameter.",
-           objectSchema({{"name", {{"type", "string"}, {"minLength", 1}}}}, {"name"}), true},
+           objectSchema({{"name", {{"type", "string"}, {"minLength", 1}, {"description", "Name to remove."}}}}, {"name"}), true},
           [](CommandContext& ctx, const Json& params) {
               const auto name = params.at("name").get<std::string>();
               designChange(ctx, "Remove Parameter " + name, [&](cad::Design& d) {
@@ -2313,7 +2334,7 @@ void registerFrameCommands(CommandRegistry& r)
                          {"origin", withDescription(vec3, "[x, y, z] in mm, default [0, 0, 0].")},
                          {"normal", withDescription(vec3, "Z axis / plane normal, default [0, 0, 1].")},
                          {"xDir", withDescription(vec3, "X axis, default [1, 0, 0].")},
-                         {"comment", {{"type", "string"}}}},
+                         {"comment", {{"type", "string"}, {"description", "Free-text note."}}}},
                         {"name"}),
            true},
           [](CommandContext& ctx, const Json& params) {
@@ -2334,7 +2355,7 @@ void registerFrameCommands(CommandRegistry& r)
 
     r.add({"frame.remove", "Remove Reference Frame",
            "Removes a reference frame. Sketches placed on it then report errors.",
-           objectSchema({{"name", {{"type", "string"}, {"minLength", 1}}}}, {"name"}), true},
+           objectSchema({{"name", {{"type", "string"}, {"minLength", 1}, {"description", "Name to remove."}}}}, {"name"}), true},
           [](CommandContext& ctx, const Json& params) {
               const auto name = params.at("name").get<std::string>();
               designChange(ctx, "Remove Frame " + name, [&](cad::Design& d) {

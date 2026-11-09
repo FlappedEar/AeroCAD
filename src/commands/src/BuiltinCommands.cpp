@@ -190,7 +190,10 @@ void registerPartCommands(CommandRegistry& r)
            "Copies a part (mesh and exact geometry) as a new part, e.g. to keep the original next to a modified "
            "copy (Copy / Paste). A body of the timeline is copied as a fixed solid outside the timeline: it keeps "
            "its shape but not its features. Sketches and planes cannot be copied.",
-           objectSchema({{"id", idParam()}, {"name", {{"type", "string"}, {"minLength", 1}}}}, {"id"}), true},
+           objectSchema({{"id", idParam()},
+                         {"name", {{"type", "string"}, {"minLength", 1}, {"description", "Name of the copy (default: original + \" (copy)\")."}}}},
+                        {"id"}),
+           true},
           [](CommandContext& ctx, const Json& params) {
               model::Document& doc = ctx.document;
               const model::Part& source = requirePart(doc, params);
@@ -220,7 +223,9 @@ void registerPartCommands(CommandRegistry& r)
           });
 
     r.add({"part.set_visible", "Show/hide part", "Shows or hides a part in the viewport.",
-           objectSchema({{"id", idParam()}, {"visible", {{"type", "boolean"}}}}, {"id", "visible"}), true},
+           objectSchema({{"id", idParam()}, {"visible", {{"type", "boolean"}, {"description", "true shows, false hides."}}}},
+                        {"id", "visible"}),
+           true},
           [](CommandContext& ctx, const Json& params) {
               const model::Part before = requirePart(ctx.document, params);
               model::Part after = before;
@@ -275,7 +280,7 @@ void registerPartCommands(CommandRegistry& r)
     r.add({"part.unisolate", "Unisolate",
            "Shows the given parts again (the 'hidden' list of part.isolate), as one undo step. Ids of parts that "
            "no longer exist are skipped.",
-           objectSchema({{"ids", {{"type", "array"}, {"items", idParam()}}}}, {"ids"}), true},
+           objectSchema({{"ids", {{"type", "array"}, {"items", idParam()}, {"description", "Part ids to show."}}}}, {"ids"}), true},
           [](CommandContext& ctx, const Json& params) {
               std::vector<model::PartId> shown;
               for (const auto& j : params.at("ids")) {
@@ -295,7 +300,9 @@ void registerPartCommands(CommandRegistry& r)
           });
 
     r.add({"part.rename", "Rename part", "Renames a part.",
-           objectSchema({{"id", idParam()}, {"name", {{"type", "string"}, {"minLength", 1}}}}, {"id", "name"}), true},
+           objectSchema({{"id", idParam()}, {"name", {{"type", "string"}, {"minLength", 1}, {"description", "New name."}}}},
+                        {"id", "name"}),
+           true},
           [](CommandContext& ctx, const Json& params) {
               const model::Part before = requirePart(ctx.document, params);
               ctx.document.modifyPart(before.id, [&](model::Part& p) { p.name = params.at("name").get<std::string>(); });
