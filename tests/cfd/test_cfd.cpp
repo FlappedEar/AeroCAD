@@ -2605,6 +2605,19 @@ TEST_CASE("The status of a finished run carries its final result, as in Results 
     REQUIRE(list.size() == 1);
     CHECK(list[0].toJson().at("final").at("cd") == final.at("cd"));
 
+    // Like Results: a missing value of the eight (here the viscous drag) means no final result.
+    {
+        std::ifstream in(tmp.path() / id / "postProcessing" / "forces" / "0" / "force.dat");
+        std::string text(std::istreambuf_iterator<char>(in), {});
+        const auto at = text.find("viscous_x");
+        REQUIRE(at != std::string::npos);
+        text.replace(at, 9, "friction_");
+        write(tmp.path() / id / "postProcessing" / "forces" / "0" / "force.dat", text);
+        CHECK(runs.results(id).at("finalResults").at("available") == false);
+        CHECK(runs.status(id)->toJson().at("final").is_null());
+        text.replace(at, 9, "viscous_x");
+        write(tmp.path() / id / "postProcessing" / "forces" / "0" / "force.dat", text);
+    }
     // A failed run, or one whose outputs are cut off, has no final result.
     write(tmp.path() / id / "aerocad.status", "failed: solve\n");
     CHECK(runs.status(id)->toJson().at("final").is_null());

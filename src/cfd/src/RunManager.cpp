@@ -1017,15 +1017,21 @@ void RunManager::refresh(Run& run)
 
     if (status == "finished") {
         s.state = RunState::Finished;
-        // Only from complete outputs that cover the same iterations, as in results().
+        // The same gate as results(): complete outputs over the same iterations and every
+        // final value (all eight of its result keys) finite (Codex review on #177).
         if (!coeffs.incomplete && !forces.incomplete && !coeffs.invalidTime && !forces.invalidTime && !coeffs.empty() &&
             coeffs.time == forces.time) {
-            s.finalCd = tailMean(coeffs.column("Cd"));
-            s.finalCl = tailMean(coeffs.column("Cl"));
-            s.finalDragN = tailMean(forces.column("total_x"));
-            s.finalLiftN = tailMean(forces.column("total_z"));
-            if (!s.finalCd || !s.finalCl || !s.finalDragN || !s.finalLiftN)
-                s.finalCd = s.finalCl = s.finalDragN = s.finalLiftN = std::nullopt;
+            const auto cd = tailMean(coeffs.column("Cd")), cl = tailMean(coeffs.column("Cl"));
+            const auto drag = tailMean(forces.column("total_x")), lift = tailMean(forces.column("total_z"));
+            const bool all = cd && cl && drag && lift && tailMean(coeffs.column("Cs")) &&
+                             tailMean(forces.column("total_y")) && tailMean(forces.column("pressure_x")) &&
+                             tailMean(forces.column("viscous_x"));
+            if (all) {
+                s.finalCd = cd;
+                s.finalCl = cl;
+                s.finalDragN = drag;
+                s.finalLiftN = lift;
+            }
         }
     } else if (status == "prepared") {
         s.state = RunState::Interrupted;
