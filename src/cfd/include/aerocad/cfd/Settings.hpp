@@ -62,7 +62,7 @@ struct Settings {
     /// Yaw (crosswind) in degrees, -30..30 (CAD-188): the oncoming air turns this far
     /// counter-clockwise, seen from above, from flowDirection. Forces stay in wind axes
     /// (drag along the air, side force across it); a moving floor moves along flowDirection
-    /// (the car's heading) at speed * cos(yaw).
+    /// (the car's heading) at speed * cos(yaw), and rotating wheels roll with it (CAD-190).
     double yaw = 0.0;
     /// Kinematic viscosity, m^2/s (air at about 20 degC).
     double kinematicViscosity = 1.5e-5;

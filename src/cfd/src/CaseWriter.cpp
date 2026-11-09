@@ -349,6 +349,23 @@ TriangleMesh toCaseMesh(const TriangleMesh& mesh, const CaseFrame& frame)
     return TriangleMesh(std::move(vertices), mesh.triangles());
 }
 
+/// The case frame before its yaw turn: the car's heading along +X (CAD-190).
+CaseFrame headingFrame(CaseFrame frame)
+{
+    frame.yaw = 0.0;
+    return frame;
+}
+
+/// A case-frame mesh turned counter-clockwise about +Z by `degrees`.
+TriangleMesh turnedMesh(const TriangleMesh& mesh, double degrees)
+{
+    std::vector<Vec3> vertices;
+    vertices.reserve(mesh.vertexCount());
+    for (const Vec3& p : mesh.vertices())
+        vertices.push_back(rotateAboutZ(p, degrees));
+    return TriangleMesh(std::move(vertices), mesh.triangles());
+}
+
 std::string blockMeshDict(const BoundingBox& d, const int cells[3], bool ground)
 {
     Text t;
@@ -635,12 +652,19 @@ void writeFields(const fs::path& zero, const Settings& s, const std::vector<Whee
     } else if (ground)
         u += "    ground { type noSlip; }\n"; // Fixed tunnel floor.
     // CAD-154: each axle turns so that its tyres' bottom moves with the floor (+X at U):
-    // about -Y, at U / r.
+    // about -Y, at U / r. At a yaw (CAD-190) the axle and the road are turned with the car:
+    // about -Y turned by -yaw, at U cos(yaw) / r.
+    const Vec3 axis = rotateAboutZ({0.0, -1.0, 0.0}, -s.yaw);
+    const double road = s.yaw == 0.0 ? U : U * std::cos(s.yaw * 3.14159265358979323846 / 180.0);
     for (int a = 0; a < axleCount(wheels); ++a) {
         const auto w = std::find_if(wheels.begin(), wheels.end(), [a](const Wheel& x) { return x.axle == a; });
         Text t;
-        t << "    " << wheelPatch(a) << " { type rotatingWallVelocity; origin " << w->centre
-          << "; axis (0 -1 0); omega " << U / w->radius << "; value uniform (0 0 0); }\n";
+        t << "    " << wheelPatch(a) << " { type rotatingWallVelocity; origin " << w->centre << "; axis ";
+        if (s.yaw == 0.0)
+            t << "(0 -1 0)";
+        else
+            t << '(' << axis.x << ' ' << axis.y << " 0)";
+        t << "; omega " << road / w->radius << "; value uniform (0 0 0); }\n";
         u += t.str();
     }
     field("volVectorField", "U", "[0 1 -1 0 0 0 0]", "uniform $flowVelocity", u);
@@ -789,12 +813,20 @@ CaseInfo planCase(const CaseGeometry& geometry, const Settings& s)
         // cells; their surfaces then move with it there.
         if (!s.ground || !s.groundMoving)
             throw std::runtime_error("Rotating wheels need a moving floor: turn on the floor and let it move");
-        if (s.yaw != 0.0) // Wheels are found and split along the case axes (CAD-188).
-            throw std::runtime_error("Rotating wheels work at yaw 0 only: set the yaw to 0 or turn the wheels off");
         if (s.groundHeight)
             throw std::runtime_error(
                 "With rotating wheels the floor is put where the tyres touch it: leave the floor height empty");
-        info.wheels = detectWheels(part, L);
+        // Wheels are found along the car's axes: in the case frame before the yaw turn
+        // (CAD-190); their centres are then turned into the case.
+        if (s.yaw == 0.0) {
+            info.wheels = detectWheels(part, L);
+        } else {
+            const TriangleMesh straight = toCaseMesh(geometry.part, headingFrame(info.frame));
+            const Vec3 hs = straight.bounds().size();
+            info.wheels = detectWheels(straight, std::max({hs.x, hs.y, hs.z})); // The car's own length.
+        }
+        for (Wheel& w : info.wheels)
+            w.centre = rotateAboutZ(w.centre, -s.yaw);
         if (info.wheels.empty())
             throw std::runtime_error("No wheels found: rotating wheels need tyres standing on the bottom of the part");
         double r = info.wheels.front().radius;
@@ -919,8 +951,20 @@ CaseInfo writeCase(const fs::path& dir, const CaseGeometry& geometry, const Sett
     if (info.wheels.empty()) {
         writeFile(dir / "constant" / "triSurface" / "part.stl", partStl);
     } else {
-        // The turning wheels are surfaces of their own (one per axle), so they can move.
-        const WheelSplit split = splitWheels(part, info.wheels);
+        // The turning wheels are surfaces of their own (one per axle), so they can move. At a
+        // yaw they are split in the car's heading frame and turned into the case (CAD-190).
+        WheelSplit split;
+        if (s.yaw == 0.0) {
+            split = splitWheels(part, info.wheels);
+        } else {
+            std::vector<Wheel> straight = info.wheels;
+            for (Wheel& w : straight)
+                w.centre = rotateAboutZ(w.centre, s.yaw);
+            split = splitWheels(toCaseMesh(geometry.part, headingFrame(info.frame)), straight);
+            split.body = turnedMesh(split.body, -s.yaw);
+            for (TriangleMesh& axle : split.axles)
+                axle = turnedMesh(axle, -s.yaw);
+        }
         writeFile(dir / "constant" / "triSurface" / "part.stl", asciiStl(split.body, "part"));
         for (std::size_t a = 0; a < split.axles.size(); ++a)
             writeFile(dir / "constant" / "triSurface" / (wheelPatch(static_cast<int>(a)) + ".stl"),

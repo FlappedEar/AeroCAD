@@ -292,9 +292,50 @@ TEST_CASE("writeCase at yaw: geometry turned, road along the heading (CAD-188)",
     INFO(u);
     CHECK(u.find("ground { type fixedValue; value uniform (29.09") != std::string::npos);
     CHECK(u.find(" -5.13") != std::string::npos);
-    // Rotating wheels are found along the case axes: refused at yaw.
+}
+
+TEST_CASE("writeCase turns the wheels with the car at yaw (CAD-190)", "[cfd][wheels]")
+{
+    TempDir straightDir, yawDir;
+    cfd::CaseGeometry g;
+    g.part = car();
+    cfd::Settings s;
+    s.flowDirection = "+X";
+    s.speed = 30;
+    s.ground = true;
     s.rotatingWheels = true;
-    CHECK_THROWS_WITH(cfd::planCase(g, s), Catch::Matchers::ContainsSubstring("yaw 0 only"));
+    const auto straight = cfd::writeCase(straightDir.path(), g, s);
+    s.yaw = 5.0;
+    const auto info = cfd::writeCase(yawDir.path(), g, s);
+    REQUIRE(info.wheels.size() == 4);
+    REQUIRE(straight.wheels.size() == 4);
+    const double a = 5.0 * 3.14159265358979323846 / 180.0;
+    for (std::size_t i = 0; i < 4; ++i) {
+        // The same wheels, their centres turned by -yaw about the case origin.
+        const auto& w0 = straight.wheels[i];
+        const auto& w = info.wheels[i];
+        CHECK(w.radius == Approx(w0.radius));
+        CHECK(w.axle == w0.axle);
+        CHECK(w.centre.x == Approx(std::cos(a) * w0.centre.x + std::sin(a) * w0.centre.y).margin(1e-9));
+        CHECK(w.centre.y == Approx(-std::sin(a) * w0.centre.x + std::cos(a) * w0.centre.y).margin(1e-9));
+        CHECK(w.centre.z == Approx(w0.centre.z));
+    }
+    CHECK(fs::is_regular_file(yawDir.path() / "constant/triSurface/wheels0.stl"));
+    CHECK(fs::is_regular_file(yawDir.path() / "constant/triSurface/wheels1.stl"));
+    // The tyres keep standing on the floor.
+    CHECK(info.domain.min.z == Approx(straight.domain.min.z).margin(1e-9));
+    // Axle (0, -1, 0) turned by -5 deg = (-sin 5, -cos 5); rolling at 30 cos 5 / r.
+    const std::string u = slurp(yawDir.path() / "0.orig/U");
+    INFO(u);
+    std::ostringstream axis, omega;
+    axis.precision(10); // As the case files are written.
+    omega.precision(10);
+    axis << "axis (" << -std::sin(a) << ' ' << -std::cos(a) << " 0)";
+    omega << "omega " << 30.0 * std::cos(a) / info.wheels[0].radius << ';';
+    CHECK(u.find(axis.str()) != std::string::npos);
+    CHECK(u.find(omega.str()) != std::string::npos);
+    // Yaw 0 is written as before.
+    CHECK(slurp(straightDir.path() / "0.orig/U").find("axis (0 -1 0); omega ") != std::string::npos);
 }
 #endif
 

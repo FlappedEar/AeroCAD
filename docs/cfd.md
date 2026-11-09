@@ -305,7 +305,8 @@ coordinates. A **yaw** turns the part in the tunnel by that angle about Z on top
 stay in wind axes (drag along the air, side force across it), the frontal area is the one
 seen along the air, and a moving floor moves along the car's heading (the flow direction
 before the yaw) at speed × cos(yaw), the road speed under a crosswind. Rotating wheels
-are found along the tunnel axes, so they work at yaw 0 only.
+are found along the car's axes and turned with it: their axles turn by the yaw and they
+roll at speed × cos(yaw) / radius (CAD-190).
 
 **Reference values.** Aref defaults to the frontal area of the part (projection on the
 plane normal to the flow, rasterised), lRef to its length along the flow. Both can be
