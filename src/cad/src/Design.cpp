@@ -632,6 +632,9 @@ void appendCurves(const Eval& ev, const Json& item, std::vector<SketchCurve>& ou
     };
     if (type == "line") {
         push(lineCurve(ev.vec2(item, "start"), ev.vec2(item, "end"), construction));
+    } else if (type == "point") {
+        SketchCurve c{SketchCurve::Kind::Point, {ev.vec2(item, "at")}};
+        push(c);
     } else if (type == "rectangle" || type == "center_rectangle") {
         Vec2 a;
         Vec2 b;
@@ -919,18 +922,42 @@ std::vector<core::Vec3> dashed(const std::vector<core::Vec3>& segments, double d
 /// What a sketch part draws: its curves, construction curves dashed (Fusion).
 std::vector<core::Vec3> sketchSegments(const SketchResult& s)
 {
-    std::vector<SketchCurve> solid, construction;
+    std::vector<SketchCurve> solid, construction, points;
     for (const auto& c : s.curves)
-        (c.construction ? construction : solid).push_back(c);
-    if (construction.empty())
-        return geometry::edgeSegments(s.geometry.curves);
-    std::vector<core::Vec3> out = solid.empty() ? std::vector<core::Vec3>{}
-                                                : geometry::edgeSegments(geometry::curveEdges(s.plane, solid));
-    const geometry::Shape edges = geometry::curveEdges(s.plane, construction);
-    const auto box = edges.bounds();
-    const double dash = std::clamp((box.max - box.min).length() / 60.0, 0.4, 4.0);
-    for (const auto& p : dashed(geometry::edgeSegments(edges), dash))
-        out.push_back(p);
+        (c.kind == SketchCurve::Kind::Point ? points : c.construction ? construction : solid).push_back(c);
+    std::vector<core::Vec3> out;
+    if (construction.empty()) {
+        out = geometry::edgeSegments(s.geometry.curves);
+    } else {
+        if (!solid.empty())
+            out = geometry::edgeSegments(geometry::curveEdges(s.plane, solid));
+        const geometry::Shape edges = geometry::curveEdges(s.plane, construction);
+        const auto box = edges.bounds();
+        const double dash = std::clamp((box.max - box.min).length() / 60.0, 0.4, 4.0);
+        for (const auto& p : dashed(geometry::edgeSegments(edges), dash))
+            out.push_back(p);
+    }
+    // Sketch points: a small cross each, sized to the sketch (Fusion draws a dot).
+    if (!points.empty()) {
+        double size = 0.0;
+        if (!out.empty()) {
+            core::Vec3 lo = out.front(), hi = out.front();
+            for (const auto& p : out) {
+                lo = {std::min(lo.x, p.x), std::min(lo.y, p.y), std::min(lo.z, p.z)};
+                hi = {std::max(hi.x, p.x), std::max(hi.y, p.y), std::max(hi.z, p.z)};
+            }
+            size = (hi - lo).length();
+        }
+        const double h = std::clamp(size / 80.0, 0.3, 2.0);
+        const core::Vec3 u = s.plane.xDir * h, v = s.plane.yDir() * h;
+        for (const auto& c : points) {
+            const core::Vec3 p = s.plane.toWorld(c.points[0]);
+            out.push_back(p - u);
+            out.push_back(p + u);
+            out.push_back(p - v);
+            out.push_back(p + v);
+        }
+    }
     return out;
 }
 
@@ -942,6 +969,8 @@ Json curveItem(const SketchCurve& c)
         item = {{"type", "line"}, {"start", pt(c.points[0])}, {"end", pt(c.points[1])}};
     else if (c.kind == SketchCurve::Kind::Arc)
         item = {{"type", "arc"}, {"start", pt(c.points[0])}, {"through", pt(c.points[1])}, {"end", pt(c.points[2])}};
+    else if (c.kind == SketchCurve::Kind::Point)
+        item = {{"type", "point"}, {"at", pt(c.points[0])}};
     else
         throw DesignError("Only lines and arcs of a shape can be deleted separately");
     if (c.construction)
@@ -1060,6 +1089,8 @@ Json itemFromSolved(const Json& item, const SketchCurve* c, std::size_t n)
         for (const auto& q : c[0].points)
             pts.push_back(pt(q));
         out["points"] = pts;
+    } else if (type == "point") {
+        out["at"] = pt(c[0].points[0]);
     }
     return out;
 }
@@ -1147,6 +1178,8 @@ std::vector<std::pair<std::size_t, std::size_t>> weldedEnds(const std::vector<Sk
             end(c.points.front(), 2 * i, true);
             if (c.points.size() > 1)
                 end(c.points.back(), 2 * i + 1, true);
+        } else if (c.kind == SketchCurve::Kind::Point && c.points.size() == 1) {
+            end(c.points[0], 2 * i, c.joinStart); // shared like a curve end (SketchSolver)
         }
     }
     return pairs;
@@ -1433,6 +1466,10 @@ void Design::mirrorSketchCurves(FeatureId sketchId, const std::vector<std::size_
             points = {"start", "end"}; // its ends follow; inner fit points cannot be constrained
             break;
         }
+        case SketchCurve::Kind::Point:
+            item = {{"type", "point"}, {"at", pt(mirror(c.points[0]))}};
+            points = {"start"};
+            break;
         }
         if (c.construction)
             item["construction"] = true;

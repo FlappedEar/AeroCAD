@@ -95,6 +95,8 @@ Item {
                 out.push({ point: { curve: c.index, point: "center" }, pos: c.center })
             } else if (c.kind === "circle") {
                 out.push({ point: { curve: c.index, point: "center" }, pos: c.points[0] })
+            } else if (c.kind === "point") {
+                out.push({ point: { curve: c.index, point: "start" }, pos: c.points[0] })
             }
         }
         out.push({ point: "origin", pos: [0, 0] })
@@ -109,6 +111,8 @@ Item {
     }
 
     function curveDistance(p, c) {
+        if (c.kind === "point")
+            return dist(p, c.points[0])
         if (c.kind === "line")
             return segmentDistance(p, c.points[0], c.points[1])
         if (c.kind === "circle")

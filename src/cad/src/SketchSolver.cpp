@@ -225,6 +225,9 @@ public:
                 for (std::size_t k = 0; k < c.points.size(); ++k)
                     c.points[k] = v.pts[k].at(m_x);
                 break;
+            case Kind::Point:
+                c.points = {v.pts[0].at(m_x)};
+                break;
             }
         }
     }
@@ -298,6 +301,12 @@ private:
                     v.pts.push_back(end ? endPoint(c.points[k]) : newPoint(c.points[k]));
                 }
                 break;
+            case Kind::Point:
+                // Shared like a curve end: a point on a line end is that end.
+                if (c.points.size() != 1)
+                    throw ModelingError("Sketch point needs one position");
+                v.pts = {endPoint(c.points[0], c.joinStart)};
+                break;
             }
         }
     }
@@ -369,6 +378,8 @@ private:
             return {};
         const auto& c = curve(ref.curve);
         const auto& v = m_vars[ref.curve];
+        if (c.kind == Kind::Point && ref.kind != SketchPointRef::Kind::Fit)
+            return v.pts[0]; // start, end and centre of a point are the point
         switch (ref.kind) {
         case SketchPointRef::Kind::Start:
             if (c.kind == Kind::Circle)

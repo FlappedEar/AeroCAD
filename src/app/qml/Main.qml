@@ -254,6 +254,7 @@ ApplicationWindow {
         SketchMenuItem { action: polygonAction; icon.source: Theme.iconUrl("polygon") }
         SketchMenuItem { action: slotAction; icon.source: Theme.iconUrl("slot") }
         SketchMenuItem { action: splineAction; icon.source: Theme.iconUrl("spline") }
+        SketchMenuItem { action: pointAction; icon.source: Theme.iconUrl("point") }
         SketchMenuItem { action: dimensionAction; icon.source: Theme.iconUrl("dimension") }
         MenuSeparator {}
         SketchMenuItem {
@@ -1332,6 +1333,7 @@ ApplicationWindow {
     Action { id: circle3PointAction; text: qsTr("&3-Point Circle"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "circle_3point"; onTriggered: window.sketchTool_("circle_3point") }
     Action { id: tangentArcAction; text: qsTr("&Tangent Arc"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "tangent_arc"; onTriggered: window.sketchTool_("tangent_arc") }
     Action { id: centerArcAction; text: qsTr("C&enter Point Arc"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "center_arc"; onTriggered: window.sketchTool_("center_arc") }
+    Action { id: pointAction; text: qsTr("Poin&t"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "point"; onTriggered: window.sketchTool_("point") }
     Action { id: splineAction; text: qsTr("Spli&ne"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "spline"; onTriggered: window.sketchTool_("spline") }
     Action { id: slotAction; text: qsTr("Sl&ot"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "slot"; onTriggered: window.sketchTool_("slot") }
 
@@ -1639,6 +1641,7 @@ ApplicationWindow {
             MenuItem { action: polygonAction }
             MenuItem { action: slotAction }
             MenuItem { action: splineAction }
+            MenuItem { action: pointAction }
             MenuSeparator {}
             MenuItem { action: sketchFilletAction }
             MenuItem { action: trimAction }
@@ -2095,6 +2098,7 @@ ApplicationWindow {
                 ToolCommand { action: polygonAction; text: qsTr("Polygon"); iconName: "polygon" }
                 ToolCommand { action: slotAction; text: qsTr("Slot"); iconName: "slot" }
                 ToolCommand { action: splineAction; text: qsTr("Spline"); iconName: "spline" }
+                ToolCommand { action: pointAction; text: qsTr("Point"); iconName: "point" }
                 ToolCommand { action: dimensionAction; text: qsTr("Dimension"); iconName: "dimension" }
                 // Past maxVisible: in the CREATE caption menu (Fusion keeps them in the
                 // Rectangle / Circle / Arc drop-downs).
