@@ -489,7 +489,7 @@ TEST_CASE("Rounding a fin's edges either gives a closed printable solid or is re
     const Json ids = Json::array({fin.data.at("id")});
     auto edges = scene.session.execute("body.edges", {{"body", body}});
     REQUIRE(edges.ok);
-    int rounded = 0;
+    std::size_t rounded = 0;
     for (const auto& e : edges.data.at("edges")) {
         auto f = scene.session.execute("feature.fillet",
                                        {{"body", body}, {"edges", Json::array({e.at("index")})}, {"radius", 0.5}});
