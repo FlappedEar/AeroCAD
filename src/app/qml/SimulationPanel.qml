@@ -71,7 +71,14 @@ Pane {
         const m = Math.max(Math.abs(s.p02 ?? s.min), Math.abs(s.p98 ?? s.max), 1e-3)
         return [-m, m]
     }
-    onComparisonChanged: loadDifferenceStats()
+    onComparisonChanged: {
+        loadDifferenceStats()
+        // The export note belongs to one A/B pair (CAD-193), not to a refresh of the same pair.
+        const pair = comparison ? comparison.a + "|" + comparison.b : ""
+        if (pair !== abExportPair)
+            abExportNote = ""
+        abExportPair = pair
+    }
     /// Streamline tube radius in mm: 0.08 % of the part's largest dimension, thin enough
     /// for the dense rakes of CAD-135 (0 = automatic).
     readonly property real tubeRadius: {
@@ -662,6 +669,37 @@ Pane {
         defaultSuffix: "csv"
         nameFilters: [qsTr("CSV files (*.csv)")]
         onAccepted: root.exportResults(root.controller.localPath(selectedFile))
+    }
+
+    // The A/B table to a spreadsheet or report (CAD-193).
+    property string abExportNote: ""
+    property string abExportPair: ""
+    readonly property alias comparisonDialog: comparisonExportDialog
+    function openComparisonExport() {
+        if (!comparison)
+            return
+        // e.g. "A 20261109-143131-box vs B 20261109-143217-box": the label, if any, and the run id.
+        const title = id => { const r = runs.find(x => x.id === id); return (r && r.source && r.source.label ? r.source.label + " " : "") + id }
+        const name = title(comparison.a) + " vs " + title(comparison.b)
+        const safe = name.replace(/[\\/:*?"<>|]+/g, "_").replace(/\s+/g, " ").trim()
+        const folder = comparisonExportDialog.currentFolder.toString().replace(/\/$/, "")
+        comparisonExportDialog.selectedFile = folder + "/" + encodeURIComponent(safe) + ".csv"
+        comparisonExportDialog.open()
+    }
+    function exportComparison(path) {
+        if (!comparison)
+            return
+        const r = controller.execute("simulation.export_comparison", { a: comparison.a, b: comparison.b, path: path })
+        abExportNote = r.ok ? qsTr("A/B table written to %1").arg(path) : qsTr("Export failed: %1").arg(r.error)
+    }
+    FileDialog {
+        id: comparisonExportDialog
+        title: qsTr("Export A/B comparison")
+        fileMode: FileDialog.SaveFile
+        acceptLabel: qsTr("Export")
+        defaultSuffix: "csv"
+        nameFilters: [qsTr("CSV files (*.csv)")]
+        onAccepted: root.exportComparison(root.controller.localPath(selectedFile))
     }
 
     /// Settings of a new run as they stand in the panel (simulation.run / propose_run).
@@ -2010,6 +2048,22 @@ Pane {
                         text: qsTr("Coefficients on the reference area of A")
                         font.pixelSize: 11
                         opacity: 0.7
+                    }
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    Button {
+                        objectName: "cfdExportAB"
+                        text: qsTr("Export CSV…")
+                        onClicked: root.openComparisonExport()
+                    }
+                    Label {
+                        objectName: "cfdExportABNote"
+                        Layout.fillWidth: true
+                        elide: Text.ElideMiddle
+                        font.pixelSize: 11
+                        opacity: 0.7
+                        text: root.abExportNote
                     }
                 }
                 Repeater {
