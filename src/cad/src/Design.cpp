@@ -1909,6 +1909,23 @@ void Design::extendSketchCurve(FeatureId sketchId, std::size_t curve, const geom
     } catch (const DesignError& e) {
         throw DesignError(std::string("Cannot extend: ") + e.what());
     }
+    // The constraints may solve the rewritten curve elsewhere (a length dimension pulls both
+    // ends back): then the extension did not happen, so nothing changes.
+    const auto it = m_sketches.find(sketchId);
+    bool kept = it != m_sketches.end() && curve < it->second.curves.size();
+    if (kept) {
+        const SketchCurve& got = it->second.curves[curve];
+        const auto distance = [](const Vec2& a, const Vec2& b) { return std::hypot(a.x - b.x, a.y - b.y); };
+        const double tol = 1e-6 * std::max(1.0, distance(made.points.front(), made.points.back()));
+        kept = !got.points.empty() && distance(got.points.front(), made.points.front()) <= tol
+               && distance(got.points.back(), made.points.back()) <= tol;
+    }
+    if (!kept) {
+        m_state = before;
+        regenerate();
+        throw DesignError("Cannot extend: the curve's constraints (a length or radius dimension, a fixed point) "
+                          "hold it where it is; remove them first");
+    }
 }
 
 void Design::setSketchConstruction(FeatureId sketchId, const std::vector<std::size_t>& picked, bool construction)

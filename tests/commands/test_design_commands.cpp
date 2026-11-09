@@ -2112,4 +2112,24 @@ TEST_CASE("Design commands: Extend a sketch line or arc to the nearest curve (CA
     const Json np = run(s, "sketch.extend_preview", {{"sketch", cid}, {"curve", 0}, {"at", {4, 0}}});
     CHECK(np.at("extendable") == false);
     CHECK(np.at("reason").get<std::string>().find("joined") != std::string::npos);
+
+    // A length dimension holds the line: the solver would slide it (2.5..7.5) instead of
+    // lengthening it, so Extend is refused and nothing moves (Codex review on #197).
+    const Json d = run(s, "sketch.create",
+                       {{"plane", "XY"},
+                        {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {5, 0}}},
+                                                {{"type", "line"}, {"start", {10, -20}}, {"end", {10, 20}}}})},
+                        {"constraints", Json::array({{{"type", "length"}, {"curve", 0}, {"value", 5}}})}});
+    const auto did = d.at("id").get<std::uint64_t>();
+    const Json held = pts(did, 0);
+    const auto steps = run(s, "edit.history").dump();
+    {
+        const auto r = s.execute("sketch.extend", {{"sketch", did}, {"curve", 0}, {"at", {4, 0}}});
+        INFO(r.error);
+        CHECK_FALSE(r.ok);
+        CHECK(r.error.find("constraints") != std::string::npos);
+    }
+    CHECK(near(pts(did, 0)[0], held[0][0].get<double>(), held[0][1].get<double>()));
+    CHECK(near(pts(did, 0)[1], held[1][0].get<double>(), held[1][1].get<double>()));
+    CHECK(run(s, "edit.history").dump() == steps); // no undo step
 }
