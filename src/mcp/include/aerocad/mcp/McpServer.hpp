@@ -45,6 +45,11 @@ private:
 /// `text` with command names (sketch.create) written as their tool names (sketch_create).
 [[nodiscard]] std::string withToolNames(std::string text, const commands::CommandRegistry& registry);
 
+/// `value` with withToolNames applied to the strings under explanatory keys (message, hint,
+/// warnings, next, ...) only: part names, paths and other data are returned unchanged.
+[[nodiscard]] Json messagesWithToolNames(Json value, const commands::CommandRegistry& registry,
+                                         bool isMessage = false);
+
 [[nodiscard]] bool isExposedAsTool(const commands::CommandInfo& info);
 
 /// Results longer than this (characters of JSON) have their long arrays shortened.

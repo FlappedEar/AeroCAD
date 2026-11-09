@@ -254,6 +254,18 @@ TEST_CASE("Descriptions and messages name tools, not dotted commands", "[mcp]")
           "Call simulation_run, then simulation_status.");
     CHECK(mcp::withToolNames("see case.json and xsketch.create", f.session.registry()) ==
           "see case.json and xsketch.create");
+    // Data keeps its exact text: a variant named after a command can still be activated by it.
+    const Json r = mcp::messagesWithToolNames(
+        {{"name", "feature.box"}, {"next", "Call simulation.run."}, {"warnings", {"use sketch.create"}},
+         {"variants", {{{"name", "feature.box"}}}}},
+        f.session.registry());
+    CHECK(r.at("name") == "feature.box");
+    CHECK(r.at("variants")[0].at("name") == "feature.box");
+    CHECK(r.at("next") == "Call simulation_run.");
+    CHECK(r.at("warnings")[0] == "use sketch_create");
+    const Json created = f.request("tools/call", {{"name", "variant_create"}, {"arguments", {{"name", "feature.box"}}}});
+    CHECK(created.at("result").at("content")[0].at("text").get<std::string>().find("\"feature.box\"") !=
+          std::string::npos);
     const Json tools = f.request("tools/list").at("result").at("tools");
     for (const auto& t : tools)
         for (const auto& info : f.session.registry().list())

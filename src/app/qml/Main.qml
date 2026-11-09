@@ -469,6 +469,8 @@ ApplicationWindow {
             const on = p.fields
             simulationPanel.fieldChoices = simulationPanel.fieldChoices.map(f => Object.assign({}, f, { on: on.indexOf(f.kind) >= 0 }))
         }
+        // One run, as asked: not the B - A difference a user may have left on (dCp).
+        simulationPanel.showDifference = false
         simulationPanel.selectRun(p.run)
         simulationPanel.tab = 1
         const out = { shown: p.run, fields: simulationPanel.fieldChoices.filter(f => f.on).map(f => f.kind),

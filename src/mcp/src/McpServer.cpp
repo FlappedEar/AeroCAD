@@ -72,6 +72,28 @@ std::string withToolNames(std::string text, const commands::CommandRegistry& reg
     return text;
 }
 
+Json messagesWithToolNames(Json value, const commands::CommandRegistry& registry, bool isMessage)
+{
+    static const char* const messageKeys[] = {"message", "messages", "next", "hint", "note", "notes", "warning",
+                                              "warnings", "error", "errors", "pick", "truncated", "guide", "reason",
+                                              "reasons", "advice", "suggestion"};
+    if (value.is_string())
+        return isMessage ? Json(withToolNames(value.get<std::string>(), registry)) : value;
+    if (value.is_array()) {
+        for (auto& v : value)
+            v = messagesWithToolNames(std::move(v), registry, isMessage);
+        return value;
+    }
+    if (value.is_object()) {
+        for (auto it = value.begin(); it != value.end(); ++it) {
+            const bool message = isMessage || std::any_of(std::begin(messageKeys), std::end(messageKeys),
+                                                          [&](const char* k) { return it.key() == k; });
+            it.value() = messagesWithToolNames(std::move(it.value()), registry, message);
+        }
+    }
+    return value;
+}
+
 bool isExposedAsTool(const commands::CommandInfo& info)
 {
     return info.name != "commands.list";
@@ -249,11 +271,8 @@ Json McpServer::callTool(const Json& params)
     if (!result.ok)
         return Json{{"content", {{{"type", "text"}, {"text", withToolNames(result.error, m_registry)}}}},
                     {"isError", true}};
-    Json content = toolResultContent(result.data);
-    for (auto& c : content["content"])
-        if (c.value("type", "") == "text")
-            c["text"] = withToolNames(c["text"].get<std::string>(), m_registry);
-    return content;
+    // Only explanatory texts name tools; names, paths and other data stay as they are.
+    return toolResultContent(messagesWithToolNames(result.data, m_registry));
 }
 
 Json toolResultContent(Json data)
