@@ -473,3 +473,40 @@ TEST_CASE("Canards exported for printing: one STL and one STEP per fin", "[comma
     }
     CHECK(lower.size() == 4);
 }
+
+TEST_CASE("Rounding a fin's edges either gives a closed printable solid or is refused", "[commands][fit][canard]")
+{
+    // Edges that run down to the scan meet its curved root face at a shallow angle; OCCT may
+    // build a fillet there with end faces too small to mesh (an open STL). Each edge in turn,
+    // with an undo in between, as in the Fillet dialog: earlier meshes on the faces a fillet
+    // keeps used to leave cracks in the export mesh too.
+    BumperScene scene;
+    const Json sk = scene.sketchAt(35.0, 110.0);
+    auto fin = scene.session.execute("surface.fin_from_sketch", {{"sketch", sk.at("id")}, {"thickness", 2.0}});
+    INFO(fin.toJson().dump());
+    REQUIRE(fin.ok);
+    const Json body = fin.data.at("featureId");
+    const Json ids = Json::array({fin.data.at("id")});
+    auto edges = scene.session.execute("body.edges", {{"body", body}});
+    REQUIRE(edges.ok);
+    std::size_t rounded = 0;
+    for (const auto& e : edges.data.at("edges")) {
+        auto f = scene.session.execute("feature.fillet",
+                                       {{"body", body}, {"edges", Json::array({e.at("index")})}, {"radius", 0.5}});
+        INFO("edge " << e.at("index") << ": " << f.toJson().dump().substr(0, 300));
+        if (!f.ok) {
+            CHECK(f.error.find("Fillet") != std::string::npos);
+            continue;
+        }
+        ++rounded;
+        auto check = scene.session.execute("document.export_check", {{"ids", ids}});
+        REQUIRE(check.ok);
+        const Json& part = check.data.at("parts")[0];
+        INFO(part.dump());
+        CHECK(part.value("validBrep", false));
+        CHECK(part.value("closed", false));
+        REQUIRE(scene.session.execute("edit.undo", Json::object()).ok);
+    }
+    // The tip and most of the outline can be rounded.
+    CHECK(rounded >= edges.data.at("edges").size() / 2);
+}

@@ -3,6 +3,7 @@
 
 #include "aerocad/geometry/OcctShape.hpp"
 
+#include <BRepBuilderAPI_Copy.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <BRepAdaptor_Curve.hxx>
 #include <BRep_Tool.hxx>
@@ -25,7 +26,12 @@ core::TriangleMesh tessellate(const Shape& shape, const TessellationParams& para
     if (shape.isNull())
         return mesh;
 
-    const TopoDS_Shape& s = shape.impl()->shape;
+    // Mesh a copy of the topology (the geometry is shared). Modeling keeps the faces an
+    // operation did not change, together with the triangulation an earlier call left on
+    // them at another deflection, and meshing next to them gives edges that do not match:
+    // a fillet on a fin came out of export as an open mesh. Meshing the shape itself would
+    // also change the tolerances of a body that undo still holds.
+    const TopoDS_Shape s = BRepBuilderAPI_Copy(shape.impl()->shape, Standard_False, Standard_False).Shape();
     const double diag = shape.bounds().diagonal();
     const double linear = std::max(diag * params.relativeLinearDeflection, 1e-4);
     BRepMesh_IncrementalMesh mesher(s, linear, false, params.angularDeflection, true);
