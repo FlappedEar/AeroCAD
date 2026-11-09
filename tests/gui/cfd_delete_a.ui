@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CAD-215: deleting run A while another run is ticked as B leaves no run marked as B (before,
+# the list picked B as the new A, so A and B were the same run) and no field data of the
+# deleted run. Two finished runs from tests/gui/fake-docker.sh.
+ui.wait(800)
+(() => { for (const r of controller.execute("simulation.list").result.runs) controller.execute("simulation.delete", { run: r.id }) })()
+Qt.createQmlObject('import QtQuick; Item { objectName: "delTest"; visible: false; property var ids: [] }', window.contentItem)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "delTest"); const ids = []; for (const label of ["A", "B"]) { const r = controller.execute("simulation.run", { id: 1, mesh: "coarse", label: label }); if (!r.ok) ui.fail("simulation.run: " + r.error); else ids.push(r.result.id) } t.ids = ids })()
+ui.clickText("SIMULATE")
+ui.wait(300)
+ui.clickText("Wind Tunnel")
+ui.wait(4000)
+(() => { simulationPanel.refreshRuns(); const t = Array.from(window.contentItem.children).find(c => c.objectName === "delTest"); const st = t.ids.map(id => (simulationPanel.runs.find(r => r.id === id) || {}).state); ui.log("states " + st); if (st.some(s => s !== "finished")) ui.fail("runs did not finish: " + st) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "delTest"); simulationPanel.selectRun(t.ids[0]); simulationPanel.compareRun = t.ids[1]; simulationPanel.loadResults(); simulationPanel.loadComparison(); simulationPanel.tab = 0 })()
+ui.wait(500)
+(() => { ui.log("before: A " + simulationPanel.activeRun + " B " + simulationPanel.compareRun + " resultsB " + !!simulationPanel.resultsB); if (!simulationPanel.compareRun || !simulationPanel.resultsB) ui.fail("B not set up") })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "delTest"); simulationPanel.confirmRunAction("delete", t.ids[0]) })()
+ui.wait(400)
+ui.clickText("Delete")
+ui.wait(800)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "delTest"); const gone = t.ids[0]; const bad = []; if (simulationPanel.activeRun === gone) bad.push("A is the deleted run"); if (simulationPanel.compareRun) bad.push("B " + simulationPanel.compareRun + (simulationPanel.compareRun === simulationPanel.activeRun ? " (same as A)" : "")); if (simulationPanel.showB) bad.push("showB"); if (simulationPanel.resultsB) bad.push("B results"); if (Object.keys(simulationPanel.fieldStats).some(k => k.indexOf(gone + "/") === 0)) bad.push("field stats of the deleted run"); if (Object.keys(simulationPanel.runSections).some(k => k === gone)) bad.push("sections of the deleted run"); ui.log("A " + simulationPanel.activeRun + " LEFT " + bad.join(", ")); if (bad.length) ui.fail("left after deleting A: " + bad.join(", ")) })()
+(() => { const n = controller.execute("simulation.list").result.runs.length; if (n !== 1) ui.fail("runs left: " + n) })()
+ui.shot("cfd-delete-a.png")
+ui.log("cfd delete A done")

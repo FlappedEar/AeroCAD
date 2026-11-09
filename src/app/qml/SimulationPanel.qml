@@ -271,7 +271,12 @@ Pane {
             return
         }
         controller.execute("simulation.delete", { run: id })
-        if (activeRun === id) activeRun = ""
+        if (activeRun === id) {
+            // B is compared with A: without A nothing is (CAD-215).
+            activeRun = ""
+            compareRun = ""
+            showB = false
+        }
         if (compareRun === id) compareRun = ""
         refreshRuns()
         loadResults()
@@ -526,6 +531,7 @@ Pane {
     function loadResults() {
         if (!activeRun) {
             results = null
+            loadFieldStats() // Drops the field data of the run that was shown (CAD-215).
             return
         }
         const r = controller.execute("simulation.results", { run: activeRun, maxPoints: 300 })
