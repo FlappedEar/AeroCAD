@@ -243,3 +243,39 @@ TEST_CASE("MeshPickCache hits a face the ray starts on (section plane on a face)
     // The Inspect queries still skip the start point (thickness rays leave the surface).
     CHECK_FALSE(MeshBvh(mesh).raycast(origin, direction).has_value());
 }
+
+TEST_CASE("MeshPickCache picks the same triangle as the brute-force cast on an edge", "[core][inspect][pick]")
+{
+    // Two faces sharing the edge (-1,0,0)-(1,0,0), with different normals; a ray through
+    // the edge hits both at the same distance. The pick must not change triangle when the
+    // hierarchy becomes ready (Lay on Face / Face Front use its normal).
+    auto edgePair = [](int copies) {
+        TriangleMesh m;
+        for (int c = 0; c < copies; ++c) {
+            const double x = 10.0 * c;
+            const auto a = m.addVertex({x - 1, 0, 0});
+            const auto b = m.addVertex({x + 1, 0, 0});
+            const auto p = m.addVertex({x, 1, 0});
+            const auto q = m.addVertex({x, -1, 1});
+            m.addTriangle(a, b, p);
+            m.addTriangle(b, a, q);
+        }
+        return std::make_shared<const TriangleMesh>(std::move(m));
+    };
+    for (const int copies : {1, 30000}) { // hierarchy at once / built in the background
+        const auto mesh = edgePair(copies);
+        const Vec3 origin{0, 0, 2};
+        const Vec3 direction{0, 0, -1};
+        const auto expected = raycast(*mesh, origin, direction);
+        REQUIRE(expected.has_value());
+        CHECK(expected->triangle == 0);
+        MeshPickCache cache;
+        const auto before = cache.raycast(mesh, origin, direction); // brute force while building
+        cache.waitForBuilds();
+        const auto after = cache.raycast(mesh, origin, direction);
+        REQUIRE(before.has_value());
+        REQUIRE(after.has_value());
+        CHECK(before->triangle == expected->triangle);
+        CHECK(after->triangle == expected->triangle);
+    }
+}

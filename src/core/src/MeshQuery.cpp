@@ -282,7 +282,13 @@ std::optional<MeshRayHit> MeshBvh::raycast(const Vec3& origin, const Vec3& direc
             for (std::uint32_t i = node.first; i < node.first + node.count; ++i) {
                 const auto& t = tris[m_order[i]];
                 const double hit = rayTriangle(origin, d, verts[t[0]], verts[t[1]], verts[t[2]]);
-                if ((hit > 0.0 || (includeOrigin && hit == 0.0)) && hit <= best) {
+                if (!(hit > 0.0 || (includeOrigin && hit == 0.0)))
+                    continue;
+                // Equally near triangles (a ray through a shared edge): the lowest index, as
+                // the brute-force cast, whatever order the hierarchy visits them in.
+                const bool nearer = !result ? hit <= best
+                                            : hit < best || (hit == best && m_order[i] < result->triangle);
+                if (nearer) {
                     best = hit;
                     result = MeshRayHit{hit, origin + d * hit, m_order[i]};
                 }
