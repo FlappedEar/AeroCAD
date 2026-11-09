@@ -23,11 +23,13 @@
 #include <QRegularExpression>
 #include <QGuiApplication>
 #include <QLocale>
+#include <QPointer>
 #include <QSettings>
 #include <QStandardPaths>
 
 #include <algorithm>
 #include <cmath>
+#include <thread>
 
 namespace aerocad::app {
 
@@ -87,6 +89,9 @@ AppController::AppController(QObject* parent) : QObject(parent), m_parts(m_sessi
             if (p.mesh)
                 meshes.push_back(p.mesh.get());
         m_pickCache.retain(meshes);
+        std::erase_if(m_meshFacts, [&meshes](const auto& entry) {
+            return std::find(meshes.begin(), meshes.end(), entry.first) == meshes.end();
+        });
         if (const model::Part* changed = part(id); changed != nullptr && changed->mesh)
             m_pickCache.prepare(changed->mesh);
         emit partChanged(id);
@@ -192,12 +197,50 @@ QString AppController::partOpenWarning(quint64 id) const
     if (p == nullptr || !p->mesh || p->mesh->isEmpty() || p->kind == model::PartKind::Sketch ||
         p->kind == model::PartKind::Plane)
         return {};
-    // A scan can have millions of triangles: check each mesh once.
-    if (m_openEdgesMesh.lock() != p->mesh) {
-        m_openEdgesMesh = p->mesh;
-        m_openEdges = core::checkMesh(*p->mesh).boundaryEdges;
+    // A scan can have millions of triangles: check each mesh once, a big one in the
+    // background (meshChecksChanged follows) so an edit never waits for it.
+    MeshFacts& facts = meshFacts(p->mesh);
+    if (!facts.openEdges && !facts.counting) {
+        constexpr std::size_t kSyncTriangles = 100000;
+        if (p->mesh->triangleCount() <= kSyncTriangles) {
+            facts.openEdges = core::checkMesh(*p->mesh).boundaryEdges;
+        } else {
+            facts.counting = true;
+            QPointer<AppController> self(const_cast<AppController*>(this));
+            std::shared_ptr<const core::TriangleMesh> mesh = p->mesh;
+            std::thread([self, mesh] {
+                const std::size_t open = core::checkMesh(*mesh).boundaryEdges;
+                QMetaObject::invokeMethod(
+                    QCoreApplication::instance(),
+                    [self, mesh, open] {
+                        if (!self)
+                            return;
+                        for (auto& [key, f] : self->m_meshFacts) {
+                            if (key == mesh.get() && f.mesh.lock() == mesh) {
+                                f.openEdges = open;
+                                f.counting = false;
+                            }
+                        }
+                        ++self->m_meshCheckRevision;
+                        emit self->meshChecksChanged();
+                    },
+                    Qt::QueuedConnection);
+            }).detach();
+        }
     }
-    return QString::fromStdString(cfd::openPartWarning(m_openEdges));
+    return facts.openEdges ? QString::fromStdString(cfd::openPartWarning(*facts.openEdges)) : QString();
+}
+
+AppController::MeshFacts& AppController::meshFacts(const std::shared_ptr<const core::TriangleMesh>& mesh) const
+{
+    for (auto& [key, facts] : m_meshFacts)
+        if (key == mesh.get() && facts.mesh.lock() == mesh)
+            return facts;
+    std::erase_if(m_meshFacts, [&mesh](const auto& entry) { return entry.first == mesh.get(); });
+    MeshFacts facts;
+    facts.mesh = mesh;
+    m_meshFacts.emplace_back(mesh.get(), std::move(facts));
+    return m_meshFacts.back().second;
 }
 
 bool AppController::showsHeatMap(quint64 id) const

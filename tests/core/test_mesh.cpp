@@ -7,6 +7,7 @@
 
 #include <cmath>
 #include <stdexcept>
+#include <type_traits>
 #include <vector>
 
 using namespace aerocad::core;
@@ -133,4 +134,34 @@ TEST_CASE("UTF-8 path round trip", "[core]")
 {
     const std::string name = "mod\xC5\x82o\xC5\xBC.stl"; // "modłoż.stl"
     CHECK(pathToUtf8(pathFromUtf8(name)) == name);
+}
+
+// The bounds cache must not stop containers from moving meshes.
+static_assert(std::is_nothrow_move_constructible_v<aerocad::core::TriangleMesh>);
+
+TEST_CASE("TriangleMesh bounds follow every change", "[core][mesh]")
+{
+    aerocad::core::TriangleMesh m;
+    m.addVertex({0, 0, 0});
+    m.addVertex({1, 0, 0});
+    m.addVertex({0, 2, 0});
+    m.addTriangle(0, 1, 2);
+    CHECK(m.bounds().max.y == 2.0);
+    CHECK(m.bounds().max.y == 2.0); // cached
+    m.addVertex({0, 0, 5});
+    CHECK(m.bounds().max.z == 5.0);
+    m.scale(2.0, {0, 0, 0});
+    CHECK(m.bounds().max.z == 10.0);
+    aerocad::core::TriangleMesh other;
+    other.addVertex({-3, 0, 0});
+    other.addVertex({-2, 0, 0});
+    other.addVertex({-3, 1, 0});
+    other.addTriangle(0, 1, 2);
+    m.append(other);
+    CHECK(m.bounds().min.x == -3.0);
+    const aerocad::core::TriangleMesh copy = m;
+    CHECK(copy.bounds().min.x == -3.0);
+    m = other; // assignment replaces the geometry and the box
+    CHECK(m.bounds().max.z == 0.0);
+    CHECK(m.bounds().max.x == -2.0);
 }

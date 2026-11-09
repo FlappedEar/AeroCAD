@@ -14,6 +14,7 @@
 
 #include <atomic>
 #include <memory>
+#include <vector>
 
 class QThread;
 
@@ -124,6 +125,16 @@ private:
     int m_triangleBudget = 1000000;
     bool m_lastImportOk = true;
     QHash<quint64, Lod> m_lods;
+    /// Recently computed reduced meshes by source mesh, so Undo / Redo back to a mesh shown
+    /// before draws it at once instead of computing it again (the part would vanish meanwhile).
+    struct CachedLod {
+        std::weak_ptr<const core::TriangleMesh> source;
+        int budget = 0;
+        std::shared_ptr<const core::TriangleMesh> mesh;
+    };
+    std::vector<CachedLod> m_lodCache;
+    void rememberLod(const std::shared_ptr<const core::TriangleMesh>& source, int budget,
+                     const std::shared_ptr<const core::TriangleMesh>& mesh);
     /// Parse result handed from the worker thread to the UI thread.
     struct Parsed;
     std::shared_ptr<Parsed> m_parsed;
