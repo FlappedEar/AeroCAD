@@ -458,11 +458,9 @@ TEST_CASE("Fit a surface to a selection and undo it", "[commands][fit]")
     CHECK(solid.data.at("volume").get<double>() > 0.0);
     CHECK(session.document().partCount() == 4);
 
-    // The solid can become a timeline body for the modelling tools.
-    auto body = session.execute("feature.base_body", {{"part", solid.data.at("id")}});
-    INFO(body.toJson().dump());
-    REQUIRE(body.ok);
-    REQUIRE(session.execute("edit.undo").ok);
+    // The solid already is a timeline body, directly usable by modelling tools.
+    CHECK(solid.data.at("kind") == "body");
+    CHECK(solid.data.at("featureId").get<cad::FeatureId>() != 0);
 
     REQUIRE(session.execute("edit.undo").ok);
     CHECK(session.document().partCount() == 3);
@@ -521,9 +519,9 @@ TEST_CASE("Fit surfaces to a whole mesh gives a solid part", "[commands][fit]")
     CHECK(largest < r.data.at("fit").at("meshToSurfaceMax").get<double>() + 0.01);
     REQUIRE(session.execute("inspect.clear").ok);
     CHECK(session.document().partCount() == 2);
-    // The solid can become a timeline body.
-    CHECK(session.execute("feature.base_body", {{"part", r.data.at("id")}}).ok);
-    REQUIRE(session.execute("edit.undo").ok);
+    // The fitted solid already is a timeline body.
+    CHECK(r.data.at("kind") == "body");
+    CHECK(r.data.at("featureId").get<cad::FeatureId>() != 0);
     REQUIRE(session.execute("edit.undo").ok);
     CHECK(session.document().partCount() == 1);
 }

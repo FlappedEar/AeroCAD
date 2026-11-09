@@ -666,13 +666,17 @@ ApplicationWindow {
                 selectBodyOfFeature(b.featureId)
             }
         }
-        if (type === "combine" && info.kind === "imported" && !((info.solids ?? 0) > 0)) {
+        const combineTool = type === "combine" && info.id && info.kind !== "sketch" && info.kind !== "plane"
+                            && !((info.solids ?? 0) > 0)
+        if (combineTool) {
             // A surface or the scan selected: it is the tool that cuts a body to its shape.
-            initial.tools = [{ part: info.id }]
+            initial.tools = info.kind === "body" ? [info.featureId] : [{ part: info.id }]
             initial.operation = "cut"
+            if (info.kind === "body")
+                initial.keepTools = true // Keep the reference surface, as for imported surfaces.
         }
         if (info.kind === "body") {
-            if (type === "combine")
+            if (type === "combine" && !combineTool)
                 initial.target = info.featureId
             else if (["fillet", "chamfer", "shell", "press_pull", "hole", "move", "mirror", "rectangular_pattern",
                       "circular_pattern", "split", "delete_faces", "draft"].includes(type))

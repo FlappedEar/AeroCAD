@@ -43,8 +43,12 @@ QtObject {
     function role(info) {
         if (!info || !info.id)
             return ""
-        if (info.kind === "sketch" || info.kind === "body" || info.kind === "plane")
+        if (info.kind === "sketch" || info.kind === "plane")
             return info.kind
+        if (info.hasBrep && (info.faces ?? 0) > 0 && (info.solids ?? 0) === 0)
+            return "surface"
+        if (info.kind === "body")
+            return "body"
         if (info.hasBrep && (info.solids ?? 0) > 0)
             return "solid"
         if (info.hasBrep && (info.faces ?? 0) > 0)
@@ -624,7 +628,8 @@ QtObject {
                                { title: qsTr("Thicken"), done: false,
                                  text: qsTr("Turns the piece into a solid with the thickness you type."),
                                  actions: [a("thicken")] }] },
-                         { title: qsTr("More"), steps: [], actions: [...fitted, a("sketchFin"), a("offset"), a("cutWithThis"), a("scale"), a("export"), a("hide"), a("isolate"), a("appearance"), a("rename"), a("delete")] }] }
+                         { title: qsTr("More"), steps: [], actions: [...fitted, a("sketchFin"), a("offset"), a("cutWithThis"),
+                               info.kind === "body" ? a("editStep") : a("scale"), a("export"), a("hide"), a("isolate"), a("appearance"), a("rename"), a("delete")] }] }
         }
         if (r === "plane") {
             return { title: roleName(r),

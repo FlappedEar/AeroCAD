@@ -112,6 +112,7 @@ Pane {
                 required property string kind
                 required property string shapeKind
                 required property string partColor
+                required property bool frozen
 
                 readonly property bool selected: root.selectedPartIds.indexOf(row.partId) >= 0
 
@@ -204,10 +205,11 @@ Pane {
                         }
                         Text {
                             Layout.fillWidth: true
-                            text: row.kind === "body" ? qsTr("Body")
+                            text: row.frozen ? (row.shapeKind === "surface" ? qsTr("Frozen surface · no history") : qsTr("Frozen solid · no history"))
+                                : row.shapeKind === "surface" ? qsTr("Surface")
+                                : row.kind === "body" ? qsTr("Body")
                                 : row.kind === "sketch" ? qsTr("Sketch")
                                 : row.kind === "plane" ? qsTr("Construction plane")
-                                : row.shapeKind === "surface" ? qsTr("Surface")
                                 : row.shapeKind === "solid" ? qsTr("Solid")
                                 : qsTr("Mesh · %1 triangles").arg(Number(row.triangles).toLocaleString(Qt.locale(), "f", 0))
                             color: Theme.textFaint

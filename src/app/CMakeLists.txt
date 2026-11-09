@@ -778,6 +778,14 @@ if(AEROCAD_BUILD_TESTS)
         FIXTURES_REQUIRED gui_export_preflight
         RESOURCE_LOCK gui_export_preflight_dir
         ENVIRONMENT "XDG_DATA_HOME=${CAD92_DIR}/data;XDG_CONFIG_HOME=${CAD92_DIR}/data")
+    # CAD-78: fitted surfaces remain editable through the timeline and modelling tools.
+    foreach(_surface_test surface_timeline surface_timeline_move surface_timeline_combine)
+        add_test(NAME app_${_surface_test}_test
+            COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome.stl
+                    --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/${_surface_test}.ui)
+        set_tests_properties(app_${_surface_test}_test PROPERTIES LABELS gui TIMEOUT 180
+            RESOURCE_LOCK gui_surface_timeline)
+    endforeach()
     # Runs a coarse OpenFOAM case, so it needs the engine (label openfoam, not in CI). The
     # runs directory is in the build tree: under the home directory on macOS, which the
     # engine's VM can mount.

@@ -131,7 +131,8 @@ const std::vector<std::string>& Design::featureTypes()
     static const std::vector<std::string> types{"sketch", "extrude", "revolve", "fillet", "chamfer",
                                                 "shell",  "combine", "box",     "cylinder", "sphere", "torus", "base_body", "hole",
                                                 "mirror",  "rectangular_pattern", "circular_pattern", "loft", "sweep", "plane",
-                                                "part_on_surface", "fin_on_surface", "move", "press_pull", "split", "delete_faces", "draft"};
+                                                "part_on_surface", "fin_on_surface", "move", "press_pull", "split", "delete_faces", "draft",
+                                                "fit_selection", "fit_regions", "trim_by_sketch", "offset_surface", "thicken_surface"};
     return types;
 }
 
@@ -224,6 +225,11 @@ std::string Design::defaultName(const std::string& type) const
                        : type == "press_pull"     ? "PressPull"
                        : type == "split"          ? "Split"
                        : type == "delete_faces"   ? "DeleteFace"
+                       : type == "fit_selection"  ? "FitSurface"
+                       : type == "fit_regions"    ? "FitPatches"
+                       : type == "trim_by_sketch" ? "TrimSurface"
+                       : type == "offset_surface" ? "OffsetSurface"
+                       : type == "thicken_surface" ? "ThickenSurface"
                                                   : type;
     base[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(base[0])));
     for (int n = 1;; ++n) {
@@ -2171,6 +2177,8 @@ void Design::evaluateFeature(const Feature& f)
         newBody(std::move(sides.front));
     } else if (f.type == "combine") {
         Body& target = bodyRef(required(p, "target"));
+        if (target.shape.solidCount() == 0)
+            throw DesignError("Combine target must be a solid body; use a surface as the tool");
         const std::string op = lower(p.value("operation", std::string("join")));
         geometry::BooleanOp bop;
         if (op == "join")
@@ -2184,6 +2192,7 @@ void Design::evaluateFeature(const Feature& f)
         const bool keepTools = p.value("keepTools", false);
         const bool flip = p.value("flip", false);
         std::vector<FeatureId> tools;
+        Json surfaceTools = Json::array();
         // Imported parts as tools: exact solids are used as they are; surfaces and scans
         // cut the target on one side (Fusion: Split Body, keeping one side).
         std::vector<const model::Part*> partTools;
@@ -2201,14 +2210,38 @@ void Design::evaluateFeature(const Feature& f)
             const Body& t = bodyRef(ref);
             if (t.id == target.id)
                 throw DesignError("A body cannot be combined with itself");
-            if (std::find(tools.begin(), tools.end(), t.id) == tools.end())
+            if (std::find(tools.begin(), tools.end(), t.id) == tools.end()) {
                 tools.push_back(t.id);
+                if (t.shape.solidCount() == 0)
+                    surfaceTools.push_back({{"id", t.id}, {"name", t.name}});
+            }
         }
         if (tools.empty() && partTools.empty())
             throw DesignError("Select at least one tool body");
+        auto splitWithSurface = [&](const geometry::Shape& input, const geometry::Shape& surface,
+                                    const std::string& name) {
+            if (bop == geometry::BooleanOp::Union)
+                throw DesignError("'" + name +
+                                  "' is a surface or scan and has no volume to join: use Cut (removes what is "
+                                  "behind it) or Intersect (keeps what is behind it)");
+            // Cut keeps the front (outside), Intersect the back; Flip swaps the sides.
+            const bool keepFront = (bop == geometry::BooleanOp::Cut) != flip;
+            try {
+                return geometry::splitBySurface(input, surface, keepFront);
+            } catch (const geometry::OffsetError& e) {
+                throw DesignError(e.what());
+            }
+        };
         geometry::Shape result = target.shape;
-        for (const FeatureId t : tools)
-            result = geometry::boolean(result, m_bodies.at(t).shape, bop);
+        for (const FeatureId t : tools) {
+            if (result.isNull())
+                break;
+            const Body& tool = m_bodies.at(t);
+            // A fitted/trimmed/offset timeline surface is the current evaluated shape,
+            // not a stale document part and not a solid boolean operand.
+            result = tool.shape.solidCount() > 0 ? geometry::boolean(result, tool.shape, bop)
+                                                : splitWithSurface(result, tool.shape, tool.name);
+        }
         for (const model::Part* part : partTools) {
             if (result.isNull())
                 break;
@@ -2228,14 +2261,7 @@ void Design::evaluateFeature(const Feature& f)
                 surface = scanSurfaceUnder(*part, result.bounds());
             else
                 throw DesignError("Part '" + part->name + "' has no geometry");
-            // Cut keeps what is in front of the surface (outside the scan), Intersect what
-            // is behind it; flip swaps the sides.
-            const bool keepFront = (bop == geometry::BooleanOp::Cut) != flip;
-            try {
-                result = geometry::splitBySurface(result, surface, keepFront);
-            } catch (const geometry::OffsetError& e) {
-                throw DesignError(e.what());
-            }
+            result = splitWithSurface(result, surface, part->name);
         }
         const FeatureId targetId = target.id;
         if (!keepTools) {
@@ -2246,6 +2272,9 @@ void Design::evaluateFeature(const Feature& f)
             m_bodies.erase(targetId);
         else
             m_bodies.at(targetId).shape = result;
+        // Editors need the evaluated tool kind even after keepTools=false consumed it.
+        // Rebuilt with the feature, this also works when reopening older project files.
+        m_reports[f.id] = {{"surfaceTools", std::move(surfaceTools)}};
     } else if (f.type == "move") {
         // Fusion: Modify > Move/Copy (M). Scales the body uniformly and rotates it about an
         // axis through `center` (default: the centre of its bounding box), then translates it.
@@ -3013,6 +3042,20 @@ void Design::syncDocument(model::Document& document)
         document.removePart(id);
 
     for (auto& [fid, w] : wanted) {
+        // Preserve the provenance contract used by deviation inspection and sketch
+        // draping. The dependency itself lives in the feature's saved params.
+        std::string source;
+        if (const Feature* f = feature(featureOfBody(fid)); f != nullptr && f->params.contains("id")) {
+            std::string operation;
+            if (f->type == "fit_selection" || f->type == "fit_regions" || f->type == "trim_by_sketch")
+                operation = f->type;
+            else if (f->type == "offset_surface")
+                operation = "offset";
+            else if (f->type == "thicken_surface")
+                operation = "thicken";
+            if (!operation.empty())
+                source = "surface." + operation + " of part " + std::to_string(f->params.at("id").get<model::PartId>());
+        }
         const model::Part* existing = nullptr;
         for (const auto& part : document.parts()) {
             if (part.kind == w.kind && part.featureId == fid) {
@@ -3029,6 +3072,7 @@ void Design::syncDocument(model::Document& document)
                     part.selection.reset();
                 part.mesh = w.mesh;
                 part.shape = w.shape;
+                part.source = source;
                 part.edgeSegments = w.segments;
                 if (w.kind == model::PartKind::Sketch && w.consumed && !wasConsumed)
                     part.visible = false; // Fusion hides a sketch once a feature uses it
@@ -3044,6 +3088,7 @@ void Design::syncDocument(model::Document& document)
             part.featureId = fid;
             part.mesh = w.mesh;
             part.shape = w.shape;
+            part.source = source;
             part.edgeSegments = std::move(w.segments);
             part.visible = !(w.kind == model::PartKind::Sketch && w.consumed);
             if (auto meta = m_partMeta.find(fid); meta != m_partMeta.end()) {

@@ -52,6 +52,8 @@ QVariant PartListModel::data(const QModelIndex& index, int role) const
         return QStringLiteral("imported");
     case FeatureIdRole:
         return QVariant::fromValue<qulonglong>(p.featureId);
+    case FrozenRole:
+        return model::frozenSurfaceResult(p);
     case ShapeKindRole:
         // Exact geometry of an imported/derived part: "solid" or "surface" (e.g. a fitted
         // surface); "" for a plain mesh.
@@ -71,7 +73,7 @@ QHash<int, QByteArray> PartListModel::roleNames() const
         {PartIdRole, "partId"},       {NameRole, "name"},       {VisibleRole, "partVisible"},
         {TrianglesRole, "triangles"}, {HasBrepRole, "hasBrep"}, {SourceRole, "source"},
         {RevisionRole, "revision"},   {KindRole, "kind"},       {FeatureIdRole, "featureId"},
-        {ShapeKindRole, "shapeKind"}, {ColorRole, "partColor"},
+        {ShapeKindRole, "shapeKind"}, {ColorRole, "partColor"}, {FrozenRole, "frozen"},
     };
 }
 
