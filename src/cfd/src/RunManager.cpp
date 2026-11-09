@@ -1235,6 +1235,18 @@ std::optional<double> tailMean(const std::vector<double>* v)
     return sum / static_cast<double>(v->size() - start);
 }
 
+/// Half of max − min over the same window as tailMean: how far the value still swings
+/// around the reported mean (CAD-191).
+std::optional<double> tailSpread(const std::vector<double>* v)
+{
+    if (!tailMean(v))
+        return std::nullopt;
+    const std::size_t start = v->size() - std::max<std::size_t>(1, v->size() / 5);
+    const auto [lo, hi] = std::minmax_element(v->begin() + static_cast<std::ptrdiff_t>(start), v->end());
+    const double spread = 0.5 * (*hi - *lo);
+    return std::isfinite(spread) ? std::optional<double>(spread) : std::nullopt;
+}
+
 Json opt(const std::optional<double>& v) { return v ? Json(*v) : Json(nullptr); }
 
 std::pair<double, double> range(const std::vector<double>& v)
@@ -1451,7 +1463,15 @@ Json RunManager::results(const std::string& id, int maxPoints)
                     {"pressureDragN", opt(tailMean(forces.column("pressure_x")))},
                     {"viscousDragN", opt(tailMean(forces.column("viscous_x")))},
                     {"iterations", coeffs.time.size()},
-                    {"averaging", "mean over the last 20 % of the iterations"}};
+                    {"averaging", "mean over the last 20 % of the iterations"},
+                    // Half of max − min over the same iterations (CAD-191).
+                    {"spread",
+                     {{"cd", opt(tailSpread(coeffs.column("Cd")))},
+                      {"cl", opt(tailSpread(coeffs.column("Cl")))},
+                      {"cs", opt(tailSpread(coeffs.column("Cs")))},
+                      {"dragN", opt(tailSpread(forces.column("total_x")))},
+                      {"liftN", opt(tailSpread(forces.column("total_z")))},
+                      {"sideN", opt(tailSpread(forces.column("total_y")))}}}};
 
     // Histories are useful while solving, but their current tail is not a final result.
     // Keep this gate independent of the numerical quality checks: even apparently good
@@ -1992,14 +2012,37 @@ Json RunManager::compare(const std::string& a, const std::string& b)
         notes.emplace_back("The parts differ in size by more than 10 %, so the domain and mesh sizes differ too.");
 
     const Json sa = ra.at("summary"), sb = rb.at("summary");
+    // CAD-191: a difference no larger than the swing of A plus the swing of B over the
+    // averaging window is inside the iteration noise. scaleB puts B's swing on A's area.
+    auto addNoise = [&](Json& d, const char* key, double scaleB) {
+        const Json pa = sa.value("spread", Json::object()).value(key, Json());
+        const Json pb = sb.value("spread", Json::object()).value(key, Json());
+        if (!pa.is_number() || !pb.is_number())
+            return;
+        const double noise = pa.get<double>() + pb.get<double>() * scaleB;
+        d["noise"] = noise;
+        d["withinNoise"] = std::abs(d.at("difference").get<double>()) <= noise;
+    };
     Json deltas = Json::object();
     for (const char* key : {"dragN", "liftN", "sideN", "pressureDragN", "viscousDragN"}) {
         if (sa.at(key).is_number() && sb.at(key).is_number()) {
             const double va = sa.at(key).get<double>(), vb = sb.at(key).get<double>();
             Json d{{"a", va}, {"b", vb}, {"difference", vb - va}};
             d["percent"] = std::abs(va) > 1e-12 ? Json(100.0 * (vb - va) / std::abs(va)) : Json(nullptr);
+            addNoise(d, key, 1.0);
             deltas[key] = std::move(d);
         }
+    }
+    for (const auto& [key, name] : {std::pair{"dragN", "drag"}, std::pair{"liftN", "lift"}}) {
+        // Equal values in steady runs (no swing) are no change, not noise.
+        if (!deltas.contains(key) || !deltas[key].value("withinNoise", false) ||
+            !(deltas[key].value("noise", 0.0) > 0.0))
+            continue;
+        char text[160];
+        std::snprintf(text, sizeof text,
+                      "The %s difference (%+.3g N) is within the iteration swing of the runs (±%.3g N)", name,
+                      deltas[key].at("difference").get<double>(), deltas[key].at("noise").get<double>());
+        notes.emplace_back(std::string(text) + ": it may be noise, not a real change.");
     }
     j["forces"] = std::move(deltas);
     // Efficiency L/D = |lift| / drag (CAD-187), only with a positive drag in both runs.
@@ -2021,6 +2064,7 @@ Json RunManager::compare(const std::string& a, const std::string& b)
             const double va = sa.at(key).get<double>();
             const double vb = sb.at(key).get<double>() * areaB / areaA;
             coeffs[key] = {{"a", va}, {"b", vb}, {"difference", vb - va}};
+            addNoise(coeffs[key], key, areaB / areaA);
         }
     }
     j["coefficientsOnReferenceAreaOfA"] = std::move(coeffs);

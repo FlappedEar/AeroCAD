@@ -67,6 +67,9 @@ panel in place of Properties:
   shows the values of every series at the nearest iteration
   ([readout](images/audit/cad-177-chart-readout.png)). Lift is along +Z, so a negative lift
   and its L/D are marked "(downforce)" (CAD-184, [summary](images/audit/cad-184-efficiency.png)).
+  Drag, lift and side show "± x": half of max − min over the same last 20 % of the iterations,
+  so how far the force still swings around the mean (`summary.spread` in `simulation.results`,
+  also for Cd/Cl/Cs; CAD-191, [summary](images/audit/cad-191-swing.png)).
   **Show in 3D**:
   pressure on the part (Cp), horizontal and vertical velocity sections and streamlines
   (speed). Pressure is drawn in a high-contrast rainbow map (blue = suction, green = Cp 0,
@@ -477,6 +480,10 @@ largest one in its group (forces or coefficients) gets no percentage (CAD-171,
 [A/B](images/audit/cad-171-ab-coefficients.png)). The *L/D* row compares the efficiency
 |lift| / drag (`efficiency` in `simulation.compare`; left out without a positive drag;
 CAD-187, [row](images/audit/cad-187-ab-efficiency.png)).
+A difference no larger than the swing of A plus the swing of B shows "noise" in the % column,
+and a note says so for drag and lift: two runs of the same box differed by +0.0006 N drag
+inside a ±0.0007 N swing (`noise` and `withinNoise` per row in `simulation.compare`; equal
+values with no swing are no change, not noise; CAD-191, [A/B](images/audit/cad-191-ab-noise.png)).
 Below it, *Cd per iteration* draws the Cd histories of A and B (B on A's reference area)
 on the same axes, so a difference can be weighed against how much Cd still oscillates;
 hovering it reads both values at an iteration (CAD-179,
