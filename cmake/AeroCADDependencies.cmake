@@ -24,10 +24,17 @@ else()
     list(APPEND AEROCAD_OCCT_LIBS TKSTEP TKSTEPBase TKSTEPAttr TKSTEP209 TKIGES)
 endif()
 # XDE (names and colours in STEP files, CAD-227). OCCT 7.8 moved STEPCAFControl into TKDESTEP.
-set(AEROCAD_OCCT_XDE_LIBS TKCDF TKLCAF TKCAF TKXCAF)
+# Linked by file: the imported TKXCAF target's interface drags in the visualization stack
+# (TKService -> -lfontconfig, -lGL, -lX11), whose development files a build machine need not
+# have. The shared libraries find their own dependencies at run time.
+set(_aerocad_xde_targets TKCDF TKLCAF TKCAF TKXCAF)
 if(NOT TARGET TKDESTEP)
-    list(APPEND AEROCAD_OCCT_XDE_LIBS TKXDESTEP)
+    list(APPEND _aerocad_xde_targets TKXDESTEP)
 endif()
+set(AEROCAD_OCCT_XDE_LIBS)
+foreach(_lib IN LISTS _aerocad_xde_targets)
+    list(APPEND AEROCAD_OCCT_XDE_LIBS "$<TARGET_FILE:${_lib}>")
+endforeach()
 add_library(aerocad_occt INTERFACE)
 target_link_libraries(aerocad_occt INTERFACE ${AEROCAD_OCCT_LIBS})
 target_include_directories(aerocad_occt SYSTEM INTERFACE ${OpenCASCADE_INCLUDE_DIR})
