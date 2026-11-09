@@ -739,7 +739,8 @@ bool AppController::autosaveNow()
         setStatusMessage(tr("Autosave failed: %1").arg(QString::fromStdString(r.error)));
         return false;
     }
-    setStatusMessage(tr("Recovery copy saved"));
+    // Silent on success: the timer fires every few minutes, and a status line here would
+    // replace the result the user is reading (a fit's deviation, an export check).
     return true;
 }
 
