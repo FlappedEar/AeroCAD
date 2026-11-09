@@ -363,6 +363,13 @@ Pane {
     function num(v, digits) {
         return v === null || v === undefined || !isFinite(v) ? "–" : Number(v).toFixed(digits)
     }
+    /// Power in W to overcome a drag force at the run speed (CAD-209), or null without both.
+    function dragPowerW(dragN, results) {
+        const v = results && results.conditions && results.conditions.settings ? results.conditions.settings.speed : undefined
+        if (typeof dragN !== "number" || !isFinite(dragN) || !(v > 0))
+            return null
+        return dragN * v
+    }
     /// Efficiency |lift| / drag (CAD-184), or null without a positive drag.
     function liftDragRatio(s) {
         if (!s || !(s.dragN > 0) || s.liftN === null || s.liftN === undefined || !isFinite(s.liftN))
@@ -1779,6 +1786,35 @@ Pane {
                         text: root.num(root.coefficientArea(parent.s.cd, conditions), 1) + " / "
                               + root.num(root.coefficientArea(parent.s.cl, conditions), 1) + " cm²"
                     }
+                    // Power to push the part through the air at the run speed, and downforce as a mass
+                    // (CAD-209): the units motorsport aero is talked about in.
+                    Label {
+                        text: qsTr("Drag power")
+                        opacity: 0.7
+                        Layout.columnSpan: 2
+                        visible: cfdDragPower.visible
+                    }
+                    Label {
+                        id: cfdDragPower
+                        objectName: "cfdSummaryDragPower"
+                        Layout.columnSpan: 2
+                        readonly property var watts: root.dragPowerW(parent.s.dragN, root.results)
+                        visible: watts !== null
+                        text: !visible ? "" : qsTr("%1 kW (%2 hp)").arg(root.num(watts / 1000, 2)).arg(root.num(watts / 745.7, 2))
+                    }
+                    Label {
+                        text: qsTr("Downforce")
+                        opacity: 0.7
+                        Layout.columnSpan: 2
+                        visible: cfdDownforceMass.visible
+                    }
+                    Label {
+                        id: cfdDownforceMass
+                        objectName: "cfdSummaryDownforceKg"
+                        Layout.columnSpan: 2
+                        visible: typeof parent.s.liftN === "number" && isFinite(parent.s.liftN) && parent.s.liftN < 0
+                        text: !visible ? "" : root.num(-parent.s.liftN / 9.80665, 2) + " kg"
+                    }
                     // Aero balance of a car with two axles of turning wheels (CAD-194), in two short
                     // rows: one long line would widen the grid and push the panel past its width.
                     Label {
@@ -1888,8 +1924,9 @@ Pane {
                             if (!(v > 0) || !(v0 > 0))
                                 return qsTr("a speed, e.g. 200 km/h, 55 m/s or 120 mph")
                             const k = (v / v0) * (v / v0), s = root.results.summary
-                            return qsTr("drag %1 N · lift %2 N (×%3)").arg(root.num(s.dragN * k, 1))
-                                .arg(root.num(s.liftN * k, 1)).arg(root.num(k, 2))
+                            // Drag power grows with speed³ (CAD-209).
+                            return qsTr("drag %1 N · lift %2 N · %4 kW (×%3)").arg(root.num(s.dragN * k, 1))
+                                .arg(root.num(s.liftN * k, 1)).arg(root.num(k, 2)).arg(root.num(s.dragN * k * v / 1000, 2))
                         }
                     }
                 }

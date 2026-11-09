@@ -72,9 +72,15 @@ panel in place of Properties:
   also for Cd/Cl/Cs; CAD-191, [summary](images/audit/cad-191-swing.png)).
   **At speed** (CAD-208, [summary](images/audit/cad-208-scale-speed.png)): type another speed
   (m/s, km/h or mph, as in New run) to read the final drag and lift there, for example
-  "200 km/h" on a 40 m/s run gives "drag 57.9 N · lift -185.2 N (×1.93)". The forces are scaled
-  by (speed / run speed)² with the run's own Cd and Cl; Reynolds-number effects are not
+  "200 km/h" on a 40 m/s run gives "drag 57.9 N · lift -185.2 N · 3.22 kW (×1.93)". The forces are scaled
+  by (speed / run speed)² with the run's own Cd and Cl, and the drag power by (speed / run speed)³;
+  Reynolds-number effects are not
   included, so for a large change run that speed instead. Final results only.
+  **Drag power and downforce in kg** (CAD-209, [summary](images/audit/cad-209-drag-power.png)):
+  *Drag power* is the power needed to push the part through the air at the run speed, drag ×
+  speed, in kW and hp (745.7 W): 30 N at 40 m/s is "1.20 kW (1.61 hp)". *Downforce* shows a
+  negative lift as a mass, |lift| / 9.80665: -96 N is "9.79 kg". Not shown without a run speed
+  or for positive lift.
   **Aero balance** (CAD-194, [summary](images/audit/cad-194-balance.png)): for a car with two
   axles (turning wheels, or with the floor on, tyres standing on the part's bottom that do not
   turn, found the same way and kept in case.json as `standingWheels` only for this; CAD-196),
