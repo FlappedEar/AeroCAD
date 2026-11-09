@@ -1635,6 +1635,14 @@ void registerTimelineCommands(CommandRegistry& r)
               return timelineToJson(design(ctx), ctx.document);
           });
 
+    r.add({"parameter.evaluate", "Evaluate Expression",
+           "Evaluates a number or an expression with the user parameters and units (as a dimension would) "
+           "without changing the design; returns {value} in mm (or degrees, or a plain number).",
+           objectSchema({{"expression", {{"type", Json::array({"string", "number"})}}}}, {"expression"})},
+          [](CommandContext& ctx, const Json& params) {
+              return Json{{"value", design(ctx).evaluate(params.at("expression"))}};
+          });
+
     r.add({"parameter.remove", "Remove Parameter", "Removes a user parameter.",
            objectSchema({{"name", {{"type", "string"}, {"minLength", 1}}}}, {"name"}), true},
           [](CommandContext& ctx, const Json& params) {

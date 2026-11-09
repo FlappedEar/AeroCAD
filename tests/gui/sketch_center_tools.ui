@@ -1,0 +1,83 @@
+# CAD-199: Center Rectangle and Center Point Arc in the sketch (Fusion), with real clicks
+# and typed sizes. The centre rectangle extrudes into a body.
+# Run: AeroCAD --ui-script <this file>
+ui.wait(800)
+Qt.createQmlObject('import QtQuick; Item { objectName: "ctTest"; visible: false; function at(u, v) { const o = viewport.sketchOverlay; const q = o.toScreen([u, v]); return o.mapToItem(null, q.x, q.y) } function clickAt(u, v) { const p = at(u, v); ui.click(p.x, p.y) } function moveTo(u, v) { const p = at(u, v); ui.move(p.x, p.y) } function curves() { return controller.execute("sketch.curves", { sketch: activeSketch.id }).result.curves } function near(p, q) { return Math.hypot(p[0] - q[0], p[1] - q[1]) < 1e-6 } }', window.contentItem)
+(() => { const r = controller.execute("sketch.create", { plane: "XY", curves: [{ type: "line", start: [-20, -20], end: [100, 80], construction: true }] }); if (!r.ok) ui.fail("sketch: " + r.error) })()
+ui.wait(300)
+(() => { enterSketch(controller.execute("timeline.list").result.features[0].id) })()
+ui.wait(800)
+# Center Rectangle from the ribbon's CREATE menu: centre (20, -20), corner (35, -10): 30 x 20
+# about the centre.
+(() => { if (!ui.clickText("CREATE")) ui.fail("no CREATE caption in the sketch ribbon") })()
+ui.wait(300)
+(() => { if (!ui.clickText("Center Rectan&gle")) ui.fail("no Center Rectangle in the CREATE menu"); if (sketchTool !== "center_rectangle") ui.fail("the tool did not start: " + sketchTool) })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "ctTest"); t.clickAt(20, -20); t.moveTo(35, -10) })()
+ui.wait(200)
+ui.shot("sketch-center-rectangle-preview.png")
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "ctTest"); t.clickAt(35, -10) })()
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "ctTest"); const c = t.curves().slice(1); ui.log("center rectangle " + JSON.stringify(c.map(x => x.points))); if (c.length !== 4 || c.some(x => x.kind !== "line")) ui.fail("expected 4 lines, got " + JSON.stringify(c)); const xs = [].concat(...c.map(x => x.points.map(p => p[0]))), ys = [].concat(...c.map(x => x.points.map(p => p[1]))); if (Math.abs(Math.min(...xs) - 5) > 1e-6 || Math.abs(Math.max(...xs) - 35) > 1e-6 || Math.abs(Math.min(...ys) + 30) > 1e-6 || Math.abs(Math.max(...ys) + 10) > 1e-6) ui.fail("not 30 x 20 about (20, -20)") })()
+# Typed size: centre (-30, -30), then "16, 8" Enter. The cursor is level with the centre
+# (an easy grid snap): the typed size counts, not the zero height to the cursor.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "ctTest"); t.clickAt(-30, -30); t.moveTo(-20, -30) })()
+ui.wait(200)
+ui.type("16, 8")
+ui.key("Return")
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "ctTest"); const c = t.curves().slice(5); const xs = [].concat(...c.map(x => x.points.map(p => p[0]))), ys = [].concat(...c.map(x => x.points.map(p => p[1]))); ui.log("typed rectangle x " + Math.min(...xs) + ".." + Math.max(...xs) + " y " + Math.min(...ys) + ".." + Math.max(...ys)); if (c.length !== 4 || Math.abs(Math.min(...xs) + 38) > 1e-6 || Math.abs(Math.max(...xs) + 22) > 1e-6 || Math.abs(Math.min(...ys) + 34) > 1e-6 || Math.abs(Math.max(...ys) + 26) > 1e-6) ui.fail("typed 16 x 8 about (-30, -30) not drawn: " + JSON.stringify(c.map(x => x.points))) })()
+# Center Point Arc from the Sketch menu: centre (60, -30), start (70, -30), end (60, -20): a
+# quarter arc of radius 10, counter-clockwise.
+(() => { if (!ui.clickText("&Sketch")) ui.fail("no Sketch menu") })()
+ui.wait(300)
+(() => { if (!ui.clickText("C&enter Point Arc")) ui.fail("no Center Point Arc in the Sketch menu"); if (sketchTool !== "center_arc") ui.fail("the tool did not start: " + sketchTool) })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "ctTest"); t.clickAt(60, -30); t.clickAt(70, -30); t.moveTo(60, -20) })()
+ui.wait(200)
+ui.shot("sketch-center-arc-preview.png")
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "ctTest"); t.clickAt(60, -20) })()
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "ctTest"); const c = t.curves(); const a = c[c.length - 1]; ui.log("center arc " + JSON.stringify(a)); if (c.length !== 10 || a.kind !== "arc") ui.fail("no arc: " + JSON.stringify(c.slice(9))); if (!t.near(a.points[0], [70, -30]) || !t.near(a.points[2], [60, -20]) || !t.near(a.center, [60, -30])) ui.fail("wrong arc ends or centre"); const m = a.points[1]; if (!(m[0] > 60 && m[1] > -30)) ui.fail("the arc is not the counter-clockwise quarter: middle " + JSON.stringify(m)) })()
+# Typed radius: centre (-40, 10), "5" Enter puts the start towards the cursor, then the end.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "ctTest"); t.clickAt(-40, 10); t.moveTo(-30, 10) })()
+ui.wait(200)
+ui.type("5")
+ui.key("Return")
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "ctTest"); t.clickAt(-50, 10) })()
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "ctTest"); const c = t.curves(); const a = c[c.length - 1]; ui.log("typed arc " + JSON.stringify(a)); if (c.length !== 11 || a.kind !== "arc" || !t.near(a.points[0], [-35, 10]) || !t.near(a.points[2], [-45, 10])) ui.fail("typed radius 5 arc not drawn: " + JSON.stringify(a)); if (!(a.points[1][1] > 10)) ui.fail("the half arc does not go over the top (counter-clockwise)") })()
+# A typed radius expression: with r = 3 mm, centre (60, 10), "r * 2" Enter, then the end
+# straight up. The arc has radius 6 and keeps the expression, so it follows r.
+(() => { const r = controller.execute("parameter.set", { name: "r", expression: "3 mm" }); if (!r.ok) ui.fail("parameter: " + r.error) })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "ctTest"); t.clickAt(60, 10); t.moveTo(70, 10) })()
+ui.wait(200)
+# Letters are tool shortcuts in the sketch, so click the Size field first (as a user would).
+(() => { const find = it => { if (it.objectName === "sketchDimension") return it; for (let i = 0; i < it.children.length; ++i) { const f = find(it.children[i]); if (f) return f } return null }; const f = find(viewport.sketchOverlay); if (!f || !f.visible) ui.fail("no Size field"); const p = f.mapToItem(null, f.width / 2, f.height / 2); ui.click(p.x, p.y) })()
+ui.wait(200)
+ui.type("r * 2")
+ui.key("Return")
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "ctTest"); if (viewport.sketchOverlay.points.length !== 2) ui.fail("the radius expression did not place the start point: " + JSON.stringify(viewport.sketchOverlay.points)); t.clickAt(60, 20) })()
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "ctTest"); const c = t.curves(); const a = c[c.length - 1]; ui.log("expression arc " + JSON.stringify(a)); if (c.length !== 12 || a.kind !== "arc" || !t.near(a.points[0], [66, 10]) || !t.near(a.points[2], [60, 16])) ui.fail("radius r * 2 arc not drawn: " + JSON.stringify(a)); const items = controller.execute("timeline.list").result.features[0].params.curves; const item = items[items.length - 1]; if (item.type !== "center_arc" || item.radius !== "r * 2") ui.fail("the arc lost the radius expression: " + JSON.stringify(item)) })()
+(() => { const r = controller.execute("parameter.set", { name: "r", expression: "4 mm" }); if (!r.ok) ui.fail("parameter: " + r.error) })()
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "ctTest"); const c = t.curves(); const a = c[c.length - 1]; if (!t.near(a.points[0], [68, 10])) ui.fail("the arc did not follow r = 4: " + JSON.stringify(a)) })()
+# The 2-corner Rectangle takes a typed size with the cursor level with the first corner too:
+# corner (0, -50), cursor (10, -50), "10, 6" Enter.
+(() => { sketchTool_("rectangle"); const t = Array.from(window.contentItem.children).find(c => c.objectName === "ctTest"); t.clickAt(0, -50); t.moveTo(10, -50) })()
+ui.wait(200)
+ui.type("10, 6")
+ui.key("Return")
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "ctTest"); const c = t.curves().slice(12); const xs = [].concat(...c.map(x => x.points.map(p => p[0]))), ys = [].concat(...c.map(x => x.points.map(p => p[1]))); if (c.length !== 4 || Math.abs(Math.min(...xs)) > 1e-6 || Math.abs(Math.max(...xs) - 10) > 1e-6 || Math.abs(Math.min(...ys) + 50) > 1e-6 || Math.abs(Math.max(...ys) + 44) > 1e-6) ui.fail("typed 10 x 6 rectangle at (0, -50) not drawn: " + JSON.stringify(c.map(x => x.points))) })()
+ui.shot("sketch-center-tools.png")
+# Finish and extrude: the three rectangles are the profiles (30 x 20, 16 x 8 and 10 x 6; 10 mm).
+(() => { finishSketch(true) })()
+ui.wait(500)
+(() => { const sk = controller.execute("timeline.list").result.features[0].id; const r = controller.execute("feature.extrude", { sketch: sk, distance: 10 }); if (!r.ok) ui.fail("extrude: " + r.error) })()
+ui.wait(500)
+(() => { const b = controller.execute("timeline.list").result.bodies; const v = b.reduce((s, x) => s + x.volume, 0); ui.log("volume " + v); if (Math.abs(v - (600 + 128 + 60) * 10) > 1e-3) ui.fail("expected 7880 mm³, got " + v) })()

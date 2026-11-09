@@ -1275,3 +1275,16 @@ TEST_CASE("Design commands: timeline.move_feature reorders the timeline, refuses
     run(s, "edit.undo"); // first move
     CHECK(order() == std::vector<std::uint64_t>{box, fillet, other});
 }
+
+TEST_CASE("Design commands: parameter.evaluate evaluates without recording (CAD-199)", "[commands][cad]")
+{
+    commands::Session s;
+    run(s, "parameter.set", {{"name", "w"}, {"expression", "30 mm"}});
+    CHECK(run(s, "parameter.evaluate", {{"expression", "w / 2"}}).at("value").get<double>() == Approx(15.0));
+    CHECK(run(s, "parameter.evaluate", {{"expression", "1 cm"}}).at("value").get<double>() == Approx(10.0));
+    CHECK(run(s, "parameter.evaluate", {{"expression", 7}}).at("value").get<double>() == Approx(7.0));
+    CHECK_FALSE(s.execute("parameter.evaluate", {{"expression", "nope * 2"}}).ok);
+    // Nothing was recorded: one undo removes the parameter, then there is nothing left.
+    REQUIRE(s.execute("edit.undo").ok);
+    CHECK_FALSE(s.execute("edit.undo").ok);
+}

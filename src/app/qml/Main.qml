@@ -243,8 +243,10 @@ ApplicationWindow {
         }
         SketchMenuItem { action: lineAction; icon.source: Theme.iconUrl("line") }
         SketchMenuItem { action: rectangleAction; icon.source: Theme.iconUrl("rectangle") }
+        SketchMenuItem { action: centerRectangleAction; icon.source: Theme.iconUrl("center-rectangle") }
         SketchMenuItem { action: circleAction; icon.source: Theme.iconUrl("circle") }
         SketchMenuItem { action: arcAction; icon.source: Theme.iconUrl("arc") }
+        SketchMenuItem { action: centerArcAction; icon.source: Theme.iconUrl("center-arc") }
         SketchMenuItem { action: polygonAction; icon.source: Theme.iconUrl("polygon") }
         SketchMenuItem { action: slotAction; icon.source: Theme.iconUrl("slot") }
         SketchMenuItem { action: splineAction; icon.source: Theme.iconUrl("spline") }
@@ -1298,6 +1300,8 @@ ApplicationWindow {
     Action { id: sketchProjectAction; text: qsTr("&Project"); shortcut: "P"; enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "project"; onTriggered: window.sketchTool_("project") }
     Action { id: sketchOffsetAction; text: qsTr("&Offset"); shortcut: "O"; enabled: !!window.activeSketch && (viewport.sketchOverlay.selectedCurves.length > 0 || window.sketchTool === "offset"); checkable: true; checked: window.sketchTool === "offset"; onTriggered: { if (window.sketchTool !== "offset") viewport.sketchOverlay.startOffset(); else window.sketchTool_("") } }
     Action { id: sketchMirrorAction; text: qsTr("&Mirror"); enabled: !!window.activeSketch && (viewport.sketchOverlay.selectedCurves.length > 0 || window.sketchTool === "mirror"); checkable: true; checked: window.sketchTool === "mirror"; onTriggered: { if (window.sketchTool !== "mirror") viewport.sketchOverlay.startMirror(); else window.sketchTool_("") } }
+    Action { id: centerRectangleAction; text: qsTr("Center Rectan&gle"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "center_rectangle"; onTriggered: window.sketchTool_("center_rectangle") }
+    Action { id: centerArcAction; text: qsTr("C&enter Point Arc"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "center_arc"; onTriggered: window.sketchTool_("center_arc") }
     Action { id: splineAction; text: qsTr("Spli&ne"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "spline"; onTriggered: window.sketchTool_("spline") }
     Action { id: slotAction; text: qsTr("Sl&ot"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "slot"; onTriggered: window.sketchTool_("slot") }
 
@@ -1592,8 +1596,10 @@ ApplicationWindow {
             title: qsTr("&Sketch")
             MenuItem { action: lineAction }
             MenuItem { action: rectangleAction }
+            MenuItem { action: centerRectangleAction }
             MenuItem { action: circleAction }
             MenuItem { action: arcAction }
+            MenuItem { action: centerArcAction }
             MenuItem { action: polygonAction }
             MenuItem { action: slotAction }
             MenuItem { action: splineAction }
@@ -2051,6 +2057,10 @@ ApplicationWindow {
                 ToolCommand { action: slotAction; text: qsTr("Slot"); iconName: "slot" }
                 ToolCommand { action: splineAction; text: qsTr("Spline"); iconName: "spline" }
                 ToolCommand { action: dimensionAction; text: qsTr("Dimension"); iconName: "dimension" }
+                // Past maxVisible: in the CREATE caption menu (Fusion keeps them in the
+                // Rectangle / Arc drop-downs).
+                ToolCommand { action: centerRectangleAction; text: qsTr("Center Rectangle"); iconName: "center-rectangle" }
+                ToolCommand { action: centerArcAction; text: qsTr("Center Arc"); iconName: "center-arc" }
             }
             ToolSeparator { tab: "sketch" }
             ToolGroup {

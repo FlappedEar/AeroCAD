@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Drawing tools of the sketch environment (Fusion: Line L, 2-point Rectangle R, Center
-// Diameter Circle C, 3-point Arc, Polygon, Slot, Fit Point Spline). Clicks are projected onto the sketch
+// Diameter Circle C, 3-point Arc, Polygon, Slot, Fit Point Spline, Center Rectangle, Center
+// Point Arc). Clicks are projected onto the sketch
 // plane and snapped to existing points or a grid; a finished curve is reported with
 // curveDrawn() in sketch coordinates (mm). Typing a value + Enter sets the dimension of
 // the curve being drawn (length, diameter, "width, height"); expressions with user
@@ -71,6 +72,10 @@ Item {
     readonly property bool selecting: sketch !== null && tool === ""
     /// Clicked points of the curve being drawn, [[u, v], ...].
     property var points: []
+    /// Center Point Arc: the radius typed after the centre (a number or an expression with
+    /// user parameters), kept for the finished arc; null when the radius is drawn.
+    property var typedRadius: null
+    onPointsChanged: if (points.length === 0) typedRadius = null
     property var hover: null
     property bool hoverSnapped: false
     readonly property real snapPixels: 10
@@ -358,6 +363,7 @@ Item {
     function clicksNeeded() {
         switch (tool) {
         case "arc":
+        case "center_arc":
         case "slot": return 3
         case "spline": return Infinity // ended with Enter, a double-click or the first point
         default: return 2
@@ -365,6 +371,14 @@ Item {
     }
 
     // --- Building curves ------------------------------------------------------------------
+
+    /// True when size `i` of a curve is usable: the typed value (a positive number or an
+    /// expression) when there is one, else the drawn size `drawn`.
+    function sizeGiven(dim, i, drawn) {
+        if (dim && dim.length > i)
+            return typeof dim[i] === "string" ? dim[i].length > 0 : dim[i] > 0
+        return drawn >= 1e-9
+    }
 
     function curveFrom(pts, dim) {
         const a = pts[0], b = pts[1]
@@ -374,10 +388,34 @@ Item {
         case "rectangle": {
             let w = Math.abs(b[0] - a[0]), h = Math.abs(b[1] - a[1])
             const corner = [Math.min(a[0], b[0]), Math.min(a[1], b[1])]
-            if (w < 1e-9 || h < 1e-9)
+            // A typed size counts, not the cursor offset (the cursor may be level with the
+            // first corner).
+            if (!sizeGiven(dim, 0, w) || !sizeGiven(dim, 1, h))
                 return null
             return { type: "rectangle", corner: corner, width: dim && dim.length > 0 ? dim[0] : w,
                      height: dim && dim.length > 1 ? dim[1] : h }
+        }
+        case "center_rectangle": {
+            // Centre, then a corner: the rectangle is symmetric about the centre.
+            const w = 2 * Math.abs(b[0] - a[0]), h = 2 * Math.abs(b[1] - a[1])
+            if (!sizeGiven(dim, 0, w) || !sizeGiven(dim, 1, h))
+                return null
+            return { type: "center_rectangle", center: a, width: dim && dim.length > 0 ? dim[0] : round6(w),
+                     height: dim && dim.length > 1 ? dim[1] : round6(h) }
+        }
+        case "center_arc": {
+            // Centre, start (sets the radius), end: counter-clockwise from start to end.
+            if (pts.length < 3)
+                return null
+            const r = dist(a, b)
+            if (r < 1e-9 || dist(a, pts[2]) < 1e-9)
+                return null
+            const deg = p => round6(Math.atan2(p[1] - a[1], p[0] - a[0]) * 180 / Math.PI)
+            const s = deg(b), e = deg(pts[2])
+            if (Math.abs(s - e) < 1e-6)
+                return null
+            return { type: "center_arc", center: a, radius: dim && dim.length > 0 ? dim[0] : typedRadius !== null ? typedRadius : round6(r),
+                     startAngle: s, endAngle: e }
         }
         case "circle": {
             const d = dist(a, b) * 2
@@ -494,9 +532,25 @@ Item {
             const d = dist(a, hover)
             const dir = d > 1e-9 ? [(hover[0] - a[0]) / d, (hover[1] - a[1]) / d] : [1, 0]
             click([round6(a[0] + dir[0] * len), round6(a[1] + dir[1] * len)])
-        } else if (tool === "rectangle" || tool === "circle" || tool === "polygon") {
+        } else if (tool === "center_arc" && points.length === 1) {
+            // The typed radius places the start point towards the cursor; an expression is
+            // evaluated for that and kept as the arc's radius.
+            const ev = typeof values[0] === "string"
+                ? root.viewport.controller.execute("parameter.evaluate", { expression: values[0] }) : null
+            if (ev && !ev.ok) {
+                root.viewport.controller.showStatus(qsTr("Radius: %1").arg(ev.error))
+                return
+            }
+            const r = ev ? ev.result.value : Number(values[0])
+            if (!(r > 0))
+                return
+            const d = dist(a, hover)
+            const dir = d > 1e-9 ? [(hover[0] - a[0]) / d, (hover[1] - a[1]) / d] : [1, 0]
+            click([round6(a[0] + dir[0] * r), round6(a[1] + dir[1] * r)])
+            typedRadius = values[0]
+        } else if (tool === "rectangle" || tool === "center_rectangle" || tool === "circle" || tool === "polygon") {
             const b = hover
-            if (tool === "rectangle" && values.length < 2)
+            if ((tool === "rectangle" || tool === "center_rectangle") && values.length < 2)
                 return
             const curve = curveFrom([a, dist(a, b) > 1e-9 ? b : [a[0] + 1, a[1] + 1]], values)
             if (tool === "rectangle" && curve) {
@@ -565,7 +619,7 @@ Item {
         /// Select mode: the point pressed on ({point, pos}) and whether it is being dragged.
         property var dragPoint: null
         property bool pointDragging: false
-        readonly property bool dragTool: root.tool === "rectangle" || root.tool === "circle" || root.tool === "polygon"
+        readonly property bool dragTool: root.tool === "rectangle" || root.tool === "center_rectangle" || root.tool === "circle" || root.tool === "polygon"
         onPressed: mouse => {
             if (root.selecting) {
                 // Select mode: a curve under the cursor is picked here; anything else goes
@@ -775,12 +829,32 @@ Item {
                 } else if (root.tool === "line" || (pts.length === 2 && (root.tool === "arc" || root.tool === "slot"))) {
                     ctx.moveTo(s[0].x, s[0].y)
                     ctx.lineTo(s[1].x, s[1].y)
-                } else if (root.tool === "rectangle") {
-                    const a = pts[0], b = pts[1]
+                } else if (root.tool === "rectangle" || root.tool === "center_rectangle") {
+                    const b = pts[1]
+                    // A centre rectangle mirrors the corner about the centre.
+                    const a = root.tool === "rectangle" ? pts[0] : [2 * pts[0][0] - b[0], 2 * pts[0][1] - b[1]]
                     const c = [[a[0], a[1]], [b[0], a[1]], [b[0], b[1]], [a[0], b[1]]].map(p => root.toScreen(p))
                     ctx.moveTo(c[0].x, c[0].y)
                     for (let i = 1; i <= 4; ++i)
                         ctx.lineTo(c[i % 4].x, c[i % 4].y)
+                } else if (root.tool === "center_arc") {
+                    // Radius line, then the arc counter-clockwise from the start to the cursor.
+                    const c = pts[0], r = root.dist(c, pts[1])
+                    const a0 = Math.atan2(pts[1][1] - c[1], pts[1][0] - c[0])
+                    let sweep = 2 * Math.PI
+                    if (pts.length >= 3) {
+                        sweep = Math.atan2(pts[2][1] - c[1], pts[2][0] - c[0]) - a0
+                        if (sweep <= 0)
+                            sweep += 2 * Math.PI
+                    }
+                    ctx.moveTo(s[0].x, s[0].y)
+                    ctx.lineTo(s[1].x, s[1].y)
+                    if (pts.length >= 3) {
+                        for (let i = 0; i <= 64; ++i) {
+                            const q = root.toScreen([c[0] + r * Math.cos(a0 + sweep * i / 64), c[1] + r * Math.sin(a0 + sweep * i / 64)])
+                            if (i === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y)
+                        }
+                    }
                 } else if (root.tool === "circle" || root.tool === "polygon") {
                     const r = root.dist(pts[0], pts[1])
                     const n = root.tool === "polygon" ? root.polygonSides : 64
@@ -836,6 +910,10 @@ Item {
                     text = Preferences.formatLength(root.dist(a, b), Preferences.lengthUnit)
                 else if (root.tool === "rectangle")
                     text = Preferences.formatLength(Math.abs(b[0] - a[0]), Preferences.lengthUnit) + " × " + Preferences.formatLength(Math.abs(b[1] - a[1]), Preferences.lengthUnit)
+                else if (root.tool === "center_rectangle")
+                    text = Preferences.formatLength(2 * Math.abs(b[0] - a[0]), Preferences.lengthUnit) + " × " + Preferences.formatLength(2 * Math.abs(b[1] - a[1]), Preferences.lengthUnit)
+                else if (root.tool === "center_arc")
+                    text = "R " + Preferences.formatLength(root.dist(a, b), Preferences.lengthUnit)
                 else if (root.tool === "circle")
                     text = "⌀ " + Preferences.formatLength(2 * root.dist(a, b), Preferences.lengthUnit)
                 else if (root.tool === "polygon")
@@ -886,6 +964,8 @@ Item {
                     : root.tool === "trim" ? qsTr("Trim: click the piece of a curve to remove (up to where other curves cross it)")
                     : root.tool === "line" ? qsTr("Line: click points; Esc (or right-click › End Curve) ends the chain")
                     : root.tool === "rectangle" ? qsTr("Rectangle: drag or click two corners; type width, height")
+                    : root.tool === "center_rectangle" ? qsTr("Center rectangle: click the centre, then a corner; type width, height")
+                    : root.tool === "center_arc" ? qsTr("Center point arc: click the centre, the start, then the end (counter-clockwise); type the radius")
                     : root.tool === "circle" ? qsTr("Circle: click centre and a point; type the diameter")
                     : root.tool === "arc" ? qsTr("Arc: click start, end, then a point on the arc")
                     : root.tool === "polygon" ? qsTr("Polygon: click centre and a corner; type the radius")
@@ -925,10 +1005,12 @@ Item {
             }
             RowLayout {
                 visible: root.active && !root.constraintTool && root.tool !== "trim" && root.tool !== "mirror" && root.tool !== "fillet" && root.tool !== "project" && root.tool !== "spline"
-                Label { text: root.tool === "rectangle" ? qsTr("Width, height") : root.tool === "line" ? qsTr("Length")
+                Label { text: root.tool === "rectangle" || root.tool === "center_rectangle" ? qsTr("Width, height")
+                            : root.tool === "center_arc" ? qsTr("Radius") : root.tool === "line" ? qsTr("Length")
                             : root.tool === "offset" ? qsTr("Distance") : qsTr("Size") }
                 TextField {
                     id: dimension
+                    objectName: "sketchDimension"
                     Layout.preferredWidth: 140
                     placeholderText: qsTr("e.g. 40 or w/2")
                     onAccepted: {
