@@ -294,7 +294,9 @@ See [cad.md](cad.md) for the timeline and the commands behind the tools.
   XY / XZ / YZ. A click into a hole of a scan (a grille opening) takes the surface next to
   it, within 4 degrees of the click, and the status bar says so. The view turns to look at
   the sketch. Tools: Line (chains; Esc or right-click › End Curve ends), Rectangle, Circle, Arc
-  (start, end, point on arc), Polygon, Slot. Points snap to existing points and to a grid
+  (start, end, point on arc), Polygon, Slot, Spline (Fusion: Fit Point Spline; click fit
+  points, Enter, a double-click or Esc ends it open, a click on the first point closes it;
+  the preview and the finished curve are smooth). Points snap to existing points and to a grid
   that follows the zoom. While drawing, type a number (or `width, height` for rectangles)
   and press Enter to set the size; expressions such as `w / 2` keep the sketch parametric.
   **Finish Sketch** leaves the sketch. Esc works as in Fusion: it ends the curve being drawn,

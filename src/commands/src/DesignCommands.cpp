@@ -1079,7 +1079,8 @@ void registerSketchCommands(CommandRegistry& r)
 
     r.add({"sketch.curves", "Sketch curves",
            "Lists the solved curves of a sketch (index, kind, points in sketch coordinates) and its constraints, "
-           "with the remaining degrees of freedom. Use the indices in sketch.add_constraints.",
+           "with the remaining degrees of freedom; a spline also has samples, points along the real curve. "
+           "Use the indices in sketch.add_constraints.",
            objectSchema({{"sketch", featureIdSchema("Sketch feature id.")}}, {"sketch"})},
           [](CommandContext& ctx, const Json& params) {
               const auto id = params.at("sketch").get<cad::FeatureId>();
@@ -1100,8 +1101,18 @@ void registerSketchCommands(CommandRegistry& r)
                           {"construction", c.construction}};
                   if (c.kind == geometry::SketchCurve::Kind::Circle)
                       cj["radius"] = c.radius;
-                  if (c.kind == geometry::SketchCurve::Kind::Spline)
+                  if (c.kind == geometry::SketchCurve::Kind::Spline) {
                       cj["closed"] = c.closed;
+                      // The real curve for drawing (points holds only the fit points).
+                      try {
+                          Json samples = Json::array();
+                          for (const auto& p : geometry::sampleSpline(c))
+                              samples.push_back(Json::array({p.x, p.y}));
+                          cj["samples"] = samples;
+                      } catch (const geometry::ModelingError&) {
+                          // Left out: the fit points are drawn instead.
+                      }
+                  }
                   if (const auto ctr = arcCenter(c))
                       cj["center"] = Json::array({ctr->x, ctr->y});
                   curves.push_back(cj);

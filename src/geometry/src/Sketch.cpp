@@ -677,4 +677,23 @@ bool faceContains(const Shape& face, const core::Vec3& point)
     return false;
 }
 
+std::vector<Vec2> sampleSpline(const SketchCurve& spline, int perSpan)
+{
+    if (spline.kind != SketchCurve::Kind::Spline)
+        throw ModelingError("Not a spline");
+    const Plane plane = Plane::xy();
+    BRepAdaptor_Curve curve(makeEdge(plane, spline));
+    const int spans = static_cast<int>(spline.points.size()) - (spline.closed ? 0 : 1);
+    const int n = std::max(1, spans) * std::max(1, perSpan);
+    const double t0 = curve.FirstParameter();
+    const double t1 = curve.LastParameter();
+    std::vector<Vec2> out;
+    out.reserve(static_cast<std::size_t>(n) + 1);
+    for (int i = 0; i <= n; ++i) {
+        const gp_Pnt p = curve.Value(t0 + (t1 - t0) * i / n);
+        out.push_back({p.X(), p.Y()});
+    }
+    return out;
+}
+
 } // namespace aerocad::geometry

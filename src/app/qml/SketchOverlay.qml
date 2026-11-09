@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Drawing tools of the sketch environment (Fusion: Line L, 2-point Rectangle R, Center
-// Diameter Circle C, 3-point Arc, Polygon, Slot). Clicks are projected onto the sketch
+// Diameter Circle C, 3-point Arc, Polygon, Slot, Fit Point Spline). Clicks are projected onto the sketch
 // plane and snapped to existing points or a grid; a finished curve is reported with
 // curveDrawn() in sketch coordinates (mm). Typing a value + Enter sets the dimension of
 // the curve being drawn (length, diameter, "width, height"); expressions with user
@@ -116,8 +116,11 @@ Item {
         return true
     }
 
-    /// Ends the curve being drawn (a line chain) or the constraint pick, as Esc does.
+    /// Ends the curve being drawn (a line chain) or the constraint pick, as Esc does. A
+    /// spline is kept as an open spline through the points clicked so far.
     function endCurrent() {
+        if (tool === "spline")
+            finishSpline(false)
         reset()
         constraintLayer.reset()
     }
@@ -353,6 +356,7 @@ Item {
         switch (tool) {
         case "arc":
         case "slot": return 3
+        case "spline": return Infinity // ended with Enter, a double-click or the first point
         default: return 2
         }
     }
@@ -404,6 +408,40 @@ Item {
         return null
     }
 
+    /// Ends the spline being drawn: an open one needs 2 fit points, a closed one 3.
+    function finishSpline(closed) {
+        if (points.length >= (closed ? 3 : 2))
+            emitCurve({ type: "spline", points: points, closed: closed })
+        points = []
+        canvas.requestPaint()
+    }
+
+    /// Smooth preview through fit points (centripetal Catmull-Rom); the finished spline
+    /// is drawn from the real curve.
+    function splinePreview(pts, closed) {
+        const n = pts.length
+        if (n < 3)
+            return pts
+        const at = i => closed ? pts[(i + n) % n] : pts[Math.max(0, Math.min(n - 1, i))]
+        const out = []
+        const spans = closed ? n : n - 1
+        for (let i = 0; i < spans; ++i) {
+            const p0 = at(i - 1), p1 = at(i), p2 = at(i + 1), p3 = at(i + 2)
+            const knot = (a, b) => Math.max(1e-9, Math.sqrt(dist(a, b)))
+            const t1 = knot(p0, p1), t2 = t1 + knot(p1, p2), t3 = t2 + knot(p2, p3)
+            const lerp = (a, b, ta, tb, t) => [(a[0] * (tb - t) + b[0] * (t - ta)) / (tb - ta),
+                                              (a[1] * (tb - t) + b[1] * (t - ta)) / (tb - ta)]
+            for (let k = 0; k < 16; ++k) {
+                const t = t1 + (t2 - t1) * k / 16
+                const a1 = lerp(p0, p1, 0, t1, t), a2 = lerp(p1, p2, t1, t2, t), a3 = lerp(p2, p3, t2, t3, t)
+                const b1 = lerp(a1, a2, 0, t2, t), b2 = lerp(a2, a3, t1, t3, t)
+                out.push(lerp(b1, b2, t1, t2, t))
+            }
+        }
+        out.push(closed ? pts[0] : pts[n - 1])
+        return out
+    }
+
     function emitCurve(curve) {
         if (curve !== null)
             curveDrawn(curve)
@@ -411,6 +449,18 @@ Item {
 
     function click(p) {
         const pts = points.concat([p])
+        if (tool === "spline") {
+            // As in Fusion: a click on the first point closes the spline; a second click
+            // on the last point (a double-click) ends it open.
+            if (points.length >= 3 && dist(points[0], p) < 1e-9)
+                finishSpline(true)
+            else if (points.length > 0 && dist(points[points.length - 1], p) < 1e-9)
+                finishSpline(false)
+            else
+                points = pts
+            canvas.requestPaint()
+            return
+        }
         if (tool === "line" && pts.length === 2) {
             if (dist(pts[0], pts[1]) < 1e-9)
                 return
@@ -463,7 +513,9 @@ Item {
     /// Draws a solved sketch curve (sketch.curves format) as a polyline on the canvas.
     function strokeCurve(ctx, c) {
         let uv = []
-        if (c.kind === "line" || c.kind === "spline") {
+        if (c.kind === "spline") {
+            uv = c.samples || c.points
+        } else if (c.kind === "line") {
             uv = c.points
         } else if (c.kind === "circle") {
             const r = c.radius
@@ -651,11 +703,13 @@ Item {
     // Typing a number starts the dimension input, as in Fusion.
     Keys.onPressed: event => {
         if (event.key === Qt.Key_Escape) {
-            cancelPointDrag()
-            reset()
-            constraintLayer.reset()
+            if (!cancelPointDrag())
+                endCurrent()
             event.accepted = true
-        } else if (active && !constraintTool && (points.length > 0 || tool === "offset") && /^[0-9.(\-]$/.test(event.text)) {
+        } else if (tool === "spline" && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)) {
+            finishSpline(false)
+            event.accepted = true
+        } else if (active && !constraintTool && tool !== "spline" && (points.length > 0 || tool === "offset") && /^[0-9.(\-]$/.test(event.text)) {
             dimension.text = event.text
             dimension.forceActiveFocus()
             event.accepted = true
@@ -707,7 +761,15 @@ Item {
             if (root.active && pts.length >= 2) {
                 const curve = root.curveFrom(pts.length >= 3 || root.clicksNeeded() === 2 ? pts : pts, null)
                 ctx.beginPath()
-                if (root.tool === "line" || (pts.length === 2 && (root.tool === "arc" || root.tool === "slot"))) {
+                if (root.tool === "spline") {
+                    // Snapped onto the first point (3 or more clicked): the closed spline.
+                    const closing = root.points.length >= 3 && root.hover !== null && root.dist(root.points[0], root.hover) < 1e-9
+                    const uv = root.splinePreview(closing ? root.points : pts, closing)
+                    for (let i = 0; i < uv.length; ++i) {
+                        const q = root.toScreen(uv[i])
+                        if (i === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y)
+                    }
+                } else if (root.tool === "line" || (pts.length === 2 && (root.tool === "arc" || root.tool === "slot"))) {
                     ctx.moveTo(s[0].x, s[0].y)
                     ctx.lineTo(s[1].x, s[1].y)
                 } else if (root.tool === "rectangle") {
@@ -824,6 +886,7 @@ Item {
                     : root.tool === "circle" ? qsTr("Circle: click centre and a point; type the diameter")
                     : root.tool === "arc" ? qsTr("Arc: click start, end, then a point on the arc")
                     : root.tool === "polygon" ? qsTr("Polygon: click centre and a corner; type the radius")
+                    : root.tool === "spline" ? qsTr("Spline: click fit points; Enter, a double-click or Esc ends it, the first point closes it")
                     : qsTr("Slot: click both centres, then the width")
                 font.weight: Font.DemiBold
             }
@@ -858,7 +921,7 @@ Item {
                 }
             }
             RowLayout {
-                visible: root.active && !root.constraintTool && root.tool !== "trim" && root.tool !== "mirror" && root.tool !== "fillet" && root.tool !== "project"
+                visible: root.active && !root.constraintTool && root.tool !== "trim" && root.tool !== "mirror" && root.tool !== "fillet" && root.tool !== "project" && root.tool !== "spline"
                 Label { text: root.tool === "rectangle" ? qsTr("Width, height") : root.tool === "line" ? qsTr("Length")
                             : root.tool === "offset" ? qsTr("Distance") : qsTr("Size") }
                 TextField {
