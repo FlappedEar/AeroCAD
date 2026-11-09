@@ -179,3 +179,34 @@ TEST_CASE("document.import still scales unitless STL OBJ PLY and BREP", "[comman
         }
     }
 }
+
+TEST_CASE("document.import gives one part per STEP body with its name and colour (CAD-227)", "[commands][import]")
+{
+    UnitFiles files;
+    const auto box = geometry::makeBox(10, 20, 30);
+    const auto cyl = geometry::makeCylinder(2, 5);
+    const auto step = files.file("two.step");
+    io::writeStep(step, {{"Wing", nullptr, &box, "#cc3333"}, {"", nullptr, &cyl, ""}});
+
+    commands::Session session;
+    const auto first = importPart(session, step, "mm", false);
+    CHECK(first["name"] == "Wing");
+    CHECK(first["color"] == "#cc3333");
+    REQUIRE(first.contains("parts"));
+    REQUIRE(first["parts"].size() == 2);
+    // No name in the file: the file name and a number.
+    CHECK(first["parts"][1]["name"] == "two 2");
+    CHECK(first["parts"][1]["color"] == "");
+    checkSize(first["parts"][1], 4, 4, 5);
+    REQUIRE(session.document().parts().size() == 2);
+    for (const auto& p : session.document().parts()) {
+        REQUIRE(p.shape);
+        CHECK(p.shape->solidCount() == 1);
+    }
+
+    // One undo step for the whole file.
+    REQUIRE(session.execute("edit.undo", Json::object()).ok);
+    CHECK(session.document().parts().empty());
+    REQUIRE(session.execute("edit.redo", Json::object()).ok);
+    CHECK(session.document().parts().size() == 2);
+}

@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CAD-227: STEP keeps body names and colours. Export two bodies (one renamed and coloured),
+# File > New, import through the app's import path: one part per body, named and coloured
+# from the file, one Undo removes them all.
+# Run: AeroCAD --ui-script <this file>
+ui.wait(800)
+(() => { const ex = (c, p) => { const r = controller.execute(c, p); if (!r.ok) ui.fail(c + ": " + r.error); return r.result }; ex("feature.box", { size: [40, 20, 10] }); ex("feature.cylinder", { center: [60, 0, 0], radius: 4, height: 10 }); ex("part.rename", { id: 1, name: "Wing" }); ex("part.set_color", { id: 1, color: "#cc3333" }); ex("document.export", { path: "/tmp/aerocad-cad227-bodies.step" }); controller.newProject() })()
+ui.wait(500)
+(() => { scan.importFile("file:///tmp/aerocad-cad227-bodies.step") })()
+ui.wait(2500)
+(() => { const parts = controller.execute("document.parts").result.parts; ui.log("PARTS " + JSON.stringify(parts.map(p => [p.name, p.color, p.hasBrep])) + " | " + controller.statusMessage); if (parts.length !== 2) ui.fail("expected one part per body, got " + parts.length); if (parts[0].name !== "Wing" || parts[0].color !== "#cc3333") ui.fail("first body lost its name or colour"); if (parts[1].name !== "Body2" || parts[1].color !== "") ui.fail("second body: " + parts[1].name + " " + parts[1].color); if (!parts.every(p => p.hasBrep)) ui.fail("an imported body has no exact geometry"); if (controller.statusMessage.indexOf("2 bodies") < 0) ui.fail("status does not count the bodies: " + controller.statusMessage) })()
+ui.shot("step-bodies.png")
+ui.key("Z", "ctrl")
+ui.wait(500)
+(() => { const n = controller.execute("document.parts").result.parts.length; if (n !== 0) ui.fail("one Undo should remove the whole import, " + n + " parts left") })()
+ui.log("step bodies done")

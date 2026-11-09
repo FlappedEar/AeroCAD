@@ -386,6 +386,12 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND sh ${PROJECT_SOURCE_DIR}/tests/gui/project_recovery.sh $<TARGET_FILE:aerocad> ${PROJECT_SOURCE_DIR}
                 ${CMAKE_CURRENT_BINARY_DIR}/project-recovery)
     set_tests_properties(app_project_recovery_test PROPERTIES LABELS gui TIMEOUT 120)
+    # CAD-227: a STEP file with several bodies imports as one named, coloured part per body.
+    add_test(NAME app_step_bodies_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/step_bodies.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_step_bodies_test PROPERTIES LABELS gui TIMEOUT 60
+        ENVIRONMENT "XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/step-bodies-data;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/step-bodies-data")
     # CAD-105: Simplify a scan, then Ctrl+Z restores the full mesh (also with a reduced display).
     add_test(NAME app_simplify_undo_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl

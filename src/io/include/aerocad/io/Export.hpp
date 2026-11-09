@@ -19,6 +19,8 @@ struct ExportItem {
     const core::TriangleMesh* mesh = nullptr;
     /// Exact geometry (required for STEP).
     const geometry::Shape* shape = nullptr;
+    /// Appearance colour "#rrggbb", or empty for the default (CAD-227). Written to STEP.
+    std::string color{};
 };
 
 /// Thrown when a file cannot be written or the data does not fit the format.
