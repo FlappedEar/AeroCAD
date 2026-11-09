@@ -129,7 +129,7 @@ std::string_view toString(FeatureStatus::State state)
 const std::vector<std::string>& Design::featureTypes()
 {
     static const std::vector<std::string> types{"sketch", "extrude", "revolve", "fillet", "chamfer",
-                                                "shell",  "combine", "box",     "cylinder", "base_body", "hole",
+                                                "shell",  "combine", "box",     "cylinder", "sphere", "torus", "base_body", "hole",
                                                 "mirror",  "rectangular_pattern", "circular_pattern", "loft", "sweep", "plane",
                                                 "part_on_surface", "fin_on_surface", "move", "press_pull", "split", "delete_faces", "draft"};
     return types;
@@ -2393,6 +2393,24 @@ void Design::evaluateFeature(const Feature& f)
         c.radius = r;
         const auto g = geometry::buildSketch(base, {c});
         applyOperation(geometry::extrude(g.profiles.at(0), {0, 0, 1}, h));
+    } else if (f.type == "sphere") {
+        // Fusion: Create > Sphere.
+        const core::Vec3 center = ev.vec3(p, "center", {});
+        const double d = ev.num(p, "diameter");
+        if (d <= 0)
+            throw DesignError("Sphere diameter must be positive");
+        applyOperation(geometry::sphere(center, d / 2));
+    } else if (f.type == "torus") {
+        // Fusion: Create > Torus, around +Z: `diameter` of the ring's centre line, `tube_diameter`
+        // of the tube.
+        const core::Vec3 center = ev.vec3(p, "center", {});
+        const double d = ev.num(p, "diameter");
+        const double t = ev.num(p, "tube_diameter");
+        if (d <= 0 || t <= 0)
+            throw DesignError("Torus diameters must be positive");
+        if (t >= d)
+            throw DesignError("Torus: the tube does not fit; its diameter must be smaller than the ring diameter");
+        applyOperation(geometry::torus(center, d / 2, t / 2));
     } else if (f.type == "hole") {
         // Simple drilled hole (Fusion: Hole, H): a cylinder cut into the body, normal to
         // the planar face at `point`.

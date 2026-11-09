@@ -1218,6 +1218,8 @@ ApplicationWindow {
     Action { id: revolveAction; text: qsTr("Re&volve"); onTriggered: window.openFeature("revolve") }
     Action { id: boxAction; text: qsTr("&Box"); onTriggered: window.openFeature("box") }
     Action { id: cylinderAction; text: qsTr("C&ylinder"); onTriggered: window.openFeature("cylinder") }
+    Action { id: sphereAction; text: qsTr("Sp&here"); onTriggered: window.openFeature("sphere") }
+    Action { id: torusAction; text: qsTr("T&orus"); onTriggered: window.openFeature("torus") }
     // Fusion: Press Pull, Q (moves faces in or out; a curved face is offset).
     Action { id: pressPullAction; text: qsTr("&Press Pull"); shortcut: "Q"; enabled: !window.activeSketch; onTriggered: window.openFeature("press_pull") }
     Action { id: filletAction; text: qsTr("&Fillet"); shortcut: "F"; enabled: !window.activeSketch; onTriggered: window.openFeature("fillet") }
@@ -1547,6 +1549,8 @@ ApplicationWindow {
             MenuItem { action: loftAction }
             MenuItem { action: boxAction }
             MenuItem { action: cylinderAction }
+            MenuItem { action: sphereAction }
+            MenuItem { action: torusAction }
             MenuItem { action: holeAction }
             MenuSeparator {}
             MenuItem { action: mirrorAction }
@@ -1838,6 +1842,8 @@ ApplicationWindow {
                 ToolCommand { action: holeAction; text: qsTr("Hole"); iconName: "hole" }
                 ToolCommand { action: boxAction; text: qsTr("Box"); iconName: "box" }
                 ToolCommand { action: cylinderAction; text: qsTr("Cylinder"); iconName: "cylinder" }
+                ToolCommand { action: sphereAction; text: qsTr("Sphere"); iconName: "sphere" }
+                ToolCommand { action: torusAction; text: qsTr("Torus"); iconName: "torus" }
                 ToolCommand { action: sweepAction; text: qsTr("Sweep"); iconName: "sweep" }
                 ToolCommand { action: loftAction; text: qsTr("Loft"); iconName: "loft" }
                 ToolCommand { action: mirrorAction; text: qsTr("Mirror"); iconName: "mirror" }

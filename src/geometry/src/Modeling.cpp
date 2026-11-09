@@ -45,6 +45,8 @@
 #include <LocOpe_DPrism.hxx>
 #include <gp_Pln.hxx>
 #include <BRepPrimAPI_MakeRevol.hxx>
+#include <BRepPrimAPI_MakeSphere.hxx>
+#include <BRepPrimAPI_MakeTorus.hxx>
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
 #include <Bnd_Box.hxx>
@@ -1087,6 +1089,25 @@ Shape deleteFaces(const Shape& shape, const std::vector<std::size_t>& faceIndice
         if (!BRepCheck_Analyzer(result).IsValid())
             throw ModelingError("Delete Face failed: the result is not a valid solid");
         return wrapShape(result);
+    });
+}
+
+Shape sphere(const core::Vec3& center, double radius)
+{
+    if (!std::isfinite(radius) || radius <= 0)
+        throw ModelingError("Sphere: the diameter must be positive");
+    return guarded("Sphere", [&] { return wrapShape(BRepPrimAPI_MakeSphere(toPnt(center), radius).Solid()); });
+}
+
+Shape torus(const core::Vec3& center, double ringRadius, double tubeRadius)
+{
+    if (!std::isfinite(ringRadius) || !std::isfinite(tubeRadius) || ringRadius <= 0 || tubeRadius <= 0)
+        throw ModelingError("Torus: the diameters must be positive");
+    if (tubeRadius >= ringRadius)
+        throw ModelingError("Torus: the tube does not fit; its diameter must be smaller than the ring diameter");
+    return guarded("Torus", [&] {
+        const gp_Ax2 axis(toPnt(center), gp::DZ());
+        return wrapShape(BRepPrimAPI_MakeTorus(axis, ringRadius, tubeRadius).Solid());
     });
 }
 

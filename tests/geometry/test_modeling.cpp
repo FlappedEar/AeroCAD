@@ -657,6 +657,23 @@ TEST_CASE("Delete Face removes a hole and a fillet and heals the body", "[geomet
     CHECK_THROWS_AS(deleteFaces(box, {99}), ModelingError);
 }
 
+TEST_CASE("Sphere and torus primitives", "[geometry][modeling]")
+{
+    const double pi = std::numbers::pi;
+    const Shape ball = sphere({1, 2, 3}, 5);
+    CHECK(ball.volume() == Approx(4.0 / 3.0 * pi * 125).epsilon(1e-6));
+    CHECK(isValid(ball));
+    CHECK(ball.bounds().min.x == Approx(-4).margin(0.05));
+    CHECK(ball.bounds().max.z == Approx(8).margin(0.05));
+    const Shape ring = torus({0, 0, 0}, 20, 5);
+    CHECK(isValid(ring));
+    CHECK(ring.volume() == Approx(2 * pi * pi * 20 * 25).epsilon(1e-6));
+    CHECK(ring.bounds().max.z == Approx(5).margin(0.05));
+    CHECK_THROWS_AS(sphere({}, 0), ModelingError);
+    CHECK_THROWS_AS(torus({}, 5, 5), ModelingError);
+    CHECK_THROWS_AS(torus({}, 5, -1), ModelingError);
+}
+
 TEST_CASE("Draft tilts side faces from the fixed plane", "[geometry][modeling]")
 {
     // A 20 x 20 x 10 box, the +X side drafted 10 degrees from the bottom (XY) plane, pull +Z:

@@ -144,7 +144,7 @@ QtObject {
     readonly property var commandIcons: ({
         "undo": "undo", "redo": "redo", "import": "import", "open": "open", "save": "save",
         "to body": "mesh-to-body", "sketch": "sketch", "extrude": "extrude", "revolve": "revolve",
-        "box": "box", "cylinder": "cylinder", "hole": "hole", "line": "line", "rectangle": "rectangle",
+        "box": "box", "cylinder": "cylinder", "sphere": "sphere", "torus": "torus", "hole": "hole", "line": "line", "rectangle": "rectangle",
         "circle": "circle", "arc": "arc", "polygon": "polygon", "slot": "slot", "dimension": "dimension",
         "finish sketch": "finish-sketch", "press pull": "extrude", "fillet": "fillet", "chamfer": "chamfer", "shell": "shell",
         "combine": "combine", "split body": "section", "delete face": "delete", "draft": "shell", "parameters": "parameters", "show/hide": "visible", "delete": "delete",
@@ -169,6 +169,8 @@ QtObject {
         "hole": qsTr("Drill a round hole into a body at a point on a face."),
         "box": qsTr("Add a block whose size you type in."),
         "cylinder": qsTr("Add a cylinder whose size you type in."),
+        "sphere": qsTr("Add a ball whose diameter you type in."),
+        "torus": qsTr("Add a ring (doughnut) whose ring and tube diameters you type in."),
         "press pull": qsTr("Move faces of a body in or out by a distance; a curved face is offset (Fusion: Press Pull, Q)."),
         "fillet": qsTr("Round the selected edges of a body."),
         "chamfer": qsTr("Bevel (cut off at an angle) the selected edges of a body."),
@@ -209,7 +211,7 @@ QtObject {
     function featureIcon(type) {
         const map = {
             sketch: "sketch", extrude: "extrude", revolve: "revolve", fillet: "fillet",
-            chamfer: "chamfer", shell: "shell", combine: "combine", box: "box", cylinder: "cylinder",
+            chamfer: "chamfer", shell: "shell", combine: "combine", box: "box", cylinder: "cylinder", sphere: "sphere", torus: "torus",
             hole: "hole", base_body: "mesh-to-body", sweep: "sweep", loft: "loft", mirror: "mirror",
             pattern: "pattern", rectangular_pattern: "pattern", circular_pattern: "circular-pattern",
             plane: "plane", body: "body", imported: "mesh", mesh: "mesh",
