@@ -8,6 +8,7 @@ set(AEROCAD_APP_SOURCES
     main.cpp
     AppController.cpp
     AppController.hpp
+    PickFilter.hpp
     PartListModel.cpp
     PartListModel.hpp
     MeshGeometry.cpp
@@ -703,6 +704,16 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/touchpad_gestures.ui)
     set_tests_properties(app_touchpad_gestures_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-94: profile clicks reach the shown sketch behind the modelling preview.
+    add_test(NAME app_profile_picking_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/profile_picking.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_profile_picking_test PROPERTIES LABELS gui TIMEOUT 90)
+    add_test(NAME app_picking_filters_test
+        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl
+                --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/picking_filters.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_picking_filters_test PROPERTIES LABELS gui TIMEOUT 120)
     # CAD-85: a fit that misses its tolerance is marked as an approximation in the UI.
     add_test(NAME app_fit_tolerance_warning_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome.stl

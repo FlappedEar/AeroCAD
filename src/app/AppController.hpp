@@ -160,21 +160,22 @@ public:
     /// Part details for the properties panel ({} for unknown ids).
     Q_INVOKABLE QVariantMap partInfo(quint64 id) const;
 
-    /// Nearest hit of a ray (model coordinates) with the visible parts' meshes:
-    /// {partId, point (QVector3D), triangle}, or {} when nothing is hit. With `skipId`
-    /// that part is left out; with `onlyId` only that part is tried.
-    Q_INVOKABLE QVariantMap pickSurface(const QVector3D& origin, const QVector3D& direction, quint64 skipId = 0,
-                                        quint64 onlyId = 0) const;
+    /// Options mirror viewport eligibility: kind, shownSketch, hiddenPartIds, unpickablePlane.
+    /// Nearest hit of a ray (model coordinates) with the eligible parts' meshes:
+    /// {partId, point (QVector3D), triangle}, or {} when nothing is hit. With option
+    /// `skipId` that part is left out; with `onlyId` only that part is tried.
+    Q_INVOKABLE QVariantMap pickSurface(const QVector3D& origin, const QVector3D& direction,
+                                        const QVariantMap& options = {}) const;
     /// For a click that misses (into a hole of a scan, such as a grille opening): the
     /// visible surface point seen closest to the ray, within `maxAngleDeg` of it, as
     /// pickSurface's map plus snapped: true; {} when nothing is that close.
     Q_INVOKABLE QVariantMap pickNearSurface(const QVector3D& origin, const QVector3D& direction,
-                                            double maxAngleDeg) const;
+                                            double maxAngleDeg, const QVariantMap& options = {}) const;
     /// The visible sketch line closest to a ray (model coordinates), within `maxDistance`
     /// mm of it: {partId, point (on the line, QVector3D), distance (along the ray)}, or {}.
     /// Measure picks sketch curves with it: they have no surface to ray-cast.
     Q_INVOKABLE QVariantMap pickSketchLine(const QVector3D& origin, const QVector3D& direction,
-                                           double maxDistance) const;
+                                           double maxDistance, const QVariantMap& options = {}) const;
     /// `point` moved along `normal` onto the first skin of part `id` (and the scan it was
     /// fitted from) seen from outside, for drawing sketch previews where the draped sketch
     /// is shown; `point` itself on a miss.

@@ -41,6 +41,10 @@ aerocad_add_test(test_mcp
     LIBS AeroCAD::mcp)
 
 if(AEROCAD_BUILD_APP)
+    aerocad_add_test(test_app_picking
+        SOURCES app/test_picking.cpp
+        LIBS AeroCAD::model)
+
     aerocad_add_test(test_mcp_ipc
         SOURCES mcp/test_mcp_ipc.cpp
         LIBS AeroCAD::mcp_ipc)
