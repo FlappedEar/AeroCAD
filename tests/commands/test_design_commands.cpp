@@ -2359,4 +2359,22 @@ TEST_CASE("Design commands: sketch points (CAD-235)", "[commands][cad][solver]")
     const Json c = run(s, "sketch.create", {{"plane", "XY"}, {"curves", Json::array({{{"type", "point"}, {"at", {1, 2}}}})}});
     CHECK(curves(c.at("id").get<std::uint64_t>()).size() == 1);
     CHECK(run(s, "sketch.profiles", {{"sketch", c.at("id")}}).at("profiles").empty());
+
+    // A tangent arc that ends on a sketch point stays joined to it (Codex review): drag the
+    // point and the arc's end follows.
+    {
+        const Json t = run(s, "sketch.create",
+                           {{"plane", "XY"},
+                            {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {10, 0}}},
+                                                    {{"type", "point"}, {"at", {20, 10}}}})}});
+        const auto tid = t.at("id").get<std::uint64_t>();
+        run(s, "sketch.add_curves",
+            {{"sketch", tid},
+             {"curves", Json::array({{{"type", "tangent_arc"}, {"from", {{"curve", 0}, {"point", "end"}}}, {"end", {20, 10}}}})}});
+        run(s, "sketch.move_point", {{"sketch", tid}, {"point", {{"curve", 1}, {"point", "start"}}}, {"to", {25, 10}}});
+        const Json tc = curves(tid);
+        REQUIRE(tc.size() == 3);
+        CHECK(near(tc[1].at("points")[0], 25, 10));
+        CHECK(near(tc[2].at("points")[2], 25, 10));
+    }
 }

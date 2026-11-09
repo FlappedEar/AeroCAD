@@ -393,6 +393,10 @@ Item {
             const c = curves.find(x => x.index === ref.curve)
             return c && c.kind === "spline" && ref.index < c.points.length ? c.points[ref.index] : null
         }
+        // A sketch point answers to start, end and center alike (as in the solver).
+        const own = curves.find(x => x.index === ref.curve)
+        if (own && own.kind === "point")
+            return own.points[0]
         for (const c of pointCandidates()) {
             if (c.point !== "origin" && c.point.curve === ref.curve && c.point.point === (ref.point || "start")
                     && (ref.point !== "fit" || c.point.index === ref.index))

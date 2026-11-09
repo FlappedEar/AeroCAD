@@ -28,3 +28,8 @@ ui.wait(300)
 ui.key("Delete")
 ui.wait(500)
 (() => { const r = controller.execute("sketch.curves", { sketch: activeSketch.id }).result; if (r.curves.filter(c => c.kind === "point").length !== 1) ui.fail("Delete did not remove the point") })()
+ui.wait(300)
+# A dimension made through the API with a point's end or center alias still gets its glyph.
+(() => { const r = controller.execute("sketch.curves", { sketch: activeSketch.id }).result; const i = r.curves.findIndex(c => c.kind === "point"); const a = controller.execute("sketch.add_constraints", { sketch: activeSketch.id, constraints: [{ type: "fix", points: [{ curve: i, point: "center" }] }] }); if (!a.ok) ui.fail("fix by center: " + a.error) })()
+ui.wait(500)
+(() => { const o = viewport.sketchOverlay; const c = o.sketchConstraints[o.sketchConstraints.length - 1]; const g = o.constraintGlyphs; for (const alias of ["start", "end", "center"]) { const p = g.pointPos({ curve: c.points[0].curve, point: alias }); ui.log(alias + " at " + JSON.stringify(p)); if (!p || Math.hypot(p[0] - 20, p[1] + 10) > 1e-6) ui.fail("no position for the point's " + alias + ": " + JSON.stringify(p)) } if (!g.anchorOf(c)) ui.fail("the Fix on the point's center has no glyph anchor") })()

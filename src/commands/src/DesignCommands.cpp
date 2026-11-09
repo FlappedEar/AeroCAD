@@ -794,6 +794,12 @@ std::vector<std::pair<std::size_t, std::string>> curveEndsAt(const std::vector<g
     std::vector<std::pair<std::size_t, std::string>> out;
     for (std::size_t j = 0; j < curves.size(); ++j) {
         const auto& c = curves[j];
+        // A sketch point has one position; a curve ending on it stays joined to it.
+        if (c.kind == K::Point && !c.points.empty()) {
+            if (std::hypot(c.points[0].x - at.x, c.points[0].y - at.y) < 1e-6)
+                out.emplace_back(j, "start");
+            continue;
+        }
         const bool open = c.kind == K::Line || (c.kind == K::Arc && c.points.size() == 3) ||
                           (c.kind == K::Spline && !c.closed);
         if (!open || c.points.size() < 2)
