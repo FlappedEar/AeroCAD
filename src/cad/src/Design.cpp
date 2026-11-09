@@ -1551,10 +1551,15 @@ void Design::moveSketchCurves(FeatureId sketchId, const std::vector<std::size_t>
             }
         }
         // Constraints among the copied curves come along; ones tied to the origin or that
-        // fix a point stay with the originals.
+        // fix a point stay with the originals, and so do directions along the sketch axes
+        // (horizontal, a horizontal distance) when the copy is turned.
         Json all = constraints;
         for (auto c : constraints) {
-            if (lower(c.value("type", std::string())) == "fix" || c.dump().find("\"origin\"") != std::string::npos)
+            const std::string type = lower(c.value("type", std::string()));
+            if (type == "fix" || c.dump().find("\"origin\"") != std::string::npos)
+                continue;
+            if (a != 0.0 && (type == "horizontal" || type == "vertical" || type == "horizontal_distance" ||
+                             type == "vertical_distance"))
                 continue;
             if (remapConstraint(c, map))
                 all.push_back(c);
@@ -1563,6 +1568,16 @@ void Design::moveSketchCurves(FeatureId sketchId, const std::vector<std::size_t>
         if (!all.empty())
             f.params["constraints"] = all;
         regenerateChecked(sketchId, before);
+        // The copies must be where they were asked to go (as the preview shows them).
+        it = m_sketches.find(sketchId);
+        for (std::size_t i = 0; i < curves.size() && it != m_sketches.end(); ++i) {
+            if (map[i] && (*map[i] >= it->second.curves.size() ||
+                           !sameCurve(it->second.curves[*map[i]], movedCurve(curves[i]), 1e-6))) {
+                m_state = before;
+                regenerate();
+                throw DesignError("The copied curves' constraints do not let them sit there");
+            }
+        }
         return;
     }
 
@@ -1579,6 +1594,9 @@ void Design::moveSketchCurves(FeatureId sketchId, const std::vector<std::size_t>
             const Vec2 to = moved(curvePointAt(curves[i], ref));
             held.push_back({{"type", "fix"}, {"points", Json::array({ref})}, {"at", Json::array({Json::array({to.x, to.y})})}});
         }
+        // A circle keeps its size too (its centre alone does not hold it).
+        if (curves[i].kind == SketchCurve::Kind::Circle)
+            held.push_back({{"type", "radius"}, {"curve", i}, {"value", curves[i].radius}});
     }
     f.params["curves"] = items;
     f.params["constraints"] = held;

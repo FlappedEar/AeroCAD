@@ -2532,4 +2532,33 @@ TEST_CASE("Design commands: sketch Move/Copy (CAD-244)", "[commands][cad][solver
         CHECK(near(c.at("curves")[5].at("points")[0], 50, 50));
         CHECK(c.at("constraints").size() == 2);
     }
+    SECTION("a moved circle keeps its size (Codex review)")
+    {
+        // Radius 5 at (0, 5), tangent to a fixed line along y = 0: moving it up cannot keep
+        // both, so the move is refused instead of growing the circle.
+        const Json t = run(s, "sketch.create",
+                           {{"plane", "XY"},
+                            {"curves", Json::array({{{"type", "line"}, {"start", {-20, 0}}, {"end", {20, 0}}},
+                                                    {{"type", "circle"}, {"center", {0, 5}}, {"radius", 5}}})},
+                            {"constraints", Json::array({{{"type", "fix"}, {"curve", 0}}, {{"type", "tangent"}, {"curves", {0, 1}}}})}});
+        const auto tid = t.at("id").get<std::uint64_t>();
+        CHECK_FALSE(s.execute("sketch.move_curves", {{"sketch", tid}, {"curves", {1}}, {"dy", 5}}).ok);
+        const Json c = run(s, "sketch.curves", {{"sketch", tid}});
+        CHECK(c.at("curves")[1].at("radius").get<double>() == Approx(5));
+        CHECK(near(c.at("curves")[1].at("points")[0], 0, 5));
+    }
+    SECTION("a turned copy leaves horizontal and vertical with the original (Codex review)")
+    {
+        const Json t = run(s, "sketch.create",
+                           {{"plane", "XY"},
+                            {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {10, 0}}}})},
+                            {"constraints", Json::array({{{"type", "horizontal"}, {"curve", 0}}, {{"type", "length"}, {"curve", 0}, {"value", 10}}})}});
+        const auto tid = t.at("id").get<std::uint64_t>();
+        run(s, "sketch.move_curves", {{"sketch", tid}, {"curves", {0}}, {"angle", 90}, {"pivot", {0, 0}}, {"copy", true}});
+        const Json c = run(s, "sketch.curves", {{"sketch", tid}});
+        REQUIRE(c.at("curves").size() == 2);
+        CHECK(near(c.at("curves")[1].at("points")[0], 0, 0));
+        CHECK(near(c.at("curves")[1].at("points")[1], 0, 10));
+        CHECK(c.at("constraints").size() == 3); // the copy's length, not its horizontal
+    }
 }
