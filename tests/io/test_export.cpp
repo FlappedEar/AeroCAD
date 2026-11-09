@@ -2,6 +2,7 @@
 #include "aerocad/core/MeshCheck.hpp"
 #include "aerocad/core/Path.hpp"
 #include "aerocad/geometry/Modeling.hpp"
+#include "aerocad/geometry/OcctShape.hpp"
 #include "aerocad/geometry/Primitives.hpp"
 #include "aerocad/geometry/Sketch.hpp"
 #include "aerocad/geometry/Tessellation.hpp"
@@ -13,6 +14,18 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <miniz.h>
+
+#include <IFSelect_ReturnStatus.hxx>
+#include <STEPCAFControl_Writer.hxx>
+#include <TDF_Label.hxx>
+#include <TDataStd_Name.hxx>
+#include <TDocStd_Document.hxx>
+#include <TopLoc_Location.hxx>
+#include <XCAFApp_Application.hxx>
+#include <XCAFDoc_DocumentTool.hxx>
+#include <XCAFDoc_ShapeTool.hxx>
+#include <gp_Trsf.hxx>
+#include <gp_Vec.hxx>
 
 #include <atomic>
 #include <chrono>
@@ -163,6 +176,92 @@ TEST_CASE("STEP export round trip keeps exact geometry in mm", "[io][export][ste
     CHECK(back.shape->bounds().size().z == Approx(40.0).margin(0.1)); // bounds include the tolerance gap
     CHECK(back.shape->bounds().size().z > 39.99);
     CHECK(dir.entries() == 1);
+
+    // CAD-227: one STEP product per body, with its name (not "Open CASCADE STEP
+    // translator ..."); reading gives the bodies back separately.
+    REQUIRE(back.bodies.size() == 2);
+    CHECK(back.bodies[0].name == "box");
+    CHECK(back.bodies[1].name == "cyl");
+    REQUIRE(back.bodies[1].shape.has_value());
+    CHECK(back.bodies[1].shape->volume() == Approx(3.14159265358979 * 25 * 40).epsilon(1e-6));
+    CHECK(back.bodies[0].mesh.triangleCount() + back.bodies[1].mesh.triangleCount() == back.mesh.triangleCount());
+}
+
+TEST_CASE("STEP import names assembly occurrences by their own names (CAD-227)", "[io][import][step]")
+{
+    // An assembly "Frame" with two placed occurrences of one product "Bracket".
+    const geometry::Shape box = geometry::makeBox(10, 10, 10);
+    Handle(TDocStd_Document) doc;
+    XCAFApp_Application::GetApplication()->NewDocument("MDTV-XCAF", doc);
+    const Handle(XCAFDoc_ShapeTool) shapes = XCAFDoc_DocumentTool::ShapeTool(doc->Main());
+    const TDF_Label product = shapes->AddShape(box.impl()->shape, Standard_False);
+    TDataStd_Name::Set(product, "Bracket");
+    const TDF_Label assembly = shapes->NewShape();
+    TDataStd_Name::Set(assembly, "Frame");
+    gp_Trsf right;
+    right.SetTranslation(gp_Vec(50, 0, 0));
+    const TDF_Label left = shapes->AddComponent(assembly, product, TopLoc_Location());
+    TDataStd_Name::Set(left, "Left bracket");
+    const TDF_Label other = shapes->AddComponent(assembly, product, TopLoc_Location(right));
+    TDataStd_Name::Set(other, "Right bracket");
+    shapes->UpdateAssemblies();
+
+    TempDir dir;
+    const fs::path path = dir.file("frame.step");
+    STEPCAFControl_Writer writer;
+    writer.SetNameMode(Standard_True);
+    REQUIRE(writer.Transfer(doc, STEPControl_AsIs));
+    REQUIRE(writer.Write(core::pathToUtf8(path).c_str()) == IFSelect_RetDone);
+    XCAFApp_Application::GetApplication()->Close(doc);
+
+    const io::ImportResult back = io::importFile(path);
+    REQUIRE(back.bodies.size() == 2);
+    CHECK(back.bodies[0].name == "Left bracket");
+    CHECK(back.bodies[1].name == "Right bracket");
+    // Each occurrence keeps its placement.
+    CHECK(back.bodies[0].mesh.bounds().min.x == Approx(0.0).margin(1e-6));
+    CHECK(back.bodies[1].mesh.bounds().min.x == Approx(50.0).margin(1e-6));
+}
+
+TEST_CASE("STEP export keeps body names and colours (CAD-227)", "[io][export][step]")
+{
+    TempDir dir;
+    const geometry::Shape box = geometry::makeBox(30, 20, 10);
+    const geometry::Shape cyl = geometry::makeCylinder(5, 40);
+    const fs::path path = dir.file("named.step");
+    io::exportFile(path, {{"Skrzydło", nullptr, &box, "#cc3333"}, {"Pin", nullptr, &cyl, ""}});
+
+    std::ifstream in(path);
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    CHECK_THAT(text, ContainsSubstring("PRODUCT('Pin'"));
+    CHECK_THAT(text, !ContainsSubstring("Open CASCADE STEP translator"));
+
+    const io::ImportResult back = io::importFile(path);
+    REQUIRE(back.bodies.size() == 2);
+    CHECK(back.bodies[0].name == "Skrzydło");
+    CHECK(back.bodies[0].color == "#cc3333");
+    CHECK(back.bodies[1].name == "Pin");
+    CHECK(back.bodies[1].color.empty());
+
+    // Two parts with the same geometry (a duplicated, unmoved part shares its shape): two
+    // products, each with its own name and colour (Codex on #198).
+    const fs::path dup = dir.file("duplicate.step");
+    io::exportFile(dup, {{"Left", nullptr, &box, "#cc3333"}, {"Right", nullptr, &box, "#3333cc"}});
+    const io::ImportResult twins = io::importFile(dup);
+    REQUIRE(twins.bodies.size() == 2);
+    CHECK(twins.bodies[0].name == "Left");
+    CHECK(twins.bodies[0].color == "#cc3333");
+    CHECK(twins.bodies[1].name == "Right");
+    CHECK(twins.bodies[1].color == "#3333cc");
+
+    // A single body is one result, with its colour.
+    const fs::path one = dir.file("one.step");
+    io::exportFile(one, {{"box", nullptr, &box, "#5aa65a"}});
+    const io::ImportResult single = io::importFile(one);
+    CHECK(single.bodies.empty());
+    CHECK(single.color == "#5aa65a");
+    REQUIRE(single.shape.has_value());
+    CHECK(single.shape->volume() == Approx(6000.0).epsilon(1e-6));
 }
 
 TEST_CASE("STEP export round trip keeps a revolved dome closed at its pole", "[io][export][step]")

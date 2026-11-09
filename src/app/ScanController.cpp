@@ -229,10 +229,18 @@ void ScanController::finishImport()
             const QString units = data.value(QStringLiteral("unitSource")).toString() == QStringLiteral("file")
                                       ? tr("file units → mm")
                                       : tr("%1 → mm").arg(data.value(QStringLiteral("units")).toString());
+            // A STEP file with several bodies gives several parts (CAD-227): count them all.
+            const QVariantList parts = data.value(QStringLiteral("parts")).toList();
+            qlonglong triangles = data.value(QStringLiteral("triangles")).toLongLong();
+            if (!parts.isEmpty()) {
+                triangles = 0;
+                for (const QVariant& p : parts)
+                    triangles += p.toMap().value(QStringLiteral("triangles")).toLongLong();
+            }
+            const QString format = data.value(QStringLiteral("format")).toString();
+            const QString what = parts.isEmpty() ? format : tr("%1, %2 bodies").arg(format).arg(parts.size());
             m_app->showStatus(tr("Imported %1 (%2, %3 triangles, %4)")
-                                  .arg(name, data.value(QStringLiteral("format")).toString(),
-                                       QLocale().toString(data.value(QStringLiteral("triangles")).toLongLong()),
-                                       units));
+                                  .arg(name, what, QLocale().toString(triangles), units));
             emit m_app->partImported(data.value(QStringLiteral("id")).toULongLong());
         } else {
             m_lastImportOk = false;

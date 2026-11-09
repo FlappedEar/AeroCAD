@@ -55,7 +55,9 @@ void registerDocumentCommands(CommandRegistry& r)
 {
 
     r.add({"document.import", "Import 3D file",
-           "Imports a 3D file (STL, OBJ, PLY, 3MF, STEP, IGES, BREP) as a new part. The document works in "
+           "Imports a 3D file (STL, OBJ, PLY, 3MF, STEP, IGES, BREP) as a new part. A STEP file with several "
+           "bodies gives one part per body, with the file's names and colours; the result is the first part "
+           "and `parts` lists all of them. The document works in "
            "millimetres. STEP, IGES and 3MF use their file units automatically. For unitless STL, OBJ, PLY "
            "and BREP files, `units` selects the source unit to convert to millimetres.",
            objectSchema({{"path", {{"type", "string"}, {"minLength", 1}, {"description", "Absolute path of the file."}}},
@@ -97,20 +99,56 @@ void registerDocumentCommands(CommandRegistry& r)
                       imported.shape = geometry::scaled(*imported.shape, unitScale, core::Vec3{});
               }
 
-              model::Part part;
-              part.name = params.contains("name") ? params["name"].get<std::string>() : core::pathToUtf8(path.stem());
-              part.source = core::pathToUtf8(path);
-              part.mesh = std::make_shared<const core::TriangleMesh>(std::move(imported.mesh));
-              part.shape = std::move(imported.shape);
+              const std::string baseName =
+                  params.contains("name") ? params["name"].get<std::string>() : core::pathToUtf8(path.stem());
+              std::vector<model::Part> newParts;
+              if (imported.bodies.empty()) {
+                  model::Part part;
+                  part.name = baseName;
+                  part.color = model::isPartColor(imported.color) ? imported.color : std::string{};
+                  part.mesh = std::make_shared<const core::TriangleMesh>(std::move(imported.mesh));
+                  part.shape = std::move(imported.shape);
+                  newParts.push_back(std::move(part));
+              } else {
+                  // A file with several named bodies (STEP products) gives one part per body
+                  // (CAD-227), named from the file or "<name> <n>".
+                  std::size_t n = 0;
+                  for (auto& body : imported.bodies) {
+                      ++n;
+                      model::Part part;
+                      part.name = body.name.empty() ? baseName + " " + std::to_string(n) : body.name;
+                      part.color = model::isPartColor(body.color) ? body.color : std::string{};
+                      part.mesh = std::make_shared<const core::TriangleMesh>(std::move(body.mesh));
+                      part.shape = std::move(body.shape);
+                      newParts.push_back(std::move(part));
+                  }
+              }
 
               model::Document& doc = ctx.document;
-              const model::PartId id = doc.addPart(part);
-              part.id = id;
-              ctx.undoStack.push({"Import " + part.name,
-                                  [&doc, id]() { doc.removePart(id); },
-                                  [&doc, part]() { doc.addPart(part); }});
+              std::vector<model::PartId> ids;
+              for (auto& part : newParts) {
+                  part.source = core::pathToUtf8(path);
+                  part.id = doc.addPart(part);
+                  ids.push_back(part.id);
+              }
+              ctx.undoStack.push({"Import " + (newParts.size() == 1 ? newParts.front().name : baseName),
+                                  [&doc, ids]() {
+                                      for (const auto id : ids)
+                                          doc.removePart(id);
+                                  },
+                                  [&doc, newParts]() {
+                                      for (const auto& part : newParts)
+                                          doc.addPart(part);
+                                  }});
 
+              const model::PartId id = ids.front();
               Json result = partToJson(*doc.part(id));
+              if (ids.size() > 1) {
+                  Json all = Json::array();
+                  for (const auto partId : ids)
+                      all.push_back(partToJson(*doc.part(partId)));
+                  result["parts"] = all;
+              }
               result["format"] = std::string(io::formatName(imported.format));
               result["units"] = std::string(core::unitSymbol(unit));
               result["unitSource"] = fileUnits ? "file" : "importSetting";

@@ -433,6 +433,7 @@ void registerExport(CommandRegistry& r)
                   item.name = p->name;
                   item.mesh = format == io::FileFormat::Step ? p->mesh.get() : fileMesh(*p, meshes);
                   item.shape = p->shape ? &*p->shape : nullptr;
+                  item.color = p->color;
                   items.push_back(item);
 
                   if (format == io::FileFormat::Step || item.mesh == nullptr)
@@ -728,7 +729,7 @@ void registerExportForPrint(CommandRegistry& r)
                           continue;
                       }
                       const auto path = folder / core::pathFromUtf8(pl.stem + ".step");
-                      outputs.push_back({path, {pl.part->name, nullptr, &*pl.part->shape}, io::FileFormat::Step});
+                      outputs.push_back({path, {pl.part->name, nullptr, &*pl.part->shape, pl.part->color}, io::FileFormat::Step});
                       files.push_back({{"id", pl.part->id}, {"format", "step"}, {"path", core::pathToUtf8(path)}});
                   }
               }

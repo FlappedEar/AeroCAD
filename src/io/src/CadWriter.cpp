@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// STEP writer via Open CASCADE.
+// STEP writer via Open CASCADE (XDE: one product per body, with its name and colour).
 #include "aerocad/io/Export.hpp"
 
 #include "ReaderUtil.hpp"
@@ -7,19 +7,31 @@
 
 #include "aerocad/geometry/OcctShape.hpp"
 
+#include <BRepBuilderAPI_Copy.hxx>
 #include <BRep_Tool.hxx>
 #include <Geom_SurfaceOfRevolution.hxx>
 #include <IFSelect_ReturnStatus.hxx>
 #include <Interface_Static.hxx>
 #include <STEPControl_StepModelType.hxx>
-#include <STEPControl_Writer.hxx>
+#include <Quantity_Color.hxx>
+#include <STEPCAFControl_Writer.hxx>
+#include <TCollection_ExtendedString.hxx>
+#include <TDF_Label.hxx>
+#include <TDataStd_Name.hxx>
+#include <TDocStd_Document.hxx>
+#include <XCAFApp_Application.hxx>
+#include <XCAFDoc_ColorTool.hxx>
+#include <XCAFDoc_DocumentTool.hxx>
+#include <XCAFDoc_ShapeTool.hxx>
 #include <ShapeCustom.hxx>
 #include <Standard_Failure.hxx>
 #include <TopExp_Explorer.hxx>
+#include <TopTools_MapOfShape.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Face.hxx>
 
+#include <cstdlib>
 #include <mutex>
 #include <string>
 #include <system_error>
@@ -56,6 +68,24 @@ TopoDS_Shape stepShape(const TopoDS_Shape& shape)
     return ShapeCustom::ConvertToBSpline(shape, Standard_False, Standard_True, Standard_False);
 }
 
+/// "#rrggbb" as an sRGB colour; false for anything else (no colour is written).
+bool parseColor(const std::string& text, Quantity_Color& color)
+{
+    if (text.size() != 7 || text[0] != '#')
+        return false;
+    double rgb[3];
+    for (int i = 0; i < 3; ++i) {
+        const std::string hex = text.substr(1 + 2 * i, 2);
+        char* end = nullptr;
+        const long v = std::strtol(hex.c_str(), &end, 16);
+        if (end != hex.c_str() + 2)
+            return false;
+        rgb[i] = static_cast<double>(v) / 255.0;
+    }
+    color = Quantity_Color(rgb[0], rgb[1], rgb[2], Quantity_TOC_sRGB);
+    return true;
+}
+
 } // namespace
 
 void writeStep(const std::filesystem::path& path, const std::vector<ExportItem>& items)
@@ -76,14 +106,39 @@ void writeStep(const std::filesystem::path& path, const std::vector<ExportItem>&
     const std::string tmpName = core::pathToUtf8(tmp);
     try {
         const std::lock_guard<std::mutex> lock(detail::occtMutex());
-        STEPControl_Writer writer;
         Interface_Static::SetCVal("write.step.unit", "MM");
         Interface_Static::SetCVal("write.step.schema", "AP214IS");
+        // An XDE document with one free shape per body: each becomes a STEP product named
+        // after the body (not "Open CASCADE STEP translator ..."), with its colour.
+        Handle(TDocStd_Document) doc;
+        XCAFApp_Application::GetApplication()->NewDocument("MDTV-XCAF", doc);
+        struct CloseDocument {
+            Handle(TDocStd_Document)& doc;
+            ~CloseDocument() { XCAFApp_Application::GetApplication()->Close(doc); }
+        } closeDocument{doc};
+        const Handle(XCAFDoc_ShapeTool) shapes = XCAFDoc_DocumentTool::ShapeTool(doc->Main());
+        const Handle(XCAFDoc_ColorTool) colors = XCAFDoc_DocumentTool::ColorTool(doc->Main());
+        TopTools_MapOfShape written;
         for (const auto& item : items) {
-            const IFSelect_ReturnStatus status = writer.Transfer(stepShape(item.shape->impl()->shape), STEPControl_AsIs);
-            if (status != IFSelect_RetDone)
-                throw ExportError("Cannot convert '" + item.name + "' to STEP");
+            // A duplicated, unmoved part shares its geometry with the original. The same shape
+            // twice would become one STEP product (AddShape() returns the existing label, and
+            // the writer maps one shape to one product), so the second body would overwrite
+            // the first one's name and colour. Such a repeat is written as a copy.
+            TopoDS_Shape shape = stepShape(item.shape->impl()->shape);
+            if (!written.Add(shape))
+                shape = BRepBuilderAPI_Copy(shape).Shape();
+            const TDF_Label label = shapes->NewShape();
+            shapes->SetShape(label, shape);
+            TDataStd_Name::Set(label, TCollection_ExtendedString(item.name.c_str(), Standard_True));
+            Quantity_Color color;
+            if (parseColor(item.color, color))
+                colors->SetColor(label, color, XCAFDoc_ColorGen);
         }
+        STEPCAFControl_Writer writer;
+        writer.SetNameMode(Standard_True);
+        writer.SetColorMode(Standard_True);
+        if (!writer.Transfer(doc, STEPControl_AsIs))
+            throw ExportError("Cannot convert the bodies to STEP");
         // OCCT accepts UTF-8 file names on every platform.
         if (writer.Write(tmpName.c_str()) != IFSelect_RetDone)
             throw ExportError("Cannot write STEP file: " + name);

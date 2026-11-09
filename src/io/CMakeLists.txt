@@ -16,5 +16,5 @@ add_library(AeroCAD::io ALIAS aerocad_io)
 target_include_directories(aerocad_io PUBLIC include PRIVATE src)
 target_link_libraries(aerocad_io
     PUBLIC AeroCAD::core AeroCAD::geometry
-    PRIVATE AeroCAD::geometry_occt pugixml::pugixml miniz::miniz)
+    PRIVATE AeroCAD::geometry_occt ${AEROCAD_OCCT_XDE_LIBS} pugixml::pugixml miniz::miniz)
 aerocad_set_warnings(aerocad_io)

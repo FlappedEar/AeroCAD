@@ -15,10 +15,26 @@
 #include <Message.hxx>
 #include <Message_Messenger.hxx>
 #include <Message_PrinterOStream.hxx>
+#include <Quantity_Color.hxx>
+#include <STEPCAFControl_Reader.hxx>
 #include <STEPControl_Reader.hxx>
+#include <TCollection_AsciiString.hxx>
+#include <TDF_Label.hxx>
+#include <TDF_LabelSequence.hxx>
+#include <TDataStd_Name.hxx>
+#include <TDocStd_Document.hxx>
+#include <TopLoc_Location.hxx>
+#include <TopoDS_Compound.hxx>
+#include <XCAFApp_Application.hxx>
+#include <XCAFDoc_ColorTool.hxx>
+#include <XCAFDoc_DocumentTool.hxx>
+#include <XCAFDoc_ShapeTool.hxx>
 #include <Standard_Failure.hxx>
 #include <TopoDS_Shape.hxx>
 
+#include <cstdio>
+#include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <mutex>
 #include <string>
@@ -110,6 +126,151 @@ TopoDS_Shape transfer(Reader& reader, IFSelect_ReturnStatus status, FileFormat f
     return reader.OneShape();
 }
 
+/// A body of an XDE document: a simple (non-assembly) shape placed in the model.
+struct StepLeaf {
+    std::string name;
+    std::string color;
+    TopoDS_Shape shape;
+};
+
+std::string labelName(const TDF_Label& label)
+{
+    Handle(TDataStd_Name) name;
+    if (!label.FindAttribute(TDataStd_Name::GetID(), name))
+        return {};
+    // Converts to UTF-8.
+    const std::string text = TCollection_AsciiString(name->Get()).ToCString();
+    // OCCT's own placeholder when a writer had no name (also in files AeroCAD wrote before
+    // CAD-227): not a name.
+    if (text.rfind("Open CASCADE STEP translator", 0) == 0)
+        return {};
+    return text;
+}
+
+/// "NAUO12": the id STEP writers give an assembly occurrence that has no name of its own.
+bool isGeneratedOccurrenceName(const std::string& name)
+{
+    if (name.size() <= 4 || name.compare(0, 4, "NAUO") != 0)
+        return false;
+    return std::all_of(name.begin() + 4, name.end(), [](char c) { return c >= '0' && c <= '9'; });
+}
+
+std::string labelColor(const Handle(XCAFDoc_ColorTool)& colors, const TDF_Label& label)
+{
+    Quantity_Color c;
+    if (!colors->GetColor(label, XCAFDoc_ColorGen, c) && !colors->GetColor(label, XCAFDoc_ColorSurf, c))
+        return {};
+    double r = 0;
+    double g = 0;
+    double b = 0;
+    c.Values(r, g, b, Quantity_TOC_sRGB);
+    const auto byte = [](double v) { return static_cast<int>(std::lround(std::clamp(v, 0.0, 1.0) * 255.0)); };
+    char text[8];
+    std::snprintf(text, sizeof text, "#%02x%02x%02x", byte(r), byte(g), byte(b));
+    return text;
+}
+
+/// Walks an assembly down to its simple shapes, composing the placements. Occurrence names
+/// and colours win over the product's.
+void collectLeaves(const Handle(XCAFDoc_ShapeTool)& shapes, const Handle(XCAFDoc_ColorTool)& colors,
+                   const TDF_Label& label, const TopLoc_Location& parent, const std::string& parentColor,
+                   std::vector<StepLeaf>& out)
+{
+    TDF_Label ref = label;
+    TopLoc_Location location = parent;
+    std::string color = labelColor(colors, label);
+    std::string name;
+    if (XCAFDoc_ShapeTool::IsReference(label)) {
+        XCAFDoc_ShapeTool::GetReferredShape(label, ref);
+        location = parent * XCAFDoc_ShapeTool::GetLocation(label);
+        if (color.empty())
+            color = labelColor(colors, ref);
+    }
+    if (color.empty())
+        color = parentColor;
+    if (XCAFDoc_ShapeTool::IsAssembly(ref)) {
+        TDF_LabelSequence components;
+        XCAFDoc_ShapeTool::GetComponents(ref, components);
+        for (Standard_Integer i = 1; i <= components.Length(); ++i)
+            collectLeaves(shapes, colors, components.Value(i), location, color, out);
+        return;
+    }
+    const TopoDS_Shape shape = XCAFDoc_ShapeTool::GetShape(ref);
+    if (shape.IsNull())
+        return;
+    // The occurrence's own name ("Left bracket") wins over its product's ("Bracket");
+    // generated occurrence ids (NAUO1, ...) are not names.
+    if (ref != label) {
+        name = labelName(label);
+        if (isGeneratedOccurrenceName(name))
+            name.clear();
+    }
+    if (name.empty())
+        name = labelName(ref);
+    out.push_back({name, color, shape.Moved(location)});
+}
+
+/// Reads a STEP file through XDE, which keeps product names and colours.
+ImportResult readStepXde(std::istream& in, const std::string& name)
+{
+    Handle(TDocStd_Document) doc;
+    XCAFApp_Application::GetApplication()->NewDocument("MDTV-XCAF", doc);
+    struct CloseDocument {
+        Handle(TDocStd_Document)& doc;
+        ~CloseDocument() { XCAFApp_Application::GetApplication()->Close(doc); }
+    } closeDocument{doc};
+
+    STEPCAFControl_Reader reader;
+    reader.SetNameMode(Standard_True);
+    reader.SetColorMode(Standard_True);
+    const IFSelect_ReturnStatus status = reader.ChangeReader().ReadStream(name.c_str(), in);
+    if (status != IFSelect_RetDone)
+        throw ImportError("Cannot read STEP file " + name + " (" + statusText(status) + ")");
+    if (!reader.Transfer(doc))
+        throw ImportError("STEP file contains no transferable shapes: " + name);
+
+    const Handle(XCAFDoc_ShapeTool) shapes = XCAFDoc_DocumentTool::ShapeTool(doc->Main());
+    const Handle(XCAFDoc_ColorTool) colors = XCAFDoc_DocumentTool::ColorTool(doc->Main());
+    TDF_LabelSequence roots;
+    shapes->GetFreeShapes(roots);
+    std::vector<StepLeaf> leaves;
+    for (Standard_Integer i = 1; i <= roots.Length(); ++i)
+        collectLeaves(shapes, colors, roots.Value(i), TopLoc_Location(), {}, leaves);
+    if (leaves.empty())
+        throw ImportError("STEP file contains no shapes: " + name);
+
+    if (leaves.size() == 1) {
+        ImportResult result = finish(leaves.front().shape, FileFormat::Step, name);
+        result.color = leaves.front().color;
+        return result;
+    }
+    ImportResult result;
+    result.format = FileFormat::Step;
+    TopoDS_Compound all;
+    BRep_Builder builder;
+    builder.MakeCompound(all);
+    for (auto& leaf : leaves) {
+        ImportBody body;
+        body.name = leaf.name;
+        body.color = leaf.color;
+        body.shape = geometry::wrapShape(leaf.shape);
+        body.mesh = geometry::tessellate(*body.shape);
+        if (body.mesh.isEmpty())
+            continue; // e.g. a lone wire or point: nothing to show
+        builder.Add(all, leaf.shape);
+        result.mesh.append(body.mesh);
+        result.bodies.push_back(std::move(body));
+    }
+    if (result.bodies.empty())
+        throw ImportError("STEP file contains no surfaces to display: " + name);
+    result.shape = geometry::wrapShape(all);
+    if (result.bodies.size() == 1) {
+        result.color = result.bodies.front().color;
+        result.bodies.clear();
+    }
+    return result;
+}
+
 } // namespace
 
 ImportResult readStep(const std::filesystem::path& path)
@@ -119,12 +280,10 @@ ImportResult readStep(const std::filesystem::path& path)
         std::ifstream in(path, std::ios::binary);
         if (!in)
             throw ImportError("Cannot open file: " + name);
-        STEPControl_Reader reader;
         // Output length unit; this is OCCT's default, set explicitly so the result
         // does not depend on what other code changed in the global parameters.
         Interface_Static::SetCVal("xstep.cascade.unit", "MM");
-        const IFSelect_ReturnStatus status = reader.ReadStream(name.c_str(), in);
-        return finish(transfer(reader, status, FileFormat::Step, name), FileFormat::Step, name);
+        return readStepXde(in, name);
     });
 }
 
