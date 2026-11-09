@@ -1945,6 +1945,36 @@ void Design::offsetSketchCurves(FeatureId sketchId, const std::vector<std::size_
     regenerateChecked(sketchId, before);
 }
 
+namespace {
+
+/// Where two sketch lines meet: the shared end and each line's far end.
+struct SketchCorner {
+    Vec2 corner, farA, farB;
+};
+
+std::optional<SketchCorner> sketchCorner(const SketchCurve& la, const SketchCurve& lb)
+{
+    auto close = [](const Vec2& p, const Vec2& q) { return std::hypot(p.x - q.x, p.y - q.y) < 1e-6; };
+    for (int i = 0; i < 2; ++i)
+        for (int j = 0; j < 2; ++j)
+            if (close(la.points[i], lb.points[j]))
+                return SketchCorner{la.points[i], la.points[1 - i], lb.points[1 - j]};
+    return std::nullopt;
+}
+
+/// Horizontal or vertical when the line `l` is drawn so (kept when it is shortened).
+std::optional<Json> axisConstraint(const SketchCurve& l, std::size_t index)
+{
+    const double dx = l.points[1].x - l.points[0].x, dy = l.points[1].y - l.points[0].y;
+    if (std::abs(dy) < 1e-9 * std::max(1.0, std::abs(dx)))
+        return Json{{"type", "horizontal"}, {"curve", index}};
+    if (std::abs(dx) < 1e-9 * std::max(1.0, std::abs(dy)))
+        return Json{{"type", "vertical"}, {"curve", index}};
+    return std::nullopt;
+}
+
+} // namespace
+
 void Design::filletSketchCorner(FeatureId sketchId, std::size_t ia, std::size_t ib, double radius)
 {
     const State before = m_state;
@@ -1965,19 +1995,10 @@ void Design::filletSketchCorner(FeatureId sketchId, std::size_t ia, std::size_t 
     const SketchCurve& lb = curves[ib];
     // The shared corner and the far ends.
     const double tol = 1e-6;
-    auto close = [&](const Vec2& p, const Vec2& q) { return std::hypot(p.x - q.x, p.y - q.y) < tol; };
-    std::optional<Vec2> corner;
-    Vec2 farA, farB;
-    for (int i = 0; i < 2 && !corner; ++i)
-        for (int j = 0; j < 2 && !corner; ++j)
-            if (close(la.points[i], lb.points[j])) {
-                corner = la.points[i];
-                farA = la.points[1 - i];
-                farB = lb.points[1 - j];
-            }
+    const auto corner = sketchCorner(la, lb);
     if (!corner)
         throw DesignError("The two lines do not meet at a corner");
-    const Vec2 c = *corner;
+    const Vec2 c = corner->corner, farA = corner->farA, farB = corner->farB;
     auto unit = [](const Vec2& v) {
         const double l = std::hypot(v.x, v.y);
         return Vec2{v.x / l, v.y / l};
@@ -2004,14 +2025,6 @@ void Design::filletSketchCorner(FeatureId sketchId, std::size_t ia, std::size_t 
             item["construction"] = true;
         return item;
     };
-    auto axisConstraint = [](const SketchCurve& l, std::size_t index) -> std::optional<Json> {
-        const double dx = l.points[1].x - l.points[0].x, dy = l.points[1].y - l.points[0].y;
-        if (std::abs(dy) < 1e-9 * std::max(1.0, std::abs(dx)))
-            return Json{{"type", "horizontal"}, {"curve", index}};
-        if (std::abs(dx) < 1e-9 * std::max(1.0, std::abs(dy)))
-            return Json{{"type", "vertical"}, {"curve", index}};
-        return std::nullopt;
-    };
     try {
         deleteSketchCurves(sketchId, {ia, ib});
         Feature& g = m_state.features[indexOf(sketchId)];
@@ -2036,6 +2049,81 @@ void Design::filletSketchCorner(FeatureId sketchId, std::size_t ia, std::size_t 
             constraints.push_back(*h);
         g.params["constraints"] = constraints;
         regenerateChecked(sketchId, before);
+    } catch (...) {
+        m_state = before;
+        regenerate();
+        throw;
+    }
+}
+
+void Design::chamferSketchCorner(FeatureId sketchId, std::size_t ia, std::size_t ib, double distance)
+{
+    const State before = m_state;
+    keepSolvedSketch(sketchId);
+    const Feature& f = m_state.features[indexOf(sketchId)];
+    if (f.type != "sketch")
+        throw DesignError("Feature " + std::to_string(sketchId) + " is not a sketch");
+    auto it = m_sketches.find(sketchId);
+    if (it == m_sketches.end())
+        throw DesignError(f.name + " is not evaluated");
+    const std::vector<SketchCurve> curves = it->second.curves;
+    if (ia == ib || ia >= curves.size() || ib >= curves.size() || curves[ia].kind != SketchCurve::Kind::Line ||
+        curves[ib].kind != SketchCurve::Kind::Line)
+        throw DesignError("A sketch chamfer cuts the corner of two lines");
+    if (!(distance > 0))
+        throw DesignError("The chamfer distance must be positive");
+    const SketchCurve& la = curves[ia];
+    const SketchCurve& lb = curves[ib];
+    const double tol = 1e-6;
+    const auto corner = sketchCorner(la, lb);
+    if (!corner)
+        throw DesignError("The two lines do not meet at a corner");
+    const Vec2 c = corner->corner, farA = corner->farA, farB = corner->farB;
+    const double lenA = std::hypot(farA.x - c.x, farA.y - c.y), lenB = std::hypot(farB.x - c.x, farB.y - c.y);
+    const Vec2 u{(farA.x - c.x) / lenA, (farA.y - c.y) / lenA}, v{(farB.x - c.x) / lenB, (farB.y - c.y) / lenB};
+    if (std::abs(u.x * v.y - u.y * v.x) < 1e-9)
+        throw DesignError("The lines are in line: there is no corner to cut");
+    if (distance >= lenA - tol || distance >= lenB - tol)
+        throw DesignError("The chamfer distance is too large for these lines");
+    const Vec2 ta = c + u * distance, tb = c + v * distance;
+
+    auto pt = [](const Vec2& p) { return Json::array({p.x, p.y}); };
+    auto lineItem = [&](const Vec2& a, const Vec2& b, bool construction) {
+        Json item{{"type", "line"}, {"start", pt(a)}, {"end", pt(b)}};
+        if (construction)
+            item["construction"] = true;
+        return item;
+    };
+    try {
+        deleteSketchCurves(sketchId, {ia, ib});
+        Feature& g = m_state.features[indexOf(sketchId)];
+        Json items = g.params.value("curves", Json::array());
+        std::size_t first = m_sketches.count(sketchId) ? m_sketches.at(sketchId).curves.size() : curves.size() - 2;
+        // The shortened lines, the chamfer line, and (as Fusion shows it) the cut-off corner
+        // as two construction lines carrying the chamfer distances.
+        items.push_back(lineItem(farA, ta, la.construction));
+        items.push_back(lineItem(farB, tb, lb.construction));
+        items.push_back(lineItem(ta, tb, la.construction && lb.construction));
+        items.push_back(lineItem(ta, c, true));
+        items.push_back(lineItem(tb, c, true));
+        g.params["curves"] = items;
+        Json constraints = g.params.value("constraints", Json::array());
+        constraints.push_back({{"type", "collinear"}, {"curves", Json::array({first, first + 3})}});
+        constraints.push_back({{"type", "collinear"}, {"curves", Json::array({first + 1, first + 4})}});
+        constraints.push_back({{"type", "length"}, {"curve", first + 3}, {"value", distance}});
+        constraints.push_back({{"type", "length"}, {"curve", first + 4}, {"value", distance}});
+        if (const auto h = axisConstraint(la, first))
+            constraints.push_back(*h);
+        if (const auto h = axisConstraint(lb, first + 1))
+            constraints.push_back(*h);
+        g.params["constraints"] = constraints;
+        regenerateChecked(sketchId, before);
+        // The chamfer must be where it was asked for (the constraints could flip it).
+        it = m_sketches.find(sketchId);
+        const SketchCurve want{SketchCurve::Kind::Line, {ta, tb}};
+        if (it == m_sketches.end() || first + 2 >= it->second.curves.size() ||
+            !sameCurve(it->second.curves[first + 2], want, 1e-6))
+            throw DesignError("The corner's constraints do not let it be chamfered");
     } catch (...) {
         m_state = before;
         regenerate();

@@ -1094,6 +1094,75 @@ TEST_CASE("Design commands: sketch fillet (CAD-126)", "[commands][cad][solver]")
         CHECK(curve.at("construction") == true);
 }
 
+TEST_CASE("Design commands: Sketch Chamfer (CAD-254)", "[commands][cad][solver]")
+{
+    commands::Session s;
+    const auto id = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "rectangle"}, {"corner", {0, 0}}, {"width", 40}, {"height", 20}}})}})
+                        .at("id")
+                        .get<std::uint64_t>();
+    auto near = [](const Json& p, double x, double y) {
+        return std::hypot(p[0].get<double>() - x, p[1].get<double>() - y) < 1e-6;
+    };
+    // Bottom (0) and right (1) sides meet at (40, 0).
+    run(s, "sketch.chamfer", {{"sketch", id}, {"curves", {0, 1}}, {"distance", 5}});
+    Json c = run(s, "sketch.curves", {{"sketch", id}});
+    // Left two sides stay (0, 1); the shortened lines (2, 3), the chamfer (4), the cut-off
+    // corner as two construction lines (5, 6).
+    REQUIRE(c.at("curves").size() == 7);
+    CHECK(near(c.at("curves")[4].at("points")[0], 35, 0));
+    CHECK(near(c.at("curves")[4].at("points")[1], 40, 5));
+    CHECK(c.at("curves")[4].at("construction") == false);
+    CHECK(c.at("curves")[5].at("construction") == true);
+    CHECK(c.at("curves")[6].at("construction") == true);
+    CHECK(c.at("degreesOfFreedom") == 4); // as the rectangle: position, width, height
+    const auto ex = run(s, "feature.extrude", {{"sketch", id}, {"distance", 1}});
+    CHECK(ex.at("bodies").back().at("volume").get<double>() == Approx(800 - 12.5).epsilon(1e-6));
+
+    // The distances are dimensions: editing them moves the chamfer (and the extrude follows).
+    std::vector<std::size_t> lengths;
+    for (std::size_t i = 0; i < c.at("constraints").size(); ++i)
+        if (c.at("constraints")[i].at("type") == "length")
+            lengths.push_back(i);
+    REQUIRE(lengths.size() == 2);
+    run(s, "sketch.edit_constraint", {{"sketch", id}, {"index", lengths[0]}, {"value", 8}});
+    run(s, "sketch.edit_constraint", {{"sketch", id}, {"index", lengths[1]}, {"value", 8}});
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    // The rectangle's size is free (not dimensioned), so measure from the cut-off corner:
+    // where the shortened bottom (2) and right (3) lines meet when extended.
+    const double cornerY = c.at("curves")[2].at("points")[0][1].get<double>();
+    const double cornerX = c.at("curves")[3].at("points")[0][0].get<double>();
+    INFO(c.at("curves").dump());
+    CHECK(near(c.at("curves")[4].at("points")[0], cornerX - 8, cornerY));
+    CHECK(near(c.at("curves")[4].at("points")[1], cornerX, cornerY + 8));
+    CHECK(run(s, "timeline.list").at("features").back().at("status") == "ok");
+
+    // One undo step brings the corner back (after undoing the edits and the extrude).
+    for (int i = 0; i < 4; ++i)
+        run(s, "edit.undo");
+    CHECK(run(s, "sketch.curves", {{"sketch", id}}).at("curves").size() == 4);
+
+    // Refused: too long for a side, lines that do not meet, no distance.
+    CHECK_FALSE(s.execute("sketch.chamfer", {{"sketch", id}, {"curves", {0, 1}}, {"distance", 25}}).ok);
+    CHECK_FALSE(s.execute("sketch.chamfer", {{"sketch", id}, {"curves", {0, 2}}, {"distance", 5}}).ok);
+    CHECK_FALSE(s.execute("sketch.chamfer", {{"sketch", id}, {"curves", {0, 1}}, {"distance", 0}}).ok);
+    CHECK(run(s, "sketch.curves", {{"sketch", id}}).at("curves").size() == 4);
+
+    // A turned corner (not along the axes) is cut the same way.
+    const auto tid = run(s, "sketch.create",
+                         {{"plane", "XY"},
+                          {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {30, 10}}},
+                                                  {{"type", "line"}, {"start", {30, 10}}, {"end", {10, 40}}}})}})
+                         .at("id")
+                         .get<std::uint64_t>();
+    run(s, "sketch.chamfer", {{"sketch", tid}, {"curves", {0, 1}}, {"distance", 5}});
+    const Json t = run(s, "sketch.curves", {{"sketch", tid}});
+    const double la = std::hypot(30.0, 10.0), lb = std::hypot(20.0, 30.0);
+    CHECK(near(t.at("curves")[2].at("points")[0], 30 - 5 * 30 / la, 10 - 5 * 10 / la));
+    CHECK(near(t.at("curves")[2].at("points")[1], 30 - 5 * 20 / lb, 10 + 5 * 30 / lb));
+}
+
 TEST_CASE("Design commands: sketch offset (CAD-126)", "[commands][cad]")
 {
     commands::Session s;

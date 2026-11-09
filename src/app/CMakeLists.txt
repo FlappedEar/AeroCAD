@@ -565,6 +565,11 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_point.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_sketch_point_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-254: Sketch Chamfer with real clicks.
+    add_test(NAME app_sketch_chamfer_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_chamfer.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_sketch_chamfer_test PROPERTIES LABELS gui TIMEOUT 60)
     # CAD-253: Sketch Scale with real clicks and keys.
     add_test(NAME app_sketch_scale_test
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_scale.ui

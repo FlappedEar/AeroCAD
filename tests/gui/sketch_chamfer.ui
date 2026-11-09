@@ -1,0 +1,34 @@
+# CAD-254: Sketch Chamfer (Fusion: Modify > Chamfer, equal distance) with real clicks:
+# MODIFY > Chamfer on the ribbon, click a corner of the rectangle: the corner is cut 5 from
+# it along both sides (one undo step), the cut-off corner stays as construction lines whose
+# lengths are the distances; typing 8 into both under Constraints moves the chamfer.
+# Run: AeroCAD --ui-script <this file>
+Qt.createQmlObject('import QtQuick; Item { objectName: "scTest"; visible: false; function find(i, name) { if (!i) return null; if (i.objectName === name) return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = find(ch[k], name); if (r) return r } return null } function at(q) { const o = viewport.sketchOverlay; const p = o.toScreen(q); return o.mapToItem(null, p.x, p.y) } function sketch() { return controller.execute("sketch.curves", { sketch: activeSketch.id }).result } function editLength(n, text) { const s = sketch(); const rows = s.constraints.map((c, i) => c.type === "length" ? i : -1).filter(i => i >= 0); const list = find(viewport.sketchOverlay, "sketchConstraintList"); list.positionViewAtIndex(rows[n], 0); const row = list.itemAtIndex(rows[n]); if (!row) { ui.fail("no row for length " + n); return } const f = Array.from(row.children).find(c => c.selectByMouse !== undefined && c.visible); const p = f.mapToItem(null, f.width / 2, f.height / 2); ui.click(p.x, p.y); ui.key("A", "ctrl"); ui.type(text); ui.key("Return") } }', window.contentItem)
+ui.wait(800)
+(() => { const r = controller.execute("sketch.create", { plane: "XY", curves: [{ type: "rectangle", corner: [-20, -10], width: 40, height: 20 }] }); if (!r.ok) ui.fail("sketch: " + r.error) })()
+ui.wait(300)
+(() => { enterSketch(controller.execute("timeline.list").result.features[0].id) })()
+ui.wait(800)
+ui.key("Esc")
+ui.wait(300)
+(() => { viewport.restoreCameraState({ pivot: [0, 0, 0], pitch: -90, yaw: 0, distance: 150, orthographic: false }) })()
+ui.wait(400)
+(() => { if (!ui.clickText("MODIFY")) ui.fail("no MODIFY menu on the ribbon") })()
+ui.wait(400)
+(() => { if (!ui.clickText("Chamfer")) ui.fail("no Chamfer in the MODIFY menu") })()
+ui.wait(300)
+(() => { if (sketchTool !== "chamfer") ui.fail("Chamfer did not start: " + sketchTool) })()
+(() => { const w = Array.from(window.contentItem.children).find(c => c.objectName === "scTest").at([19.7, -9.8]); ui.move(w.x, w.y); ui.wait(100); ui.click(w.x, w.y) })()
+ui.wait(600)
+(() => { const s = Array.from(window.contentItem.children).find(c => c.objectName === "scTest").sketch(); const c = s.curves; ui.log("curves " + c.length + ", chamfer " + JSON.stringify(c[4] && c[4].points) + ", undo '" + controller.undoText + "'"); if (c.length !== 7) ui.fail("expected 2 sides, 2 shortened, the chamfer and 2 construction lines: " + c.length); if (Math.hypot(c[4].points[0][0] - 15, c[4].points[0][1] + 10) > 1e-6 || Math.hypot(c[4].points[1][0] - 20, c[4].points[1][1] + 5) > 1e-6) ui.fail("the chamfer is not 5 from the corner"); if (!c[5].construction || !c[6].construction) ui.fail("the cut-off corner is not construction") })()
+ui.shot("/mnt/project-files/ux/sketch-chamfer.png")
+# Both distances to 8 under Constraints.
+ui.key("Esc")
+ui.wait(300)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "scTest").editLength(0, "8") })()
+ui.wait(500)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "scTest").editLength(1, "8") })()
+ui.wait(600)
+(() => { const c = Array.from(window.contentItem.children).find(c => c.objectName === "scTest").sketch().curves; const y = c[2].points[0][1], x = c[3].points[0][0]; ui.log("chamfer " + JSON.stringify(c[4].points) + " corner " + x + ", " + y); if (Math.hypot(c[4].points[0][0] - (x - 8), c[4].points[0][1] - y) > 1e-6 || Math.hypot(c[4].points[1][0] - x, c[4].points[1][1] - (y + 8)) > 1e-6) ui.fail("editing the distances did not move the chamfer to 8") })()
+ui.shot("build/sketch-chamfer-8.png")
+ui.log("Sketch Chamfer OK")

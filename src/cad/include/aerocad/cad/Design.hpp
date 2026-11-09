@@ -242,6 +242,12 @@ public:
     /// is held tangent to them with a radius dimension. Lines that were horizontal or
     /// vertical stay so. The new lines and arc are added at the end of the curves.
     void filletSketchCorner(FeatureId sketch, std::size_t a, std::size_t b, double radius);
+    /// Cuts the corner where sketch lines `a` and `b` meet with a line `distance` from the
+    /// corner along each (Fusion: Sketch Chamfer, equal distance): both lines are shortened
+    /// and joined by the chamfer line; the cut-off corner stays as two construction lines
+    /// carrying the distances (edit them like any dimension). Lines that were horizontal or
+    /// vertical stay so. The new curves are added at the end.
+    void chamferSketchCorner(FeatureId sketch, std::size_t a, std::size_t b, double distance);
     /// Offsets a connected chain of sketch curves by `distance` (Fusion: Sketch Offset):
     /// positive outwards (closed chain) or to the left (open chain). The offset curves are
     /// added at the end; corners are rounded.

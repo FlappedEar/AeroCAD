@@ -46,6 +46,12 @@ Item {
     /// Radius the next sketch fillet starts with (the last one used); its dimension can be
     /// edited afterwards like any other.
     property real filletRadius: 5
+    /// Chamfer tool: the corner of lines `curves` (two indices) is to be cut `distance`
+    /// from the corner along each (Fusion: Sketch Chamfer, equal distance).
+    signal chamferRequested(var curves, real distance)
+    /// Distance the next sketch chamfer starts with (the last one used); its dimensions can
+    /// be edited afterwards like any other.
+    property real chamferDistance: 5
     /// Project tool: the edge of body `body` (feature id) nearest `point` (model mm) is to
     /// be projected onto the sketch.
     signal projectRequested(int body, var point)
@@ -231,26 +237,44 @@ Item {
         return true
     }
 
+    /// The corner of two lines nearest (x, y): { lines: [i, j], shortest } or null.
+    function cornerAt(x, y) {
+        const p = pointAt(x, y)
+        if (p === null)
+            return null
+        const all = sketchCurves.filter(c => c.kind === "line" && (dist(c.points[0], p.pos) < 1e-6 || dist(c.points[1], p.pos) < 1e-6))
+        // Two lines meet there; or, where a chamfer left construction lines, the two drawn ones.
+        const drawn = all.filter(c => !c.construction)
+        const lines = all.length === 2 ? all : drawn
+        if (lines.length !== 2)
+            return null
+        return { lines: [lines[0].index, lines[1].index],
+                 shortest: Math.min(dist(lines[0].points[0], lines[0].points[1]), dist(lines[1].points[0], lines[1].points[1])) }
+    }
+
     /// Fillet tool: the two lines meeting at the corner nearest (x, y) are rounded, with
     /// the last radius used (smaller when the lines are short).
     function filletAt(x, y) {
-        const p = pointAt(x, y)
-        if (p === null)
+        const k = cornerAt(x, y)
+        if (k === null)
             return false
-        const lines = []
-        for (const c of sketchCurves) {
-            if (c.kind !== "line")
-                continue
-            if (dist(c.points[0], p.pos) < 1e-6 || dist(c.points[1], p.pos) < 1e-6)
-                lines.push(c)
-        }
-        if (lines.length !== 2)
-            return false
-        const shortest = Math.min(dist(lines[0].points[0], lines[0].points[1]), dist(lines[1].points[0], lines[1].points[1]))
         let r = filletRadius
-        if (r > 0.4 * shortest)
-            r = Number((0.25 * shortest).toPrecision(2))
-        filletRequested([lines[0].index, lines[1].index], r)
+        if (r > 0.4 * k.shortest)
+            r = Number((0.25 * k.shortest).toPrecision(2))
+        filletRequested(k.lines, r)
+        return true
+    }
+
+    /// Chamfer tool: the two lines meeting at the corner nearest (x, y) are cut, with the
+    /// last distance used (smaller when the lines are short).
+    function chamferAt(x, y) {
+        const k = cornerAt(x, y)
+        if (k === null)
+            return false
+        let d = chamferDistance
+        if (d > 0.4 * k.shortest)
+            d = Number((0.25 * k.shortest).toPrecision(2))
+        chamferRequested(k.lines, d)
         return true
     }
 
@@ -1169,6 +1193,11 @@ Item {
                 root.forceActiveFocus()
                 return
             }
+            if (root.tool === "chamfer") {
+                root.chamferAt(mouse.x, mouse.y)
+                root.forceActiveFocus()
+                return
+            }
             if (root.tool === "extend" || root.tool === "break") {
                 const i = root.curveAt(mouse.x, mouse.y)
                 const at = root.screenToLocal(mouse.x, mouse.y)
@@ -1548,6 +1577,7 @@ Item {
                     : root.tool === "rectangular_pattern"
                         ? qsTr("Rectangular Pattern of %n curve(s): set counts and spacing (negative goes left / down), then OK or Enter", "", root.patternCurves.length)
                     : root.tool === "fillet" ? qsTr("Fillet: click a corner of two lines; then edit its radius under Constraints")
+                    : root.tool === "chamfer" ? qsTr("Chamfer: click a corner of two lines; then edit its distances under Constraints")
                     : root.tool === "mirror" ? qsTr("Mirror: click the line to mirror the %n selected curve(s) about", "", root.mirrorCurves.length)
                     : root.tool === "trim" ? qsTr("Trim: click the piece of a curve to remove (up to where other curves cross it)")
                     : root.tool === "extend" ? qsTr("Extend: click near the end of a line or arc to lengthen it to the next curve")
@@ -1600,7 +1630,7 @@ Item {
                 }
             }
             RowLayout {
-                visible: root.active && !root.constraintTool && root.tool !== "trim" && root.tool !== "circular_pattern" && root.tool !== "rectangular_pattern" && root.tool !== "extend" && root.tool !== "break" && root.tool !== "point" && root.tool !== "mirror" && root.tool !== "fillet" && root.tool !== "project" && root.tool !== "spline"
+                visible: root.active && !root.constraintTool && root.tool !== "trim" && root.tool !== "circular_pattern" && root.tool !== "rectangular_pattern" && root.tool !== "extend" && root.tool !== "break" && root.tool !== "point" && root.tool !== "mirror" && root.tool !== "fillet" && root.tool !== "chamfer" && root.tool !== "project" && root.tool !== "spline"
                          && root.tool !== "tangent_arc"
                          && root.tool !== "circle_3point"
                 Label { text: root.tool === "rectangle" || root.tool === "center_rectangle" ? qsTr("Width, height")
@@ -1749,6 +1779,7 @@ Item {
             }
             ListView {
                 id: constraintList
+                objectName: "sketchConstraintList"
                 visible: root.sketchConstraints.length > 0
                 Layout.preferredWidth: 300
                 Layout.preferredHeight: Math.min(180, contentHeight)

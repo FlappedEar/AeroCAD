@@ -1459,6 +1459,8 @@ ApplicationWindow {
     Action { id: trimAction; text: qsTr("&Trim"); shortcut: "T"; enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "trim"; onTriggered: window.sketchTool_("trim") }
     Action { id: extendAction; text: qsTr("E&xtend"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "extend"; onTriggered: window.sketchTool_("extend") }
     Action { id: breakAction; text: qsTr("&Break"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "break"; onTriggered: window.sketchTool_("break") }
+    // Fusion: Modify > Chamfer (equal distance): click a corner of two lines.
+    Action { id: sketchChamferAction; text: qsTr("Chamfer"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "chamfer"; onTriggered: window.sketchTool_("chamfer") }
     Action { id: sketchFilletAction; text: qsTr("&Fillet"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "fillet"; onTriggered: window.sketchTool_("fillet") }
     Action { id: sketchProjectAction; text: qsTr("&Project"); shortcut: "P"; enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "project"; onTriggered: window.sketchTool_("project") }
     Action { id: sketchOffsetAction; text: qsTr("&Offset"); shortcut: "O"; enabled: !!window.activeSketch && (viewport.sketchOverlay.selectedCurves.length > 0 || window.sketchTool === "offset"); checkable: true; checked: window.sketchTool === "offset"; onTriggered: { if (window.sketchTool !== "offset") viewport.sketchOverlay.startOffset(); else window.sketchTool_("") } }
@@ -1790,6 +1792,7 @@ ApplicationWindow {
             MenuItem { action: pointAction }
             MenuSeparator {}
             MenuItem { action: sketchFilletAction }
+            MenuItem { action: sketchChamferAction }
             MenuItem { action: trimAction }
             MenuItem { action: extendAction }
             MenuItem { action: breakAction }
@@ -2276,6 +2279,7 @@ ApplicationWindow {
                 ToolCommand { action: sketchMirrorAction; text: qsTr("Mirror"); iconName: "mirror" }
                 ToolCommand { action: constructionAction; text: qsTr("Construction"); iconName: "construction" }
                 ToolCommand { action: sketchScaleAction; text: qsTr("Sketch Scale"); iconName: "scale" }
+                ToolCommand { action: sketchChamferAction; text: qsTr("Chamfer"); iconName: "chamfer" }
             }
             ToolSeparator { tab: "sketch" }
             ToolGroup {
@@ -2493,6 +2497,16 @@ ApplicationWindow {
                     window.controller.showStatus(r.error)
                 else
                     window.controller.showStatus(qsTr("Fillet R%1: edit its radius under Constraints").arg(radius))
+                window.refreshSketchSnaps()
+            }
+            onSketchChamferRequested: (curves, distance) => {
+                if (!window.activeSketch)
+                    return
+                const r = window.controller.execute("sketch.chamfer", { sketch: window.activeSketch.id, curves: curves, distance: distance })
+                if (!r.ok)
+                    window.controller.showStatus(r.error)
+                else
+                    window.controller.showStatus(qsTr("Chamfer %1: edit its distances under Constraints").arg(distance))
                 window.refreshSketchSnaps()
             }
             onSketchMoveRequested: (curves, dx, dy, angle, copy) => {

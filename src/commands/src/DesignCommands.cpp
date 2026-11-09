@@ -1346,6 +1346,31 @@ void registerSketchCommands(CommandRegistry& r)
               return addedFeature(design(ctx), ctx.document, id);
           });
 
+    r.add({"sketch.chamfer", "Sketch Chamfer",
+           "Cuts the corner where two sketch lines meet (Fusion: Sketch > Chamfer, equal distance): both lines are "
+           "shortened by `distance` from the corner and joined by a straight line. The cut-off corner stays as two "
+           "construction lines with length dimensions (edit them like any dimension). The new curves are added at "
+           "the end of sketch.curves (shortened lines, chamfer line, two construction lines); constraints on the "
+           "old lines are removed, horizontal or vertical lines stay so.",
+           objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
+                         {"curves", {{"type", "array"}, {"items", {{"type", "integer"}}}, {"minItems", 2}, {"maxItems", 2},
+                                     {"description", "The two lines (indices from sketch.curves)."}}},
+                         {"distance", {{"type", "number"}, {"exclusiveMinimum", 0}, {"description", "Distance from the corner along each line, mm."}}}},
+                        {"sketch", "curves", "distance"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              const auto id = params.at("sketch").get<cad::FeatureId>();
+              const auto curves = params.at("curves").get<std::vector<std::size_t>>();
+              if (curves.size() != 2)
+                  throw CommandError("Give the two lines of the corner");
+              designChange(ctx, "Sketch Chamfer", [&](cad::Design& d) {
+                  (void)sketchFeature(d, id);
+                  d.chamferSketchCorner(id, curves[0], curves[1], params.at("distance").get<double>());
+                  return Json{};
+              });
+              return addedFeature(design(ctx), ctx.document, id);
+          });
+
     r.add({"sketch.trim", "Trim",
            "Trims a sketch curve (Fusion: Trim, T): removes the piece of `curve` nearest to `at` (sketch "
            "coordinates) between its nearest crossings with other curves; a curve crossing nothing is removed "
