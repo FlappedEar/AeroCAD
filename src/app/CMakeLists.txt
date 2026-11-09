@@ -762,6 +762,10 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/draft.ui
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(app_draft_test PROPERTIES LABELS gui TIMEOUT 60)
+    add_test(NAME app_hole_sketch_points_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/hole_sketch_points.ui
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(app_hole_sketch_points_test PROPERTIES LABELS gui TIMEOUT 60)
     add_test(NAME app_sphere_torus_test
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sphere_torus.ui
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})

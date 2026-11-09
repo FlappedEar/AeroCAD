@@ -121,7 +121,7 @@ rebuilding, AeroCAD reports the problem; Undo restores the previous source.
 | `feature.draft` | Draft | `body`, `faces`, `plane` (fixed plane: XY default / XZ / YZ / construction plane / {origin, normal} / planar face; its normal is the pull direction), `angle` in degrees (positive leans the faces in along the pull direction, negative out) |
 | `feature.delete_faces` | Delete Face | `body`, `faces`: removes them and heals the gap from the neighbouring faces (a hole, fillet or boss disappears); an error when the neighbours cannot close it |
 | `feature.split` | Split Body | `body`, `plane` XY / XZ / YZ / {plane: construction plane} / {origin, normal} / planar face, `offset`; the body keeps what is behind the plane, a new body (the feature's id) gets what is in front |
-| `feature.hole` | Hole (H) | `point` on a planar face, `diameter`, `depth` or through all |
+| `feature.hole` | Hole (H) | `point` on a planar face, or `sketch` (one hole per sketch point, optional `sketch_points`, `flip`); `diameter`, `depth` or through all |
 | `feature.combine` | Combine, Split Body | `target`, `tools` (bodies, or imported parts `{part: id}`), join / cut / intersect, `keepTools`, `flip` |
 | `feature.box`, `feature.cylinder` | Box, Cylinder | primitives with an operation |
 | `feature.sphere`, `feature.torus` | Sphere, Torus | `center` (default origin), `diameter`; torus: ring `diameter` (centre line, around +Z) and `tube_diameter` (smaller than `diameter`); with an operation |
@@ -144,7 +144,9 @@ A `point` (Fusion: Create › Point, the Point tool in the sketch CREATE menu) i
 it has no edge and bounds no profile, and is drawn as a small cross (a dot while editing). It
 takes constraints and dimensions through `{curve, point: start}` (end and center mean the same
 point). A point placed on a curve end is that end, so it moves with it. Mirror, Construction
-and Delete work on points; Trim, Extend, Break and Offset refuse them.
+and Delete work on points; Trim, Extend, Break and Offset refuse them. Hole with Placement
+"At sketch points" (`feature.hole` with `sketch`) drills one hole at every point, along the
+sketch's normal towards the body (Flip reverses it); the holes follow the points when they move.
 
 ### Constraints and dimensions
 

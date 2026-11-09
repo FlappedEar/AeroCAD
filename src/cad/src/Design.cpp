@@ -295,6 +295,10 @@ void Design::editFeature(FeatureId id, const Json& patch)
         if (!patch["path"].contains("curves"))
             f.params["path"].erase("curves");
     }
+    // Newly picked sketch points (or a new placement) for a hole replace deleted ones.
+    if ((patch.contains("sketch_points") || patch.contains("sketch") || patch.contains("point")) &&
+        !patch.contains("deletedSketchPoints"))
+        f.params.erase("deletedSketchPoints");
     regenerateChecked(id, before);
 }
 
@@ -2268,6 +2272,16 @@ void Design::deleteSketchCurves(FeatureId sketchId, const std::vector<std::size_
             }
             path["curves"] = kept;
         }
+        if (g.type == "hole" && g.params.value("sketch", Json()) == sketchId && g.params.contains("sketch_points")) {
+            Json kept = Json::array();
+            for (const auto& i : g.params["sketch_points"]) {
+                if (const auto to = mapped(i))
+                    kept.push_back(*to);
+                else
+                    g.params["deletedSketchPoints"] = true;
+            }
+            g.params["sketch_points"] = kept;
+        }
     }
     regenerateChecked(sketchId, before);
 }
@@ -2982,31 +2996,84 @@ void Design::evaluateFeature(const Feature& f)
             throw DesignError("Torus: the tube does not fit; its diameter must be smaller than the ring diameter");
         applyOperation(geometry::torus(center, d / 2, t / 2));
     } else if (f.type == "hole") {
-        // Simple drilled hole (Fusion: Hole, H): a cylinder cut into the body, normal to
-        // the planar face at `point`.
+        // Simple drilled hole (Fusion: Hole, H): a cylinder cut into the body. Either one
+        // hole normal to the planar face at `point`, or (Fusion: Placement "From Sketch")
+        // one hole at every point of a sketch, along the sketch's normal.
         Body& b = bodyRef(required(p, "body"));
-        const core::Vec3 point = ev.vec3(required(p, "point"));
-        const auto faceIdx = geometry::nearestFace(b.shape, point);
-        const auto plane = faceIdx ? geometry::facePlane(b.shape, *faceIdx) : std::nullopt;
-        if (!plane)
-            throw DesignError("Holes need a planar face at the given point");
         const double r = ev.num(p, "diameter") / 2;
         if (r <= 0)
             throw DesignError("Hole diameter must be positive");
         const bool through = p.value("through", !has(p, "depth"));
-        const double depth = through ? b.shape.bounds().diagonal() * 2 : ev.num(p, "depth");
-        if (depth <= 0)
+        const double depth = through ? 0.0 : ev.num(p, "depth");
+        if (!through && depth <= 0)
             throw DesignError("Hole depth must be positive");
-        geometry::Plane base = *plane;
-        base.origin = point - plane->normal * plane->normal.dot(point - plane->origin); // onto the face
-        SketchCurve c{SketchCurve::Kind::Circle, {{0, 0}}};
-        c.radius = r;
-        const auto g = geometry::buildSketch(base, {c});
-        // Start slightly outside the face so the cut is clean.
-        const geometry::Shape tool = geometry::extrude(g.profiles.at(0), plane->normal * -1.0, depth, 1e-3 * depth + 1e-3);
-        const geometry::Shape result = geometry::boolean(b.shape, tool, geometry::BooleanOp::Cut);
-        if (result.isNull())
-            throw DesignError("The hole removed the whole body");
+        std::vector<geometry::Plane> bases; // origin: hole centre; normal: drilling direction reversed
+        if (has(p, "sketch")) {
+            if (has(p, "point"))
+                throw DesignError("A hole is placed at a point or at a sketch's points, not both");
+            const FeatureId sid = p.at("sketch").get<FeatureId>();
+            auto it = m_sketches.find(sid);
+            if (it == m_sketches.end())
+                throw DesignError("No sketch " + std::to_string(sid) + " at this point of the timeline");
+            SketchResult& sk = it->second;
+            if (p.value("deletedSketchPoints", false))
+                throw DesignError("Some sketch points of this hole were deleted; edit the hole to pick them again");
+            std::vector<std::size_t> picked;
+            if (has(p, "sketch_points")) {
+                for (const auto& i : p.at("sketch_points")) {
+                    const auto idx = i.get<std::size_t>();
+                    if (idx >= sk.curves.size() || sk.curves[idx].kind != SketchCurve::Kind::Point)
+                        throw DesignError(sk.name + " has no sketch point " + std::to_string(idx));
+                    picked.push_back(idx);
+                }
+            } else {
+                for (std::size_t i = 0; i < sk.curves.size(); ++i)
+                    if (sk.curves[i].kind == SketchCurve::Kind::Point)
+                        picked.push_back(i);
+            }
+            if (picked.empty())
+                throw DesignError(sk.name + " has no sketch points; add them with Sketch > Point");
+            // Drill towards the body (the side of the sketch plane its middle is on); Flip
+            // drills the other way.
+            core::Vec3 n = sk.plane.normal;
+            if (n.dot(b.shape.bounds().center() - sk.plane.origin) > 0)
+                n = n * -1.0;
+            if (p.value("flip", false))
+                n = n * -1.0;
+            for (const auto idx : picked) {
+                geometry::Plane base = sk.plane;
+                base.origin = sk.plane.toWorld(sk.curves[idx].points.at(0));
+                base.normal = n;
+                bases.push_back(base);
+            }
+            sk.consumed = true;
+        } else {
+            const core::Vec3 point = ev.vec3(required(p, "point"));
+            const auto faceIdx = geometry::nearestFace(b.shape, point);
+            const auto plane = faceIdx ? geometry::facePlane(b.shape, *faceIdx) : std::nullopt;
+            if (!plane)
+                throw DesignError("Holes need a planar face at the given point");
+            geometry::Plane base = *plane;
+            base.origin = point - plane->normal * plane->normal.dot(point - plane->origin); // onto the face
+            bases.push_back(base);
+        }
+        geometry::Shape result = b.shape;
+        const core::BoundingBox bounds = b.shape.bounds();
+        for (const auto& base : bases) {
+            // Through all reaches past the body from where the hole starts: a sketch plane
+            // may lie some way off the body.
+            const double length =
+                through ? std::abs(base.normal.dot(bounds.center() - base.origin)) + bounds.diagonal() * 2 : depth;
+            SketchCurve c{SketchCurve::Kind::Circle, {{0, 0}}};
+            c.radius = r;
+            const auto g = geometry::buildSketch(base, {c});
+            // Start a hair outside the face so the cut is clean (and does not nick a body
+            // on the other side of a sketch plane).
+            const geometry::Shape tool = geometry::extrude(g.profiles.at(0), base.normal * -1.0, length, 1e-3);
+            result = geometry::boolean(result, tool, geometry::BooleanOp::Cut);
+            if (result.isNull())
+                throw DesignError("The hole removed the whole body");
+        }
         b.shape = result;
     } else if (f.type == "base_body") {
         // An imported part as a body: its exact B-rep (STEP, IGES, BREP) or, for meshes,

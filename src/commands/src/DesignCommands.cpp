@@ -1955,14 +1955,22 @@ void registerFeatureCommands(CommandRegistry& r)
                       {"diameter", "tube_diameter"});
 
     addFeatureCommand(r, "hole", "Hole",
-                      "Drills a round hole into a body, normal to the planar face at `point` (Fusion: Hole, "
-                      "shortcut H). Through all unless `depth` is given.",
+                      "Drills round holes into a body (Fusion: Hole, shortcut H): one normal to the planar "
+                      "face at `point`, or one at every point of `sketch` (Fusion: Placement From Sketch; "
+                      "draw them with type \"point\" in sketch.add_curves), along the sketch's normal "
+                      "towards the body. Through all unless `depth` is given.",
                       {{"body", bodyRefSchema("Body.")},
-                       {"point", point3("Hole centre on a planar face.")},
+                       {"point", point3("Hole centre on a planar face (or give `sketch`).")},
+                       {"sketch", featureIdSchema("Sketch whose points are the hole centres (instead of `point`).")},
+                       {"sketch_points",
+                        {{"type", "array"},
+                         {"items", {{"type", "integer"}, {"minimum", 0}}},
+                         {"description", "Curve indices (sketch.curves) of the sketch points to drill; default all."}}},
+                       {"flip", {{"type", "boolean"}, {"description", "With `sketch`: drill away from the body side."}}},
                        {"diameter", numberOrExpr("Diameter (mm).")},
                        {"depth", numberOrExpr("Depth (mm); omit for through all.")},
                        {"through", {{"type", "boolean"}, {"description", "Through all (default when no depth)."}}}},
-                      {"body", "point", "diameter"});
+                      {"body", "diameter"});
 
     r.add({"feature.base_body", "Convert to Body",
            "Turns an imported part into a timeline body so it can be sketched on, cut, joined, filleted "
