@@ -256,6 +256,23 @@ TEST_CASE("Delete Face in the timeline removes a hole and follows an edited box"
     CHECK_THROWS_AS(d.editFeature(del, {{"body", block}, {"faces", Json::array({{{"point", {20, 10, 20}}}})}}), cad::DesignError);
 }
 
+TEST_CASE("Sphere and torus in the timeline", "[cad][design]")
+{
+    const double pi = std::numbers::pi;
+    Design d;
+    const auto ball = d.addFeature("sphere", {{"center", {0, 0, 10}}, {"diameter", 20}});
+    CHECK(bodyVolume(d, ball) == Approx(4.0 / 3.0 * pi * 1000).epsilon(1e-6));
+    // A groove: a ring cut inside a plate.
+    const auto plate = d.addFeature("box", {{"corner", {-30, -30, 0}}, {"size", {60, 60, 4}}});
+    d.addFeature("torus", {{"center", {0, 0, 2}}, {"diameter", 40}, {"tube_diameter", 3},
+                           {"operation", "cut"}, {"bodies", Json::array({plate})}});
+    CHECK(bodyVolume(d, plate) == Approx(60 * 60 * 4 - 2 * pi * pi * 20 * 1.5 * 1.5).epsilon(1e-6));
+    d.editFeature(ball, {{"diameter", 10}});
+    CHECK(bodyVolume(d, ball) == Approx(4.0 / 3.0 * pi * 125).epsilon(1e-6));
+    CHECK_THROWS_AS(d.addFeature("torus", {{"diameter", 10}, {"tube_diameter", 12}}), cad::DesignError);
+    CHECK_THROWS_AS(d.addFeature("sphere", {{"diameter", -1}}), cad::DesignError);
+}
+
 TEST_CASE("Draft in the timeline tilts a side and follows an edited angle", "[cad][design]")
 {
     Design d;

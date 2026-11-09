@@ -283,6 +283,15 @@ Pane {
             { key: "diameter", type: "expr", label: qsTr("Diameter"), init: 20 },
             { key: "height", type: "expr", label: qsTr("Height"), init: 20 },
             { key: "operation", type: "choice", label: qsTr("Operation"), init: "new_body", options: operations }] },
+        sphere: { title: qsTr("Sphere"), command: "feature.sphere", fields: [
+            { key: "center", type: "vec3", label: qsTr("Centre"), init: [0, 0, 0] },
+            { key: "diameter", type: "expr", label: qsTr("Diameter"), init: 20 },
+            { key: "operation", type: "choice", label: qsTr("Operation"), init: "new_body", options: operations }] },
+        torus: { title: qsTr("Torus"), command: "feature.torus", fields: [
+            { key: "center", type: "vec3", label: qsTr("Centre"), init: [0, 0, 0] },
+            { key: "diameter", type: "expr", label: qsTr("Ring diameter"), init: 40 },
+            { key: "tube_diameter", type: "expr", label: qsTr("Tube diameter"), init: 10 },
+            { key: "operation", type: "choice", label: qsTr("Operation"), init: "new_body", options: operations }] },
         loft: { title: qsTr("Loft"), command: "feature.loft", fields: [
             { key: "sections", type: "sketchList", label: qsTr("Profiles (in order)") },
             { key: "ruled", type: "bool", label: qsTr("Straight between profiles") },

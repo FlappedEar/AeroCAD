@@ -112,6 +112,14 @@ struct ChamferOptions {
 /// ModelingError when the gap cannot be closed (e.g. a face whose neighbours never meet).
 [[nodiscard]] Shape deleteFaces(const Shape& shape, const std::vector<std::size_t>& faceIndices);
 
+/// A ball (Fusion: Create > Sphere) centred at `center`.
+[[nodiscard]] Shape sphere(const core::Vec3& center, double radius);
+
+/// A ring (Fusion: Create > Torus) around the +Z axis through `center`, in the XY plane:
+/// `ringRadius` from the axis to the middle of the tube, `tubeRadius` of the tube itself.
+/// The tube must be thinner than the ring (tubeRadius < ringRadius).
+[[nodiscard]] Shape torus(const core::Vec3& center, double ringRadius, double tubeRadius);
+
 /// Draft (Fusion: Modify > Draft): tilts each face by `angleDegrees` about the line where it
 /// meets the fixed (neutral) plane through `planeOrigin` with `pullDirection` as its normal.
 /// A positive angle tilts the faces inwards along the pull direction (the part narrows away

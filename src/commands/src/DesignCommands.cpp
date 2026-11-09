@@ -1370,6 +1370,21 @@ void registerFeatureCommands(CommandRegistry& r)
                        {"bodies", bodiesSchema()}},
                       {"height"});
 
+    addFeatureCommand(r, "sphere", "Sphere", "Creates a ball (Fusion: Sphere).",
+                      {{"center", point3("Centre, default origin.")},
+                       {"diameter", numberOrExpr("Diameter (mm).")},
+                       {"operation", operationSchema()},
+                       {"bodies", bodiesSchema()}},
+                      {"diameter"});
+
+    addFeatureCommand(r, "torus", "Torus", "Creates a ring around +Z, lying in the XY plane (Fusion: Torus).",
+                      {{"center", point3("Centre of the ring, default origin.")},
+                       {"diameter", numberOrExpr("Diameter of the ring's centre line (mm).")},
+                       {"tube_diameter", numberOrExpr("Diameter of the tube (mm); smaller than `diameter`.")},
+                       {"operation", operationSchema()},
+                       {"bodies", bodiesSchema()}},
+                      {"diameter", "tube_diameter"});
+
     addFeatureCommand(r, "hole", "Hole",
                       "Drills a round hole into a body, normal to the planar face at `point` (Fusion: Hole, "
                       "shortcut H). Through all unless `depth` is given.",
