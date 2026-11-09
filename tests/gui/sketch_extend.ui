@@ -12,7 +12,7 @@ ui.wait(300)
 # Hover near the right end of the short line: the preview reaches the first wall at x = 10.
 (() => { const o = viewport.sketchOverlay; const p = o.toScreen([4.5, 0]); const w = o.mapToItem(null, p.x, p.y); ui.move(w.x, w.y) })()
 ui.wait(300)
-(() => { const pv = viewport.sketchOverlay.extendPreview; ui.log("preview " + JSON.stringify(pv)); if (!pv || pv.kind !== "line" || Math.abs(Math.max(pv.points[0][0], pv.points[1][0]) - 10) > 1e-6) ui.fail("no preview to x = 10") })()
+(() => { const pv = viewport.sketchOverlay.piecePreview; ui.log("preview " + JSON.stringify(pv)); if (!pv || pv.kind !== "line" || Math.abs(Math.max(pv.points[0][0], pv.points[1][0]) - 10) > 1e-6) ui.fail("no preview to x = 10") })()
 ui.shot("/mnt/project-files/ux/sketch-extend.png")
 (() => { const o = viewport.sketchOverlay; const p = o.toScreen([4.5, 0]); const w = o.mapToItem(null, p.x, p.y); ui.click(w.x, w.y) })()
 ui.wait(500)

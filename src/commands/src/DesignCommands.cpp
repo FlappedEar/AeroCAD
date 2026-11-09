@@ -1202,6 +1202,52 @@ void registerSketchCommands(CommandRegistry& r)
               return addedFeature(design(ctx), ctx.document, id);
           });
 
+    r.add({"sketch.break", "Break",
+           "Breaks a sketch curve (Fusion: Break): the piece of `curve` nearest to `at` (sketch coordinates) "
+           "between its nearest crossings with other curves becomes a curve of its own, as do the pieces either "
+           "side; nothing is removed. Lines, arcs and circles (a circle becomes two arcs). The pieces are added "
+           "at the end of sketch.curves; constraints on the curve are removed. Refused when nothing crosses it.",
+           objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
+                         {"curve", {{"type", "integer"}, {"description", "Index from sketch.curves."}}},
+                         {"at", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", {{"type", "number"}}}}}},
+                        {"sketch", "curve", "at"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              const auto id = params.at("sketch").get<cad::FeatureId>();
+              const Json& at = params.at("at");
+              designChange(ctx, "Break", [&](cad::Design& d) {
+                  (void)sketchFeature(d, id);
+                  d.breakSketchCurve(id, params.at("curve").get<std::size_t>(), {at[0].get<double>(), at[1].get<double>()});
+                  return Json{};
+              });
+              return addedFeature(design(ctx), ctx.document, id);
+          });
+
+    r.add({"sketch.break_preview", "Break preview",
+           "The piece sketch.break (or sketch.trim) would split off at `at`, without changing the sketch: "
+           "{breakable: true, kind (line / arc), points (an arc: start, through, end)}, or {breakable: false, "
+           "reason}.",
+           objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
+                         {"curve", {{"type", "integer"}, {"description", "Index from sketch.curves."}}},
+                         {"at", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", {{"type", "number"}}}}}},
+                        {"sketch", "curve", "at"})},
+          [](CommandContext& ctx, const Json& params) {
+              const auto id = params.at("sketch").get<cad::FeatureId>();
+              const Json& at = params.at("at");
+              try {
+                  const Json piece = design(ctx).sketchCurvePiece(id, params.at("curve").get<std::size_t>(),
+                                                                  {at[0].get<double>(), at[1].get<double>()});
+                  if (piece.is_null())
+                      return Json{{"breakable", false}, {"reason", "Nothing to break at: no other curve crosses it"}};
+                  const bool arc = piece.at("type") == "arc";
+                  Json pts = arc ? Json::array({piece.at("start"), piece.at("through"), piece.at("end")})
+                                 : Json::array({piece.at("start"), piece.at("end")});
+                  return Json{{"breakable", true}, {"kind", arc ? "arc" : "line"}, {"points", pts}};
+              } catch (const cad::DesignError& e) {
+                  return Json{{"breakable", false}, {"reason", e.what()}};
+              }
+          });
+
     r.add({"sketch.extend", "Extend",
            "Extends a sketch line or arc (Fusion: Extend): the end of `curve` nearer `at` (sketch coordinates) "
            "moves along the line, or around the arc's circle, to the nearest crossing with another curve. The "
