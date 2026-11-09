@@ -629,6 +629,7 @@ ApplicationWindow {
         }
         activeSketch = null
         sketchTool = ""
+        viewport.sketchSnapPoints = []
         viewport.sketchCurves = []
         viewport.sketchConstraints = []
         viewport.sketchDegreesOfFreedom = -1
@@ -665,13 +666,17 @@ ApplicationWindow {
                 selectBodyOfFeature(b.featureId)
             }
         }
-        if (type === "combine" && info.kind === "imported" && !((info.solids ?? 0) > 0)) {
+        const combineTool = type === "combine" && info.id && info.kind !== "sketch" && info.kind !== "plane"
+                            && !((info.solids ?? 0) > 0)
+        if (combineTool) {
             // A surface or the scan selected: it is the tool that cuts a body to its shape.
-            initial.tools = [{ part: info.id }]
+            initial.tools = info.kind === "body" ? [info.featureId] : [{ part: info.id }]
             initial.operation = "cut"
+            if (info.kind === "body")
+                initial.keepTools = true // Keep the reference surface, as for imported surfaces.
         }
         if (info.kind === "body") {
-            if (type === "combine")
+            if (type === "combine" && !combineTool)
                 initial.target = info.featureId
             else if (["fillet", "chamfer", "shell", "press_pull", "hole", "move", "mirror", "rectangular_pattern",
                       "circular_pattern", "split", "delete_faces", "draft"].includes(type))
@@ -860,28 +865,48 @@ ApplicationWindow {
         nameFilters: window.controller.exportNameFilters
         defaultSuffix: selectedNameFilter.extensions.length ? selectedNameFilter.extensions[0] : "stl"
         onAccepted: {
-            // Check first; write straight away when everything is fine.
             const file = selectedFile
-            const ids = partIds
+            const ids = partIds.slice()
             const name = file.toString().toLowerCase()
             const format = name.endsWith(".3mf") ? "3mf" : (name.endsWith(".step") || name.endsWith(".stp")) ? "step" : "stl"
-            const params = { format: format, minWall: Preferences.minWallThickness }
+            const params = { format: format }
             if (ids.length)
                 params.ids = ids
-            const c = window.controller.execute("document.export_check", params)
-            if (c.ok && !c.result.passed)
-                exportCheckDialog.show(c.result, () => window.writeExport(file, ids))
-            else
-                window.writeExport(file, ids)
+            window.checkExport(params, state => window.writeExport(file, ids, state))
         }
     }
 
-    function writeExport(file, ids) {
-        const r = window.controller.exportFile(file, ids)
+    // Warning consent applies only to the checked design, part set, format and wall
+    // limit. Commands from an AI agent can change those while the modal is open.
+    function checkExport(request, write, approval) {
+        const params = Object.assign({}, request, { minWall: Preferences.minWallThickness })
+        const c = window.controller.execute("document.export_check", params)
+        if (!c.ok) {
+            window.exportFailed(c.error)
+            return
+        }
+        const changed = !!approval && (approval.state !== c.result.state || approval.minWall !== c.result.minWall)
+        const approved = !!approval && !changed && c.result.canExport
+        if (changed || (!c.result.passed && !approved)) {
+            exportCheckDialog.show(c.result, () => {
+                // Let the old modal finish closing before opening a refreshed report.
+                Qt.callLater(() => window.checkExport(request, write, c.result))
+            }, changed)
+            return
+        }
+        write(c.result.state)
+    }
+
+    function exportFailed(error) {
+        exportMessage.title = qsTr("Export failed")
+        exportMessage.text = error
+        exportMessage.open()
+    }
+
+    function writeExport(file, ids, state) {
+        const r = window.controller.exportFile(file, ids, state)
         if (!r.ok) {
-            exportMessage.title = qsTr("Export failed")
-            exportMessage.text = r.error
-            exportMessage.open()
+            window.exportFailed(r.error)
         }
     }
 
@@ -902,20 +927,14 @@ ApplicationWindow {
         onAccepted: {
             const url = selectedFolder.toString()
             const folder = decodeURIComponent(url.replace(/^file:\/\/\/(?=[A-Za-z]:)|^file:\/\/(?=\/)/, ""))
-            const c = window.controller.execute("document.export_check", { print: true, minWall: Preferences.minWallThickness })
-            if (c.ok && !c.result.passed)
-                exportCheckDialog.show(c.result, () => window.writePrintFiles(folder))
-            else
-                window.writePrintFiles(folder)
+            window.checkExport({ print: true }, state => window.writePrintFiles(folder, state))
         }
     }
 
-    function writePrintFiles(folder) {
-        const r = window.controller.execute("document.export_for_print", { folder: folder })
+    function writePrintFiles(folder, state) {
+        const r = window.controller.execute("document.export_for_print", { folder: folder, expectedState: state })
         if (!r.ok) {
-            exportMessage.title = qsTr("Export failed")
-            exportMessage.text = r.error
-            exportMessage.open()
+            window.exportFailed(r.error)
             return
         }
         window.controller.showStatus(qsTr("%1 part(s) written to %2 (STL and STEP each)")
@@ -1349,10 +1368,12 @@ ApplicationWindow {
         }
     }
 
-    /// New or opened project: nothing of the previous one stays on screen (tools, picks,
-    /// sections, measurements, heat maps, scan picks, simulation results, dialogs holding
-    /// ids). The command layer clears the document, undo history and analyses itself.
+    /// Replaced project or active variant: nothing of the previous editing context stays
+    /// on screen (tools, picks, sections, measurements, heat maps, scan picks, simulation
+    /// results, dialogs holding ids). New/Open also clears the document, undo history and
+    /// analyses in the command layer.
     function resetWorkspace() {
+        viewport.stopCameraAnimation()
         viewport.finishTransform(false) // the preview belongs to the previous document
         featureDialog.close() // may hold a feature id of the previous project
         parametersDialog.close()
@@ -2793,9 +2814,9 @@ ApplicationWindow {
 
     Connections {
         target: window.controller
-        function onScriptFinished() { viewport.fitAll() }
+        function onScriptFinished(fitView) { if (fitView) viewport.fitAll() }
+        function onEditingContextChanged() { window.resetWorkspace() }
         function onProjectOpened(view) {
-            window.resetWorkspace()
             viewport.restoreCameraState(view)
         }
         // Undo/redo and edits elsewhere (timeline, parameters) change the sketch too.

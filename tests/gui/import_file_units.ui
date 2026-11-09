@@ -1,0 +1,15 @@
+# CAD-12: restarted real Qt app, remembered cm preference, mixed queued imports.
+# import_units_remember.ui prepares the files/settings; import_file_units.cmake runs both.
+ui.wait(500)
+(() => { if (scan.importUnits !== "cm") ui.fail("unitless-file cm preference was not restored: " + scan.importUnits); ui.log("Restored unitless-file preference: " + scan.importUnits) })()
+# All three requests are queued before the event loop can finish the first one.
+(() => { scan.importFile("@OUTPUT_DIR@/unitless.stl"); scan.importFile("@OUTPUT_DIR@/file-units.3mf"); scan.importFile("@OUTPUT_DIR@/file-units.step") })()
+ui.wait(2000)
+(() => { const parts = controller.execute("document.parts").result.parts; if (scan.busy || parts.length !== 3) ui.fail("mixed import queue did not complete"); for (const p of parts) { ui.log(p.name + ": " + JSON.stringify(p.bounds.size)); if (p.bounds.size.some((v, i) => Math.abs(v - [10, 20, 30][i]) > 1e-5)) ui.fail(p.name + " has incorrect physical dimensions") } ui.log(controller.statusMessage); if (controller.statusMessage.indexOf("file units → mm") < 0) ui.fail("status reports the stale unitless preference"); window.selectPart(parts[2].id); viewport.fitAll(); scanToolsAction.trigger() })()
+ui.wait(500)
+ui.shot("import-file-units.png")
+# A later unitless import still uses cm; embedded units must not overwrite the preference.
+scan.importFile("@OUTPUT_DIR@/unitless.stl")
+ui.wait(1500)
+(() => { const parts = controller.execute("document.parts").result.parts; const p = parts[3]; if (scan.busy || parts.length !== 4 || !p) ui.fail("last STL import did not complete"); else if (p.bounds.size.some((v, i) => Math.abs(v - [10, 20, 30][i]) > 1e-5)) ui.fail("unitless preference was overwritten"); if (controller.statusMessage.indexOf("cm → mm") < 0) ui.fail("unitless status omits the applied conversion"); ui.log(controller.statusMessage) })()
+scan.importUnits = "mm"

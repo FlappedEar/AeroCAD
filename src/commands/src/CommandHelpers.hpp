@@ -38,6 +38,7 @@ inline Json partToJson(const model::Part& p)
                  : p.kind == model::PartKind::Plane  ? "plane"
                                                      : "imported"},
         {"featureId", p.featureId},
+        {"frozen", model::frozenSurfaceResult(p)},
         {"selectedTriangles", p.selection ? p.selection->size() : 0},
         {"bounds", boundsToJson(p.mesh ? p.mesh->bounds() : core::BoundingBox{})},
     };

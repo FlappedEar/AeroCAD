@@ -8,6 +8,8 @@
 #include <QVariantList>
 #include <QtQml/qqmlregistration.h>
 
+#include <cstdint>
+
 namespace aerocad::app {
 
 class AppController;
@@ -25,8 +27,9 @@ class McpAccess : public QObject {
     Q_PROPERTY(bool listening READ listening NOTIFY stateChanged)
     Q_PROPERTY(QString errorString READ errorString NOTIFY stateChanged)
     Q_PROPERTY(QString endpoint READ endpoint CONSTANT)
+    Q_PROPERTY(QString projectTarget READ projectTarget NOTIFY stateChanged)
     Q_PROPERTY(QStringList clients READ clients NOTIFY clientsChanged)
-    /// Newest first: {time, client, command, tool, params, ok, message, durationMs}.
+    /// Newest first: {time, client, project, effects, command, tool, params, ok, message, durationMs}.
     Q_PROPERTY(QVariantList log READ log NOTIFY logChanged)
     Q_PROPERTY(int operationCount READ operationCount NOTIFY logChanged)
     Q_PROPERTY(QString serverPath READ serverPath CONSTANT)
@@ -37,14 +40,15 @@ public:
     explicit McpAccess(AppController& controller, QObject* parent = nullptr);
 
     [[nodiscard]] bool enabled() const { return m_enabled; }
-    /// Turns access on/off and remembers the choice (QSettings "mcp/enabled").
+    /// Grants access only to this open project generation, until replacement or app exit.
     void setEnabled(bool enabled);
-    /// Applies the remembered choice (called once at startup, not in smoke tests).
+    /// Clears the legacy global preference and starts with no grant (called at startup).
     void restoreFromSettings();
 
     [[nodiscard]] bool listening() const { return m_server.isListening(); }
     [[nodiscard]] QString errorString() const { return m_error; }
     [[nodiscard]] QString endpoint() const;
+    [[nodiscard]] QString projectTarget() const;
     [[nodiscard]] QStringList clients() const;
     [[nodiscard]] QVariantList log() const { return m_log; }
     [[nodiscard]] int operationCount() const { return m_operationCount; }
@@ -52,7 +56,7 @@ public:
     [[nodiscard]] QString claudeDesktopConfig() const;
     [[nodiscard]] QString claudeCodeCommand() const;
 
-    /// Disconnects all agents; their MCP server refuses further calls until restarted.
+    /// Disconnects all agents and ends consent until the user enables access again.
     Q_INVOKABLE void disconnectClients();
     Q_INVOKABLE void clearLog();
     Q_INVOKABLE void copyToClipboard(const QString& text) const;
@@ -65,11 +69,15 @@ signals:
 private:
     nlohmann::json handle(const mcp::IpcServer::Client& client, const std::string& command,
                           const nlohmann::json& params);
-    void apply(bool enabled);
+    void apply(bool enabled, const QString& reason = {});
+    void projectChanged();
+    void recordAccessEvent(const QString& message, const QString& target, bool ok = true);
 
     AppController& m_controller;
     mcp::IpcServer m_server;
     bool m_enabled = false;
+    std::uint64_t m_grantedGeneration = 0;
+    QString m_grantedProject;
     QString m_error;
     QVariantList m_log;
     int m_operationCount = 0;

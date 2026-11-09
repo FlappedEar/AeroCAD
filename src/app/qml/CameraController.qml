@@ -196,6 +196,11 @@ Item {
         return Math.pow(zoomStep, invertZoom ? angle : -angle)
     }
 
+    /// A restored project camera supersedes a view animation started in the old context.
+    function stopAnimation() {
+        viewAnimation.stop()
+    }
+
     /// Angle in (-180, 180].
     function wrapAngle(a) {
         let w = ((a + 180) % 360 + 360) % 360 - 180

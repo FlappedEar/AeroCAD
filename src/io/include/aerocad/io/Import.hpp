@@ -26,9 +26,10 @@ enum class FileFormat { Unknown, Stl, Obj, Ply, ThreeMf, Step, Iges, Brep };
 
 struct ImportResult {
     FileFormat format = FileFormat::Unknown;
-    /// Display / mesh representation. Always filled on success.
+    /// Display / mesh representation. Always filled on success. STEP, IGES and 3MF
+    /// coordinates are normalized to millimetres; unitless formats retain file coordinates.
     core::TriangleMesh mesh;
-    /// Exact B-rep geometry, only for CAD formats (STEP, IGES, BREP).
+    /// Exact B-rep geometry, only for CAD formats (STEP, IGES, BREP), in the same units as mesh.
     std::optional<geometry::Shape> shape;
     /// Non-fatal problems (skipped elements, unsupported extensions, ...).
     std::vector<std::string> warnings;
@@ -55,7 +56,8 @@ struct ImportOptions {
     ImportProgress progress;
 };
 
-/// Imports a 3D file. Mesh coordinates are in millimetres.
+/// Imports a 3D file. STEP, IGES and 3MF use file units and return millimetres.
+/// STL, OBJ, PLY and BREP preserve their unitless coordinates; the caller chooses their unit.
 /// Throws ImportError on failure.
 [[nodiscard]] ImportResult importFile(const std::filesystem::path& path);
 [[nodiscard]] ImportResult importFile(const std::filesystem::path& path, const ImportOptions& options);

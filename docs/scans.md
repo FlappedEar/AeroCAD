@@ -9,13 +9,21 @@ command, available to scripts and to an AI agent over MCP (`commands.list`).
 
 | Command | What it does |
 | --- | --- |
-| `document.import {"path", "units"}` | `units`: `um`, `mm` (default), `cm`, `m`, `in`, `ft`. STL, OBJ and PLY carry no unit; the file is scaled to millimetres on import. |
+| `document.import {"path", "units"}` | STL, OBJ, PLY and BREP use `units`: `um`, `mm` (default), `cm`, `m`, `in`, `ft`, and are scaled to millimetres. STEP, IGES and 3MF use their file units (including format defaults) and ignore this unitless-file setting. |
 | `part.convert_units {"id", "from", "to"}` | Fix a part imported in the wrong unit: `from: "m"` scales by 1000 (about the world origin). `to` defaults to `mm`. |
 | `part.calibrate {"id", "a", "b", "distance", "units"}` | Scale so that the distance between two points (picked on the model) equals a known dimension. Point `a` stays fixed. Returns the applied `factor`. |
 
 In the app, a scan whose longest side is under 20 mm or over 50 m starts its guide with
 "Check the size": it names the unit the file was most likely saved in (the one that makes it
 0.1 to 10 m long) and converts it in one click (CAD-140).
+
+File units are converted exactly once. A 10 × 20 × 30 mm STEP or 3MF model stays
+10 × 20 × 30 mm even if the last unitless scan was imported in centimetres or inches.
+The import result reports `unitSource: "file"` and `units: "mm"` for reader-normalized
+STEP, IGES and 3MF coordinates; unitless formats report `unitSource: "importSetting"`
+and the applied input `units`. `outputUnits` is always `mm`.
+The setting does not override embedded units. If a file declares the wrong unit, apply
+an explicit **Convert**, **Calibrate**, or **Scale** operation after import.
 
 ## Orientation
 
@@ -58,7 +66,9 @@ modelling over them.
 
 - **Import** (toolbar, File > Import, drag & drop) parses files on a worker thread with a
   progress bar and a Cancel button; the part is then added through `document.import`.
-  The unit for new imports is set in Scan Tools ("New imports in").
+  Set **Unitless files in** in Scan Tools for STL, OBJ, PLY and BREP. STEP, IGES and
+  3MF use file units automatically, and their import status says **file units → mm**.
+  The unitless-file preference is remembered, including when importing a mixed queue.
 - **Scan Tools** (toolbar MESH > Scan Tools, Modify > Scan Tools; no shortcut, Fusion has none)
   acts on the selected imported part: mesh statistics, Repair / Flip Normals, unit
   conversion, Calibrate (Pick 2 Points, enter the true distance), Orient (Pick Points on a

@@ -8,6 +8,7 @@
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
@@ -1607,6 +1608,135 @@ TEST_CASE("RunManager: runs from an earlier session", "[cfd]")
     CHECK(runs.status(id)->state == cfd::RunState::Interrupted);
     CHECK(runs.remove(id));
 }
+
+TEST_CASE("RunManager: invalid metadata is contained to its run", "[cfd][run-metadata]")
+{
+    TempDir tmp;
+    cfd::CaseGeometry geometry;
+    geometry.part = box({0, 0, 0}, {100, 50, 20});
+    std::string valid;
+    {
+        cfd::RunManager runs(tmp.path());
+        valid = runs.prepare(geometry, cfd::Settings{}, {});
+        fakeFinishedRun(tmp.path() / valid, 0.8, 1.0);
+    }
+    const auto original = nlohmann::json::parse(slurp(tmp.path() / valid / "run.json"));
+    const std::vector<std::pair<std::string, std::string>> invalid{
+        {"syntax", "{broken"},
+        {"array", "[]"},
+        {"null", "null"},
+        {"backend-type", "{\"backend\":42}"},
+        {"backend-name", "{\"backend\":\"unknown\"}"},
+        {"source-type", "{\"source\":[]}"},
+        {"source-name", "{\"source\":{\"partName\":false}}"},
+        {"source-context", "{\"source\":{\"contextPartIds\":\"1\"}}"},
+        {"source-id", "{\"source\":{\"partId\":-1}}"},
+        {"source-revision", "{\"source\":{\"partRevision\":1.5}}"},
+        {"source-context-id", "{\"source\":{\"contextPartIds\":[-1]}}"},
+        {"source-fingerprint-type", "{\"source\":{\"partFingerprint\":42}}"},
+        {"source-fingerprint-value", "{\"source\":{\"partFingerprint\":\"12oops\"}}"},
+        {"created", "{\"created\":false}"},
+        {"caseDir", "{\"caseDir\":[]}"},
+        {"caseDir-empty", "{\"caseDir\":\"\"}"},
+        {"imported", "{\"imported\":\"true\"}"},
+        {"docker", "{\"docker\":12}"},
+        {"dockerHost", "{\"dockerHost\":42}"},
+        {"dockerHost-address", "{\"dockerHost\":\"not-an-engine-address\"}"}};
+    for (const auto& [name, content] : invalid) {
+        DYNAMIC_SECTION(name) {
+            const auto dir = tmp.path() / ("broken-" + name);
+            write(dir / "run.json", content);
+            // Completed-looking output must not override a metadata error.
+            cfd::writeCase(dir, geometry, cfd::Settings{});
+            fakeFinishedRun(dir, 0.8, 1.0);
+            std::unique_ptr<cfd::RunManager> reopened;
+            REQUIRE_NOTHROW(reopened = std::make_unique<cfd::RunManager>(tmp.path()));
+            REQUIRE(reopened->list().size() == 2);
+            CHECK(reopened->status(valid)->state == cfd::RunState::Finished);
+            CHECK(reopened->results(valid).at("finalResults").at("available") == true);
+            const auto broken = reopened->status(dir.filename().string());
+            REQUIRE(broken);
+            CHECK(broken->state == cfd::RunState::Failed);
+            CHECK(broken->message.find((dir / "run.json").string()) != std::string::npos);
+            CHECK(broken->message.find("restore") != std::string::npos);
+            CHECK(broken->progress == 0.0);
+            CHECK_FALSE(broken->dragN);
+            CHECK_FALSE(reopened->caseInfo(broken->id));
+            CHECK_THROWS_WITH(reopened->results(broken->id), broken->message);
+            CHECK_THROWS_WITH(reopened->field(broken->id, "surface"), broken->message);
+            CHECK_THROWS_WITH(reopened->setLabel(broken->id, "rename"), broken->message);
+            CHECK(slurp(dir / "run.json") == content);
+            CHECK_FALSE(reopened->cancel(broken->id));
+            reopened->rescan();
+            CHECK(reopened->list().size() == 2);
+            CHECK(slurp(dir / "run.json") == content);
+            CHECK(nlohmann::json::parse(slurp(tmp.path() / valid / "run.json")) == original);
+            // Recovery guidance is actionable; only this explicit repair changes the file.
+            write(dir / "run.json", original.dump());
+            reopened->rescan();
+            REQUIRE(reopened->status(broken->id));
+            CHECK(reopened->status(broken->id)->state == cfd::RunState::Finished);
+            CHECK(reopened->setLabel(broken->id, "recovered"));
+            cfd::RunManager repaired(tmp.path());
+            CHECK(repaired.status(broken->id)->state == cfd::RunState::Finished);
+            // Another process may damage the file after this manager loaded it.
+            write(dir / "run.json", "{broken-again");
+            CHECK_THROWS(reopened->setLabel(broken->id, "must not overwrite"));
+            CHECK(slurp(dir / "run.json") == "{broken-again");
+            // Valid JSON with a field the loader rejects is not rewritten either.
+            for (const auto& bad : {nlohmann::json{{"source", nlohmann::json::array()}},
+                                    nlohmann::json{{"source", {{"partId", -1}}}},
+                                    nlohmann::json{{"backend", "unknown"}},
+                                    nlohmann::json{{"dockerHost", "not a host"}}}) {
+                auto damaged = original;
+                damaged.update(bad);
+                const std::string bytes = damaged.dump();
+                write(dir / "run.json", bytes);
+                CHECK_THROWS_WITH(reopened->setLabel(broken->id, "must not overwrite"),
+                                  Catch::Matchers::ContainsSubstring("Cannot rename run"));
+                CHECK(slurp(dir / "run.json") == bytes);
+            }
+            // A rename keeps the source fields now on disk, not the ones loaded earlier.
+            auto edited = original;
+            edited["source"]["partName"] = "edited elsewhere";
+            write(dir / "run.json", edited.dump());
+            CHECK(reopened->setLabel(broken->id, "renamed"));
+            const auto renamed = nlohmann::json::parse(slurp(dir / "run.json"));
+            CHECK(renamed.at("source").at("partName") == "edited elsewhere");
+            CHECK(renamed.at("source").at("label") == "renamed");
+        }
+    }
+}
+
+#ifndef _WIN32
+TEST_CASE("RunManager: malformed remote metadata never launches a process", "[cfd][run-metadata]")
+{
+    TempDir tmp;
+    const auto docker = tmp.path() / "fake-docker";
+    write(docker, "#!/bin/sh\nprintf invoked > invoked\nexit 1\n");
+    fs::permissions(docker, fs::perms::owner_exec, fs::perm_options::add);
+    const auto dir = tmp.path() / "broken-remote";
+    const auto metadata = nlohmann::json{{"backend", "unknown"}, {"docker", docker.string()},
+                                        {"dockerHost", "ssh://test.invalid"}}.dump();
+    write(dir / "run.json", metadata);
+    cfd::RunManager runs(tmp.path());
+    REQUIRE(runs.status("broken-remote"));
+    CHECK(runs.status("broken-remote")->state == cfd::RunState::Failed);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    CHECK_FALSE(fs::exists(dir / "invoked"));
+    CHECK_FALSE(fs::exists(dir / "log.aerocad"));
+    CHECK(slurp(dir / "run.json") == metadata);
+    // A repaired remote record is reloaded during the same session without
+    // starting a process. Only a new session may follow a remote run.
+    write(dir / "run.json", nlohmann::json{{"backend", "docker"}, {"docker", docker.string()},
+                                           {"dockerHost", "ssh://test.invalid"}}.dump());
+    runs.rescan();
+    REQUIRE(runs.status("broken-remote"));
+    CHECK(runs.status("broken-remote")->state == cfd::RunState::Interrupted);
+    CHECK_FALSE(fs::exists(dir / "invoked"));
+    CHECK_FALSE(fs::exists(dir / "log.aerocad"));
+}
+#endif
 
 #ifndef _WIN32
 TEST_CASE("Listing runs only reads; a remote run is followed again at start-up (CAD-81)", "[cfd]")

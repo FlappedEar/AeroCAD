@@ -37,8 +37,9 @@ public:
     bool listen(const QString& endpoint);
     /// Stops listening and disconnects all clients with the given reason.
     void close(const QString& reason = {});
-    /// Sends {"event": "revoked"} to all clients and disconnects them. The MCP server then
-    /// refuses further tool calls until it is restarted by the MCP client.
+    /// Immediately drops all queued commands, rotates the access session, sends
+    /// {"event": "revoked"} to all clients and disconnects them. Does not stop listening;
+    /// use close() to end consent until the user explicitly grants access again.
     void revokeAll(const QString& reason);
 
     [[nodiscard]] bool isListening() const;
@@ -53,6 +54,7 @@ private:
     struct Connection {
         Client info;
         QByteArray buffer;
+        bool ready = false;
     };
 
     void onNewConnection();
@@ -65,6 +67,7 @@ private:
     QHash<QLocalSocket*, Connection> m_connections;
     QString m_endpoint;
     QString m_error;
+    QString m_accessSession; ///< Changes when access ends, including an explicit Disconnect.
     quint64 m_nextClientId = 1;
 };
 

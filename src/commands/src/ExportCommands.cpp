@@ -2,6 +2,8 @@
 // Export and mesh validity commands.
 #include "ExportCommands.hpp"
 
+#include "aerocad/commands/Project.hpp"
+
 #include "aerocad/cad/Design.hpp"
 #include "aerocad/core/MeshCheck.hpp"
 #include "aerocad/core/MeshQuery.hpp"
@@ -129,6 +131,33 @@ std::vector<const model::Part*> selectPrintParts(const model::Document& doc, con
     return parts;
 }
 
+// An approval belongs to one project, document revision, part set and export mode.
+// Keep counters as an opaque string so QML never rounds uint64 values to doubles.
+std::string exportState(const CommandContext& ctx, const std::vector<const model::Part*>& parts,
+                        io::FileFormat format, bool print)
+{
+    Json ids = Json::array();
+    for (const auto* part : parts)
+        ids.push_back(part->id);
+    return Json::array({ctx.project ? ctx.project->generation : 0, ctx.project ? ctx.project->variants.active() : 0,
+                        ctx.document.revision(), print ? "print" : std::string(io::formatName(format)), ids})
+        .dump();
+}
+
+void requireExportState(const CommandContext& ctx, const Json& params,
+                        const std::vector<const model::Part*>& parts, io::FileFormat format, bool print)
+{
+    if (params.contains("expectedState") && params.at("expectedState") != exportState(ctx, parts, format, print))
+        throw CommandError("The design or export selection changed after the check. Check the export again.");
+}
+
+Json expectedStateSchema()
+{
+    return {{"type", "string"}, {"minLength", 1},
+            {"description", "Optional state returned by document.export_check. Rejects a changed project, "
+                            "document, part selection or export mode before writing anything."}};
+}
+
 /// Default minimum wall thickness for printing (mm): two perimeters of a 0.4 mm FDM nozzle.
 constexpr double kDefaultMinWall = 0.8;
 
@@ -213,8 +242,11 @@ Json exportCheck(const std::vector<const model::Part*>& parts, io::FileFormat fo
                 r["approximate"] = true;
                 char text[200];
                 std::snprintf(text, sizeof text,
-                              "Approximation: its surface is up to %.3g mm from the scan, more than the requested "
-                              "fit tolerance of %.3g mm.",
+                              st.report.value("fitInherited", false)
+                                  ? "Approximation: the reference fit is up to %.3g mm from the scan, more than its "
+                                    "requested tolerance of %.3g mm (before offset or thickness)."
+                                  : "Approximation: its surface is up to %.3g mm from the scan, more than the requested "
+                                    "fit tolerance of %.3g mm.",
                               fit.value("maxDeviation", 0.0), fit.value("tolerance", 0.0));
                 warningList.push_back(text);
             }
@@ -352,8 +384,11 @@ void registerCheck(CommandRegistry& r)
             if (params.contains("format") && !print)
                 format = parseFormat(params, {});
             const auto parts = print ? selectPrintParts(ctx.document, params) : selectParts(ctx.document, params);
-            return exportCheck(parts, format, params.value("minWall", kDefaultMinWall), print, ctx.design);
+            Json result = exportCheck(parts, format, params.value("minWall", kDefaultMinWall), print, ctx.design);
+            result["state"] = exportState(ctx, parts, format, print);
+            return result;
         });
+
 }
 
 void registerExport(CommandRegistry& r)
@@ -374,6 +409,7 @@ void registerExport(CommandRegistry& r)
                   {"items", {{"type", "integer"}, {"minimum", 1}}},
                   {"minItems", 1},
                   {"description", "Parts to export; defaults to all visible bodies and imported parts (not sketches or construction planes)."}}},
+                {"expectedState", expectedStateSchema()},
                 {"requireValid",
                  {{"type", "boolean"},
                   {"description", "Fail instead of warning when a mesh is not watertight (STL/3MF). Default false."}}}},
@@ -385,6 +421,7 @@ void registerExport(CommandRegistry& r)
               const io::FileFormat format = parseFormat(params, path);
               const bool requireValid = params.value("requireValid", false);
               const std::vector<const model::Part*> parts = selectParts(ctx.document, params);
+              requireExportState(ctx, params, parts, format, false);
 
               Json checks = Json::array();
               Json warnings = Json::array();
@@ -612,6 +649,7 @@ void registerExportForPrint(CommandRegistry& r)
                            {"items", {{"type", "integer"}, {"minimum", 1}}},
                            {"minItems", 1},
                            {"description", "Parts to write; defaults to all visible solids (not scans or surfaces)."}}},
+                         {"expectedState", expectedStateSchema()},
                          {"formats",
                           {{"type", "array"},
                            {"items", {{"type", "string"}, {"enum", {"stl", "step"}}}},
@@ -619,6 +657,8 @@ void registerExportForPrint(CommandRegistry& r)
                            {"description", "Default both."}}}},
                         {"folder"})},
           [](CommandContext& ctx, const Json& params) {
+              const std::vector<const model::Part*> parts = selectPrintParts(ctx.document, params);
+              requireExportState(ctx, params, parts, io::FileFormat::Stl, true);
               const std::filesystem::path folder = core::pathFromUtf8(params.at("folder").get<std::string>());
               if (!folder.is_absolute())
                   throw CommandError("Folder must be an absolute path: " + core::pathToUtf8(folder));
@@ -634,8 +674,6 @@ void registerExportForPrint(CommandRegistry& r)
                       step = step || f == "step";
                   }
               }
-              const std::vector<const model::Part*> parts = selectPrintParts(ctx.document, params);
-
               // Check everything before writing anything.
               struct Planned {
                   const model::Part* part;

@@ -5,6 +5,7 @@
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <filesystem>
@@ -82,6 +83,88 @@ model::PartId addPrintBox(commands::Session& session, const std::string& name = 
 }
 
 } // namespace
+
+TEST_CASE("Export approval is rejected after its document or request changes", "[commands][export][preflight]")
+{
+    TempDir dir;
+    commands::Session session;
+    const auto first = addPrintBox(session, "first");
+    const auto second = addPrintBox(session, "second");
+    const bool print = GENERATE(false, true);
+    const auto check = session.execute("document.export_check", {{"ids", {first}}, {"print", print}, {"minWall", 0}});
+    REQUIRE(check.ok);
+    REQUIRE(check.data.at("passed") == true);
+    const std::string path = dir.file("first.stl");
+    writeFile(path, "previous STL");
+    Json params{{"ids", {first}}, {"expectedState", check.data.at("state")}};
+    if (print) {
+        params["folder"] = dir.file("");
+    } else {
+        params["path"] = path;
+        params["requireValid"] = true;
+    }
+
+    SECTION("different selected part without a document change") { params["ids"] = {second}; }
+    SECTION("different visibility") {
+        REQUIRE(session.execute("part.set_visible", {{"id", second}, {"visible", false}}).ok);
+    }
+    SECTION("deleted selected part") {
+        REQUIRE(session.execute("feature.delete", {{"id", session.document().part(first)->featureId}}).ok);
+    }
+    SECTION("new project reusing part ids") {
+        REQUIRE(session.execute("project.new").ok);
+        addPrintBox(session, "first");
+    }
+    SECTION("different active variant") { REQUIRE(session.execute("variant.create").ok); }
+    SECTION("new geometry") { addMeshPart(session, "open surface", false); }
+
+    const auto result = session.execute(print ? "document.export_for_print" : "document.export", params);
+    CHECK_FALSE(result.ok);
+    CHECK(readFile(path) == "previous STL");
+    CHECK(std::distance(fs::directory_iterator(core::pathFromUtf8(dir.file(""))), fs::directory_iterator{}) == 1);
+}
+
+TEST_CASE("Export All approval follows its current visible part set", "[commands][export][preflight]")
+{
+    TempDir dir;
+    commands::Session session;
+    addPrintBox(session);
+    const bool print = GENERATE(false, true);
+    const auto check = session.execute("document.export_check", {{"print", print}, {"minWall", 0}});
+    REQUIRE(check.ok);
+    addPrintBox(session, "added after check");
+    const Json params = print ? Json{{"folder", dir.file("new")}, {"expectedState", check.data.at("state")}}
+                              : Json{{"path", dir.file("new.stl")}, {"expectedState", check.data.at("state")}};
+    const auto result = session.execute(print ? "document.export_for_print" : "document.export", params);
+    CHECK_FALSE(result.ok);
+    CHECK_THAT(result.error, ContainsSubstring("changed after the check"));
+    CHECK(fs::is_empty(core::pathFromUtf8(dir.file(""))));
+}
+
+TEST_CASE("Current export approvals work and cannot be reused for another format", "[commands][export][preflight]")
+{
+    TempDir dir;
+    commands::Session session;
+    addPrintBox(session);
+    const std::string format = GENERATE("stl", "3mf", "step");
+    const auto check = session.execute("document.export_check", {{"format", format}, {"minWall", 0}});
+    REQUIRE(check.ok);
+    REQUIRE(session.execute("document.parts").ok); // a read does not invalidate approval
+    const std::string path = dir.file("part." + format);
+    REQUIRE(session.execute("document.export",
+                            {{"path", path}, {"requireValid", true}, {"expectedState", check.data.at("state")}}).ok);
+    CHECK(fs::file_size(core::pathFromUtf8(path)) > 0);
+    const auto changed = session.execute("document.export", {{"path", dir.file("different.stl")},
+                                                              {"format", format == "stl" ? "3mf" : "stl"},
+                                                              {"expectedState", check.data.at("state")}});
+    CHECK_FALSE(changed.ok);
+    CHECK_FALSE(fs::exists(core::pathFromUtf8(dir.file("different.stl"))));
+
+    const auto printCheck = session.execute("document.export_check", {{"print", true}, {"minWall", 0}});
+    REQUIRE(printCheck.ok);
+    CHECK(session.execute("document.export_for_print",
+                          {{"folder", dir.file("print")}, {"expectedState", printCheck.data.at("state")}}).ok);
+}
 
 TEST_CASE("Print export preserves old files when a later destination is invalid", "[commands][export][transaction]")
 {
@@ -403,32 +486,60 @@ TEST_CASE("document.export_check explains what blocks or weakens an export", "[c
         CHECK_FALSE(off.data.at("parts").at(0).contains("minWall"));
     }
 
-    SECTION("an open mesh cannot be printed; a mesh cannot be STEP")
+    SECTION("an open surface may be exported with a warning but cannot be printed")
     {
+        TempDir dir;
         const auto open = addMeshPart(s, "open", false, 50.0);
-        // An open mesh (a scan) can be written as STL for another program, with a warning
-        // (CAD-115) ...
-        auto r = s.execute("document.export_check", {{"ids", {open}}, {"format", "stl"}});
-        REQUIRE(r.ok);
-        CHECK(r.data.at("canExport") == true);
-        CHECK(r.data.at("errors") == 0);
-        CHECK(r.data.at("parts").at(0).at("status") == "warning");
-        CHECK_THAT(r.data.at("parts").at(0).at("warnings").at(0).get<std::string>(), ContainsSubstring("3 open edges"));
+        for (const char* format : {"stl", "3mf"}) {
+            const auto check = s.execute("document.export_check", {{"ids", {open}}, {"format", format}});
+            REQUIRE(check.ok);
+            CHECK(check.data.at("passed") == false);
+            CHECK(check.data.at("canExport") == true);
+            CHECK(check.data.at("errors") == 0);
+            const Json& part = check.data.at("parts").at(0);
+            CHECK(part.at("status") == "warning");
+            CHECK_THAT(part.at("warnings").at(0).get<std::string>(), ContainsSubstring("3 open edges"));
+            CHECK_FALSE(part.contains("minWall"));
+            const std::string path = dir.file(std::string("surface.") + format);
+            REQUIRE(s.execute("document.export", {{"path", path}, {"ids", {open}},
+                                                   {"expectedState", check.data.at("state")}}).ok);
+            CHECK(fs::file_size(core::pathFromUtf8(path)) > 0);
+        }
         // ... but not exported for printing.
-        r = s.execute("document.export_check", {{"ids", {open}}, {"print", true}});
+        auto r = s.execute("document.export_check", {{"ids", {open}}, {"print", true}});
         REQUIRE(r.ok);
         CHECK(r.data.at("canExport") == false);
         CHECK(r.data.at("errors") == 1);
-        const Json& part = r.data.at("parts").at(0);
-        CHECK(part.at("status") == "error");
-        CHECK_THAT(part.at("errors").at(0).get<std::string>(), ContainsSubstring("3 open edges"));
-        CHECK_FALSE(part.contains("minWall"));
+        const auto print = s.execute("document.export_for_print", {{"ids", {open}}, {"folder", dir.file("print")}});
+        CHECK_FALSE(print.ok);
+        CHECK_THAT(print.error, ContainsSubstring("not every part is a watertight solid"));
+    }
 
+    SECTION("a mesh without exact geometry cannot be STEP")
+    {
         const auto closed = addMeshPart(s, "closed", true, 80.0);
-        r = s.execute("document.export_check", {{"ids", {closed}}, {"format", "step"}});
+        const auto r = s.execute("document.export_check", {{"ids", {closed}}, {"format", "step"}});
         REQUIRE(r.ok);
         CHECK(r.data.at("canExport") == false);
         CHECK_THAT(r.data.at("parts").at(0).at("errors").at(0).get<std::string>(),
                    ContainsSubstring("STEP needs exact geometry"));
+    }
+
+    SECTION("a non-manifold mesh is a warning for a plain export (CAD-115) and an error for printing")
+    {
+        model::Part part;
+        part.name = "non-manifold";
+        part.mesh = std::make_shared<const core::TriangleMesh>(
+            std::vector<core::Vec3>{{0, 0, 0}, {10, 0, 0}, {0, 10, 0}, {0, -10, 0}, {0, 0, 10}},
+            std::vector<core::TriangleMesh::Triangle>{{0, 1, 2}, {1, 0, 3}, {0, 1, 4}});
+        const auto id = s.document().addPart(std::move(part));
+        const auto r = s.execute("document.export_check", {{"ids", {id}}, {"format", "stl"}});
+        REQUIRE(r.ok);
+        CHECK(r.data.at("canExport") == true);
+        CHECK(r.data.at("parts").at(0).at("status") == "warning");
+        const auto p = s.execute("document.export_check", {{"ids", {id}}, {"print", true}});
+        REQUIRE(p.ok);
+        CHECK(p.data.at("canExport") == false);
+        CHECK(p.data.at("parts").at(0).at("status") == "error");
     }
 }

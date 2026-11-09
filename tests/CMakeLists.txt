@@ -33,14 +33,19 @@ aerocad_add_test(test_model
 aerocad_add_test(test_commands
     SOURCES commands/test_commands.cpp commands/test_canards.cpp commands/test_export_commands.cpp commands/test_design_commands.cpp
         commands/test_project_commands.cpp commands/test_scan_commands.cpp commands/test_inspect_commands.cpp
-        commands/test_simulation_commands.cpp commands/test_source_regeneration.cpp
-    LIBS AeroCAD::commands AeroCAD::geometry_occt AeroCAD::project)
+        commands/test_simulation_commands.cpp commands/test_import_units.cpp commands/test_source_regeneration.cpp
+        commands/test_surface_timeline.cpp
+    LIBS AeroCAD::commands AeroCAD::geometry_occt AeroCAD::project miniz::miniz)
 
 aerocad_add_test(test_mcp
     SOURCES mcp/test_mcp_server.cpp
     LIBS AeroCAD::mcp)
 
 if(AEROCAD_BUILD_APP)
+    aerocad_add_test(test_app_picking
+        SOURCES app/test_picking.cpp
+        LIBS AeroCAD::model)
+
     aerocad_add_test(test_mcp_ipc
         SOURCES mcp/test_mcp_ipc.cpp
         LIBS AeroCAD::mcp_ipc)

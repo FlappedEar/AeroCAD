@@ -118,8 +118,10 @@ public:
     Q_INVOKABLE bool importFile(const QUrl& url);
     /// Convenience wrapper around document.export for the save dialog. `ids` empty means
     /// all visible parts. Returns {ok, error?, warnings: [string]}; the status bar shows
-    /// the outcome.
-    Q_INVOKABLE QVariantMap exportFile(const QUrl& url, const QVariantList& ids = {});
+    /// the outcome. expectedState binds a GUI preflight approval to its project, document
+    /// revision, part set and format.
+    Q_INVOKABLE QVariantMap exportFile(const QUrl& url, const QVariantList& ids = {},
+                                      const QString& expectedState = {});
     /// Local file path of a file-dialog URL, for commands that take a path.
     Q_INVOKABLE QString localPath(const QUrl& url) const;
     /// Runs a JSON command script: an array of {"name": ..., "params": {...}} objects (the
@@ -160,21 +162,22 @@ public:
     /// Part details for the properties panel ({} for unknown ids).
     Q_INVOKABLE QVariantMap partInfo(quint64 id) const;
 
-    /// Nearest hit of a ray (model coordinates) with the visible parts' meshes:
-    /// {partId, point (QVector3D), triangle}, or {} when nothing is hit. With `skipId`
-    /// that part is left out; with `onlyId` only that part is tried.
-    Q_INVOKABLE QVariantMap pickSurface(const QVector3D& origin, const QVector3D& direction, quint64 skipId = 0,
-                                        quint64 onlyId = 0) const;
+    /// Options mirror viewport eligibility: kind, shownSketch, hiddenPartIds, unpickablePlane.
+    /// Nearest hit of a ray (model coordinates) with the eligible parts' meshes:
+    /// {partId, point (QVector3D), triangle}, or {} when nothing is hit. With option
+    /// `skipId` that part is left out; with `onlyId` only that part is tried.
+    Q_INVOKABLE QVariantMap pickSurface(const QVector3D& origin, const QVector3D& direction,
+                                        const QVariantMap& options = {}) const;
     /// For a click that misses (into a hole of a scan, such as a grille opening): the
     /// visible surface point seen closest to the ray, within `maxAngleDeg` of it, as
     /// pickSurface's map plus snapped: true; {} when nothing is that close.
     Q_INVOKABLE QVariantMap pickNearSurface(const QVector3D& origin, const QVector3D& direction,
-                                            double maxAngleDeg) const;
+                                            double maxAngleDeg, const QVariantMap& options = {}) const;
     /// The visible sketch line closest to a ray (model coordinates), within `maxDistance`
     /// mm of it: {partId, point (on the line, QVector3D), distance (along the ray)}, or {}.
     /// Measure picks sketch curves with it: they have no surface to ray-cast.
     Q_INVOKABLE QVariantMap pickSketchLine(const QVector3D& origin, const QVector3D& direction,
-                                           double maxDistance) const;
+                                           double maxDistance, const QVariantMap& options = {}) const;
     /// `point` moved along `normal` onto the first skin of part `id` (and the scan it was
     /// fitted from) seen from outside, for drawing sketch previews where the draped sketch
     /// is shown; `point` itself on a miss.
@@ -233,11 +236,14 @@ signals:
     /// The displayed selection of a part changed without a document change (brush preview).
     void selectionPreviewChanged(quint64 id);
     /// Emitted after runScript() so the view can frame the result.
-    void scriptFinished();
+    void scriptFinished(bool fitView);
     void inspectChanged();
     void projectChanged();
     void recentProjectsChanged();
     void autosaveSecondsChanged();
+    /// The project or active variant changed: cached editor ids, planes and picks no
+    /// longer belong to the current context. Emitted before historyChanged.
+    void editingContextChanged();
     /// After a project was opened or recovered; `view` is the stored camera state.
     void projectOpened(const QVariantMap& view);
 

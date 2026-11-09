@@ -134,6 +134,18 @@ show up as a small share of thin surface.
 `warnings`, `watertight`, `manifold`, `validBrep`, `volume` and `minWall {thinnest, at,
 thinAreaPercent, limit}`.
 
+Before **Export Anyway** writes, the application runs the check again. If the project,
+variant, document, exported part set, or wall limit changed, the updated report needs a
+new confirmation; a failed check writes nothing. An ordinary STL/3MF export of an open,
+oriented manifold surface requires explicit warning consent and is not a printable solid.
+The print-export writer continues to reject meshes that are not watertight.
+
+The check also returns an opaque `state` string. Commands `document.export` and
+`document.export_for_print` accept it as optional `expectedState`; a changed project,
+document, effective part IDs, or export mode is rejected before writing. The token does
+not include the wall limit; the GUI separately binds warning consent to that value. It
+is local to the running session and is not a printability certificate.
+
 ### Writing a print-file set
 
 **File > Export for Printing** (`document.export_for_print`) stages every STL/STEP

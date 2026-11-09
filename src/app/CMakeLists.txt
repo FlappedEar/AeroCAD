@@ -8,6 +8,7 @@ set(AEROCAD_APP_SOURCES
     main.cpp
     AppController.cpp
     AppController.hpp
+    PickFilter.hpp
     PartListModel.cpp
     PartListModel.hpp
     MeshGeometry.cpp
@@ -167,6 +168,13 @@ if(AEROCAD_BUILD_TESTS)
     set_tests_properties(app_import_after_project_replaced_test PROPERTIES LABELS gui TIMEOUT 90
         FIXTURES_REQUIRED gui_drop RESOURCE_LOCK gui_drop_dir
         ENVIRONMENT "XDG_DATA_HOME=${_drop}/data;XDG_CONFIG_HOME=${_drop}/data")
+    # CAD-12: a persisted unitless-file setting cannot rescale embedded file units.
+    set(_import_units ${CMAKE_CURRENT_BINARY_DIR}/gui-import-units)
+    add_test(NAME app_import_file_units_test
+        COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:aerocad> -DOUTPUT_DIR=${_import_units}
+                -P ${PROJECT_SOURCE_DIR}/tests/gui/import_file_units.cmake)
+    set_tests_properties(app_import_file_units_test PROPERTIES LABELS gui TIMEOUT 90
+        ENVIRONMENT "XDG_DATA_HOME=${_import_units}/data;XDG_CONFIG_HOME=${_import_units}/config")
     # Wheel zoom towards the pointer, right-drag orbit, right-click menus, touchpad, Move/Rotate.
     add_test(NAME app_navigation_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl
@@ -696,6 +704,16 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/touchpad_gestures.ui)
     set_tests_properties(app_touchpad_gestures_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-94: profile clicks reach the shown sketch behind the modelling preview.
+    add_test(NAME app_profile_picking_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/profile_picking.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_profile_picking_test PROPERTIES LABELS gui TIMEOUT 90)
+    add_test(NAME app_picking_filters_test
+        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl
+                --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/picking_filters.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_picking_filters_test PROPERTIES LABELS gui TIMEOUT 120)
     # CAD-85: a fit that misses its tolerance is marked as an approximation in the UI.
     add_test(NAME app_fit_tolerance_warning_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome.stl
@@ -707,6 +725,67 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome.step
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/feature_dialog_owned_history.ui)
     set_tests_properties(app_feature_dialog_owned_history_test PROPERTIES LABELS gui TIMEOUT 90)
+    # CAD-90: MCP/script/Undo context changes close editors before stale previews rebuild.
+    set(_context ${CMAKE_CURRENT_BINARY_DIR}/gui-context)
+    file(MAKE_DIRECTORY ${_context})
+    file(WRITE ${_context}/reset.json "[{\"name\":\"project.new\"}]\n")
+    file(WRITE ${_context}/open.json "[{\"name\":\"project.open\",\"params\":{\"path\":\"saved.aerocad\"}}]\n")
+    file(WRITE ${_context}/missing.json "[{\"name\":\"project.open\",\"params\":{\"path\":\"missing.aerocad\"}}]\n")
+    file(WRITE ${_context}/variants.json
+        "[{\"name\":\"variant.activate\",\"params\":{\"variant\":\"A\"}},"
+        "{\"name\":\"variant.activate\",\"params\":{\"variant\":\"B\"}}]\n")
+    add_test(NAME app_editing_context_reset_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/editing_context_reset.ui
+        WORKING_DIRECTORY ${_context})
+    set_tests_properties(app_editing_context_reset_test PROPERTIES LABELS gui TIMEOUT 90)
+    # CAD-42: migrate the old global grant, then exercise consent across project changes.
+    set(_mcp ${CMAKE_CURRENT_BINARY_DIR}/gui-mcp-access)
+    file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/gui-mcp-setup.cmake
+        "file(REMOVE_RECURSE \"${_mcp}\")\n"
+        "file(MAKE_DIRECTORY \"${_mcp}/config/FlappedEar\" \"${_mcp}/data\")\n"
+        "file(WRITE \"${_mcp}/config/FlappedEar/AeroCAD.conf\" \"[mcp]\\nenabled=true\\n\")\n")
+    add_test(NAME app_mcp_access_setup
+        COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_BINARY_DIR}/gui-mcp-setup.cmake)
+    set_tests_properties(app_mcp_access_setup PROPERTIES LABELS gui FIXTURES_SETUP gui_mcp)
+    add_test(NAME app_mcp_project_access_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/mcp_project_access.ui
+        WORKING_DIRECTORY ${_mcp})
+    set_tests_properties(app_mcp_project_access_test PROPERTIES LABELS gui TIMEOUT 90 FIXTURES_REQUIRED gui_mcp
+        ENVIRONMENT "XDG_DATA_HOME=${_mcp}/data;XDG_CONFIG_HOME=${_mcp}/config")
+    # CAD-92: an MCP edit while the warning modal is open needs a fresh export approval.
+    set(CAD92_DIR ${CMAKE_CURRENT_BINARY_DIR}/gui-export-preflight)
+    foreach(_file export_preflight.ui export_preflight_setup.cmake export_preflight_verify.cmake export_open_scan.ui)
+        configure_file(${PROJECT_SOURCE_DIR}/tests/gui/${_file}.in ${CMAKE_CURRENT_BINARY_DIR}/${_file} @ONLY)
+    endforeach()
+    add_test(NAME app_export_preflight_setup
+        COMMAND ${CMAKE_COMMAND} -DCMD=$<TARGET_FILE:aerocad_cmd>
+                -P ${CMAKE_CURRENT_BINARY_DIR}/export_preflight_setup.cmake)
+    set_tests_properties(app_export_preflight_setup PROPERTIES LABELS gui FIXTURES_SETUP gui_export_preflight)
+    add_test(NAME app_export_preflight_test
+        COMMAND aerocad ${CAD92_DIR}/fixture.aerocad --ui-script ${CMAKE_CURRENT_BINARY_DIR}/export_preflight.ui)
+    set_tests_properties(app_export_preflight_test PROPERTIES LABELS gui TIMEOUT 90
+        FIXTURES_REQUIRED gui_export_preflight
+        RESOURCE_LOCK gui_export_preflight_dir
+        ENVIRONMENT "XDG_DATA_HOME=${CAD92_DIR}/data;XDG_CONFIG_HOME=${CAD92_DIR}/data")
+    add_test(NAME app_export_preflight_verify
+        COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_BINARY_DIR}/export_preflight_verify.cmake)
+    set_tests_properties(app_export_preflight_verify PROPERTIES LABELS gui
+        FIXTURES_REQUIRED gui_export_preflight DEPENDS app_export_preflight_test)
+    add_test(NAME app_export_open_scan_test
+        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl
+                --ui-script ${CMAKE_CURRENT_BINARY_DIR}/export_open_scan.ui)
+    set_tests_properties(app_export_open_scan_test PROPERTIES LABELS gui TIMEOUT 90
+        FIXTURES_REQUIRED gui_export_preflight
+        RESOURCE_LOCK gui_export_preflight_dir
+        ENVIRONMENT "XDG_DATA_HOME=${CAD92_DIR}/data;XDG_CONFIG_HOME=${CAD92_DIR}/data")
+    # CAD-78: fitted surfaces remain editable through the timeline and modelling tools.
+    foreach(_surface_test surface_timeline surface_timeline_move surface_timeline_combine)
+        add_test(NAME app_${_surface_test}_test
+            COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome.stl
+                    --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/${_surface_test}.ui)
+        set_tests_properties(app_${_surface_test}_test PROPERTIES LABELS gui TIMEOUT 180
+            RESOURCE_LOCK gui_surface_timeline)
+    endforeach()
     # Runs a coarse OpenFOAM case, so it needs the engine (label openfoam, not in CI). The
     # runs directory is in the build tree: under the home directory on macOS, which the
     # engine's VM can mount.

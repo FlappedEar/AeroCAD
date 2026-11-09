@@ -4,6 +4,7 @@
 #include "FieldGeometry.hpp"
 #include "InspectGeometry.hpp"
 #include "JsonBridge.hpp"
+#include "PickFilter.hpp"
 
 #include "aerocad/BuildInfo.hpp"
 #include "aerocad/cfd/Settings.hpp"
@@ -30,6 +31,23 @@
 namespace aerocad::app {
 
 namespace {
+
+PickFilter pickFilter(const QVariantMap& options)
+{
+    PickFilter filter;
+    filter.kind = options.value(QStringLiteral("kind")).toString().toStdString();
+    for (const auto& id : options.value(QStringLiteral("hiddenPartIds")).toList())
+        filter.hiddenPartIds.push_back(id.toULongLong());
+    const auto feature = [&](const QString& name) -> std::optional<std::uint64_t> {
+        const QVariant value = options.value(name);
+        bool ok = false;
+        const qlonglong id = value.toLongLong(&ok);
+        return ok && id >= 0 ? std::optional<std::uint64_t>(static_cast<std::uint64_t>(id)) : std::nullopt;
+    };
+    filter.shownSketch = feature(QStringLiteral("shownSketch"));
+    filter.unpickablePlane = feature(QStringLiteral("unpickablePlane"));
+    return filter;
+}
 
 constexpr int kMaxRecent = 10;
 const QString kProjectExtension = QStringLiteral("aerocad");
@@ -299,7 +317,18 @@ commands::CommandResult AppController::executeCommand(const std::string& name, c
     const auto* info = m_session.registry().info(name);
     emit commandAboutToRun(QString::fromStdString(name), info != nullptr && info->modifiesDocument);
     const bool hadPreview = m_session.previewActive();
+    const auto generation = m_session.project().generation;
+    const auto activeVariant = m_session.project().variants.active();
     const commands::CommandResult result = m_session.execute(name, params);
+    const bool projectReplaced = m_session.project().generation != generation;
+    if (projectReplaced || m_session.project().variants.active() != activeVariant) {
+        // A command can replace the editing context through MCP, a script, or Undo/Redo,
+        // without using the File/Variant menu wrappers. Close stale editors before the
+        // history notification can schedule their previews against the new context.
+        emit editingContextChanged();
+        if (projectReplaced)
+            emit projectOpened(toVariant(m_session.project().view).toMap());
+    }
     // A command that ended a live preview (e.g. project.save) also changed the document
     // back; the feature dialog rebuilds its preview on historyChanged.
     if ((info != nullptr && info->modifiesDocument) || (hadPreview && !m_session.previewActive()))
@@ -327,12 +356,14 @@ bool AppController::importFile(const QUrl& url)
     return true;
 }
 
-QVariantMap AppController::exportFile(const QUrl& url, const QVariantList& ids)
+QVariantMap AppController::exportFile(const QUrl& url, const QVariantList& ids, const QString& expectedState)
 {
     const QString path = url.isLocalFile() ? url.toLocalFile() : url.toString();
     QVariantMap params{{QStringLiteral("path"), QDir::toNativeSeparators(path)}};
     if (!ids.isEmpty())
         params.insert(QStringLiteral("ids"), ids);
+    if (!expectedState.isEmpty())
+        params.insert(QStringLiteral("expectedState"), expectedState);
     const QVariantMap r = execute(QStringLiteral("document.export"), params);
     if (!r.value(QStringLiteral("ok")).toBool())
         return {{QStringLiteral("ok"), false}, {QStringLiteral("error"), r.value(QStringLiteral("error"))}};
@@ -364,6 +395,7 @@ bool AppController::runScript(const QString& path)
         return false;
     }
     bool ok = true;
+    bool fitView = false;
     for (const auto& step : script) {
         if (!step.is_object() || !step.contains("name") || !step["name"].is_string()) {
             setStatusMessage(tr("Script step is not an object with a string \"name\": %1")
@@ -372,17 +404,25 @@ bool AppController::runScript(const QString& path)
             break;
         }
         const std::string name = step["name"].get<std::string>();
-        const commands::CommandResult r = m_session.execute(name, step.value("params", commands::Json::object()));
+        const auto generation = m_session.project().generation;
+        const auto activeVariant = m_session.project().variants.active();
+        const commands::CommandResult r = executeCommand(name, step.value("params", commands::Json::object()));
         if (!r.ok) {
             setStatusMessage(tr("Script step %1 failed: %2")
                                  .arg(QString::fromStdString(name), QString::fromStdString(r.error)));
             ok = false;
             break;
         }
+        if (m_session.project().generation != generation || m_session.project().variants.active() != activeVariant) {
+            // Open already restored its camera; variant switches keep the existing one.
+            fitView = false;
+        } else if (const auto* info = m_session.registry().info(name); info != nullptr && info->modifiesDocument) {
+            fitView = true;
+        }
     }
     emit historyChanged();
     emit projectChanged();
-    emit scriptFinished();
+    emit scriptFinished(fitView);
     return ok;
 }
 
@@ -480,8 +520,6 @@ bool AppController::openProject(const QString& path, bool recover)
         setStatusMessage(errors == 0 ? tr("Opened %1").arg(file)
                                      : tr("Opened %1 (%2 features with errors)").arg(file).arg(errors));
     }
-    emit historyChanged();
-    emit projectOpened(data.value(QStringLiteral("view")).toMap());
     return true;
 }
 
@@ -493,8 +531,6 @@ void AppController::newProject()
         return;
     removeAutosave(previousAutosave);
     setStatusMessage(tr("New design"));
-    emit historyChanged();
-    emit projectOpened({});
 }
 
 bool AppController::saveProject(const QVariantMap& view)
@@ -752,15 +788,18 @@ void AppController::brushCancel()
     emit selectionPreviewChanged(id);
 }
 
-QVariantMap AppController::pickSurface(const QVector3D& origin, const QVector3D& direction, quint64 skipId,
-                                       quint64 onlyId) const
+QVariantMap AppController::pickSurface(const QVector3D& origin, const QVector3D& direction,
+                                       const QVariantMap& options) const
 {
+    const PickFilter filter = pickFilter(options);
+    const quint64 skipId = options.value(QStringLiteral("skipId")).toULongLong();
+    const quint64 onlyId = options.value(QStringLiteral("onlyId")).toULongLong();
     const core::Vec3 o{origin.x(), origin.y(), origin.z()};
     const core::Vec3 d{direction.x(), direction.y(), direction.z()};
     std::optional<core::RayHit> best;
     model::PartId bestPart = 0;
     for (const auto& p : m_session.document().parts()) {
-        if (!p.visible || !p.mesh || (skipId != 0 && p.id == skipId) || (onlyId != 0 && p.id != onlyId))
+        if (!filter.accepts(p) || !p.mesh || (skipId != 0 && p.id == skipId) || (onlyId != 0 && p.id != onlyId))
             continue;
         std::optional<core::RayHit> hit;
         const commands::SectionAnalysis& section = m_session.inspect().section();
@@ -799,8 +838,9 @@ QVariantMap AppController::pickSurface(const QVector3D& origin, const QVector3D&
 }
 
 QVariantMap AppController::pickNearSurface(const QVector3D& origin, const QVector3D& direction,
-                                           double maxAngleDeg) const
+                                           double maxAngleDeg, const QVariantMap& options) const
 {
+    const PickFilter filter = pickFilter(options);
     const core::Vec3 o{origin.x(), origin.y(), origin.z()};
     const core::Vec3 d{direction.x(), direction.y(), direction.z()};
     const double len = d.length();
@@ -810,7 +850,7 @@ QVariantMap AppController::pickNearSurface(const QVector3D& origin, const QVecto
     double bestAngle = 0.0;
     model::PartId bestPart = 0;
     for (const auto& p : m_session.document().parts()) {
-        if (!p.visible || !p.mesh)
+        if (!filter.accepts(p) || !p.mesh)
             continue;
         // Section view: only the kept half is drawn, so only it can be snapped to (CAD-96).
         const commands::SectionAnalysis& section = m_session.inspect().section();
@@ -839,8 +879,9 @@ QVariantMap AppController::pickNearSurface(const QVector3D& origin, const QVecto
 }
 
 QVariantMap AppController::pickSketchLine(const QVector3D& origin, const QVector3D& direction,
-                                          double maxDistance) const
+                                          double maxDistance, const QVariantMap& options) const
 {
+    const PickFilter filter = pickFilter(options);
     const core::Vec3 o{origin.x(), origin.y(), origin.z()};
     core::Vec3 d{direction.x(), direction.y(), direction.z()};
     if (!(d.length() > 0.0) || !(maxDistance > 0.0))
@@ -851,7 +892,7 @@ QVariantMap AppController::pickSketchLine(const QVector3D& origin, const QVector
     core::Vec3 bestPoint{};
     model::PartId bestPart = 0;
     for (const auto& p : m_session.document().parts()) {
-        if (!p.visible || p.kind != model::PartKind::Sketch)
+        if (!filter.accepts(p) || p.kind != model::PartKind::Sketch)
             continue;
         const auto& segs = p.edgeSegments;
         for (std::size_t i = 0; i + 1 < segs.size(); i += 2) {

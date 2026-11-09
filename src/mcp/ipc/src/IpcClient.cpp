@@ -12,7 +12,7 @@ namespace aerocad::mcp {
 namespace {
 
 constexpr const char* kNotRunning =
-    "AeroCAD is not reachable. Ask the user to start AeroCAD, click AI > Agent in its toolbar and turn on "
+    "AeroCAD is not reachable. Ask the user to start AeroCAD, click TOOLS > Agent in its toolbar and turn on "
     "'Allow AI agents to use this project' (or start AeroCAD with --mcp). Then call the tool again.";
 
 } // namespace
@@ -34,6 +34,7 @@ void IpcClient::disconnect()
         m_socket.reset();
     }
     m_buffer.clear();
+    m_accessSession.clear();
 }
 
 bool IpcClient::handleEvent(const Json& message)
@@ -113,7 +114,8 @@ bool IpcClient::ensureConnected(QString& error)
                      {"hello",
                       {{"client", m_clientName.toStdString()},
                        {"pid", QCoreApplication::applicationPid()},
-                       {"protocol", kIpcProtocolVersion}}}};
+                       {"protocol", kIpcProtocolVersion},
+                       {"session", ""}}}};
     m_socket->write(QByteArray::fromStdString(hello.dump() + "\n"));
     m_socket->waitForBytesWritten(2000);
     for (;;) {
@@ -132,6 +134,19 @@ bool IpcClient::ensureConnected(QString& error)
             disconnect();
             return false;
         }
+        const Json result = reply->value("result", Json::object());
+        if (!result.is_object() || !result.contains("protocol") ||
+            result["protocol"] != kIpcProtocolVersion || !result.contains("session") ||
+            !result["session"].is_string() || result["session"].get<std::string>().empty()) {
+            error = QStringLiteral("Incompatible AeroCAD MCP protocol; restart the bundled MCP server");
+            disconnect();
+            return false;
+        }
+        // Only an explicitly granted application listens here. A new connection receives
+        // that grant through a fresh hello; old requests are never replayed on it.
+        m_accessSession = QString::fromStdString(result["session"].get<std::string>());
+        m_revoked = false;
+        m_revokeReason.clear();
         return true;
     }
     disconnect();
@@ -142,22 +157,22 @@ commands::CommandResult IpcClient::execute(const std::string& command, const Jso
 {
     auto revoked = [this] {
         return commands::CommandResult::failure(
-            "The user disconnected this AI agent in AeroCAD" +
+            "AI agent access is not granted for this project in AeroCAD" +
             (m_revokeReason.isEmpty() ? std::string() : " (" + m_revokeReason.toStdString() + ")") +
-            ". Do not retry; ask the user to reconnect the MCP server if they want to continue.");
+            ". Ask the user to turn on 'Allow AI agents to use this project' in TOOLS > Agent. "
+            "Then call the tool again; the MCP server does not need to be restarted.");
     };
     drainPending();
-    if (m_revoked) {
+    if (m_revoked)
         disconnect();
-        return revoked();
-    }
 
     QString error;
     if (!ensureConnected(error))
         return m_revoked ? revoked() : commands::CommandResult::failure(error.toStdString());
 
     const qint64 id = m_nextId++;
-    const Json request{{"id", id}, {"command", command}, {"params", params}};
+    const Json request{{"id", id}, {"session", m_accessSession.toStdString()},
+                       {"command", command}, {"params", params}};
     m_socket->write(QByteArray::fromStdString(request.dump() + "\n"));
     if (!m_socket->waitForBytesWritten(5000) && m_socket->bytesToWrite() > 0) {
         disconnect();

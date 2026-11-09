@@ -226,10 +226,13 @@ void ScanController::finishImport()
         (void)m_app->session().importStage().take(key);
         if (r.value(QStringLiteral("ok")).toBool()) {
             const QVariantMap data = r.value(QStringLiteral("result")).toMap();
+            const QString units = data.value(QStringLiteral("unitSource")).toString() == QStringLiteral("file")
+                                      ? tr("file units → mm")
+                                      : tr("%1 → mm").arg(data.value(QStringLiteral("units")).toString());
             m_app->showStatus(tr("Imported %1 (%2, %3 triangles, %4)")
                                   .arg(name, data.value(QStringLiteral("format")).toString(),
                                        QLocale().toString(data.value(QStringLiteral("triangles")).toLongLong()),
-                                       m_current.units));
+                                       units));
             emit m_app->partImported(data.value(QStringLiteral("id")).toULongLong());
         } else {
             m_lastImportOk = false;
