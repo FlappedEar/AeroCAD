@@ -329,6 +329,11 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_drag_point.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_sketch_drag_point_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-199: Center Rectangle and Center Point Arc in the sketch.
+    add_test(NAME app_sketch_center_tools_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_center_tools.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_sketch_center_tools_test PROPERTIES LABELS gui TIMEOUT 60)
     # CAD-195: Fit Point Spline tool in the sketch.
     add_test(NAME app_sketch_spline_test
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_spline.ui
