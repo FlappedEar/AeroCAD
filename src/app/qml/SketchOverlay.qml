@@ -37,6 +37,8 @@ Item {
     /// Extend tool: the end of line or arc `curve` nearer `at` (sketch coordinates) is to
     /// reach the next curve.
     signal extendRequested(int curve, var at)
+    /// Break tool: curve `curve` is to be split where other curves cross it, around `at`.
+    signal breakRequested(int curve, var at)
     /// Mirror tool: `curves` are to be mirrored about line `line`.
     signal mirrorRequested(var curves, int line)
     /// Fillet tool: the corner of lines `curves` (two indices) is to be rounded.
@@ -72,8 +74,8 @@ Item {
     /// sketch.curves, and the curve under the cursor (-1 none).
     property var selectedCurves: []
     property int hoverCurve: -1
-    /// Extend tool: the lengthened curve under the cursor ({kind, points, center}) or null.
-    property var extendPreview: null
+    /// Extend / Break: what the click would make under the cursor ({kind, points, center}) or null.
+    property var piecePreview: null
     readonly property bool selecting: sketch !== null && tool === ""
     /// Clicked points of the curve being drawn, [[u, v], ...].
     property var points: []
@@ -101,7 +103,7 @@ Item {
             mirrorCurves = []
         if (tool !== "offset")
             offsetCurves = []
-        extendPreview = null
+        piecePreview = null
     }
     onSketchChanged: { reset(); clearSelection() }
     // The curves changed (a delete, an undo): drop picks that no longer exist.
@@ -110,7 +112,7 @@ Item {
         if (kept.length !== selectedCurves.length)
             selectedCurves = kept
         hoverCurve = -1
-        extendPreview = null
+        piecePreview = null
         canvas.requestPaint()
     }
     // Previews and the surface line are projected points: redraw them when the view moves.
@@ -721,23 +723,24 @@ Item {
         canvas.requestPaint()
     }
 
-    /// Draws a solved sketch curve (sketch.curves format) as a polyline on the canvas.
-    /// Extend tool hover: the curve under the cursor and, when its nearer end can reach
-    /// another curve, the lengthened curve (asked of sketch.extend_preview, read-only).
-    function extendHover(x, y) {
+    /// Extend and Break hover: the curve under the cursor and what the click would make
+    /// (Extend: the lengthened curve; Break: the piece it splits off), asked of the tool's
+    /// read-only preview command.
+    function pieceHover(x, y) {
         const i = curveAt(x, y)
         const at = screenToLocal(x, y)
         let preview = null
         if (i >= 0 && at !== null && sketch) {
-            const r = viewport.controller.execute("sketch.extend_preview", { sketch: sketch.id, curve: i, at: at })
-            if (r.ok && r.result.extendable) {
+            const extend = tool === "extend"
+            const r = viewport.controller.execute(extend ? "sketch.extend_preview" : "sketch.break_preview", { sketch: sketch.id, curve: i, at: at })
+            if (r.ok && (extend ? r.result.extendable : r.result.breakable)) {
                 preview = { kind: r.result.kind, points: r.result.points }
                 if (preview.kind === "arc")
                     preview.center = circumcenter(preview.points[0], preview.points[1], preview.points[2])
             }
         }
         hoverCurve = i
-        extendPreview = preview
+        piecePreview = preview
         canvas.requestPaint()
     }
 
@@ -751,6 +754,7 @@ Item {
                 (a2 * (c[0] - b[0]) + b2 * (a[0] - c[0]) + c2 * (b[0] - a[0])) / d]
     }
 
+    /// Draws a solved sketch curve (sketch.curves format) as a polyline on the canvas.
     function strokeCurve(ctx, c) {
         let uv = []
         if (c.kind === "spline") {
@@ -845,8 +849,8 @@ Item {
                 constraintLayer.hoverAt(mouse.x, mouse.y)
                 return
             }
-            if (root.tool === "extend") {
-                root.extendHover(mouse.x, mouse.y)
+            if (root.tool === "extend" || root.tool === "break") {
+                root.pieceHover(mouse.x, mouse.y)
                 return
             }
             if (root.tool === "trim" || root.tool === "mirror") {
@@ -928,12 +932,16 @@ Item {
                 root.forceActiveFocus()
                 return
             }
-            if (root.tool === "extend") {
+            if (root.tool === "extend" || root.tool === "break") {
                 const i = root.curveAt(mouse.x, mouse.y)
                 const at = root.screenToLocal(mouse.x, mouse.y)
-                if (i >= 0 && at !== null)
-                    root.extendRequested(i, at)
-                root.extendPreview = null
+                if (i >= 0 && at !== null) {
+                    if (root.tool === "extend")
+                        root.extendRequested(i, at)
+                    else
+                        root.breakRequested(i, at)
+                }
+                root.piecePreview = null
                 root.forceActiveFocus()
                 return
             }
@@ -1016,11 +1024,11 @@ Item {
                 root.strokeCurve(ctx, c)
             }
             ctx.globalAlpha = 1
-            // Extend: the lengthened curve the click would make.
-            if (root.tool === "extend" && root.extendPreview && (root.extendPreview.kind === "line" || root.extendPreview.center)) {
+            // Extend: the lengthened curve the click would make; Break: the piece it splits off.
+            if ((root.tool === "extend" || root.tool === "break") && root.piecePreview && (root.piecePreview.kind === "line" || root.piecePreview.center)) {
                 ctx.lineWidth = 2.5
                 ctx.strokeStyle = Theme.accent
-                root.strokeCurve(ctx, root.extendPreview)
+                root.strokeCurve(ctx, root.piecePreview)
                 ctx.setLineDash([])
             }
             ctx.lineWidth = 1.5
@@ -1217,6 +1225,7 @@ Item {
                     : root.tool === "mirror" ? qsTr("Mirror: click the line to mirror the %n selected curve(s) about", "", root.mirrorCurves.length)
                     : root.tool === "trim" ? qsTr("Trim: click the piece of a curve to remove (up to where other curves cross it)")
                     : root.tool === "extend" ? qsTr("Extend: click near the end of a line or arc to lengthen it to the next curve")
+                    : root.tool === "break" ? qsTr("Break: click a curve to split it where other curves cross it")
                     : root.tool === "line" ? qsTr("Line: click points; Esc (or right-click › End Curve) ends the chain")
                     : root.tool === "rectangle" ? qsTr("Rectangle: drag or click two corners; type width, height")
                     : root.tool === "center_rectangle" ? qsTr("Center rectangle: click the centre, then a corner; type width, height")
@@ -1264,7 +1273,7 @@ Item {
                 }
             }
             RowLayout {
-                visible: root.active && !root.constraintTool && root.tool !== "trim" && root.tool !== "extend" && root.tool !== "mirror" && root.tool !== "fillet" && root.tool !== "project" && root.tool !== "spline"
+                visible: root.active && !root.constraintTool && root.tool !== "trim" && root.tool !== "extend" && root.tool !== "break" && root.tool !== "mirror" && root.tool !== "fillet" && root.tool !== "project" && root.tool !== "spline"
                          && root.tool !== "tangent_arc"
                          && root.tool !== "circle_3point"
                 Label { text: root.tool === "rectangle" || root.tool === "center_rectangle" ? qsTr("Width, height")

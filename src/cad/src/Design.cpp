@@ -1655,94 +1655,6 @@ void Design::filletSketchCorner(FeatureId sketchId, std::size_t ia, std::size_t 
     }
 }
 
-void Design::trimSketchCurve(FeatureId sketchId, std::size_t curve, const geometry::Vec2& at)
-{
-    const State before = m_state;
-    keepSolvedSketch(sketchId);
-    const Feature& f = m_state.features[indexOf(sketchId)];
-    if (f.type != "sketch")
-        throw DesignError("Feature " + std::to_string(sketchId) + " is not a sketch");
-    auto it = m_sketches.find(sketchId);
-    if (it == m_sketches.end() || curve >= it->second.curves.size())
-        throw DesignError(f.name + " has no curve " + std::to_string(curve));
-    const std::vector<SketchCurve> curves = it->second.curves;
-    const SketchCurve& k = curves[curve];
-    const auto target = trimCurve(k);
-    if (!target)
-        throw DesignError("Trim works on lines, arcs and circles");
-
-    // Where the others cross it, as parameters along it.
-    std::vector<double> cuts;
-    for (std::size_t i = 0; i < curves.size(); ++i) {
-        if (i == curve)
-            continue;
-        const auto other = trimCurve(curves[i]);
-        if (!other)
-            continue;
-        for (const Vec2& x : crossings(*target, *other)) {
-            if (const auto u = trimParam(*target, x, 1e-7))
-                cuts.push_back(*u);
-        }
-    }
-    std::sort(cuts.begin(), cuts.end());
-    const auto pu = trimParam(*target, at, 1.0); // the click is near the curve, not on it
-    double u = pu ? *pu : 0.5;
-    if (!target->line && std::abs(target->sweep) < 2 * std::numbers::pi) {
-        // An arc: the click's angle, clamped to the arc.
-        const double a = std::atan2(at.y - target->c.y, at.x - target->c.x);
-        const double along = target->sweep >= 0 ? wrap2pi(a - target->a0) : wrap2pi(target->a0 - a);
-        const double span = std::abs(target->sweep);
-        u = along <= span ? along / span : (along - span < 2 * std::numbers::pi - along ? 1.0 : 0.0);
-    }
-
-    Json pieces = Json::array();
-    const double eps = 1e-6;
-    const bool full = !target->line && std::abs(target->sweep) >= 2 * std::numbers::pi - 1e-12;
-    std::vector<double> inner;
-    for (const double c : cuts) {
-        if (full || (c > eps && c < 1 - eps))
-            if (inner.empty() || c - inner.back() > eps)
-                inner.push_back(c);
-    }
-    if (full) {
-        if (inner.size() >= 2) {
-            // The piece under the click goes; the circle becomes the arc around the rest.
-            auto after = std::upper_bound(inner.begin(), inner.end(), u);
-            const double hi = after == inner.end() ? inner.front() + 1.0 : *after;
-            const double lo = after == inner.begin() ? inner.back() - 1.0 : *(after - 1);
-            pieces.push_back(trimPiece(*target, hi, lo + 1.0, k.construction));
-        }
-    } else {
-        double lo = 0.0, hi = 1.0;
-        for (const double c : inner) {
-            if (c <= u)
-                lo = c;
-            else {
-                hi = c;
-                break;
-            }
-        }
-        if (lo > eps)
-            pieces.push_back(trimPiece(*target, 0.0, lo, k.construction));
-        if (hi < 1 - eps)
-            pieces.push_back(trimPiece(*target, hi, 1.0, k.construction));
-    }
-
-    try {
-        deleteSketchCurves(sketchId, {curve});
-        Feature& g = m_state.features[indexOf(sketchId)];
-        Json items = g.params.value("curves", Json::array());
-        for (const auto& p : pieces)
-            items.push_back(p);
-        g.params["curves"] = items;
-        regenerateChecked(sketchId, before);
-    } catch (...) {
-        m_state = before;
-        regenerate();
-        throw;
-    }
-}
-
 namespace {
 
 /// What another curve bounds an extension with: the curve itself, or a spline as the
@@ -1769,7 +1681,146 @@ std::vector<TrimCurve> extendBoundaries(const SketchCurve& k)
     return out;
 }
 
+/// A curve cut where the other curves cross it, around the point clicked: the piece under
+/// the click and the pieces either side of it (sketch items, in order along the curve).
+struct CurveSplit {
+    Json before;  ///< null when the picked piece starts the curve
+    Json picked;  ///< null when nothing crosses the curve (the whole curve is the piece)
+    Json after;   ///< null when the picked piece ends the curve; a circle's rest is here
+};
+
+CurveSplit splitCurve(const std::vector<SketchCurve>& curves, std::size_t curve, const Vec2& at, const char* tool)
+{
+    const SketchCurve& k = curves[curve];
+    const auto target = trimCurve(k);
+    if (!target)
+        throw DesignError(std::string(tool) + " works on lines, arcs and circles");
+
+    // Where the others cross it, as parameters along it.
+    std::vector<double> cuts;
+    for (std::size_t i = 0; i < curves.size(); ++i) {
+        if (i == curve)
+            continue;
+        for (const TrimCurve& other : extendBoundaries(curves[i]))
+            for (const Vec2& x : crossings(*target, other)) {
+                if (const auto u = trimParam(*target, x, 1e-7))
+                    cuts.push_back(*u);
+            }
+    }
+    std::sort(cuts.begin(), cuts.end());
+    const auto pu = trimParam(*target, at, 1.0); // the click is near the curve, not on it
+    double u = pu ? *pu : 0.5;
+    if (!target->line && std::abs(target->sweep) < 2 * std::numbers::pi) {
+        // An arc: the click's angle, clamped to the arc.
+        const double a = std::atan2(at.y - target->c.y, at.x - target->c.x);
+        const double along = target->sweep >= 0 ? wrap2pi(a - target->a0) : wrap2pi(target->a0 - a);
+        const double span = std::abs(target->sweep);
+        u = along <= span ? along / span : (along - span < 2 * std::numbers::pi - along ? 1.0 : 0.0);
+    }
+
+    CurveSplit out;
+    const double eps = 1e-6;
+    const bool full = !target->line && std::abs(target->sweep) >= 2 * std::numbers::pi - 1e-12;
+    std::vector<double> inner;
+    for (const double c : cuts) {
+        if (full || (c > eps && c < 1 - eps))
+            if (inner.empty() || c - inner.back() > eps)
+                inner.push_back(c);
+    }
+    if (full) {
+        if (inner.size() >= 2) {
+            // The piece under the click, and the arc around the rest of the circle.
+            auto after = std::upper_bound(inner.begin(), inner.end(), u);
+            const double hi = after == inner.end() ? inner.front() + 1.0 : *after;
+            const double lo = after == inner.begin() ? inner.back() - 1.0 : *(after - 1);
+            out.picked = trimPiece(*target, lo, hi, k.construction);
+            out.after = trimPiece(*target, hi, lo + 1.0, k.construction);
+        }
+        return out;
+    }
+    double lo = 0.0, hi = 1.0;
+    for (const double c : inner) {
+        if (c <= u)
+            lo = c;
+        else {
+            hi = c;
+            break;
+        }
+    }
+    if (lo <= eps && hi >= 1 - eps)
+        return out;
+    if (lo > eps)
+        out.before = trimPiece(*target, 0.0, lo, k.construction);
+    out.picked = trimPiece(*target, lo, hi, k.construction);
+    if (hi < 1 - eps)
+        out.after = trimPiece(*target, hi, 1.0, k.construction);
+    return out;
+}
+
 } // namespace
+
+void Design::trimSketchCurve(FeatureId sketchId, std::size_t curve, const geometry::Vec2& at)
+{
+    splitSketchCurve(sketchId, curve, at, false);
+}
+
+void Design::breakSketchCurve(FeatureId sketchId, std::size_t curve, const geometry::Vec2& at)
+{
+    splitSketchCurve(sketchId, curve, at, true);
+}
+
+Json Design::sketchCurvePiece(FeatureId sketchId, std::size_t curve, const geometry::Vec2& at) const
+{
+    const Feature& f = m_state.features[indexOf(sketchId)];
+    if (f.type != "sketch")
+        throw DesignError("Feature " + std::to_string(sketchId) + " is not a sketch");
+    auto it = m_sketches.find(sketchId);
+    if (it == m_sketches.end() || curve >= it->second.curves.size())
+        throw DesignError(f.name + " has no curve " + std::to_string(curve));
+    return splitCurve(it->second.curves, curve, at, "Break").picked;
+}
+
+void Design::splitSketchCurve(FeatureId sketchId, std::size_t curve, const geometry::Vec2& at, bool keep)
+{
+    const State before = m_state;
+    keepSolvedSketch(sketchId);
+    const Feature& f = m_state.features[indexOf(sketchId)];
+    if (f.type != "sketch")
+        throw DesignError("Feature " + std::to_string(sketchId) + " is not a sketch");
+    auto it = m_sketches.find(sketchId);
+    if (it == m_sketches.end() || curve >= it->second.curves.size())
+        throw DesignError(f.name + " has no curve " + std::to_string(curve));
+    CurveSplit split;
+    try {
+        split = splitCurve(it->second.curves, curve, at, keep ? "Break" : "Trim");
+    } catch (...) {
+        m_state = before;
+        throw;
+    }
+    if (keep && split.picked.is_null()) {
+        m_state = before;
+        throw DesignError("Nothing to break at: no other curve crosses it");
+    }
+    // Trim drops the piece under the click (a curve crossing nothing goes whole); Break keeps it.
+    Json pieces = Json::array();
+    for (const Json* p : {&split.before, keep ? &split.picked : nullptr, &split.after})
+        if (p && !p->is_null())
+            pieces.push_back(*p);
+
+    try {
+        deleteSketchCurves(sketchId, {curve});
+        Feature& g = m_state.features[indexOf(sketchId)];
+        Json items = g.params.value("curves", Json::array());
+        for (const auto& p : pieces)
+            items.push_back(p);
+        g.params["curves"] = items;
+        regenerateChecked(sketchId, before);
+    } catch (...) {
+        m_state = before;
+        regenerate();
+        throw;
+    }
+}
 
 geometry::SketchCurve Design::extendedSketchCurve(FeatureId sketchId, std::size_t curve, const geometry::Vec2& at,
                                                   bool* atStart) const

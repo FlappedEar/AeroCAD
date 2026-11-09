@@ -2159,3 +2159,97 @@ TEST_CASE("Design commands: Extend a sketch line or arc to the nearest curve (CA
         CHECK(p[2][1].get<double>() == Approx(8).margin(1e-3));
     }
 }
+
+TEST_CASE("Design commands: Break a sketch curve where other curves cross it (CAD-229)", "[commands][cad]")
+{
+    commands::Session s;
+    auto curves = [&](std::uint64_t id) { return run(s, "sketch.curves", {{"sketch", id}}).at("curves"); };
+    auto near = [](const Json& p, double x, double y) {
+        return std::hypot(p[0].get<double>() - x, p[1].get<double>() - y) < 1e-6;
+    };
+
+    // A line crossed by two lines breaks into three; nothing is removed.
+    const Json a = run(s, "sketch.create",
+                       {{"plane", "XY"},
+                        {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {30, 0}}},
+                                                {{"type", "line"}, {"start", {10, -5}}, {"end", {10, 5}}},
+                                                {{"type", "line"}, {"start", {20, -5}}, {"end", {20, 5}}}})},
+                        {"constraints", Json::array({{{"type", "horizontal"}, {"curve", 0}}})}});
+    const auto id = a.at("id").get<std::uint64_t>();
+
+    // Preview: the middle piece under the click, without a change.
+    const Json pv = run(s, "sketch.break_preview", {{"sketch", id}, {"curve", 0}, {"at", {15, 0.3}}});
+    INFO(pv.dump());
+    CHECK(pv.at("breakable") == true);
+    CHECK(pv.at("kind") == "line");
+    CHECK(near(pv.at("points")[0], 10, 0));
+    CHECK(near(pv.at("points")[1], 20, 0));
+    CHECK(curves(id).size() == 3);
+
+    run(s, "sketch.break", {{"sketch", id}, {"curve", 0}, {"at", {15, 0.3}}});
+    {
+        const Json c = curves(id);
+        INFO(c.dump());
+        REQUIRE(c.size() == 5);
+        // The two crossing lines first, then the pieces in order along the line.
+        CHECK(near(c[2].at("points")[0], 0, 0));
+        CHECK(near(c[2].at("points")[1], 10, 0));
+        CHECK(near(c[3].at("points")[0], 10, 0));
+        CHECK(near(c[3].at("points")[1], 20, 0));
+        CHECK(near(c[4].at("points")[0], 20, 0));
+        CHECK(near(c[4].at("points")[1], 30, 0));
+        // The constraint on the broken line goes, as in Trim.
+        CHECK(run(s, "sketch.curves", {{"sketch", id}}).at("constraints").empty());
+    }
+    // One undo step brings the whole line back.
+    run(s, "edit.undo");
+    CHECK(curves(id).size() == 3);
+    run(s, "edit.redo");
+
+    // A piece with nothing more crossing it: refused, nothing changes.
+    {
+        const auto r = s.execute("sketch.break", {{"sketch", id}, {"curve", 3}, {"at", {15, 0}}});
+        INFO(r.error);
+        CHECK_FALSE(r.ok);
+        CHECK(r.error.find("Nothing to break at") != std::string::npos);
+        CHECK(curves(id).size() == 5);
+        CHECK(run(s, "sketch.break_preview", {{"sketch", id}, {"curve", 3}, {"at", {15, 0}}}).at("breakable") == false);
+    }
+
+    // A circle crossed by a line breaks into two arcs that make the circle again.
+    const Json b = run(s, "sketch.create",
+                       {{"plane", "XY"},
+                        {"curves", Json::array({{{"type", "circle"}, {"center", {0, 0}}, {"radius", 10}},
+                                                {{"type", "line"}, {"start", {-20, 0}}, {"end", {20, 0}}}})}});
+    const auto bid = b.at("id").get<std::uint64_t>();
+    run(s, "sketch.break", {{"sketch", bid}, {"curve", 0}, {"at", {0, 10}}});
+    {
+        const Json c = curves(bid);
+        INFO(c.dump());
+        // The line is not broken (only the clicked curve is), the circle is two arcs.
+        REQUIRE(c.size() == 3);
+        CHECK(c[0].at("kind") == "line");
+        CHECK(c[1].at("kind") == "arc");
+        CHECK(c[2].at("kind") == "arc");
+        // The picked half is the upper one, through (0, 10); the other through (0, -10).
+        CHECK(near(c[1].at("points")[1], 0, 10));
+        CHECK(near(c[2].at("points")[1], 0, -10));
+        // Two closed half-discs: the arcs and the line between the crossings bound profiles.
+        CHECK(!run(s, "sketch.profiles", {{"sketch", bid}}).at("profiles").empty());
+    }
+
+    // A spline crossing the line counts too (and in Trim, which shares the code).
+    const Json c = run(s, "sketch.create",
+                       {{"plane", "XY"},
+                        {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {20, 0}}},
+                                                {{"type", "spline"}, {"points", {{12, -6}, {10, 0}, {12, 6}}}}})}});
+    const auto cid = c.at("id").get<std::uint64_t>();
+    run(s, "sketch.trim", {{"sketch", cid}, {"curve", 0}, {"at", {15, 0}}});
+    {
+        const Json k = curves(cid);
+        INFO(k.dump());
+        REQUIRE(k.size() == 2);
+        CHECK(k[1].at("kind") == "line");
+        CHECK(k[1].at("points")[1][0].get<double>() == Approx(10).margin(1e-3));
+    }
+}

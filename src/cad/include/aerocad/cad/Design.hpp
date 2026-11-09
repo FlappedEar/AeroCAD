@@ -206,6 +206,14 @@ public:
     /// a curve that crosses nothing is removed whole. Lines, arcs and circles. Constraints
     /// on the trimmed curve go; the remaining pieces are added as new curves at the end.
     void trimSketchCurve(FeatureId sketch, std::size_t curve, const geometry::Vec2& at);
+    /// Breaks a sketch curve (Fusion: Break): the piece of `curve` under `at` between its
+    /// nearest crossings with other curves becomes a curve of its own, as do the pieces either
+    /// side (a circle becomes two arcs). Nothing is removed. Constraints on the curve go.
+    /// Throws DesignError when nothing crosses it.
+    void breakSketchCurve(FeatureId sketch, std::size_t curve, const geometry::Vec2& at);
+    /// The piece Break (or Trim) would split off at `at`, as a sketch item ({type: line | arc,
+    /// start, [through], end}); null when nothing crosses the curve. Read-only.
+    [[nodiscard]] Json sketchCurvePiece(FeatureId sketch, std::size_t curve, const geometry::Vec2& at) const;
     /// Extends a sketch line or arc (Fusion: Extend): the end of `curve` nearer `at` (sketch
     /// coordinates) moves along the line, or around the arc's circle, to the nearest crossing
     /// with another curve. The curve keeps its index and constraints. Throws DesignError (and
@@ -340,6 +348,7 @@ public:
     [[nodiscard]] static const std::vector<std::string>& featureTypes();
 
 private:
+    void splitSketchCurve(FeatureId sketch, std::size_t curve, const geometry::Vec2& at, bool keepPicked);
     void evaluateFeature(const Feature& f);
     void evaluateExternal(const Feature& f, const FeatureEvaluator& ev);
     [[nodiscard]] std::string defaultName(const std::string& type) const;

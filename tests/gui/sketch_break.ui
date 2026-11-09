@@ -1,0 +1,30 @@
+# CAD-229: Break splits the curve under the click where other curves cross it (Fusion
+# Break); nothing is removed. Hovering highlights the piece the click splits off.
+# Run: AeroCAD --ui-script <this file>
+ui.wait(800)
+(() => { const r = controller.execute("sketch.create", { plane: "XY", curves: [{ type: "line", start: [-25, 0], end: [25, 0] }, { type: "line", start: [-10, -10], end: [-10, 10] }, { type: "line", start: [10, -10], end: [10, 10] }] }); if (!r.ok) ui.fail("sketch: " + r.error) })()
+ui.wait(300)
+(() => { enterSketch(controller.execute("timeline.list").result.features[0].id) })()
+ui.wait(800)
+(() => { breakAction.trigger() })()
+ui.wait(300)
+(() => { if (sketchTool !== "break") ui.fail("Break did not start: " + sketchTool) })()
+# Hover the middle of the long line: the preview is the piece between the two crossings.
+(() => { const o = viewport.sketchOverlay; const p = o.toScreen([0, 0]); const w = o.mapToItem(null, p.x, p.y); ui.move(w.x, w.y) })()
+ui.wait(300)
+(() => { const pv = viewport.sketchOverlay.piecePreview; ui.log("preview " + JSON.stringify(pv)); if (!pv || pv.kind !== "line" || Math.abs(Math.min(pv.points[0][0], pv.points[1][0]) + 10) > 1e-6 || Math.abs(Math.max(pv.points[0][0], pv.points[1][0]) - 10) > 1e-6) ui.fail("no preview of the piece -10..10") })()
+ui.shot("/mnt/project-files/ux/sketch-break.png")
+(() => { const o = viewport.sketchOverlay; const p = o.toScreen([0, 0]); const w = o.mapToItem(null, p.x, p.y); ui.click(w.x, w.y) })()
+ui.wait(500)
+(() => { const c = controller.execute("sketch.curves", { sketch: activeSketch.id }).result.curves; ui.log("after line break: " + c.length + " curves"); const pieces = c.filter(k => k.kind === "line" && Math.abs(k.points[0][1]) < 1e-9 && Math.abs(k.points[1][1]) < 1e-9); if (pieces.length !== 3) ui.fail("the line did not break into three: " + JSON.stringify(pieces)) })()
+# A circle crossed by its diameter (added now: entering a sketch frames its profiles): two arcs.
+(() => { const r = controller.execute("sketch.add_curves", { sketch: activeSketch.id, curves: [{ type: "circle", center: [0, 25], radius: 8 }, { type: "line", start: [-12, 25], end: [12, 25] }] }); if (!r.ok) ui.fail("add circle: " + r.error) })()
+ui.wait(500)
+(() => { const o = viewport.sketchOverlay; const p = o.toScreen([0, 33]); const w = o.mapToItem(null, p.x, p.y); ui.click(w.x, w.y) })()
+ui.wait(500)
+(() => { const c = controller.execute("sketch.curves", { sketch: activeSketch.id }).result.curves; if (c.some(k => k.kind === "circle") || c.filter(k => k.kind === "arc").length !== 2) ui.fail("the circle did not break into two arcs: " + c.map(k => k.kind).join(", ")) })()
+# One undo step per break.
+(() => { controller.execute("edit.undo"); const c = controller.execute("sketch.curves", { sketch: activeSketch.id }).result.curves; if (!c.some(k => k.kind === "circle")) ui.fail("undo did not bring the circle back") })()
+ui.key("Escape")
+ui.wait(300)
+(() => { if (sketchTool !== "") ui.fail("Esc did not end Break: " + sketchTool) })()
