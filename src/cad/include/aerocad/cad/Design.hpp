@@ -63,12 +63,13 @@ struct ReferenceFrame {
 };
 
 /// Result of evaluating one feature during regeneration.
-/// Where a copy of sketch curves goes: each point p to pivot + R(angleDegrees) (p - pivot)
-/// + offset (sketch coordinates, degrees counterclockwise).
+/// Where sketch curves go: each point p to pivot + scale R(angleDegrees) (p - pivot) +
+/// offset (sketch coordinates, degrees counterclockwise); radii are scaled too.
 struct SketchPlacement {
     geometry::Vec2 offset;
     double angleDegrees = 0.0;
     geometry::Vec2 pivot;
+    double scale = 1.0;
 };
 
 struct FeatureStatus {
@@ -261,13 +262,14 @@ public:
     /// coordinates) while the solver moves the free degrees of freedom, and the sketch keeps
     /// the result. Throws DesignError (design unchanged) when the constraints do not allow it.
     void moveSketchPoint(FeatureId sketch, const Json& point, const geometry::Vec2& to);
-    /// Moves or copies sketch curves (Fusion: Sketch > Move/Copy): each point p goes to
-    /// pivot + R(angle) (p - pivot) + offset (degrees, counterclockwise). A move holds the
-    /// curves' points there while the solver moves what they are connected to, like a drag;
-    /// a copy adds the moved curves at the end, with the constraints among them. Throws
-    /// DesignError (design unchanged) when the constraints do not allow the move.
-    void moveSketchCurves(FeatureId sketch, const std::vector<std::size_t>& curves, const geometry::Vec2& offset,
-                          double angleDegrees, const geometry::Vec2& pivot, bool copy);
+    /// Moves, turns, scales or copies sketch curves (Fusion: Sketch > Move/Copy, Sketch
+    /// Scale) to `place`. A move holds the curves' points there while the solver moves what
+    /// they are connected to, like a drag; a copy adds the moved curves at the end, with the
+    /// constraints among them. With a scale, dimensions among the picked curves (lengths,
+    /// distances, radii) are scaled with them. Throws DesignError (design unchanged) when the
+    /// constraints do not allow it.
+    void moveSketchCurves(FeatureId sketch, const std::vector<std::size_t>& curves, const SketchPlacement& place,
+                          bool copy);
     /// Adds one copy of sketch curves per placement (Fusion: Sketch > Rectangular / Circular
     /// Pattern; Move/Copy with Copy is one placement), in one edit. Copies are made as by
     /// moveSketchCurves with copy. Throws DesignError (design unchanged) when the copies'

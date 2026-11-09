@@ -2590,6 +2590,74 @@ TEST_CASE("Design commands: sketch Move/Copy (CAD-244)", "[commands][cad][solver
     }
 }
 
+TEST_CASE("Design commands: Sketch Scale (CAD-253)", "[commands][cad][solver]")
+{
+    commands::Session s;
+    auto near = [](const Json& p, double x, double y) {
+        return std::hypot(p[0].get<double>() - x, p[1].get<double>() - y) < 1e-6;
+    };
+    // A 40 x 20 rectangle at the origin (curves 0-3) and a circle with a diameter dimension (4).
+    const Json sk = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "rectangle"}, {"corner", {0, 0}}, {"width", 40}, {"height", 20}},
+                                                 {{"type", "circle"}, {"center", {60, 10}}, {"radius", 5}}})},
+                         {"constraints", Json::array({{{"type", "diameter"}, {"curve", 4}, {"value", 10}}})}});
+    const auto id = sk.at("id").get<std::uint64_t>();
+    auto curves = [&] { return run(s, "sketch.curves", {{"sketch", id}}); };
+
+    SECTION("a dimensioned circle about its centre: the dimension scales with it, one undo step")
+    {
+        run(s, "sketch.scale_curves", {{"sketch", id}, {"curves", {4}}, {"factor", 2}});
+        const Json c = curves();
+        CHECK(near(c.at("curves")[4].at("points")[0], 60, 10)); // the default point: its middle
+        CHECK(std::abs(c.at("curves")[4].at("radius").get<double>() - 10) < 1e-6);
+        CHECK(std::abs(c.at("constraints")[0].at("value").get<double>() - 20) < 1e-9);
+        CHECK(c.at("degreesOfFreedom") == sk.at("degreesOfFreedom"));
+        run(s, "edit.undo");
+        CHECK(std::abs(curves().at("curves")[4].at("radius").get<double>() - 5) < 1e-6);
+    }
+    SECTION("the whole rectangle about a corner")
+    {
+        run(s, "sketch.scale_curves", {{"sketch", id}, {"curves", {0, 1, 2, 3}}, {"factor", 0.5}, {"point", {0, 0}}});
+        const Json c = curves();
+        CHECK(near(c.at("curves")[0].at("points")[0], 0, 0));
+        CHECK(near(c.at("curves")[0].at("points")[1], 20, 0));
+        CHECK(near(c.at("curves")[1].at("points")[1], 20, 10));
+        CHECK(near(c.at("curves")[4].at("points")[0], 60, 10)); // not picked: stays
+        CHECK(run(s, "sketch.profiles", {{"sketch", id}}).at("profiles").size() == 2);
+    }
+    SECTION("everything about a point away from it: positions and sizes scale")
+    {
+        run(s, "sketch.scale_curves", {{"sketch", id}, {"curves", {0, 1, 2, 3, 4}}, {"factor", 3}, {"point", {10, 0}}});
+        const Json c = curves();
+        CHECK(near(c.at("curves")[0].at("points")[0], -20, 0));
+        CHECK(near(c.at("curves")[2].at("points")[0], 100, 60));
+        CHECK(near(c.at("curves")[4].at("points")[0], 160, 30));
+        CHECK(std::abs(c.at("curves")[4].at("radius").get<double>() - 15) < 1e-6);
+    }
+    SECTION("a dimension written as an expression stays one: (expr)*factor")
+    {
+        run(s, "sketch.edit_constraint", {{"sketch", id}, {"index", 0}, {"value", "4*2.5"}});
+        run(s, "sketch.scale_curves", {{"sketch", id}, {"curves", {4}}, {"factor", 0.5}});
+        const Json c = curves();
+        CHECK(std::abs(c.at("curves")[4].at("radius").get<double>() - 2.5) < 1e-6);
+        const Json v = c.at("constraints")[0].at("value");
+        INFO(v.dump());
+        CHECK(v.is_string());
+    }
+    SECTION("refused when constraints hold the curves; nothing changes")
+    {
+        // A fixed corner holds the rectangle where it is.
+        run(s, "sketch.add_constraints", {{"sketch", id}, {"constraints", Json::array({{{"type", "fix"}, {"points", Json::array({{{"curve", 0}, {"point", "start"}}})}}})}});
+        const auto res = s.execute("sketch.scale_curves", {{"sketch", id}, {"curves", {0, 1, 2, 3}}, {"factor", 2}});
+        CHECK_FALSE(res.ok);
+        CHECK(res.error.find("cannot be scaled") != std::string::npos);
+        CHECK(near(curves().at("curves")[0].at("points")[1], 40, 0));
+        CHECK_FALSE(s.execute("sketch.scale_curves", {{"sketch", id}, {"curves", {4}}, {"factor", 0}}).ok);
+        CHECK_FALSE(s.execute("sketch.scale_curves", {{"sketch", id}, {"curves", {4}}, {"factor", -2}}).ok);
+    }
+}
+
 TEST_CASE("Design commands: sketch Circular and Rectangular Pattern (CAD-251)", "[commands][cad][solver]")
 {
     commands::Session s;

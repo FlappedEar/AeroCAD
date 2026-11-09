@@ -63,6 +63,14 @@ Item {
     property var moveCurves: []
     property real moveAngle: 0
     property bool moveCopy: false
+    /// Sketch Scale (Fusion: Modify > Sketch Scale): `curves` are to be scaled by `factor`
+    /// about `point` (null: their middle).
+    signal scaleRequested(var curves, var point, real factor)
+    /// Curves Sketch Scale scales (the selection when it started), the point that stays
+    /// (null until clicked) and the factor typed so far (for the preview).
+    property var scaleCurves: []
+    property var scalePoint: null
+    property real scaleFactor: 1
     /// Circular / Rectangular Pattern (Fusion: Sketch > Circular / Rectangular Pattern):
     /// copies of `curves` around `center` (`count` instances over `angle` degrees), or in
     /// rows and columns (`countX` x `countY`, `spacingX` / `spacingY` mm apart).
@@ -127,6 +135,11 @@ Item {
         if (tool !== "move") {
             moveCurves = []
             moveAngle = 0
+        }
+        if (tool !== "scale") {
+            scaleCurves = []
+            scalePoint = null
+            scaleFactor = 1
         }
         if (tool !== "circular_pattern" && tool !== "rectangular_pattern") {
             patternCurves = []
@@ -269,6 +282,32 @@ Item {
         return true
     }
 
+    /// Sketch Scale: the selection is kept for the tool; a click picks the point that stays
+    /// (default: the curves' middle), the factor is typed, Enter scales.
+    function startScale() {
+        if (selectedCurves.length === 0)
+            return false
+        const list = selectedCurves.slice()
+        toolRequested("scale")
+        scaleCurves = list
+        scalePoint = null
+        scaleFactor = 1
+        dimension.text = ""
+        canvas.requestPaint()
+        return true
+    }
+
+    /// Ends Sketch Scale with `factor` (> 0, not 1).
+    function applyScale(factor) {
+        const list = scaleCurves.slice()
+        if (list.length === 0 || !(factor > 0) || !isFinite(factor) || factor === 1)
+            return false
+        const point = scalePoint
+        toolRequested("")
+        scaleRequested(list, point, factor)
+        return true
+    }
+
     /// Circular or Rectangular Pattern (`kind` "circular_pattern" / "rectangular_pattern")
     /// of the selection: the circular one waits for a click on the centre; both apply with
     /// Enter or OK, the instances previewed as the settings change.
@@ -365,9 +404,11 @@ Item {
         return b.lo[0] <= b.hi[0] ? [(b.lo[0] + b.hi[0]) / 2, (b.lo[1] + b.hi[1]) / 2] : [0, 0]
     }
 
-    /// A sketch curve (sketch.curves format) moved by `d` after turning by `angle` about `pivot`.
-    function movedCurve(c, d, angle, pivot) {
-        const a = angle * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a)
+    /// A sketch curve (sketch.curves format) moved by `d` after turning by `angle` and
+    /// scaling by `scale` (default 1) about `pivot`.
+    function movedCurve(c, d, angle, pivot, scale) {
+        const k = scale === undefined ? 1 : scale
+        const a = angle * Math.PI / 180, ca = Math.cos(a) * k, sa = Math.sin(a) * k
         const f = p => [pivot[0] + ca * (p[0] - pivot[0]) - sa * (p[1] - pivot[1]) + d[0],
                         pivot[1] + sa * (p[0] - pivot[0]) + ca * (p[1] - pivot[1]) + d[1]]
         const out = Object.assign({}, c)
@@ -376,6 +417,8 @@ Item {
             out.center = f(c.center)
         if (c.samples)
             out.samples = c.samples.map(f)
+        if (c.radius !== undefined)
+            out.radius = c.radius * k
         return out
     }
 
@@ -781,6 +824,12 @@ Item {
     }
 
     function click(p) {
+        if (tool === "scale") {
+            // The point that stays (it snaps to points); a later click moves it.
+            scalePoint = p
+            canvas.requestPaint()
+            return
+        }
         if (tool === "circular_pattern") {
             // The centre (it snaps to points); a later click moves it.
             patternCenter = p
@@ -1171,7 +1220,7 @@ Item {
         } else if ((tool === "circular_pattern" || tool === "rectangular_pattern") && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)) {
             applyPattern()
             event.accepted = true
-        } else if (active && !constraintTool && tool !== "spline" && tool !== "tangent_arc" && (points.length > 0 || tool === "offset" || tool === "move") && /^[0-9.(\-]$/.test(event.text)) {
+        } else if (active && !constraintTool && tool !== "spline" && tool !== "tangent_arc" && (points.length > 0 || tool === "offset" || tool === "move" || tool === "scale") && /^[0-9.(\-]$/.test(event.text)) {
             dimension.text = event.text
             dimension.forceActiveFocus()
             event.accepted = true
@@ -1219,7 +1268,7 @@ Item {
             for (const c of root.sketchCurves) {
                 const sel = root.selectedCurves.indexOf(c.index) >= 0 || root.mirrorCurves.indexOf(c.index) >= 0
                             || root.offsetCurves.indexOf(c.index) >= 0 || root.moveCurves.indexOf(c.index) >= 0
-                            || root.patternCurves.indexOf(c.index) >= 0
+                            || root.patternCurves.indexOf(c.index) >= 0 || root.scaleCurves.indexOf(c.index) >= 0
                 if (!sel && c.index !== root.hoverCurve)
                     continue
                 ctx.lineWidth = sel ? 3.5 : 3
@@ -1243,6 +1292,25 @@ Item {
                     ctx.setLineDash([])
                     ctx.globalAlpha = 1
                 }
+            }
+            // Sketch Scale: the curves at the typed factor, and the point that stays.
+            if (root.tool === "scale" && root.scaleCurves.length > 0) {
+                const pivot = root.scalePoint !== null ? root.scalePoint : root.curvesMiddle(root.scaleCurves)
+                if (root.scaleFactor !== 1) {
+                    ctx.lineWidth = 2
+                    ctx.strokeStyle = Theme.accent
+                    ctx.globalAlpha = 0.8
+                    for (const c of root.sketchCurves) {
+                        if (root.scaleCurves.indexOf(c.index) >= 0)
+                            root.strokeCurve(ctx, root.movedCurve(c, [0, 0], 0, pivot, root.scaleFactor))
+                    }
+                    ctx.globalAlpha = 1
+                }
+                const q = root.toScreen(pivot)
+                ctx.fillStyle = Theme.accent
+                ctx.beginPath()
+                ctx.arc(q.x, q.y, 4, 0, 2 * Math.PI)
+                ctx.fill()
             }
             // Pattern: the copies the tool would make, and the circular pattern's centre.
             if ((root.tool === "circular_pattern" || root.tool === "rectangular_pattern") && root.patternCurves.length > 0) {
@@ -1464,6 +1532,9 @@ Item {
                     : root.tool === "move" ? (root.points.length === 0
                         ? qsTr("Move/Copy %n curve(s): click a base point, or type dx, dy and press Enter", "", root.moveCurves.length)
                         : qsTr("Move/Copy: click where the base point goes"))
+                    : root.tool === "scale" ? (root.scalePoint === null
+                        ? qsTr("Sketch Scale %n curve(s): type the factor and press Enter (about their middle), or click the point that stays", "", root.scaleCurves.length)
+                        : qsTr("Sketch Scale: type the factor and press Enter (click again to move the point that stays)"))
                     : root.tool === "circular_pattern" ? (root.patternCenter === null
                         ? qsTr("Circular Pattern of %n curve(s): click the centre", "", root.patternCurves.length)
                         : qsTr("Circular Pattern: set the count and angle, then OK or Enter (click again to move the centre)"))
@@ -1532,14 +1603,25 @@ Item {
                             : root.tool === "circle_2point" ? qsTr("Diameter")
                             : root.tool === "rectangle_3point" ? (root.points.length >= 2 ? qsTr("Height") : qsTr("Length"))
                             : root.tool === "offset" ? qsTr("Distance")
-                            : root.tool === "move" ? qsTr("dx, dy") : qsTr("Size") }
+                            : root.tool === "move" ? qsTr("dx, dy")
+                            : root.tool === "scale" ? qsTr("Factor") : qsTr("Size") }
                 TextField {
                     id: dimension
                     objectName: "sketchDimension"
                     Layout.preferredWidth: 140
-                    placeholderText: qsTr("e.g. 40 or w/2")
+                    placeholderText: root.tool === "scale" ? qsTr("e.g. 2 or 0.5") : qsTr("e.g. 40 or w/2")
+                    // onTextChanged: the first digit is put here by the overlay's key handler.
+                    onTextChanged: {
+                        if (root.tool === "scale") {
+                            const f = Number(text)
+                            root.scaleFactor = isFinite(f) && f > 0 ? f : 1
+                            canvas.requestPaint()
+                        }
+                    }
                     onAccepted: {
-                        if (root.tool === "move") {
+                        if (root.tool === "scale") {
+                            root.applyScale(Number(text))
+                        } else if (root.tool === "move") {
                             const v = text.split(/[,;\s]+/).filter(t => t.length > 0).map(Number)
                             if (v.length >= 1 && v.length <= 2 && v.every(isFinite))
                                 root.applyMove(v[0], v.length > 1 ? v[1] : 0)

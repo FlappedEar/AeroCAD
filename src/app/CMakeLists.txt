@@ -558,6 +558,11 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_point.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_sketch_point_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-253: Sketch Scale with real clicks and keys.
+    add_test(NAME app_sketch_scale_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_scale.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_sketch_scale_test PROPERTIES LABELS gui TIMEOUT 60)
     # CAD-251: Sketch Circular / Rectangular Pattern with real clicks.
     add_test(NAME app_sketch_pattern_test
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_pattern.ui
