@@ -46,7 +46,7 @@ Item {
         case "vertical": return qsTr("Vertical: click a line or an ellipse (or two points)")
         case "coincident": return qsTr("Coincident: click a point, then a point or a curve")
         case "tangent": return qsTr("Tangent: click a line or arc, then an arc or circle")
-        case "equal": return qsTr("Equal: click two lines or two circles/arcs")
+        case "equal": return qsTr("Equal: click two lines, two circles/arcs or two ellipses")
         case "parallel": return qsTr("Parallel: click two lines")
         case "perpendicular": return qsTr("Perpendicular: click two lines")
         case "concentric": return qsTr("Concentric: click two circles or arcs")
@@ -360,7 +360,8 @@ Item {
             // Two-curve constraints.
             if (curvesPicked.length === 2) {
                 const [i, j] = curvesPicked
-                const ok = tool === "equal" ? (isLine(i) && isLine(j)) || (isCirc(i) && isCirc(j))
+                const ellipse = k => !!curves[k] && curves[k].kind === "ellipse"
+                const ok = tool === "equal" ? (isLine(i) && isLine(j)) || (isCirc(i) && isCirc(j)) || (ellipse(i) && ellipse(j))
                          : tool === "tangent" ? isCirc(i) || isCirc(j)
                          : tool === "concentric" ? isCirc(i) && isCirc(j)
                          : isLine(i) && isLine(j)
