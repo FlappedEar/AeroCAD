@@ -377,7 +377,10 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/project_isolation.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
-    set_tests_properties(app_project_isolation_test PROPERTIES LABELS gui TIMEOUT 60)
+    # Its own settings and autosave folder: a recovery copy left by another run would open the
+    # recovery question and take the keyboard (Ctrl+Z) away from the window.
+    set_tests_properties(app_project_isolation_test PROPERTIES LABELS gui TIMEOUT 60
+        ENVIRONMENT "XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/project-isolation-data;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/project-isolation-data")
     # CAD-105: Simplify a scan, then Ctrl+Z restores the full mesh (also with a reduced display).
     add_test(NAME app_simplify_undo_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl
