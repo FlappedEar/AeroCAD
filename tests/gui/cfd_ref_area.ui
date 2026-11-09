@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CAD-182: the New run form sets the reference area of Cd/Cl/Cs; empty = the frontal area, shown
+# as the placeholder. Prepared cases only (no engine).
+Qt.createQmlObject('import QtQuick; Item { objectName: "cfTest"; visible: false; function find(i, name) { if (!i) return null; if (i.objectName === name) return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = find(ch[k], name); if (r) return r } return null } function runButton(i) { if (!i) return null; if (i.text === "Run CFD" && i.highlighted !== undefined) return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = runButton(ch[k]); if (r) return r } return null } }', window.contentItem)
+ui.wait(800)
+(() => { for (const r of controller.execute("simulation.list").result.runs) controller.execute("simulation.delete", { run: r.id }) })()
+(() => { const p = controller.execute("document.parts").result.parts[0]; window.selectPart(p.id) })()
+ui.clickText("SIMULATE")
+ui.wait(300)
+ui.clickText("Wind Tunnel")
+ui.wait(1000)
+(() => { simulationPanel.tab = 0; simulationPanel.refreshProposal() })()
+ui.wait(300)
+# Auto: the frontal area of the 200 x 80 x 60 mm box seen along +Y is 200 x 60 mm = 120 cm².
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const f = t.find(simulationPanel, "cfdRefAreaField"); ui.log("AUTO " + f.placeholderText); if (f.text !== "" || f.placeholderText !== "auto: 120.0 cm² (frontal)") ui.fail("auto placeholder: " + f.placeholderText); if ("referenceArea" in simulationPanel.runParams()) ui.fail("auto sends an area") })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const f = t.find(simulationPanel, "cfdRefAreaField"); const p = f.mapToItem(null, f.width / 2, f.height / 2); ui.click(p.x, p.y) })()
+ui.type("abc")
+ui.wait(200)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const e = t.find(simulationPanel, "cfdRefAreaError"); const b = t.runButton(simulationPanel); ui.log("BAD error " + e.visible + " run " + b.enabled); if (!e.visible || b.enabled) ui.fail("invalid area accepted") })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); t.find(simulationPanel, "cfdRefAreaField").selectAll() })()
+ui.type("1200,5")
+ui.wait(300)
+ui.shot("cfd-ref-area.png")
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const e = t.find(simulationPanel, "cfdRefAreaError"); const b = t.runButton(simulationPanel); const a = simulationPanel.runParams().referenceArea; ui.log("TYPED " + a + " error " + e.visible + " run " + b.enabled); if (e.visible || !b.enabled || Math.abs(a - 0.12005) > 1e-15) ui.fail("typed area") })()
+# A run with it stores it, Results names it, and its settings come back into the field.
+(() => { const r = controller.execute("simulation.run", Object.assign(simulationPanel.runParams(), { label: "planform", prepareOnly: true })); if (!r.ok) ui.fail("prepare: " + r.error); const res = controller.execute("simulation.results", { run: r.result.id, maxPoints: 2 }).result; ui.log("STORED " + res.conditions.referenceArea + " / settings " + res.conditions.settings.referenceArea); if (Math.abs(res.conditions.referenceArea - 0.12005) > 1e-15) ui.fail("stored area") })()
+(() => { const p = controller.execute("document.parts").result.parts[0]; const r = controller.execute("simulation.run", { id: p.id, label: "frontal", prepareOnly: true }); if (!r.ok) ui.fail("prepare 2: " + r.error); simulationPanel.refreshRuns() })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const f = t.find(simulationPanel, "cfdRefAreaField"); const planform = simulationPanel.runs.find(r => r.source.label === "planform"); const frontal = simulationPanel.runs.find(r => r.source.label === "frontal"); simulationPanel.useSettingsOf(frontal.id); ui.log("COPY frontal '" + f.text + "'"); if (f.text !== "") ui.fail("auto run copied an area: " + f.text); simulationPanel.useSettingsOf(planform.id); ui.log("COPY planform '" + f.text + "' -> " + simulationPanel.runParams().referenceArea); if (f.text !== "1200.5" || simulationPanel.runParams().referenceArea !== 0.12005) ui.fail("planform copy: " + f.text) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const planform = simulationPanel.runs.find(r => r.source.label === "planform"); const l = t.find(simulationPanel, "runConditions_" + planform.id); ui.log("ROW " + l.text); if (!l.text.endsWith(" · Aref 1200.5 cm²")) ui.fail("row: " + l.text) })()
+ui.log("cfd ref area done")

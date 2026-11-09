@@ -319,6 +319,8 @@ Pane {
                 floor += " " + qsTr("at Z %1 mm").arg(Number(st.groundHeight))
             parts.push(floor)
         }
+        if (st.referenceArea) // A set reference area (CAD-182); none = the frontal area.
+            parts.push(qsTr("Aref %1 cm²").arg(Number((st.referenceArea * 1e4).toPrecision(12))))
         return parts.join(" · ")
     }
     function num(v, digits) {
@@ -678,9 +680,11 @@ Pane {
         groundFixed = !!st.ground && st.groundMoving === false
         wheelsBox.checked = !!st.ground && !!st.rotatingWheels
         floorField.text = st.ground && st.groundHeight !== null && st.groundHeight !== undefined ? String(st.groundHeight) : ""
+        // The reference area has its own field (CAD-182): empty = the frontal area, as in that run.
+        refAreaField.text = st.referenceArea ? String(Number((st.referenceArea * 1e4).toPrecision(12))) : ""
         const extra = {}
         for (const key of ["preset", "density", "kinematicViscosity", "turbulenceIntensity", "viscosityRatio",
-                           "referenceArea", "referenceLength", "iterations"])
+                           "referenceLength", "iterations"])
             if (st[key] !== null && st[key] !== undefined)
                 extra[key] = st[key]
         copiedSettings = extra
@@ -710,6 +714,16 @@ Pane {
         return unit === "km/h" || unit === "kmh" || unit === "kph" ? round(v / 3.6)
              : unit === "mph" ? round(v * 0.44704) : v
     }
+    /// The reference area typed in the New run form in m², null when empty (the frontal area),
+    /// or NaN when it is not a number above 0 (CAD-182).
+    function typedRefArea() {
+        const t = refAreaField.text.trim()
+        if (t.length === 0)
+            return null
+        const v = /^(\d+(?:[.,]\d*)?|[.,]\d+)$/.test(t) ? Number(t.replace(",", ".")) : NaN
+        return v > 0 ? v / 1e4 : NaN
+    }
+    readonly property bool refAreaValid: refAreaField.text.trim().length === 0 || typedRefArea() > 0
     readonly property real typedSpeed: speedMs(speedField.text)
     readonly property bool speedValid: typedSpeed > 0 && typedSpeed <= 150
     /// Under the speed field: the speed in both units, or why it cannot be used.
@@ -732,6 +746,9 @@ Pane {
             mesh: meshBox.currentValue,
             ground: groundBox.checked
         })
+        const area = typedRefArea()
+        if (area > 0)
+            params.referenceArea = area
         if (groundBox.checked && groundFixed)
             params.groundMoving = false
         // CAD-154: the tyres stand on the moving floor and turn with it.
@@ -1169,6 +1186,28 @@ Pane {
                             { text: qsTr("Fine (slow)"), value: "fine" }
                         ]
                     }
+                    // Cd/Cl/Cs on this area (CAD-182): empty = the frontal area of the part; a wing's
+                    // lift is usually given on its planform area.
+                    Label { text: qsTr("Ref. area (cm²)"); opacity: 0.7 }
+                    TextField {
+                        id: refAreaField
+                        objectName: "cfdRefAreaField"
+                        Layout.fillWidth: true
+                        placeholderText: root.proposal && root.proposal.referenceArea > 0
+                                         ? qsTr("auto: %1 cm² (frontal)").arg((root.proposal.referenceArea * 1e4).toFixed(1))
+                                         : qsTr("auto: frontal area")
+                        onTextEdited: proposalTimer.restart()
+                    }
+                    Label {
+                        objectName: "cfdRefAreaError"
+                        Layout.columnSpan: 2
+                        Layout.fillWidth: true
+                        visible: !root.refAreaValid
+                        text: qsTr("The reference area must be a number above 0 (cm²), or empty for the frontal area.")
+                        color: Theme.warning
+                        wrapMode: Text.WordWrap
+                        font.pixelSize: 11
+                    }
                     Label { text: qsTr("Label"); opacity: 0.7 }
                     TextField { id: labelField; Layout.fillWidth: true; placeholderText: qsTr("e.g. v2, long splitter") }
                     CheckBox {
@@ -1240,7 +1279,7 @@ Pane {
                         text: qsTr("Run CFD")
                         highlighted: true
                         enabled: !!root.partInfo.id && root.partInfo.kind !== "sketch" && root.partInfo.kind !== "plane"
-                                 && root.speedValid
+                                 && root.speedValid && root.refAreaValid
                         onClicked: root.startRun()
                     }
                     // Why this run cannot be set up, before Run CFD is pressed (CAD-147).
