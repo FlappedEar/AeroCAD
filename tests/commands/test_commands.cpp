@@ -277,6 +277,14 @@ TEST_CASE("geometry.measure: distance, part, point and clearance", "[commands][a
     r = session.execute("geometry.measure", {{"kind", "point_to_part"}, {"id", a}, {"point", {2, 2, -4}}});
     REQUIRE(r.ok);
     CHECK(r.data.at("distance").get<double>() == Approx(4.0));
+    // CAD-232: a mesh part gets a smoothed normal and keeps the triangle's own one.
+    CHECK(r.data.contains("triangleNormal"));
+    CHECK(r.data.at("normal")[2].get<double>() < 0.0); // the base faces -Z
+    CHECK(r.data.at("normalRadius").get<double>() > 0.0);
+    r = session.execute("geometry.measure",
+                        {{"kind", "point_to_part"}, {"id", a}, {"point", {2, 2, -4}}, {"normal_radius", 0.5}});
+    REQUIRE(r.ok);
+    CHECK(r.data.at("normalRadius").get<double>() == Approx(0.5));
 
     // Second tetrahedron, half size, moved to x = 15..20: 5 mm from the first one.
     const auto b = session.execute("document.import", {{"path", file.utf8()}}).data.at("id").get<std::uint64_t>();

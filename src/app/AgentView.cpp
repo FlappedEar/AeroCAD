@@ -145,8 +145,10 @@ Json pick(QQuickWindow* window, AppController& controller, const Json& params)
             continue;
         const auto r = controller.session().execute(
             "geometry.measure", {{"kind", "point_to_part"}, {"id", h.at("part")}, {"point", h.at("point")}});
-        if (r.ok && r.data.contains("normal"))
-            h["normal"] = r.data["normal"];
+        if (r.ok && r.data.contains("normal")) {
+            h["normal"] = r.data["normal"]; // Smoothed on scans (CAD-232).
+            h["triangleNormal"] = r.data["triangleNormal"];
+        }
         if (const auto* part = controller.session().document().part(h.at("part").get<model::PartId>()))
             h["partName"] = part->name;
     }

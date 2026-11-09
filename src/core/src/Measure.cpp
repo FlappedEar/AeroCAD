@@ -75,6 +75,37 @@ std::optional<MeshPoint> closestPointOnMesh(const TriangleMesh& mesh, const Vec3
     return best;
 }
 
+Vec3 smoothedNormal(const TriangleMesh& mesh, const Vec3& at, std::size_t triangle, double radius)
+{
+    const Vec3 own = mesh.faceNormal(triangle);
+    const auto& v = mesh.vertices();
+    const double r2 = radius * radius;
+    Vec3 sum{};
+    for (const auto& t : mesh.triangles()) {
+        const Vec3 q = closestPointOnTriangle(at, v[t[0]], v[t[1]], v[t[2]]);
+        if ((q - at).dot(q - at) > r2)
+            continue;
+        const Vec3 areaNormal = (v[t[1]] - v[t[0]]).cross(v[t[2]] - v[t[0]]); // length = 2 * area
+        if (areaNormal.dot(own) <= 0.0)
+            continue;
+        sum = sum + areaNormal;
+    }
+    if (sum.length() < 1e-12)
+        return own;
+    return sum.normalized();
+}
+
+double defaultNormalRadius(const TriangleMesh& mesh, std::size_t triangle)
+{
+    const auto& t = mesh.triangles().at(triangle);
+    const auto& v = mesh.vertices();
+    const double longest = std::max({(v[t[1]] - v[t[0]]).length(), (v[t[2]] - v[t[1]]).length(),
+                                     (v[t[0]] - v[t[2]]).length()});
+    const auto box = mesh.bounds();
+    const double diagonal = (box.max - box.min).length();
+    return std::max(2.0 * longest, 0.002 * diagonal);
+}
+
 double enclosedVolume(const TriangleMesh& mesh)
 {
     const auto& v = mesh.vertices();
