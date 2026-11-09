@@ -321,7 +321,9 @@ ApplicationWindow {
             return
         // Undone Isolates past the last step can never be redone again: forget them, and keep
         // the list short.
-        const kept = isolationRecords.filter(rec => controller.historyApplied(rec.step)
+        // An Isolate restored from the project file (step -1) is kept too, so undoing this
+        // Isolate and its Unisolate brings it back (CAD-224).
+        const kept = isolationRecords.filter(rec => rec.step < 0 || controller.historyApplied(rec.step)
                                                     || controller.historyExpired(rec.step)).slice(-19)
         kept.push({ id: id, name: controller.partInfo(id).name, hidden: r.result.hidden,
                     step: controller.historyTopId(), exitStep: 0 })
