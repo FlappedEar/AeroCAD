@@ -2232,8 +2232,7 @@ ApplicationWindow {
                 if (!window.activeSketch)
                     return
                 // A conflicting constraint is rejected; the error shows in the status bar.
-                // One undo step, also when a tool adds several constraints (Symmetric on two lines).
-                window.controller.execute("sketch.add_constraints", { sketch: window.activeSketch.id, constraints: Array.isArray(c) ? c : [c] })
+                window.controller.execute("sketch.add_constraints", { sketch: window.activeSketch.id, constraints: [c] })
                 window.refreshSketchSnaps()
             }
             onConstraintEdited: (index, value) => {

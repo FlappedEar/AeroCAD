@@ -1356,3 +1356,49 @@ TEST_CASE("Design commands: three-point rectangle at an angle (CAD-203)", "[comm
                                                                      {"height", 0}}})}})
                     .ok);
 }
+
+TEST_CASE("Design commands: symmetric on two lines or two circles (CAD-206)", "[commands][cad][solver]")
+{
+    commands::Session s;
+    // Axis x = 0 (curve 0, fixed); line 2 runs the other way, so its end pairs with the start of
+    // line 1; circles 3 and 4.
+    const Json sk = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "line"}, {"start", {0, -50}}, {"end", {0, 50}}, {"construction", true}},
+                                                 {{"type", "line"}, {"start", {10, 0}}, {"end", {20, 10}}},
+                                                 {{"type", "line"}, {"start", {-22, 13}}, {"end", {-11, 1}}},
+                                                 {{"type", "circle"}, {"center", {20, -20}}, {"radius", 4}},
+                                                 {{"type", "circle"}, {"center", {-18, -22}}, {"radius", 6}}})},
+                         {"constraints", Json::array({{{"type", "fix"}, {"curves", {0}}}})}});
+    const auto id = sk.at("id").get<std::uint64_t>();
+    run(s, "sketch.add_constraints",
+        {{"sketch", id},
+         {"constraints", Json::array({{{"type", "symmetric"}, {"curves", {1, 2}}, {"curve", 0}},
+                                      {{"type", "symmetric"}, {"curves", {3, 4}}, {"curve", 0}}})}});
+    const Json c = run(s, "sketch.curves", {{"sketch", id}});
+    const auto pt = [&](int i, int k) { return c.at("curves")[i].at("points")[k]; };
+    const auto mirrored = [](const Json& p, const Json& q) {
+        CHECK(p[0].get<double>() == Approx(-q[0].get<double>()).margin(1e-6));
+        CHECK(p[1].get<double>() == Approx(q[1].get<double>()).margin(1e-6));
+    };
+    mirrored(pt(1, 0), pt(2, 1)); // start of 1 with the end of 2 (the nearer end), not flipped
+    mirrored(pt(1, 1), pt(2, 0));
+    mirrored(pt(3, 0), pt(4, 0));
+    CHECK(c.at("curves")[3].at("radius").get<double>() == Approx(c.at("curves")[4].at("radius").get<double>()));
+    // Stored as point symmetries (+ equal radii): fix, 2 for the lines, 2 for the circles.
+    const auto& list = c.at("constraints");
+    REQUIRE(list.size() == 5);
+    CHECK(list[1].at("points")[1] == Json({{"curve", 2}, {"point", "end"}}));
+    CHECK(list[4].at("type") == "equal");
+    // One undo step removes all of them.
+    run(s, "edit.undo");
+    CHECK(run(s, "sketch.curves", {{"sketch", id}}).at("constraints").size() == 1);
+
+    // Refused: a line with a circle, a circle as the axis, an item as its own axis.
+    for (const Json& bad : {Json{{"type", "symmetric"}, {"curves", {1, 3}}, {"curve", 0}},
+                            Json{{"type", "symmetric"}, {"curves", {1, 2}}, {"curve", 3}},
+                            Json{{"type", "symmetric"}, {"curves", {1, 2}}, {"curve", 1}}}) {
+        const auto r = s.execute("sketch.add_constraints", {{"sketch", id}, {"constraints", Json::array({bad})}});
+        CHECK_FALSE(r.ok);
+    }
+}

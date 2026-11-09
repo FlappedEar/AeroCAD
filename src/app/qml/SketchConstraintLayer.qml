@@ -2,8 +2,7 @@
 // Sketch constraints and dimensions (Fusion: Sketch > Constraints, Sketch Dimension D).
 // Shows the constraints of the active sketch as small glyphs and dimension labels, and
 // implements the constraint tools: the user clicks curves or points, and a finished
-// selection is reported with constraintAdded() in the format of sketch.add_constraints (one
-// constraint, or an array that is added as one step).
+// selection is reported with constraintAdded() in the format of sketch.add_constraints.
 import QtQuick
 import QtQuick.Controls
 
@@ -256,18 +255,8 @@ Item {
         return (isLine(a.curve) && isLine(b.curve)) || (isCirc(a.curve) && isCirc(b.curve))
     }
 
-    /// p mirrored about the line through a and b.
-    function mirrorPoint(p, a, b) {
-        const dx = b[0] - a[0], dy = b[1] - a[1]
-        const l2 = dx * dx + dy * dy
-        const t = l2 > 0 ? ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / l2 : 0
-        const f = [a[0] + t * dx, a[1] + t * dy]
-        return [2 * f[0] - p[0], 2 * f[1] - p[1]]
-    }
-
-    /// Symmetric constraints for two items and the symmetry line (Fusion: Symmetry), or null.
-    /// Two lines: each end is held symmetric to the nearer end of the other line's mirror image;
-    /// two circles/arcs: the centres are symmetric and the radii equal.
+    /// Symmetric for two items and the symmetry line (Fusion: Symmetry), or null. Two curves are
+    /// sent as {curves, curve}; sketch.add_constraints turns them into the matching point symmetries.
     function symmetricFor(ps) {
         if (ps.length !== 3 || !symmetricPairOk(ps))
             return null
@@ -275,17 +264,8 @@ Item {
         if (axis === undefined || !isLine(axis) || axis === ps[0].curve || axis === ps[1].curve)
             return null
         const [a, b] = ps
-        if (a.point !== undefined)
-            return { type: "symmetric", points: [a.point, b.point], curve: axis }
-        if (isCirc(a.curve))
-            return [{ type: "symmetric", points: [{ curve: a.curve, point: "center" }, { curve: b.curve, point: "center" }], curve: axis },
-                    { type: "equal", curves: [a.curve, b.curve] }]
-        const ax = curves[axis].points, ca = curves[a.curve].points, cb = curves[b.curve].points
-        const m = mirrorPoint(ca[0], ax[0], ax[1])
-        const startToStart = dist(m, cb[0]) <= dist(m, cb[1])
-        const ref = (i, end) => ({ curve: i, point: end })
-        return [{ type: "symmetric", points: [ref(a.curve, "start"), ref(b.curve, startToStart ? "start" : "end")], curve: axis },
-                { type: "symmetric", points: [ref(a.curve, "end"), ref(b.curve, startToStart ? "end" : "start")], curve: axis }]
+        return a.point !== undefined ? { type: "symmetric", points: [a.point, b.point], curve: axis }
+                                     : { type: "symmetric", curves: [a.curve, b.curve], curve: axis }
     }
 
     function emit(constraint) {
