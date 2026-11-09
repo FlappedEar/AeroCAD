@@ -60,6 +60,8 @@ Item {
     signal toolRequested(string tool)
 
     readonly property bool constraintTool: constraintLayer.toolNames.indexOf(tool) >= 0
+    /// The constraint glyph and pick layer (for tests and tools that place constraints).
+    readonly property alias constraintGlyphs: constraintLayer
 
     readonly property bool active: sketch !== null && tool !== ""
     /// With no tool (Fusion's select mode): curves picked with the mouse, indices of
@@ -241,7 +243,8 @@ Item {
         if (p === null)
             return null
         const self = [from]
-        const now = constraintLayer.pointCandidates().find(c => c.point.curve === ref.curve && c.point.point === ref.point)
+        const now = constraintLayer.pointCandidates().find(c => c.point.curve === ref.curve && c.point.point === ref.point
+                                                               && c.point.index === ref.index)
         if (now)
             self.push(now.pos)
         for (const c of snapPoints.concat([[0, 0]])) {

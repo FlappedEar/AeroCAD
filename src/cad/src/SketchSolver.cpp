@@ -384,6 +384,10 @@ private:
             if (c.kind == Kind::Arc)
                 return v.pts[2];
             break;
+        case SketchPointRef::Kind::Fit:
+            if (c.kind == Kind::Spline && ref.index < v.pts.size())
+                return v.pts[ref.index];
+            break;
         case SketchPointRef::Kind::Origin:
             break;
         }

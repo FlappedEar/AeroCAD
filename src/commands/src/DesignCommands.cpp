@@ -105,9 +105,11 @@ Json curveSchema()
 Json constraintPointSchema()
 {
     return Json{{"type", Json::array({"string", "object"})},
-                {"description", "\"origin\" (sketch origin) or {curve: index, point: start | end | center}."},
+                {"description", "\"origin\" (sketch origin) or {curve: index, point: start | end | center}, "
+                                "or a fit point of a spline {curve, point: fit, index} (0 = first fit point)."},
                 {"properties", {{"curve", {{"type", "integer"}, {"minimum", 0}}},
-                                {"point", {{"type", "string"}, {"enum", {"start", "end", "center"}}}}}}};
+                                {"point", {{"type", "string"}, {"enum", {"start", "end", "center", "fit"}}}},
+                                {"index", {{"type", "integer"}, {"minimum", 0}}}}}};
 }
 
 Json constraintSchema()
@@ -638,7 +640,8 @@ std::optional<geometry::Vec2> arcCenter(const geometry::SketchCurve& c)
                           (aa * (e.x - b.x) + bb * (a.x - e.x) + ee * (b.x - a.x)) / den};
 }
 
-/// Position of a constraint point reference ("origin" or {curve, point}) in solved curves.
+/// Position of a constraint point reference ("origin", {curve, point} or a spline fit point
+/// {curve, point: fit, index}) in solved curves.
 geometry::Vec2 pointPosition(const std::vector<geometry::SketchCurve>& curves, const Json& ref)
 {
     if (ref.is_string())
@@ -654,6 +657,10 @@ geometry::Vec2 pointPosition(const std::vector<geometry::SketchCurve>& curves, c
             return c.points[0];
         if (const auto ctr = arcCenter(c))
             return *ctr;
+    } else if (which == "fit") {
+        const auto k = ref.value("index", std::size_t{0});
+        if (c.kind == K::Spline && k < c.points.size())
+            return c.points[k];
     } else if (c.kind != K::Circle && !c.points.empty()) {
         return which == "end" ? c.points.back() : c.points.front();
     }
@@ -689,6 +696,9 @@ Json resolveFix(const std::vector<geometry::SketchCurve>& curves, const Json& c)
         } else {
             points.push_back({{"curve", i}, {"point", "start"}});
             points.push_back({{"curve", i}, {"point", "end"}});
+            // A fixed spline holds its fit points between the ends too (they can be dragged).
+            for (std::size_t f = 1; k.kind == K::Spline && f + 1 < k.points.size(); ++f)
+                points.push_back({{"curve", i}, {"point", "fit"}, {"index", f}});
             if (k.kind == K::Arc)
                 points.push_back({{"curve", i}, {"point", "center"}});
         }

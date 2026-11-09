@@ -563,8 +563,11 @@ SketchPointRef parsePointRef(const Json& j)
         ref.kind = SketchPointRef::Kind::End;
     else if (which == "center")
         ref.kind = SketchPointRef::Kind::Center;
-    else
-        throw DesignError("Unknown constraint point '" + which + "' (start, end, center)");
+    else if (which == "fit") {
+        ref.kind = SketchPointRef::Kind::Fit;
+        ref.index = required(j, "index").get<std::size_t>();
+    } else
+        throw DesignError("Unknown constraint point '" + which + "' (start, end, center, fit)");
     return ref;
 }
 
