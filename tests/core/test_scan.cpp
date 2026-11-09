@@ -229,13 +229,19 @@ TEST_CASE("repairMesh welds, dedupes, orients and fills holes", "[core][scan]")
     tris.erase(tris.begin() + 2, tris.begin() + 4);
     const TriangleMesh open(c.vertices(), tris);
     REQUIRE(meshStats(open).holes == 1);
+    CHECK(meshStats(open).largestBoundaryEdges == 4);
+    CHECK(meshStats(c).largestBoundaryEdges == 0);
     RepairOptions fill;
     fill.maxHoleEdges = 3;
-    CHECK(meshStats(repairMesh(open, fill)).holes == 1); // too large to fill
+    RepairReport large;
+    CHECK(meshStats(repairMesh(open, fill, &large)).holes == 1); // too large to fill
+    CHECK(large.largeBoundaries == 1);
+    CHECK(large.filledHoles == 0);
     fill.maxHoleEdges = 8;
     RepairReport frep;
     const TriangleMesh filled = repairMesh(open, fill, &frep);
     CHECK(frep.filledHoles == 1);
+    CHECK(frep.largeBoundaries == 0);
     CHECK(frep.addedTriangles == 2); // ear clipping: a square needs two triangles
     const MeshStats fs = meshStats(filled);
     CHECK(fs.holes == 0);

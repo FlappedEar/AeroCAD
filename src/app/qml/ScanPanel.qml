@@ -92,7 +92,9 @@ Pane {
     }
 
     function refreshStats() {
-        if (!info.id || info.kind === "sketch") {
+        // Read the part now: `info` may still describe the previous part while partId changes.
+        const part = partId ? controller.partInfo(partId) : ({})
+        if (!part.id || part.kind === "sketch") {
             stats = null
             return
         }
@@ -102,6 +104,33 @@ Pane {
 
     function fmt(n) {
         return Number(n).toLocaleString(Qt.locale(), "f", 0)
+    }
+
+    /// "1 hole", "2 holes": the count with the singular or plural noun.
+    function count(n, one, many) {
+        return fmt(n) + " " + (Number(n) === 1 ? one : many)
+    }
+
+    /// Status line after Repair: only what changed, and why a boundary stayed open.
+    function repairSummary(r) {
+        const done = []
+        if (r.filledHoles > 0)
+            done.push(qsTr("filled %1").arg(count(r.filledHoles, qsTr("hole"), qsTr("holes"))))
+        if (r.flippedTriangles > 0)
+            done.push(qsTr("flipped %1").arg(count(r.flippedTriangles, qsTr("triangle"), qsTr("triangles"))))
+        if (r.removedDuplicates > 0)
+            done.push(qsTr("removed %1").arg(count(r.removedDuplicates, qsTr("duplicate"), qsTr("duplicates"))))
+        if (r.removedDegenerate > 0)
+            done.push(qsTr("removed %1").arg(count(r.removedDegenerate, qsTr("degenerate triangle"), qsTr("degenerate triangles"))))
+        if (r.mergedVertices > 0)
+            done.push(qsTr("merged %1").arg(count(r.mergedVertices, qsTr("vertex"), qsTr("vertices"))))
+        let text = done.length ? qsTr("Repaired: %1.").arg(done.join(", ")) : qsTr("Repair: nothing to fix.")
+        if (r.largeBoundaries > 0)
+            text += " " + qsTr("%1 longer than %2 edges left open (for example the outline of the scan).")
+                .arg(count(r.largeBoundaries, qsTr("boundary"), qsTr("boundaries"))).arg(fmt(holeEdges.value))
+        if (r.skippedHoles > 0)
+            text += " " + qsTr("%1 could not be filled.").arg(count(r.skippedHoles, qsTr("hole"), qsTr("holes")))
+        return text
     }
 
     component Hint: Label {
@@ -142,6 +171,7 @@ Pane {
             Section { text: qsTr("MESH") }
             GridLayout {
                 visible: !!root.stats
+                Layout.fillWidth: true
                 columns: 2
                 columnSpacing: 12
                 rowSpacing: 0
@@ -154,7 +184,15 @@ Pane {
                         return n ? root.fmt(n) : qsTr("computing…")
                     }
                 }
-                Label { text: qsTr("Holes") } Label { text: root.stats ? root.fmt(root.stats.holes) : "" }
+                Label { text: qsTr("Open boundaries") }
+                Label {
+                    objectName: "scanOpenBoundaries"
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    text: !root.stats ? ""
+                        : root.stats.holes === 0 ? qsTr("0 (closed)")
+                        : qsTr("%1 (longest %2 edges)").arg(root.fmt(root.stats.holes)).arg(root.fmt(root.stats.largestBoundaryEdges))
+                }
                 Label { text: qsTr("Flipped edges") } Label { text: root.stats ? root.fmt(root.stats.inconsistentEdges) : "" }
                 Label { text: qsTr("Non-manifold edges") } Label { text: root.stats ? root.fmt(root.stats.nonManifoldEdges) : "" }
                 Label { text: qsTr("Duplicates / degenerate") }
@@ -162,8 +200,10 @@ Pane {
                 Label { text: qsTr("Shells") } Label { text: root.stats ? root.fmt(root.stats.components) : "" }
                 Label { text: qsTr("Size (mm)") }
                 Label {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
                     text: root.stats && root.stats.bounds
-                        ? root.stats.bounds.size.map(v => v.toFixed(2)).join(" × ") : ""
+                        ? root.stats.bounds.size.map(v => v.toFixed(1)).join(" × ") : ""
                 }
             }
 
@@ -177,14 +217,15 @@ Pane {
                 Label { text: qsTr("Fill holes up to (edges)") }
                 SpinBox { id: holeEdges; from: 0; to: 100000; value: 200; editable: true; stepSize: 50 }
             }
+            Hint { text: qsTr("Boundaries with more edges stay open, for example the outline of a scan of one side.") }
             RowLayout {
+                Layout.fillWidth: true
                 enabled: root.editable && !root.info.hasBrep
                 Button {
                     text: qsTr("Repair")
                     onClicked: root.run("mesh.repair", {
                         id: root.partId, mergeDistance: Number(mergeField.text) || 0, maxHoleEdges: holeEdges.value
-                    }, r => root.controller.showStatus(qsTr("Repaired: %1 holes filled, %2 triangles flipped, %3 duplicates and %4 degenerate removed")
-                        .arg(r.filledHoles).arg(r.flippedTriangles).arg(r.removedDuplicates).arg(r.removedDegenerate)))
+                    }, r => root.controller.showStatus(root.repairSummary(r)))
                 }
                 Button { text: qsTr("Flip Normals"); onClicked: root.run("mesh.flip_normals", { id: root.partId }) }
             }
@@ -192,9 +233,12 @@ Pane {
             // --- Units and scale -------------------------------------------------------
             Section { text: qsTr("UNITS AND SCALE") }
             RowLayout {
+                Layout.fillWidth: true
                 Label { text: qsTr("Unitless files in") }
                 ComboBox {
                     objectName: "unitlessImportUnits"
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 60
                     model: root.scan.unitSymbols
                     currentIndex: Math.max(0, root.scan.unitSymbols.indexOf(root.scan.importUnits))
                     onActivated: root.scan.importUnits = currentText
@@ -202,9 +246,10 @@ Pane {
             }
             Hint { text: qsTr("STEP, IGES and 3MF use their file units automatically.") }
             RowLayout {
+                Layout.fillWidth: true
                 enabled: root.editable
                 Label { text: qsTr("This part is in") }
-                ComboBox { id: fromUnit; model: root.scan.unitSymbols; currentIndex: 1 }
+                ComboBox { id: fromUnit; model: root.scan.unitSymbols; currentIndex: 1; Layout.fillWidth: true; Layout.minimumWidth: 60 }
                 Button {
                     text: qsTr("Convert")
                     enabled: fromUnit.currentText !== "mm"
@@ -215,6 +260,7 @@ Pane {
                 text: qsTr("Calibrate: pick two points of a known dimension, enter the true distance.")
             }
             RowLayout {
+                Layout.fillWidth: true
                 enabled: root.editable
                 Button {
                     text: root.pickMode === "calibrate" ? qsTr("Picking… (%1/2)").arg(root.calibratePoints.length) : qsTr("Pick 2 Points")
@@ -229,10 +275,12 @@ Pane {
                 Label { text: root.measured > 0 ? qsTr("%1 mm").arg(root.measured.toFixed(3)) : "" }
             }
             RowLayout {
+                Layout.fillWidth: true
                 enabled: root.editable && root.measured > 0
-                TextField { id: trueDistance; placeholderText: qsTr("True distance"); Layout.preferredWidth: 110; validator: DoubleValidator { bottom: 0 } }
+                TextField { id: trueDistance; objectName: "scanTrueDistance"; placeholderText: qsTr("True distance"); Layout.preferredWidth: 110; validator: DoubleValidator { bottom: 0 } }
                 ComboBox { id: distanceUnit; model: root.scan.unitSymbols; currentIndex: 1; Layout.preferredWidth: 70 }
                 Button {
+                    objectName: "scanScaleButton"
                     text: qsTr("Scale")
                     enabled: Number(trueDistance.text) > 0
                     onClicked: root.run("part.calibrate", {
@@ -252,6 +300,7 @@ Pane {
                 text: qsTr("Pick 3 or more points on a flat reference area; it is turned onto the chosen world plane and moved to the origin.")
             }
             RowLayout {
+                Layout.fillWidth: true
                 enabled: root.editable
                 Button {
                     text: root.pickMode === "align" ? qsTr("Picking… (%1)").arg(root.alignPoints.length) : qsTr("Pick Points")
@@ -265,6 +314,8 @@ Pane {
                 }
                 ComboBox {
                     id: targetPlane
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 60
                     textRole: "label"
                     valueRole: "value"
                     model: [{ value: "xy", label: qsTr("XY (Top)") }, { value: "xz", label: qsTr("XZ (Front)") },
@@ -272,6 +323,7 @@ Pane {
                 }
             }
             RowLayout {
+                Layout.fillWidth: true
                 enabled: root.editable
                 CheckBox { id: flipAlign; text: qsTr("Flip") }
                 CheckBox { id: keepPosition; text: qsTr("Rotate only") }
@@ -289,17 +341,29 @@ Pane {
                 }
             }
             RowLayout {
+                Layout.fillWidth: true
                 enabled: root.editable
-                Button { text: qsTr("Place on Floor"); onClicked: root.run("part.place", { id: root.partId, onFloor: true }) }
-                Button { text: qsTr("Center"); onClicked: root.run("part.place", { id: root.partId, onFloor: false }) }
+                Button {
+                    text: qsTr("Place on Floor")
+                    onClicked: root.run("part.place", { id: root.partId, onFloor: true },
+                                        r => root.controller.showStatus(qsTr("%1 is centred and rests on the floor (Z = 0)").arg(r.name)))
+                }
+                Button {
+                    text: qsTr("Center")
+                    onClicked: root.run("part.place", { id: root.partId, onFloor: false },
+                                        r => root.controller.showStatus(qsTr("%1 is centred on the origin").arg(r.name)))
+                }
             }
 
             // --- Display ---------------------------------------------------------------
             Section { text: qsTr("DISPLAY") }
             RowLayout {
+                Layout.fillWidth: true
                 Label { text: qsTr("Max. triangles drawn") }
                 ComboBox {
                     id: budget
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 60
                     textRole: "label"
                     valueRole: "value"
                     model: [{ value: 250000, label: "250 k" }, { value: 500000, label: "500 k" },

@@ -23,6 +23,8 @@ struct MeshStats {
     std::size_t boundaryEdges = 0;
     /// Closed loops of boundary edges (holes and open borders).
     std::size_t holes = 0;
+    /// Edges of the longest boundary loop (on a scan of one side of an object: its outline).
+    std::size_t largestBoundaryEdges = 0;
     /// Edges shared by more than two triangles.
     std::size_t nonManifoldEdges = 0;
     /// Manifold edges whose two triangles disagree on winding (flipped normals).
@@ -55,6 +57,8 @@ struct RepairReport {
     /// Holes within maxHoleEdges that could not be triangulated (not a simple polygon in
     /// their best-fit plane) and were left open.
     std::size_t skippedHoles = 0;
+    /// Boundary loops longer than maxHoleEdges, left open (for example the outline of a scan).
+    std::size_t largeBoundaries = 0;
     std::size_t addedTriangles = 0;
 };
 
