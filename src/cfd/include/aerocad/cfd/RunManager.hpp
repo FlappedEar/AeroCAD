@@ -191,6 +191,13 @@ public:
     /// forces in N). Returns the number of history rows. Throws std::runtime_error for
     /// unknown ids or when the file cannot be written.
     std::size_t exportResultsCsv(const std::string& id, const std::filesystem::path& path);
+    /// Writes the A/B comparison (compare(a, b)) as CSV (CAD-193): a "Quantity,Value" block
+    /// with the runs, the verdict, differing / unknown conditions, reasons, notes and the mesh
+    /// check, a blank line, then the table: A, B, B - A, change in %, swing of A plus B and
+    /// whether the difference is within it, for the forces, L/D and Cd/Cl/Cs on A's
+    /// reference area. Returns the number of table rows with values. Throws std::runtime_error
+    /// for unknown ids or when the file cannot be written.
+    std::size_t exportComparisonCsv(const std::string& a, const std::string& b, const std::filesystem::path& path);
 
     /// Field data for the result view, converted to model coordinates (mm):
     /// kind "surface" (pressure on the part), "sectionHorizontal", "sectionVertical",

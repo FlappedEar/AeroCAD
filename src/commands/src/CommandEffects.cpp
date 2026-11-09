@@ -75,6 +75,7 @@ void declareCommandEffects(CommandRegistry& r)
         {"simulation.delete", deleteRun},
         {"simulation.import", importRun},
         {"simulation.export_results", writeFiles},
+        {"simulation.export_comparison", writeFiles},
         {"simulation.rename", saveRunLabel},
     };
     for (const auto& [name, effects] : table)

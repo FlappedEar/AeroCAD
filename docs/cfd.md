@@ -442,11 +442,23 @@ app uses for the pressure colour range.
 label and id. The file has a `Quantity,Value` block with the run, part, state, conditions
 (speed, flow, mesh, floor, air, reference area and length, the OpenFOAM version the run recorded, or "not recorded") and the final values
 (Cd, Cl, Cs; drag, lift, side, pressure and viscous drag in N; efficiency L/D, CdA and ClA
-in m², CAD-187). A run that has not finished
+in m², CAD-187), and for a finished run how far drag, lift, side, Cd, Cl and Cs still swing
+("Drag swing ± (N)" etc., CAD-191). A run that has not finished
 says so in the `Results` row and gives the current means marked "(provisional)". After a blank
 line comes the full, unsampled history: iteration, Cd, Cl, Cs and the forces in N.
 Numbers use a `.` decimal point, and lines end with CRLF. MCP: `simulation.export_results
 {"run": "<id>", "path": "/path/results.csv"}` returns the path and the number of history rows.
+
+**A/B > Export CSV…** writes the comparison (CAD-193, [panel](images/audit/cad-193-export-ab.png)).
+The default file name is "A-label A-id vs B-label B-id". A `Quantity,Value` block lists run A
+(baseline) and B (variant) with their labels and part, the verdict, each differing or unknown
+condition, why the runs are not comparable, the notes (such as a difference within the
+iteration swing) and the mesh check. After a blank line comes the table
+`Quantity,A,B,B - A,Change (%),Swing A+B,Within swing` for drag, lift, side, pressure and
+viscous drag (N), efficiency L/D and Cd/Cl/Cs on the reference area of A. Rows the comparison
+has no values for (runs not comparable) stay empty. MCP: `simulation.export_comparison
+{"a": "<id>", "b": "<id>", "path": "/path/ab.csv"}` returns the path and the number of table
+rows with values.
 
 ## A/B comparison
 

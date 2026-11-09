@@ -536,6 +536,30 @@ void registerSimulationCommands(CommandRegistry& r)
               }
           });
 
+    r.add({"simulation.export_comparison", "Export A/B comparison (CSV)",
+           "Write the A/B comparison of two runs (as simulation.compare) to a CSV file: a Quantity,Value block "
+           "with run A and B, the verdict, differing and unknown conditions, reasons, notes and the mesh check, a "
+           "blank line, then the table Quantity,A,B,B - A,Change (%),Swing A+B,Within swing for drag, lift, side, "
+           "pressure and viscous drag (N), efficiency L/D and Cd/Cl/Cs on the reference area of A. Returns the path "
+           "and the number of table rows with values.",
+           objectSchema({{"a", runIdParam("Run A (baseline).")},
+                         {"b", runIdParam("Run B (variant).")},
+                         {"path", {{"type", "string"}, {"description", "File to write (.csv), overwritten."}}}},
+                        {"a", "b", "path"})},
+          [](CommandContext& ctx, const Json& params) {
+              const std::string a = requireRun(ctx, params, "a");
+              const std::string b = requireRun(ctx, params, "b");
+              const std::string path = params.at("path").get<std::string>();
+              if (path.empty())
+                  throw CommandError("path is empty");
+              try {
+                  const std::size_t rows = runs(ctx).exportComparisonCsv(a, b, core::pathFromUtf8(path));
+                  return Json{{"path", path}, {"rows", rows}};
+              } catch (const std::exception& e) {
+                  throw CommandError(e.what());
+              }
+          });
+
     r.add({"simulation.field", "Simulation field summary",
            "Statistics of a result field in model coordinates (mm): surface (pressure on the part: p, Cp, "
            "pressure in Pa), sectionHorizontal / sectionVertical (velocity sections through the part centre: speed "

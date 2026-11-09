@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CAD-193: A/B > Export CSV… writes the comparison (runs, verdict, reasons, table) to a CSV file.
+# Two prepared runs (no engine): not comparable, so the table rows are empty; the values are
+# covered by the simulation.export_comparison unit test.
+Qt.createQmlObject('import QtQuick; Item { objectName: "cfTest"; visible: false; function find(i, name) { if (!i) return null; if (i.objectName === name) return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = find(ch[k], name); if (r) return r } return null } function read(url) { const x = new XMLHttpRequest(); x.open("GET", url, false); x.send(); return x.responseText } }', window.contentItem)
+ui.wait(800)
+(() => { for (const r of controller.execute("simulation.list").result.runs) controller.execute("simulation.delete", { run: r.id }) })()
+ui.clickText("SIMULATE")
+ui.wait(300)
+ui.clickText("Wind Tunnel")
+ui.wait(800)
+(() => { const p = controller.execute("document.parts").result.parts[0]; const a = controller.execute("simulation.run", { id: p.id, prepareOnly: true }).result.id; const b = controller.execute("simulation.run", { id: p.id, prepareOnly: true }).result.id; controller.execute("simulation.rename", { run: b, label: "splitter" }); simulationPanel.refreshRuns(); simulationPanel.comparison = controller.execute("simulation.compare", { a: a, b: b }).result; simulationPanel.tab = 2 })()
+ui.wait(800)
+(() => { const st = controller.execute("simulation.status", { run: simulationPanel.comparison.a }).result; simulationPanel.comparisonDialog.currentFolder = "file://" + st.caseDir.replace(/\/[^/]*$/, "") })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const b = t.find(simulationPanel, "cfdExportAB"); if (!b || !b.visible) ui.fail("no A/B Export CSV button"); const p = b.mapToItem(null, b.width / 2, b.height / 2); ui.click(p.x, p.y) })()
+ui.wait(800)
+(() => { const d = simulationPanel.comparisonDialog; if (!d.visible) ui.fail("the export dialog did not open"); const f = decodeURIComponent(d.selectedFile.toString()); ui.log("suggested " + f); const c = simulationPanel.comparison; if (!f.endsWith(c.a + " vs splitter " + c.b + ".csv")) ui.fail("suggested file: " + f); d.accept() })()
+ui.wait(600)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const n = t.find(simulationPanel, "cfdExportABNote"); ui.log("NOTE " + n.text); if (n.text.indexOf("A/B table written to") !== 0) ui.fail("note: " + n.text) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const c = simulationPanel.comparison; const st = controller.execute("simulation.status", { run: c.a }).result; const dir = st.caseDir.replace(/\/[^/]*$/, ""); const csv = t.read("file://" + dir + "/" + encodeURIComponent(c.a + " vs splitter " + c.b) + ".csv"); const lines = csv.split("\r\n"); ui.log("CSV " + JSON.stringify(lines)); if (lines[0] !== "Quantity,Value" || lines[1].indexOf("Run A (baseline),\"" + c.a) !== 0) ui.fail("head: " + lines.slice(0, 2)); if (lines.indexOf("Verdict,not comparable") < 0) ui.fail("no verdict"); if (!lines.some(l => l.indexOf("Not comparable,") === 0)) ui.fail("no reasons"); if (lines.indexOf("Quantity,A,B,B - A,Change (%),Swing A+B,Within swing") < 0 || lines.indexOf("Drag (N),,,,,,") < 0) ui.fail("table") })()
+ui.shot("cfd-export-ab.png")
+ui.log("cfd export ab done")

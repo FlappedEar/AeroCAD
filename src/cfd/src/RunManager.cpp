@@ -1287,6 +1287,17 @@ std::string csvNumber(double v)
     return os.str();
 }
 
+void writeTextFile(const fs::path& path, const std::string& text)
+{
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    if (!file)
+        throw std::runtime_error("Cannot write '" + path.string() + "'");
+    file << text;
+    file.close();
+    if (!file)
+        throw std::runtime_error("Cannot write '" + path.string() + "'");
+}
+
 std::string csvJson(const Json& v)
 {
     if (v.is_number())
@@ -1377,6 +1388,12 @@ std::size_t RunManager::exportResultsCsv(const std::string& id, const fs::path& 
             row(std::string(k.name) + suffix,
                 c.is_number() && area.is_number() ? csvNumber(c.get<double>() * area.get<double>()) : std::string());
         }
+        // How far each value still swings over the averaging window (CAD-191, CAD-193).
+        if (const Json spread = values.value("spread", Json()); spread.is_object())
+            for (const Key k : {Key{"dragN", "Drag swing ± (N)"}, Key{"liftN", "Lift swing ± (N)"},
+                                Key{"sideN", "Side force swing ± (N)"}, Key{"cd", "Cd swing ±"},
+                                Key{"cl", "Cl swing ±"}, Key{"cs", "Cs swing ±"}})
+                row(k.name, csvJson(spread.value(k.key, Json())));
     }
     row("Iterations recorded", std::to_string(coeffs.time.size()));
 
@@ -1404,14 +1421,68 @@ std::size_t RunManager::exportResultsCsv(const std::string& id, const fs::path& 
             << csvNumber(at(fy, fi)) << ',' << csvNumber(at(px, fi)) << ',' << csvNumber(at(vx, fi)) << "\r\n";
     }
 
-    std::ofstream file(path, std::ios::binary | std::ios::trunc);
-    if (!file)
-        throw std::runtime_error("Cannot write '" + path.string() + "'");
-    file << out.str();
-    file.close();
-    if (!file)
-        throw std::runtime_error("Cannot write '" + path.string() + "'");
+    writeTextFile(path, out.str());
     return coeffs.time.size();
+}
+
+std::size_t RunManager::exportComparisonCsv(const std::string& a, const std::string& b, const fs::path& path)
+{
+    const Json cmp = compare(a, b);
+    std::ostringstream out;
+    auto row = [&](const std::string& key, const std::string& value) {
+        out << csvCell(key) << ',' << csvCell(value) << "\r\n";
+    };
+    auto title = [&](const std::string& id) {
+        const auto st = status(id);
+        const Json source = st ? st->toJson().value("source", Json::object()) : Json::object();
+        const std::string label = source.value("label", std::string());
+        const std::string part = source.value("partName", std::string());
+        return (label.empty() ? id : label + " (" + id + ")") + (part.empty() ? "" : ", part " + part);
+    };
+    out << "Quantity,Value\r\n";
+    row("Run A (baseline)", title(a));
+    row("Run B (variant)", title(b));
+    row("Verdict", cmp.value("verdict", std::string()));
+    for (const auto& c : cmp.value("conditionChanges", Json::array()))
+        row("Different condition", csvJson(c));
+    for (const auto& c : cmp.value("unknownConditions", Json::array()))
+        row("Unknown condition", csvJson(c));
+    for (const auto& r : cmp.value("reasons", Json::array()))
+        row("Not comparable", csvJson(r));
+    for (const auto& n : cmp.value("notes", Json::array()))
+        row("Note", csvJson(n));
+    const Json mesh = cmp.value("meshSensitivity", Json::object());
+    row("Mesh check", mesh.value("message", mesh.value("status", std::string())));
+
+    out << "\r\nQuantity,A,B,B - A,Change (%),Swing A+B,Within swing\r\n";
+    std::size_t rows = 0;
+    auto table = [&](const std::string& name, const Json& d) {
+        if (!d.is_object()) {
+            out << csvCell(name) << ",,,,,,\r\n";
+            return;
+        }
+        Json percent = d.value("percent", Json());
+        const double va = d.value("a", 0.0);
+        if (!d.contains("percent") && std::abs(va) > 1e-12)
+            percent = 100.0 * d.value("difference", 0.0) / std::abs(va);
+        out << csvCell(name) << ',' << csvJson(d.value("a", Json())) << ',' << csvJson(d.value("b", Json())) << ','
+            << csvJson(d.value("difference", Json())) << ',' << csvJson(percent) << ','
+            << csvJson(d.value("noise", Json())) << ',' << csvJson(d.value("withinNoise", Json())) << "\r\n";
+        ++rows;
+    };
+    const Json forces = cmp.value("forces", Json::object());
+    for (const auto& [key, name] :
+         {std::pair{"dragN", "Drag (N)"}, std::pair{"liftN", "Lift (N)"}, std::pair{"sideN", "Side force (N)"},
+          std::pair{"pressureDragN", "Pressure drag (N)"}, std::pair{"viscousDragN", "Viscous drag (N)"}})
+        table(name, forces.value(key, Json()));
+    table("Efficiency L/D", cmp.value("efficiency", Json()));
+    const Json coeffs = cmp.value("coefficientsOnReferenceAreaOfA", Json::object());
+    for (const auto& [key, name] :
+         {std::pair{"cd", "Cd (on the reference area of A)"}, std::pair{"cl", "Cl (on the reference area of A)"},
+          std::pair{"cs", "Cs (on the reference area of A)"}})
+        table(name, coeffs.value(key, Json()));
+    writeTextFile(path, out.str());
+    return rows;
 }
 
 Json RunManager::results(const std::string& id, int maxPoints)

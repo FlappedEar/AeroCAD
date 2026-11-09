@@ -99,10 +99,11 @@ TEST_CASE("simulation.* commands are registered with schemas", "[commands][simul
 {
     RunsDir dir;
     commands::Session session;
-    for (const char* name : {"simulation.environment", "simulation.propose_run", "simulation.run", "simulation.status",
-                             "simulation.list", "simulation.cancel", "simulation.delete", "simulation.results",
-                             "simulation.field", "simulation.compare", "simulation.import", "simulation.install_engine",
-                             "simulation.refine", "simulation.set_engine", "simulation.export_results"}) {
+    for (const char* name :
+         {"simulation.environment", "simulation.propose_run", "simulation.run", "simulation.status", "simulation.list",
+          "simulation.cancel", "simulation.delete", "simulation.results", "simulation.field", "simulation.compare",
+          "simulation.import", "simulation.install_engine", "simulation.refine", "simulation.set_engine",
+          "simulation.export_results", "simulation.export_comparison"}) {
         INFO(name);
         const auto* info = session.registry().info(name);
         REQUIRE(info != nullptr);
@@ -389,6 +390,53 @@ TEST_CASE("simulation.export_results writes conditions, final values and the ful
         session
             .execute("simulation.export_results", {{"run", a}, {"path", (dir.path() / "no/such/dir/x.csv").string()}})
             .ok);
+}
+
+TEST_CASE("simulation.export_comparison writes the A/B verdict and table as CSV (CAD-193)", "[commands][simulation]")
+{
+    RunsDir dir;
+    commands::Session session;
+    const auto part = importBox(session);
+    const auto a = prepareRun(session, part), b = prepareRun(session, part);
+    for (const auto& id : {a, b}) {
+        writeResultFixture(dir.path() / id);
+        writeOutput(dir.path() / id / "aerocad.status", "finished\n");
+        writeOutput(dir.path() / id / "aerocad.engine", "v2506\n");
+    }
+    REQUIRE(session.execute("simulation.rename", {{"run", b}, {"label", "B"}}).ok);
+    const fs::path file = dir.path() / "a vs b.csv";
+    const auto r = session.execute("simulation.export_comparison", {{"a", a}, {"b", b}, {"path", file.string()}});
+    REQUIRE(r.ok);
+    CHECK(r.data.at("rows") == 9); // 5 forces, L/D, Cd/Cl/Cs.
+    std::ifstream in(file, std::ios::binary);
+    const std::string csv(std::istreambuf_iterator<char>(in), {});
+    INFO(csv);
+    const auto verdict =
+        session.execute("simulation.compare", {{"a", a}, {"b", b}}).data.at("verdict").get<std::string>();
+    CHECK(csv.rfind("Quantity,Value\r\nRun A (baseline),\"" + a + ", part ", 0) == 0);
+    CHECK(csv.find("\r\nRun B (variant),\"B (" + b + "), part ") != std::string::npos);
+    CHECK(csv.find("\r\nVerdict," + verdict + "\r\n") != std::string::npos);
+    CHECK(csv.find("\r\nMesh check,") != std::string::npos);
+    // Constant fixture histories: no swing, so an equal value is within it.
+    CHECK(csv.find("\r\n\r\nQuantity,A,B,B - A,Change (%),Swing A+B,Within swing\r\n"
+                   "Drag (N),1,1,0,0,0,yes\r\n") != std::string::npos);
+    CHECK(csv.find("\r\nEfficiency L/D,0.2,0.2,0,0,,\r\n") != std::string::npos);
+    CHECK(csv.find("\r\nCd (on the reference area of A),0.8,0.8,0,0,0,yes\r\n") != std::string::npos);
+
+    // The per-run CSV has the swing rows too.
+    const fs::path one = dir.path() / "a.csv";
+    REQUIRE(session.execute("simulation.export_results", {{"run", a}, {"path", one.string()}}).ok);
+    std::ifstream in1(one, std::ios::binary);
+    const std::string runCsv(std::istreambuf_iterator<char>(in1), {});
+    CHECK(runCsv.find("\r\nDrag swing ± (N),0\r\n") != std::string::npos);
+    CHECK(runCsv.find("\r\nCs swing ±,0\r\n") != std::string::npos);
+
+    CHECK_FALSE(session.execute("simulation.export_comparison", {{"a", a}, {"b", "nope"}, {"path", file.string()}}).ok);
+    CHECK_FALSE(session.execute("simulation.export_comparison", {{"a", a}, {"b", b}, {"path", ""}}).ok);
+    CHECK_FALSE(session
+                    .execute("simulation.export_comparison",
+                             {{"a", a}, {"b", b}, {"path", (dir.path() / "no/such/dir/x.csv").string()}})
+                    .ok);
 }
 
 TEST_CASE("simulation.rename sets, trims and clears a run's label and keeps it on reload", "[commands][simulation]")
