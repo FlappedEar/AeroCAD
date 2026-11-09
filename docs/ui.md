@@ -293,7 +293,8 @@ See [cad.md](cad.md) for the timeline and the commands behind the tools.
 - **Create Sketch**: click a planar face of a body, a scan or a fitted surface, or pick
   XY / XZ / YZ. A click into a hole of a scan (a grille opening) takes the surface next to
   it, within 4 degrees of the click, and the status bar says so. The view turns to look at
-  the sketch. Tools: Line (chains; Esc or right-click › End Curve ends), Rectangle, Circle, Arc
+  the sketch. Tools: Line (chains; Esc or right-click › End Curve ends), Rectangle, Circle, 2-Point
+  Circle (both ends of a diameter), 3-Point Circle (three points on it), Arc
   (start, end, point on arc), Center Rectangle (centre, then a corner), Center Point Arc
   (centre, start, end; counter-clockwise), Polygon, Slot, Spline (Fusion: Fit Point Spline; click fit
   points, Enter, a double-click or Esc ends it open, a click on the first point closes it;
