@@ -524,6 +524,11 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_break.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_sketch_break_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-235: Point places a sketch point that snaps, is drawn and can be deleted.
+    add_test(NAME app_sketch_point_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_point.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_sketch_point_test PROPERTIES LABELS gui TIMEOUT 60)
     # CAD-126: X turns sketch curves into construction geometry.
     add_test(NAME app_sketch_construction_test
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_construction.ui

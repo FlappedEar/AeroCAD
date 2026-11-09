@@ -115,6 +115,8 @@ TopoDS_Edge makeEdge(const Plane& plane, const SketchCurve& c)
             throw ModelingError("Spline interpolation failed");
         return BRepBuilderAPI_MakeEdge(interp.Curve()).Edge();
     }
+    case SketchCurve::Kind::Point:
+        throw ModelingError("A sketch point has no edge");
     }
     throw ModelingError("Unknown curve kind");
 }
@@ -191,6 +193,8 @@ SketchGeometry buildSketch(const Plane& planeIn, const std::vector<SketchCurve>&
         builder.MakeCompound(all);
         std::vector<TopoDS_Edge> profileEdges;
         for (const auto& c : curves) {
+            if (c.kind == SketchCurve::Kind::Point)
+                continue; // a point bounds nothing and has no edge
             const TopoDS_Edge e = makeEdge(plane, c);
             builder.Add(all, e);
             if (!c.construction)
@@ -312,7 +316,8 @@ Shape curveEdges(const Plane& planeIn, const std::vector<SketchCurve>& curves)
         throw ModelingError("No curves given");
     try {
         for (const auto& c : curves)
-            builder.Add(comp, makeEdge(plane, c));
+            if (c.kind != SketchCurve::Kind::Point)
+                builder.Add(comp, makeEdge(plane, c));
     } catch (const Standard_Failure& e) {
         throw ModelingError(std::string("Sketch curve: ") + e.GetMessageString());
     }
@@ -326,6 +331,9 @@ std::vector<SketchCurve> offsetCurves(const std::vector<SketchCurve>& curves, do
     if (std::abs(distance) < kTol)
         throw ModelingError("The offset distance must not be zero");
     const Plane xy; // plane coordinates are XY here
+    for (const auto& c : curves)
+        if (c.kind == SketchCurve::Kind::Point)
+            throw ModelingError("Offset works on curves, not on sketch points");
     try {
         BRepBuilderAPI_MakeWire wire;
         // Add the edges in an order that keeps the chain connected.

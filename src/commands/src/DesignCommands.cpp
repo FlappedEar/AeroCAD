@@ -79,18 +79,20 @@ Json curveSchema()
          "at any angle, then the other side; height is signed, positive to the left of start -> end); circle {center, radius | diameter}; "
          "arc {start, through, end} (three-point arc); center_arc {center, radius, startAngle, endAngle} "
          "(degrees, counter-clockwise); polygon {center, radius, sides, angle?}; slot {start, end, width} "
-         "(centre-to-centre); spline {points, closed?}; tangent_arc {from: {curve, point: start | end}, end} "
+         "(centre-to-centre); spline {points, closed?}; point {at} (a sketch point: no edge, no profile; "
+         "it joins a curve end at the same place); tangent_arc {from: {curve, point: start | end}, end} "
          "(sketch.add_curves only: an arc leaving the end of a line or arc tangentially, kept tangent). "
          "construction: true excludes it from profiles."},
         {"properties",
          {{"type",
            {{"type", "string"},
             {"enum", {"line", "rectangle", "center_rectangle", "three_point_rectangle", "circle", "arc", "center_arc", "polygon", "slot",
-                      "spline", "tangent_arc"}}}},
+                      "spline", "point", "tangent_arc"}}}},
           {"from", {{"type", "object"},
                     {"description", "tangent_arc: the end it starts from, {curve: index, point: start | end}."}}},
           {"start", point2("Start point.")},
           {"end", point2("End point.")},
+          {"at", point2("point: its position.")},
           {"through", point2("Point on the arc.")},
           {"corner", point2("Rectangle corner.")},
           {"opposite", point2("Opposite rectangle corner.")},
@@ -1493,7 +1495,7 @@ void registerSketchCommands(CommandRegistry& r)
               Json curves = Json::array();
               for (std::size_t i = 0; i < sk.curves.size(); ++i) {
                   const auto& c = sk.curves[i];
-                  static const char* kinds[] = {"line", "arc", "circle", "spline"};
+                  static const char* kinds[] = {"line", "arc", "circle", "spline", "point"};
                   Json pts = Json::array();
                   for (const auto& p : c.points)
                       pts.push_back(Json::array({p.x, p.y}));

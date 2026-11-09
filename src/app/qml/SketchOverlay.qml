@@ -628,6 +628,13 @@ Item {
     }
 
     function click(p) {
+        if (tool === "point") {
+            // One click places a sketch point (Fusion: Point).
+            emitCurve({ type: "point", at: p })
+            points = []
+            canvas.requestPaint()
+            return
+        }
         const pts = points.concat([p])
         if (tool === "spline") {
             // As in Fusion: a click on the first point closes the spline; a second click
@@ -756,6 +763,14 @@ Item {
 
     /// Draws a solved sketch curve (sketch.curves format) as a polyline on the canvas.
     function strokeCurve(ctx, c) {
+        if (c.kind === "point") {
+            // A sketch point: a dot, ringed when highlighted.
+            const q = toScreen(c.points[0])
+            ctx.beginPath()
+            ctx.arc(q.x, q.y, Math.max(3, ctx.lineWidth + 1), 0, 2 * Math.PI)
+            ctx.stroke()
+            return
+        }
         let uv = []
         if (c.kind === "spline") {
             uv = c.samples || c.points
@@ -1012,6 +1027,18 @@ Item {
                 }
                 ctx.stroke()
             }
+            // Sketch points, as dots (the 3D view draws them as small crosses).
+            ctx.fillStyle = Theme.sketchColor
+            for (const c of root.sketchCurves) {
+                if (c.kind !== "point")
+                    continue
+                const q = root.toScreen(c.points[0])
+                ctx.globalAlpha = c.construction ? 0.5 : 1
+                ctx.beginPath()
+                ctx.arc(q.x, q.y, 3.5, 0, 2 * Math.PI)
+                ctx.fill()
+            }
+            ctx.globalAlpha = 1
             // Select mode: the curve under the cursor and the selected curves, highlighted.
             for (const c of root.sketchCurves) {
                 const sel = root.selectedCurves.indexOf(c.index) >= 0 || root.mirrorCurves.indexOf(c.index) >= 0
@@ -1226,6 +1253,7 @@ Item {
                     : root.tool === "trim" ? qsTr("Trim: click the piece of a curve to remove (up to where other curves cross it)")
                     : root.tool === "extend" ? qsTr("Extend: click near the end of a line or arc to lengthen it to the next curve")
                     : root.tool === "break" ? qsTr("Break: click a curve to split it where other curves cross it")
+                    : root.tool === "point" ? qsTr("Point: click to place a sketch point (it snaps to curve ends and centres)")
                     : root.tool === "line" ? qsTr("Line: click points; Esc (or right-click › End Curve) ends the chain")
                     : root.tool === "rectangle" ? qsTr("Rectangle: drag or click two corners; type width, height")
                     : root.tool === "center_rectangle" ? qsTr("Center rectangle: click the centre, then a corner; type width, height")
@@ -1273,7 +1301,7 @@ Item {
                 }
             }
             RowLayout {
-                visible: root.active && !root.constraintTool && root.tool !== "trim" && root.tool !== "extend" && root.tool !== "break" && root.tool !== "mirror" && root.tool !== "fillet" && root.tool !== "project" && root.tool !== "spline"
+                visible: root.active && !root.constraintTool && root.tool !== "trim" && root.tool !== "extend" && root.tool !== "break" && root.tool !== "point" && root.tool !== "mirror" && root.tool !== "fillet" && root.tool !== "project" && root.tool !== "spline"
                          && root.tool !== "tangent_arc"
                          && root.tool !== "circle_3point"
                 Label { text: root.tool === "rectangle" || root.tool === "center_rectangle" ? qsTr("Width, height")
