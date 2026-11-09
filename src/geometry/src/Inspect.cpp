@@ -537,7 +537,6 @@ std::size_t refineShapeDistances(const Shape& shape, const std::vector<core::Vec
         Bnd_Box box;
         std::vector<gp_Pnt> samples;
         std::vector<gp_Pnt2d> sampleUV;
-        double spacing = 0.0; ///< Largest sample cell diagonal: any surface point is this close to a sample.
     };
     constexpr int seedSpans = 24;
     // Built once per thread: OpenCASCADE's projection and classification objects keep
@@ -552,7 +551,8 @@ std::size_t refineShapeDistances(const Shape& shape, const std::vector<core::Vec
             FaceData f;
             f.surface = new ShapeAnalysis_Surface(surface);
             f.classifier = std::make_unique<BRepTopAdaptor_FClass2d>(face, 1e-7);
-            BRepBndLib::Add(face, f.box);
+            // From the geometry, not the triangulation: a safe bound for skipping the face.
+            BRepBndLib::Add(face, f.box, false);
             double u0 = 0.0, u1 = 0.0, v0 = 0.0, v1 = 0.0;
             BRepTools::UVBounds(face, u0, u1, v0, v1);
             for (int j = 0; j <= seedSpans; ++j)
@@ -561,11 +561,6 @@ std::size_t refineShapeDistances(const Shape& shape, const std::vector<core::Vec
                     f.samples.push_back(surface->Value(uv.X(), uv.Y()));
                     f.sampleUV.push_back(uv);
                 }
-            const auto at = [](int i, int j) { return static_cast<std::size_t>(j * (seedSpans + 1) + i); };
-            for (int j = 0; j < seedSpans; ++j)
-                for (int i = 0; i < seedSpans; ++i)
-                    f.spacing = std::max({f.spacing, f.samples[at(i, j)].Distance(f.samples[at(i + 1, j + 1)]),
-                                          f.samples[at(i + 1, j)].Distance(f.samples[at(i, j + 1)])});
             faces.push_back(std::move(f));
         }
         return faces;
@@ -582,9 +577,11 @@ std::size_t refineShapeDistances(const Shape& shape, const std::vector<core::Vec
                 const double current = std::abs(values[i]);
                 // The exact distance replaces the mesh one either way: an inscribed triangulation
                 // can also be closer than the surface (inside a convex reference).
-                // Faces nearest first: a face cannot be closer than its nearest sample minus the
-                // sample spacing, so the rest are skipped once one is found.
+                // Faces in the order of their nearest sample (likely the closest first). A face
+                // whose bounding box is farther than the best distance found is skipped: the box
+                // is a safe bound, the samples are not (a bulge between them).
                 struct Candidate {
+                    double estimate;
                     double bound;
                     std::size_t face;
                     std::size_t seed;
@@ -605,14 +602,19 @@ std::size_t refineShapeDistances(const Shape& shape, const std::vector<core::Vec
                             seed = k;
                         }
                     }
-                    candidates.push_back({std::sqrt(seedDistance) - f.spacing, n, seed});
+                    double xmin = 0.0, ymin = 0.0, zmin = 0.0, xmax = 0.0, ymax = 0.0, zmax = 0.0;
+                    f.box.Get(xmin, ymin, zmin, xmax, ymax, zmax);
+                    const double dx = std::max({xmin - p.X(), 0.0, p.X() - xmax});
+                    const double dy = std::max({ymin - p.Y(), 0.0, p.Y() - ymax});
+                    const double dz = std::max({zmin - p.Z(), 0.0, p.Z() - zmax});
+                    candidates.push_back({seedDistance, std::sqrt(dx * dx + dy * dy + dz * dz), n, seed});
                 }
                 std::sort(candidates.begin(), candidates.end(),
-                          [](const Candidate& a, const Candidate& b) { return a.bound < b.bound; });
+                          [](const Candidate& a, const Candidate& b) { return a.estimate < b.estimate; });
                 double best = std::numeric_limits<double>::infinity();
                 for (const auto& c : candidates) {
-                    if (c.bound > best)
-                        break;
+                    if (c.bound >= best)
+                        continue;
                     auto& f = faces[c.face];
                     try {
                         // Falls back to a global search by itself when the local one fails,
