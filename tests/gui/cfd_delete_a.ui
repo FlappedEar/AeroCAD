@@ -21,4 +21,6 @@ ui.wait(800)
 (() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "delTest"); const gone = t.ids[0]; const bad = []; if (simulationPanel.activeRun === gone) bad.push("A is the deleted run"); if (simulationPanel.compareRun) bad.push("B " + simulationPanel.compareRun + (simulationPanel.compareRun === simulationPanel.activeRun ? " (same as A)" : "")); if (simulationPanel.showB) bad.push("showB"); if (simulationPanel.resultsB) bad.push("B results"); if (Object.keys(simulationPanel.fieldStats).some(k => k.indexOf(gone + "/") === 0)) bad.push("field stats of the deleted run"); if (Object.keys(simulationPanel.runSections).some(k => k === gone)) bad.push("sections of the deleted run"); ui.log("A " + simulationPanel.activeRun + " LEFT " + bad.join(", ")); if (bad.length) ui.fail("left after deleting A: " + bad.join(", ")) })()
 (() => { const n = controller.execute("simulation.list").result.runs.length; if (n !== 1) ui.fail("runs left: " + n) })()
 ui.shot("cfd-delete-a.png")
+# CAD-217: unticking B (no pair) turns "Show B" off, so the next B ticked starts on A.
+(() => { simulationPanel.showB = true; simulationPanel.compareRun = ""; simulationPanel.loadComparison(); if (simulationPanel.showB) ui.fail("Show B left on without B") })()
 ui.log("cfd delete A done")
