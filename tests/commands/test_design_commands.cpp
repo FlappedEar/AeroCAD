@@ -2559,6 +2559,21 @@ TEST_CASE("Design commands: sketch Move/Copy (CAD-244)", "[commands][cad][solver
         CHECK(near(c.at("curves")[0].at("points")[0], was[0][0].get<double>() + 3, was[0][1].get<double>() + 2));
         CHECK(near(c.at("curves")[0].at("points")[1], was[1][0].get<double>() + 3, was[1][1].get<double>() + 2));
     }
+    SECTION("a three-point arc through any point moves and copies (Codex review)")
+    {
+        const Json t = run(s, "sketch.create",
+                           {{"plane", "XY"},
+                            {"curves", Json::array({{{"type", "arc"}, {"start", {5, 0}}, {"through", {3, 4}}, {"end", {0, 5}}}})}});
+        const auto tid = t.at("id").get<std::uint64_t>();
+        run(s, "sketch.move_curves", {{"sketch", tid}, {"curves", {0}}, {"dx", 10}});
+        run(s, "sketch.move_curves", {{"sketch", tid}, {"curves", {0}}, {"dy", 10}, {"copy", true}});
+        const Json c = run(s, "sketch.curves", {{"sketch", tid}});
+        REQUIRE(c.at("curves").size() == 2);
+        CHECK(near(c.at("curves")[0].at("points")[0], 15, 0));
+        CHECK(near(c.at("curves")[0].at("points")[2], 10, 5));
+        CHECK(near(c.at("curves")[1].at("points")[0], 15, 10));
+        CHECK(near(c.at("curves")[1].at("points")[2], 10, 15));
+    }
     SECTION("a turned copy leaves horizontal and vertical with the original (Codex review)")
     {
         const Json t = run(s, "sketch.create",

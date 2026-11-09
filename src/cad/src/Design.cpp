@@ -1461,6 +1461,18 @@ Vec2 curvePointAt(const SketchCurve& c, const Json& ref)
     return name == "start" ? c.points.front() : c.points.back();
 }
 
+/// The same curve where it matters: an arc by its ends and centre (the solver may put its
+/// through point anywhere on it), anything else point by point.
+bool sameShape(const SketchCurve& a, const SketchCurve& b, double tol)
+{
+    if (a.kind != SketchCurve::Kind::Arc || b.kind != SketchCurve::Kind::Arc)
+        return sameCurve(a, b, tol);
+    const Json c{{"point", "center"}};
+    auto close = [&](const Vec2& p, const Vec2& q) { return std::hypot(p.x - q.x, p.y - q.y) <= tol; };
+    return close(a.points.front(), b.points.front()) && close(a.points.back(), b.points.back()) &&
+           close(curvePointAt(a, c), curvePointAt(b, c));
+}
+
 } // namespace
 
 void Design::moveSketchCurves(FeatureId sketchId, const std::vector<std::size_t>& picked, const Vec2& offset,
@@ -1572,7 +1584,7 @@ void Design::moveSketchCurves(FeatureId sketchId, const std::vector<std::size_t>
         it = m_sketches.find(sketchId);
         for (std::size_t i = 0; i < curves.size() && it != m_sketches.end(); ++i) {
             if (map[i] && (*map[i] >= it->second.curves.size() ||
-                           !sameCurve(it->second.curves[*map[i]], movedCurve(curves[i]), 1e-6))) {
+                           !sameShape(it->second.curves[*map[i]], movedCurve(curves[i]), 1e-6))) {
                 m_state = before;
                 regenerate();
                 throw DesignError("The copied curves' constraints do not let them sit there");
@@ -1629,7 +1641,7 @@ void Design::moveSketchCurves(FeatureId sketchId, const std::vector<std::size_t>
     // Rewritten as items, the picked curves must still be where they were asked to go.
     it = m_sketches.find(sketchId);
     for (std::size_t i = 0; i < curves.size() && it != m_sketches.end(); ++i) {
-        if (sel[i] && (i >= it->second.curves.size() || !sameCurve(it->second.curves[i], movedCurve(curves[i]), 1e-6))) {
+        if (sel[i] && (i >= it->second.curves.size() || !sameShape(it->second.curves[i], movedCurve(curves[i]), 1e-6))) {
             m_state = before;
             regenerate();
             throw DesignError("Those curves cannot move there: their shape holds them");
