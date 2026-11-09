@@ -105,6 +105,12 @@ replaced by `_` (`document.import` -> `document_import`). New commands (CAD tool
 | `view_pick` | Positions `[x, y]` (0..1) in the last viewport screenshot to the part hit, the 3D point (mm) and the surface normal there: how an agent finds "that corner of the bumper" on a scan. |
 | `view_show_results` | Draws a finished CFD run in the 3D view (Cp on the part, streamlines, sections, wake, vortices), as SIMULATE > Results does. |
 
+What the agent gets from `view_screenshot {part: <fin>}` after `surface_fin_from_sketch`, and
+from `view_show_results` + `view_screenshot {area: "window"}` after a CFD run:
+
+![Fin on the bumper, as the agent sees it](images/mcp/agent-fin-screenshot.png)
+![CFD results drawn by the agent](images/mcp/agent-cfd-results.png)
+
 The `view_*` tools need the AeroCAD window; with `--headless` they fail with a message
 saying so. They do not change the document.
 
