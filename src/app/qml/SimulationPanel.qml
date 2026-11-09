@@ -118,8 +118,23 @@ Pane {
     property var environment: null
     property var runs: []
     /// Runs made from a part in the open document, and the others (CAD-136).
-    readonly property var ownRuns: runs.filter(r => r.sourceInDocument).reverse()
-    readonly property var otherRuns: runs.filter(r => !r.sourceInDocument).reverse()
+    readonly property var ownRuns: sortedRuns(runs.filter(r => r.sourceInDocument).reverse())
+    readonly property var otherRuns: sortedRuns(runs.filter(r => !r.sourceInDocument).reverse())
+    /// Order of the run list (CAD-207): "newest", "drag", "cd" or "downforce".
+    property string runSort: "newest"
+    /// Ranks newest-first runs by their final result (CAD-205); runs without one (running,
+    /// failed, prepared) follow, newest first. Equal values keep the newest first.
+    function sortedRuns(newestFirst) {
+        if (runSort === "newest")
+            return newestFirst
+        const key = r => !r.final ? null
+                       : runSort === "drag" ? r.final.dragN : runSort === "cd" ? r.final.cd : r.final.liftN
+        const ranked = newestFirst.filter(r => typeof key(r) === "number")
+        const rest = newestFirst.filter(r => typeof key(r) !== "number")
+        // Array.sort is stable, so ties stay newest first.
+        ranked.sort((a, b) => key(a) - key(b))
+        return ranked.concat(rest)
+    }
     readonly property var shownOtherRuns: showOtherRuns ? otherRuns
                                                         : otherRuns.filter(r => r.id === activeRun || r.id === compareRun)
     property bool showOtherRuns: false
@@ -1419,11 +1434,30 @@ Pane {
 
             // --- Runs -----------------------------------------------------------------
             Label { text: qsTr("Runs"); font.bold: true; visible: root.tab === 0 && root.runs.length > 0 }
-            Label {
+            RowLayout {
+                Layout.fillWidth: true
                 visible: root.tab === 0 && root.runs.length > 0
-                text: qsTr("Click a run to show it (A). B: compare with A.")
-                opacity: 0.6
-                font.pixelSize: 11
+                Label {
+                    Layout.fillWidth: true
+                    text: qsTr("Click a run to show it (A). B: compare with A.")
+                    opacity: 0.6
+                    font.pixelSize: 11
+                    wrapMode: Text.WordWrap
+                }
+                // Rank the variants by their final result (CAD-207).
+                Label { text: qsTr("Sort"); opacity: 0.7; font.pixelSize: 11; visible: root.runs.length > 1 }
+                ComboBox {
+                    objectName: "cfdRunSort"
+                    visible: root.runs.length > 1
+                    textRole: "text"
+                    valueRole: "value"
+                    model: [{ value: "newest", text: qsTr("Newest") },
+                            { value: "drag", text: qsTr("Lowest drag") },
+                            { value: "cd", text: qsTr("Lowest Cd") },
+                            { value: "downforce", text: qsTr("Most downforce") }]
+                    currentIndex: Math.max(0, model.findIndex(m => m.value === root.runSort))
+                    onActivated: root.runSort = currentValue
+                }
             }
             // This design's runs first (newest first); runs of other designs (their part is
             // not in the open document) are folded away unless they are A or B (CAD-136).
@@ -1586,6 +1620,8 @@ Pane {
                                 // Results (CAD-205); a running one its latest iteration.
                                 if (m.final)
                                     s += " · Cd " + root.num(m.final.cd, 3) + " · drag " + root.num(m.final.dragN, 3) + " N"
+                                         // The value a downforce ranking goes by (CAD-207).
+                                         + (root.runSort === "downforce" ? " · lift " + root.num(m.final.liftN, 3) + " N" : "")
                                 else if (l.cd !== null && l.cd !== undefined && m.state !== "finished")
                                     s += " · provisional Cd " + root.num(l.cd, 3) + " · drag " + root.num(l.dragN, 3) + " N"
                                 return s

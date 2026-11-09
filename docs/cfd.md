@@ -371,6 +371,11 @@ over the last 20 % of the iterations, the same numbers as Results (CAD-205,
 `simulation.list` return it as `final` {cd, cl, dragN, liftN} (null while running, after a
 failure or with cut-off outputs); `latest` stays the last iteration, which a running run's
 row shows as "provisional Cd".
+**Sort** above the run list ranks the variants by that final result (CAD-207,
+[run list](images/audit/cad-207-run-sort.png)): *Newest* (default), *Lowest drag*, *Lowest
+Cd* or *Most downforce* (most negative lift, which the rows then show too). Runs without a
+final result (running, failed, prepared) follow, newest first; this design's runs and the
+runs from other designs are each sorted.
 
 `simulation.run` returns at once with a run id; the run continues in the background,
 also when the app is closed (it is picked up again on the next start). Progress is
