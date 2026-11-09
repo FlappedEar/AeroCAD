@@ -1683,6 +1683,27 @@ TEST_CASE("RunManager: invalid metadata is contained to its run", "[cfd][run-met
             write(dir / "run.json", "{broken-again");
             CHECK_THROWS(reopened->setLabel(broken->id, "must not overwrite"));
             CHECK(slurp(dir / "run.json") == "{broken-again");
+            // Valid JSON with a field the loader rejects is not rewritten either.
+            for (const auto& bad : {nlohmann::json{{"source", nlohmann::json::array()}},
+                                    nlohmann::json{{"source", {{"partId", -1}}}},
+                                    nlohmann::json{{"backend", "unknown"}},
+                                    nlohmann::json{{"dockerHost", "not a host"}}}) {
+                auto damaged = original;
+                damaged.update(bad);
+                const std::string bytes = damaged.dump();
+                write(dir / "run.json", bytes);
+                CHECK_THROWS_WITH(reopened->setLabel(broken->id, "must not overwrite"),
+                                  Catch::Matchers::ContainsSubstring("Cannot rename run"));
+                CHECK(slurp(dir / "run.json") == bytes);
+            }
+            // A rename keeps the source fields now on disk, not the ones loaded earlier.
+            auto edited = original;
+            edited["source"]["partName"] = "edited elsewhere";
+            write(dir / "run.json", edited.dump());
+            CHECK(reopened->setLabel(broken->id, "renamed"));
+            const auto renamed = nlohmann::json::parse(slurp(dir / "run.json"));
+            CHECK(renamed.at("source").at("partName") == "edited elsewhere");
+            CHECK(renamed.at("source").at("label") == "renamed");
         }
     }
 }

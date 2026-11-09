@@ -773,6 +773,44 @@ void RunManager::scan(bool follow)
     }
 }
 
+namespace {
+
+/// The fields of a run's run.json, checked as loadRun() trusts them. Throws on any
+/// malformed field, so a caller never acts on (or rewrites) a partly valid record.
+struct RunMetadata {
+    fs::path caseDir;
+    bool imported = false;
+    std::string created;
+    Backend backend = Backend::Docker;
+    RunSource source;
+    std::string docker;
+    std::string dockerHost;
+};
+
+RunMetadata decodeRunMetadata(const Json& j, const fs::path& dir)
+{
+    if (!j.is_object())
+        throw std::runtime_error("Expected a JSON object");
+    RunMetadata m;
+    m.caseDir = j.contains("caseDir") ? fs::path(j.at("caseDir").get<std::string>()) : dir;
+    if (m.caseDir.empty())
+        throw std::runtime_error("caseDir must not be empty");
+    m.imported = j.value("imported", false);
+    m.created = j.value("created", std::string());
+    const auto backend = parseBackend(j.value("backend", std::string("docker")));
+    if (!backend)
+        throw std::runtime_error("backend must be 'docker' or 'local'");
+    m.backend = *backend;
+    m.source = sourceFrom(j.value("source", Json::object()));
+    m.docker = j.value("docker", std::string());
+    m.dockerHost = j.value("dockerHost", std::string());
+    if (!isValidEngineHost(m.dockerHost))
+        throw std::runtime_error("dockerHost is not a supported engine address");
+    return m;
+}
+
+} // namespace
+
 void RunManager::loadRun(const fs::path& dir, bool follow)
 {
     auto run = std::make_unique<Run>();
@@ -780,22 +818,14 @@ void RunManager::loadRun(const fs::path& dir, bool follow)
         std::ifstream in(dir / "run.json");
         Json j;
         in >> j;
-        if (!j.is_object())
-            throw std::runtime_error("Expected a JSON object");
-        run->caseDir = j.contains("caseDir") ? fs::path(j.at("caseDir").get<std::string>()) : dir;
-        if (run->caseDir.empty())
-            throw std::runtime_error("caseDir must not be empty");
-        run->imported = j.value("imported", false);
-        run->created = j.value("created", std::string());
-        const auto backend = parseBackend(j.value("backend", std::string("docker")));
-        if (!backend)
-            throw std::runtime_error("backend must be 'docker' or 'local'");
-        run->backend = *backend;
-        run->source = sourceFrom(j.value("source", Json::object()));
-        run->docker = j.value("docker", std::string());
-        run->dockerHost = j.value("dockerHost", std::string());
-        if (!isValidEngineHost(run->dockerHost))
-            throw std::runtime_error("dockerHost is not a supported engine address");
+        RunMetadata m = decodeRunMetadata(j, dir);
+        run->caseDir = std::move(m.caseDir);
+        run->imported = m.imported;
+        run->created = std::move(m.created);
+        run->backend = m.backend;
+        run->source = std::move(m.source);
+        run->docker = std::move(m.docker);
+        run->dockerHost = std::move(m.dockerHost);
     } catch (const std::exception& e) {
         // Discard all partially decoded paths and engine settings. Preserve the original
         // file and expose this record alongside healthy runs instead of aborting startup.
@@ -1226,17 +1256,18 @@ bool RunManager::setLabel(const std::string& id, const std::string& label)
         throw std::runtime_error(run->metadataError);
     const fs::path file = run->dir / "run.json";
     Json j;
+    RunSource source;
     try {
         std::ifstream in(file);
         if (!in)
             throw std::runtime_error("file cannot be read");
         in >> j;
-        if (!j.is_object())
-            throw std::runtime_error("expected a JSON object");
+        // The file may have changed since it was loaded: check all of it as loadRun()
+        // does, and keep its own source fields, so a rename never rewrites a bad record.
+        source = decodeRunMetadata(j, run->dir).source;
     } catch (const std::exception& e) {
         throw std::runtime_error("Cannot rename run: metadata '" + file.string() + "' is invalid: " + e.what());
     }
-    RunSource source = run->source;
     source.label = label;
     j["source"] = sourceJson(source);
     // Written next to it and renamed over it, so a crash never leaves half a run.json.
