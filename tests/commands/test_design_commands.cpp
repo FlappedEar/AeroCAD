@@ -1446,3 +1446,77 @@ TEST_CASE("Design commands: symmetric on two arcs mirrors the whole arc (CAD-206
                              {{"sketch", id}, {"constraints", Json::array({{{"type", "symmetric"}, {"curves", {5, 1}}, {"curve", 0}}})}});
     CHECK_FALSE(r.ok);
 }
+
+TEST_CASE("Design commands: tangent arc from the end of a line or arc (CAD-212)", "[commands][cad][solver]")
+{
+    commands::Session s;
+    const Json sk = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {10, 0}}}})}});
+    const auto id = sk.at("id").get<std::uint64_t>();
+    // From the end of the line (heading +x) to (20, 10): a quarter circle about (10, 10); then on
+    // from that arc's end (heading +y) to (10, 30): radius 25 about (-5, 10). Both in one call.
+    run(s, "sketch.add_curves",
+        {{"sketch", id},
+         {"curves", Json::array({{{"type", "tangent_arc"}, {"from", {{"curve", 0}, {"point", "end"}}}, {"end", {20, 10}}},
+                                 {{"type", "tangent_arc"}, {"from", {{"curve", 1}, {"point", "end"}}}, {"end", {10, 30}}}})}});
+    Json c = run(s, "sketch.curves", {{"sketch", id}});
+    REQUIRE(c.at("curves").size() == 3);
+    const auto at = [](const Json& p, double x, double y) {
+        CHECK(p[0].get<double>() == Approx(x).margin(1e-6));
+        CHECK(p[1].get<double>() == Approx(y).margin(1e-6));
+    };
+    at(c.at("curves")[1].at("points")[0], 10, 0);
+    at(c.at("curves")[1].at("points")[1], 10 + 10 * std::sqrt(0.5), 10 - 10 * std::sqrt(0.5));
+    at(c.at("curves")[1].at("points")[2], 20, 10);
+    at(c.at("curves")[2].at("points")[0], 20, 10);
+    at(c.at("curves")[2].at("points")[2], 10, 30);
+    const auto centre = [](const Json& a) {
+        const double ax = a[0][0].get<double>(), ay = a[0][1].get<double>(), bx = a[1][0].get<double>(),
+                     by = a[1][1].get<double>(), ex = a[2][0].get<double>(), ey = a[2][1].get<double>();
+        const double den = 2 * (ax * (by - ey) + bx * (ey - ay) + ex * (ay - by));
+        return Json::array({((ax * ax + ay * ay) * (by - ey) + (bx * bx + by * by) * (ey - ay) + (ex * ex + ey * ey) * (ay - by)) / den,
+                            ((ax * ax + ay * ay) * (ex - bx) + (bx * bx + by * by) * (ax - ex) + (ex * ex + ey * ey) * (bx - ax)) / den});
+    };
+    at(centre(c.at("curves")[2].at("points")), -5, 10);
+    const auto& cons = c.at("constraints");
+    REQUIRE(cons.size() == 2);
+    CHECK(cons[0].at("type") == "tangent");
+    CHECK(cons[1].at("curves") == Json::array({1, 2}));
+    // One undo step removes both arcs.
+    run(s, "edit.undo");
+    CHECK(run(s, "sketch.curves", {{"sketch", id}}).at("curves").size() == 1);
+    run(s, "edit.redo");
+
+    // The arc stays tangent when the line changes: lengthen it to 20 and the arc's centre
+    // stays straight above the line's end.
+    run(s, "sketch.add_constraints",
+        {{"sketch", id}, {"constraints", Json::array({{{"type", "fix"}, {"points", Json::array({{{"curve", 0}, {"point", "start"}}})}},
+                                                      {{"type", "horizontal"}, {"curve", 0}},
+                                                      {{"type", "length"}, {"curve", 0}, {"value", 20}}})}});
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    const auto& l = c.at("curves")[0].at("points");
+    const auto& a = c.at("curves")[1].at("points");
+    at(l[1], 20, 0);
+    at(a[0], 20, 0);
+    // The arc's centre stays straight above the line's end (tangent), and the second arc's
+    // centre stays on the line through the first arc's centre and their shared end.
+    CHECK(centre(a)[0].get<double>() == Approx(20).margin(1e-6));
+    const Json c1 = centre(a), c2 = centre(c.at("curves")[2].at("points")), j = c.at("curves")[2].at("points")[0];
+    const double cross = (c1[0].get<double>() - j[0].get<double>()) * (c2[1].get<double>() - j[1].get<double>()) -
+                         (c1[1].get<double>() - j[1].get<double>()) * (c2[0].get<double>() - j[0].get<double>());
+    const double l1 = std::hypot(c1[0].get<double>() - j[0].get<double>(), c1[1].get<double>() - j[1].get<double>());
+    const double l2 = std::hypot(c2[0].get<double>() - j[0].get<double>(), c2[1].get<double>() - j[1].get<double>());
+    CHECK(cross / (l1 * l2) == Approx(0).margin(1e-5)); // sine of the angle (curve points are rounded)
+
+    // Refused: an end on the tangent line, a circle as the source.
+    CHECK_FALSE(s.execute("sketch.add_curves", {{"sketch", id},
+                                                {"curves", Json::array({{{"type", "tangent_arc"},
+                                                                         {"from", {{"curve", 0}, {"point", "end"}}},
+                                                                         {"end", {40, 0}}}})}}).ok);
+    run(s, "sketch.add_curves", {{"sketch", id}, {"curves", Json::array({{{"type", "circle"}, {"center", {50, 50}}, {"radius", 3}}})}});
+    CHECK_FALSE(s.execute("sketch.add_curves", {{"sketch", id},
+                                                {"curves", Json::array({{{"type", "tangent_arc"},
+                                                                         {"from", {{"curve", 3}, {"point", "end"}}},
+                                                                         {"end", {60, 60}}}})}}).ok);
+}

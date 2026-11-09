@@ -1,0 +1,35 @@
+# CAD-212: Tangent Arc in the sketch (Fusion: Arc › Tangent Arc). From the end of a line, then
+# on from the end of that arc; each arc leaves its start tangentially and stays tangent.
+# Run: AeroCAD --ui-script <this file>
+ui.wait(800)
+Qt.createQmlObject('import QtQuick; Item { objectName: "taTest"; visible: false; function at(u, v) { const o = viewport.sketchOverlay; const q = o.toScreen([u, v]); return o.mapToItem(null, q.x, q.y) } function clickAt(u, v) { const p = at(u, v); ui.click(p.x, p.y) } function moveTo(u, v) { const p = at(u, v); ui.move(p.x, p.y) } function data() { return controller.execute("sketch.curves", { sketch: activeSketch.id }).result } function near(p, q) { return Math.hypot(p[0] - q[0], p[1] - q[1]) < 1e-6 } function centre(a) { const [p, q, r] = a.points; const d = 2 * (p[0] * (q[1] - r[1]) + q[0] * (r[1] - p[1]) + r[0] * (p[1] - q[1])); const s = x => x[0] * x[0] + x[1] * x[1]; return [(s(p) * (q[1] - r[1]) + s(q) * (r[1] - p[1]) + s(r) * (p[1] - q[1])) / d, (s(p) * (r[0] - q[0]) + s(q) * (p[0] - r[0]) + s(r) * (q[0] - p[0])) / d] } }', window.contentItem)
+(() => { const r = controller.execute("sketch.create", { plane: "XY", curves: [{ type: "line", start: [10, -20], end: [30, -20] }] }); if (!r.ok) ui.fail("sketch: " + r.error) })()
+ui.wait(300)
+(() => { enterSketch(controller.execute("timeline.list").result.features[0].id) })()
+ui.wait(800)
+(() => { if (!ui.clickText("CREATE")) ui.fail("no CREATE caption in the sketch ribbon") })()
+ui.wait(300)
+(() => { if (!ui.clickText("&Tangent Arc")) ui.fail("no Tangent Arc in the CREATE menu"); if (sketchTool !== "tangent_arc") ui.fail("the tool did not start: " + sketchTool) })()
+ui.wait(300)
+# A click away from any end does not start an arc.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "taTest"); t.clickAt(50, -45) })()
+ui.wait(200)
+(() => { if (viewport.sketchOverlay.points.length !== 0) ui.fail("an arc started away from a curve end") })()
+# From the end of the line (heading +x) to (40, -10): a quarter circle about (30, -10).
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "taTest"); t.clickAt(30, -20); t.moveTo(40, -10) })()
+ui.wait(300)
+ui.shot("sketch-tangent-arc-preview.png")
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "taTest"); t.clickAt(40, -10) })()
+ui.wait(400)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "taTest"); const d = t.data(); const a = d.curves[1]; ui.log("arc " + JSON.stringify(a ? a.points : null) + " constraints " + JSON.stringify(d.constraints.map(c => c.type + c.curves))); if (!a || a.kind !== "arc") ui.fail("no arc drawn"); else { if (!t.near(a.points[0], [30, -20]) || !t.near(a.points[2], [40, -10])) ui.fail("arc ends " + JSON.stringify(a.points)); if (!t.near(t.centre(a), [30, -10])) ui.fail("arc centre " + JSON.stringify(t.centre(a))) } if (d.constraints.length !== 1 || d.constraints[0].type !== "tangent") ui.fail("expected one tangent constraint") })()
+# On from the end of that arc (heading +y) to (20, 0): radius 12.5 about (27.5, -10).
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "taTest"); t.clickAt(40, -10); t.clickAt(20, 0) })()
+ui.wait(400)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "taTest"); const d = t.data(); const a = d.curves[2]; if (!a || a.kind !== "arc") ui.fail("no second arc"); else if (!t.near(t.centre(a), [27.5, -10])) ui.fail("second arc centre " + JSON.stringify(t.centre(a))); if (d.constraints.length !== 2) ui.fail("expected two tangent constraints") })()
+ui.shot("sketch-tangent-arc.png")
+# Esc ends the tool; dragging the line's start then keeps the arc tangent to the line.
+ui.key("Esc")
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "taTest"); const a = t.at(10, -20), b = t.at(15, -25); ui.drag(a.x, a.y, b.x, b.y, "left", "", 10) })()
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "taTest"); const d = t.data(); const l = d.curves[0].points, a = d.curves[1]; const c = t.centre(a); const dir = [l[1][0] - l[0][0], l[1][1] - l[0][1]]; const r = [c[0] - l[1][0], c[1] - l[1][1]]; const dot = (dir[0] * r[0] + dir[1] * r[1]) / Math.hypot(dir[0], dir[1]) / Math.hypot(r[0], r[1]); ui.log("after drag line " + JSON.stringify(l) + " centre " + JSON.stringify(c)); if (t.near(l[0], [10, -20])) ui.fail("the line end did not move"); if (Math.abs(dot) > 1e-4) ui.fail("the arc is no longer tangent: cos " + dot) })()
