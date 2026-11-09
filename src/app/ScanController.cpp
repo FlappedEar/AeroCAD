@@ -367,7 +367,8 @@ void ScanController::finishFit()
     auto& session = m_app->session();
     if (job->generation != projectGeneration()) {
         m_app->showStatus(tr("Fit discarded: the project was replaced"));
-    } else if (job->cancelled) {
+    } else if (job->cancelled || job->cancel.load()) {
+        // Also when Cancel came after the fit's last poll (sewing, seam checks).
         m_app->showStatus(tr("Fit cancelled"));
     } else if (!job->result) {
         m_app->showStatus(job->error);
