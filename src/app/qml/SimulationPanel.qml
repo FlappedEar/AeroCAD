@@ -326,6 +326,19 @@ Pane {
     function num(v, digits) {
         return v === null || v === undefined || !isFinite(v) ? "–" : Number(v).toFixed(digits)
     }
+    /// Efficiency |lift| / drag (CAD-184), or null without a positive drag.
+    function liftDragRatio(s) {
+        if (!s || !(s.dragN > 0) || s.liftN === null || s.liftN === undefined || !isFinite(s.liftN))
+            return null
+        return Math.abs(s.liftN) / s.dragN
+    }
+    /// Coefficient times the reference area in cm² (CdA, ClA; CAD-184): does not depend on the area chosen.
+    function coefficientArea(coefficient, conditions) {
+        const a = conditions ? conditions.referenceArea : undefined
+        if (coefficient === null || coefficient === undefined || !(a > 0))
+            return null
+        return coefficient * a * 1e4
+    }
     /// "45 s", "12 min", "1 h 05 min" (CAD-149).
     function duration(seconds) {
         const s = Math.max(0, Math.round(seconds))
@@ -1594,13 +1607,33 @@ Pane {
                     Label { text: "Cd"; opacity: 0.7 }
                     Label { text: root.num(parent.s.cd, 3); font.bold: true }
                     Label { text: qsTr("Lift"); opacity: 0.7 }
-                    Label { text: root.num(parent.s.liftN, 3) + " N"; font.bold: true }
+                    Label {
+                        objectName: "cfdSummaryLift"
+                        // Lift is along +Z: a negative lift is downforce (CAD-184).
+                        text: root.num(parent.s.liftN, 3) + " N" + (parent.s.liftN < 0 ? qsTr(" (downforce)") : "")
+                        font.bold: true
+                    }
                     Label { text: "Cl"; opacity: 0.7 }
                     Label { text: root.num(parent.s.cl, 3); font.bold: true }
                     Label { text: qsTr("Side"); opacity: 0.7 }
                     Label { text: root.num(parent.s.sideN, 3) + " N"; font.bold: true }
                     Label { text: "Cs"; opacity: 0.7 }
                     Label { text: root.num(parent.s.cs, 3); font.bold: true }
+                    Label { text: qsTr("Efficiency L/D"); opacity: 0.7; Layout.columnSpan: 2 }
+                    Label {
+                        objectName: "cfdSummaryLD"
+                        Layout.columnSpan: 2
+                        readonly property var ratio: root.liftDragRatio(parent.s)
+                        text: root.num(ratio, 2) + (ratio !== null && parent.s.liftN < 0 ? qsTr(" (downforce)") : "")
+                    }
+                    Label { text: qsTr("CdA / ClA"); opacity: 0.7; Layout.columnSpan: 2 }
+                    Label {
+                        objectName: "cfdSummaryCoefficientArea"
+                        Layout.columnSpan: 2
+                        readonly property var conditions: root.results ? root.results.conditions : null
+                        text: root.num(root.coefficientArea(parent.s.cd, conditions), 1) + " / "
+                              + root.num(root.coefficientArea(parent.s.cl, conditions), 1) + " cm²"
+                    }
                     Label { text: qsTr("Pressure / friction"); opacity: 0.7; Layout.columnSpan: 2 }
                     Label {
                         Layout.columnSpan: 2

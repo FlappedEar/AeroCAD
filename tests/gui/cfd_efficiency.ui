@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CAD-184: Results names downforce (negative lift along +Z), shows the efficiency L/D and CdA / ClA
+# in cm², which do not depend on the reference area. Injected results, no engine.
+Qt.createQmlObject('import QtQuick; Item { objectName: "cfTest"; visible: false; function find(i, name) { if (!i) return null; if (i.objectName === name) return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = find(ch[k], name); if (r) return r } return null } }', window.contentItem)
+ui.wait(800)
+ui.clickText("SIMULATE")
+ui.wait(300)
+ui.clickText("Wind Tunnel")
+ui.wait(800)
+(() => { simulationPanel.tab = 1; simulationPanel.results = { summary: { dragN: 30, liftN: -96, sideN: 0.5, cd: 0.25, cl: -0.8, cs: 0.004, pressureDragN: 24, viscousDragN: 6, iterations: 500 }, finalResults: { available: true, reasons: [] }, quality: { status: "ok", checks: {} }, conditions: { settings: { speed: 40, flowDirection: "+X", mesh: "coarse", ground: false }, referenceArea: 0.012, openfoam: "2406" }, fields: {}, history: { iteration: [1, 2], cd: [0.3, 0.25], cl: [-0.7, -0.8] } } })()
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const text = n => { const i = t.find(simulationPanel, n); if (!i || !i.visible) ui.fail(n + " is not shown"); ui.log(n + ": " + i.text); return i.text }; if (text("cfdSummaryLift") !== "-96.000 N (downforce)") ui.fail("downforce is not named"); if (text("cfdSummaryLD") !== "3.20 (downforce)") ui.fail("wrong L/D"); if (text("cfdSummaryCoefficientArea") !== "30.0 / -96.0 cm²") ui.fail("wrong CdA / ClA") })()
+ui.shot("cfd-efficiency.png")
+// Positive lift: no downforce label; no positive drag: no L/D.
+(() => { const r = JSON.parse(JSON.stringify(simulationPanel.results)); r.summary.liftN = 12; r.summary.cl = 0.1; simulationPanel.results = r })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const text = n => t.find(simulationPanel, n).text; if (text("cfdSummaryLift") !== "12.000 N") ui.fail("positive lift named downforce: " + text("cfdSummaryLift")); if (text("cfdSummaryLD") !== "0.40") ui.fail("wrong L/D for lift: " + text("cfdSummaryLD")) })()
+(() => { const r = JSON.parse(JSON.stringify(simulationPanel.results)); r.summary.dragN = 0; delete r.conditions.referenceArea; simulationPanel.results = r })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const text = n => t.find(simulationPanel, n).text; if (text("cfdSummaryLD") !== "–") ui.fail("L/D without drag: " + text("cfdSummaryLD")); if (text("cfdSummaryCoefficientArea") !== "– / – cm²") ui.fail("CdA without area: " + text("cfdSummaryCoefficientArea")) })()
+ui.log("cfd efficiency done")
