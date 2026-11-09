@@ -473,6 +473,12 @@ private:
             if (c.kind == Kind::Spline && ref.index < v.pts.size())
                 return v.pts[ref.index];
             break;
+        case SketchPointRef::Kind::Axis:
+            if (c.kind == Kind::Ellipse)
+                return v.pts[1];
+            if (c.kind == Kind::EllipticalArc)
+                return v.pts[3];
+            break;
         case SketchPointRef::Kind::Origin:
             break;
         }

@@ -242,9 +242,9 @@ Json constraintPointSchema()
 {
     return Json{{"type", Json::array({"string", "object"})},
                 {"description", "\"origin\" (sketch origin) or {curve: index, point: start | end | center} "
-                                "(an ellipse: center, end = the end of its major axis), or a fit point of a spline {curve, point: fit, index} (0 = first fit point)."},
+                                "(an ellipse: center, end = the end of its major axis; axis = that point for an ellipse or elliptical arc), or a fit point of a spline {curve, point: fit, index} (0 = first fit point)."},
                 {"properties", {{"curve", {{"type", "integer"}, {"minimum", 0}, {"description", "Curve index in sketch.curves."}}},
-                                {"point", {{"type", "string"}, {"enum", {"start", "end", "center", "fit"}},
+                                {"point", {{"type", "string"}, {"enum", {"start", "end", "center", "axis", "fit"}},
                                            {"description", "Which point of the curve."}}},
                                 {"index", {{"type", "integer"}, {"minimum", 0},
                                            {"description", "point: fit only: fit point index (0 = first)."}}}}}};

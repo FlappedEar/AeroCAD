@@ -574,11 +574,13 @@ SketchPointRef parsePointRef(const Json& j)
         ref.kind = SketchPointRef::Kind::End;
     else if (which == "center")
         ref.kind = SketchPointRef::Kind::Center;
+    else if (which == "axis")
+        ref.kind = SketchPointRef::Kind::Axis;
     else if (which == "fit") {
         ref.kind = SketchPointRef::Kind::Fit;
         ref.index = required(j, "index").get<std::size_t>();
     } else
-        throw DesignError("Unknown constraint point '" + which + "' (start, end, center, fit)");
+        throw DesignError("Unknown constraint point '" + which + "' (start, end, center, axis, fit)");
     return ref;
 }
 
@@ -929,33 +931,77 @@ double offCurve(const TrimCurve& t, const Vec2& x)
 
 /// Where curve `p` (along its length) crosses curve `q`: sign changes of q's offset along
 /// p, sampled and then bisected (for pairs with an ellipse, which have no closed form here).
+/// Two crossings close together (a small circle cutting the ellipse) can fall between two
+/// samples with the same sign, so a sample nearer to q than both neighbours is refined to
+/// the nearest approach between them, and the crossings either side of it are bisected.
 std::vector<Vec2> crossingsAlong(const TrimCurve& p, const TrimCurve& q)
 {
     std::vector<Vec2> pts;
     const int n = 720;
     auto f = [&](double s) { return offCurve(q, trimPoint(p, s)); };
-    double s0 = 0.0, f0 = f(0.0);
-    for (int i = 1; i <= n; ++i) {
-        const double s1 = static_cast<double>(i) / n, f1 = f(s1);
-        if (f0 == 0.0) {
-            pts.push_back(trimPoint(p, s0));
-        } else if ((f0 < 0) != (f1 < 0) && f1 != 0.0) {
-            double lo = s0, hi = s1, flo = f0;
-            for (int k = 0; k < 80; ++k) {
-                const double mid = (lo + hi) / 2, fm = f(mid);
-                if ((fm < 0) == (flo < 0)) {
-                    lo = mid;
-                    flo = fm;
-                } else {
-                    hi = mid;
-                }
+    auto root = [&](double lo, double hi) {
+        double flo = f(lo);
+        for (int k = 0; k < 80; ++k) {
+            const double mid = (lo + hi) / 2, fm = f(mid);
+            if ((fm < 0) == (flo < 0)) {
+                lo = mid;
+                flo = fm;
+            } else {
+                hi = mid;
             }
-            pts.push_back(trimPoint(p, (lo + hi) / 2));
         }
-        s0 = s1;
-        f0 = f1;
+        return trimPoint(p, (lo + hi) / 2);
+    };
+    std::vector<double> fs(n + 1);
+    for (int i = 0; i <= n; ++i)
+        fs[i] = f(static_cast<double>(i) / n);
+    for (int i = 1; i <= n; ++i) {
+        const double s0 = static_cast<double>(i - 1) / n, s1 = static_cast<double>(i) / n;
+        const double f0 = fs[i - 1], f1 = fs[i];
+        if (f0 == 0.0)
+            pts.push_back(trimPoint(p, s0));
+        else if ((f0 < 0) != (f1 < 0) && f1 != 0.0)
+            pts.push_back(root(s0, s1));
     }
-    if (f0 == 0.0 && !(!p.line && std::abs(p.sweep) >= 2 * std::numbers::pi - 1e-12))
+    // A dip towards q at a sample (nearer than both neighbours, wrapping round a closed
+    // curve) without a sign change: refine the nearest approach between the neighbours.
+    const bool closed = !p.line && std::abs(p.sweep) >= 2 * std::numbers::pi - 1e-12;
+    for (int i = 0; i < (closed ? n : n + 1); ++i) {
+        const double fi = fs[i];
+        const bool hasLeft = i > 0 || closed, hasRight = i < n;
+        const double fl = i > 0 ? fs[i - 1] : fs[n - 1], fr = hasRight ? fs[i + 1] : 0.0;
+        if (fi == 0.0 || (hasLeft && ((fl < 0) != (fi < 0) || std::abs(fi) > std::abs(fl))) ||
+            (hasRight && ((fr < 0) != (fi < 0) || std::abs(fi) > std::abs(fr))))
+            continue;
+        const double sign = fi < 0 ? -1.0 : 1.0;
+        const double from = hasLeft ? static_cast<double>(i - 1) / n : 0.0;
+        const double to = hasRight ? static_cast<double>(i + 1) / n : 1.0;
+        double lo = from, hi = to;
+        const double g = (std::sqrt(5.0) - 1) / 2;
+        double a = hi - g * (hi - lo), b = lo + g * (hi - lo);
+        double fa = sign * f(a), fb = sign * f(b);
+        for (int k = 0; k < 100; ++k) {
+            if (fa < fb) {
+                hi = b;
+                b = a;
+                fb = fa;
+                a = hi - g * (hi - lo);
+                fa = sign * f(a);
+            } else {
+                lo = a;
+                a = b;
+                fa = fb;
+                b = lo + g * (hi - lo);
+                fb = sign * f(b);
+            }
+        }
+        const double m = (lo + hi) / 2;
+        if (sign * f(m) < 0) {
+            pts.push_back(root(from, m));
+            pts.push_back(root(m, to));
+        }
+    }
+    if (fs[n] == 0.0 && !closed)
         pts.push_back(trimPoint(p, 1.0));
     return pts;
 }
@@ -1648,7 +1694,9 @@ std::vector<Json> curvePointRefs(const SketchCurve& c, std::size_t i)
     case K::Circle: return {ref("center")};
     case K::Point: return {ref("start")};
     case K::Ellipse: return {ref("center"), ref("end")};
-    case K::EllipticalArc: return {ref("start"), ref("end"), ref("center")};
+    // An elliptical arc's ends and centre do not fix its axis when its ends are the minor
+    // axis tips, so its axis end is held too.
+    case K::EllipticalArc: return {ref("start"), ref("end"), ref("center"), ref("axis")};
     case K::Spline: {
         std::vector<Json> out;
         for (std::size_t k = 0; k < c.points.size(); ++k)
@@ -1672,6 +1720,8 @@ Vec2 curvePointAt(const SketchCurve& c, const Json& ref)
         return name == "center" ? c.points[0] : c.points[1];
     if (c.kind == K::EllipticalArc && name == "center")
         return c.points[1];
+    if (c.kind == K::EllipticalArc && name == "axis")
+        return c.points[2];
     if (name == "center") {
         const Vec2 p1 = c.points[0], p2 = c.points[1], p3 = c.points[2];
         const double d = 2 * (p1.x * (p2.y - p3.y) + p2.x * (p3.y - p1.y) + p3.x * (p1.y - p2.y));

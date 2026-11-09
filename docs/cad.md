@@ -184,7 +184,7 @@ sketch's normal towards the body (Flip reverses it); the holes follow the points
 A sketch can carry `constraints` (in `sketch.create` or via `sketch.add_constraints`). They
 refer to curves by index in `sketch.curves` (a rectangle is four lines in order bottom,
 right, top, left; a slot is line, arc, line, arc) and to points as
-`{"curve": i, "point": "start" | "end" | "center"}` or `"origin"`.
+`{"curve": i, "point": "start" | "end" | "center" | "axis"}` or `"origin"` (`axis` is the end of an ellipse's or elliptical arc's major axis).
 
 - Geometric: `coincident`, `point_on_curve`, `midpoint`, `horizontal`, `vertical`,
   `parallel`, `perpendicular`, `collinear`, `tangent`, `equal`, `concentric`, `symmetric`, `fix`.

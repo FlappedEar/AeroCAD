@@ -1459,6 +1459,40 @@ TEST_CASE("Design commands: Trim and Break an ellipse (CAD-258)", "[commands][ca
     run(s, "sketch.offset", {{"sketch", mid}, {"curves", {1}}, {"distance", 2}});
     c = run(s, "sketch.curves", {{"sketch", mid}});
     CHECK(c.at("curves").back().at("kind") == "spline");
+
+    // Scale the right half of an ellipse (ends at the minor axis tips): its axis scales too
+    // (Codex review of #222: the ends and centre alone did not hold it).
+    const auto half = run(s, "sketch.create",
+                          {{"plane", "XY"},
+                           {"curves", Json::array({{{"type", "elliptical_arc"}, {"center", {0, 0}}, {"major_radius", 20},
+                                                    {"minor_radius", 10}, {"angle", 0}, {"start_angle", -90}, {"end_angle", 90}}})}})
+                          .at("id")
+                          .get<std::uint64_t>();
+    run(s, "sketch.scale_curves", {{"sketch", half}, {"curves", {0}}, {"factor", 2}, {"point", {0, 0}}});
+    c = run(s, "sketch.curves", {{"sketch", half}});
+    INFO(c.dump());
+    CHECK(c.at("curves")[0].at("majorRadius").get<double>() == Approx(40));
+    CHECK(c.at("curves")[0].at("minorRadius").get<double>() == Approx(20));
+    CHECK(near(c.at("curves")[0].at("points")[2], 40, 0, 1e-6));
+    run(s, "sketch.move_curves", {{"sketch", half}, {"curves", {0}}, {"angle", 90}, {"pivot", {0, 0}}});
+    c = run(s, "sketch.curves", {{"sketch", half}});
+    INFO(c.dump());
+    CHECK(near(c.at("curves")[0].at("points")[2], 0, 40, 1e-6));
+    CHECK(c.at("curves")[0].at("majorRadius").get<double>() == Approx(40));
+
+    // Two crossings between two samples along the ellipse (a tiny circle across it, Codex
+    // review of #222): the trim cuts at them instead of deleting the whole ellipse.
+    const auto tiny = run(s, "sketch.create",
+                          {{"plane", "XY"},
+                           {"curves", Json::array({{{"type", "ellipse"}, {"center", {0, 0}}, {"major_radius", 20}, {"minor_radius", 10}, {"angle", 0}},
+                                                   {{"type", "circle"}, {"center", {19.9998096144, 0.04363309285}}, {"radius", 0.02}}})}})
+                          .at("id")
+                          .get<std::uint64_t>();
+    run(s, "sketch.trim", {{"sketch", tiny}, {"curve", 0}, {"at", {-20, 0}}});
+    c = run(s, "sketch.curves", {{"sketch", tiny}});
+    INFO(c.dump());
+    REQUIRE(c.at("curves").size() == 2);
+    CHECK(c.at("curves")[1].at("kind") == "elliptical_arc");
 }
 
 TEST_CASE("Design commands: sketch offset (CAD-126)", "[commands][cad]")
