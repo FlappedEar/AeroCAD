@@ -72,6 +72,9 @@ Pane {
         return [-m, m]
     }
     onComparisonChanged: {
+        // A/B is disabled without a comparison (CAD-214).
+        if (!comparison && tab === 2)
+            tab = activeRun ? 1 : 0
         loadDifferenceStats()
         // The export note belongs to one A/B pair (CAD-193), not to a refresh of the same pair.
         const pair = comparison ? comparison.a + "|" + comparison.b : ""
@@ -510,6 +513,7 @@ Pane {
         // A speed typed for the closed project's run (CAD-211).
         scaleSpeedField.text = ""
         error = ""
+        tab = 0 // Results and A/B are empty and disabled now (CAD-214).
     }
 
     function selectRun(id) {
@@ -692,7 +696,12 @@ Pane {
     /// Where the last results export went, or why it failed (CAD-167).
     property string exportNote: ""
     readonly property alias resultsDialog: resultsExportDialog
-    onActiveRunChanged: exportNote = ""
+    onActiveRunChanged: {
+        exportNote = ""
+        // Results is disabled without a run: never leave the panel on it, empty (CAD-214).
+        if (!activeRun && tab === 1)
+            tab = 0
+    }
     function openResultsExport() {
         const m = activeStatus
         // The run id already holds the part name and the time (CAD-167).
