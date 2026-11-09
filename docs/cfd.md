@@ -19,7 +19,10 @@ panel in place of Properties:
   parts as surroundings, label) and **Run CFD**. The speed is in m/s or with a unit
   (`72 km/h`, `45 mph`; a decimal comma works); the line under it shows it in m/s and km/h,
   and a speed that is not a number or above 150 m/s is named there and disables Run CFD
-  (CAD-180, [speed](images/audit/cad-180-speed-units.png)). *Yaw (°)* turns the oncoming
+  (CAD-180, [speed](images/audit/cad-180-speed-units.png)). Yaw, Ref. area, Label, the
+  floor and other parts are under **More settings** (CAD-213), so Run CFD and the run list
+  fit on screen together; its header lists what is not the default (e.g. "yaw 5°, moving
+  floor"), and it opens by itself when a value there is wrong. *Yaw (°)* turns the oncoming
   air for a crosswind or a car in a corner (`yaw`, -30 to 30, empty = 0, positive =
   counter-clockwise seen from above); the tunnel preview turns with it, the frontal area
   grows, and run rows say "flow +Y, yaw 5°" (CAD-188, [yaw](images/audit/cad-188-yaw.png)).
