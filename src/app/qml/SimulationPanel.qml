@@ -1864,6 +1864,44 @@ Pane {
                             : qsTr(" · mean of the last 20 % of %1 iterations")).arg(root.results.summary.iterations)
                     }
                 }
+                // The final forces at another speed (CAD-208): same Cd/Cl, forces ∝ speed².
+                RowLayout {
+                    Layout.fillWidth: true
+                    visible: !!root.results && !!root.results.conditions && !root.results.provisional
+                             && typeof root.results.summary.dragN === "number"
+                    Label { text: qsTr("At speed"); opacity: 0.7 }
+                    TextField {
+                        id: scaleSpeedField
+                        objectName: "cfdScaleSpeed"
+                        Layout.preferredWidth: 110
+                        placeholderText: qsTr("e.g. 200 km/h")
+                    }
+                    Label {
+                        objectName: "cfdScaleResult"
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        text: {
+                            const t = scaleSpeedField.text.trim()
+                            if (t.length === 0 || !parent.visible)
+                                return ""
+                            const v = root.speedMs(t), v0 = root.results.conditions.settings.speed
+                            if (!(v > 0) || !(v0 > 0))
+                                return qsTr("a speed, e.g. 200 km/h, 55 m/s or 120 mph")
+                            const k = (v / v0) * (v / v0), s = root.results.summary
+                            return qsTr("drag %1 N · lift %2 N (×%3)").arg(root.num(s.dragN * k, 1))
+                                .arg(root.num(s.liftN * k, 1)).arg(root.num(k, 2))
+                        }
+                    }
+                }
+                Label {
+                    visible: scaleSpeedField.text.trim().length > 0 && scaleSpeedField.parent.visible
+                    Layout.fillWidth: true
+                    Layout.maximumWidth: scroll.availableWidth
+                    wrapMode: Text.WordWrap
+                    font.pixelSize: 11
+                    opacity: 0.7
+                    text: qsTr("Scaled by (speed / run speed)² with this run's Cd and Cl; Reynolds-number effects are not included.")
+                }
                 // Forces and coefficients to a spreadsheet or report (CAD-167).
                 RowLayout {
                     Layout.fillWidth: true
