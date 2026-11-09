@@ -1522,6 +1522,131 @@ TEST_CASE("Design commands: Trim and Break an ellipse (CAD-258)", "[commands][ca
     }
 }
 
+TEST_CASE("Design commands: Trim and Break a spline (CAD-260)", "[commands][cad]")
+{
+    commands::Session s;
+    // How far a point is from a polyline.
+    auto off = [](const Json& q, const Json& poly) {
+        double best = 1e300;
+        for (std::size_t i = 0; i + 1 < poly.size(); ++i) {
+            const double ax = poly[i][0].get<double>(), ay = poly[i][1].get<double>();
+            const double dx = poly[i + 1][0].get<double>() - ax, dy = poly[i + 1][1].get<double>() - ay;
+            const double qx = q[0].get<double>(), qy = q[1].get<double>();
+            const double l2 = dx * dx + dy * dy;
+            const double f = l2 > 0 ? std::clamp(((qx - ax) * dx + (qy - ay) * dy) / l2, 0.0, 1.0) : 0.0;
+            best = std::min(best, std::hypot(qx - ax - f * dx, qy - ay - f * dy));
+        }
+        return best;
+    };
+    auto count = [](const Json& c, const char* kind) {
+        return std::count_if(c.at("curves").begin(), c.at("curves").end(), [&](const Json& k) { return k.at("kind") == kind; });
+    };
+
+    // An arch (open spline) over a line: trim both tails of the arch and both line ends
+    // outside it, and the arch with the line is one profile.
+    const auto id = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "spline"}, {"points", {{0, 0}, {10, 8}, {20, 10}, {30, 8}, {40, 0}}}},
+                                                 {{"type", "line"}, {"start", {-5, 5}}, {"end", {45, 5}}}})}})
+                        .at("id")
+                        .get<std::uint64_t>();
+    Json c = run(s, "sketch.curves", {{"sketch", id}});
+    const Json original = c.at("curves")[0].at("samples");
+    REQUIRE(original.size() > 10);
+    run(s, "sketch.trim", {{"sketch", id}, {"curve", 0}, {"at", {1, 1}}});
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    INFO(c.dump());
+    REQUIRE(c.at("curves").size() == 2);
+    CHECK(c.at("curves")[1].at("kind") == "spline");
+    {
+        const Json& pts = c.at("curves")[1].at("points");
+        CHECK(pts.front()[1].get<double>() == Approx(5).margin(1e-9));
+        CHECK(pts.back()[0].get<double>() == Approx(40).margin(1e-9));
+        // The piece follows the original arch.
+        double worst = 0;
+        for (const auto& q : c.at("curves")[1].at("samples"))
+            worst = std::max(worst, off(q, original));
+        CHECK(worst < 0.02);
+    }
+    run(s, "sketch.trim", {{"sketch", id}, {"curve", 1}, {"at", {39, 1}}});
+    run(s, "sketch.trim", {{"sketch", id}, {"curve", 0}, {"at", {-3, 5}}});
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    INFO(c.dump());
+    std::size_t line = 0;
+    for (std::size_t i = 0; i < c.at("curves").size(); ++i)
+        if (c.at("curves")[i].at("kind") == "line")
+            line = i;
+    run(s, "sketch.trim", {{"sketch", id}, {"curve", line}, {"at", {43, 5}}});
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    INFO(c.dump());
+    REQUIRE(c.at("curves").size() == 2);
+    CHECK(count(c, "spline") == 1);
+    {
+        const Json& arch = c.at("curves")[c.at("curves")[0].at("kind") == "spline" ? 0 : 1];
+        double worst = 0;
+        for (const auto& q : arch.at("samples"))
+            worst = std::max(worst, off(q, original));
+        CHECK(worst < 0.02);
+    }
+    CHECK(run(s, "sketch.profiles", {{"sketch", id}}).at("profiles").size() == 1);
+
+    // Break: the arch splits into three splines where the line crosses it.
+    const auto br = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "spline"}, {"points", {{0, 0}, {10, 8}, {20, 10}, {30, 8}, {40, 0}}}},
+                                                 {{"type", "line"}, {"start", {-5, 5}}, {"end", {45, 5}}}})}})
+                        .at("id")
+                        .get<std::uint64_t>();
+    const Json pv = run(s, "sketch.break_preview", {{"sketch", br}, {"curve", 0}, {"at", {20, 10}}});
+    INFO(pv.dump());
+    CHECK(pv.at("breakable") == true);
+    CHECK(pv.at("kind") == "spline");
+    CHECK(pv.at("samples").size() > 2);
+    run(s, "sketch.break", {{"sketch", br}, {"curve", 0}, {"at", {20, 10}}});
+    c = run(s, "sketch.curves", {{"sketch", br}});
+    INFO(c.dump());
+    CHECK(count(c, "spline") == 3);
+
+    // A closed spline cut by a line: Trim the top, the bottom stays as an open spline.
+    const auto cl = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "spline"}, {"points", {{10, 0}, {0, 10}, {-10, 0}, {0, -10}}}, {"closed", true}},
+                                                 {{"type", "line"}, {"start", {-15, 2}}, {"end", {15, 2}}}})}})
+                        .at("id")
+                        .get<std::uint64_t>();
+    c = run(s, "sketch.curves", {{"sketch", cl}});
+    const Json loop = c.at("curves")[0].at("samples");
+    run(s, "sketch.trim", {{"sketch", cl}, {"curve", 0}, {"at", {0, 10}}});
+    c = run(s, "sketch.curves", {{"sketch", cl}});
+    INFO(c.dump());
+    REQUIRE(c.at("curves").size() == 2);
+    const Json& rest = c.at("curves")[1];
+    CHECK(rest.at("kind") == "spline");
+    CHECK(rest.value("closed", false) == false);
+    CHECK(rest.at("points").front()[1].get<double>() == Approx(2).margin(1e-9));
+    CHECK(rest.at("points").back()[1].get<double>() == Approx(2).margin(1e-9));
+    double worst = 0;
+    for (const auto& q : rest.at("samples"))
+        worst = std::max(worst, off(q, loop));
+    CHECK(worst < 0.05); // the reference is the loop's drawn samples (16 a span), coarser than the trim's
+    for (const double x : {-14.0, 14.0}) {
+        c = run(s, "sketch.curves", {{"sketch", cl}});
+        std::size_t ln = 0;
+        for (std::size_t i = 0; i < c.at("curves").size(); ++i)
+            if (c.at("curves")[i].at("kind") == "line")
+                ln = i;
+        run(s, "sketch.trim", {{"sketch", cl}, {"curve", ln}, {"at", {x, 2}}});
+    }
+    CHECK(run(s, "sketch.profiles", {{"sketch", cl}}).at("profiles").size() == 1);
+    // One undo step per trim.
+    run(s, "edit.undo");
+    run(s, "edit.undo");
+    run(s, "edit.undo");
+    c = run(s, "sketch.curves", {{"sketch", cl}});
+    CHECK(c.at("curves")[0].at("kind") == "spline");
+    CHECK(c.at("curves")[0].value("closed", false) == true);
+}
+
 TEST_CASE("Design commands: sketch offset (CAD-126)", "[commands][cad]")
 {
     commands::Session s;

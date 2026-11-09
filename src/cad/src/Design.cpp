@@ -2492,12 +2492,194 @@ struct CurveSplit {
     Json after;   ///< null when the picked piece ends the curve; a circle's rest is here
 };
 
+/// A spline cut where the other curves cross it, around the point clicked (Fusion trims
+/// splines too). It is taken as the polyline other curves are cut against (128 points a
+/// span, see extendBoundaries), so a line and the spline cut each other at the same point.
+/// Each piece is a spline again: through its ends, the original fit points between them and
+/// as many more points of the original as keep it within 0.1 % of the spline's size of it.
+CurveSplit splitSpline(const std::vector<SketchCurve>& curves, std::size_t curve, const Vec2& at)
+{
+    const SketchCurve& k = curves[curve];
+    std::vector<Vec2> pts;
+    try {
+        pts = geometry::sampleSpline(k, 128);
+    } catch (const geometry::ModelingError& e) {
+        throw DesignError(e.what());
+    }
+    const std::size_t n = pts.size() - 1;
+    if (n == 0)
+        throw DesignError("The spline has no length");
+    // A point along the polyline: u in [0, 1] (a closed spline wraps round).
+    auto pointAt = [&](double u) {
+        if (k.closed)
+            u -= std::floor(u);
+        const double x = std::clamp(u, 0.0, 1.0) * static_cast<double>(n);
+        const std::size_t i = std::min(static_cast<std::size_t>(x), n - 1);
+        const double f = x - static_cast<double>(i);
+        return pts[i] + (pts[i + 1] - pts[i]) * f;
+    };
+    // Where a point is along it (nearest point of the polyline).
+    auto project = [&](const Vec2& q) {
+        double best = 1e300, u = 0.0;
+        for (std::size_t i = 0; i < n; ++i) {
+            const Vec2 d = pts[i + 1] - pts[i];
+            const double l2 = d.x * d.x + d.y * d.y;
+            const double f = l2 > 0 ? std::clamp(((q.x - pts[i].x) * d.x + (q.y - pts[i].y) * d.y) / l2, 0.0, 1.0) : 0.0;
+            const Vec2 x = pts[i] + d * f;
+            const double dist = std::hypot(q.x - x.x, q.y - x.y);
+            if (dist < best) {
+                best = dist;
+                u = (static_cast<double>(i) + f) / static_cast<double>(n);
+            }
+        }
+        return u;
+    };
+
+    std::vector<double> cuts;
+    for (std::size_t j = 0; j < curves.size(); ++j) {
+        if (j == curve)
+            continue;
+        const std::vector<TrimCurve> others = extendBoundaries(curves[j]);
+        for (std::size_t i = 0; i < n; ++i) {
+            TrimCurve seg;
+            seg.a = pts[i];
+            seg.b = pts[i + 1];
+            if (std::hypot(seg.b.x - seg.a.x, seg.b.y - seg.a.y) < 1e-12)
+                continue;
+            for (const TrimCurve& other : others)
+                for (const Vec2& x : crossings(seg, other))
+                    if (const auto f = trimParam(seg, x, 1e-9))
+                        cuts.push_back((static_cast<double>(i) + *f) / static_cast<double>(n));
+        }
+    }
+    std::sort(cuts.begin(), cuts.end());
+    const double eps = 1e-7;
+    std::vector<double> inner;
+    for (double c : cuts) {
+        if (k.closed && c >= 1 - eps)
+            c = 0.0; // the closing point is the start
+        if (k.closed || (c > eps && c < 1 - eps))
+            if (inner.empty() || c - inner.back() > eps)
+                inner.push_back(c);
+    }
+    std::sort(inner.begin(), inner.end());
+    if (k.closed && inner.size() >= 2 && inner.front() + 1 - inner.back() <= eps)
+        inner.pop_back();
+
+    // The fit points, as places along it.
+    std::vector<double> fits;
+    for (const Vec2& q : k.points)
+        fits.push_back(project(q));
+    auto piece = [&](double lo, double hi) {
+        // Anchors: the ends and the fit points between them (a closed spline's wrap round).
+        std::vector<double> anchors{lo};
+        std::vector<double> inside;
+        for (double f : fits) {
+            for (const double g : {f, f + 1.0, f - 1.0})
+                if (g > lo + eps && g < hi - eps && (k.closed || g == f))
+                    inside.push_back(g);
+        }
+        std::sort(inside.begin(), inside.end());
+        for (const double g : inside)
+            if (g - anchors.back() > eps)
+                anchors.push_back(g);
+        if (hi - anchors.back() <= eps)
+            anchors.pop_back();
+        anchors.push_back(hi);
+        // Between the anchors, evenly spread points of the original (an interpolating spline
+        // overshoots between uneven ones), as few as keep the piece within 0.1 % of the
+        // spline's size of the original.
+        const double spans = static_cast<double>(std::max<std::size_t>(1, k.points.size() - (k.closed ? 0 : 1)));
+        Vec2 bmin = pts.front(), bmax = pts.front();
+        for (const Vec2& q : pts) {
+            bmin = {std::min(bmin.x, q.x), std::min(bmin.y, q.y)};
+            bmax = {std::max(bmax.x, q.x), std::max(bmax.y, q.y)};
+        }
+        const double tol = 1e-3 * std::hypot(bmax.x - bmin.x, bmax.y - bmin.y);
+        auto offOriginal = [&](const Vec2& q) {
+            double best = 1e300;
+            for (std::size_t i = 0; i < n; ++i) {
+                const Vec2 d = pts[i + 1] - pts[i];
+                const double l2 = d.x * d.x + d.y * d.y;
+                const double f = l2 > 0 ? std::clamp(((q.x - pts[i].x) * d.x + (q.y - pts[i].y) * d.y) / l2, 0.0, 1.0) : 0.0;
+                const Vec2 x = pts[i] + d * f;
+                best = std::min(best, std::hypot(q.x - x.x, q.y - x.y));
+            }
+            return best;
+        };
+        std::vector<Vec2> chosen;
+        for (const double h : {1.0, 0.5, 0.25, 0.125, 0.0625}) {
+            chosen.clear();
+            for (std::size_t i = 0; i < anchors.size(); ++i) {
+                chosen.push_back(pointAt(anchors[i]));
+                if (i + 1 == anchors.size())
+                    break;
+                const double len = anchors[i + 1] - anchors[i];
+                const int m = std::max(1, static_cast<int>(std::lround(len * spans / h)));
+                for (int j = 1; j < m; ++j)
+                    chosen.push_back(pointAt(anchors[i] + len * j / m));
+            }
+            if (chosen.size() < 3)
+                chosen.insert(chosen.begin() + 1, pointAt((anchors.front() + anchors.back()) / 2));
+            SketchCurve trial{SketchCurve::Kind::Spline, chosen};
+            double worst = 0.0;
+            try {
+                for (const Vec2& q : geometry::sampleSpline(trial, 16))
+                    worst = std::max(worst, offOriginal(q));
+            } catch (const geometry::ModelingError&) {
+                worst = 1e300;
+            }
+            if (worst <= tol)
+                break;
+        }
+        Json p = Json::array();
+        for (const Vec2& q : chosen)
+            p.push_back(Json::array({q.x, q.y}));
+        Json item{{"type", "spline"}, {"points", p}};
+        if (k.construction)
+            item["construction"] = true;
+        return item;
+    };
+
+    CurveSplit out;
+    const double u = project(at);
+    if (k.closed) {
+        if (inner.size() >= 2) {
+            auto after = std::upper_bound(inner.begin(), inner.end(), u);
+            const double hi = after == inner.end() ? inner.front() + 1.0 : *after;
+            const double lo = after == inner.begin() ? inner.back() - 1.0 : *(after - 1);
+            out.picked = piece(lo, hi);
+            out.after = piece(hi, lo + 1.0);
+        }
+        return out;
+    }
+    double lo = 0.0, hi = 1.0;
+    for (const double c : inner) {
+        if (c <= u)
+            lo = c;
+        else {
+            hi = c;
+            break;
+        }
+    }
+    if (lo <= eps && hi >= 1 - eps)
+        return out;
+    if (lo > eps)
+        out.before = piece(0.0, lo);
+    out.picked = piece(lo, hi);
+    if (hi < 1 - eps)
+        out.after = piece(hi, 1.0);
+    return out;
+}
+
 CurveSplit splitCurve(const std::vector<SketchCurve>& curves, std::size_t curve, const Vec2& at, const char* tool)
 {
     const SketchCurve& k = curves[curve];
+    if (k.kind == SketchCurve::Kind::Spline)
+        return splitSpline(curves, curve, at);
     const auto target = trimCurve(k);
     if (!target)
-        throw DesignError(std::string(tool) + " works on lines, arcs, circles and ellipses");
+        throw DesignError(std::string(tool) + " works on lines, arcs, circles, ellipses and splines");
 
     // Where the others cross it, as parameters along it.
     std::vector<double> cuts;

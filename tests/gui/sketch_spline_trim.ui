@@ -1,0 +1,30 @@
+# CAD-260: Trim (T) and Break work on a spline (Fusion): an arch drawn as a spline over a
+# line; Break hover previews the piece; Trim with real clicks removes both tails of the
+# arch and the line ends outside it, which leaves one closed profile. One undo step a trim.
+# Run: AeroCAD --ui-script <this file>
+Qt.createQmlObject('import QtQuick; Item { objectName: "stTest"; visible: false; function clickAt(q) { const o = viewport.sketchOverlay; const p = o.toScreen(q); const w = o.mapToItem(null, p.x, p.y); ui.move(w.x, w.y); ui.wait(80); ui.click(w.x, w.y); ui.wait(400) } function sketch() { return controller.execute("sketch.curves", { sketch: activeSketch.id }).result } function count(kind) { return sketch().curves.filter(k => k.kind === kind).length } }', window.contentItem)
+ui.wait(800)
+(() => { const r = controller.execute("sketch.create", { plane: "XY", curves: [{ type: "spline", points: [[0, 0], [10, 8], [20, 10], [30, 8], [40, 0]] }, { type: "line", start: [-5, 5], end: [45, 5] }] }); if (!r.ok) ui.fail("sketch: " + r.error) })()
+ui.wait(300)
+(() => { enterSketch(controller.execute("timeline.list").result.features[0].id) })()
+ui.wait(800)
+(() => { viewport.restoreCameraState({ pivot: [20, 5, 0], pitch: -90, yaw: 0, distance: 150, orthographic: false }) })()
+ui.wait(400)
+# Break hover over the top of the arch: the spline piece between the crossings is previewed.
+(() => { window.sketchTool_("break"); if (sketchTool !== "break") ui.fail("Break did not start: " + sketchTool) })()
+ui.wait(200)
+(() => { const o = viewport.sketchOverlay; const p = o.toScreen([20, 10]); const w = o.mapToItem(null, p.x, p.y); ui.move(w.x, w.y); ui.wait(300); const pv = o.piecePreview; ui.log("break preview " + JSON.stringify(pv ? [pv.kind, pv.points] : null)); if (!pv || pv.kind !== "spline" || !o.previewDrawable(pv)) ui.fail("no drawable spline Break preview") })()
+ui.key("Esc")
+ui.wait(200)
+ui.key("T")
+ui.wait(300)
+(() => { if (sketchTool !== "trim") ui.fail("T did not start Trim: " + sketchTool) })()
+# The arch's tails below the line, then the line's ends outside the arch.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "stTest"); t.clickAt([1.2, 1]); t.clickAt([38.8, 1]) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "stTest"); const s = t.sketch(); ui.log("after spline trims: " + JSON.stringify(s.curves.map(k => [k.kind, k.points[0], k.points[k.points.length - 1]]))); if (t.count("spline") !== 1) ui.fail("expected one spline piece"); const sp = s.curves.find(k => k.kind === "spline"); if (Math.abs(sp.points[0][1] - 5) > 1e-6 || Math.abs(sp.points[sp.points.length - 1][1] - 5) > 1e-6) ui.fail("the arch was not cut at the line") })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "stTest"); t.clickAt([-3, 5]); t.clickAt([43, 5]) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "stTest"); const s = t.sketch(); const l = s.curves.find(k => k.kind === "line"); const xs = l ? [l.points[0][0], l.points[1][0]].sort((a, b) => a - b) : []; ui.log("line " + JSON.stringify(xs)); if (!l || xs[0] < 4 || xs[1] > 36) ui.fail("the line was not trimmed at the arch"); const n = controller.execute("sketch.profiles", { sketch: activeSketch.id }).result.profiles.length; if (n !== 1) ui.fail("the arch with the line is not one profile: " + n) })()
+ui.shot("/mnt/project-files/ux/sketch-spline-trim.png")
+# One undo step per trim: four undos bring the whole spline back.
+(() => { for (let i = 0; i < 4; ++i) controller.execute("edit.undo"); const s = Array.from(window.contentItem.children).find(c => c.objectName === "stTest").sketch(); const sp = s.curves.find(k => k.kind === "spline"); if (!sp || sp.points.length !== 5 || Math.abs(sp.points[0][0]) > 1e-9) ui.fail("undo did not bring the spline back: " + JSON.stringify(sp && sp.points)) })()
+ui.log("Sketch spline trim OK")

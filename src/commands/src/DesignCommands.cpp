@@ -1445,8 +1445,8 @@ void registerSketchCommands(CommandRegistry& r)
 
     r.add({"sketch.break_preview", "Break preview",
            "The piece sketch.break (or sketch.trim) would split off at `at`, without changing the sketch: "
-           "{breakable: true, kind (line / arc / elliptical_arc), points (an arc: start, through, end; an elliptical "
-           "arc: start, end, plus samples to draw it)}, or {breakable: false, "
+           "{breakable: true, kind (line / arc / elliptical_arc / spline), points (an arc: start, through, end; an elliptical "
+           "arc or a spline: start, end, plus samples to draw it)}, or {breakable: false, "
            "reason}.",
            objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
                          {"curve", {{"type", "integer"}, {"description", "Index from sketch.curves."}}},
@@ -1477,6 +1477,18 @@ void registerSketchCommands(CommandRegistry& r)
                           samples.push_back(at2(t0 + (t1 - t0) * k / 64));
                       return Json{{"breakable", true}, {"kind", "elliptical_arc"},
                                   {"points", Json::array({at2(t0), at2(t1)})}, {"samples", samples}};
+                  }
+                  if (piece.at("type") == "spline") {
+                      // A piece of a spline: its ends and the drawn curve (samples).
+                      geometry::SketchCurve sp{geometry::SketchCurve::Kind::Spline, {}};
+                      for (const auto& q : piece.at("points"))
+                          sp.points.push_back({q[0].get<double>(), q[1].get<double>()});
+                      Json samples = Json::array();
+                      for (const auto& q : geometry::sampleSpline(sp, 16))
+                          samples.push_back(Json::array({q.x, q.y}));
+                      return Json{{"breakable", true}, {"kind", "spline"},
+                                  {"points", Json::array({piece.at("points").front(), piece.at("points").back()})},
+                                  {"samples", samples}};
                   }
                   const bool arc = piece.at("type") == "arc";
                   Json pts = arc ? Json::array({piece.at("start"), piece.at("through"), piece.at("end")})
