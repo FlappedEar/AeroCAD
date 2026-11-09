@@ -197,3 +197,58 @@ TEST_CASE("Separate closed parts and cavities are all kept", "[geometry][fit]")
     CHECK(hollow.shape.solidCount() == 1);
     CHECK(std::abs(hollow.volume - (72000.0 - 2000.0)) < 5.0);
 }
+
+TEST_CASE("Patches are fit in parallel, with progress and cancel (CAD-259)", "[geometry][fit]")
+{
+    const auto mesh = can(20, 50, 90, 30, 10);
+    // One thread and every core give the same result.
+    geometry::RegionFitOptions serial;
+    serial.threads = 1;
+    const auto one = geometry::fitRegions(mesh, {}, serial);
+    geometry::RegionFitOptions parallel;
+    parallel.threads = 4;
+    std::vector<std::pair<int, int>> steps;
+    parallel.progress = [&](int done, int total) { steps.emplace_back(done, total); };
+    const auto many = geometry::fitRegions(mesh, {}, parallel);
+    CHECK(many.faces == one.faces);
+    CHECK(many.solid == one.solid);
+    CHECK(std::abs(many.volume - one.volume) < 1e-6 * one.volume);
+    // Progress starts at 0, ends with every patch done, and never runs past its total.
+    REQUIRE(steps.size() >= 2);
+    CHECK(steps.front().first == 0);
+    CHECK(steps.back().first == steps.back().second);
+    CHECK(steps.back().second >= many.faces); // refits after splits count as more work
+    // Never goes back: the bar only fills.
+    for (std::size_t k = 0; k < steps.size(); ++k) {
+        CHECK((steps[k].first >= 0 && steps[k].first <= steps[k].second));
+        if (k > 0)
+            CHECK(steps[k].first >= steps[k - 1].first);
+    }
+
+    // Cancelled after the first patch: the fit stops with "Cancelled".
+    geometry::RegionFitOptions cancel;
+    int calls = 0;
+    cancel.cancelled = [&] { return ++calls > 1; };
+    std::string error;
+    try {
+        (void)geometry::fitRegions(mesh, {}, cancel);
+    } catch (const geometry::SurfaceFitError& e) {
+        error = e.what();
+    }
+    CHECK(error == "Cancelled");
+
+    // A single surface fit stops too, also in the middle (one poll allowed).
+    geometry::SurfaceFitOptions one_fit;
+    int polls = 0;
+    one_fit.cancelled = [&] { return ++polls > 1; };
+    core::TriangleSet all(mesh.triangleCount());
+    for (std::uint32_t t = 0; t < all.size(); ++t)
+        all[t] = t;
+    error.clear();
+    try {
+        (void)geometry::fitSurface(mesh, all, one_fit);
+    } catch (const geometry::SurfaceFitError& e) {
+        error = e.what();
+    }
+    CHECK(error == "Cancelled");
+}

@@ -4,6 +4,7 @@
 #include "aerocad/commands/CommandRegistry.hpp"
 #include "aerocad/commands/Inspect.hpp"
 #include "aerocad/commands/Project.hpp"
+#include "aerocad/commands/FitStage.hpp"
 #include "aerocad/commands/ImportStage.hpp"
 
 #include <memory>
@@ -69,6 +70,8 @@ public:
     [[nodiscard]] const CommandRegistry& registry() const { return m_registry; }
     /// Files parsed ahead of time for document.import (see ImportStage).
     [[nodiscard]] ImportStage& importStage() { return m_importStage; }
+    /// Surface fits computed ahead of time for surface.fit_* (see FitStage).
+    [[nodiscard]] FitStage& fitStage() { return m_fitStage; }
 
 private:
     /// Rebuild after source edits, including undo/redo, before consumers see the result.
@@ -82,6 +85,7 @@ private:
     ProjectState m_project;
     CommandRegistry m_registry;
     ImportStage m_importStage;
+    FitStage m_fitStage;
     std::unique_ptr<cfd::RunManager> m_simulations;
     CommandContext m_context;
     /// History before the first preview; set while a preview change is applied.

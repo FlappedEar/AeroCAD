@@ -5,6 +5,7 @@
 #include "aerocad/core/MeshSelection.hpp"
 #include "aerocad/geometry/Shape.hpp"
 
+#include <functional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -42,6 +43,9 @@ struct SurfaceFitOptions {
     /// rest only adds data, so the surface runs on smoothly past the trim, for joining
     /// neighbouring patches with matching tangents.
     core::TriangleSet trimTo;
+    /// Polled between the steps of the fit (and while measuring); when it returns true
+    /// the fit stops with SurfaceFitError("Cancelled"). Called on the fitting thread.
+    std::function<bool()> cancelled;
 };
 
 /// Fit quality, both ways: mesh to surface catches a surface that misses the mesh,

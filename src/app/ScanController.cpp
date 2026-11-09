@@ -5,7 +5,9 @@
 #include <cstdint>
 
 #include "AppController.hpp"
+#include "JsonBridge.hpp"
 
+#include "aerocad/commands/FitStage.hpp"
 #include "aerocad/core/Align.hpp"
 #include "aerocad/core/MeshSimplify.hpp"
 #include "aerocad/core/Path.hpp"
@@ -38,6 +40,21 @@ struct ScanController::Parsed {
     bool cancelled = false;
 };
 
+struct ScanController::FitJob {
+    QString command;
+    QVariantMap params;
+    QJSValue then;
+    std::uint64_t generation = 0;
+    commands::PreparedFit prepared;
+    std::atomic<int> done{0};
+    std::atomic<int> total{0};
+    std::atomic<bool> cancel{false};
+    // Written by the worker thread, read after it finished.
+    std::optional<commands::FitStage::Result> result;
+    QString error;
+    bool cancelled = false;
+};
+
 ScanController::ScanController(AppController* app, QObject* parent) : QObject(parent), m_app(app)
 {
     g_instance = this;
@@ -51,6 +68,13 @@ ScanController::ScanController(AppController* app, QObject* parent) : QObject(pa
     connect(&m_progressTimer, &QTimer::timeout, this, [this] {
         if (m_jobProgress)
             setProgress(m_jobProgress->load(), m_progressText);
+        if (m_fit && m_fit->command == QStringLiteral("surface.fit_regions")) {
+            const int total = m_fit->total.load();
+            const int done = std::min(m_fit->done.load(), total);
+            if (total > 0)
+                setProgress(static_cast<double>(done) / total,
+                            tr("Fitting surfaces… %1 / %2 patches").arg(done).arg(total));
+        }
     });
     // New / Open (from the menu, a script or MCP) ends the imports of the old project.
     connect(m_app, &AppController::projectChanged, this, &ScanController::dropStaleImports);
@@ -73,6 +97,12 @@ ScanController::~ScanController()
     if (m_job != nullptr) {
         m_job->wait();
         delete m_job;
+    }
+    if (m_fit)
+        m_fit->cancel.store(true);
+    if (m_fitJob != nullptr) {
+        m_fitJob->wait();
+        delete m_fitJob;
     }
     if (g_instance == this)
         g_instance = nullptr;
@@ -151,6 +181,8 @@ void ScanController::dropStaleImports()
                   m_queue.end());
     if (m_job != nullptr && m_current.generation != generation && m_jobCancel)
         m_jobCancel->store(true);
+    if (m_fit && m_fit->generation != generation)
+        m_fit->cancel.store(true);
 }
 
 void ScanController::setProgress(double value, const QString& text)
@@ -165,7 +197,8 @@ void ScanController::setProgress(double value, const QString& text)
 void ScanController::startNextImport()
 {
     dropStaleImports();
-    if (m_queue.isEmpty() || m_job != nullptr)
+    // One background job at a time: an import queued during a fit starts after it.
+    if (m_queue.isEmpty() || m_job != nullptr || m_fitJob != nullptr)
         return;
     m_current = m_queue.takeFirst();
     m_jobProgress = std::make_shared<std::atomic<double>>(0.0);
@@ -251,6 +284,118 @@ void ScanController::finishImport()
     m_current = {};
     emit busyChanged();
     startNextImport();
+}
+
+void ScanController::setBackgroundFitTriangles(int triangles)
+{
+    triangles = std::max(0, triangles);
+    if (triangles == m_backgroundFitTriangles)
+        return;
+    m_backgroundFitTriangles = triangles;
+    emit backgroundFitTrianglesChanged();
+}
+
+void ScanController::cancel()
+{
+    cancelImport();
+    if (m_fit)
+        m_fit->cancel.store(true);
+}
+
+bool ScanController::fitInBackground(const QString& command, const QVariantMap& params, const QJSValue& then)
+{
+    if (!m_app)
+        return false;
+    if (busy()) {
+        m_app->showStatus(tr("Wait for the running import or fit to finish, or cancel it."));
+        return false;
+    }
+    auto& session = m_app->session();
+    std::optional<commands::PreparedFit> prepared =
+        commands::prepareFit(session.document(), session.design(), command.toStdString(), toJson(params));
+    if (!prepared || prepared->triangles < static_cast<std::size_t>(m_backgroundFitTriangles)) {
+        // Small, or nothing to fit: the command runs (and reports problems) at once.
+        QJSValue callback = then;
+        if (callback.isCallable())
+            callback.call();
+        return true;
+    }
+    auto job = std::make_shared<FitJob>();
+    job->command = command;
+    job->params = params;
+    job->then = then;
+    job->generation = projectGeneration();
+    job->prepared = std::move(*prepared);
+    m_fit = job;
+    m_fitJob = QThread::create([job] {
+        try {
+            job->result = job->prepared.run(
+                [job](int done, int total) {
+                    job->done.store(done);
+                    job->total.store(total);
+                },
+                [job] { return job->cancel.load(); });
+        } catch (const std::exception& e) {
+            if (job->cancel.load())
+                job->cancelled = true;
+            else
+                job->error = QString::fromStdString(e.what());
+        } catch (...) { // OpenCASCADE failures
+            job->error = QObject::tr("The surface fit failed");
+        }
+    });
+    connect(m_fitJob, &QThread::finished, this, &ScanController::finishFit);
+    const QString triangles = QLocale().toString(static_cast<qulonglong>(job->prepared.triangles));
+    // One surface has no steps to count: an indeterminate bar (progress < 0).
+    setProgress(-1.0, command == QStringLiteral("surface.fit_regions")
+                          ? tr("Fitting surfaces to %1 triangles…").arg(triangles)
+                          : tr("Fitting a surface to %1 triangles…").arg(triangles));
+    m_progressTimer.start();
+    m_fitJob->start();
+    emit busyChanged();
+    return true;
+}
+
+void ScanController::finishFit()
+{
+    m_progressTimer.stop();
+    m_fitJob->deleteLater();
+    m_fitJob = nullptr;
+    std::shared_ptr<FitJob> job = std::exchange(m_fit, nullptr);
+    emit busyChanged();
+
+    auto& session = m_app->session();
+    if (job->generation != projectGeneration()) {
+        m_app->showStatus(tr("Fit discarded: the project was replaced"));
+    } else if (job->cancelled || job->cancel.load()) {
+        // Also when Cancel came after the fit's last poll (sewing, seam checks).
+        m_app->showStatus(tr("Fit cancelled"));
+    } else if (!job->result) {
+        m_app->showStatus(job->error);
+    } else {
+        // The scan, its selection or the options may have changed meanwhile (the window
+        // stays usable): then the result belongs to nothing and is not used.
+        const auto now = commands::prepareFit(session.document(), session.design(), job->command.toStdString(),
+                                              toJson(job->params));
+        if (!now || now->key != job->prepared.key) {
+            m_app->showStatus(tr("Fit discarded: the scan or its selection changed while it was computed"));
+        } else {
+            session.fitStage().put(job->prepared.key, std::move(*job->result));
+            if (job->then.isCallable())
+                job->then.call();
+            // Never leave a staged result behind (e.g. when the command rejected its params).
+            (void)session.fitStage().take(job->prepared.key);
+        }
+    }
+    startNextImport();
+}
+
+void ScanController::waitForFit()
+{
+    while (m_fitJob != nullptr) {
+        m_fitJob->wait();
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    }
 }
 
 bool ScanController::waitForImports()

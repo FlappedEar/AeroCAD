@@ -3,6 +3,7 @@
 #include "CommandHelpers.hpp"
 
 #include "aerocad/cad/Design.hpp"
+#include "aerocad/commands/FitStage.hpp"
 #include "aerocad/core/MeshCheck.hpp"
 #include "aerocad/core/MeshSelection.hpp"
 #include "aerocad/core/Symmetry.hpp"
@@ -26,6 +27,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 namespace aerocad::commands {
@@ -746,7 +748,75 @@ int integerOption(const cad::Design& d, const Json& params, const char* key, int
     return static_cast<int>(value);
 }
 
-cad::FeatureEvaluator::Output surfaceStep(const model::Document& doc, const cad::Design& d, const cad::Feature& f)
+geometry::SurfaceFitOptions selectionFitOptions(const cad::Design& d, const Json& params)
+{
+    geometry::SurfaceFitOptions options;
+    options.tolerance = d.evaluate(params.value("tolerance", Json(options.tolerance)));
+    options.gridSize = params.contains("gridSize") ? integerOption(d, params, "gridSize", 0, 4, 200) : 0;
+    const std::string method = params.value("method", std::string("auto"));
+    if (method != "auto" && method != "plane" && method != "unfold")
+        throw CommandError("Unknown surface fit method");
+    if (!(options.tolerance > 0) || (options.gridSize != 0 && (options.gridSize < 4 || options.gridSize > 200)))
+        throw CommandError("Invalid fit tolerance or grid size");
+    options.method = method == "plane"    ? geometry::SurfaceFitMethod::Plane
+                     : method == "unfold" ? geometry::SurfaceFitMethod::Unfold
+                                          : geometry::SurfaceFitMethod::Auto;
+    return options;
+}
+
+geometry::RegionFitOptions regionFitOptions(const cad::Design& d, const Json& params)
+{
+    geometry::RegionFitOptions options;
+    options.creaseAngleDeg = d.evaluate(params.value("creaseAngle", Json(options.creaseAngleDeg)));
+    options.fit.tolerance = d.evaluate(params.value("tolerance", Json(options.fit.tolerance)));
+    options.blendRings = integerOption(d, params, "blendRings", options.blendRings, 0, 50);
+    if (!(options.fit.tolerance > 0) || !(options.creaseAngleDeg > 0 && options.creaseAngleDeg <= 180) ||
+        options.blendRings < 0 || options.blendRings > 50)
+        throw CommandError("Invalid region fit tolerance, crease angle or blend rings");
+    return options;
+}
+
+/// One smooth surface over a large part of a scan takes minutes and cannot follow it
+/// anyway. A part drawn on the scan needs no selection or fit.
+constexpr std::size_t kMaxSelectionFitTriangles = 200000;
+
+/// Identifies a fit for FitStage: the mesh object (shared and immutable), the region and
+/// the options that change the result.
+std::string fitKey(const std::string& type, const core::TriangleMesh& mesh, const core::TriangleSet& region,
+                   const std::vector<double>& options)
+{
+    std::uint64_t h = 1469598103934665603ull;
+    for (const auto t : region) {
+        h ^= t;
+        h *= 1099511628211ull;
+    }
+    std::string key = type + ":" + std::to_string(reinterpret_cast<std::uintptr_t>(&mesh)) + ":" +
+                      std::to_string(mesh.triangleCount()) + ":" + std::to_string(region.size()) + ":" +
+                      std::to_string(h);
+    for (const double v : options) {
+        char buffer[40];
+        std::snprintf(buffer, sizeof buffer, ":%.17g", v);
+        key += buffer;
+    }
+    return key;
+}
+
+std::string selectionFitKey(const core::TriangleMesh& mesh, const core::TriangleSet& region,
+                            const geometry::SurfaceFitOptions& o)
+{
+    return fitKey("fit_selection", mesh, region,
+                  {o.tolerance, static_cast<double>(o.gridSize), static_cast<double>(static_cast<int>(o.method))});
+}
+
+std::string regionFitKey(const core::TriangleMesh& mesh, const core::TriangleSet& region,
+                         const geometry::RegionFitOptions& o)
+{
+    return fitKey("fit_regions", mesh, region,
+                  {o.creaseAngleDeg, o.fit.tolerance, static_cast<double>(o.blendRings)});
+}
+
+cad::FeatureEvaluator::Output surfaceStep(const model::Document& doc, const cad::Design& d, const cad::Feature& f,
+                                          FitStage* stage)
 {
     const Json& params = f.params;
     model::Part scratch;
@@ -771,9 +841,7 @@ cad::FeatureEvaluator::Output surfaceStep(const model::Document& doc, const cad:
             source.selection = std::make_shared<const core::TriangleSet>(triangles);
         }
         if (f.type == "fit_selection") {
-            // One smooth surface over a large part of a scan takes minutes and cannot follow
-            // it anyway. A part drawn on the scan needs no selection or fit.
-            constexpr std::size_t maxTriangles = 200000;
+            constexpr std::size_t maxTriangles = kMaxSelectionFitTriangles;
             if (source.selection->size() > maxTriangles)
                 throw CommandError("The selected area is too large for one smooth surface (" +
                                    std::to_string(source.selection->size()) + " triangles, at most " +
@@ -781,20 +849,16 @@ cad::FeatureEvaluator::Output surfaceStep(const model::Document& doc, const cad:
                                    "). Select a smaller area, or use Sketch and click the scan: a part drawn there "
                                    "follows the scan without a fitted surface");
 
-            geometry::SurfaceFitOptions options;
-            options.tolerance = d.evaluate(params.value("tolerance", Json(options.tolerance)));
-            options.gridSize = params.contains("gridSize") ? integerOption(d, params, "gridSize", 0, 4, 200) : 0;
-            const std::string method = params.value("method", std::string("auto"));
-            if (method != "auto" && method != "plane" && method != "unfold")
-                throw CommandError("Unknown surface fit method");
-            if (!(options.tolerance > 0) || (options.gridSize != 0 && (options.gridSize < 4 || options.gridSize > 200)))
-                throw CommandError("Invalid fit tolerance or grid size");
-            options.method = method == "plane"    ? geometry::SurfaceFitMethod::Plane
-                             : method == "unfold" ? geometry::SurfaceFitMethod::Unfold
-                                                  : geometry::SurfaceFitMethod::Auto;
+            const geometry::SurfaceFitOptions options = selectionFitOptions(d, params);
             geometry::SurfaceFitResult fit;
             try {
-                fit = geometry::fitSurface(*source.mesh, *source.selection, options);
+                std::optional<FitStage::Result> staged;
+                if (stage != nullptr)
+                    staged = stage->take(selectionFitKey(*source.mesh, *source.selection, options));
+                if (staged && std::holds_alternative<geometry::SurfaceFitResult>(*staged))
+                    fit = std::get<geometry::SurfaceFitResult>(std::move(*staged));
+                else
+                    fit = geometry::fitSurface(*source.mesh, *source.selection, options);
             } catch (const geometry::SurfaceFitError& e) {
                 throw CommandError(e.what());
             }
@@ -816,17 +880,17 @@ cad::FeatureEvaluator::Output surfaceStep(const model::Document& doc, const cad:
             result["warnings"] = rep.warnings;
             return {{{fit.face, params.value("name", source.name + " surface")}}, {}, result};
         }
-        geometry::RegionFitOptions options;
-        options.creaseAngleDeg = d.evaluate(params.value("creaseAngle", Json(options.creaseAngleDeg)));
-        options.fit.tolerance = d.evaluate(params.value("tolerance", Json(options.fit.tolerance)));
-        options.blendRings = integerOption(d, params, "blendRings", options.blendRings, 0, 50);
-        if (!(options.fit.tolerance > 0) || !(options.creaseAngleDeg > 0 && options.creaseAngleDeg <= 180) ||
-            options.blendRings < 0 || options.blendRings > 50)
-            throw CommandError("Invalid region fit tolerance, crease angle or blend rings");
+        const geometry::RegionFitOptions options = regionFitOptions(d, params);
         geometry::RegionFitResult fit;
         try {
-            fit = geometry::fitRegions(*source.mesh, useSelection ? *source.selection : core::TriangleSet{},
-                                       options);
+            const core::TriangleSet region = useSelection ? *source.selection : core::TriangleSet{};
+            std::optional<FitStage::Result> staged;
+            if (stage != nullptr)
+                staged = stage->take(regionFitKey(*source.mesh, region, options));
+            if (staged && std::holds_alternative<geometry::RegionFitResult>(*staged))
+                fit = std::get<geometry::RegionFitResult>(std::move(*staged));
+            else
+                fit = geometry::fitRegions(*source.mesh, region, options);
         } catch (const geometry::SurfaceFitError& e) {
             throw CommandError(e.what());
         }
@@ -1050,7 +1114,7 @@ Json addSurfaceStep(CommandContext& ctx, const std::string& type, const Json& pa
 
 } // namespace
 
-void registerSurfaceFeatures(cad::Design& design, const model::Document& document)
+void registerSurfaceFeatures(cad::Design& design, const model::Document& document, FitStage* fitStage)
 {
     // Fingerprints are cached per part revision: hashing a large scan on every
     // regeneration would cost more than the cache saves.
@@ -1114,8 +1178,8 @@ void registerSurfaceFeatures(cad::Design& design, const model::Document& documen
                                     return finOnSurface(*doc, d, f.params);
                                 }});
     for (const std::string type : {"fit_selection", "fit_regions", "trim_by_sketch", "offset_surface", "thicken_surface"})
-        design.setFeatureEvaluator(type, {inputs, [doc](const cad::Feature& f, const cad::Design& d) {
-                                             return surfaceStep(*doc, d, f);
+        design.setFeatureEvaluator(type, {inputs, [doc, fitStage](const cad::Feature& f, const cad::Design& d) {
+                                             return surfaceStep(*doc, d, f, fitStage);
                                          }});
 
 }
@@ -1305,6 +1369,60 @@ void registerSurfaceCommands(CommandRegistry& r)
           [](CommandContext& ctx, const Json& params) {
               return addSurfaceStep(ctx, "thicken_surface", params, "Thicken surface");
           });
+}
+
+std::optional<PreparedFit> prepareFit(const model::Document& document, const cad::Design& design,
+                                      const std::string& command, const Json& params)
+{
+    const bool selectionFit = command == "surface.fit_selection";
+    if (!selectionFit && command != "surface.fit_regions")
+        return std::nullopt;
+    try {
+        const model::Part* part = document.part(params.at("id").get<model::PartId>());
+        if (part == nullptr || !part->mesh || part->mesh->triangleCount() == 0)
+            return std::nullopt;
+        // The same region as addSurfaceStep stores and surfaceStep fits.
+        const bool hasSelection = part->selection && !part->selection->empty();
+        const bool useSelection = selectionFit || params.value("useSelection", hasSelection);
+        if (useSelection && !hasSelection)
+            return std::nullopt;
+        std::shared_ptr<const core::TriangleMesh> mesh = part->mesh;
+        core::TriangleSet region = useSelection ? *part->selection : core::TriangleSet{};
+        PreparedFit prepared;
+        prepared.triangles = useSelection ? region.size() : mesh->triangleCount();
+        if (selectionFit) {
+            if (region.size() > kMaxSelectionFitTriangles)
+                return std::nullopt;
+            const geometry::SurfaceFitOptions options = selectionFitOptions(design, params);
+            prepared.key = selectionFitKey(*mesh, region, options);
+            prepared.run = [mesh, region = std::move(region), options](
+                               std::function<void(int, int)> progress,
+                               std::function<bool()> cancelled) -> FitStage::Result {
+                geometry::SurfaceFitOptions o = options;
+                o.cancelled = std::move(cancelled);
+                if (progress)
+                    progress(0, 1);
+                FitStage::Result result = geometry::fitSurface(*mesh, region, o);
+                if (progress)
+                    progress(1, 1);
+                return result;
+            };
+        } else {
+            const geometry::RegionFitOptions options = regionFitOptions(design, params);
+            prepared.key = regionFitKey(*mesh, region, options);
+            prepared.run = [mesh, region = std::move(region), options](
+                               std::function<void(int, int)> progress,
+                               std::function<bool()> cancelled) -> FitStage::Result {
+                geometry::RegionFitOptions o = options;
+                o.progress = std::move(progress);
+                o.cancelled = std::move(cancelled);
+                return geometry::fitRegions(*mesh, region, o);
+            };
+        }
+        return prepared;
+    } catch (const std::exception&) {
+        return std::nullopt;
+    }
 }
 
 } // namespace aerocad::commands

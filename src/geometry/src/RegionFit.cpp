@@ -30,12 +30,14 @@
 #include <math_Matrix.hxx>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <map>
 #include <numbers>
 #include <optional>
 #include <set>
+#include <thread>
 #include <unordered_map>
 
 namespace aerocad::geometry {
@@ -204,11 +206,13 @@ RegionFitResult fitRegions(const core::TriangleMesh& mesh, const core::TriangleS
     };
     // The original smooth region of every triangle (splits stay inside it).
     const std::vector<std::int64_t> regionOfTriangle = label;
-    auto fitWith = [&](Fitted& f) {
+    // `stop`: polled inside each patch fit, so a cancel does not wait for a large patch.
+    auto fitWith = [&](Fitted& f, const std::function<bool()>& stop) {
         f.fit.reset();
         f.error.clear();
         SurfaceFitOptions o = fitOptions;
         o.outlineCorners = f.corners;
+        o.cancelled = stop;
         // Data across smooth seams: grow into the same region only (never over a crease).
         core::TriangleSet data = f.triangles;
         if (options.blendRings > 0) {
@@ -244,29 +248,100 @@ RegionFitResult fitRegions(const core::TriangleMesh& mesh, const core::TriangleS
             }
         }
     };
-    std::vector<std::pair<core::TriangleSet, int>> queue;
+    // Patches are independent: they are fit on several threads at once, in waves (the
+    // halves of a split patch go to the next wave). Progress and cancel run between patches
+    // on this thread.
+    const int threads = std::max(1, options.threads > 0 ? options.threads
+                                                       : static_cast<int>(std::thread::hardware_concurrency()));
+    int done = 0;
+    int known = static_cast<int>(regions.size());
+    auto checkCancel = [&] {
+        if (options.cancelled && options.cancelled())
+            throw SurfaceFitError("Cancelled");
+    };
+    auto report = [&] {
+        if (options.progress)
+            options.progress(done, known);
+    };
+    auto fitAll = [&](std::vector<Fitted*>& batch) {
+        std::atomic<std::size_t> next{0};
+        std::atomic<int> finished{0};
+        std::atomic<bool> stop{false};
+        const std::function<bool()> stopped = [&stop] { return stop.load(); };
+        // Only this thread calls options.cancelled.
+        const std::function<bool()> stopHere = [&] {
+            if (!stop && options.cancelled && options.cancelled())
+                stop = true;
+            return stop.load();
+        };
+        auto work = [&] {
+            for (std::size_t i = next++; i < batch.size() && !stop; i = next++) {
+                fitWith(*batch[i], stopped);
+                ++finished;
+            }
+        };
+        std::vector<std::thread> pool;
+        const auto n = std::min<std::size_t>(static_cast<std::size_t>(threads), batch.size());
+        for (std::size_t k = 1; k < n; ++k)
+            pool.emplace_back(work);
+        // This thread fits too, and reports progress and polls cancel after each patch.
+        const int before = done;
+        for (std::size_t i = next++; i < batch.size() && !stopHere(); i = next++) {
+            fitWith(*batch[i], stopHere);
+            ++finished;
+            done = before + finished.load();
+            report();
+        }
+        // The other threads may still be fitting: keep reporting and polling until they finish.
+        while (finished.load() < static_cast<int>(std::min(batch.size(), next.load())) && !stop) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            done = before + finished.load();
+            report();
+            stopHere();
+        }
+        for (auto& t : pool)
+            t.join();
+        done = before + finished.load();
+        report();
+        if (stop)
+            throw SurfaceFitError("Cancelled");
+    };
+    report();
+    std::vector<std::pair<core::TriangleSet, int>> wave;
     for (const auto& region : regions)
-        queue.emplace_back(region, 0);
+        wave.emplace_back(region, 0);
     std::vector<Fitted> fitted;
     bool split = false;
-    while (!queue.empty()) {
-        auto [patch, depth] = std::move(queue.back());
-        queue.pop_back();
-        Fitted f;
-        f.triangles = std::move(patch);
-        f.corners = patchCorners(mesh, adjacency, label, f.triangles);
-        fitWith(f);
-        const bool good = f.fit && f.fit->report.withinTolerance;
-        if (!good && depth < 3 && f.triangles.size() >= 64) {
-            auto halves = bisect(mesh, adjacency, f.triangles);
-            if (halves.size() >= 2) {
-                split = true;
-                for (auto& h : halves)
-                    queue.emplace_back(std::move(h), depth + 1);
-                continue;
-            }
+    while (!wave.empty()) {
+        checkCancel();
+        std::vector<Fitted> batch(wave.size());
+        std::vector<Fitted*> work;
+        for (std::size_t k = 0; k < wave.size(); ++k) {
+            batch[k].triangles = std::move(wave[k].first);
+            batch[k].corners = patchCorners(mesh, adjacency, label, batch[k].triangles);
+            work.push_back(&batch[k]);
         }
-        fitted.push_back(std::move(f));
+        fitAll(work);
+        std::vector<std::pair<core::TriangleSet, int>> nextWave;
+        for (std::size_t k = 0; k < batch.size(); ++k) {
+            Fitted& f = batch[k];
+            const int depth = wave[k].second;
+            const bool good = f.fit && f.fit->report.withinTolerance;
+            if (!good && depth < 3 && f.triangles.size() >= 64) {
+                auto halves = bisect(mesh, adjacency, f.triangles);
+                if (halves.size() >= 2) {
+                    split = true;
+                    // The fit of the whole stays done; its halves are more work.
+                    known += static_cast<int>(halves.size());
+                    for (auto& h : halves)
+                        nextWave.emplace_back(std::move(h), depth + 1);
+                    continue;
+                }
+            }
+            fitted.push_back(std::move(f));
+        }
+        wave = std::move(nextWave);
+        report();
     }
     if (fitted.size() > regions.size())
         result.warnings.push_back("Split " + std::to_string(fitted.size() - regions.size()) +
@@ -276,6 +351,7 @@ RegionFitResult fitRegions(const core::TriangleMesh& mesh, const core::TriangleS
         for (std::size_t k = 0; k < fitted.size(); ++k)
             for (const auto t : fitted[k].triangles)
                 label[t] = static_cast<std::int64_t>(k);
+        std::vector<Fitted*> refit;
         for (auto& f : fitted) {
             auto corners = patchCorners(mesh, adjacency, label, f.triangles);
             auto key = [](const core::Vec3& p) { return std::array<double, 3>{p.x, p.y, p.z}; };
@@ -288,8 +364,14 @@ RegionFitResult fitRegions(const core::TriangleMesh& mesh, const core::TriangleS
             };
             if (sorted(corners) != sorted(f.corners)) {
                 f.corners = std::move(corners);
-                fitWith(f);
+                refit.push_back(&f);
             }
+        }
+        if (!refit.empty()) {
+            // Refits count as more work: progress never goes back.
+            done = static_cast<int>(fitted.size());
+            known = static_cast<int>(fitted.size() + refit.size());
+            fitAll(refit);
         }
     }
 

@@ -4,11 +4,13 @@
 #include "aerocad/core/Mesh.hpp"
 
 #include <QHash>
+#include <QJSValue>
 #include <QObject>
 #include <QPointer>
 #include <QStringList>
 #include <QTimer>
 #include <QUrl>
+#include <QVariantMap>
 #include <QVector3D>
 #include <QtQml/qqmlregistration.h>
 
@@ -29,6 +31,8 @@ class AppController;
 /// Scan workflow support for the UI:
 /// - background import with progress and cancel (files are parsed on a worker thread,
 ///   staged, then added through the document.import command on the UI thread);
+/// - background surface fits with progress and cancel (CAD-259), staged the same way for
+///   the surface.fit_* commands;
 /// - display level of detail: meshes above `triangleBudget` are drawn decimated (computed
 ///   in the background) while the document keeps the full mesh for selection and fitting;
 /// - snapping picked points to the full-resolution mesh.
@@ -42,6 +46,8 @@ class ScanController : public QObject {
     Q_PROPERTY(QString importUnits READ importUnits WRITE setImportUnits NOTIFY importUnitsChanged)
     Q_PROPERTY(int triangleBudget READ triangleBudget WRITE setTriangleBudget NOTIFY triangleBudgetChanged)
     Q_PROPERTY(QStringList unitSymbols READ unitSymbols CONSTANT)
+    Q_PROPERTY(int backgroundFitTriangles READ backgroundFitTriangles WRITE setBackgroundFitTriangles NOTIFY
+                   backgroundFitTrianglesChanged)
 
 public:
     explicit ScanController(AppController* app, QObject* parent = nullptr);
@@ -52,7 +58,7 @@ public:
     /// The application's instance (used by MeshGeometry); nullptr before construction.
     [[nodiscard]] static ScanController* instance();
 
-    [[nodiscard]] bool busy() const { return m_job != nullptr; }
+    [[nodiscard]] bool busy() const { return m_job != nullptr || m_fitJob != nullptr; }
     [[nodiscard]] double progress() const { return m_progressValue; }
     [[nodiscard]] QString progressText() const { return m_progressText; }
     [[nodiscard]] QString importUnits() const { return m_importUnits; }
@@ -61,12 +67,25 @@ public:
     [[nodiscard]] int triangleBudget() const { return m_triangleBudget; }
     void setTriangleBudget(int budget);
     [[nodiscard]] QStringList unitSymbols() const;
+    /// Fits of at least this many triangles run in the background (lower in tests).
+    [[nodiscard]] int backgroundFitTriangles() const { return m_backgroundFitTriangles; }
+    void setBackgroundFitTriangles(int triangles);
 
     /// Queues a file for background import (units: importUnits). Returns false for
     /// unsupported URLs.
     Q_INVOKABLE bool importFile(const QUrl& url);
     /// Cancels the running import and drops queued ones.
     Q_INVOKABLE void cancelImport();
+    /// Runs surface.fit_selection or surface.fit_regions (`command`) with `params`: a fit of
+    /// at least backgroundFitTriangles triangles is computed on a worker thread with
+    /// progress and Cancel, staged, and `then()` is called on the UI thread to execute the
+    /// command, which takes the staged result. A smaller fit calls `then()` at once.
+    /// Returns false (and calls nothing) while an import or another fit runs.
+    Q_INVOKABLE bool fitInBackground(const QString& command, const QVariantMap& params, const QJSValue& then);
+    /// Cancels the running import or fit.
+    Q_INVOKABLE void cancel();
+    /// Blocks until a background fit is finished (scripts, tests).
+    Q_INVOKABLE void waitForFit();
     /// Blocks until queued imports are finished (scripts, smoke test). Returns false if one failed.
     bool waitForImports();
     /// Blocks until every part's display mesh is available (smoke test, screenshots).
@@ -87,6 +106,7 @@ signals:
     void progressChanged();
     void importUnitsChanged();
     void triangleBudgetChanged();
+    void backgroundFitTrianglesChanged();
     void displayMeshReady(quint64 partId);
     /// A queued import failed (message also shown in the status bar).
     void importFailed(const QString& message);
@@ -111,6 +131,7 @@ private:
     /// Cancels the running job and drops queued files that belong to a replaced project.
     void dropStaleImports();
     void setProgress(double value, const QString& text);
+    void finishFit();
 
     QPointer<AppController> m_app;
     QList<ImportJob> m_queue;
@@ -138,6 +159,11 @@ private:
     /// Parse result handed from the worker thread to the UI thread.
     struct Parsed;
     std::shared_ptr<Parsed> m_parsed;
+    /// The background fit: worker thread, its result, and what to run when it is staged.
+    struct FitJob;
+    std::shared_ptr<FitJob> m_fit;
+    QThread* m_fitJob = nullptr;
+    int m_backgroundFitTriangles = 20000;
 };
 
 } // namespace aerocad::app

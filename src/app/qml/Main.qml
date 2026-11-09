@@ -2677,19 +2677,28 @@ ApplicationWindow {
                 partId: window.selectedPartId
             }
 
-            // Import progress (files are parsed in the background).
+            // Import and surface fit progress (both run in the background; progress < 0: no
+            // steps to count).
             Pane {
+                objectName: "backgroundJobPane"
+                // Top centre, below the selection tools: the selection's context bar and the
+                // navigation bar use the bottom.
                 anchors.horizontalCenter: parent.horizontalCenter
-                anchors.bottom: parent.bottom
-                anchors.bottomMargin: 56
+                anchors.top: parent.top
+                anchors.topMargin: 56
                 visible: window.scan.busy
                 padding: 10
                 RowLayout {
                     spacing: 10
                     Label { text: window.scan.progressText }
-                    ProgressBar { from: 0; to: 1; value: window.scan.progress; Layout.preferredWidth: 220 }
-                    Label { text: Math.round(window.scan.progress * 100) + " %" }
-                    Button { text: qsTr("Cancel"); onClicked: window.scan.cancelImport() }
+                    ProgressBar {
+                        from: 0; to: 1
+                        indeterminate: window.scan.progress < 0
+                        value: Math.max(0, window.scan.progress)
+                        Layout.preferredWidth: 220
+                    }
+                    Label { visible: window.scan.progress >= 0; text: Math.round(window.scan.progress * 100) + " %" }
+                    Button { text: qsTr("Cancel"); onClicked: window.scan.cancel() }
                 }
             }
 

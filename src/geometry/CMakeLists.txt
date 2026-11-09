@@ -17,7 +17,8 @@ add_library(aerocad_geometry STATIC
 )
 add_library(AeroCAD::geometry ALIAS aerocad_geometry)
 target_include_directories(aerocad_geometry PUBLIC include PRIVATE occt/include)
-target_link_libraries(aerocad_geometry PUBLIC AeroCAD::core PRIVATE aerocad_occt)
+find_package(Threads REQUIRED)
+target_link_libraries(aerocad_geometry PUBLIC AeroCAD::core PRIVATE aerocad_occt Threads::Threads)
 aerocad_set_warnings(aerocad_geometry)
 
 # Interop target exposing the OCCT-backed Shape internals (OcctShape.hpp).

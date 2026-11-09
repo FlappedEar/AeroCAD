@@ -426,6 +426,12 @@ if(AEROCAD_BUILD_TESTS)
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/fit_deviation_message.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_fit_deviation_message_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-259: large fits run in the background with progress, Cancel and stale-result checks.
+    add_test(NAME app_fit_background_test
+        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl
+                --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/fit_background.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_fit_background_test PROPERTIES LABELS gui TIMEOUT 90)
     # CAD-114: the outline step on a fitted surface (empty sketch, rectangle drawn by dragging).
     add_test(NAME app_surface_outline_drag_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl

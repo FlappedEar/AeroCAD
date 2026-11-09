@@ -748,6 +748,55 @@ QtObject {
         return (Number(s) <= f.tolerance) !== (d <= f.tolerance) ? d.toFixed(3) : s
     }
 
+    /// Runs fit `command` through the scan controller: in the background with progress and
+    /// Cancel when it is large (CAD-259), else at once. `done(params)` executes the command.
+    function _fit(command, params, done) {
+        let r = null
+        const started = host.scan.fitInBackground(command, params, () => { r = done(params) })
+        // Called at once (small fit): its result; else it follows when the fit is done.
+        return r ?? { ok: started, pending: started }
+    }
+
+    function _fitSurfaceDone(r, pid) {
+        if (r.ok) {
+            // The area is done: back to navigating, and the scan's highlight no longer
+            // covers the new surface.
+            host.setSelectionTool("navigate")
+            controller.execute("selection.clear", { id: pid })
+            _hideSource(r, pid)
+            const f = r.result.fit
+            let msg = qsTr("Surface \"%1\" fitted: max deviation %2 mm (%3).")
+                .arg(r.result.name).arg(fitDeviationText(f))
+                .arg(f.withinTolerance ? qsTr("within the %1 mm tolerance").arg(f.tolerance)
+                                       : qsTr("more than the %1 mm tolerance").arg(f.tolerance))
+            if (!f.withinTolerance && (r.result.warnings ?? []).length > 0)
+                msg += " " + r.result.warnings.join(" ")
+            controller.showStatus(msg + " " + qsTr("The scan is hidden. Draw the outline of the part and click Finish Sketch."))
+        }
+        _selectResult(r)
+        // The next step is always the outline: start the sketch on the new surface.
+        if (r.ok && r.result.id)
+            host.createSketch({ surface: { part: r.result.id } })
+        return r
+    }
+
+    function _fitWholeDone(r) {
+        if (r.ok) {
+            const f = r.result.fit
+            let msg = qsTr("\"%1\": %2 patches, %3, max deviation %4 mm (%5).").arg(r.result.name).arg(f.faces)
+                .arg(f.solid ? qsTr("closed solid") : qsTr("open shell with %1 free edges").arg(f.freeEdges))
+                .arg(fitDeviationText(f))
+                .arg(f.withinTolerance ? qsTr("within the %1 mm tolerance").arg(f.tolerance)
+                                       : qsTr("MORE THAN THE %1 mm TOLERANCE").arg(f.tolerance))
+            if (f.smoothSeams > 0)
+                msg += " " + qsTr("Smooth seams within %1°.").arg(Number(f.seamAngleMaxDeg).toFixed(2))
+            if ((r.result.warnings ?? []).length > 0)
+                msg += " " + r.result.warnings.join(" ")
+            controller.showStatus(msg)
+        }
+        return _selectResult(r)
+    }
+
     /// Runs action `id` on part `info` with the popup's values ({key: value}).
     function run(id, info, values) {
         const v = values || {}
@@ -762,47 +811,15 @@ QtObject {
         case "growSelection": return controller.execute("selection.grow", { id: pid, steps: 1 })
         case "shrinkSelection": return controller.execute("selection.grow", { id: pid, steps: -1 })
         case "clearSelection": return controller.execute("selection.clear", { id: pid })
-        case "fitSurface": {
-            const r = controller.execute("surface.fit_selection", { id: pid, tolerance: v.tolerance > 0 ? v.tolerance : 0.25 })
-            if (r.ok) {
-                // The area is done: back to navigating, and the scan's highlight no longer
-                // covers the new surface.
-                host.setSelectionTool("navigate")
-                controller.execute("selection.clear", { id: pid })
-                _hideSource(r, pid)
-                const f = r.result.fit
-                let msg = qsTr("Surface \"%1\" fitted: max deviation %2 mm (%3).")
-                    .arg(r.result.name).arg(fitDeviationText(f))
-                    .arg(f.withinTolerance ? qsTr("within the %1 mm tolerance").arg(f.tolerance)
-                                           : qsTr("more than the %1 mm tolerance").arg(f.tolerance))
-                if (!f.withinTolerance && (r.result.warnings ?? []).length > 0)
-                    msg += " " + r.result.warnings.join(" ")
-                controller.showStatus(msg + " " + qsTr("The scan is hidden. Draw the outline of the part and click Finish Sketch."))
-            }
-            _selectResult(r)
-            // The next step is always the outline: start the sketch on the new surface.
-            if (r.ok && r.result.id)
-                host.createSketch({ surface: { part: r.result.id } })
-            return r
-        }
-        case "fitWhole": {
-            const r = controller.execute("surface.fit_regions", { id: pid, tolerance: v.tolerance > 0 ? v.tolerance : 0.25,
-                                                                   useSelection: (info.selectedTriangles ?? 0) > 0 })
-            if (r.ok) {
-                const f = r.result.fit
-                let msg = qsTr("\"%1\": %2 patches, %3, max deviation %4 mm (%5).").arg(r.result.name).arg(f.faces)
-                    .arg(f.solid ? qsTr("closed solid") : qsTr("open shell with %1 free edges").arg(f.freeEdges))
-                    .arg(fitDeviationText(f))
-                    .arg(f.withinTolerance ? qsTr("within the %1 mm tolerance").arg(f.tolerance)
-                                           : qsTr("MORE THAN THE %1 mm TOLERANCE").arg(f.tolerance))
-                if (f.smoothSeams > 0)
-                    msg += " " + qsTr("Smooth seams within %1°.").arg(Number(f.seamAngleMaxDeg).toFixed(2))
-                if ((r.result.warnings ?? []).length > 0)
-                    msg += " " + r.result.warnings.join(" ")
-                controller.showStatus(msg)
-            }
-            return _selectResult(r)
-        }
+        case "fitSurface":
+            // A large area is fit in the background with progress and Cancel (CAD-259); the
+            // command then takes that result. Small ones run at once.
+            return _fit("surface.fit_selection", { id: pid, tolerance: v.tolerance > 0 ? v.tolerance : 0.25 },
+                        params => _fitSurfaceDone(controller.execute("surface.fit_selection", params), pid))
+        case "fitWhole":
+            return _fit("surface.fit_regions", { id: pid, tolerance: v.tolerance > 0 ? v.tolerance : 0.25,
+                                                 useSelection: (info.selectedTriangles ?? 0) > 0 },
+                        params => _fitWholeDone(controller.execute("surface.fit_regions", params)))
         case "fitDeviation": {
             const scan = fitSource(info)
             const tol = v.tolerance > 0 ? v.tolerance : 0.25

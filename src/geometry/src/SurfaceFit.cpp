@@ -576,7 +576,7 @@ std::vector<std::int64_t> clusterVertices(std::vector<Vec3>& pos, std::vector<st
 /// that subset, while the whole selection is unfolded and fit (data beyond the trim, for
 /// smooth joins with neighbouring patches).
 Unfolded unfoldPatch(const core::TriangleMesh& mesh, const core::TriangleSet& selection,
-                     const core::TriangleSet& trimTo = {})
+                     const core::TriangleSet& trimTo, const std::function<void()>& checkCancel)
 {
     Unfolded u;
     std::vector<std::array<std::uint32_t, 3>> trimTriangles;
@@ -781,6 +781,8 @@ Unfolded unfoldPatch(const core::TriangleMesh& mesh, const core::TriangleSet& se
         const auto maxIter =
             std::max<std::size_t>(5000, static_cast<std::size_t>(50.0 * std::sqrt(static_cast<double>(m))));
         for (std::size_t iter = 0; iter < maxIter && m > 0; ++iter) {
+            if (iter % 16 == 0)
+                checkCancel();
             apply(p, ap);
             double pap = 0.0;
             for (std::size_t r = 0; r < m; ++r)
@@ -1154,10 +1156,12 @@ TopoDS_Face faceFromWire(const Handle(Geom_BSplineSurface) & surface, const Topo
 
 /// Cuts the hole wires (clockwise in parameter space) out of `face`; returns how many
 /// were cut. A hole that fails is left closed with a warning.
-int cutHoles(TopoDS_Face& face, const std::vector<TopoDS_Wire>& holes, std::vector<std::string>& warnings)
+int cutHoles(TopoDS_Face& face, const std::vector<TopoDS_Wire>& holes, std::vector<std::string>& warnings,
+             const std::function<void()>& checkCancel)
 {
     int cut = 0;
     for (const auto& wire : holes) {
+        checkCancel();
         try {
             if (wire.IsNull())
                 throw Standard_Failure("no wire");
@@ -1187,6 +1191,10 @@ SurfaceFitResult fitSurface(const core::TriangleMesh& mesh, const core::Triangle
     const auto t0 = std::chrono::steady_clock::now();
     SurfaceFitResult result;
     SurfaceFitReport& report = result.report;
+    const std::function<void()> checkCancel = [&options] {
+        if (options.cancelled && options.cancelled())
+            throw SurfaceFitError("Cancelled");
+    };
     for (const auto t : requested)
         if (t >= mesh.triangleCount())
             throw SurfaceFitError("Selection refers to triangles outside the mesh");
@@ -1241,7 +1249,7 @@ SurfaceFitResult fitSurface(const core::TriangleMesh& mesh, const core::Triangle
     std::optional<Unfolded> unfolded;
     if (options.method != SurfaceFitMethod::Plane) {
         try {
-            unfolded = unfoldPatch(mesh, selection, options.trimTo);
+            unfolded = unfoldPatch(mesh, selection, options.trimTo, checkCancel);
         } catch (const SurfaceFitError& error) {
             if (options.method == SurfaceFitMethod::Unfold)
                 throw;
@@ -1249,6 +1257,7 @@ SurfaceFitResult fitSurface(const core::TriangleMesh& mesh, const core::Triangle
                                       "); fit as a height field over its mean plane instead.");
         }
     }
+    checkCancel();
     const bool unfold = unfolded.has_value();
     if (folded && !unfold)
         report.warnings.push_back("The region bends more than about 85 degrees away from its mean plane; the fit "
@@ -1427,6 +1436,7 @@ SurfaceFitResult fitSurface(const core::TriangleMesh& mesh, const core::Triangle
         if (fitTolerance / 2.0 > options.tolerance)
             report.warnings.push_back("The fit needed a tolerance of " + std::to_string(fitTolerance / 2.0) + " mm.");
     }
+    checkCancel();
     report.method = unfold ? "unfold" : "plane";
     report.uPoles = surface->NbUPoles();
     report.vPoles = surface->NbVPoles();
@@ -1508,10 +1518,11 @@ SurfaceFitResult fitSurface(const core::TriangleMesh& mesh, const core::Triangle
             report.warnings.push_back("Could not trim the surface to the selection outline; it covers the whole "
                                       "fit rectangle.");
         } else if (!holeWires.empty()) {
-            report.holes = cutHoles(face, holeWires, report.warnings);
+            report.holes = cutHoles(face, holeWires, report.warnings, checkCancel);
         }
     }
 
+    checkCancel();
     // Mesh -> face.
     // Each point is projected with a local search (Extrema_GenLocateExtPS) started from
     // the nearest of a grid of surface samples: exact and much faster than a global
@@ -1603,6 +1614,8 @@ SurfaceFitResult fitSurface(const core::TriangleMesh& mesh, const core::Triangle
         return best;
     };
     for (std::size_t i = 0; i < measured.size(); i += stride) {
+        if ((i / stride) % 1024 == 0)
+            checkCancel();
         const auto l = frame.toLocal(measured[i]);
         double d = 0.0;
         const auto k = seeds.nearest(l[0], l[1], l[2], d);
@@ -1641,6 +1654,7 @@ SurfaceFitResult fitSurface(const core::TriangleMesh& mesh, const core::Triangle
                               "smaller area that does not fold over itself");
     }
 
+    checkCancel();
     // Surface -> mesh, sampled on the face's own triangulation (so only inside the trim).
     // Measured against the selection grown by two rings: the smoothed trim outline may
     // pass a fraction of a triangle outside the selected triangles, which is not a
