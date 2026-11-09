@@ -860,6 +860,29 @@ Pane {
         return /^[+-]?(\d+(?:[.,]\d*)?|[.,]\d+)$/.test(t) ? Number(t.replace(",", ".")) : NaN
     }
     readonly property bool yawValid: Math.abs(typedYaw()) <= 30
+
+    /// The New run settings under "More settings" (CAD-213): shown when opened, when one of
+    /// them needs fixing, or when A's surroundings could not be copied (B's flow would differ).
+    property bool moreOpen: false
+    readonly property bool moreShown: moreOpen || !yawValid || !refAreaValid
+                                      || copiedContextForeign > 0 || copiedContextMissing > 0
+    /// What under "More settings" is not the default, for its header.
+    readonly property string moreSummary: {
+        const parts = []
+        if (typedYaw() !== 0 && yawValid)
+            parts.push(qsTr("yaw %1°").arg(yawField.text.trim()))
+        if (refAreaField.text.trim().length > 0)
+            parts.push(qsTr("ref. area %1 cm²").arg(refAreaField.text.trim()))
+        if (groundBox.checked)
+            parts.push(wheelsBox.checked ? qsTr("moving floor, rotating wheels")
+                                         : (groundFixed ? qsTr("fixed floor") : qsTr("moving floor")) +
+                                           (floorField.text.trim().length > 0 ? qsTr(" at Z %1 mm").arg(floorField.text.trim()) : ""))
+        if (contextBox.checked)
+            parts.push(qsTr("other parts"))
+        if (labelField.text.trim().length > 0)
+            parts.push(qsTr("label \"%1\"").arg(labelField.text.trim()))
+        return parts.join(", ")
+    }
     readonly property real typedSpeed: speedMs(speedField.text)
     readonly property bool speedValid: typedSpeed > 0 && typedSpeed <= 150
     /// Under the speed field: the speed in both units, or why it cannot be used.
@@ -1312,28 +1335,10 @@ Pane {
                             { text: qsTr("-X (onto the right side)"), value: "-X" }
                         ]
                     }
-                    // Crosswind (CAD-188): the air turned this far counter-clockwise, seen from above.
-                    Label { text: qsTr("Yaw (°)"); opacity: 0.7 }
-                    TextField {
-                        id: yawField
-                        objectName: "cfdYawField"
-                        Layout.fillWidth: true
-                        placeholderText: qsTr("0 (straight); crosswind e.g. 5")
-                        onTextEdited: proposalTimer.restart()
-                    }
-                    Label {
-                        objectName: "cfdYawError"
-                        Layout.columnSpan: 2
-                        Layout.fillWidth: true
-                        visible: !root.yawValid
-                        text: qsTr("The yaw must be a number from -30 to 30 degrees, or empty for 0.")
-                        color: Theme.warning
-                        wrapMode: Text.WordWrap
-                        font.pixelSize: 11
-                    }
                     Label { text: qsTr("Mesh"); opacity: 0.7 }
                     ComboBox {
                         id: meshBox
+                        objectName: "cfdMeshBox"
                         Layout.fillWidth: true
                         onActivated: proposalTimer.restart()
                         textRole: "text"
@@ -1344,94 +1349,150 @@ Pane {
                             { text: qsTr("Fine (slow)"), value: "fine" }
                         ]
                     }
-                    // Cd/Cl/Cs on this area (CAD-182): empty = the frontal area of the part; a wing's
-                    // lift is usually given on its planform area.
-                    Label { text: qsTr("Ref. area (cm²)"); opacity: 0.7 }
-                    TextField {
-                        id: refAreaField
-                        objectName: "cfdRefAreaField"
-                        Layout.fillWidth: true
-                        placeholderText: root.proposal && root.proposal.referenceArea > 0
-                                         ? qsTr("auto: %1 cm² (frontal)").arg((root.proposal.referenceArea * 1e4).toFixed(1))
-                                         : qsTr("auto: frontal area")
-                        onTextEdited: proposalTimer.restart()
-                    }
+                    // Settings most runs keep (CAD-213) are folded away, so Run CFD and the run
+                    // list fit on screen together; the header says what is not the default.
                     Label {
-                        objectName: "cfdRefAreaError"
+                        objectName: "cfdMoreToggle"
                         Layout.columnSpan: 2
                         Layout.fillWidth: true
-                        visible: !root.refAreaValid
-                        text: qsTr("The reference area must be a number above 0 (cm²), or empty for the frontal area.")
-                        color: Theme.warning
-                        wrapMode: Text.WordWrap
-                        font.pixelSize: 11
-                    }
-                    Label { text: qsTr("Label"); opacity: 0.7 }
-                    TextField { id: labelField; Layout.fillWidth: true; placeholderText: qsTr("e.g. v2, long splitter") }
-                    CheckBox {
-                        id: groundBox
-                        objectName: "cfdGroundBox"
-                        Layout.columnSpan: 2
-                        text: root.groundFixed ? qsTr("Fixed floor under the geometry (as in A)")
-                                               : qsTr("Moving floor under the geometry")
-                        onToggled: { root.groundFixed = false; proposalTimer.restart() }
-                    }
-                    // A car (CAD-154): its wheels found on the part's bottom stand on the floor and turn.
-                    CheckBox {
-                        id: wheelsBox
-                        objectName: "cfdRotatingWheels"
-                        Layout.columnSpan: 2
-                        Layout.leftMargin: 24
-                        visible: groundBox.checked
-                        text: qsTr("Rotating wheels (on the floor)")
-                        // Rotating wheels need a moving floor: a fixed floor copied from A is dropped.
-                        onToggled: { if (checked) root.groundFixed = false; proposalTimer.restart() }
-                        ToolTip.visible: hovered
-                        ToolTip.text: qsTr("For a car: the wheels standing on its bottom are found, the floor touches the tyres and they turn with it.")
-                    }
-                    // Where the road is (CAD-147): a part mounted on a car sits well above it.
-                    Label { text: qsTr("Floor at Z (mm)"); opacity: 0.7; visible: groundBox.checked && !wheelsBox.checked }
-                    TextField {
-                        id: floorField
-                        objectName: "cfdFloorField"
-                        Layout.fillWidth: true
-                        visible: groundBox.checked && !wheelsBox.checked
-                        placeholderText: qsTr("just below the parts")
-                        validator: RegularExpressionValidator { regularExpression: /^-?\d*([.,]\d*)?$/ }
-                        onTextEdited: proposalTimer.restart()
-                    }
-                    Label {
-                        Layout.columnSpan: 2
-                        Layout.fillWidth: true
-                        visible: groundBox.checked && !wheelsBox.checked
-                        text: qsTr("Where the road is. Empty puts it just below the parts; for a part on a car, give the road's Z so the gap is as on the car.")
+                        Layout.topMargin: 2
+                        text: (root.moreShown ? "▾ " : "▸ ") + qsTr("More settings") +
+                              (root.moreSummary.length > 0 ? ": " + root.moreSummary : "")
                         color: Theme.textMuted
-                        wrapMode: Text.WordWrap
+                        elide: Text.ElideRight
                         font.pixelSize: 11
+                        // Reachable with Tab and opened with Space or Enter, like a button.
+                        activeFocusOnTab: true
+                        font.underline: activeFocus
+                        Keys.onPressed: (event) => {
+                            if (event.key === Qt.Key_Space || event.key === Qt.Key_Return ||
+                                    event.key === Qt.Key_Enter) {
+                                root.moreOpen = !root.moreOpen
+                                event.accepted = true
+                            }
+                        }
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.moreOpen = !root.moreOpen
+                        }
                     }
-                    CheckBox {
-                        id: contextBox
-                        Layout.columnSpan: 2
-                        onToggled: { root.copiedContext = null; root.copiedContextForeign = 0; proposalTimer.restart() }
-                        text: root.copiedContext
-                              ? qsTr("Surroundings of A in the flow: %n part(s) (not in the forces)", "", root.copiedContext.length)
-                              : qsTr("Other visible parts in the flow (not in the forces)")
-                    }
-                    Label {
-                        objectName: "cfdCopiedNote"
+                    GridLayout {
+                        objectName: "cfdMoreSettings"
                         Layout.columnSpan: 2
                         Layout.fillWidth: true
-                        visible: text.length > 0
-                        text: root.copiedContextForeign > 0
-                              ? qsTr("A ran with %n surrounding part(s) of another design; they cannot be restored here, so B's flow differs from A's.", "", root.copiedContextForeign)
-                              : root.copiedContextMissing > 0
-                              ? qsTr("%n part(s) of A's surroundings are no longer in the design, so B's flow differs from A's.", "", root.copiedContextMissing)
-                              : ""
-                        color: Theme.warning
-                        wrapMode: Text.WordWrap
-                        font.pixelSize: 11
+                        visible: root.moreShown
+                        columns: 2
+                        columnSpacing: 8
+                        // Crosswind (CAD-188): the air turned this far counter-clockwise, seen from above.
+                        Label { text: qsTr("Yaw (°)"); opacity: 0.7 }
+                        TextField {
+                            id: yawField
+                            objectName: "cfdYawField"
+                            Layout.fillWidth: true
+                            placeholderText: qsTr("0 (straight); crosswind e.g. 5")
+                            onTextEdited: proposalTimer.restart()
+                        }
+                        Label {
+                            objectName: "cfdYawError"
+                            Layout.columnSpan: 2
+                            Layout.fillWidth: true
+                            visible: !root.yawValid
+                            text: qsTr("The yaw must be a number from -30 to 30 degrees, or empty for 0.")
+                            color: Theme.warning
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: 11
+                        }
+                        // Cd/Cl/Cs on this area (CAD-182): empty = the frontal area of the part; a wing's
+                        // lift is usually given on its planform area.
+                        Label { text: qsTr("Ref. area (cm²)"); opacity: 0.7 }
+                        TextField {
+                            id: refAreaField
+                            objectName: "cfdRefAreaField"
+                            Layout.fillWidth: true
+                            placeholderText: root.proposal && root.proposal.referenceArea > 0
+                                             ? qsTr("auto: %1 cm² (frontal)").arg((root.proposal.referenceArea * 1e4).toFixed(1))
+                                             : qsTr("auto: frontal area")
+                            onTextEdited: proposalTimer.restart()
+                        }
+                        Label {
+                            objectName: "cfdRefAreaError"
+                            Layout.columnSpan: 2
+                            Layout.fillWidth: true
+                            visible: !root.refAreaValid
+                            text: qsTr("The reference area must be a number above 0 (cm²), or empty for the frontal area.")
+                            color: Theme.warning
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: 11
+                        }
+                        Label { text: qsTr("Label"); opacity: 0.7 }
+                        TextField { id: labelField; Layout.fillWidth: true; placeholderText: qsTr("e.g. v2, long splitter") }
+                        CheckBox {
+                            id: groundBox
+                            objectName: "cfdGroundBox"
+                            Layout.columnSpan: 2
+                            text: root.groundFixed ? qsTr("Fixed floor under the geometry (as in A)")
+                                                   : qsTr("Moving floor under the geometry")
+                            onToggled: { root.groundFixed = false; proposalTimer.restart() }
+                        }
+                        // A car (CAD-154): its wheels found on the part's bottom stand on the floor and turn.
+                        CheckBox {
+                            id: wheelsBox
+                            objectName: "cfdRotatingWheels"
+                            Layout.columnSpan: 2
+                            Layout.leftMargin: 24
+                            visible: groundBox.checked
+                            text: qsTr("Rotating wheels (on the floor)")
+                            // Rotating wheels need a moving floor: a fixed floor copied from A is dropped.
+                            onToggled: { if (checked) root.groundFixed = false; proposalTimer.restart() }
+                            ToolTip.visible: hovered
+                            ToolTip.text: qsTr("For a car: the wheels standing on its bottom are found, the floor touches the tyres and they turn with it.")
+                        }
+                        // Where the road is (CAD-147): a part mounted on a car sits well above it.
+                        Label { text: qsTr("Floor at Z (mm)"); opacity: 0.7; visible: groundBox.checked && !wheelsBox.checked }
+                        TextField {
+                            id: floorField
+                            objectName: "cfdFloorField"
+                            Layout.fillWidth: true
+                            visible: groundBox.checked && !wheelsBox.checked
+                            placeholderText: qsTr("just below the parts")
+                            validator: RegularExpressionValidator { regularExpression: /^-?\d*([.,]\d*)?$/ }
+                            onTextEdited: proposalTimer.restart()
+                        }
+                        Label {
+                            Layout.columnSpan: 2
+                            Layout.fillWidth: true
+                            visible: groundBox.checked && !wheelsBox.checked
+                            text: qsTr("Where the road is. Empty puts it just below the parts; for a part on a car, give the road's Z so the gap is as on the car.")
+                            color: Theme.textMuted
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: 11
+                        }
+                        CheckBox {
+                            id: contextBox
+                            Layout.columnSpan: 2
+                            onToggled: { root.copiedContext = null; root.copiedContextForeign = 0; proposalTimer.restart() }
+                            text: root.copiedContext
+                                  ? qsTr("Surroundings of A in the flow: %n part(s) (not in the forces)", "", root.copiedContext.length)
+                                  : qsTr("Other visible parts in the flow (not in the forces)")
+                        }
+                        Label {
+                            objectName: "cfdCopiedNote"
+                            Layout.columnSpan: 2
+                            Layout.fillWidth: true
+                            visible: text.length > 0
+                            text: root.copiedContextForeign > 0
+                                  ? qsTr("A ran with %n surrounding part(s) of another design; they cannot be restored here, so B's flow differs from A's.", "", root.copiedContextForeign)
+                                  : root.copiedContextMissing > 0
+                                  ? qsTr("%n part(s) of A's surroundings are no longer in the design, so B's flow differs from A's.", "", root.copiedContextMissing)
+                                  : ""
+                            color: Theme.warning
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: 11
+                        }
                     }
                     Button {
+                        objectName: "cfdRunButton"
                         Layout.columnSpan: 2
                         Layout.fillWidth: true
                         text: qsTr("Run CFD")

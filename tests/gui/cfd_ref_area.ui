@@ -12,6 +12,9 @@ ui.wait(1000)
 (() => { simulationPanel.tab = 0; simulationPanel.refreshProposal() })()
 ui.wait(300)
 # Auto: the frontal area of the 200 x 80 x 60 mm box seen along +Y is 200 x 60 mm = 120 cm².
+# The settings are under "More settings" (CAD-213).
+(() => { simulationPanel.moreOpen = true })()
+ui.wait(200)
 (() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const f = t.find(simulationPanel, "cfdRefAreaField"); ui.log("AUTO " + f.placeholderText); if (f.text !== "" || f.placeholderText !== "auto: 120.0 cm² (frontal)") ui.fail("auto placeholder: " + f.placeholderText); if ("referenceArea" in simulationPanel.runParams()) ui.fail("auto sends an area") })()
 (() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const f = t.find(simulationPanel, "cfdRefAreaField"); const p = f.mapToItem(null, f.width / 2, f.height / 2); ui.click(p.x, p.y) })()
 ui.type("abc")

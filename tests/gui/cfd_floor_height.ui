@@ -7,6 +7,9 @@ Qt.createQmlObject('import QtQuick; Item { objectName: "cfTest"; visible: false;
 ui.wait(800)
 (() => { const p = controller.execute("document.parts").result.parts[0]; ui.log("box bottom Z " + p.bounds.min[2]); window.selectPart(p.id); cfdAction.trigger() })()
 ui.wait(600)
+# The settings are under "More settings" (CAD-213).
+(() => { simulationPanel.moreOpen = true })()
+ui.wait(200)
 ui.clickText("Moving floor under the geometry")
 ui.wait(400)
 (() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const z = t.floorZ(); ui.log("floor just below: Z " + z); if (!(z < 0 && z > -10)) ui.fail("default floor is not just below the box: " + z); if (!t.find(simulationPanel, "cfdFloorField").visible) ui.fail("no floor height field with the floor on") })()

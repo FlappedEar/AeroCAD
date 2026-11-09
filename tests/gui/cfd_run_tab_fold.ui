@@ -1,0 +1,60 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CAD-213: in the Wind tunnel Run tab, Run CFD and the run list fit on screen together at
+# 1600x1000: the settings most runs keep (yaw, ref. area, label, floor, other parts) are under
+# "More settings", whose header says what is not the default. Injected runs, no engine.
+Qt.createQmlObject('import QtQuick; Item { objectName: "cfTest"; visible: false; function find(i, name) { if (!i) return null; if (i.objectName === name) return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = find(ch[k], name); if (r) return r } return null } function onScreen(name) { const it = find(simulationPanel, name); const v = find(simulationPanel, "cfdPanelScroll"); if (!it || !it.visible) return name + " hidden"; const p = it.mapToItem(v, 0, 0); return p.y >= 0 && p.y + it.height <= v.height ? "" : name + " at y " + Math.round(p.y) + " of " + Math.round(v.height) } function click(name) { const b = find(simulationPanel, name); const p = b.mapToItem(null, 20, b.height / 2); ui.click(p.x, p.y) } }', window.contentItem)
+ui.wait(800)
+(() => { const p = controller.execute("document.parts").result.parts[0]; window.selectPart(p.id); cfdAction.trigger() })()
+ui.wait(800)
+(() => { const run = (id, created, label) => ({ id: id, created: created, state: "finished", sourceInDocument: true, source: { label: label, partName: "box" }, latest: {}, final: { cd: 0.3, cl: -0.5, dragN: 30, liftN: -50 } }); simulationPanel.runs = [run("r1", "2026-11-09T01:00:00Z", "base"), run("r2", "2026-11-09T02:00:00Z", "long splitter")] })()
+ui.wait(500)
+# Without scrolling, the New run form's Run CFD and the newest run are both visible.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const v = t.find(simulationPanel, "cfdPanelScroll").contentItem; v.contentY = 0 })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const bad = [t.onScreen("cfdRunButton"), t.onScreen("runSummary_r2")].filter(x => x); ui.log("ON SCREEN " + (bad.join("; ") || "ok")); if (bad.length) ui.fail("not on screen: " + bad.join("; ")) })()
+ui.shot("/mnt/project-files/ux/cfd-run-tab-fold.png")
+# Folded by default; the header names nothing while all are default.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const h = t.find(simulationPanel, "cfdMoreToggle"); ui.log("HEADER " + h.text); if (t.find(simulationPanel, "cfdYawField").visible) ui.fail("More settings open by default"); if (h.text !== "▸ More settings") ui.fail("header: " + h.text) })()
+# Clicking the header opens it.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); t.click("cfdMoreToggle") })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); if (!t.find(simulationPanel, "cfdYawField").visible) ui.fail("More settings did not open") })()
+# A yaw and the moving floor show in the header once folded again.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const y = t.find(simulationPanel, "cfdYawField"); const p = y.mapToItem(null, y.width / 2, y.height / 2); ui.click(p.x, p.y) })()
+ui.type("5")
+ui.wait(200)
+ui.clickText("Moving floor under the geometry")
+ui.wait(200)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); t.click("cfdMoreToggle") })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const h = t.find(simulationPanel, "cfdMoreToggle"); ui.log("HEADER " + h.text); if (t.find(simulationPanel, "cfdYawField").visible) ui.fail("More settings did not fold"); if (h.text !== "▸ More settings: yaw 5°, moving floor") ui.fail("header: " + h.text); if (simulationPanel.runParams().yaw !== 5) ui.fail("folded yaw not sent: " + JSON.stringify(simulationPanel.runParams())) })()
+# Codex (#188): a typed floor height shows too.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); t.find(simulationPanel, "cfdFloorField").text = "-120" })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const h = t.find(simulationPanel, "cfdMoreToggle"); ui.log("HEADER " + h.text); if (h.text !== "▸ More settings: yaw 5°, moving floor at Z -120 mm") ui.fail("floor header: " + h.text) })()
+# Codex (#188): A's surroundings that cannot be restored open it, so the warning is seen.
+(() => { simulationPanel.copiedContextForeign = 1 })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); if (!t.find(simulationPanel, "cfdCopiedNote").visible) ui.fail("surroundings warning hidden in the fold") })()
+(() => { simulationPanel.copiedContextForeign = 0 })()
+ui.wait(200)
+# A wrong value opens it so it can be fixed.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); t.find(simulationPanel, "cfdYawField").text = "50" })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); if (!t.find(simulationPanel, "cfdYawError").visible) ui.fail("bad yaw hidden in the fold") })()
+# Codex (#188): from the Mesh box, Tab reaches the header and Space opens and closes it.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); t.find(simulationPanel, "cfdYawField").text = "5"; simulationPanel.moreOpen = false; t.find(simulationPanel, "cfdMeshBox").forceActiveFocus(Qt.TabFocusReason) })()
+ui.wait(200)
+ui.key("Tab")
+ui.wait(200)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); if (!t.find(simulationPanel, "cfdMoreToggle").activeFocus) ui.fail("Tab does not reach More settings: " + window.activeFocusItem) })()
+ui.key("Space")
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); if (!t.find(simulationPanel, "cfdYawField").visible) ui.fail("Space did not open More settings") })()
+ui.key("Return")
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); if (t.find(simulationPanel, "cfdYawField").visible) ui.fail("Enter did not fold More settings") })()
+(() => { simulationPanel.moreOpen = true; const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); t.find(simulationPanel, "cfdYawField").text = "50" })()
+ui.wait(300)
+ui.shot("cfd-run-tab-more.png")
+ui.log("cfd run tab fold done")

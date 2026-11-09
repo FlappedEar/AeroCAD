@@ -15,6 +15,9 @@ ui.wait(600)
 (() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const b = t.find(simulationPanel, "cfdUseSettingsOfA"); if (!b || !b.visible) ui.fail("no Use the settings button"); if (b.text.indexOf("Use the settings of A run (") !== 0) ui.fail("button text: " + b.text); const p = b.mapToItem(null, b.width / 2, b.height / 2); ui.click(p.x, p.y) })()
 ui.wait(600)
 (() => { const p = simulationPanel.runParams(); ui.log("PARAMS " + JSON.stringify(p)); if (p.speed !== 35 || p.flowDirection !== "+X" || p.mesh !== "medium" || p.ground !== true || p.groundHeight !== -40 || p.groundMoving !== false || p.density !== 1.1 || p.turbulenceIntensity !== 0.05) ui.fail("settings of A not copied: " + JSON.stringify(p)); if (!p.context || p.context.length !== 1) ui.fail("A's surroundings (one part), not every visible part: " + JSON.stringify(p.context)) })()
+# The settings are under "More settings" (CAD-213).
+(() => { simulationPanel.moreOpen = true })()
+ui.wait(200)
 (() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const g = t.find(simulationPanel, "cfdGroundBox"); if (g.text !== "Fixed floor under the geometry (as in A)") ui.fail("floor box text: " + g.text) })()
 ui.shot("cfd-use-settings.png")
 # Rotating wheels need a moving floor: ticking them drops the copied fixed floor.

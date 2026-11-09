@@ -15,7 +15,9 @@ ui.wait(2500)
 ui.wait(800)
 (() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const c = t.find(simulationPanel, "cfdChartCoefficients"); if (!c || !c.visible) ui.fail("no coefficient chart"); t.show(c) })()
 ui.wait(300)
-# Not hovered: no readout.
+# Not hovered: no readout. (The pointer is moved off the chart: it stays where Run CFD was clicked.)
+ui.move(5, 5)
+ui.wait(200)
 (() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const b = t.find(simulationPanel, "cfdChartCoefficients"); if (b.readout) ui.fail("readout without hover") })()
 # Hover the middle of the plot: iteration about 10 of 1..20, all three coefficients.
 (() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const c = t.find(simulationPanel, "cfdChartCoefficients"); const p = c.layoutPlot(c.width, c.height - 20); const q = c.mapToItem(null, p.left + p.w / 2, c.height / 2); ui.move(q.x, q.y) })()
