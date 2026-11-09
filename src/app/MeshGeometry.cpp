@@ -84,17 +84,20 @@ bool MeshGeometry::moveBuilt(const std::shared_ptr<const core::TriangleMesh>& di
     const auto* src = reinterpret_cast<const float*>(old.constData());
     auto* dst = reinterpret_cast<float*>(buffer.data());
     const bool mirrored = det < 0.0;
-    const core::Affine transform = *tf;
-    // transformMesh reverses the winding of a mirrored mesh, (a, b, c) -> (a, c, b): corner k
-    // of a triangle then comes from corner (3 - k) % 3.
+    const auto& vertices = display->vertices();
+    const auto& tris = display->triangles();
+    // Positions come from the mesh itself (doubles): transforming the uploaded floats would
+    // keep their rounding, e.g. detail lost far from the origin would stay lost after a
+    // move back. Only the normals are carried over. transformMesh reverses the winding of a
+    // mirrored mesh, (a, b, c) -> (a, c, b): corner k then had its normal at (3 - k) % 3.
     auto work = [&](qsizetype firstTriangle, qsizetype endTriangle) {
         for (qsizetype t = firstTriangle; t < endTriangle; ++t) {
+            const auto& tri = tris[static_cast<std::size_t>(t)];
             for (qsizetype k = 0; k < 3; ++k) {
                 const qsizetype from = t * 3 + (mirrored ? (3 - k) % 3 : k);
                 const float* v = src + from * floatsPerVertex;
                 float* o = dst + (t * 3 + k) * floatsPerVertex;
-                // Positions in double (a scan far from the origin keeps its precision).
-                const core::Vec3 p = transform.apply(core::Vec3{v[0], v[1], v[2]});
+                const core::Vec3& p = vertices[tri[static_cast<std::size_t>(k)]];
                 o[0] = static_cast<float>(p.x);
                 o[1] = static_cast<float>(p.y);
                 o[2] = static_cast<float>(p.z);
