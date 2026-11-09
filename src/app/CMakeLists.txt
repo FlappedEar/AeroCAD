@@ -231,6 +231,13 @@ if(AEROCAD_BUILD_TESTS)
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_cfd_chart_readout_test PROPERTIES LABELS gui TIMEOUT 60
         ENVIRONMENT "AEROCAD_CFD_DIR=${CMAKE_CURRENT_BINARY_DIR}/cfd-chart-readout-runs;AEROCAD_DOCKER=${PROJECT_SOURCE_DIR}/tests/gui/fake-docker.sh;FAKE_DOCKER_HISTORY=1")
+    # CAD-180: the wind tunnel speed in m/s, km/h or mph, with a decimal comma (no engine).
+    add_test(NAME app_cfd_speed_units_test
+        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl
+                --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/cfd_speed_units.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_cfd_speed_units_test PROPERTIES LABELS gui TIMEOUT 60
+        ENVIRONMENT "AEROCAD_CFD_DIR=${CMAKE_CURRENT_BINARY_DIR}/cfd-speed-units-runs")
     # CAD-162: the New run form takes the settings of the selected run (prepared cases, no engine).
     add_test(NAME app_cfd_use_settings_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl

@@ -16,7 +16,10 @@ panel in place of Properties:
 
 - **Run**: the engine status (green = ready), settings for a new run of the part
   selected in the browser (speed, flow direction, mesh, moving floor, other visible
-  parts as surroundings, label) and **Run CFD**. With the moving floor on, *Floor at Z
+  parts as surroundings, label) and **Run CFD**. The speed is in m/s or with a unit
+  (`72 km/h`, `45 mph`; a decimal comma works); the line under it shows it in m/s and km/h,
+  and a speed that is not a number or above 150 m/s is named there and disables Run CFD
+  (CAD-180, [speed](images/audit/cad-180-speed-units.png)). With the moving floor on, *Floor at Z
   (mm)* says where the road is (`groundHeight`); empty puts it just below the parts. For a
   part mounted on a car give the road's height, as the gap changes the forces (200 mm box,
   flow +X, 30 m/s, coarse: floor 4 mm below Cd 0.855 / Cl +0.095, 40 mm below Cd 0.839 /
