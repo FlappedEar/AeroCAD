@@ -861,10 +861,11 @@ Pane {
     }
     readonly property bool yawValid: Math.abs(typedYaw()) <= 30
 
-    /// The New run settings under "More settings" (CAD-213): shown when opened, or when one of
-    /// them needs fixing.
+    /// The New run settings under "More settings" (CAD-213): shown when opened, when one of
+    /// them needs fixing, or when A's surroundings could not be copied (B's flow would differ).
     property bool moreOpen: false
     readonly property bool moreShown: moreOpen || !yawValid || !refAreaValid
+                                      || copiedContextForeign > 0 || copiedContextMissing > 0
     /// What under "More settings" is not the default, for its header.
     readonly property string moreSummary: {
         const parts = []
@@ -874,7 +875,8 @@ Pane {
             parts.push(qsTr("ref. area %1 cm²").arg(refAreaField.text.trim()))
         if (groundBox.checked)
             parts.push(wheelsBox.checked ? qsTr("moving floor, rotating wheels")
-                                         : groundFixed ? qsTr("fixed floor") : qsTr("moving floor"))
+                                         : (groundFixed ? qsTr("fixed floor") : qsTr("moving floor")) +
+                                           (floorField.text.trim().length > 0 ? qsTr(" at Z %1 mm").arg(floorField.text.trim()) : ""))
         if (contextBox.checked)
             parts.push(qsTr("other parts"))
         if (labelField.text.trim().length > 0)

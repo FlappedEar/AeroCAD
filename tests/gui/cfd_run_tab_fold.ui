@@ -28,6 +28,16 @@ ui.wait(200)
 (() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); t.click("cfdMoreToggle") })()
 ui.wait(300)
 (() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const h = t.find(simulationPanel, "cfdMoreToggle"); ui.log("HEADER " + h.text); if (t.find(simulationPanel, "cfdYawField").visible) ui.fail("More settings did not fold"); if (h.text !== "▸ More settings: yaw 5°, moving floor") ui.fail("header: " + h.text); if (simulationPanel.runParams().yaw !== 5) ui.fail("folded yaw not sent: " + JSON.stringify(simulationPanel.runParams())) })()
+# Codex (#188): a typed floor height shows too.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); t.find(simulationPanel, "cfdFloorField").text = "-120" })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const h = t.find(simulationPanel, "cfdMoreToggle"); ui.log("HEADER " + h.text); if (h.text !== "▸ More settings: yaw 5°, moving floor at Z -120 mm") ui.fail("floor header: " + h.text) })()
+# Codex (#188): A's surroundings that cannot be restored open it, so the warning is seen.
+(() => { simulationPanel.copiedContextForeign = 1 })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); if (!t.find(simulationPanel, "cfdCopiedNote").visible) ui.fail("surroundings warning hidden in the fold") })()
+(() => { simulationPanel.copiedContextForeign = 0 })()
+ui.wait(200)
 # A wrong value opens it so it can be fixed.
 (() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); t.find(simulationPanel, "cfdYawField").text = "50" })()
 ui.wait(300)
