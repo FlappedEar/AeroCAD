@@ -202,7 +202,7 @@ Json curveSchema()
            {{"type", "string"},
             {"description", "Curve kind; selects which other fields apply."},
             {"enum", {"line", "rectangle", "center_rectangle", "three_point_rectangle", "circle", "arc", "center_arc", "polygon", "slot",
-                      "spline", "point", "tangent_arc", "ellipse"}}}},
+                      "spline", "point", "tangent_arc", "ellipse", "elliptical_arc"}}}},
           {"from", {{"type", "object"},
                     {"description", "tangent_arc: the end it starts from, {curve: index, point: start | end}."}}},
           {"start", point2("Start point.")},
@@ -222,6 +222,9 @@ Json curveSchema()
           {"angle", numberOrExpr("Polygon rotation, or the direction of an ellipse's major axis (degrees).")},
           {"major_radius", numberOrExpr("ellipse: centre to the end of the major axis (mm).")},
           {"minor_radius", numberOrExpr("ellipse: half the minor axis (mm).")},
+          {"start_angle", numberOrExpr("elliptical_arc: parametric start angle (degrees; x = major cos t, y = minor sin t "
+                                       "along the axes), counter-clockwise to end_angle.")},
+          {"end_angle", numberOrExpr("elliptical_arc: parametric end angle (degrees).")},
           {"points", {{"type", "array"}, {"items", point2("Fit point.")}, {"minItems", 2},
                       {"description", "spline: fit points, at least 2."}}},
           {"closed", {{"type", "boolean"}, {"description", "spline: true joins the last point to the first."}}},
@@ -239,9 +242,9 @@ Json constraintPointSchema()
 {
     return Json{{"type", Json::array({"string", "object"})},
                 {"description", "\"origin\" (sketch origin) or {curve: index, point: start | end | center} "
-                                "(an ellipse: center, end = the end of its major axis), or a fit point of a spline {curve, point: fit, index} (0 = first fit point)."},
+                                "(an ellipse: center, end = the end of its major axis; axis = that point for an ellipse or elliptical arc), or a fit point of a spline {curve, point: fit, index} (0 = first fit point)."},
                 {"properties", {{"curve", {{"type", "integer"}, {"minimum", 0}, {"description", "Curve index in sketch.curves."}}},
-                                {"point", {{"type", "string"}, {"enum", {"start", "end", "center", "fit"}},
+                                {"point", {{"type", "string"}, {"enum", {"start", "end", "center", "axis", "fit"}},
                                            {"description", "Which point of the curve."}}},
                                 {"index", {{"type", "integer"}, {"minimum", 0},
                                            {"description", "point: fit only: fit point index (0 = first)."}}}}}};
@@ -845,6 +848,12 @@ geometry::Vec2 pointPosition(const std::vector<geometry::SketchCurve>& curves, c
         return c.points[0]; // start, end and centre of a sketch point are the point
     if (c.kind == K::Ellipse && (which == "center" || which == "end"))
         return which == "center" ? c.points[0] : c.points[1]; // end: of the major axis
+    if (c.kind == K::Ellipse && which == "axis")
+        return c.points[1];
+    if (c.kind == K::EllipticalArc && (which == "center" || which == "axis"))
+        return which == "center" ? c.points[1] : c.points[2];
+    if (which == "axis")
+        throw CommandError("Curve " + std::to_string(i) + " has no major axis (only ellipses do)");
     if (which == "center") {
         if (c.kind == K::Circle)
             return c.points[0];
@@ -1122,6 +1131,15 @@ Json resolveFix(const std::vector<geometry::SketchCurve>& curves, const Json& c)
         if (k.kind == K::Circle) {
             points.push_back({{"curve", i}, {"point", "center"}});
             out.push_back({{"type", "radius"}, {"curve", i}, {"value", k.radius}});
+        } else if (k.kind == K::Ellipse || k.kind == K::EllipticalArc) {
+            // The whole ellipse: centre, major axis end and minor radius (and an arc's ends).
+            if (k.kind == K::EllipticalArc) {
+                points.push_back({{"curve", i}, {"point", "start"}});
+                points.push_back({{"curve", i}, {"point", "end"}});
+            }
+            points.push_back({{"curve", i}, {"point", "center"}});
+            points.push_back({{"curve", i}, {"point", "axis"}});
+            out.push_back({{"type", "minor_radius"}, {"curve", i}, {"value", k.radius}});
         } else {
             points.push_back({{"curve", i}, {"point", "start"}});
             points.push_back({{"curve", i}, {"point", "end"}});
@@ -1427,7 +1445,8 @@ void registerSketchCommands(CommandRegistry& r)
 
     r.add({"sketch.break_preview", "Break preview",
            "The piece sketch.break (or sketch.trim) would split off at `at`, without changing the sketch: "
-           "{breakable: true, kind (line / arc), points (an arc: start, through, end)}, or {breakable: false, "
+           "{breakable: true, kind (line / arc / elliptical_arc), points (an arc: start, through, end; an elliptical "
+           "arc: start, end, plus samples to draw it)}, or {breakable: false, "
            "reason}.",
            objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
                          {"curve", {{"type", "integer"}, {"description", "Index from sketch.curves."}}},
@@ -1442,6 +1461,23 @@ void registerSketchCommands(CommandRegistry& r)
                                                                   {at[0].get<double>(), at[1].get<double>()});
                   if (piece.is_null())
                       return Json{{"breakable", false}, {"reason", "Nothing to break at: no other curve crosses it"}};
+                  if (piece.at("type") == "elliptical_arc") {
+                      // Its ends and the drawn curve (samples), counter-clockwise.
+                      const double cx = piece.at("center")[0].get<double>(), cy = piece.at("center")[1].get<double>();
+                      const double ma = piece.at("major_radius").get<double>(), mi = piece.at("minor_radius").get<double>();
+                      const double rot = piece.at("angle").get<double>() * std::numbers::pi / 180;
+                      const double t0 = piece.at("start_angle").get<double>() * std::numbers::pi / 180;
+                      const double t1 = piece.at("end_angle").get<double>() * std::numbers::pi / 180;
+                      auto at2 = [&](double t) {
+                          const double x = ma * std::cos(t), y = mi * std::sin(t);
+                          return Json::array({cx + x * std::cos(rot) - y * std::sin(rot), cy + x * std::sin(rot) + y * std::cos(rot)});
+                      };
+                      Json samples = Json::array();
+                      for (int k = 0; k <= 64; ++k)
+                          samples.push_back(at2(t0 + (t1 - t0) * k / 64));
+                      return Json{{"breakable", true}, {"kind", "elliptical_arc"},
+                                  {"points", Json::array({at2(t0), at2(t1)})}, {"samples", samples}};
+                  }
                   const bool arc = piece.at("type") == "arc";
                   Json pts = arc ? Json::array({piece.at("start"), piece.at("through"), piece.at("end")})
                                  : Json::array({piece.at("start"), piece.at("end")});
@@ -1850,7 +1886,8 @@ void registerSketchCommands(CommandRegistry& r)
               Json curves = Json::array();
               for (std::size_t i = 0; i < sk.curves.size(); ++i) {
                   const auto& c = sk.curves[i];
-                  static const char* kinds[] = {"line", "arc", "circle", "spline", "point", "ellipse"};
+                  static const char* kinds[] = {"line", "arc", "circle", "spline", "point", "ellipse",
+                                                "elliptical_arc"};
                   Json pts = Json::array();
                   for (const auto& p : c.points)
                       pts.push_back(Json::array({p.x, p.y}));
@@ -1858,19 +1895,35 @@ void registerSketchCommands(CommandRegistry& r)
                           {"construction", c.construction}};
                   if (c.kind == geometry::SketchCurve::Kind::Circle)
                       cj["radius"] = c.radius;
-                  if (c.kind == geometry::SketchCurve::Kind::Ellipse) {
+                  if (c.kind == geometry::SketchCurve::Kind::Ellipse ||
+                      c.kind == geometry::SketchCurve::Kind::EllipticalArc) {
                       // Centre, the end of the major axis, radii and the axis angle (degrees);
-                      // samples draw it.
-                      const geometry::Vec2 o = c.points[0], e = c.points[1];
+                      // samples draw it (an elliptical arc: counter-clockwise from its start to
+                      // its end).
+                      const bool arc = c.kind == geometry::SketchCurve::Kind::EllipticalArc;
+                      const geometry::Vec2 o = c.points[arc ? 1 : 0], e = c.points[arc ? 2 : 1];
                       const double major = std::hypot(e.x - o.x, e.y - o.y);
                       const double turn = std::atan2(e.y - o.y, e.x - o.x);
                       cj["center"] = Json::array({o.x, o.y});
                       cj["majorRadius"] = major;
                       cj["minorRadius"] = c.radius;
                       cj["angle"] = turn * 180 / std::numbers::pi;
+                      double t0 = 0.0, span = 2 * std::numbers::pi;
+                      if (arc && major > 1e-12 && c.radius > 1e-12) {
+                          auto param = [&](const geometry::Vec2& p) {
+                              const double dx = p.x - o.x, dy = p.y - o.y;
+                              const double x = dx * std::cos(turn) + dy * std::sin(turn);
+                              const double y = -dx * std::sin(turn) + dy * std::cos(turn);
+                              return std::atan2(y / c.radius, x / major);
+                          };
+                          t0 = param(c.points[0]);
+                          span = std::fmod(param(c.points[3]) - t0 + 4 * std::numbers::pi, 2 * std::numbers::pi);
+                          if (span < 1e-12)
+                              span = 2 * std::numbers::pi;
+                      }
                       Json samples = Json::array();
                       for (int k = 0; k <= 96; ++k) {
-                          const double t = 2 * std::numbers::pi * k / 96;
+                          const double t = t0 + span * k / 96;
                           const double u = major * std::cos(t), w = c.radius * std::sin(t);
                           samples.push_back(Json::array({o.x + u * std::cos(turn) - w * std::sin(turn),
                                                          o.y + u * std::sin(turn) + w * std::cos(turn)}));

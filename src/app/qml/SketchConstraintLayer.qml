@@ -79,6 +79,9 @@ Item {
 
     function isLine(i) { return !!curves[i] && curves[i].kind === "line" }
 
+    /// An ellipse or an elliptical arc (a trimmed ellipse).
+    function isEllipse(i) { return !!curves[i] && (curves[i].kind === "ellipse" || curves[i].kind === "elliptical_arc") }
+
     /// Points that constraints can refer to.
     function pointCandidates() {
         const out = []
@@ -95,6 +98,10 @@ Item {
                 out.push({ point: { curve: c.index, point: "center" }, pos: c.center })
             } else if (c.kind === "circle") {
                 out.push({ point: { curve: c.index, point: "center" }, pos: c.points[0] })
+            } else if (c.kind === "elliptical_arc") {
+                out.push({ point: { curve: c.index, point: "start" }, pos: c.points[0] })
+                out.push({ point: { curve: c.index, point: "end" }, pos: c.points[3] })
+                out.push({ point: { curve: c.index, point: "center" }, pos: c.points[1] })
             } else if (c.kind === "ellipse") {
                 // Its centre and the end of its major axis.
                 out.push({ point: { curve: c.index, point: "center" }, pos: c.points[0] })
@@ -218,12 +225,13 @@ Item {
                 return { constraint: { type: "diameter", curve: a.curve }, value: 2 * c.radius }
             if (c.kind === "arc")
                 return { constraint: { type: "radius", curve: a.curve }, value: curveRadius(c) }
-            if (c.kind === "ellipse") {
+            if (isEllipse(a.curve)) {
                 // Picked nearer the end of the major axis: its major radius, else the minor one.
-                const at = a.at || c.points[1]
-                const ax = [c.points[1][0] - c.points[0][0], c.points[1][1] - c.points[0][1]]
+                const ctr = c.center, axEnd = c.kind === "ellipse" ? c.points[1] : c.points[2]
+                const at = a.at || axEnd
+                const ax = [axEnd[0] - ctr[0], axEnd[1] - ctr[1]]
                 const l = Math.hypot(ax[0], ax[1]) || 1
-                const v = [at[0] - c.points[0][0], at[1] - c.points[0][1]]
+                const v = [at[0] - ctr[0], at[1] - ctr[1]]
                 const along = Math.abs(v[0] * ax[0] + v[1] * ax[1]) / l
                 const across = Math.abs(v[1] * ax[0] - v[0] * ax[1]) / l
                 if (along / l >= across / Math.max(1e-9, c.minorRadius))
@@ -319,7 +327,7 @@ Item {
         case "vertical":
             if (p.curve !== undefined && picks.length === 0) {
                 // A line, or an ellipse's major axis (Fusion keeps an ellipse level this way).
-                if (isLine(p.curve) || curves[p.curve].kind === "ellipse")
+                if (isLine(p.curve) || isEllipse(p.curve))
                     emit({ type: tool, curve: p.curve })
             } else if (pointsPicked.length === 2) {
                 emit({ type: tool, points: pointsPicked })
@@ -360,8 +368,7 @@ Item {
             // Two-curve constraints.
             if (curvesPicked.length === 2) {
                 const [i, j] = curvesPicked
-                const ellipse = k => !!curves[k] && curves[k].kind === "ellipse"
-                const ok = tool === "equal" ? (isLine(i) && isLine(j)) || (isCirc(i) && isCirc(j)) || (ellipse(i) && ellipse(j))
+                const ok = tool === "equal" ? (isLine(i) && isLine(j)) || (isCirc(i) && isCirc(j)) || (isEllipse(i) && isEllipse(j))
                          : tool === "tangent" ? isCirc(i) || isCirc(j)
                          : tool === "concentric" ? isCirc(i) && isCirc(j)
                          : isLine(i) && isLine(j)
@@ -402,6 +409,8 @@ Item {
             return c.points[1]
         if (c.kind === "ellipse" && c.samples)
             return c.samples[Math.floor(c.samples.length / 8)]
+        if (c.kind === "elliptical_arc" && c.samples)
+            return c.samples[Math.floor(c.samples.length / 2)]
         return c.points[Math.floor(c.points.length / 2)]
     }
 
@@ -483,7 +492,7 @@ Item {
                 if (i === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y)
             }
         } else {
-            (c.kind === "ellipse" && c.samples ? c.samples : c.points).forEach((p, i) => {
+            ((c.kind === "ellipse" || c.kind === "elliptical_arc") && c.samples ? c.samples : c.points).forEach((p, i) => {
                 const q = overlay.toScreen(p)
                 if (i === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y)
             })

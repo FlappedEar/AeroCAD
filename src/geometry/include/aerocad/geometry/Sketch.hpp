@@ -62,6 +62,9 @@ struct SketchCurve {
         Spline, ///< points = interpolated fit points (>= 2), closed flag
         Point,  ///< points = {position}; a sketch point (Fusion: Point): no edge, no profile
         Ellipse, ///< points = {center, end of the major axis}, radius = the minor radius
+        /// points = {start, center, end of the major axis, end}, radius = the minor radius;
+        /// counter-clockwise from start to end (a trimmed ellipse)
+        EllipticalArc,
     };
     Kind kind = Kind::Line;
     std::vector<Vec2> points;

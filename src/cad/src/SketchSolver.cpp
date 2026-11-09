@@ -76,6 +76,19 @@ double safe(double v)
     return std::max(v, 1e-12);
 }
 
+/// How far `p` is off the ellipse with centre `c`, major axis end `e` and minor radius `b`
+/// (about a distance in mm near the curve; 0 on it).
+double ellipseResidual(Vec2 c, Vec2 e, double b, Vec2 p)
+{
+    const Vec2 ax = e - c;
+    const double a = safe(len(ax));
+    const Vec2 u = ax * (1.0 / a);
+    const Vec2 d = p - c;
+    const double x = dot(d, u), y = cross(u, d);
+    const double bb = std::abs(b) > 1e-12 ? b : 1e-12;
+    return (x * x / (a * a) + y * y / (bb * bb) - 1) * (a + std::abs(bb)) / 4;
+}
+
 double signOf(double v)
 {
     return v < 0 ? -1.0 : 1.0;
@@ -131,6 +144,16 @@ public:
         buildVariables();
         m_x0 = m_x;
         for (std::size_t i = 0; i < m_curves.size(); ++i) {
+            if (m_curves[i].kind == Kind::EllipticalArc) {
+                // Both ends stay on the arc's ellipse.
+                const auto& v = m_vars[i];
+                const P c = v.pts[2], e = v.pts[3];
+                const std::size_t rv = v.rvar;
+                for (const P p : {v.pts[0], v.pts[1]})
+                    add(kNone, varsOf({c, e, p}, {rv}), 1, [c, e, p, rv](const std::vector<double>& x, double* r) {
+                        r[0] = ellipseResidual(c.at(x), e.at(x), x[rv], p.at(x));
+                    });
+            }
             if (m_curves[i].kind == Kind::Arc) {
                 const Circ c = circ(i);
                 const P e = m_vars[i].pts[1];
@@ -234,6 +257,10 @@ public:
                 c.points = {v.pts[0].at(m_x), v.pts[1].at(m_x)};
                 c.radius = std::abs(m_x[v.rvar]);
                 break;
+            case Kind::EllipticalArc:
+                c.points = {v.pts[0].at(m_x), v.pts[2].at(m_x), v.pts[3].at(m_x), v.pts[1].at(m_x)};
+                c.radius = std::abs(m_x[v.rvar]);
+                break;
             }
         }
     }
@@ -321,6 +348,15 @@ private:
                 v.rvar = m_x.size();
                 m_x.push_back(c.radius);
                 break;
+            case Kind::EllipticalArc:
+                // Start, end (shared with touching curves, like an arc), centre, major axis end.
+                if (c.points.size() != 4)
+                    throw ModelingError("Sketch elliptical arc needs start, centre, axis end and end");
+                v.pts = {endPoint(c.points[0], c.joinStart), endPoint(c.points[3], c.joinEnd), newPoint(c.points[1]),
+                         newPoint(c.points[2])};
+                v.rvar = m_x.size();
+                m_x.push_back(c.radius);
+                break;
             }
         }
     }
@@ -364,18 +400,27 @@ private:
     }
 
     /// A line, or an ellipse's major axis (centre to its end) for horizontal and vertical.
+    bool isEllipse(std::size_t i) const
+    {
+        const Kind k = curve(i).kind;
+        return k == Kind::Ellipse || k == Kind::EllipticalArc;
+    }
+
     std::pair<P, P> lineOrAxis(std::size_t i) const
     {
-        if (curve(i).kind == Kind::Ellipse)
-            return {m_vars[i].pts[0], m_vars[i].pts[1]};
+        if (isEllipse(i))
+            return ellipseAxis(i);
         return line(i);
     }
 
+    /// An ellipse's (or elliptical arc's) centre and the end of its major axis.
     std::pair<P, P> ellipseAxis(std::size_t i) const
     {
-        if (curve(i).kind != Kind::Ellipse)
-            throw ModelingError("Curve " + std::to_string(i) + " is not an ellipse");
-        return {m_vars[i].pts[0], m_vars[i].pts[1]};
+        if (curve(i).kind == Kind::Ellipse)
+            return {m_vars[i].pts[0], m_vars[i].pts[1]};
+        if (curve(i).kind == Kind::EllipticalArc)
+            return {m_vars[i].pts[2], m_vars[i].pts[3]};
+        throw ModelingError("Curve " + std::to_string(i) + " is not an ellipse");
     }
 
     std::pair<P, P> line(std::size_t i) const
@@ -421,12 +466,18 @@ private:
         case SketchPointRef::Kind::Center:
             if (c.kind == Kind::Circle || c.kind == Kind::Ellipse)
                 return v.pts[0];
-            if (c.kind == Kind::Arc)
+            if (c.kind == Kind::Arc || c.kind == Kind::EllipticalArc)
                 return v.pts[2];
             break;
         case SketchPointRef::Kind::Fit:
             if (c.kind == Kind::Spline && ref.index < v.pts.size())
                 return v.pts[ref.index];
+            break;
+        case SketchPointRef::Kind::Axis:
+            if (c.kind == Kind::Ellipse)
+                return v.pts[1];
+            if (c.kind == Kind::EllipticalArc)
+                return v.pts[3];
             break;
         case SketchPointRef::Kind::Origin:
             break;
@@ -447,14 +498,17 @@ private:
             std::optional<double> angle; // wanted direction of the line `target` (radians)
             auto dirOf = [this](std::size_t i) {
                 const auto& v = m_vars[i];
-                const Vec2 d = v.pts[1].at(m_x) - v.pts[0].at(m_x);
+                // An elliptical arc by its major axis (centre to axis end).
+                const bool ea = m_curves[i].kind == Kind::EllipticalArc;
+                const Vec2 d = v.pts[ea ? 3 : 1].at(m_x) - v.pts[ea ? 2 : 0].at(m_x);
                 return std::atan2(d.y, d.x);
             };
             const bool lines =
                 !c.curves.empty() && std::all_of(c.curves.begin(), c.curves.end(), [this, &c](std::size_t i) {
                     return i < m_curves.size() &&
                            (m_curves[i].kind == Kind::Line ||
-                            (m_curves[i].kind == Kind::Ellipse && c.curves.size() == 1 &&
+                            ((m_curves[i].kind == Kind::Ellipse || m_curves[i].kind == Kind::EllipticalArc) &&
+                             c.curves.size() == 1 &&
                              (c.type == Type::Horizontal || c.type == Type::Vertical)));
                 });
             if (!lines)
@@ -477,8 +531,9 @@ private:
             const auto& v = m_vars[target];
             const Vec2 a = v.pts[0].at(m_x);
             const Vec2 b = v.pts[1].at(m_x);
-            // A line turns about its middle, an ellipse about its centre.
-            const Vec2 mid = m_curves[target].kind == Kind::Ellipse ? a : (a + b) * 0.5;
+            // A line turns about its middle, an ellipse (or elliptical arc) about its centre.
+            const Kind tk = m_curves[target].kind;
+            const Vec2 mid = tk == Kind::Ellipse ? a : tk == Kind::EllipticalArc ? v.pts[2].at(m_x) : (a + b) * 0.5;
             const double cs = std::cos(delta);
             const double sn = std::sin(delta);
             auto turn = [&](P p, Vec2 q) {
@@ -488,8 +543,12 @@ private:
                 m_x[p.var] = mid.x + cs * d.x - sn * d.y;
                 m_x[p.var + 1] = mid.y + sn * d.x + cs * d.y;
             };
-            turn(v.pts[0], a);
-            turn(v.pts[1], b);
+            // Every point of the curve turns (all of an elliptical arc's, read before turning).
+            std::vector<Vec2> was;
+            for (const P& p : v.pts)
+                was.push_back(p.at(m_x));
+            for (std::size_t k = 0; k < v.pts.size(); ++k)
+                turn(v.pts[k], was[k]);
         }
     }
 
@@ -661,7 +720,7 @@ private:
         }
         case Type::Equal: {
             needCurves(c, 2);
-            if (curve(c.curves[0]).kind == Kind::Ellipse && curve(c.curves[1]).kind == Kind::Ellipse) {
+            if (isEllipse(c.curves[0]) && isEllipse(c.curves[1])) {
                 // Two ellipses: the same major and minor radii.
                 const auto [a1, b1] = ellipseAxis(c.curves[0]);
                 const auto [a2, b2] = ellipseAxis(c.curves[1]);

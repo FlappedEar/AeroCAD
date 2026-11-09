@@ -1,0 +1,47 @@
+# CAD-258: Trim (T) works on an ellipse (Fusion): clicking its left half between the line
+# crossings leaves an elliptical arc, the line's ends outside it trim at the exact crossings,
+# and the half ellipse with the line is one closed profile. The Dimension tool on the arc
+# near the end of its major axis sets its major radius.
+# Run: AeroCAD --ui-script <this file>
+Qt.createQmlObject('import QtQuick; Item { objectName: "etTest"; visible: false; function clickAt(q) { const o = viewport.sketchOverlay; const p = o.toScreen(q); const w = o.mapToItem(null, p.x, p.y); ui.move(w.x, w.y); ui.wait(80); ui.click(w.x, w.y); ui.wait(400) } function sketch() { return controller.execute("sketch.curves", { sketch: activeSketch.id }).result } }', window.contentItem)
+ui.wait(800)
+(() => { const r = controller.execute("sketch.create", { plane: "XY", curves: [{ type: "ellipse", center: [0, 0], major_radius: 30, minor_radius: 12, angle: 0 }, { type: "line", start: [0, -20], end: [0, 20] }] }); if (!r.ok) ui.fail("sketch: " + r.error) })()
+ui.wait(300)
+(() => { enterSketch(controller.execute("timeline.list").result.features[0].id) })()
+ui.wait(800)
+(() => { viewport.restoreCameraState({ pivot: [0, 0, 0], pitch: -90, yaw: 0, distance: 200, orthographic: false }) })()
+ui.wait(400)
+# Break hover on the ellipse: the elliptical arc it would split off is previewed (drawable).
+(() => { window.sketchTool_("break"); if (sketchTool !== "break") ui.fail("Break did not start: " + sketchTool) })()
+ui.wait(200)
+(() => { const o = viewport.sketchOverlay; const p = o.toScreen([30 * Math.cos(5 * Math.PI / 6), 12 * Math.sin(5 * Math.PI / 6)]); const w = o.mapToItem(null, p.x, p.y); ui.move(w.x, w.y); ui.wait(300); const pv = o.piecePreview; ui.log("break preview " + JSON.stringify(pv ? [pv.kind, pv.points] : null)); if (!pv || pv.kind !== "elliptical_arc") ui.fail("no elliptical arc Break preview"); else if (!o.previewDrawable(pv)) ui.fail("the elliptical arc Break preview is not drawn") })()
+ui.shot("build/sketch-ellipse-break-preview.png")
+ui.key("Esc")
+ui.wait(200)
+ui.key("T")
+ui.wait(300)
+(() => { if (sketchTool !== "trim") ui.fail("T did not start Trim: " + sketchTool) })()
+# The ellipse's left half (a point on it at 150 degrees).
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "etTest").clickAt([30 * Math.cos(5 * Math.PI / 6), 12 * Math.sin(5 * Math.PI / 6)]) })()
+(() => { const c = Array.from(window.contentItem.children).find(c => c.objectName === "etTest").sketch().curves; ui.log("after ellipse trim: " + JSON.stringify(c.map(k => [k.kind, k.points]))); const a = c.find(k => k.kind === "elliptical_arc"); if (c.some(k => k.kind === "ellipse") || !a) ui.fail("the ellipse was not trimmed to an elliptical arc"); else if (Math.abs(a.majorRadius - 30) > 1e-6 || Math.abs(a.minorRadius - 12) > 1e-6 || a.samples.some(p => p[0] < -1e-6)) ui.fail("the arc is not the right half: " + JSON.stringify([a.majorRadius, a.minorRadius])) })()
+# The line ends outside the ellipse, above and below.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "etTest"); t.clickAt([0, 17]); t.clickAt([0, -17]) })()
+(() => { const s = Array.from(window.contentItem.children).find(c => c.objectName === "etTest").sketch(); const l = s.curves.find(k => k.kind === "line"); const ys = l ? [l.points[0][1], l.points[1][1]].sort((a, b) => a - b) : []; ui.log("line " + JSON.stringify(ys)); if (!l || Math.abs(ys[0] + 12) > 1e-6 || Math.abs(ys[1] - 12) > 1e-6) ui.fail("the line was not trimmed at the ellipse"); const n = controller.execute("sketch.profiles", { sketch: activeSketch.id }).result.profiles.length; if (n !== 1) ui.fail("the half ellipse is not one profile: " + n) })()
+ui.shot("/mnt/project-files/ux/sketch-ellipse-trim.png")
+# One undo step per trim: undo the two line trims and the ellipse trim brings the ellipse back.
+(() => { controller.execute("edit.undo"); controller.execute("edit.undo"); controller.execute("edit.undo"); const c = Array.from(window.contentItem.children).find(c => c.objectName === "etTest").sketch().curves; if (!c.some(k => k.kind === "ellipse")) ui.fail("undo did not bring the ellipse back"); controller.execute("edit.redo") })()
+ui.wait(300)
+# Dimension the arc near the end of its major axis: its major radius, set to 35.
+ui.key("Esc")
+ui.wait(200)
+ui.key("D")
+ui.wait(200)
+(() => { if (sketchTool !== "dimension") ui.fail("Dimension did not start: " + sketchTool) })()
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "etTest").clickAt([29.9, 1]) })()
+ui.key("A", "ctrl")
+ui.type("35")
+ui.key("Return")
+ui.wait(600)
+(() => { const s = Array.from(window.contentItem.children).find(c => c.objectName === "etTest").sketch(); const i = s.curves.findIndex(k => k.kind === "elliptical_arc"); ui.log("constraints " + JSON.stringify(s.constraints)); if (!s.constraints.some(k => k.type === "major_radius" && k.curve === i)) ui.fail("no major radius dimension on the arc"); else if (Math.abs(s.curves[i].majorRadius - 35) > 1e-6) ui.fail("the major radius did not become 35: " + s.curves[i].majorRadius) })()
+ui.shot("build/sketch-ellipse-trim-dimension.png")
+ui.log("Sketch ellipse trim OK")

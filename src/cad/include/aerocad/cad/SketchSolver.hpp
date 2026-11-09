@@ -20,10 +20,11 @@ namespace aerocad::cad {
 
 /// A point of a sketch curve, or the sketch origin.
 struct SketchPointRef {
-    enum class Kind { Start, End, Center, Origin, Fit };
+    enum class Kind { Start, End, Center, Origin, Fit, Axis };
     Kind kind = Kind::Start;
     std::size_t curve = 0; ///< index into the sketch's curve list (unused for Origin)
     std::size_t index = 0; ///< Fit: which fit point of a spline (0 = first)
+    // Axis: the end of an ellipse's or elliptical arc's major axis.
 };
 
 struct SketchConstraint {

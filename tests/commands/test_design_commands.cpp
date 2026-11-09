@@ -1300,8 +1300,8 @@ TEST_CASE("Design commands: Sketch Ellipse (CAD-256)", "[commands][cad][solver]"
         CHECK(k.at("majorRadius").get<double>() == Approx(12));
     }
 
-    // Trim, Extend, Break and Fillet refuse it; Offset gives a closed spline; Delete removes it.
-    CHECK_FALSE(s.execute("sketch.trim", {{"sketch", sc}, {"curve", 0}, {"at", {12, 0}}}).ok);
+    // Extend, Fillet and Break (nothing crosses it) refuse it; Offset gives a closed spline;
+    // Delete removes it. Trim of an ellipse is covered by the CAD-258 test.
     CHECK_FALSE(s.execute("sketch.extend", {{"sketch", sc}, {"curve", 0}, {"at", {12, 0}}}).ok);
     CHECK_FALSE(s.execute("sketch.break", {{"sketch", sc}, {"curve", 0}, {"at", {12, 0}}}).ok);
     CHECK_FALSE(s.execute("sketch.fillet", {{"sketch", sc}, {"curves", {0, 1}}, {"radius", 1}}).ok);
@@ -1312,6 +1312,214 @@ TEST_CASE("Design commands: Sketch Ellipse (CAD-256)", "[commands][cad][solver]"
     CHECK(c.at("curves")[3].at("closed") == true);
     run(s, "sketch.delete_curves", {{"sketch", sc}, {"curves", {0, 3}}});
     CHECK(run(s, "sketch.curves", {{"sketch", sc}}).at("curves").size() == 2);
+}
+
+TEST_CASE("Design commands: Trim and Break an ellipse (CAD-258)", "[commands][cad][solver]")
+{
+    commands::Session s;
+    auto near = [](const Json& p, double x, double y, double tol = 1e-6) {
+        return std::hypot(p[0].get<double>() - x, p[1].get<double>() - y) < tol;
+    };
+    // How far (x, y) is off the ellipse x^2/a^2 + y^2/b^2 = 1 (axis-aligned, centred at c).
+    auto onEllipse = [](const Json& p, double cx, double a, double b) {
+        const double x = (p[0].get<double>() - cx) / a, y = p[1].get<double>() / b;
+        return std::abs(x * x + y * y - 1) < 1e-9;
+    };
+    // A half ellipse closed by its minor axis: trim the left half and the line's overhangs.
+    const auto id = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "ellipse"}, {"center", {0, 0}}, {"major_radius", 20},
+                                                  {"minor_radius", 10}},
+                                                 {{"type", "line"}, {"start", {0, -15}}, {"end", {0, 15}}}})}})
+                        .at("id")
+                        .get<std::uint64_t>();
+    run(s, "sketch.trim", {{"sketch", id}, {"curve", 0}, {"at", {-20, 0}}});
+    Json c = run(s, "sketch.curves", {{"sketch", id}});
+    INFO(c.dump());
+    REQUIRE(c.at("curves").size() == 2);
+    // The line stays first; the right half of the ellipse is the new last curve.
+    const Json arc = c.at("curves")[1];
+    CHECK(arc.at("kind") == "elliptical_arc");
+    CHECK(near(arc.at("points")[0], 0, -10));
+    CHECK(near(arc.at("points")[3], 0, 10));
+    CHECK(arc.at("majorRadius").get<double>() == Approx(20));
+    CHECK(arc.at("minorRadius").get<double>() == Approx(10));
+    // Its drawing runs through (20, 0), the right side.
+    bool right = false;
+    for (const auto& p : arc.at("samples"))
+        right = right || near(p, 20, 0, 1e-3);
+    CHECK(right);
+    // The line's overhangs: cut exactly at the ellipse.
+    run(s, "sketch.trim", {{"sketch", id}, {"curve", 0}, {"at", {0, 13}}});
+    run(s, "sketch.trim", {{"sketch", id}, {"curve", 1}, {"at", {0, -13}}});
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    INFO(c.dump());
+    REQUIRE(c.at("curves").size() == 2);
+    std::size_t line = c.at("curves")[0].at("kind") == "line" ? 0 : 1;
+    const Json l = c.at("curves")[line];
+    CHECK(((near(l.at("points")[0], 0, -10) && near(l.at("points")[1], 0, 10)) ||
+           (near(l.at("points")[0], 0, 10) && near(l.at("points")[1], 0, -10))));
+    // A closed profile: half of pi a b.
+    CHECK(run(s, "sketch.profiles", {{"sketch", id}}).at("profiles").size() == 1);
+    const auto ex = run(s, "feature.extrude", {{"sketch", id}, {"distance", 2}});
+    CHECK(ex.at("bodies").back().at("volume").get<double>() == Approx(std::numbers::pi * 20 * 10 / 2 * 2).epsilon(1e-4));
+    run(s, "edit.undo");
+
+    // The arc keeps its ellipse's dimensions; changed, the outline stays closed.
+    const std::size_t ea = 1 - line;
+    run(s, "sketch.add_constraints",
+        {{"sketch", id},
+         {"constraints", Json::array({{{"type", "major_radius"}, {"curve", ea}, {"value", 30}},
+                                      {{"type", "minor_radius"}, {"curve", ea}, {"value", 12}},
+                                      {{"type", "horizontal"}, {"curve", ea}},
+                                      {{"type", "vertical"}, {"curve", line}}})}});
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    INFO(c.dump());
+    CHECK(c.at("curves")[ea].at("majorRadius").get<double>() == Approx(30));
+    CHECK(c.at("curves")[ea].at("minorRadius").get<double>() == Approx(12));
+    CHECK(run(s, "sketch.profiles", {{"sketch", id}}).at("profiles").size() == 1);
+
+    // Break: an ellipse crossed by a line becomes two elliptical arcs.
+    const auto bid = run(s, "sketch.create",
+                         {{"plane", "XY"},
+                          {"curves", Json::array({{{"type", "ellipse"}, {"center", {100, 0}}, {"major_radius", 20},
+                                                   {"minor_radius", 10}},
+                                                  {{"type", "line"}, {"start", {90, -20}}, {"end", {90, 20}}}})}})
+                         .at("id")
+                         .get<std::uint64_t>();
+    run(s, "sketch.break", {{"sketch", bid}, {"curve", 0}, {"at", {120, 0}}});
+    c = run(s, "sketch.curves", {{"sketch", bid}});
+    INFO(c.dump());
+    REQUIRE(c.at("curves").size() == 3);
+    for (std::size_t i = 1; i < 3; ++i) {
+        CHECK(c.at("curves")[i].at("kind") == "elliptical_arc");
+        CHECK(onEllipse(c.at("curves")[i].at("points")[0], 100, 20, 10));
+        CHECK(std::abs(c.at("curves")[i].at("points")[0][0].get<double>() - 90) < 1e-9);
+    }
+    // The pieces still bound the regions: the line cuts the ellipse in two.
+    CHECK(run(s, "sketch.profiles", {{"sketch", bid}}).at("profiles").size() == 2);
+
+    // A line and a circle are cut exactly where an ellipse crosses them.
+    const auto tid = run(s, "sketch.create",
+                         {{"plane", "XY"},
+                          {"curves", Json::array({{{"type", "ellipse"}, {"center", {200, 0}}, {"major_radius", 20},
+                                                   {"minor_radius", 10}},
+                                                  {{"type", "line"}, {"start", {170, 0}}, {"end", {230, 0}}},
+                                                  {{"type", "circle"}, {"center", {200, 10}}, {"radius", 4}}})}})
+                         .at("id")
+                         .get<std::uint64_t>();
+    run(s, "sketch.trim", {{"sketch", tid}, {"curve", 1}, {"at", {228, 0}}});
+    c = run(s, "sketch.curves", {{"sketch", tid}});
+    INFO(c.dump());
+    bool cutAt220 = false;
+    for (const auto& k : c.at("curves"))
+        if (k.at("kind") == "line")
+            for (const auto& p : k.at("points"))
+                cutAt220 = cutAt220 || near(p, 220, 0, 1e-9);
+    CHECK(cutAt220);
+    // The circle's part outside the ellipse goes; what is left ends on the ellipse.
+    std::size_t circle = 0;
+    for (std::size_t i = 0; i < c.at("curves").size(); ++i)
+        if (c.at("curves")[i].at("kind") == "circle")
+            circle = i;
+    run(s, "sketch.trim", {{"sketch", tid}, {"curve", circle}, {"at", {200, 14}}});
+    c = run(s, "sketch.curves", {{"sketch", tid}});
+    INFO(c.dump());
+    const Json rest = c.at("curves").back();
+    REQUIRE(rest.at("kind") == "arc");
+    CHECK(onEllipse(rest.at("points")[0], 200, 20, 10));
+    CHECK(onEllipse(rest.at("points")[2], 200, 20, 10));
+
+    // Mirror keeps an elliptical arc and adds no freedom.
+    const auto mid = run(s, "sketch.create",
+                         {{"plane", "XY"},
+                          {"curves", Json::array({{{"type", "line"}, {"start", {300, -50}}, {"end", {300, 50}}, {"construction", true}},
+                                                  {{"type", "elliptical_arc"}, {"center", {330, 0}}, {"major_radius", 20},
+                                                   {"minor_radius", 8}, {"angle", 0}, {"start_angle", 20}, {"end_angle", 110}}})}})
+                         .at("id")
+                         .get<std::uint64_t>();
+    c = run(s, "sketch.curves", {{"sketch", mid}});
+    const double r20 = 20 * std::numbers::pi / 180, r110 = 110 * std::numbers::pi / 180;
+    const double sx = 330 + 20 * std::cos(r20), sy = 8 * std::sin(r20), ex2 = 330 + 20 * std::cos(r110), ey = 8 * std::sin(r110);
+    CHECK(near(c.at("curves")[1].at("points")[0], sx, sy));
+    CHECK(near(c.at("curves")[1].at("points")[3], ex2, ey));
+    const int dofBefore = c.at("degreesOfFreedom").get<int>();
+    CHECK(dofBefore == 4 + 7);
+    run(s, "sketch.mirror", {{"sketch", mid}, {"curves", {1}}, {"line", 0}});
+    c = run(s, "sketch.curves", {{"sketch", mid}});
+    INFO(c.dump());
+    REQUIRE(c.at("curves").size() == 3);
+    CHECK(c.at("curves")[2].at("kind") == "elliptical_arc");
+    // Mirrored about x = 300, from the mirrored end to the mirrored start.
+    CHECK(near(c.at("curves")[2].at("points")[0], 600 - ex2, ey));
+    CHECK(near(c.at("curves")[2].at("points")[3], 600 - sx, sy));
+    CHECK(c.at("degreesOfFreedom").get<int>() == dofBefore);
+
+    // Offset of an elliptical arc: a spline (an offset ellipse is not an ellipse).
+    run(s, "sketch.offset", {{"sketch", mid}, {"curves", {1}}, {"distance", 2}});
+    c = run(s, "sketch.curves", {{"sketch", mid}});
+    CHECK(c.at("curves").back().at("kind") == "spline");
+
+    // Scale the right half of an ellipse (ends at the minor axis tips): its axis scales too
+    // (Codex review of #222: the ends and centre alone did not hold it).
+    const auto half = run(s, "sketch.create",
+                          {{"plane", "XY"},
+                           {"curves", Json::array({{{"type", "elliptical_arc"}, {"center", {0, 0}}, {"major_radius", 20},
+                                                    {"minor_radius", 10}, {"angle", 0}, {"start_angle", -90}, {"end_angle", 90}}})}})
+                          .at("id")
+                          .get<std::uint64_t>();
+    run(s, "sketch.scale_curves", {{"sketch", half}, {"curves", {0}}, {"factor", 2}, {"point", {0, 0}}});
+    c = run(s, "sketch.curves", {{"sketch", half}});
+    INFO(c.dump());
+    CHECK(c.at("curves")[0].at("majorRadius").get<double>() == Approx(40));
+    CHECK(c.at("curves")[0].at("minorRadius").get<double>() == Approx(20));
+    CHECK(near(c.at("curves")[0].at("points")[2], 40, 0, 1e-6));
+    run(s, "sketch.move_curves", {{"sketch", half}, {"curves", {0}}, {"angle", 90}, {"pivot", {0, 0}}});
+    c = run(s, "sketch.curves", {{"sketch", half}});
+    INFO(c.dump());
+    CHECK(near(c.at("curves")[0].at("points")[2], 0, 40, 1e-6));
+    CHECK(c.at("curves")[0].at("majorRadius").get<double>() == Approx(40));
+
+    // Two crossings between two samples along the ellipse (a tiny circle across it, Codex
+    // review of #222): the trim cuts at them instead of deleting the whole ellipse.
+    const auto tiny = run(s, "sketch.create",
+                          {{"plane", "XY"},
+                           {"curves", Json::array({{{"type", "ellipse"}, {"center", {0, 0}}, {"major_radius", 20}, {"minor_radius", 10}, {"angle", 0}},
+                                                   {{"type", "circle"}, {"center", {19.9998096144, 0.04363309285}}, {"radius", 0.02}}})}})
+                          .at("id")
+                          .get<std::uint64_t>();
+    run(s, "sketch.trim", {{"sketch", tiny}, {"curve", 0}, {"at", {-20, 0}}});
+    c = run(s, "sketch.curves", {{"sketch", tiny}});
+    INFO(c.dump());
+    REQUIRE(c.at("curves").size() == 2);
+    CHECK(c.at("curves")[1].at("kind") == "elliptical_arc");
+
+    // Fix on the axis point keeps it where it is; Fix on a whole elliptical arc or ellipse
+    // holds all of it (Codex review of #222).
+    const auto fixes = run(s, "sketch.create",
+                           {{"plane", "XY"},
+                            {"curves", Json::array({{{"type", "elliptical_arc"}, {"center", {0, 0}}, {"major_radius", 20},
+                                                     {"minor_radius", 10}, {"angle", 30}, {"start_angle", -90}, {"end_angle", 90}},
+                                                    {{"type", "ellipse"}, {"center", {100, 0}}, {"major_radius", 20}, {"minor_radius", 10}, {"angle", 0}},
+                                                    {{"type", "elliptical_arc"}, {"center", {200, 0}}, {"major_radius", 20},
+                                                     {"minor_radius", 10}, {"angle", 0}, {"start_angle", 20}, {"end_angle", 110}}})}})
+                           .at("id")
+                           .get<std::uint64_t>();
+    const double ax = 20 * std::cos(std::numbers::pi / 6), ay = 20 * std::sin(std::numbers::pi / 6);
+    run(s, "sketch.add_constraints", {{"sketch", fixes}, {"constraints", Json::array({{{"type", "fix"}, {"points", Json::array({{{"curve", 2}, {"point", "axis"}}})}}})}});
+    c = run(s, "sketch.curves", {{"sketch", fixes}});
+    INFO(c.dump());
+    CHECK(near(c.at("curves")[2].at("points")[2], 220, 0, 1e-6));
+    run(s, "sketch.add_constraints", {{"sketch", fixes}, {"constraints", Json::array({{{"type", "fix"}, {"curves", Json::array({0, 1, 2})}}})}});
+    c = run(s, "sketch.curves", {{"sketch", fixes}});
+    INFO(c.dump());
+    CHECK(c.at("degreesOfFreedom").get<int>() == 0);
+    CHECK(near(c.at("curves")[0].at("points")[2], ax, ay, 1e-6));
+    const auto r = s.execute("sketch.add_constraints", {{"sketch", fixes}, {"constraints", Json::array({{{"type", "major_radius"}, {"curve", 0}, {"value", 30}}})}});
+    if (r.ok) {
+        c = run(s, "sketch.curves", {{"sketch", fixes}});
+        CHECK(c.at("curves")[0].at("majorRadius").get<double>() == Approx(20));
+    }
 }
 
 TEST_CASE("Design commands: sketch offset (CAD-126)", "[commands][cad]")
