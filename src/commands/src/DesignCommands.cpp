@@ -696,7 +696,7 @@ std::pair<Json, std::size_t> resolveTangentArc(const std::vector<geometry::Sketc
     if (which != "start" && which != "end")
         throw CommandError("tangent_arc: from.point must be start or end");
     const auto& c = curves[i];
-    const geometry::Vec2 s = pointPosition(curves, from);
+    const geometry::Vec2 s = pointPosition(curves, {{"curve", i}, {"point", which}});
     // Direction leaving the curve at that end.
     geometry::Vec2 t{0, 0};
     if (c.kind == K::Line) {

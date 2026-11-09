@@ -762,7 +762,7 @@ TEST_CASE("Design commands: fit points between the ends of a spline (CAD-198)", 
     const Json sk2 = run(s, "sketch.create",
                          {{"plane", "XY"},
                           {"curves", Json::array({{{"type", "spline"}, {"points", {{0, 50}, {10, 60}, {20, 50}}}}})},
-                          {"constraints", Json::array({{{"type", "fix"}, {"curve", 0}}})}});
+                          {"constraints", Json::array({{{"type", "fix"}, {"curves", Json::array({0})}}})}});
     const auto id2 = sk2.at("id").get<std::uint64_t>();
     const auto held = s.execute("sketch.move_point",
                                 {{"sketch", id2}, {"point", {{"curve", 0}, {"point", "fit"}, {"index", 1}}}, {"to", {10, 70}}});
@@ -1029,7 +1029,7 @@ TEST_CASE("Design commands: mirror sketch curves (CAD-126)", "[commands][cad][so
                              .at("id")
                              .get<std::uint64_t>();
         run(t, "sketch.mirror", {{"sketch", sid}, {"curves", {1}}, {"line", 0}});
-        run(t, "sketch.add_constraints", {{"sketch", sid}, {"constraints", Json::array({{{"type", "fix"}, {"curve", 0}}})}});
+        run(t, "sketch.add_constraints", {{"sketch", sid}, {"constraints", Json::array({{{"type", "fix"}, {"curves", Json::array({0})}}})}});
         run(t, "sketch.move_point", {{"sketch", sid}, {"point", {{"curve", 1}, {"point", "end"}}}, {"to", {25, 6}}});
         const Json sc = run(t, "sketch.curves", {{"sketch", sid}});
         const auto& copy = sc.at("curves")[2].at("points");
@@ -1556,4 +1556,17 @@ TEST_CASE("Design commands: a tangent arc stays on a dimensioned line's end (CAD
     CHECK(l[1][0].get<double>() == Approx(25).margin(1e-6));
     CHECK(a[0][0].get<double>() == Approx(25).margin(1e-6));
     CHECK(a[0][1].get<double>() == Approx(0).margin(1e-6));
+
+    // from.point defaults to "end" for both the geometry and the join.
+    const Json e = run(s, "sketch.create",
+                       {{"plane", "XY"},
+                        {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {10, 0}}}})},
+                        {"constraints", Json::array({{{"type", "fix"}, {"curves", Json::array({0})}}})}});
+    const auto eid = e.at("id").get<std::uint64_t>();
+    run(s, "sketch.add_curves",
+        {{"sketch", eid}, {"curves", Json::array({{{"type", "tangent_arc"}, {"from", {{"curve", 0}}}, {"end", {20, 10}}}})}});
+    const Json ec = run(s, "sketch.curves", {{"sketch", eid}});
+    const auto& ea = ec.at("curves")[1].at("points");
+    CHECK(ea[0][0].get<double>() == Approx(10).margin(1e-6));
+    CHECK(ea[0][1].get<double>() == Approx(0).margin(1e-6));
 }
