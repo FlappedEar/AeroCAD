@@ -36,7 +36,13 @@ constexpr const char* kInstructions =
     "that is open in the AeroCAD window; the user sees every change live in the 3D view and can undo it. "
     "Units: millimetres (mm) for lengths, degrees for angles; axes are right-handed with Z up. "
     "Start with project_get_context to learn the part ids, sizes and the document revision, and call it again "
-    "after changes. Use geometry_measure to check dimensions and clearances instead of guessing. Every "
+    "after changes; timeline_list lists the design features (sketches, extrudes, fits) by feature id. "
+    "agent_guide gives step-by-step recipes for the common tasks (scan, part on a curved surface, fin/canard, "
+    "solid, CFD wind tunnel, A/B variants, export): read it before a task you have not done here yet. "
+    "view_screenshot shows you the 3D view as the user sees it, view_set turns the camera, and view_pick turns "
+    "positions in the screenshot into 3D points on the model: look at the result after each important step "
+    "instead of assuming it worked. Use geometry_measure to check dimensions and clearances instead of guessing. "
+    "When a tool fails, its message says why; fix the parameters it names rather than retrying unchanged. Every "
     "document change is recorded in the undo history (edit_undo / edit_redo), except project_new and "
     "project_open, which replace the document and clear it. Files written or deleted and programs started are "
     "never undone; each tool's description and annotations say what it does outside the document. File paths "
@@ -49,6 +55,21 @@ std::string toolNameForCommand(std::string_view command)
     std::string out(command);
     std::replace(out.begin(), out.end(), '.', '_');
     return out;
+}
+
+std::string withToolNames(std::string text, const commands::CommandRegistry& registry)
+{
+    const auto word = [](char c) { return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_'; };
+    for (const auto& info : registry.list()) {
+        const std::string& name = info.name;
+        for (std::size_t at = text.find(name); at != std::string::npos; at = text.find(name, at + 1)) {
+            const std::size_t end = at + name.size();
+            if ((at > 0 && (word(text[at - 1]) || text[at - 1] == '.')) || (end < text.size() && word(text[end])))
+                continue;
+            text[at + name.find('.')] = '_';
+        }
+    }
+    return text;
 }
 
 bool isExposedAsTool(const commands::CommandInfo& info)
@@ -195,8 +216,12 @@ Json McpServer::listTools() const
 {
     Json tools = Json::array();
     for (const auto& info : m_registry.list()) {
-        if (isExposedAsTool(info))
-            tools.push_back(toolDefinition(info));
+        if (!isExposedAsTool(info))
+            continue;
+        // Descriptions name other commands (sketch.create); the agent knows them as tools.
+        Json tool = toolDefinition(info);
+        tool["description"] = withToolNames(tool["description"].get<std::string>(), m_registry);
+        tools.push_back(std::move(tool));
     }
     return Json{{"tools", tools}};
 }
@@ -222,8 +247,69 @@ Json McpServer::callTool(const Json& params)
 
     const commands::CommandResult result = m_backend.execute(command->name, arguments);
     if (!result.ok)
-        return Json{{"content", {{{"type", "text"}, {"text", result.error}}}}, {"isError", true}};
-    return Json{{"content", {{{"type", "text"}, {"text", result.data.dump()}}}}, {"isError", false}};
+        return Json{{"content", {{{"type", "text"}, {"text", withToolNames(result.error, m_registry)}}}},
+                    {"isError", true}};
+    Json content = toolResultContent(result.data);
+    for (auto& c : content["content"])
+        if (c.value("type", "") == "text")
+            c["text"] = withToolNames(c["text"].get<std::string>(), m_registry);
+    return content;
+}
+
+Json toolResultContent(Json data)
+{
+    // An image (view.screenshot) goes to the agent as MCP image content, so it sees it,
+    // and the rest of the result as text.
+    Json image;
+    if (data.is_object()) {
+        if (auto it = data.find("image"); it != data.end() && it->is_object() && it->contains("data")) {
+            image = std::move(*it);
+            data.erase("image");
+        }
+    }
+    std::string text = data.dump();
+    if (text.size() > kMaxResultChars) {
+        // MCP clients cut or refuse results this large (Claude: about 25 000 tokens), and the
+        // agent then sees nothing. Long arrays are shortened, and the result says so.
+        Json shortened = shortenArrays(data, kShortenedArrayItems);
+        shortened["truncated"] =
+            "This result had " + std::to_string(text.size()) + " characters, too many for the agent; arrays longer "
+            "than " + std::to_string(kShortenedArrayItems) + " items were shortened (see the '... N more' entries). "
+            "Ask for less (a part id, a smaller area, fewer samples) when you need all of it.";
+        text = shortened.dump();
+    }
+    Json content = Json::array({Json{{"type", "text"}, {"text", text}}});
+    if (!image.is_null())
+        content.push_back(Json{{"type", "image"},
+                               {"data", image.at("data")},
+                               {"mimeType", image.value("mimeType", std::string("image/png"))}});
+    return Json{{"content", content}, {"isError", false}};
+}
+
+Json shortenArrays(const Json& value, std::size_t maxItems)
+{
+    if (value.is_object()) {
+        Json out = Json::object();
+        for (auto it = value.begin(); it != value.end(); ++it)
+            out[it.key()] = shortenArrays(it.value(), maxItems);
+        return out;
+    }
+    if (!value.is_array())
+        return value;
+    // Only the arrays that make the result large: small ones (a point, a short list) stay whole.
+    if (value.size() <= maxItems || value.dump().size() < kMaxResultChars / 10) {
+        Json out = Json::array();
+        for (const auto& v : value)
+            out.push_back(shortenArrays(v, maxItems));
+        return out;
+    }
+    Json out = Json::array();
+    const std::size_t n = std::min(value.size(), maxItems);
+    for (std::size_t i = 0; i < n; ++i)
+        out.push_back(shortenArrays(value[i], maxItems));
+    if (value.size() > maxItems)
+        out.push_back("... " + std::to_string(value.size() - maxItems) + " more");
+    return out;
 }
 
 } // namespace aerocad::mcp

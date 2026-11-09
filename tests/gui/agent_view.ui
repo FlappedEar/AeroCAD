@@ -1,0 +1,13 @@
+# CAD-AGENT: an MCP agent can look at the 3D view: view.set turns the camera at once,
+# view.screenshot returns an image of the viewport, view.pick turns image positions into
+# points on the model, view.show_results refuses unknown runs with guidance.
+# Run: AeroCAD tests/data/box_200x80x60.stl --ui-script <this file>
+ui.wait(400)
+(() => { const r = controller.mcp.runViewCommand("view.set", {direction: "front", fit: true}); if (!r.ok) ui.fail("view.set: " + r.error); const d = r.result.camera.towardsCamera; ui.log("front: towardsCamera " + JSON.stringify(d)); if (Math.abs(d[1] + 1) > 1e-6) ui.fail("front view does not look from -Y") })()
+(() => { const r = controller.mcp.runViewCommand("view.screenshot", {maxSize: 600}); if (!r.ok) ui.fail("screenshot: " + r.error); const s = r.result; ui.log("screenshot " + s.width + " x " + s.height + ", " + s.image.data.length + " base64 chars, " + s.image.mimeType); if (s.image.mimeType !== "image/png" || s.image.data.length < 1000) ui.fail("no image"); if (Math.max(s.width, s.height) !== 600) ui.fail("maxSize not applied"); if (s.visibleParts.length !== 1) ui.fail("visible parts: " + JSON.stringify(s.visibleParts)) })()
+(() => { const r = controller.mcp.runViewCommand("view.pick", {points: [[0.5, 0.5], [0.02, 0.02]]}); if (!r.ok) ui.fail("pick: " + r.error); const h = r.result.hits; ui.log("pick: " + JSON.stringify(h)); if (!h[0] || h[0].part !== 1) ui.fail("centre pick missed the box"); if (Math.abs(h[0].point[1]) > 1e-3) ui.fail("front view centre is not on the front face y = 0"); if (Math.abs(h[0].normal[1] + 1) > 1e-6) ui.fail("normal of the front face is not -Y"); if (h[1] !== null) ui.fail("the corner of the view hit something") })()
+(() => { const r = controller.mcp.runViewCommand("view.screenshot", {direction: [1, 1, 1], part: 1, area: "window"}); if (!r.ok) ui.fail("window shot: " + r.error); ui.log("window shot " + r.result.width + " x " + r.result.height + " camera target " + JSON.stringify(r.result.camera.target)); if (Math.abs(r.result.camera.target[0] - 100) > 1) ui.fail("part 1 is not framed") })()
+(() => { const r = controller.mcp.runViewCommand("view.set", {direction: "sideways"}); ui.log("bad direction: " + r.error); if (r.ok || r.error.indexOf("front") < 0) ui.fail("bad direction not explained") })()
+(() => { const r = controller.mcp.runViewCommand("view.set", {part: 99}); ui.log("bad part: " + r.error); if (r.ok || r.error.indexOf("99") < 0) ui.fail("missing part not reported") })()
+(() => { const r = controller.mcp.runViewCommand("view.show_results", {run: "no-such-run"}); ui.log("bad run: " + r.error); if (r.ok || r.error.indexOf("simulation_list") < 0) ui.fail("unknown run not explained") })()
+ui.shot("agent-view.png")

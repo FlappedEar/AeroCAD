@@ -5,6 +5,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <cctype>
 #include <string>
 
 using namespace aerocad;
@@ -213,6 +214,118 @@ TEST_CASE("CAD-81: undo and redo do not describe themselves as undoable with edi
             INFO(name);
             CHECK(t.at("description").get<std::string>().find("undoable with edit_undo") == std::string::npos);
             CHECK(t.at("annotations").at("destructiveHint") == false);
+        }
+    }
+}
+
+TEST_CASE("An image in a result goes to the agent as MCP image content", "[mcp]")
+{
+    const Json r = mcp::toolResultContent({{"width", 2}, {"image", {{"mimeType", "image/png"}, {"data", "iVBORw0KGgo="}}}});
+    REQUIRE(r.at("content").size() == 2);
+    CHECK(r.at("content")[0].at("type") == "text");
+    const Json text = Json::parse(r.at("content")[0].at("text").get<std::string>());
+    CHECK(text.at("width") == 2);
+    CHECK_FALSE(text.contains("image")); // not a second time as base64 text
+    CHECK(r.at("content")[1] == Json{{"type", "image"}, {"data", "iVBORw0KGgo="}, {"mimeType", "image/png"}});
+}
+
+TEST_CASE("A result too large for the agent has its long arrays shortened", "[mcp]")
+{
+    Json big = Json::array();
+    for (int i = 0; i < 20000; ++i)
+        big.push_back(Json::array({i * 1.5, i * 2.5}));
+    const Json r = mcp::toolResultContent({{"surfaceLine", big}, {"surfaceCurve", {{"points", {{0, 1}, {2, 3}}}}}});
+    const std::string text = r.at("content")[0].at("text").get<std::string>();
+    CHECK(text.size() < mcp::kMaxResultChars);
+    const Json data = Json::parse(text);
+    CHECK(data.contains("truncated"));
+    CHECK(data.at("surfaceLine").size() == mcp::kShortenedArrayItems + 1);
+    CHECK(data.at("surfaceLine").back() == "... " + std::to_string(20000 - mcp::kShortenedArrayItems) + " more");
+    CHECK(data.at("surfaceCurve").at("points").size() == 2); // small arrays stay whole
+
+    const Json small = mcp::toolResultContent({{"list", Json::array({1, 2, 3})}});
+    CHECK_FALSE(Json::parse(small.at("content")[0].at("text").get<std::string>()).contains("truncated"));
+}
+
+TEST_CASE("Descriptions and messages name tools, not dotted commands", "[mcp]")
+{
+    Fixture f;
+    CHECK(mcp::withToolNames("Call simulation.run, then simulation.status.", f.session.registry()) ==
+          "Call simulation_run, then simulation_status.");
+    CHECK(mcp::withToolNames("see case.json and xsketch.create", f.session.registry()) ==
+          "see case.json and xsketch.create");
+    const Json tools = f.request("tools/list").at("result").at("tools");
+    for (const auto& t : tools)
+        for (const auto& info : f.session.registry().list())
+            CHECK(t.at("description").get<std::string>().find(" " + info.name + " ") == std::string::npos);
+}
+
+TEST_CASE("View tools are listed and explain that they need the window", "[mcp]")
+{
+    Fixture f;
+    for (const char* name : {"view_screenshot", "view_set", "view_pick", "view_show_results"}) {
+        const Json r = f.request("tools/call", {{"name", name}, {"arguments", Json::object()}});
+        CHECK(r.at("result").at("isError") == true);
+        const std::string text = r.at("result").at("content")[0].at("text").get<std::string>();
+        // view_pick and view_show_results reject the missing parameter first.
+        CHECK((text.find("AeroCAD window") != std::string::npos || text.find("required") != std::string::npos));
+    }
+    bool readOnly = false;
+    const Json tools = f.request("tools/list").at("result").at("tools");
+    for (const auto& t : tools)
+        if (t.at("name") == "view_screenshot")
+            readOnly = t.at("annotations").at("readOnlyHint").get<bool>();
+    CHECK(readOnly);
+}
+
+TEST_CASE("agent_guide recipes name only tools and parameters that exist", "[mcp]")
+{
+    Fixture f;
+    const Json tools = f.request("tools/list").at("result").at("tools");
+    const Json r = f.request("tools/call", {{"name", "agent_guide"}, {"arguments", Json::object()}});
+    REQUIRE(r.at("result").at("isError") == false);
+    const Json guide = Json::parse(r.at("result").at("content")[0].at("text").get<std::string>()).at("guide");
+    for (const char* topic : {"basics", "scan", "sketch_on_surface", "fin", "solid", "cfd", "variants", "export"})
+        CHECK(guide.contains(topic));
+    // Every "name_with_underscore {" in a recipe is a tool, and every key in its braces is
+    // one of that tool's parameters.
+    for (const auto& [topic, text] : guide.items()) {
+        const std::string s = text.get<std::string>();
+        for (std::size_t at = s.find(" {"); at != std::string::npos; at = s.find(" {", at + 1)) {
+            std::size_t start = at;
+            while (start > 0 && (std::isalnum(static_cast<unsigned char>(s[start - 1])) || s[start - 1] == '_'))
+                --start;
+            const std::string tool = s.substr(start, at - start);
+            if (tool.find('_') == std::string::npos)
+                continue;
+            const Json* schema = nullptr;
+            for (const auto& t : tools)
+                if (t.at("name") == tool)
+                    schema = &t.at("inputSchema");
+            INFO(topic << ": " << tool);
+            REQUIRE(schema != nullptr);
+            // The top-level keys, up to a nested object.
+            const std::size_t close = std::min(s.find('}', at), s.find('{', at + 2));
+            const std::string args = s.substr(at + 2, close - at - 2);
+            std::size_t k = 0;
+            while (k < args.size()) {
+                while (k < args.size() && !std::isalpha(static_cast<unsigned char>(args[k])))
+                    ++k;
+                std::size_t e = k;
+                while (e < args.size() && (std::isalnum(static_cast<unsigned char>(args[e])) || args[e] == '_'))
+                    ++e;
+                const std::string key = args.substr(k, e - k);
+                const bool startsKey = k == 0 || args[k - 1] == ' ';
+                const bool endsKey = e >= args.size() || args[e] == ':' || args[e] == ',' || args[e] == '?';
+                if (!key.empty() && startsKey && endsKey && args.substr(0, k).find('\'') == std::string::npos) {
+                    INFO(topic << ": " << tool << " {" << key << "}");
+                    CHECK(schema->at("properties").contains(key));
+                }
+                // Skip a value: after ':' up to the next ','.
+                if (e < args.size() && args[e] == ':')
+                    e = std::min(args.find(',', e), args.size());
+                k = e;
+            }
         }
     }
 }

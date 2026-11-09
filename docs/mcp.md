@@ -99,6 +99,29 @@ replaced by `_` (`document.import` -> `document_import`). New commands (CAD tool
 | `part_set_color` | Appearance: `"#rrggbb"`, or `""` for the default colour (undoable, saved). |
 | `part_isolate`, `part_unisolate` | Show only one part (returns the ids it hid) and show those again; one undo step each. |
 | `edit_undo`, `edit_redo`, `edit_history` | Undo history. |
+| `agent_guide` | Step-by-step recipes for the common tasks (basics, scan, sketch_on_surface, fin, solid, cfd, variants, export), with the exact tool and parameter names. |
+| `view_screenshot` | Image of the 3D view (or `area: "window"`: the whole window, panels and dialogs included), optionally after turning the camera (`direction`: front, top, iso, ... or `[x, y, z]`) and framing a part (`part`) or an area (`center`, `radius`). Returned as MCP image content, with the camera and the visible parts. |
+| `view_set` | The same camera control without an image. |
+| `view_pick` | Positions `[x, y]` (0..1) in the last viewport screenshot to the part hit, the 3D point (mm) and the surface normal there: how an agent finds "that corner of the bumper" on a scan. |
+| `view_show_results` | Draws a finished CFD run in the 3D view (Cp on the part, streamlines, sections, wake, vortices), as SIMULATE > Results does. |
+
+The `view_*` tools need the AeroCAD window; with `--headless` they fail with a message
+saying so. They do not change the document.
+
+### Results an agent can read
+
+- A result longer than 60 000 characters (Claude reads about 25 000 tokens of a tool result)
+  has its long arrays cut to 40 items plus a `"... N more"` entry, and a `truncated` member
+  says so. `sketch_profiles {surfaceLine: true}` returns, besides the raw cut segments used
+  for drawing (thousands on a scan), `surfaceCurve`: one simplified polyline of the surface
+  near the sketch, in sketch coordinates.
+- Parameter errors name what the tool accepts: `params.id: unknown parameter - did you mean
+  'ids'? (accepted: expectedState, format, ids, path, requireValid)`; a missing parameter
+  quotes its description; an enum lists its values.
+- Descriptions and messages use tool names (`sketch_create`), not the command names
+  (`sketch.create`) the app uses internally.
+- `project_get_context` gives each part's `kind` (imported, body, sketch, plane) and the
+  timeline `featureId` that made it; tools taking `sketch` or `feature` want that id.
 
 Tool annotations say what a tool does outside the document, so clients can decide what to
 auto-approve. They come from each command's effects (`src/commands/src/CommandEffects.cpp`):
@@ -136,6 +159,13 @@ only undoable document changes promise `edit_undo`.
 `aerocad-mcp --headless` runs the commands in an in-process document instead of the app
 (no window). It is used by the automated tests and is handy for trying the protocol, e.g.
 with the MCP Inspector: `npx @modelcontextprotocol/inspector /path/to/aerocad-mcp --headless`.
+
+## Testing as an agent
+
+`tests/gui/agent_view.ui` drives the view tools in the real window
+(`ctest -L gui -R agent_view`). To try a whole workflow as an MCP client in a container:
+start `AeroCAD --mcp` under `xvfb-run`, then send JSON-RPC lines to `aerocad-mcp` (initialize,
+then `tools/call`); `view_screenshot` returns base64 PNG in its image content.
 
 ## Not yet done
 

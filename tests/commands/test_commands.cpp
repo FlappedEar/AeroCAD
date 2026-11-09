@@ -1667,3 +1667,32 @@ TEST_CASE("CAD-80: replacing the project starts a new generation and drops stage
     CHECK(session.project().generation != second);
     std::filesystem::remove(file);
 }
+
+TEST_CASE("Parameter errors tell an agent what the command accepts", "[commands]")
+{
+    commands::Session s;
+    auto r = s.execute("document.export", {{"id", 1}, {"path", "/tmp/x.stl"}});
+    REQUIRE_FALSE(r.ok);
+    CHECK(r.error.find("did you mean 'ids'?") != std::string::npos);
+    CHECK(r.error.find("accepted: ") != std::string::npos);
+    r = s.execute("feature.box", Json::object());
+    REQUIRE_FALSE(r.ok);
+    CHECK(r.error.find("size: required (") != std::string::npos); // with the parameter's description
+    r = s.execute("geometry.measure", {{"kind", "volume"}});
+    REQUIRE_FALSE(r.ok);
+    CHECK(r.error.find("\"volume\" not allowed (one of") != std::string::npos);
+    r = s.execute("geometry.measure", {{"kind", 3}});
+    REQUIRE_FALSE(r.ok);
+    CHECK(r.error.find("expected string, got number") != std::string::npos);
+}
+
+TEST_CASE("project.get_context says what each part is and which feature made it", "[commands]")
+{
+    commands::Session s;
+    REQUIRE(s.execute("feature.box", {{"size", {10, 20, 30}}}).ok);
+    const auto r = s.execute("project.get_context");
+    REQUIRE(r.ok);
+    const auto& part = r.data.at("parts").at(0);
+    CHECK(part.at("kind") == "body");
+    CHECK(part.at("featureId") == 1);
+}

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "AgentView.hpp"
 #include "AppController.hpp"
 #include "ScanController.hpp"
 #include "UiScript.hpp"
@@ -166,6 +167,11 @@ int main(int argc, char* argv[])
                             parser.value(script));
 
     controller.mcp()->restoreFromSettings();
+    if (auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().first())) {
+        controller.mcp()->setViewHandler([window, &controller](const std::string& name, const nlohmann::json& params) {
+            return aerocad::app::runViewCommand(window, controller, name, params);
+        });
+    }
 
     QMetaObject::invokeMethod(engine.rootObjects().first(), "offerRecovery");
     for (const QString& file : parser.positionalArguments())
