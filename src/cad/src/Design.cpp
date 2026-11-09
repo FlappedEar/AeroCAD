@@ -644,6 +644,25 @@ void appendCurves(const Eval& ev, const Json& item, std::vector<SketchCurve>& ou
         implicit.push_back({CT::Vertical, {first + 1}, {}});
         implicit.push_back({CT::Horizontal, {first + 2}, {}});
         implicit.push_back({CT::Vertical, {first + 3}, {}});
+    } else if (type == "three_point_rectangle") {
+        // Fusion's 3-Point Rectangle: one side from start to end at any angle, the other
+        // side `height` long, to the left of start -> end (negative: to the right).
+        const Vec2 a = ev.vec2(item, "start");
+        const Vec2 b = ev.vec2(item, "end");
+        const double h = ev.num(item, "height");
+        const double len = std::hypot(b.x - a.x, b.y - a.y);
+        if (len < 1e-9 || std::abs(h) < 1e-9)
+            throw DesignError("Rectangle has zero width or height");
+        const Vec2 up{-(b.y - a.y) / len * h, (b.x - a.x) / len * h};
+        const Vec2 c{b.x + up.x, b.y + up.y};
+        const Vec2 d{a.x + up.x, a.y + up.y};
+        push(lineCurve(a, b, construction));
+        push(lineCurve(b, c, construction));
+        push(lineCurve(c, d, construction));
+        push(lineCurve(d, a, construction));
+        implicit.push_back({CT::Perpendicular, {first, first + 1}, {}});
+        implicit.push_back({CT::Parallel, {first, first + 2}, {}});
+        implicit.push_back({CT::Parallel, {first + 1, first + 3}, {}});
     } else if (type == "circle") {
         SketchCurve c{SketchCurve::Kind::Circle, {ev.vec2(item, "center")}};
         c.radius = has(item, "diameter") ? ev.num(item, "diameter") / 2 : ev.num(item, "radius");
@@ -922,6 +941,7 @@ const char* implicitName(SketchConstraint::Type t)
     case CT::Horizontal: return "horizontal";
     case CT::Vertical: return "vertical";
     case CT::Parallel: return "parallel";
+    case CT::Perpendicular: return "perpendicular";
     case CT::Tangent: return "tangent";
     case CT::Equal: return "equal";
     default: return nullptr;
@@ -985,6 +1005,13 @@ Json itemFromSolved(const Json& item, const SketchCurve* c, std::size_t n)
         // Signed, so the corners keep their places (a corner dragged past the opposite one).
         out["width"] = b.x - a.x;
         out["height"] = b.y - a.y;
+    } else if (type == "three_point_rectangle") {
+        const Vec2 a = c[0].points[0], b = c[0].points[1], e = c[1].points[1];
+        const double len = std::hypot(b.x - a.x, b.y - a.y);
+        out["start"] = pt(a);
+        out["end"] = pt(b);
+        // Signed distance of the far side, to the left of start -> end.
+        out["height"] = len > 1e-12 ? ((b.x - a.x) * (e.y - b.y) - (b.y - a.y) * (e.x - b.x)) / len : 0.0;
     } else if (type == "circle") {
         out.erase("diameter");
         out["center"] = pt(c[0].points[0]);

@@ -72,14 +72,15 @@ Json curveSchema()
         {"type", "object"},
         {"description",
          "A sketch curve. type selects the fields: line {start, end}; rectangle {corner, width, height} or "
-         "{corner, opposite}; center_rectangle {center, width, height}; circle {center, radius | diameter}; "
+         "{corner, opposite}; center_rectangle {center, width, height}; three_point_rectangle {start, end, height} (a side "
+         "at any angle, then the other side; height is signed, positive to the left of start -> end); circle {center, radius | diameter}; "
          "arc {start, through, end} (three-point arc); center_arc {center, radius, startAngle, endAngle} "
          "(degrees, counter-clockwise); polygon {center, radius, sides, angle?}; slot {start, end, width} "
          "(centre-to-centre); spline {points, closed?}. construction: true excludes it from profiles."},
         {"properties",
          {{"type",
            {{"type", "string"},
-            {"enum", {"line", "rectangle", "center_rectangle", "circle", "arc", "center_arc", "polygon", "slot",
+            {"enum", {"line", "rectangle", "center_rectangle", "three_point_rectangle", "circle", "arc", "center_arc", "polygon", "slot",
                       "spline"}}}},
           {"start", point2("Start point.")},
           {"end", point2("End point.")},

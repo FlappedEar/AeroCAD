@@ -4,6 +4,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <cmath>
 #include <numbers>
 #include <set>
@@ -1287,4 +1288,71 @@ TEST_CASE("Design commands: parameter.evaluate evaluates without recording (CAD-
     // Nothing was recorded: one undo removes the parameter, then there is nothing left.
     REQUIRE(s.execute("edit.undo").ok);
     CHECK_FALSE(s.execute("edit.undo").ok);
+}
+
+TEST_CASE("Design commands: three-point rectangle at an angle (CAD-203)", "[commands][cad][solver]")
+{
+    commands::Session s;
+    run(s, "parameter.set", {{"name", "h"}, {"expression", "10 mm"}});
+    // One side from (0, 0) to (30, 40) (50 long), the other 10 to its left; and one with a
+    // negative height, to the right of its first side.
+    const Json sk = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "three_point_rectangle"}, {"start", {0, 0}}, {"end", {30, 40}},
+                                                  {"height", "h"}},
+                                                 {{"type", "three_point_rectangle"}, {"start", {100, 0}},
+                                                  {"end", {120, 0}}, {"height", -5}}})}});
+    CHECK(sk.at("profiles") == 2);
+    const auto id = sk.at("id").get<std::uint64_t>();
+    Json c = run(s, "sketch.curves", {{"sketch", id}});
+    REQUIRE(c.at("curves").size() == 8);
+    const auto& far = c.at("curves")[1].at("points")[1];
+    CHECK(far[0].get<double>() == Approx(22).margin(1e-6));
+    CHECK(far[1].get<double>() == Approx(46).margin(1e-6));
+    const auto& below = c.at("curves")[5].at("points")[1];
+    CHECK(below[0].get<double>() == Approx(120).margin(1e-6));
+    CHECK(below[1].get<double>() == Approx(-5).margin(1e-6));
+
+    const Json ex = run(s, "feature.extrude", {{"sketch", id}, {"distance", 5}});
+    double volume = 0;
+    for (const auto& b : ex.at("bodies"))
+        volume += b.at("volume").get<double>();
+    CHECK(volume == Approx((50 * 10 + 20 * 5) * 5.0));
+
+    // Dragging the far corner keeps a rectangle: the sides stay perpendicular and parallel.
+    run(s, "edit.undo");
+    run(s, "sketch.move_point", {{"sketch", id}, {"point", {{"curve", 1}, {"point", "end"}}}, {"to", {10, 60}}});
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    auto dir = [&](int i) {
+        const auto& p = c.at("curves")[i].at("points");
+        return std::array<double, 2>{p[1][0].get<double>() - p[0][0].get<double>(),
+                                     p[1][1].get<double>() - p[0][1].get<double>()};
+    };
+    const auto d0 = dir(0), d1 = dir(1), d2 = dir(2), d3 = dir(3);
+    CHECK(d0[0] * d1[0] + d0[1] * d1[1] == Approx(0).margin(1e-6));
+    CHECK(d0[0] * d2[1] - d0[1] * d2[0] == Approx(0).margin(1e-6));
+    CHECK(d1[0] * d3[1] - d1[1] * d3[0] == Approx(0).margin(1e-6));
+    // The stored item follows the drag (its height is no longer the expression).
+    const Json tl = run(s, "timeline.list");
+    const Json item = tl.at("features")[0].at("params").at("curves")[0];
+    CHECK(item.at("type") == "three_point_rectangle");
+    CHECK(item.at("height").is_number());
+
+    // One side made construction splits the item into lines; the drag still keeps a
+    // rectangle (the perpendicular constraint is carried over, not dropped).
+    run(s, "sketch.set_construction", {{"sketch", id}, {"curves", {3}}});
+    run(s, "sketch.move_point", {{"sketch", id}, {"point", {{"curve", 1}, {"point", "end"}}}, {"to", {0, 70}}});
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    CHECK(c.at("curves")[3].at("construction") == true);
+    const auto e0 = dir(0), e1 = dir(1), e2 = dir(2), e3 = dir(3);
+    CHECK(e0[0] * e1[0] + e0[1] * e1[1] == Approx(0).margin(1e-6));
+    CHECK(e0[0] * e2[1] - e0[1] * e2[0] == Approx(0).margin(1e-6));
+    CHECK(e1[0] * e3[1] - e1[1] * e3[0] == Approx(0).margin(1e-6));
+
+    // A zero height is refused.
+    CHECK_FALSE(s.execute("sketch.create", {{"plane", "XY"},
+                                            {"curves", Json::array({{{"type", "three_point_rectangle"},
+                                                                     {"start", {0, 0}}, {"end", {10, 0}},
+                                                                     {"height", 0}}})}})
+                    .ok);
 }

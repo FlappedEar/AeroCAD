@@ -1,0 +1,58 @@
+# CAD-203: 3-Point Rectangle in the sketch (Fusion: Rectangle › 3-Point Rectangle). One side
+# at any angle, then the far side; with clicks, typed sizes and a height expression. The
+# rectangles extrude into bodies.
+# Run: AeroCAD --ui-script <this file>
+ui.wait(800)
+Qt.createQmlObject('import QtQuick; Item { objectName: "r3Test"; visible: false; function at(u, v) { const o = viewport.sketchOverlay; const q = o.toScreen([u, v]); return o.mapToItem(null, q.x, q.y) } function clickAt(u, v) { const p = at(u, v); ui.click(p.x, p.y) } function moveTo(u, v) { const p = at(u, v); ui.move(p.x, p.y) } function curves() { return controller.execute("sketch.curves", { sketch: activeSketch.id }).result.curves } function items() { return controller.execute("timeline.list").result.features[0].params.curves } function near(p, q) { return Math.hypot(p[0] - q[0], p[1] - q[1]) < 1e-6 } function corners(c) { return c.map(x => x.points[0]) } function field() { const find = it => { if (it.objectName === "sketchDimension") return it; for (let i = 0; i < it.children.length; ++i) { const f = find(it.children[i]); if (f) return f } return null }; return find(viewport.sketchOverlay) } }', window.contentItem)
+(() => { const r = controller.execute("sketch.create", { plane: "XY", curves: [{ type: "line", start: [-80, 60], end: [-70, 70], construction: true }] }); if (!r.ok) ui.fail("sketch: " + r.error) })()
+ui.wait(300)
+(() => { enterSketch(controller.execute("timeline.list").result.features[0].id) })()
+ui.wait(800)
+# From the ribbon's CREATE menu: side (0, -40) -> (20, -25) (25 long, tilted), then a click
+# at (10, -15), 14 to its left (clicks on grid points, which snap).
+(() => { if (!ui.clickText("CREATE")) ui.fail("no CREATE caption in the sketch ribbon") })()
+ui.wait(300)
+(() => { if (!ui.clickText("3-Po&int Rectangle")) ui.fail("no 3-Point Rectangle in the CREATE menu"); if (sketchTool !== "rectangle_3point") ui.fail("the tool did not start: " + sketchTool) })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "r3Test"); t.clickAt(0, -40); t.clickAt(20, -25); t.moveTo(10, -15) })()
+ui.wait(200)
+ui.shot("sketch-rectangle-3point-preview.png")
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "r3Test"); t.clickAt(10, -15) })()
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "r3Test"); const c = t.curves().slice(1); ui.log("3-point rectangle " + JSON.stringify(t.corners(c))); const want = [[0, -40], [20, -25], [11.6, -13.8], [-8.4, -28.8]]; if (c.length !== 4 || c.some((x, i) => x.kind !== "line" || !t.near(x.points[0], want[i]))) ui.fail("expected corners " + JSON.stringify(want) + ", got " + JSON.stringify(c.map(x => x.points))); const it = t.items()[1]; if (it.type !== "three_point_rectangle" || Math.abs(it.height - 14) > 1e-6) ui.fail("stored item: " + JSON.stringify(it)) })()
+# Typed sizes from the Sketch menu: start (-40, 0), "20" towards +x, then "6" with the cursor
+# below: the rectangle goes down (height -6).
+(() => { if (!ui.clickText("&Sketch")) ui.fail("no Sketch menu") })()
+ui.wait(300)
+(() => { if (!ui.clickText("3-Po&int Rectangle")) ui.fail("no 3-Point Rectangle in the Sketch menu") })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "r3Test"); t.clickAt(-40, 0); t.moveTo(-30, 0) })()
+ui.wait(200)
+ui.type("20")
+ui.key("Return")
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "r3Test"); const p = viewport.sketchOverlay.points; if (p.length !== 2 || !t.near(p[1], [-20, 0])) ui.fail("typed length 20 did not place the side end at (-20, 0): " + JSON.stringify(p)); t.moveTo(-30, -10) })()
+ui.wait(200)
+ui.type("6")
+ui.key("Return")
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "r3Test"); const c = t.curves().slice(5); const want = [[-40, 0], [-20, 0], [-20, -6], [-40, -6]]; ui.log("typed 3-point rectangle " + JSON.stringify(t.corners(c))); if (c.length !== 4 || c.some((x, i) => !t.near(x.points[0], want[i]))) ui.fail("typed 20 x 6 below not drawn: " + JSON.stringify(c.map(x => x.points))); const it = t.items()[2]; if (it.height !== -6) ui.fail("stored height: " + JSON.stringify(it)) })()
+# A height expression: hh = 4 mm, side (40, 10) -> (50, 10), cursor above, "hh" in the Size
+# field (letters are tool shortcuts, so click the field first). The item keeps "hh".
+(() => { const r = controller.execute("parameter.set", { name: "hh", expression: "4 mm" }); if (!r.ok) ui.fail("parameter: " + r.error) })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "r3Test"); t.clickAt(40, 10); t.clickAt(50, 10); t.moveTo(45, 20) })()
+ui.wait(200)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "r3Test"); const f = t.field(); if (!f || !f.visible) ui.fail("no Size field"); const p = f.mapToItem(null, f.width / 2, f.height / 2); ui.click(p.x, p.y) })()
+ui.wait(200)
+ui.type("hh")
+ui.key("Return")
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "r3Test"); const c = t.curves().slice(9); const want = [[40, 10], [50, 10], [50, 14], [40, 14]]; if (c.length !== 4 || c.some((x, i) => !t.near(x.points[0], want[i]))) ui.fail("height hh not drawn: " + JSON.stringify(c.map(x => x.points))); const it = t.items()[3]; if (it.height !== "hh") ui.fail("the rectangle lost the height expression: " + JSON.stringify(it)) })()
+ui.shot("sketch-rectangle-3point.png")
+# Finish and extrude: 25 x 14, 20 x 6 and 10 x 4, 10 mm.
+(() => { finishSketch(true) })()
+ui.wait(500)
+(() => { const sk = controller.execute("timeline.list").result.features[0].id; const r = controller.execute("feature.extrude", { sketch: sk, distance: 10 }); if (!r.ok) ui.fail("extrude: " + r.error) })()
+ui.wait(500)
+(() => { const b = controller.execute("timeline.list").result.bodies; const v = b.reduce((s, x) => s + x.volume, 0); ui.log("volume " + v); if (Math.abs(v - (350 + 120 + 40) * 10) > 1e-3) ui.fail("expected 5100 mm³, got " + v) })()
