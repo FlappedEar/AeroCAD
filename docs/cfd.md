@@ -75,7 +75,8 @@ panel in place of Properties:
   "200 km/h" on a 40 m/s run gives "drag 57.9 N · lift -185.2 N · 3.22 kW (×1.93)". The forces are scaled
   by (speed / run speed)² with the run's own Cd and Cl, and the drag power by (speed / run speed)³;
   Reynolds-number effects are not
-  included, so for a large change run that speed instead. Final results only.
+  included, so for a large change run that speed instead. Final results only. File > New and
+  Open clear the typed speed with the rest of the panel (CAD-211).
   **Drag power and downforce in kg** (CAD-209, [summary](images/audit/cad-209-drag-power.png)):
   *Drag power* is the power needed to push the part through the air at the run speed, drag ×
   speed, in kW and hp (745.7 W): 30 N at 40 m/s is "1.20 kW (1.61 hp)". *Downforce* shows a

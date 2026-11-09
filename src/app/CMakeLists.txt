@@ -273,6 +273,13 @@ if(AEROCAD_BUILD_TESTS)
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_cfd_scale_speed_test PROPERTIES LABELS gui TIMEOUT 60
         ENVIRONMENT "AEROCAD_CFD_DIR=${CMAKE_CURRENT_BINARY_DIR}/cfd-scale-speed-runs")
+    # CAD-211: File > New clears the CFD panel's At speed text and B results.
+    add_test(NAME app_cfd_new_resets_test
+        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl
+                --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/cfd_new_resets.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_cfd_new_resets_test PROPERTIES LABELS gui TIMEOUT 60
+        ENVIRONMENT "AEROCAD_CFD_DIR=${CMAKE_CURRENT_BINARY_DIR}/cfd-new-resets-runs")
     # CAD-193: A/B > Export CSV… (prepared runs, no engine).
     add_test(NAME app_cfd_export_ab_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/box_200x80x60.stl
