@@ -396,6 +396,32 @@ TEST_CASE("Fit refuses a surface that covers little of the selection (CAD-255)",
     CHECK(error.find("covers only") != std::string::npos);
 }
 
+TEST_CASE("Fit accepts a coarse fan whose outline smoothing moves every border vertex (CAD-255)", "[geometry][fit]")
+{
+    // 32 triangles around one centre: all but one vertex are on the border, and the
+    // smoothed outline passes just inside each of them. They are on the face's edge, not
+    // off the face, so the coverage check must not refuse the fit.
+    const int n = 32;
+    const double radius = 40.0;
+    std::vector<core::Vec3> v{{0, 0, 0}};
+    for (int i = 0; i < n; ++i) {
+        const double a = 2.0 * std::numbers::pi * i / n;
+        v.push_back({radius * std::cos(a), radius * std::sin(a), 0.0});
+    }
+    std::vector<core::TriangleMesh::Triangle> t;
+    for (int i = 0; i < n; ++i)
+        t.push_back({0u, static_cast<std::uint32_t>(1 + i), static_cast<std::uint32_t>(1 + (i + 1) % n)});
+    const core::TriangleMesh fan(std::move(v), std::move(t));
+    const core::TriangleSet all = selectWhere(fan, [](const core::Vec3&) { return true; });
+    for (const auto method : {geometry::SurfaceFitMethod::Unfold, geometry::SurfaceFitMethod::Plane}) {
+        geometry::SurfaceFitOptions options;
+        options.method = method;
+        INFO(static_cast<int>(method));
+        const auto fit = geometry::fitSurface(fan, all, options);
+        CHECK(geometry::surfaceArea(fit.face) > 0.9 * core::selectionArea(fan, all));
+    }
+}
+
 TEST_CASE("Fit on extra data and trim to a subset of it", "[geometry][fit]")
 {
     const core::TriangleMesh mesh = tube(30.0, 80.0, 180, 60);
