@@ -34,7 +34,7 @@ Json objectSchema(Json properties, Json required = Json::array())
 
 Json idParam()
 {
-    return Json{{"type", "integer"}, {"minimum", 1}, {"description", "Part id (see document.parts)."}};
+    return Json{{"type", "integer"}, {"minimum", 1}, {"description", "Part id."}};
 }
 
 Json pointParam(const std::string& description)

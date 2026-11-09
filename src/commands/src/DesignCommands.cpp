@@ -151,7 +151,7 @@ Json objectSchema(Json properties, Json required = Json::array())
 Json numberOrExpr(const std::string& description)
 {
     return Json{{"type", Json::array({"number", "string"})},
-                {"description", description + " Number or expression with user parameters, e.g. \"width / 2\"."}};
+                {"description", description + " (or expression)"}};
 }
 
 Json point2(const std::string& description)
@@ -180,8 +180,7 @@ Json featureIdSchema(const std::string& description)
 Json bodyRefSchema(const std::string& description)
 {
     return Json{{"type", Json::array({"integer", "string"})},
-                {"description", description + " Body id (the id of the feature that created it, see "
-                                              "timeline.list / document.parts featureId) or body name."}};
+                {"description", description + " Body id (its feature id, see timeline.list) or name."}};
 }
 
 Json curveSchema()

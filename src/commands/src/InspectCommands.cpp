@@ -185,7 +185,7 @@ Json point3(const std::string& description)
 
 Json partIdSchema(const std::string& description)
 {
-    return Json{{"type", "integer"}, {"minimum", 1}, {"description", description + " Part id (see document.parts)."}};
+    return Json{{"type", "integer"}, {"minimum", 1}, {"description", description + " Part id."}};
 }
 
 Json vec(const core::Vec3& v)

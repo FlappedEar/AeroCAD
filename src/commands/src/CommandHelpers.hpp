@@ -64,7 +64,7 @@ inline void requireImported(const model::Part& p, const char* what)
 
 inline Json idParam()
 {
-    return Json{{"type", "integer"}, {"minimum", 1}, {"description", "Part id (see document.parts)."}};
+    return Json{{"type", "integer"}, {"minimum", 1}, {"description", "Part id."}};
 }
 
 inline Json objectSchema(Json properties, Json required = Json::array())

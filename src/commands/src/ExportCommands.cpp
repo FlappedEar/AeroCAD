@@ -341,7 +341,7 @@ void registerCheck(CommandRegistry& r)
          "Checks whether a part's mesh is a watertight solid: closed (no open edges), manifold "
          "(no edge shared by more than two triangles), consistently and outward oriented, without "
          "degenerate triangles. Reports counts, the enclosed volume (mm^3) and a list of problems.",
-         objectSchema({{"id", {{"type", "integer"}, {"minimum", 1}, {"description", "Part id (see document.parts)."}}}},
+         objectSchema({{"id", {{"type", "integer"}, {"minimum", 1}, {"description", "Part id."}}}},
                       {"id"})},
         [](CommandContext& ctx, const Json& params) {
             const model::Part& p = findPart(ctx.document, params.at("id").get<model::PartId>());

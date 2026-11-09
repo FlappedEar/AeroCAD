@@ -178,10 +178,10 @@ TEST_CASE("Tool annotations state effects outside the document truthfully (CAD-8
     // No false undo promise: project_new and project_open clear the history.
     for (const char* name : {"project_new", "project_open"}) {
         INFO(name);
-        CHECK(description(name).find("undoable with edit_undo") == std::string::npos);
+        CHECK(description(name).find("Undoable") == std::string::npos);
         CHECK(description(name).find("cannot be undone") != std::string::npos);
     }
-    CHECK(description("part_rename").find("undoable with edit_undo") != std::string::npos);
+    CHECK(description("part_rename").find("Undoable.") != std::string::npos);
     CHECK(description("simulation_delete").find("Deletes files") != std::string::npos);
     CHECK(description("simulation_install_engine").find("install software") != std::string::npos);
     CHECK(description("project_save").find("edit_undo does not reverse this") != std::string::npos);
@@ -213,7 +213,7 @@ TEST_CASE("CAD-81: undo and redo do not describe themselves as undoable with edi
         const std::string name = t.at("name").get<std::string>();
         if (name == "edit_undo" || name == "edit_redo") {
             INFO(name);
-            CHECK(t.at("description").get<std::string>().find("undoable with edit_undo") == std::string::npos);
+            CHECK(t.at("description").get<std::string>().find("Undoable") == std::string::npos);
             CHECK(t.at("annotations").at("destructiveHint") == false);
         }
     }
@@ -384,4 +384,27 @@ TEST_CASE("Every tool parameter has a description (CAD-231)", "[mcp]")
         list += m + "\n";
     INFO(list);
     CHECK(missing.empty());
+}
+
+TEST_CASE("tools/list is compact: shared schemas listed once, no schema boilerplate (CAD-233)", "[mcp]")
+{
+    Fixture f;
+    const Json tools = f.request("tools/list").at("result").at("tools");
+    const std::string all = tools.dump();
+    // The listing is loaded by every agent session before it starts; keep it from growing back.
+    CHECK(all.size() < 150000);
+    CHECK(all.find("additionalProperties") == std::string::npos);
+    CHECK(all.find("sketch.curves") == std::string::npos); // parameter descriptions name tools too
+    const Json* create = nullptr;
+    for (const auto& t : tools)
+        if (t.at("name") == "sketch_create")
+            create = &t;
+    REQUIRE(create != nullptr);
+    const Json& curves = create->at("inputSchema").at("properties").at("curves");
+    CHECK(curves.at("type") == "array");
+    CHECK(curves.at("description").get<std::string>().find("Same as sketch_add_curves curves") != std::string::npos);
+    // The command itself still validates the full schema.
+    const Json r = f.request("tools/call", {{"name", "sketch_create"},
+                                            {"arguments", {{"plane", "XY"}, {"curves", {{{"type", "line"}, {"bogus", 1}}}}}}});
+    CHECK(r.at("result").at("isError") == true);
 }
