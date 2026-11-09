@@ -1338,6 +1338,17 @@ TEST_CASE("Design commands: three-point rectangle at an angle (CAD-203)", "[comm
     CHECK(item.at("type") == "three_point_rectangle");
     CHECK(item.at("height").is_number());
 
+    // One side made construction splits the item into lines; the drag still keeps a
+    // rectangle (the perpendicular constraint is carried over, not dropped).
+    run(s, "sketch.set_construction", {{"sketch", id}, {"curves", {3}}});
+    run(s, "sketch.move_point", {{"sketch", id}, {"point", {{"curve", 1}, {"point", "end"}}}, {"to", {0, 70}}});
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    CHECK(c.at("curves")[3].at("construction") == true);
+    const auto e0 = dir(0), e1 = dir(1), e2 = dir(2), e3 = dir(3);
+    CHECK(e0[0] * e1[0] + e0[1] * e1[1] == Approx(0).margin(1e-6));
+    CHECK(e0[0] * e2[1] - e0[1] * e2[0] == Approx(0).margin(1e-6));
+    CHECK(e1[0] * e3[1] - e1[1] * e3[0] == Approx(0).margin(1e-6));
+
     // A zero height is refused.
     CHECK_FALSE(s.execute("sketch.create", {{"plane", "XY"},
                                             {"curves", Json::array({{{"type", "three_point_rectangle"},

@@ -941,6 +941,7 @@ const char* implicitName(SketchConstraint::Type t)
     case CT::Horizontal: return "horizontal";
     case CT::Vertical: return "vertical";
     case CT::Parallel: return "parallel";
+    case CT::Perpendicular: return "perpendicular";
     case CT::Tangent: return "tangent";
     case CT::Equal: return "equal";
     default: return nullptr;
