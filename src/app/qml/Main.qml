@@ -241,6 +241,13 @@ ApplicationWindow {
             visible: !sketchMenu.drawing && viewport.sketchOverlay.selectedCurves.length > 0
             onTriggered: viewport.sketchOverlay.toggleConstruction()
         }
+        SketchMenuItem {
+            objectName: "moveCurves"
+            text: qsTr("Move/Copy (M)")
+            icon.source: Theme.iconUrl("move")
+            visible: !sketchMenu.drawing && viewport.sketchOverlay.selectedCurves.length > 0
+            onTriggered: viewport.sketchOverlay.startMove()
+        }
         MenuSeparator {
             visible: !sketchMenu.drawing && viewport.sketchOverlay.selectedCurves.length > 0
             height: visible ? implicitHeight : 0
@@ -1434,6 +1441,8 @@ ApplicationWindow {
     Action { id: sketchFilletAction; text: qsTr("&Fillet"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "fillet"; onTriggered: window.sketchTool_("fillet") }
     Action { id: sketchProjectAction; text: qsTr("&Project"); shortcut: "P"; enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "project"; onTriggered: window.sketchTool_("project") }
     Action { id: sketchOffsetAction; text: qsTr("&Offset"); shortcut: "O"; enabled: !!window.activeSketch && (viewport.sketchOverlay.selectedCurves.length > 0 || window.sketchTool === "offset"); checkable: true; checked: window.sketchTool === "offset"; onTriggered: { if (window.sketchTool !== "offset") viewport.sketchOverlay.startOffset(); else window.sketchTool_("") } }
+    // Fusion: Sketch > Move/Copy (M): the selected curves move or are copied.
+    Action { id: sketchMoveAction; text: qsTr("Mo&ve/Copy"); shortcut: "M"; enabled: !!window.activeSketch && (viewport.sketchOverlay.selectedCurves.length > 0 || window.sketchTool === "move"); checkable: true; checked: window.sketchTool === "move"; onTriggered: { if (window.sketchTool !== "move") viewport.sketchOverlay.startMove(); else window.sketchTool_("") } }
     Action { id: sketchMirrorAction; text: qsTr("&Mirror"); enabled: !!window.activeSketch && (viewport.sketchOverlay.selectedCurves.length > 0 || window.sketchTool === "mirror"); checkable: true; checked: window.sketchTool === "mirror"; onTriggered: { if (window.sketchTool !== "mirror") viewport.sketchOverlay.startMirror(); else window.sketchTool_("") } }
     Action { id: centerRectangleAction; text: qsTr("Center Rectan&gle"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "center_rectangle"; onTriggered: window.sketchTool_("center_rectangle") }
     Action { id: rectangle3PointAction; text: qsTr("3-Po&int Rectangle"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "rectangle_3point"; onTriggered: window.sketchTool_("rectangle_3point") }
@@ -1760,6 +1769,7 @@ ApplicationWindow {
             MenuItem { action: breakAction }
             MenuItem { action: sketchOffsetAction }
             MenuItem { action: sketchProjectAction }
+            MenuItem { action: sketchMoveAction }
             MenuItem { action: sketchMirrorAction }
             MenuItem { action: constructionAction }
             MenuSeparator {}
@@ -2230,6 +2240,7 @@ ApplicationWindow {
                 ToolCommand { action: breakAction; text: qsTr("Break"); iconName: "break" }
                 ToolCommand { action: sketchOffsetAction; text: qsTr("Offset"); iconName: "offset" }
                 ToolCommand { action: sketchProjectAction; text: qsTr("Project"); iconName: "project" }
+                ToolCommand { action: sketchMoveAction; text: qsTr("Move/Copy"); iconName: "move" }
                 ToolCommand { action: sketchMirrorAction; text: qsTr("Mirror"); iconName: "mirror" }
                 ToolCommand { action: constructionAction; text: qsTr("Construction"); iconName: "construction" }
             }
@@ -2448,6 +2459,14 @@ ApplicationWindow {
                     window.controller.showStatus(r.error)
                 else
                     window.controller.showStatus(qsTr("Fillet R%1: edit its radius under Constraints").arg(radius))
+                window.refreshSketchSnaps()
+            }
+            onSketchMoveRequested: (curves, dx, dy, angle, copy) => {
+                if (!window.activeSketch)
+                    return
+                const r = window.controller.execute("sketch.move_curves", { sketch: window.activeSketch.id, curves: curves, dx: dx, dy: dy, angle: angle, copy: copy })
+                if (!r.ok)
+                    window.controller.showStatus(r.error)
                 window.refreshSketchSnaps()
             }
             onSketchMirrorRequested: (curves, line) => {

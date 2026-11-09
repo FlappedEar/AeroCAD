@@ -1485,6 +1485,54 @@ void registerSketchCommands(CommandRegistry& r)
               return addedFeature(design(ctx), ctx.document, id);
           });
 
+    r.add({"sketch.move_curves", "Move/Copy Sketch Curves",
+           "Moves or copies sketch curves (Fusion: Sketch > Move/Copy): by `dx`, `dy` (mm) and turned by `angle` "
+           "(degrees, counterclockwise) about `pivot` (default: the middle of the curves' bounds). A move holds "
+           "the curves where they go and the solver moves what they are connected to, like a drag; refused when "
+           "constraints hold them. With `copy`, moved copies are added at the end of sketch.curves with the "
+           "constraints among them, and the originals stay.",
+           objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
+                         {"curves", {{"type", "array"}, {"items", {{"type", "integer"}}}, {"minItems", 1},
+                                     {"description", "Curve indices from sketch.curves."}}},
+                         {"dx", {{"type", "number"}, {"description", "Move along the sketch's x (mm), default 0."}}},
+                         {"dy", {{"type", "number"}, {"description", "Move along the sketch's y (mm), default 0."}}},
+                         {"angle", {{"type", "number"}, {"description", "Turn (degrees, counterclockwise), default 0."}}},
+                         {"pivot", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", {{"type", "number"}}},
+                                    {"description", "Centre of the turn, [u, v]; default the middle of the curves."}}},
+                         {"copy", {{"type", "boolean"}, {"description", "Add moved copies instead of moving (Fusion: Create Copy)."}}}},
+                        {"sketch", "curves"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              const auto id = params.at("sketch").get<cad::FeatureId>();
+              const auto picked = params.at("curves").get<std::vector<std::size_t>>();
+              const bool copy = params.value("copy", false);
+              designChange(ctx, copy ? "Copy Sketch Curves" : "Move Sketch Curves", [&](cad::Design& d) {
+                  (void)sketchFeature(d, id);
+                  geometry::Vec2 pivot{0, 0};
+                  if (params.contains("pivot")) {
+                      pivot = {params.at("pivot")[0].get<double>(), params.at("pivot")[1].get<double>()};
+                  } else if (auto it = d.sketches().find(id); it != d.sketches().end()) {
+                      double lo[2] = {1e300, 1e300}, hi[2] = {-1e300, -1e300};
+                      for (const std::size_t i : picked) {
+                          if (i >= it->second.curves.size())
+                              continue;
+                          const auto& c = it->second.curves[i];
+                          for (const auto& p : c.points) {
+                              const double rad = c.kind == geometry::SketchCurve::Kind::Circle ? c.radius : 0.0;
+                              lo[0] = std::min(lo[0], p.x - rad), lo[1] = std::min(lo[1], p.y - rad);
+                              hi[0] = std::max(hi[0], p.x + rad), hi[1] = std::max(hi[1], p.y + rad);
+                          }
+                      }
+                      if (lo[0] <= hi[0])
+                          pivot = {(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2};
+                  }
+                  d.moveSketchCurves(id, picked, {params.value("dx", 0.0), params.value("dy", 0.0)}, params.value("angle", 0.0),
+                                     pivot, copy);
+                  return Json{};
+              });
+              return addedFeature(design(ctx), ctx.document, id);
+          });
+
     r.add({"sketch.profiles", "Sketch profiles",
            "Lists the closed profiles of a sketch with their area and centroid (sketch and world coordinates), "
            "to pick profiles for extrude/revolve.",

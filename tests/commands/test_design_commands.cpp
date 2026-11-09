@@ -2449,3 +2449,143 @@ TEST_CASE("Design commands: holes at sketch points (CAD-241)", "[commands][cad]"
     CHECK_FALSE(s.execute("feature.hole", {{"body", box}, {"sketch", empty}, {"diameter", 4}}).ok);
     CHECK_FALSE(s.execute("feature.hole", {{"body", box}, {"sketch", sid}, {"point", {5, 5, 10}}, {"diameter", 4}}).ok);
 }
+
+TEST_CASE("Design commands: sketch Move/Copy (CAD-244)", "[commands][cad][solver]")
+{
+    commands::Session s;
+    auto near = [](const Json& p, double x, double y) {
+        return std::hypot(p[0].get<double>() - x, p[1].get<double>() - y) < 1e-6;
+    };
+    // A 40 x 20 rectangle at the origin and a circle (diameter dimension) beside it.
+    const Json sk = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "rectangle"}, {"corner", {0, 0}}, {"width", 40}, {"height", 20}},
+                                                 {{"type", "circle"}, {"center", {60, 10}}, {"radius", 5}}})},
+                         {"constraints", Json::array({{{"type", "diameter"}, {"curve", 4}, {"value", 10}}})}});
+    const auto id = sk.at("id").get<std::uint64_t>();
+    auto curves = [&] { return run(s, "sketch.curves", {{"sketch", id}}); };
+
+    SECTION("move a circle and the whole rectangle")
+    {
+        run(s, "sketch.move_curves", {{"sketch", id}, {"curves", {4}}, {"dx", 10}});
+        CHECK(near(curves().at("curves")[4].at("points")[0], 70, 10));
+        run(s, "sketch.move_curves", {{"sketch", id}, {"curves", {0, 1, 2, 3}}, {"dx", 5}, {"dy", -5}});
+        const Json c = curves();
+        CHECK(near(c.at("curves")[0].at("points")[0], 5, -5));
+        CHECK(near(c.at("curves")[2].at("points")[0], 45, 15));
+        CHECK(near(c.at("curves")[4].at("points")[0], 70, 10)); // not picked: stays
+        // One undo step per move.
+        run(s, "edit.undo");
+        CHECK(near(curves().at("curves")[0].at("points")[0], 0, 0));
+    }
+    SECTION("one side moved: the sides joined to it stretch")
+    {
+        run(s, "sketch.move_curves", {{"sketch", id}, {"curves", {1}}, {"dx", 10}});
+        const Json c = curves();
+        CHECK(near(c.at("curves")[0].at("points")[1], 50, 0));
+        CHECK(near(c.at("curves")[2].at("points")[0], 50, 20));
+        CHECK(near(c.at("curves")[0].at("points")[0], 0, 0));
+    }
+    SECTION("turn the rectangle: it becomes a 3-point rectangle and stays one")
+    {
+        run(s, "sketch.move_curves", {{"sketch", id}, {"curves", {0, 1, 2, 3}}, {"angle", 90}, {"pivot", {0, 0}}});
+        const Json c = curves();
+        CHECK(near(c.at("curves")[0].at("points")[0], 0, 0));
+        CHECK(near(c.at("curves")[0].at("points")[1], 0, 40));
+        CHECK(near(c.at("curves")[2].at("points")[0], -20, 40));
+        const Json& items = s.design().features().back().params.at("curves");
+        CHECK(items[0].at("type") == "three_point_rectangle");
+        CHECK(run(s, "sketch.profiles", {{"sketch", id}}).at("profiles").size() == 2);
+    }
+    SECTION("copy: whole items and the constraints among them, turned about the middle")
+    {
+        run(s, "sketch.move_curves", {{"sketch", id}, {"curves", {0, 1, 2, 3, 4}}, {"dy", 50}, {"copy", true}});
+        Json c = curves();
+        REQUIRE(c.at("curves").size() == 10);
+        CHECK(near(c.at("curves")[5].at("points")[0], 0, 50));
+        CHECK(near(c.at("curves")[9].at("points")[0], 60, 60));
+        // The copied circle keeps its own diameter dimension: change the original's, the copy stays.
+        CHECK(c.at("constraints").size() == 2);
+        run(s, "sketch.edit_constraint", {{"sketch", id}, {"index", 0}, {"value", 6}});
+        c = curves();
+        CHECK(c.at("curves")[4].at("radius").get<double>() == Approx(3));
+        CHECK(c.at("curves")[9].at("radius").get<double>() == Approx(5));
+        CHECK(run(s, "sketch.profiles", {{"sketch", id}}).at("profiles").size() == 4);
+        // A turned copy of the rectangle (about its middle, (20, 10)).
+        run(s, "sketch.move_curves", {{"sketch", id}, {"curves", {0, 1, 2, 3}}, {"angle", 90}, {"copy", true}});
+        c = curves();
+        REQUIRE(c.at("curves").size() == 14);
+        CHECK(near(c.at("curves")[10].at("points")[0], 30, -10));
+        CHECK(near(c.at("curves")[10].at("points")[1], 30, 30));
+        CHECK(near(c.at("curves")[0].at("points")[0], 0, 0)); // the original stays
+    }
+    SECTION("refused when constraints hold the curves; nothing changes")
+    {
+        run(s, "sketch.add_constraints",
+            {{"sketch", id}, {"constraints", Json::array({{{"type", "coincident"}, {"points", Json::array({{{"curve", 0}, {"point", "start"}}, "origin"})}}})}});
+        const Json was = curves();
+        CHECK_FALSE(s.execute("sketch.move_curves", {{"sketch", id}, {"curves", {0, 1, 2, 3}}, {"dx", 5}}).ok);
+        CHECK(curves() == was);
+        // A copy leaves the origin constraint with the original.
+        run(s, "sketch.move_curves", {{"sketch", id}, {"curves", {0, 1, 2, 3}}, {"dx", 50}, {"dy", 50}, {"copy", true}});
+        const Json c = curves();
+        CHECK(near(c.at("curves")[5].at("points")[0], 50, 50));
+        CHECK(c.at("constraints").size() == 2);
+    }
+    SECTION("a moved circle keeps its size (Codex review)")
+    {
+        // Radius 5 at (0, 5), tangent to a fixed line along y = 0: moving it up cannot keep
+        // both, so the move is refused instead of growing the circle.
+        const Json t = run(s, "sketch.create",
+                           {{"plane", "XY"},
+                            {"curves", Json::array({{{"type", "line"}, {"start", {-20, 0}}, {"end", {20, 0}}},
+                                                    {{"type", "circle"}, {"center", {0, 5}}, {"radius", 5}}})},
+                            {"constraints", Json::array({{{"type", "fix"}, {"curve", 0}}, {{"type", "tangent"}, {"curves", {0, 1}}}})}});
+        const auto tid = t.at("id").get<std::uint64_t>();
+        CHECK_FALSE(s.execute("sketch.move_curves", {{"sketch", tid}, {"curves", {1}}, {"dy", 5}}).ok);
+        const Json c = run(s, "sketch.curves", {{"sketch", tid}});
+        CHECK(c.at("curves")[1].at("radius").get<double>() == Approx(5));
+        CHECK(near(c.at("curves")[1].at("points")[0], 0, 5));
+    }
+    SECTION("one side of a polygon moves where asked; the polygon stays regular (Codex review)")
+    {
+        const Json t = run(s, "sketch.create",
+                           {{"plane", "XY"},
+                            {"curves", Json::array({{{"type", "polygon"}, {"center", {0, 0}}, {"radius", 10}, {"sides", 5}}})}});
+        const auto tid = t.at("id").get<std::uint64_t>();
+        const Json was = run(s, "sketch.curves", {{"sketch", tid}}).at("curves")[0].at("points");
+        run(s, "sketch.move_curves", {{"sketch", tid}, {"curves", {0}}, {"dx", 3}, {"dy", 2}});
+        const Json c = run(s, "sketch.curves", {{"sketch", tid}});
+        CHECK(near(c.at("curves")[0].at("points")[0], was[0][0].get<double>() + 3, was[0][1].get<double>() + 2));
+        CHECK(near(c.at("curves")[0].at("points")[1], was[1][0].get<double>() + 3, was[1][1].get<double>() + 2));
+    }
+    SECTION("a three-point arc through any point moves and copies (Codex review)")
+    {
+        const Json t = run(s, "sketch.create",
+                           {{"plane", "XY"},
+                            {"curves", Json::array({{{"type", "arc"}, {"start", {5, 0}}, {"through", {3, 4}}, {"end", {0, 5}}}})}});
+        const auto tid = t.at("id").get<std::uint64_t>();
+        run(s, "sketch.move_curves", {{"sketch", tid}, {"curves", {0}}, {"dx", 10}});
+        run(s, "sketch.move_curves", {{"sketch", tid}, {"curves", {0}}, {"dy", 10}, {"copy", true}});
+        const Json c = run(s, "sketch.curves", {{"sketch", tid}});
+        REQUIRE(c.at("curves").size() == 2);
+        CHECK(near(c.at("curves")[0].at("points")[0], 15, 0));
+        CHECK(near(c.at("curves")[0].at("points")[2], 10, 5));
+        CHECK(near(c.at("curves")[1].at("points")[0], 15, 10));
+        CHECK(near(c.at("curves")[1].at("points")[2], 10, 15));
+    }
+    SECTION("a turned copy leaves horizontal and vertical with the original (Codex review)")
+    {
+        const Json t = run(s, "sketch.create",
+                           {{"plane", "XY"},
+                            {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {10, 0}}}})},
+                            {"constraints", Json::array({{{"type", "horizontal"}, {"curve", 0}}, {{"type", "length"}, {"curve", 0}, {"value", 10}}})}});
+        const auto tid = t.at("id").get<std::uint64_t>();
+        run(s, "sketch.move_curves", {{"sketch", tid}, {"curves", {0}}, {"angle", 90}, {"pivot", {0, 0}}, {"copy", true}});
+        const Json c = run(s, "sketch.curves", {{"sketch", tid}});
+        REQUIRE(c.at("curves").size() == 2);
+        CHECK(near(c.at("curves")[1].at("points")[0], 0, 0));
+        CHECK(near(c.at("curves")[1].at("points")[1], 0, 10));
+        CHECK(c.at("constraints").size() == 3); // the copy's length, not its horizontal
+    }
+}

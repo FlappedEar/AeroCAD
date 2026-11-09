@@ -1405,6 +1405,250 @@ void Design::moveSketchPoint(FeatureId sketchId, const Json& point, const geomet
     regenerateChecked(sketchId, before);
 }
 
+namespace {
+
+/// An axis-aligned rectangle item (`c`: its four solved sides) as a 3-point rectangle with
+/// the same corners and side order, which keeps its shape at any angle.
+Json asThreePointRectangle(const Json& item, const SketchCurve* c)
+{
+    const Vec2 a = c[0].points[0], b = c[0].points[1], e = c[1].points[1];
+    const double len = std::hypot(b.x - a.x, b.y - a.y);
+    Json out{{"type", "three_point_rectangle"},
+             {"start", Json::array({a.x, a.y})},
+             {"end", Json::array({b.x, b.y})},
+             {"height", len > 1e-12 ? ((b.x - a.x) * (e.y - b.y) - (b.y - a.y) * (e.x - b.x)) / len : 0.0}};
+    if (item.value("construction", false))
+        out["construction"] = true;
+    return out;
+}
+
+/// The constraint point references that pin down a curve's position.
+std::vector<Json> curvePointRefs(const SketchCurve& c, std::size_t i)
+{
+    using K = SketchCurve::Kind;
+    auto ref = [&](const char* name) { return Json{{"curve", i}, {"point", name}}; };
+    switch (c.kind) {
+    case K::Line: return {ref("start"), ref("end")};
+    case K::Arc: return {ref("start"), ref("end"), ref("center")};
+    case K::Circle: return {ref("center")};
+    case K::Point: return {ref("start")};
+    case K::Spline: {
+        std::vector<Json> out;
+        for (std::size_t k = 0; k < c.points.size(); ++k)
+            out.push_back(Json{{"curve", i}, {"point", "fit"}, {"index", k}});
+        return out;
+    }
+    }
+    return {};
+}
+
+/// Where a constraint point reference of a solved curve is (start, end, center, fit).
+Vec2 curvePointAt(const SketchCurve& c, const Json& ref)
+{
+    using K = SketchCurve::Kind;
+    const std::string name = ref.at("point").get<std::string>();
+    if (name == "fit")
+        return c.points.at(ref.at("index").get<std::size_t>());
+    if (c.kind == K::Point || c.kind == K::Circle)
+        return c.points[0];
+    if (name == "center") {
+        const Vec2 p1 = c.points[0], p2 = c.points[1], p3 = c.points[2];
+        const double d = 2 * (p1.x * (p2.y - p3.y) + p2.x * (p3.y - p1.y) + p3.x * (p1.y - p2.y));
+        const double s1 = p1.x * p1.x + p1.y * p1.y, s2 = p2.x * p2.x + p2.y * p2.y, s3 = p3.x * p3.x + p3.y * p3.y;
+        return Vec2{(s1 * (p2.y - p3.y) + s2 * (p3.y - p1.y) + s3 * (p1.y - p2.y)) / d,
+                    (s1 * (p3.x - p2.x) + s2 * (p1.x - p3.x) + s3 * (p2.x - p1.x)) / d};
+    }
+    return name == "start" ? c.points.front() : c.points.back();
+}
+
+/// The same curve where it matters: an arc by its ends and centre (the solver may put its
+/// through point anywhere on it), anything else point by point.
+bool sameShape(const SketchCurve& a, const SketchCurve& b, double tol)
+{
+    if (a.kind != SketchCurve::Kind::Arc || b.kind != SketchCurve::Kind::Arc)
+        return sameCurve(a, b, tol);
+    const Json c{{"point", "center"}};
+    auto close = [&](const Vec2& p, const Vec2& q) { return std::hypot(p.x - q.x, p.y - q.y) <= tol; };
+    return close(a.points.front(), b.points.front()) && close(a.points.back(), b.points.back()) &&
+           close(curvePointAt(a, c), curvePointAt(b, c));
+}
+
+} // namespace
+
+void Design::moveSketchCurves(FeatureId sketchId, const std::vector<std::size_t>& picked, const Vec2& offset,
+                              double angleDegrees, const Vec2& pivot, bool copy)
+{
+    const State before = m_state;
+    keepSolvedSketch(sketchId);
+    Feature& f = m_state.features[indexOf(sketchId)];
+    if (f.type != "sketch")
+        throw DesignError("Feature " + std::to_string(sketchId) + " is not a sketch");
+    auto it = m_sketches.find(sketchId);
+    if (it == m_sketches.end())
+        throw DesignError(f.name + " is not evaluated");
+    const std::vector<SketchCurve> curves = it->second.curves;
+    std::vector<bool> sel(curves.size(), false);
+    for (const std::size_t i : picked) {
+        if (i >= curves.size())
+            throw DesignError(f.name + " has no curve " + std::to_string(i));
+        sel[i] = true;
+    }
+    if (picked.empty())
+        throw DesignError("Select the sketch curves to move");
+    const double a = angleDegrees * kDegToRad;
+    const double ca = std::cos(a), sa = std::sin(a);
+    auto moved = [&](const Vec2& p) {
+        const Vec2 d = p - pivot;
+        return Vec2{pivot.x + ca * d.x - sa * d.y + offset.x, pivot.y + sa * d.x + ca * d.y + offset.y};
+    };
+    auto movedCurve = [&](SketchCurve c) {
+        for (auto& p : c.points)
+            p = moved(p);
+        return c;
+    };
+
+    const Eval ev{*this};
+    Json items = f.params.value("curves", Json::array());
+    const Json constraints = f.params.value("constraints", Json::array());
+    // Each item's curves: [first, first + count).
+    std::vector<std::pair<std::size_t, std::size_t>> ranges;
+    {
+        std::size_t first = 0;
+        for (const auto& item : items) {
+            std::vector<SketchCurve> made;
+            std::vector<SketchConstraint> implicit;
+            appendCurves(ev, item, made, implicit);
+            ranges.emplace_back(first, made.size());
+            first += made.size();
+        }
+        if (first != curves.size())
+            throw DesignError(f.name + " changed while it was solved");
+    }
+    auto whole = [&](std::size_t k) {
+        for (std::size_t i = 0; i < ranges[k].second; ++i)
+            if (!sel[ranges[k].first + i])
+                return false;
+        return ranges[k].second > 0;
+    };
+    // A rectangle drawn along the axes keeps horizontal and vertical sides; turned, it
+    // becomes a 3-point rectangle (same corners and sides).
+    auto turnable = [&](std::size_t k) {
+        const std::string type = lower(items[k].at("type").get<std::string>());
+        if (a != 0.0 && (type == "rectangle" || type == "center_rectangle"))
+            return asThreePointRectangle(items[k], curves.data() + ranges[k].first);
+        return items[k];
+    };
+
+    if (copy) {
+        // The copies at the end: whole items stay items (a rectangle stays a rectangle);
+        // single curves of a shape become lines, arcs or points.
+        std::vector<std::optional<std::size_t>> map(curves.size());
+        std::size_t next = curves.size();
+        for (std::size_t k = 0; k < ranges.size(); ++k) { // the copies go after these
+            const auto [first, count] = ranges[k];
+            if (whole(k)) {
+                std::vector<SketchCurve> now;
+                for (std::size_t i = 0; i < count; ++i)
+                    now.push_back(movedCurve(curves[first + i]));
+                items.push_back(itemFromSolved(turnable(k), now.data(), count));
+                for (std::size_t i = 0; i < count; ++i)
+                    map[first + i] = next++;
+                continue;
+            }
+            for (std::size_t i = 0; i < count; ++i) {
+                if (!sel[first + i])
+                    continue;
+                items.push_back(curveItem(movedCurve(curves[first + i])));
+                map[first + i] = next++;
+            }
+        }
+        // Constraints among the copied curves come along; ones tied to the origin or that
+        // fix a point stay with the originals, and so do directions along the sketch axes
+        // (horizontal, a horizontal distance) when the copy is turned.
+        Json all = constraints;
+        for (auto c : constraints) {
+            const std::string type = lower(c.value("type", std::string()));
+            if (type == "fix" || c.dump().find("\"origin\"") != std::string::npos)
+                continue;
+            if (a != 0.0 && (type == "horizontal" || type == "vertical" || type == "horizontal_distance" ||
+                             type == "vertical_distance"))
+                continue;
+            if (remapConstraint(c, map))
+                all.push_back(c);
+        }
+        f.params["curves"] = items;
+        if (!all.empty())
+            f.params["constraints"] = all;
+        regenerateChecked(sketchId, before);
+        // The copies must be where they were asked to go (as the preview shows them).
+        it = m_sketches.find(sketchId);
+        for (std::size_t i = 0; i < curves.size() && it != m_sketches.end(); ++i) {
+            if (map[i] && (*map[i] >= it->second.curves.size() ||
+                           !sameShape(it->second.curves[*map[i]], movedCurve(curves[i]), 1e-6))) {
+                m_state = before;
+                regenerate();
+                throw DesignError("The copied curves' constraints do not let them sit there");
+            }
+        }
+        return;
+    }
+
+    // Move: hold every point of the picked curves where it goes and let the solver move the
+    // rest (connected curves stretch), as a drag does.
+    for (std::size_t k = 0; k < items.size(); ++k)
+        if (whole(k))
+            items[k] = turnable(k);
+    Json held = constraints;
+    for (std::size_t i = 0; i < curves.size(); ++i) {
+        if (!sel[i])
+            continue;
+        for (const Json& ref : curvePointRefs(curves[i], i)) {
+            const Vec2 to = moved(curvePointAt(curves[i], ref));
+            held.push_back({{"type", "fix"}, {"points", Json::array({ref})}, {"at", Json::array({Json::array({to.x, to.y})})}});
+        }
+        // A circle keeps its size too (its centre alone does not hold it).
+        if (curves[i].kind == SketchCurve::Kind::Circle)
+            held.push_back({{"type", "radius"}, {"curve", i}, {"value", curves[i].radius}});
+    }
+    // A polygon keeps its corner angles too (its sides alone are only kept equal), as in a
+    // point drag, so it stays regular while one side moves.
+    for (std::size_t k = 0; k < items.size(); ++k) {
+        if (lower(items[k].at("type").get<std::string>()) != "polygon")
+            continue;
+        const auto [first, count] = ranges[k];
+        const double turn = 360.0 / static_cast<double>(count);
+        for (std::size_t i = 0; i + 1 < count; ++i)
+            held.push_back({{"type", "angle"}, {"curves", Json::array({first + i, first + i + 1})}, {"value", turn}});
+    }
+    f.params["curves"] = items;
+    f.params["constraints"] = held;
+    regenerate();
+    const FeatureStatus st = status(sketchId);
+    it = m_sketches.find(sketchId);
+    if (st.state == FeatureStatus::State::Error || it == m_sketches.end()) {
+        m_state = before;
+        regenerate();
+        throw DesignError("Those curves cannot move there: their constraints hold them (" + st.message + ")");
+    }
+    const Json newItems = itemsFromSolved(ev, items, &curves, it->second.curves, false);
+    Feature& g = m_state.features[indexOf(sketchId)];
+    g.params["curves"] = newItems;
+    if (constraints.empty() && !before.features[indexOf(sketchId)].params.contains("constraints"))
+        g.params.erase("constraints");
+    else
+        g.params["constraints"] = constraints;
+    regenerateChecked(sketchId, before);
+    // Rewritten as items, the picked curves must still be where they were asked to go.
+    it = m_sketches.find(sketchId);
+    for (std::size_t i = 0; i < curves.size() && it != m_sketches.end(); ++i) {
+        if (sel[i] && (i >= it->second.curves.size() || !sameShape(it->second.curves[i], movedCurve(curves[i]), 1e-6))) {
+            m_state = before;
+            regenerate();
+            throw DesignError("Those curves cannot move there: their shape holds them");
+        }
+    }
+}
+
 void Design::mirrorSketchCurves(FeatureId sketchId, const std::vector<std::size_t>& picked, std::size_t lineIdx)
 {
     const State before = m_state;

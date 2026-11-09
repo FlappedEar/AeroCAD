@@ -55,6 +55,14 @@ Item {
     property var offsetCurves: []
     /// Curves the Mirror tool copies (the selection when it started).
     property var mirrorCurves: []
+    /// Move/Copy tool (Fusion: Sketch > Move/Copy, M): `curves` are to be moved by dx, dy
+    /// and turned by `angle` (degrees) about their middle; with `copy`, copies are added.
+    signal moveRequested(var curves, real dx, real dy, real angle, bool copy)
+    /// Curves the Move/Copy tool moves (the selection when it started), the turn it adds
+    /// and whether it copies.
+    property var moveCurves: []
+    property real moveAngle: 0
+    property bool moveCopy: false
     /// A point is being dragged in select mode (CAD-123): `point` is a constraint point
     /// reference, `to` where it is now (sketch coordinates); `done` on release.
     signal pointDragged(var point, var to, bool done)
@@ -103,6 +111,10 @@ Item {
             mirrorCurves = []
         if (tool !== "offset")
             offsetCurves = []
+        if (tool !== "move") {
+            moveCurves = []
+            moveAngle = 0
+        }
         piecePreview = null
     }
     onSketchChanged: { reset(); clearSelection() }
@@ -224,6 +236,60 @@ Item {
         dimension.forceActiveFocus()
         canvas.requestPaint()
         return true
+    }
+
+    /// Move/Copy (Fusion: Sketch > Move/Copy): the selection is kept for the tool; two
+    /// clicks (from, to) or typed "dx, dy" move it, with the turn and Copy from the panel.
+    function startMove() {
+        if (selectedCurves.length === 0)
+            return false
+        const list = selectedCurves.slice()
+        toolRequested("move")
+        moveCurves = list
+        moveAngle = 0
+        dimension.text = ""
+        canvas.requestPaint()
+        return true
+    }
+
+    /// Ends Move/Copy with the given offset (the turn and Copy from the panel).
+    function applyMove(dx, dy) {
+        const list = moveCurves.slice()
+        const angle = moveAngle, copy = moveCopy
+        if (list.length === 0 || (dx === 0 && dy === 0 && angle === 0))
+            return false
+        toolRequested("")
+        moveRequested(list, dx, dy, angle, copy)
+        return true
+    }
+
+    /// The middle of the curves' bounds (the turn's centre, as sketch.move_curves takes it).
+    function curvesMiddle(list) {
+        let lo = [Infinity, Infinity], hi = [-Infinity, -Infinity]
+        for (const c of sketchCurves) {
+            if (list.indexOf(c.index) < 0)
+                continue
+            const r = c.kind === "circle" ? c.radius : 0
+            for (const p of c.points) {
+                lo = [Math.min(lo[0], p[0] - r), Math.min(lo[1], p[1] - r)]
+                hi = [Math.max(hi[0], p[0] + r), Math.max(hi[1], p[1] + r)]
+            }
+        }
+        return lo[0] <= hi[0] ? [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2] : [0, 0]
+    }
+
+    /// A sketch curve (sketch.curves format) moved by `d` after turning by `angle` about `pivot`.
+    function movedCurve(c, d, angle, pivot) {
+        const a = angle * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a)
+        const f = p => [pivot[0] + ca * (p[0] - pivot[0]) - sa * (p[1] - pivot[1]) + d[0],
+                        pivot[1] + sa * (p[0] - pivot[0]) + ca * (p[1] - pivot[1]) + d[1]]
+        const out = Object.assign({}, c)
+        out.points = c.points.map(f)
+        if (c.center)
+            out.center = f(c.center)
+        if (c.samples)
+            out.samples = c.samples.map(f)
+        return out
     }
 
     /// Index of the sketch curve within a few pixels of (x, y), or -1.
@@ -628,6 +694,18 @@ Item {
     }
 
     function click(p) {
+        if (tool === "move") {
+            // From a base point to where it goes.
+            if (points.length === 0) {
+                points = [p]
+                canvas.requestPaint()
+            } else {
+                const from = points[0]
+                points = []
+                applyMove(p[0] - from[0], p[1] - from[1])
+            }
+            return
+        }
         if (tool === "point") {
             // One click places a sketch point (Fusion: Point).
             emitCurve({ type: "point", at: p })
@@ -995,7 +1073,7 @@ Item {
         } else if (tool === "spline" && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)) {
             finishSpline(false)
             event.accepted = true
-        } else if (active && !constraintTool && tool !== "spline" && tool !== "tangent_arc" && (points.length > 0 || tool === "offset") && /^[0-9.(\-]$/.test(event.text)) {
+        } else if (active && !constraintTool && tool !== "spline" && tool !== "tangent_arc" && (points.length > 0 || tool === "offset" || tool === "move") && /^[0-9.(\-]$/.test(event.text)) {
             dimension.text = event.text
             dimension.forceActiveFocus()
             event.accepted = true
@@ -1042,7 +1120,7 @@ Item {
             // Select mode: the curve under the cursor and the selected curves, highlighted.
             for (const c of root.sketchCurves) {
                 const sel = root.selectedCurves.indexOf(c.index) >= 0 || root.mirrorCurves.indexOf(c.index) >= 0
-                            || root.offsetCurves.indexOf(c.index) >= 0
+                            || root.offsetCurves.indexOf(c.index) >= 0 || root.moveCurves.indexOf(c.index) >= 0
                 if (!sel && c.index !== root.hoverCurve)
                     continue
                 ctx.lineWidth = sel ? 3.5 : 3
@@ -1051,6 +1129,22 @@ Item {
                 root.strokeCurve(ctx, c)
             }
             ctx.globalAlpha = 1
+            // Move/Copy: where the curves go (from the base point to the cursor, turned).
+            if (root.tool === "move" && root.moveCurves.length > 0) {
+                const d = root.points.length === 1 && root.hover ? [root.hover[0] - root.points[0][0], root.hover[1] - root.points[0][1]] : [0, 0]
+                if (d[0] !== 0 || d[1] !== 0 || root.moveAngle !== 0) {
+                    const pivot = root.curvesMiddle(root.moveCurves)
+                    ctx.lineWidth = 2
+                    ctx.strokeStyle = Theme.accent
+                    ctx.globalAlpha = 0.8
+                    for (const c of root.sketchCurves) {
+                        if (root.moveCurves.indexOf(c.index) >= 0)
+                            root.strokeCurve(ctx, root.movedCurve(c, d, root.moveAngle, pivot))
+                    }
+                    ctx.setLineDash([])
+                    ctx.globalAlpha = 1
+                }
+            }
             // Extend: the lengthened curve the click would make; Break: the piece it splits off.
             if ((root.tool === "extend" || root.tool === "break") && root.piecePreview && (root.piecePreview.kind === "line" || root.piecePreview.center)) {
                 ctx.lineWidth = 2.5
@@ -1248,6 +1342,9 @@ Item {
                         : qsTr("Click curves to select (Shift adds), drag points to move them; or pick a tool (L line, R rectangle, C circle, D dimension)"))
                     : root.tool === "project" ? qsTr("Project: click edges of bodies to bring them into the sketch (fixed)")
                     : root.tool === "offset" ? qsTr("Offset: type the distance and press Enter (negative goes inwards)")
+                    : root.tool === "move" ? (root.points.length === 0
+                        ? qsTr("Move/Copy %n curve(s): click a base point, or type dx, dy and press Enter", "", root.moveCurves.length)
+                        : qsTr("Move/Copy: click where the base point goes"))
                     : root.tool === "fillet" ? qsTr("Fillet: click a corner of two lines; then edit its radius under Constraints")
                     : root.tool === "mirror" ? qsTr("Mirror: click the line to mirror the %n selected curve(s) about", "", root.mirrorCurves.length)
                     : root.tool === "trim" ? qsTr("Trim: click the piece of a curve to remove (up to where other curves cross it)")
@@ -1308,14 +1405,19 @@ Item {
                             : root.tool === "center_arc" ? qsTr("Radius") : root.tool === "line" ? qsTr("Length")
                             : root.tool === "circle_2point" ? qsTr("Diameter")
                             : root.tool === "rectangle_3point" ? (root.points.length >= 2 ? qsTr("Height") : qsTr("Length"))
-                            : root.tool === "offset" ? qsTr("Distance") : qsTr("Size") }
+                            : root.tool === "offset" ? qsTr("Distance")
+                            : root.tool === "move" ? qsTr("dx, dy") : qsTr("Size") }
                 TextField {
                     id: dimension
                     objectName: "sketchDimension"
                     Layout.preferredWidth: 140
                     placeholderText: qsTr("e.g. 40 or w/2")
                     onAccepted: {
-                        if (root.tool === "offset") {
+                        if (root.tool === "move") {
+                            const v = text.split(/[,;\s]+/).filter(t => t.length > 0).map(Number)
+                            if (v.length >= 1 && v.length <= 2 && v.every(isFinite))
+                                root.applyMove(v[0], v.length > 1 ? v[1] : 0)
+                        } else if (root.tool === "offset") {
                             const d = Number(text)
                             const list = root.offsetCurves.slice()
                             if (isFinite(d) && d !== 0 && list.length > 0) {
@@ -1328,6 +1430,26 @@ Item {
                         root.forceActiveFocus()
                     }
                     Keys.onEscapePressed: { root.reset(); root.forceActiveFocus() }
+                }
+                // Move/Copy: the turn about the curves' middle, and Copy (Fusion: Create Copy).
+                Label { visible: root.tool === "move"; text: qsTr("Angle") }
+                TextField {
+                    id: moveAngleField
+                    objectName: "sketchMoveAngle"
+                    visible: root.tool === "move"
+                    Layout.preferredWidth: 60
+                    text: root.moveAngle !== 0 ? String(root.moveAngle) : ""
+                    placeholderText: "0"
+                    onTextEdited: { const a = Number(text); root.moveAngle = isFinite(a) ? a : 0; canvas.requestPaint() }
+                    // Enter with no offset typed: just the turn.
+                    onAccepted: { if (dimension.text.trim().length === 0) root.applyMove(0, 0); root.forceActiveFocus() }
+                }
+                CheckBox {
+                    objectName: "sketchMoveCopy"
+                    visible: root.tool === "move"
+                    text: qsTr("Copy")
+                    checked: root.moveCopy
+                    onToggled: root.moveCopy = checked
                 }
                 Label { visible: root.tool === "polygon"; text: qsTr("Sides") }
                 SpinBox {

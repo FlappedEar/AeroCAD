@@ -253,6 +253,13 @@ public:
     /// coordinates) while the solver moves the free degrees of freedom, and the sketch keeps
     /// the result. Throws DesignError (design unchanged) when the constraints do not allow it.
     void moveSketchPoint(FeatureId sketch, const Json& point, const geometry::Vec2& to);
+    /// Moves or copies sketch curves (Fusion: Sketch > Move/Copy): each point p goes to
+    /// pivot + R(angle) (p - pivot) + offset (degrees, counterclockwise). A move holds the
+    /// curves' points there while the solver moves what they are connected to, like a drag;
+    /// a copy adds the moved curves at the end, with the constraints among them. Throws
+    /// DesignError (design unchanged) when the constraints do not allow the move.
+    void moveSketchCurves(FeatureId sketch, const std::vector<std::size_t>& curves, const geometry::Vec2& offset,
+                          double angleDegrees, const geometry::Vec2& pivot, bool copy);
     /// Moves the timeline marker (0 = before the first feature, size() = at the end). This
     /// is an explicit choice: it ends a sketch edit without rolling forward.
     void setMarker(std::size_t marker);
