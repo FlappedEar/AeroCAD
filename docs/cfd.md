@@ -81,7 +81,9 @@ panel in place of Properties:
   *Drag power* is the power needed to push the part through the air at the run speed, drag ×
   speed, in kW and hp (745.7 W): 30 N at 40 m/s is "1.20 kW (1.61 hp)". *Downforce* shows a
   negative lift as a mass, |lift| / 9.80665: -96 N is "9.79 kg". Not shown without a run speed
-  or for positive lift.
+  or for positive lift. Below 1 kW the power is in W, and below 1 kg the mass has three decimals,
+  so a model-sized run stays readable: 1.6 N at 20 m/s is "32 W (0.043 hp)", -0.2 N is "0.020 kg"
+  (CAD-218). The *At speed* result also uses W below 1 kW.
   **Aero balance** (CAD-194, [summary](images/audit/cad-194-balance.png)): for a car with two
   axles (turning wheels, or with the floor on, tyres standing on the part's bottom that do not
   turn, found the same way and kept in case.json as `standingWheels` only for this; CAD-196),

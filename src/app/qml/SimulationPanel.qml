@@ -379,6 +379,19 @@ Pane {
             return null
         return dragN * v
     }
+    /// A power for Results (CAD-218): watts below 1 kW, so a model-sized run does not read
+    /// "0.03 kW", and hp (745.7 W) with three digits below 1 hp.
+    function powerText(watts) {
+        if (watts === null || watts === undefined || !isFinite(watts))
+            return "–"
+        const hp = watts / 745.7
+        const w = Math.abs(watts) < 1000 ? num(watts, Math.abs(watts) < 10 ? 1 : 0) + " W" : num(watts / 1000, 2) + " kW"
+        return w + " (" + num(hp, Math.abs(hp) < 1 ? 3 : 2) + " hp)"
+    }
+    /// A mass for Results (CAD-218): three decimals below 1 kg.
+    function massText(kg) {
+        return num(kg, Math.abs(kg) < 1 ? 3 : 2) + " kg"
+    }
     /// Efficiency |lift| / drag (CAD-184), or null without a positive drag.
     function liftDragRatio(s) {
         if (!s || !(s.dragN > 0) || s.liftN === null || s.liftN === undefined || !isFinite(s.liftN))
@@ -1823,7 +1836,7 @@ Pane {
                         Layout.columnSpan: 2
                         readonly property var watts: root.dragPowerW(parent.s.dragN, root.results)
                         visible: watts !== null
-                        text: !visible ? "" : qsTr("%1 kW (%2 hp)").arg(root.num(watts / 1000, 2)).arg(root.num(watts / 745.7, 2))
+                        text: !visible ? "" : root.powerText(watts)
                     }
                     Label {
                         text: qsTr("Downforce")
@@ -1836,7 +1849,7 @@ Pane {
                         objectName: "cfdSummaryDownforceKg"
                         Layout.columnSpan: 2
                         visible: typeof parent.s.liftN === "number" && isFinite(parent.s.liftN) && parent.s.liftN < 0
-                        text: !visible ? "" : root.num(-parent.s.liftN / 9.80665, 2) + " kg"
+                        text: !visible ? "" : root.massText(-parent.s.liftN / 9.80665)
                     }
                     // Aero balance of a car with two axles of turning wheels (CAD-194), in two short
                     // rows: one long line would widen the grid and push the panel past its width.
@@ -1948,8 +1961,10 @@ Pane {
                                 return qsTr("a speed, e.g. 200 km/h, 55 m/s or 120 mph")
                             const k = (v / v0) * (v / v0), s = root.results.summary
                             // Drag power grows with speed³ (CAD-209).
-                            return qsTr("drag %1 N · lift %2 N · %4 kW (×%3)").arg(root.num(s.dragN * k, 1))
-                                .arg(root.num(s.liftN * k, 1)).arg(root.num(k, 2)).arg(root.num(s.dragN * k * v / 1000, 2))
+                            const w = s.dragN * k * v
+                            return qsTr("drag %1 N · lift %2 N · %4 (×%3)").arg(root.num(s.dragN * k, 1))
+                                .arg(root.num(s.liftN * k, 1)).arg(root.num(k, 2))
+                                .arg(Math.abs(w) < 1000 ? root.num(w, 0) + " W" : root.num(w / 1000, 2) + " kW")
                         }
                     }
                 }

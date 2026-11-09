@@ -16,6 +16,12 @@ ui.shot("cfd-efficiency.png")
 ui.clickText("Drag power")
 (() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const sc = t.find(simulationPanel, "cfdPanelScroll"); const g = t.find(simulationPanel, "cfdSummaryGrid"); if (g.width > sc.availableWidth + 1) ui.fail("the Results grid is wider than the panel with the power rows") })()
 ui.shot("cfd-drag-power.png")
+# CAD-218: a model-sized run reads in W, not "0.03 kW"; a small downforce with three decimals.
+(() => { const r = JSON.parse(JSON.stringify(simulationPanel.results)); r.summary.dragN = 1.6; r.summary.liftN = -0.2; r.conditions.settings.speed = 20; simulationPanel.results = r })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const p = t.find(simulationPanel, "cfdSummaryDragPower").text; const m = t.find(simulationPanel, "cfdSummaryDownforceKg").text; ui.log("SMALL " + p + " | " + m); if (p !== "32 W (0.043 hp)") ui.fail("small drag power: " + p); if (m !== "0.020 kg") ui.fail("small downforce: " + m) })()
+(() => { const r = JSON.parse(JSON.stringify(simulationPanel.results)); r.summary.dragN = 30; r.summary.liftN = -96; r.conditions.settings.speed = 40; simulationPanel.results = r })()
+ui.wait(300)
 # Positive lift: no downforce label; no positive drag: no L/D.
 (() => { const r = JSON.parse(JSON.stringify(simulationPanel.results)); r.summary.liftN = 12; r.summary.cl = 0.1; simulationPanel.results = r })()
 ui.wait(300)
