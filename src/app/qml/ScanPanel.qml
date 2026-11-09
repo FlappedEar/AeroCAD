@@ -249,11 +249,18 @@ Pane {
                 Layout.fillWidth: true
                 enabled: root.editable
                 Label { text: qsTr("This part is in") }
-                ComboBox { id: fromUnit; model: root.scan.unitSymbols; currentIndex: 1; Layout.fillWidth: true; Layout.minimumWidth: 60 }
+                ComboBox { id: fromUnit; objectName: "scanFromUnit"; model: root.scan.unitSymbols; currentIndex: 1; Layout.fillWidth: true; Layout.minimumWidth: 60 }
                 Button {
                     text: qsTr("Convert")
                     enabled: fromUnit.currentText !== "mm"
-                    onClicked: root.run("part.convert_units", { id: root.partId, from: fromUnit.currentText })
+                    // The part is in mm afterwards: reset the choice so a second click does not scale again.
+                    onClicked: {
+                        const from = fromUnit.currentText
+                        root.run("part.convert_units", { id: root.partId, from: from }, r => {
+                            root.controller.showStatus(qsTr("Converted %1 from %2 to mm (scaled by %3)").arg(r.name).arg(from).arg(Number(r.factor).toString()))
+                            fromUnit.currentIndex = Math.max(0, root.scan.unitSymbols.indexOf("mm"))
+                        })
+                    }
                 }
             }
             Hint {
