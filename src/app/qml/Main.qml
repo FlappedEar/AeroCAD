@@ -629,6 +629,7 @@ ApplicationWindow {
         }
         activeSketch = null
         sketchTool = ""
+        viewport.sketchSnapPoints = []
         viewport.sketchCurves = []
         viewport.sketchConstraints = []
         viewport.sketchDegreesOfFreedom = -1
@@ -1349,10 +1350,12 @@ ApplicationWindow {
         }
     }
 
-    /// New or opened project: nothing of the previous one stays on screen (tools, picks,
-    /// sections, measurements, heat maps, scan picks, simulation results, dialogs holding
-    /// ids). The command layer clears the document, undo history and analyses itself.
+    /// Replaced project or active variant: nothing of the previous editing context stays
+    /// on screen (tools, picks, sections, measurements, heat maps, scan picks, simulation
+    /// results, dialogs holding ids). New/Open also clears the document, undo history and
+    /// analyses in the command layer.
     function resetWorkspace() {
+        viewport.stopCameraAnimation()
         viewport.finishTransform(false) // the preview belongs to the previous document
         featureDialog.close() // may hold a feature id of the previous project
         parametersDialog.close()
@@ -2793,9 +2796,9 @@ ApplicationWindow {
 
     Connections {
         target: window.controller
-        function onScriptFinished() { viewport.fitAll() }
+        function onScriptFinished(fitView) { if (fitView) viewport.fitAll() }
+        function onEditingContextChanged() { window.resetWorkspace() }
         function onProjectOpened(view) {
-            window.resetWorkspace()
             viewport.restoreCameraState(view)
         }
         // Undo/redo and edits elsewhere (timeline, parameters) change the sketch too.

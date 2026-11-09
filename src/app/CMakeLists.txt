@@ -707,6 +707,19 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome.step
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/feature_dialog_owned_history.ui)
     set_tests_properties(app_feature_dialog_owned_history_test PROPERTIES LABELS gui TIMEOUT 90)
+    # CAD-90: MCP/script/Undo context changes close editors before stale previews rebuild.
+    set(_context ${CMAKE_CURRENT_BINARY_DIR}/gui-context)
+    file(MAKE_DIRECTORY ${_context})
+    file(WRITE ${_context}/reset.json "[{\"name\":\"project.new\"}]\n")
+    file(WRITE ${_context}/open.json "[{\"name\":\"project.open\",\"params\":{\"path\":\"saved.aerocad\"}}]\n")
+    file(WRITE ${_context}/missing.json "[{\"name\":\"project.open\",\"params\":{\"path\":\"missing.aerocad\"}}]\n")
+    file(WRITE ${_context}/variants.json
+        "[{\"name\":\"variant.activate\",\"params\":{\"variant\":\"A\"}},"
+        "{\"name\":\"variant.activate\",\"params\":{\"variant\":\"B\"}}]\n")
+    add_test(NAME app_editing_context_reset_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/editing_context_reset.ui
+        WORKING_DIRECTORY ${_context})
+    set_tests_properties(app_editing_context_reset_test PROPERTIES LABELS gui TIMEOUT 90)
     # Runs a coarse OpenFOAM case, so it needs the engine (label openfoam, not in CI). The
     # runs directory is in the build tree: under the home directory on macOS, which the
     # engine's VM can mount.

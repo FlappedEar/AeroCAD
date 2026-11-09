@@ -233,11 +233,14 @@ signals:
     /// The displayed selection of a part changed without a document change (brush preview).
     void selectionPreviewChanged(quint64 id);
     /// Emitted after runScript() so the view can frame the result.
-    void scriptFinished();
+    void scriptFinished(bool fitView);
     void inspectChanged();
     void projectChanged();
     void recentProjectsChanged();
     void autosaveSecondsChanged();
+    /// The project or active variant changed: cached editor ids, planes and picks no
+    /// longer belong to the current context. Emitted before historyChanged.
+    void editingContextChanged();
     /// After a project was opened or recovered; `view` is the stored camera state.
     void projectOpened(const QVariantMap& view);
 
