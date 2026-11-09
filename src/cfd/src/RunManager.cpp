@@ -12,6 +12,7 @@
 #include <limits>
 #include <locale>
 #include <map>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -1351,6 +1352,18 @@ std::size_t RunManager::exportResultsCsv(const std::string& id, const fs::path& 
                             Key{"liftN", "Lift (N)"}, Key{"sideN", "Side force (N)"},
                             Key{"pressureDragN", "Pressure drag (N)"}, Key{"viscousDragN", "Viscous drag (N)"}})
             row(std::string(k.name) + suffix, csvJson(values.value(k.key, Json())));
+        // As in the Results summary (CAD-184, CAD-187): L/D = |lift| / drag, Cd and Cl times
+        // the reference area.
+        const Json drag = values.value("dragN", Json()), lift = values.value("liftN", Json());
+        row(std::string("Efficiency L/D") + suffix, drag.is_number() && lift.is_number() && drag.get<double>() > 0.0
+                                                        ? csvNumber(std::abs(lift.get<double>()) / drag.get<double>())
+                                                        : std::string());
+        const Json area = r.contains("conditions") ? r.at("conditions").value("referenceArea", Json()) : Json();
+        for (const Key k : {Key{"cd", "CdA (m2)"}, Key{"cl", "ClA (m2)"}}) {
+            const Json c = values.value(k.key, Json());
+            row(std::string(k.name) + suffix,
+                c.is_number() && area.is_number() ? csvNumber(c.get<double>() * area.get<double>()) : std::string());
+        }
     }
     row("Iterations recorded", std::to_string(coeffs.time.size()));
 
@@ -1988,6 +2001,18 @@ Json RunManager::compare(const std::string& a, const std::string& b)
         }
     }
     j["forces"] = std::move(deltas);
+    // Efficiency L/D = |lift| / drag (CAD-187), only with a positive drag in both runs.
+    auto efficiency = [](const Json& summary) -> std::optional<double> {
+        const Json d = summary.value("dragN", Json()), l = summary.value("liftN", Json());
+        if (!d.is_number() || !l.is_number() || !(d.get<double>() > 0.0))
+            return std::nullopt;
+        return std::abs(l.get<double>()) / d.get<double>();
+    };
+    if (const auto ea = efficiency(sa), eb = efficiency(sb); ea && eb) {
+        Json e{{"a", *ea}, {"b", *eb}, {"difference", *eb - *ea}};
+        e["percent"] = *ea > 1e-12 ? Json(100.0 * (*eb - *ea) / *ea) : Json(nullptr);
+        j["efficiency"] = std::move(e);
+    }
     // Coefficients of B on A's reference area, so Cd/Cl compare like the forces do.
     Json coeffs = Json::object();
     for (const char* key : {"cd", "cl", "cs"}) {

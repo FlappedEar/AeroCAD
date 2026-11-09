@@ -557,8 +557,9 @@ void registerSimulationCommands(CommandRegistry& r)
           });
 
     r.add({"simulation.compare", "Compare simulations",
-           "A/B comparison of two runs: drag/lift/side force differences in N and %, coefficients on a shared "
-           "reference area, whether the conditions match (settings such as speed, direction, mesh and preset, and "
+           "A/B comparison of two runs: drag/lift/side force differences in N and %, efficiency L/D (|lift|/drag), "
+           "coefficients on a shared reference area, whether the conditions match (settings such as speed, direction, "
+           "mesh and preset, and "
            "the resolved setup: surroundings/context geometry, flow domain and engine; unknownConditions lists what an "
            "older run did not record), quality of both, "
            "and shared colour scale ranges. Both runs need successful completion and complete finite force/coefficient "

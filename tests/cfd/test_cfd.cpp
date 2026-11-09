@@ -1847,6 +1847,35 @@ TEST_CASE("A different reference area does not make runs incomparable (CAD-186)"
           Approx(0.8 * 0.024 / 0.0048).epsilon(0.02));
 }
 
+TEST_CASE("simulation compare reports the efficiency L/D of A and B (CAD-187)", "[cfd]")
+{
+    TempDir tmp;
+    cfd::RunManager runs(tmp.path());
+    cfd::Settings s;
+    s.flowDirection = "+X";
+    cfd::CaseGeometry g;
+    g.part = box({0, 0, 0}, {200, 80, 60});
+    const std::string a = runs.prepare(g, s, {});
+    const std::string b = runs.prepare(g, s, {});
+    const std::string c = runs.prepare(g, s, {});
+    fakeFinishedRun(tmp.path() / a, 0.8, 1.0, -2.0); // Downforce: L/D uses |lift|.
+    fakeFinishedRun(tmp.path() / b, 0.8, 1.25, -3.0);
+    fakeFinishedRun(tmp.path() / c, 0.8, 0.0, -3.0); // No drag: no L/D.
+
+    const auto cmp = runs.compare(a, b);
+    INFO(cmp.dump());
+    const auto& f = cmp.at("forces");
+    const double ea = 2.0 / f.at("dragN").at("a").get<double>();
+    const double eb = 3.0 / f.at("dragN").at("b").get<double>();
+    const auto& e = cmp.at("efficiency");
+    CHECK(e.at("a").get<double>() == Approx(ea));
+    CHECK(e.at("b").get<double>() == Approx(eb));
+    CHECK(e.at("difference").get<double>() == Approx(eb - ea));
+    CHECK(e.at("percent").get<double>() == Approx(100.0 * (eb - ea) / ea));
+    CHECK(e.at("percent").get<double>() == Approx(20.0).margin(1.0));
+    CHECK_FALSE(runs.compare(a, c).contains("efficiency"));
+}
+
 namespace {
 
 void editCaseJson(const fs::path& runDir, const std::function<void(nlohmann::json&)>& edit)

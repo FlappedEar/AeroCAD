@@ -358,6 +358,20 @@ TEST_CASE("simulation.export_results writes conditions, final values and the ful
     CHECK(csv.find("\r\nCd,0.8\r\n") != std::string::npos);
     CHECK(csv.find("\r\nDrag (N),1\r\n") != std::string::npos);
     CHECK(csv.find("\r\nPressure drag (N),0.9\r\n") != std::string::npos);
+    // As in the Results summary (CAD-187): L/D = |0.2| / 1, Cd and Cl times the reference area.
+    CHECK(csv.find("\r\nEfficiency L/D,0.2\r\n") != std::string::npos);
+    {
+        const double area =
+            session.execute("simulation.results", {{"run", a}}).data.at("conditions").at("referenceArea").get<double>();
+        std::ostringstream cdA, clA;
+        cdA.precision(7);
+        clA.precision(7);
+        cdA << "\r\nCdA (m2)," << 0.8 * area << "\r\n";
+        clA << "\r\nClA (m2)," << 0.1 * area << "\r\n";
+        INFO(csv.substr(0, 1500));
+        CHECK(csv.find(cdA.str()) != std::string::npos);
+        CHECK(csv.find(clA.str()) != std::string::npos);
+    }
     CHECK(csv.find("\r\nOpenFOAM (ran),v2506\r\n") != std::string::npos);
     CHECK(csv.find("\r\n\r\nIteration,Cd,Cl,Cs,Drag (N),Lift (N),Side force (N),Pressure drag (N),Viscous drag (N)\r\n"
                    "1,0.8,0.1,0.01,1,0.2,0.01,0.9,0.1\r\n") != std::string::npos);

@@ -428,7 +428,8 @@ app uses for the pressure colour range.
 (CAD-167, [panel](images/audit/cad-167-export-csv.png)). The default file name is the run's
 label and id. The file has a `Quantity,Value` block with the run, part, state, conditions
 (speed, flow, mesh, floor, air, reference area and length, the OpenFOAM version the run recorded, or "not recorded") and the final values
-(Cd, Cl, Cs; drag, lift, side, pressure and viscous drag in N). A run that has not finished
+(Cd, Cl, Cs; drag, lift, side, pressure and viscous drag in N; efficiency L/D, CdA and ClA
+in m², CAD-187). A run that has not finished
 says so in the `Results` row and gives the current means marked "(provisional)". After a blank
 line comes the full, unsampled history: iteration, Cd, Cl, Cs and the forces in N.
 Numbers use a `.` decimal point, and lines end with CRLF. MCP: `simulation.export_results
@@ -463,7 +464,9 @@ The A/B tab's table has drag, lift and side force, pressure drag and friction dr
 (in N), and Cd, Cl and Cs with B on A's reference area (to 4 decimals, so a change of a few
 drag counts shows). Each row has A, B, B − A and the change in %. A value under 2 % of the
 largest one in its group (forces or coefficients) gets no percentage (CAD-171,
-[A/B](images/audit/cad-171-ab-coefficients.png)).
+[A/B](images/audit/cad-171-ab-coefficients.png)). The *L/D* row compares the efficiency
+|lift| / drag (`efficiency` in `simulation.compare`; left out without a positive drag;
+CAD-187, [row](images/audit/cad-187-ab-efficiency.png)).
 Below it, *Cd per iteration* draws the Cd histories of A and B (B on A's reference area)
 on the same axes, so a difference can be weighed against how much Cd still oscillates;
 hovering it reads both values at an iteration (CAD-179,
