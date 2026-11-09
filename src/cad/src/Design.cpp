@@ -1598,6 +1598,16 @@ void Design::moveSketchCurves(FeatureId sketchId, const std::vector<std::size_t>
         if (curves[i].kind == SketchCurve::Kind::Circle)
             held.push_back({{"type", "radius"}, {"curve", i}, {"value", curves[i].radius}});
     }
+    // A polygon keeps its corner angles too (its sides alone are only kept equal), as in a
+    // point drag, so it stays regular while one side moves.
+    for (std::size_t k = 0; k < items.size(); ++k) {
+        if (lower(items[k].at("type").get<std::string>()) != "polygon")
+            continue;
+        const auto [first, count] = ranges[k];
+        const double turn = 360.0 / static_cast<double>(count);
+        for (std::size_t i = 0; i + 1 < count; ++i)
+            held.push_back({{"type", "angle"}, {"curves", Json::array({first + i, first + i + 1})}, {"value", turn}});
+    }
     f.params["curves"] = items;
     f.params["constraints"] = held;
     regenerate();
@@ -1616,6 +1626,15 @@ void Design::moveSketchCurves(FeatureId sketchId, const std::vector<std::size_t>
     else
         g.params["constraints"] = constraints;
     regenerateChecked(sketchId, before);
+    // Rewritten as items, the picked curves must still be where they were asked to go.
+    it = m_sketches.find(sketchId);
+    for (std::size_t i = 0; i < curves.size() && it != m_sketches.end(); ++i) {
+        if (sel[i] && (i >= it->second.curves.size() || !sameCurve(it->second.curves[i], movedCurve(curves[i]), 1e-6))) {
+            m_state = before;
+            regenerate();
+            throw DesignError("Those curves cannot move there: their shape holds them");
+        }
+    }
 }
 
 void Design::mirrorSketchCurves(FeatureId sketchId, const std::vector<std::size_t>& picked, std::size_t lineIdx)

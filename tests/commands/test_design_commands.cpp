@@ -2547,6 +2547,18 @@ TEST_CASE("Design commands: sketch Move/Copy (CAD-244)", "[commands][cad][solver
         CHECK(c.at("curves")[1].at("radius").get<double>() == Approx(5));
         CHECK(near(c.at("curves")[1].at("points")[0], 0, 5));
     }
+    SECTION("one side of a polygon moves where asked; the polygon stays regular (Codex review)")
+    {
+        const Json t = run(s, "sketch.create",
+                           {{"plane", "XY"},
+                            {"curves", Json::array({{{"type", "polygon"}, {"center", {0, 0}}, {"radius", 10}, {"sides", 5}}})}});
+        const auto tid = t.at("id").get<std::uint64_t>();
+        const Json was = run(s, "sketch.curves", {{"sketch", tid}}).at("curves")[0].at("points");
+        run(s, "sketch.move_curves", {{"sketch", tid}, {"curves", {0}}, {"dx", 3}, {"dy", 2}});
+        const Json c = run(s, "sketch.curves", {{"sketch", tid}});
+        CHECK(near(c.at("curves")[0].at("points")[0], was[0][0].get<double>() + 3, was[0][1].get<double>() + 2));
+        CHECK(near(c.at("curves")[0].at("points")[1], was[1][0].get<double>() + 3, was[1][1].get<double>() + 2));
+    }
     SECTION("a turned copy leaves horizontal and vertical with the original (Codex review)")
     {
         const Json t = run(s, "sketch.create",
