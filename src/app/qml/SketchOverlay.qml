@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Drawing tools of the sketch environment (Fusion: Line L, 2-point Rectangle R, Center
 // Diameter Circle C, 2-Point and 3-Point Circle, 3-point Arc, Polygon, Slot, Fit Point
-// Spline, Center Rectangle, Center Point Arc). Clicks are projected onto the sketch
+// Spline, Center Rectangle, 3-Point Rectangle, Center Point Arc). Clicks are projected onto the sketch
 // plane and snapped to existing points or a grid; a finished curve is reported with
 // curveDrawn() in sketch coordinates (mm). Typing a value + Enter sets the dimension of
 // the curve being drawn (length, diameter, "width, height"); expressions with user
@@ -75,7 +75,10 @@ Item {
     /// Center Point Arc: the radius typed after the centre (a number or an expression with
     /// user parameters), kept for the finished arc; null when the radius is drawn.
     property var typedRadius: null
-    onPointsChanged: if (points.length === 0) typedRadius = null
+    /// 3-Point Rectangle: the height typed after the first side (number or expression,
+    /// signed to the side of the cursor), kept for the finished rectangle.
+    property var typedHeight: null
+    onPointsChanged: if (points.length === 0) { typedRadius = null; typedHeight = null }
     property var hover: null
     property bool hoverSnapped: false
     readonly property real snapPixels: 10
@@ -365,6 +368,7 @@ Item {
         case "arc":
         case "center_arc":
         case "circle_3point":
+        case "rectangle_3point":
         case "slot": return 3
         case "spline": return Infinity // ended with Enter, a double-click or the first point
         default: return 2
@@ -392,6 +396,12 @@ Item {
             return NaN
         }
         return ev.result.value
+    }
+
+    /// Signed distance of `p` from the line a -> b, positive to its left.
+    function leftOf(a, b, p) {
+        const len = dist(a, b)
+        return len < 1e-12 ? 0 : ((b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0])) / len
     }
 
     /// Circle through three points as {center, radius}, or null when they are (nearly)
@@ -449,6 +459,17 @@ Item {
             if (d < 1e-9)
                 return null
             return { type: "circle", center: a, diameter: dim && dim.length > 0 ? dim[0] : round6(d) }
+        }
+        case "rectangle_3point": {
+            // One side from the first to the second click at any angle; the third click
+            // (or a typed height) sets the other side.
+            if (pts.length < 3 || dist(a, b) < 1e-9)
+                return null
+            const h = leftOf(a, b, pts[2])
+            if (Math.abs(h) < 1e-9)
+                return null
+            return { type: "three_point_rectangle", start: a, end: b,
+                     height: typedHeight !== null ? typedHeight : round6(h) }
         }
         case "circle_2point": {
             // The two points are the ends of a diameter; a typed diameter keeps the first
@@ -576,8 +597,19 @@ Item {
         // Plain numbers stay numbers; anything else is an expression for the timeline.
         const values = parts.map(s => isNaN(Number(s)) ? s : Number(s))
         const a = points[0]
-        if (tool === "line") {
-            const len = Number(values[0])
+        if (tool === "rectangle_3point" && points.length === 2) {
+            // The typed height goes to the side of the cursor.
+            const h = evaluateTyped(values[0], qsTr("Height"))
+            if (!(h > 0))
+                return
+            const side = leftOf(points[0], points[1], hover) < 0 ? -1 : 1
+            const len = dist(a, points[1])
+            const n = [-(points[1][1] - a[1]) / len, (points[1][0] - a[0]) / len]
+            typedHeight = side > 0 ? values[0] : (typeof values[0] === "string" ? "-(" + values[0] + ")" : -values[0])
+            click([round6(points[1][0] + n[0] * h * side), round6(points[1][1] + n[1] * h * side)])
+        } else if (tool === "line" || (tool === "rectangle_3point" && points.length === 1)) {
+            // A line length, or the first side of a 3-point rectangle, towards the cursor.
+            const len = evaluateTyped(values[0], qsTr("Length"))
             if (!(len > 0))
                 return
             const d = dist(a, hover)
@@ -881,7 +913,8 @@ Item {
                         const q = root.toScreen(uv[i])
                         if (i === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y)
                     }
-                } else if (root.tool === "line" || (pts.length === 2 && (root.tool === "arc" || root.tool === "slot" || root.tool === "circle_3point"))) {
+                } else if (root.tool === "line" || (pts.length === 2 && (root.tool === "arc" || root.tool === "slot" || root.tool === "circle_3point"
+                                                                          || root.tool === "rectangle_3point"))) {
                     ctx.moveTo(s[0].x, s[0].y)
                     ctx.lineTo(s[1].x, s[1].y)
                 } else if (root.tool === "rectangle" || root.tool === "center_rectangle") {
@@ -909,6 +942,16 @@ Item {
                             const q = root.toScreen([c[0] + r * Math.cos(a0 + sweep * i / 64), c[1] + r * Math.sin(a0 + sweep * i / 64)])
                             if (i === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y)
                         }
+                    }
+                } else if (root.tool === "rectangle_3point") {
+                    // The first side, then the far side through the cursor.
+                    const h = root.leftOf(pts[0], pts[1], pts[2]), len = root.dist(pts[0], pts[1])
+                    if (len > 1e-9) {
+                        const up = [-(pts[1][1] - pts[0][1]) / len * h, (pts[1][0] - pts[0][0]) / len * h]
+                        const c = [pts[0], pts[1], [pts[1][0] + up[0], pts[1][1] + up[1]], [pts[0][0] + up[0], pts[0][1] + up[1]]].map(p => root.toScreen(p))
+                        ctx.moveTo(c[0].x, c[0].y)
+                        for (let i = 1; i <= 4; ++i)
+                            ctx.lineTo(c[i % 4].x, c[i % 4].y)
                     }
                 } else if (root.tool === "circle_2point" || root.tool === "circle_3point") {
                     // The circle through the points so far and the cursor.
@@ -970,8 +1013,10 @@ Item {
             if (root.active && pts.length >= 2) {
                 const a = pts[0], b = pts[1]
                 let text = ""
-                if (root.tool === "line" || root.tool === "arc" || root.tool === "slot")
+                if (root.tool === "line" || root.tool === "arc" || root.tool === "slot" || (root.tool === "rectangle_3point" && pts.length === 2))
                     text = Preferences.formatLength(root.dist(a, b), Preferences.lengthUnit)
+                else if (root.tool === "rectangle_3point")
+                    text = Preferences.formatLength(root.dist(a, b), Preferences.lengthUnit) + " × " + Preferences.formatLength(Math.abs(root.leftOf(a, b, pts[2])), Preferences.lengthUnit)
                 else if (root.tool === "rectangle")
                     text = Preferences.formatLength(Math.abs(b[0] - a[0]), Preferences.lengthUnit) + " × " + Preferences.formatLength(Math.abs(b[1] - a[1]), Preferences.lengthUnit)
                 else if (root.tool === "center_rectangle")
@@ -1037,6 +1082,7 @@ Item {
                     : root.tool === "center_rectangle" ? qsTr("Center rectangle: click the centre, then a corner; type width, height")
                     : root.tool === "center_arc" ? qsTr("Center point arc: click the centre, the start, then the end (counter-clockwise); type the radius")
                     : root.tool === "circle" ? qsTr("Circle: click centre and a point; type the diameter")
+                    : root.tool === "rectangle_3point" ? qsTr("3-point rectangle: click both ends of one side (any angle), then the far side; type the length, then the height")
                     : root.tool === "circle_2point" ? qsTr("2-point circle: click both ends of a diameter; type the diameter")
                     : root.tool === "circle_3point" ? qsTr("3-point circle: click three points on the circle")
                     : root.tool === "arc" ? qsTr("Arc: click start, end, then a point on the arc")
@@ -1081,6 +1127,7 @@ Item {
                 Label { text: root.tool === "rectangle" || root.tool === "center_rectangle" ? qsTr("Width, height")
                             : root.tool === "center_arc" ? qsTr("Radius") : root.tool === "line" ? qsTr("Length")
                             : root.tool === "circle_2point" ? qsTr("Diameter")
+                            : root.tool === "rectangle_3point" ? (root.points.length >= 2 ? qsTr("Height") : qsTr("Length"))
                             : root.tool === "offset" ? qsTr("Distance") : qsTr("Size") }
                 TextField {
                     id: dimension
