@@ -493,6 +493,11 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_trim.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_sketch_trim_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-225: Extend lengthens a sketch line or arc to the next curve.
+    add_test(NAME app_sketch_extend_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_extend.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_sketch_extend_test PROPERTIES LABELS gui TIMEOUT 60)
     # CAD-126: X turns sketch curves into construction geometry.
     add_test(NAME app_sketch_construction_test
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_construction.ui

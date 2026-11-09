@@ -1743,6 +1743,174 @@ void Design::trimSketchCurve(FeatureId sketchId, std::size_t curve, const geomet
     }
 }
 
+geometry::SketchCurve Design::extendedSketchCurve(FeatureId sketchId, std::size_t curve, const geometry::Vec2& at,
+                                                  bool* atStart) const
+{
+    const Feature& f = m_state.features[indexOf(sketchId)];
+    if (f.type != "sketch")
+        throw DesignError("Feature " + std::to_string(sketchId) + " is not a sketch");
+    auto it = m_sketches.find(sketchId);
+    if (it == m_sketches.end() || curve >= it->second.curves.size())
+        throw DesignError(f.name + " has no curve " + std::to_string(curve));
+    const std::vector<SketchCurve>& curves = it->second.curves;
+    const SketchCurve& k = curves[curve];
+    if (k.kind != SketchCurve::Kind::Line && k.kind != SketchCurve::Kind::Arc)
+        throw DesignError("Extend works on lines and arcs");
+
+    // Only a curve drawn on its own: the sides of a rectangle, polygon or slot keep their shape.
+    {
+        const Eval ev{*this};
+        std::size_t first = 0;
+        for (const auto& item : f.params.value("curves", Json::array())) {
+            std::vector<SketchCurve> made;
+            std::vector<SketchConstraint> implicit;
+            appendCurves(ev, item, made, implicit);
+            if (curve < first + made.size()) {
+                const std::string type = lower(item.value("type", std::string()));
+                if (made.size() != 1 || (type != "line" && type != "arc" && type != "center_arc"))
+                    throw DesignError("Extend works on lines and arcs drawn on their own, not on the sides of a "
+                                      "rectangle, polygon or slot");
+                break;
+            }
+            first += made.size();
+        }
+    }
+
+    const Vec2 p0 = k.points.front();
+    const Vec2 p1 = k.points.back();
+    const bool fromStart = std::hypot(at.x - p0.x, at.y - p0.y) < std::hypot(at.x - p1.x, at.y - p1.y);
+    const Vec2 e = fromStart ? p0 : p1;
+    if (atStart != nullptr)
+        *atStart = fromStart;
+
+    // An end shared with another curve stays where it is (Fusion extends free ends).
+    for (std::size_t i = 0; i < curves.size(); ++i) {
+        if (i == curve)
+            continue;
+        const auto& c = curves[i];
+        const bool hasEnds = c.kind == SketchCurve::Kind::Line || c.kind == SketchCurve::Kind::Arc ||
+                             (c.kind == SketchCurve::Kind::Spline && !c.closed);
+        if (!hasEnds || c.points.empty())
+            continue;
+        for (const Vec2& q : {c.points.front(), c.points.back()})
+            if (std::hypot(q.x - e.x, q.y - e.y) < 1e-6)
+                throw DesignError("That end is joined to another curve");
+    }
+
+    // How far the sketch reaches, for a ray long enough to meet every curve.
+    double reach = 1.0;
+    for (const auto& c : curves)
+        for (const Vec2& q : c.points)
+            reach = std::max(reach, std::hypot(q.x - e.x, q.y - e.y) + c.radius);
+    reach *= 4.0;
+
+    SketchCurve out = k;
+    if (k.kind == SketchCurve::Kind::Line) {
+        const Vec2 from = fromStart ? p1 : p0;
+        const double len = std::hypot(e.x - from.x, e.y - from.y);
+        if (len < 1e-12)
+            throw DesignError("The line has no length");
+        const Vec2 d{(e.x - from.x) / len, (e.y - from.y) / len};
+        TrimCurve ray;
+        ray.a = e;
+        ray.b = e + d * reach;
+        double best = -1.0;
+        for (std::size_t i = 0; i < curves.size(); ++i) {
+            if (i == curve)
+                continue;
+            const auto other = trimCurve(curves[i]);
+            if (!other)
+                continue;
+            for (const Vec2& x : crossings(ray, *other)) {
+                const double t = (x.x - e.x) * d.x + (x.y - e.y) * d.y;
+                if (t > 1e-6 && (best < 0 || t < best))
+                    best = t;
+            }
+        }
+        if (best < 0)
+            throw DesignError("Nothing to extend to: no curve lies beyond that end");
+        (fromStart ? out.points.front() : out.points.back()) = e + d * best;
+        return out;
+    }
+
+    // An arc: on around its circle, in the direction it runs at that end.
+    const auto arc = trimCurve(k);
+    if (!arc || std::abs(arc->sweep) >= 2 * std::numbers::pi - 1e-9)
+        throw DesignError("Extend works on lines and arcs");
+    const double sense = arc->sweep >= 0 ? 1.0 : -1.0;
+    const double aEnd = fromStart ? arc->a0 : arc->a0 + arc->sweep;
+    const double dir = fromStart ? -sense : sense;
+    const double room = 2 * std::numbers::pi - std::abs(arc->sweep); // up to its other end
+    TrimCurve circle = *arc;
+    circle.a0 = 0.0;
+    circle.sweep = 2 * std::numbers::pi;
+    double best = -1.0;
+    for (std::size_t i = 0; i < curves.size(); ++i) {
+        if (i == curve)
+            continue;
+        const auto other = trimCurve(curves[i]);
+        if (!other)
+            continue;
+        for (const Vec2& x : crossings(circle, *other)) {
+            const double a = std::atan2(x.y - arc->c.y, x.x - arc->c.x);
+            const double along = dir > 0 ? wrap2pi(a - aEnd) : wrap2pi(aEnd - a);
+            if (along > 1e-9 && along < room - 1e-9 && (best < 0 || along < best))
+                best = along;
+        }
+    }
+    if (best < 0)
+        throw DesignError("Nothing to extend to: no curve lies beyond that end");
+    const double a0 = fromStart ? arc->a0 - sense * best : arc->a0;
+    const double sweep = arc->sweep + sense * best;
+    auto on = [&](double a) { return Vec2{arc->c.x + arc->r * std::cos(a), arc->c.y + arc->r * std::sin(a)}; };
+    out.points = {on(a0), on(a0 + sweep / 2), on(a0 + sweep)};
+    return out;
+}
+
+void Design::extendSketchCurve(FeatureId sketchId, std::size_t curve, const geometry::Vec2& at)
+{
+    const State before = m_state;
+    keepSolvedSketch(sketchId);
+    bool fromStart = false;
+    SketchCurve made;
+    try {
+        made = extendedSketchCurve(sketchId, curve, at, &fromStart);
+    } catch (...) {
+        m_state = before;
+        throw;
+    }
+    // The item that makes the curve, rewritten with the new end (an arc as three points).
+    Feature& f = m_state.features[indexOf(sketchId)];
+    const Eval ev{*this};
+    Json items = f.params.value("curves", Json::array());
+    std::size_t first = 0;
+    auto pt = [](const Vec2& v) { return Json::array({v.x, v.y}); };
+    for (auto& item : items) {
+        std::vector<SketchCurve> c;
+        std::vector<SketchConstraint> implicit;
+        appendCurves(ev, item, c, implicit);
+        if (curve < first + c.size()) {
+            if (made.kind == SketchCurve::Kind::Line) {
+                item[fromStart ? "start" : "end"] = pt(fromStart ? made.points.front() : made.points.back());
+            } else {
+                Json arc{{"type", "arc"}, {"start", pt(made.points[0])}, {"through", pt(made.points[1])}, {"end", pt(made.points[2])}};
+                for (const char* key : {"construction", "join_start", "join_end"})
+                    if (item.contains(key))
+                        arc[key] = item[key];
+                item = arc;
+            }
+            break;
+        }
+        first += c.size();
+    }
+    f.params["curves"] = items;
+    try {
+        regenerateChecked(sketchId, before);
+    } catch (const DesignError& e) {
+        throw DesignError(std::string("Cannot extend: ") + e.what());
+    }
+}
+
 void Design::setSketchConstruction(FeatureId sketchId, const std::vector<std::size_t>& picked, bool construction)
 {
     const State before = m_state;

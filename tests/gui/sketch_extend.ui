@@ -1,0 +1,32 @@
+# CAD-225: Extend lengthens a sketch line or arc to the next curve it would meet (Fusion
+# Extend). Hovering shows the lengthened curve; clicking near an end extends that end.
+# Run: AeroCAD --ui-script <this file>
+ui.wait(800)
+(() => { const r = controller.execute("sketch.create", { plane: "XY", curves: [{ type: "line", start: [0, 0], end: [5, 0] }, { type: "line", start: [10, -10], end: [10, 10] }, { type: "line", start: [20, -10], end: [20, 10] }] }); if (!r.ok) ui.fail("sketch: " + r.error) })()
+ui.wait(300)
+(() => { enterSketch(controller.execute("timeline.list").result.features[0].id) })()
+ui.wait(800)
+(() => { extendAction.trigger() })()
+ui.wait(300)
+(() => { if (sketchTool !== "extend") ui.fail("Extend did not start: " + sketchTool) })()
+# Hover near the right end of the short line: the preview reaches the first wall at x = 10.
+(() => { const o = viewport.sketchOverlay; const p = o.toScreen([4.5, 0]); const w = o.mapToItem(null, p.x, p.y); ui.move(w.x, w.y) })()
+ui.wait(300)
+(() => { const pv = viewport.sketchOverlay.extendPreview; ui.log("preview " + JSON.stringify(pv)); if (!pv || pv.kind !== "line" || Math.abs(Math.max(pv.points[0][0], pv.points[1][0]) - 10) > 1e-6) ui.fail("no preview to x = 10") })()
+ui.shot("/mnt/project-files/ux/sketch-extend.png")
+(() => { const o = viewport.sketchOverlay; const p = o.toScreen([4.5, 0]); const w = o.mapToItem(null, p.x, p.y); ui.click(w.x, w.y) })()
+ui.wait(500)
+(() => { const r = controller.execute("sketch.curves", { sketch: activeSketch.id }).result; const l = r.curves[0]; ui.log("after extend: " + JSON.stringify(l.points)); if (Math.abs(l.points[1][0] - 10) > 1e-6 || Math.abs(l.points[0][0]) > 1e-6) ui.fail("the line was not extended to x = 10") })()
+# Again: on to the next wall.
+(() => { const o = viewport.sketchOverlay; const p = o.toScreen([9, 0]); const w = o.mapToItem(null, p.x, p.y); ui.click(w.x, w.y) })()
+ui.wait(500)
+(() => { const r = controller.execute("sketch.curves", { sketch: activeSketch.id }).result; const l = r.curves[0]; if (Math.abs(l.points[1][0] - 20) > 1e-6) ui.fail("the second extend did not reach x = 20: " + JSON.stringify(l.points)) })()
+# Nothing beyond the start: the line stays and the reason shows in the status bar.
+(() => { const o = viewport.sketchOverlay; const p = o.toScreen([0.5, 0]); const w = o.mapToItem(null, p.x, p.y); ui.click(w.x, w.y) })()
+ui.wait(500)
+(() => { const r = controller.execute("sketch.curves", { sketch: activeSketch.id }).result; if (Math.abs(r.curves[0].points[0][0]) > 1e-6) ui.fail("the start moved") })()
+# One undo step per extend.
+(() => { controller.execute("edit.undo"); const r = controller.execute("sketch.curves", { sketch: activeSketch.id }).result; if (Math.abs(r.curves[0].points[1][0] - 10) > 1e-6) ui.fail("undo did not go back to x = 10") })()
+ui.key("Escape")
+ui.wait(300)
+(() => { if (sketchTool !== "") ui.fail("Esc did not end Extend: " + sketchTool) })()
