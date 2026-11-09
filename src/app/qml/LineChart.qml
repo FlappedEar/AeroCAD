@@ -112,6 +112,27 @@ Item {
         return { x: at, px: p.px(at), values: values }
     }
 
+    /// Tick values from lo to hi as whole multiples of step (CAD-185): adding the step up
+    /// drifts, so the zero tick from a negative start read "-6e-17".
+    function tickValues(lo, hi, step) {
+        const out = []
+        for (let k = Math.ceil(lo / step); k * step <= hi + step * 1e-6; ++k)
+            out.push(k === 0 ? 0 : k * step)
+        return out
+    }
+    /// The y-axis ticks of a layout from layoutPlot(): [{ value, label }].
+    function yTicks(p) {
+        if (!p || p.empty)
+            return []
+        const step = logY ? Math.max(1, Math.ceil((p.ymax - p.ymin) / 5)) : niceStep(p.ymax - p.ymin, 4)
+        return tickValues(p.ymin, p.ymax, step).map(v => ({ value: v, label: logY ? "1e" + Math.round(v) : fmt(v) }))
+    }
+
+    /// The y-axis labels as drawn now (for tests).
+    function yAxisLabels() {
+        return yTicks(layoutPlot(canvas.width, canvas.height)).map(t => t.label)
+    }
+
     function fmt(v) {
         const a = Math.abs(v)
         if (a !== 0 && (a < 1e-3 || a >= 1e5))
@@ -164,14 +185,12 @@ Item {
             }
 
             // Grid and ticks.
-            const yStep = chart.logY ? Math.max(1, Math.ceil((ymax - ymin) / 5)) : chart.niceStep(ymax - ymin, 4)
-            for (let v = Math.ceil(ymin / yStep) * yStep; v <= ymax + yStep * 1e-6; v += yStep) {
-                const y = py(v)
+            for (const t of chart.yTicks(p)) {
+                const y = py(t.value)
                 ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(left + w, y); ctx.stroke()
-                ctx.fillText(chart.logY ? "1e" + Math.round(v) : chart.fmt(v), 2, y + 3)
+                ctx.fillText(t.label, 2, y + 3)
             }
-            const xStep = chart.niceStep(xmax - xmin, 5)
-            for (let v = Math.ceil(xmin / xStep) * xStep; v <= xmax + xStep * 1e-6; v += xStep) {
+            for (const v of chart.tickValues(xmin, xmax, chart.niceStep(xmax - xmin, 5))) {
                 const x = px(v)
                 ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, top + h); ctx.stroke()
                 ctx.fillText(chart.fmt(v), x - 8, top + h + 14)
