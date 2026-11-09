@@ -52,6 +52,8 @@ constexpr std::array kNames{
     NameEntry{Type::Radius, "radius"},
     NameEntry{Type::Diameter, "diameter"},
     NameEntry{Type::Angle, "angle"},
+    NameEntry{Type::MajorRadius, "major_radius"},
+    NameEntry{Type::MinorRadius, "minor_radius"},
 };
 
 double cross(Vec2 a, Vec2 b)
@@ -228,6 +230,10 @@ public:
             case Kind::Point:
                 c.points = {v.pts[0].at(m_x)};
                 break;
+            case Kind::Ellipse:
+                c.points = {v.pts[0].at(m_x), v.pts[1].at(m_x)};
+                c.radius = std::abs(m_x[v.rvar]);
+                break;
             }
         }
     }
@@ -307,6 +313,14 @@ private:
                     throw ModelingError("Sketch point needs one position");
                 v.pts = {endPoint(c.points[0], c.joinStart)};
                 break;
+            case Kind::Ellipse:
+                // Centre and the end of the major axis; the minor radius is a variable.
+                if (c.points.size() != 2)
+                    throw ModelingError("Sketch ellipse needs a centre and an axis end");
+                v.pts = {newPoint(c.points[0]), newPoint(c.points[1])};
+                v.rvar = m_x.size();
+                m_x.push_back(c.radius);
+                break;
             }
         }
     }
@@ -349,6 +363,21 @@ private:
         return m_curves[i];
     }
 
+    /// A line, or an ellipse's major axis (centre to its end) for horizontal and vertical.
+    std::pair<P, P> lineOrAxis(std::size_t i) const
+    {
+        if (curve(i).kind == Kind::Ellipse)
+            return {m_vars[i].pts[0], m_vars[i].pts[1]};
+        return line(i);
+    }
+
+    std::pair<P, P> ellipseAxis(std::size_t i) const
+    {
+        if (curve(i).kind != Kind::Ellipse)
+            throw ModelingError("Curve " + std::to_string(i) + " is not an ellipse");
+        return {m_vars[i].pts[0], m_vars[i].pts[1]};
+    }
+
     std::pair<P, P> line(std::size_t i) const
     {
         if (curve(i).kind != Kind::Line)
@@ -382,15 +411,15 @@ private:
             return v.pts[0]; // start, end and centre of a point are the point
         switch (ref.kind) {
         case SketchPointRef::Kind::Start:
-            if (c.kind == Kind::Circle)
+            if (c.kind == Kind::Circle || c.kind == Kind::Ellipse)
                 break;
             return v.pts.front();
         case SketchPointRef::Kind::End:
             if (c.kind == Kind::Circle)
                 break;
-            return c.kind == Kind::Spline ? v.pts.back() : v.pts[1];
+            return c.kind == Kind::Spline ? v.pts.back() : v.pts[1]; // an ellipse: its major axis end
         case SketchPointRef::Kind::Center:
-            if (c.kind == Kind::Circle)
+            if (c.kind == Kind::Circle || c.kind == Kind::Ellipse)
                 return v.pts[0];
             if (c.kind == Kind::Arc)
                 return v.pts[2];
@@ -422,8 +451,11 @@ private:
                 return std::atan2(d.y, d.x);
             };
             const bool lines =
-                !c.curves.empty() && std::all_of(c.curves.begin(), c.curves.end(), [this](std::size_t i) {
-                    return i < m_curves.size() && m_curves[i].kind == Kind::Line;
+                !c.curves.empty() && std::all_of(c.curves.begin(), c.curves.end(), [this, &c](std::size_t i) {
+                    return i < m_curves.size() &&
+                           (m_curves[i].kind == Kind::Line ||
+                            (m_curves[i].kind == Kind::Ellipse && c.curves.size() == 1 &&
+                             (c.type == Type::Horizontal || c.type == Type::Vertical)));
                 });
             if (!lines)
                 continue;
@@ -445,7 +477,8 @@ private:
             const auto& v = m_vars[target];
             const Vec2 a = v.pts[0].at(m_x);
             const Vec2 b = v.pts[1].at(m_x);
-            const Vec2 mid = (a + b) * 0.5;
+            // A line turns about its middle, an ellipse about its centre.
+            const Vec2 mid = m_curves[target].kind == Kind::Ellipse ? a : (a + b) * 0.5;
             const double cs = std::cos(delta);
             const double sn = std::sin(delta);
             auto turn = [&](P p, Vec2 q) {
@@ -546,7 +579,7 @@ private:
             P a;
             P b;
             if (!c.curves.empty()) {
-                const auto seg = line(c.curves[0]);
+                const auto seg = lineOrAxis(c.curves[0]);
                 a = seg.first;
                 b = seg.second;
             } else {
@@ -628,7 +661,16 @@ private:
         }
         case Type::Equal: {
             needCurves(c, 2);
-            if (isCirc(c.curves[0]) && isCirc(c.curves[1])) {
+            if (curve(c.curves[0]).kind == Kind::Ellipse && curve(c.curves[1]).kind == Kind::Ellipse) {
+                // Two ellipses: the same major and minor radii.
+                const auto [a1, b1] = ellipseAxis(c.curves[0]);
+                const auto [a2, b2] = ellipseAxis(c.curves[1]);
+                const std::size_t r1 = m_vars[c.curves[0]].rvar, r2 = m_vars[c.curves[1]].rvar;
+                add(ci, varsOf({a1, b1, a2, b2}, {r1, r2}), 2, [=](const std::vector<double>& x, double* r) {
+                    r[0] = len(b1.at(x) - a1.at(x)) - len(b2.at(x) - a2.at(x));
+                    r[1] = x[r1] - x[r2];
+                });
+            } else if (isCirc(c.curves[0]) && isCirc(c.curves[1])) {
                 const Circ k = circ(c.curves[0]);
                 const Circ l = circ(c.curves[1]);
                 std::vector<std::size_t> vars = circVars(k);
@@ -747,6 +789,22 @@ private:
             const Circ k = circ(c.curves[0]);
             const double v = c.type == Type::Diameter ? c.value / 2 : c.value;
             add(ci, circVars(k), 1, [k, v](const std::vector<double>& x, double* r) { r[0] = k.radius(x) - v; });
+            break;
+        }
+        case Type::MajorRadius: {
+            needCurves(c, 1);
+            const auto [a, b] = ellipseAxis(c.curves[0]);
+            const double v = c.value;
+            add(ci, varsOf({a, b}), 1,
+                [a, b, v](const std::vector<double>& x, double* r) { r[0] = len(b.at(x) - a.at(x)) - v; });
+            break;
+        }
+        case Type::MinorRadius: {
+            needCurves(c, 1);
+            ellipseAxis(c.curves[0]);
+            const std::size_t rv = m_vars[c.curves[0]].rvar;
+            const double v = c.value;
+            add(ci, varsOf({}, {rv}), 1, [rv, v](const std::vector<double>& x, double* r) { r[0] = x[rv] - v; });
             break;
         }
         case Type::Angle: {
@@ -912,6 +970,8 @@ bool isDimension(SketchConstraint::Type type)
     case Type::Radius:
     case Type::Diameter:
     case Type::Angle:
+    case Type::MajorRadius:
+    case Type::MinorRadius:
         return true;
     default:
         return false;

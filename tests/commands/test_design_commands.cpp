@@ -1184,6 +1184,136 @@ TEST_CASE("Design commands: Sketch Chamfer (CAD-254)", "[commands][cad][solver]"
     CHECK(collinear == 4);
 }
 
+TEST_CASE("Design commands: Sketch Ellipse (CAD-256)", "[commands][cad][solver]")
+{
+    commands::Session s;
+    auto near = [](const Json& p, double x, double y) {
+        return std::hypot(p[0].get<double>() - x, p[1].get<double>() - y) < 1e-6;
+    };
+    const auto id = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "ellipse"}, {"center", {10, 5}}, {"major_radius", 20},
+                                                  {"minor_radius", 8}, {"angle", 30}}})}})
+                        .at("id")
+                        .get<std::uint64_t>();
+    Json c = run(s, "sketch.curves", {{"sketch", id}});
+    REQUIRE(c.at("curves").size() == 1);
+    const Json e = c.at("curves")[0];
+    CHECK(e.at("kind") == "ellipse");
+    CHECK(near(e.at("center"), 10, 5));
+    CHECK(e.at("majorRadius").get<double>() == Approx(20));
+    CHECK(e.at("minorRadius").get<double>() == Approx(8));
+    CHECK(e.at("angle").get<double>() == Approx(30));
+    CHECK(e.at("samples").size() > 32);
+    // Centre, axis end, minor radius: 5 degrees of freedom.
+    CHECK(c.at("degreesOfFreedom") == 5);
+    // A closed profile: extruded, its area is pi a b.
+    CHECK(run(s, "sketch.profiles", {{"sketch", id}}).at("profiles").size() == 1);
+    const auto ex = run(s, "feature.extrude", {{"sketch", id}, {"distance", 2}});
+    CHECK(ex.at("bodies").back().at("volume").get<double>() == Approx(std::numbers::pi * 20 * 8 * 2).epsilon(1e-4));
+    run(s, "edit.undo");
+
+    // Dimensions: major and minor radius, the major axis horizontal, the centre at the origin.
+    c = run(s, "sketch.add_constraints",
+            {{"sketch", id},
+             {"constraints", Json::array({{{"type", "major_radius"}, {"curve", 0}, {"value", 25}},
+                                          {{"type", "minor_radius"}, {"curve", 0}, {"value", 10}},
+                                          {{"type", "horizontal"}, {"curve", 0}},
+                                          {{"type", "coincident"},
+                                           {"points", Json::array({{{"curve", 0}, {"point", "center"}}, "origin"})}}})}});
+    CHECK(c.at("degreesOfFreedom") == 0);
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    INFO(c.dump());
+    CHECK(near(c.at("curves")[0].at("center"), 0, 0));
+    CHECK(near(c.at("curves")[0].at("points")[1], 25, 0));
+    CHECK(c.at("curves")[0].at("minorRadius").get<double>() == Approx(10));
+    // Edited like any dimension.
+    std::size_t minorIdx = 0;
+    for (std::size_t i = 0; i < c.at("constraints").size(); ++i)
+        if (c.at("constraints")[i].at("type") == "minor_radius")
+            minorIdx = i;
+    run(s, "sketch.edit_constraint", {{"sketch", id}, {"index", minorIdx}, {"value", 12}});
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    CHECK(c.at("curves")[0].at("minorRadius").get<double>() == Approx(12));
+
+    // Refused: no radius, a radius on the wrong curve.
+    CHECK_FALSE(s.execute("sketch.create", {{"plane", "XY"},
+                                            {"curves", Json::array({{{"type", "ellipse"}, {"center", {0, 0}},
+                                                                     {"major_radius", 0}, {"minor_radius", 3}}})}})
+                    .ok);
+
+    // A minor radius longer than the major one is the same oval turned: still a profile.
+    const auto tall = run(s, "sketch.create",
+                          {{"plane", "XY"},
+                           {"curves", Json::array({{{"type", "ellipse"}, {"center", {0, 0}}, {"major_radius", 5},
+                                                    {"minor_radius", 15}}})}})
+                          .at("id")
+                          .get<std::uint64_t>();
+    const auto tex = run(s, "feature.extrude", {{"sketch", tall}, {"distance", 1}});
+    CHECK(tex.at("bodies").back().at("volume").get<double>() == Approx(std::numbers::pi * 5 * 15).epsilon(1e-4));
+
+    // Mirror, move, scale and pattern keep it an ellipse.
+    const auto mid = run(s, "sketch.create",
+                         {{"plane", "XY"},
+                          {"curves", Json::array({{{"type", "line"}, {"start", {0, -50}}, {"end", {0, 50}}, {"construction", true}},
+                                                  {{"type", "ellipse"}, {"center", {20, 0}}, {"major_radius", 10},
+                                                   {"minor_radius", 4}, {"angle", 90}}})}})
+                         .at("id")
+                         .get<std::uint64_t>();
+    const int dofBefore = run(s, "sketch.curves", {{"sketch", mid}}).at("degreesOfFreedom").get<int>();
+    run(s, "sketch.mirror", {{"sketch", mid}, {"curves", {1}}, {"line", 0}});
+    c = run(s, "sketch.curves", {{"sketch", mid}});
+    REQUIRE(c.at("curves").size() == 3);
+    CHECK(c.at("curves")[2].at("kind") == "ellipse");
+    CHECK(near(c.at("curves")[2].at("center"), -20, 0));
+    CHECK(c.at("curves")[2].at("majorRadius").get<double>() == Approx(10));
+    CHECK(c.at("curves")[2].at("minorRadius").get<double>() == Approx(4));
+    // The copy follows the original (symmetric + equal radii): no extra freedom.
+    CHECK(c.at("degreesOfFreedom").get<int>() == dofBefore);
+
+    run(s, "sketch.move_curves", {{"sketch", mid}, {"curves", {1}}, {"angle", 90}, {"pivot", {20, 0}}});
+    c = run(s, "sketch.curves", {{"sketch", mid}});
+    CHECK(c.at("curves")[1].at("kind") == "ellipse");
+    CHECK(near(c.at("curves")[1].at("center"), 20, 0));
+    CHECK(c.at("curves")[1].at("minorRadius").get<double>() == Approx(4));
+    CHECK(near(c.at("curves")[1].at("points")[1], 10, 0)); // the axis turned from +y to -x
+
+    const auto sc = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "ellipse"}, {"center", {0, 0}}, {"major_radius", 6},
+                                                  {"minor_radius", 3}}})}})
+                        .at("id")
+                        .get<std::uint64_t>();
+    run(s, "sketch.add_constraints", {{"sketch", sc},
+                                      {"constraints", Json::array({{{"type", "major_radius"}, {"curve", 0}, {"value", 6}},
+                                                                   {{"type", "minor_radius"}, {"curve", 0}, {"value", 3}}})}});
+    run(s, "sketch.scale_curves", {{"sketch", sc}, {"curves", {0}}, {"factor", 2}, {"point", {0, 0}}});
+    c = run(s, "sketch.curves", {{"sketch", sc}});
+    CHECK(c.at("curves")[0].at("majorRadius").get<double>() == Approx(12));
+    CHECK(c.at("curves")[0].at("minorRadius").get<double>() == Approx(6));
+    run(s, "sketch.circular_pattern", {{"sketch", sc}, {"curves", {0}}, {"center", {30, 0}}, {"count", 3}});
+    c = run(s, "sketch.curves", {{"sketch", sc}});
+    REQUIRE(c.at("curves").size() == 3);
+    for (const auto& k : c.at("curves")) {
+        CHECK(k.at("kind") == "ellipse");
+        CHECK(k.at("minorRadius").get<double>() == Approx(6));
+        CHECK(k.at("majorRadius").get<double>() == Approx(12));
+    }
+
+    // Trim, Extend, Break and Fillet refuse it; Offset gives a closed spline; Delete removes it.
+    CHECK_FALSE(s.execute("sketch.trim", {{"sketch", sc}, {"curve", 0}, {"at", {12, 0}}}).ok);
+    CHECK_FALSE(s.execute("sketch.extend", {{"sketch", sc}, {"curve", 0}, {"at", {12, 0}}}).ok);
+    CHECK_FALSE(s.execute("sketch.break", {{"sketch", sc}, {"curve", 0}, {"at", {12, 0}}}).ok);
+    CHECK_FALSE(s.execute("sketch.fillet", {{"sketch", sc}, {"curves", {0, 1}}, {"radius", 1}}).ok);
+    run(s, "sketch.offset", {{"sketch", sc}, {"curves", {0}}, {"distance", 1}});
+    c = run(s, "sketch.curves", {{"sketch", sc}});
+    REQUIRE(c.at("curves").size() == 4);
+    CHECK(c.at("curves")[3].at("kind") == "spline");
+    CHECK(c.at("curves")[3].at("closed") == true);
+    run(s, "sketch.delete_curves", {{"sketch", sc}, {"curves", {0, 3}}});
+    CHECK(run(s, "sketch.curves", {{"sketch", sc}}).at("curves").size() == 2);
+}
+
 TEST_CASE("Design commands: sketch offset (CAD-126)", "[commands][cad]")
 {
     commands::Session s;

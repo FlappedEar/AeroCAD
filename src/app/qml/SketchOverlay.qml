@@ -414,7 +414,7 @@ Item {
             if (list.indexOf(c.index) < 0)
                 continue
             const r = c.kind === "circle" ? c.radius : 0
-            for (const p of c.points) {
+            for (const p of c.kind === "ellipse" && c.samples ? c.samples : c.points) {
                 lo = [Math.min(lo[0], p[0] - r), Math.min(lo[1], p[1] - r)]
                 hi = [Math.max(hi[0], p[0] + r), Math.max(hi[1], p[1] + r)]
             }
@@ -601,6 +601,7 @@ Item {
         case "center_arc":
         case "circle_3point":
         case "rectangle_3point":
+        case "ellipse":
         case "slot": return 3
         case "spline": return Infinity // ended with Enter, a double-click or the first point
         default: return 2
@@ -769,6 +770,21 @@ Item {
                 return { type: "circle", center: [round6(a[0] + (b[0] - a[0]) * h), round6(a[1] + (b[1] - a[1]) * h)], diameter: dim[0] }
             }
             return { type: "circle", center: [round6((a[0] + b[0]) / 2), round6((a[1] + b[1]) / 2)], diameter: round6(d) }
+        }
+        case "ellipse": {
+            // Centre, the end of the major axis, then a point that sets the minor radius
+            // (its distance from the major axis), as Fusion's Ellipse.
+            if (pts.length < 3)
+                return null
+            const major = dist(a, b)
+            if (major < 1e-9)
+                return null
+            const minor = Math.abs(leftOf(a, b, pts[2]))
+            if (!sizeGiven(dim, 0, minor))
+                return null
+            return { type: "ellipse", center: a, major_radius: typedRadius !== null ? typedRadius : round6(major),
+                     minor_radius: dim && dim.length > 0 ? dim[0] : round6(minor),
+                     angle: round6(Math.atan2(b[1] - a[1], b[0] - a[0]) * 180 / Math.PI) }
         }
         case "circle_3point": {
             if (pts.length < 3)
@@ -947,6 +963,21 @@ Item {
             const d = dist(a, hover)
             const dir = d > 1e-9 ? [(hover[0] - a[0]) / d, (hover[1] - a[1]) / d] : [1, 0]
             click([round6(a[0] + dir[0] * len), round6(a[1] + dir[1] * len)])
+        } else if (tool === "ellipse" && points.length === 1) {
+            // The typed major radius places the axis end towards the cursor (kept as typed).
+            const r = evaluateTyped(values[0], qsTr("Major radius"))
+            if (!(r > 0))
+                return
+            const d = dist(a, hover)
+            const dir = d > 1e-9 ? [(hover[0] - a[0]) / d, (hover[1] - a[1]) / d] : [1, 0]
+            click([round6(a[0] + dir[0] * r), round6(a[1] + dir[1] * r)])
+            typedRadius = values[0]
+        } else if (tool === "ellipse" && points.length === 2) {
+            const r = evaluateTyped(values[0], qsTr("Minor radius"))
+            if (!(r > 0))
+                return
+            emitCurve(curveFrom([a, points[1], hover], values))
+            points = []
         } else if (tool === "center_arc" && points.length === 1) {
             // The typed radius places the start point towards the cursor; an expression is
             // evaluated for that and kept as the arc's radius.
@@ -1018,7 +1049,7 @@ Item {
             return
         }
         let uv = []
-        if (c.kind === "spline") {
+        if (c.kind === "spline" || c.kind === "ellipse") {
             uv = c.samples || c.points
         } else if (c.kind === "line") {
             uv = c.points
@@ -1390,7 +1421,7 @@ Item {
                         if (i === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y)
                     }
                 } else if (root.tool === "line" || (pts.length === 2 && (root.tool === "arc" || root.tool === "slot" || root.tool === "circle_3point"
-                                                                          || root.tool === "rectangle_3point"))) {
+                                                                          || root.tool === "rectangle_3point" || root.tool === "ellipse"))) {
                     ctx.moveTo(s[0].x, s[0].y)
                     ctx.lineTo(s[1].x, s[1].y)
                 } else if (root.tool === "rectangle" || root.tool === "center_rectangle") {
@@ -1437,6 +1468,18 @@ Item {
                         ctx.moveTo(c[0].x, c[0].y)
                         for (let i = 1; i <= 4; ++i)
                             ctx.lineTo(c[i % 4].x, c[i % 4].y)
+                    }
+                } else if (root.tool === "ellipse") {
+                    // The major axis, then the ellipse through the cursor.
+                    ctx.moveTo(s[0].x, s[0].y)
+                    ctx.lineTo(s[1].x, s[1].y)
+                    if (curve) {
+                        const t = curve.angle * Math.PI / 180, ra = root.dist(pts[0], pts[1]), rb = Number(curve.minor_radius)
+                        for (let i = 0; i <= 96; ++i) {
+                            const u = ra * Math.cos(2 * Math.PI * i / 96), w = rb * Math.sin(2 * Math.PI * i / 96)
+                            const q = root.toScreen([pts[0][0] + u * Math.cos(t) - w * Math.sin(t), pts[0][1] + u * Math.sin(t) + w * Math.cos(t)])
+                            if (i === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y)
+                        }
                     }
                 } else if (root.tool === "circle_2point" || root.tool === "circle_3point") {
                     // The circle through the points so far and the cursor.
@@ -1508,6 +1551,9 @@ Item {
                     text = Preferences.formatLength(2 * Math.abs(b[0] - a[0]), Preferences.lengthUnit) + " × " + Preferences.formatLength(2 * Math.abs(b[1] - a[1]), Preferences.lengthUnit)
                 else if (root.tool === "center_arc")
                     text = "R " + Preferences.formatLength(root.dist(a, b), Preferences.lengthUnit)
+                else if (root.tool === "ellipse")
+                    text = pts.length >= 3 ? "Rb " + Preferences.formatLength(Math.abs(root.leftOf(a, b, pts[2])), Preferences.lengthUnit)
+                                           : "Ra " + Preferences.formatLength(root.dist(a, b), Preferences.lengthUnit)
                 else if (root.tool === "tangent_arc") {
                     const arc = root.tangentFrom ? root.tangentArc(root.tangentFrom, b) : null
                     text = arc ? "R " + Preferences.formatLength(arc.radius, Preferences.lengthUnit) : ""
@@ -1592,6 +1638,7 @@ Item {
                     : root.tool === "rectangle_3point" ? qsTr("3-point rectangle: click both ends of one side (any angle), then the far side; type the length, then the height")
                     : root.tool === "circle_2point" ? qsTr("2-point circle: click both ends of a diameter; type the diameter")
                     : root.tool === "circle_3point" ? qsTr("3-point circle: click three points on the circle")
+                    : root.tool === "ellipse" ? qsTr("Ellipse: click the centre, the end of the major axis, then a point for the minor radius; type each radius")
                     : root.tool === "arc" ? qsTr("Arc: click start, end, then a point on the arc")
                     : root.tool === "polygon" ? qsTr("Polygon: click centre and a corner; type the radius")
                     : root.tool === "spline" ? qsTr("Spline: click fit points; Enter, a double-click or Esc ends it, the first point closes it")
@@ -1635,6 +1682,7 @@ Item {
                          && root.tool !== "circle_3point"
                 Label { text: root.tool === "rectangle" || root.tool === "center_rectangle" ? qsTr("Width, height")
                             : root.tool === "center_arc" ? qsTr("Radius") : root.tool === "line" ? qsTr("Length")
+                            : root.tool === "ellipse" ? (root.points.length >= 2 ? qsTr("Minor radius") : qsTr("Major radius"))
                             : root.tool === "circle_2point" ? qsTr("Diameter")
                             : root.tool === "rectangle_3point" ? (root.points.length >= 2 ? qsTr("Height") : qsTr("Length"))
                             : root.tool === "offset" ? qsTr("Distance")

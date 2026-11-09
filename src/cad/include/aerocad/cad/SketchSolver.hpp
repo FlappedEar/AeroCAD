@@ -32,8 +32,8 @@ struct SketchConstraint {
         Coincident,    ///< points[0] == points[1]
         PointOnCurve,  ///< points[0] lies on curves[0] (line, arc, circle)
         Midpoint,      ///< points[0] is the midpoint of line curves[0]
-        Horizontal,    ///< line curves[0], or points[0] and points[1] share y
-        Vertical,      ///< line curves[0], or points[0] and points[1] share x
+        Horizontal,    ///< line curves[0] (or an ellipse's major axis), or points[0] and points[1] share y
+        Vertical,      ///< line curves[0] (or an ellipse's major axis), or points[0] and points[1] share x
         Parallel,      ///< lines curves[0], curves[1]
         Perpendicular, ///< lines curves[0], curves[1]
         Collinear,     ///< lines curves[0], curves[1]
@@ -50,6 +50,8 @@ struct SketchConstraint {
         Radius,             ///< arc/circle curves[0]
         Diameter,           ///< arc/circle curves[0]
         Angle,              ///< between lines curves[0] and curves[1], degrees
+        MajorRadius,        ///< ellipse curves[0]: centre to the end of its major axis
+        MinorRadius,        ///< ellipse curves[0]
     };
     Type type = Type::Coincident;
     std::vector<std::size_t> curves;

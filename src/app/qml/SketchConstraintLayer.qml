@@ -42,8 +42,8 @@ Item {
     function hint() {
         switch (tool) {
         case "dimension": return qsTr("Dimension: click a line, circle, arc, two points or two lines; type the value")
-        case "horizontal": return qsTr("Horizontal: click a line (or two points)")
-        case "vertical": return qsTr("Vertical: click a line (or two points)")
+        case "horizontal": return qsTr("Horizontal: click a line or an ellipse (or two points)")
+        case "vertical": return qsTr("Vertical: click a line or an ellipse (or two points)")
         case "coincident": return qsTr("Coincident: click a point, then a point or a curve")
         case "tangent": return qsTr("Tangent: click a line or arc, then an arc or circle")
         case "equal": return qsTr("Equal: click two lines or two circles/arcs")
@@ -95,6 +95,10 @@ Item {
                 out.push({ point: { curve: c.index, point: "center" }, pos: c.center })
             } else if (c.kind === "circle") {
                 out.push({ point: { curve: c.index, point: "center" }, pos: c.points[0] })
+            } else if (c.kind === "ellipse") {
+                // Its centre and the end of its major axis.
+                out.push({ point: { curve: c.index, point: "center" }, pos: c.points[0] })
+                out.push({ point: { curve: c.index, point: "end" }, pos: c.points[1] })
             } else if (c.kind === "point") {
                 out.push({ point: { curve: c.index, point: "start" }, pos: c.points[0] })
             }
@@ -182,7 +186,7 @@ Item {
             let best = null, bestD = tol
             for (const c of curves) {
                 const d = curveDistance(p, c)
-                if (d <= bestD) { best = { curve: c.index }; bestD = d }
+                if (d <= bestD) { best = { curve: c.index, at: p }; bestD = d }
             }
             return best
         }
@@ -214,6 +218,18 @@ Item {
                 return { constraint: { type: "diameter", curve: a.curve }, value: 2 * c.radius }
             if (c.kind === "arc")
                 return { constraint: { type: "radius", curve: a.curve }, value: curveRadius(c) }
+            if (c.kind === "ellipse") {
+                // Picked nearer the end of the major axis: its major radius, else the minor one.
+                const at = a.at || c.points[1]
+                const ax = [c.points[1][0] - c.points[0][0], c.points[1][1] - c.points[0][1]]
+                const l = Math.hypot(ax[0], ax[1]) || 1
+                const v = [at[0] - c.points[0][0], at[1] - c.points[0][1]]
+                const along = Math.abs(v[0] * ax[0] + v[1] * ax[1]) / l
+                const across = Math.abs(v[1] * ax[0] - v[0] * ax[1]) / l
+                if (along / l >= across / Math.max(1e-9, c.minorRadius))
+                    return { constraint: { type: "major_radius", curve: a.curve }, value: c.majorRadius }
+                return { constraint: { type: "minor_radius", curve: a.curve }, value: c.minorRadius }
+            }
             return null
         }
         if (ps.length !== 2)
@@ -239,7 +255,7 @@ Item {
     function midpointOf(ps) {
         let u = 0, v = 0, n = 0
         for (const p of ps) {
-            const pos = p.pos || anchorOfCurve(p.curve)
+            const pos = p.pos || p.at || anchorOfCurve(p.curve)
             u += pos[0]; v += pos[1]; ++n
         }
         return [u / n, v / n]
@@ -302,7 +318,8 @@ Item {
         case "horizontal":
         case "vertical":
             if (p.curve !== undefined && picks.length === 0) {
-                if (isLine(p.curve))
+                // A line, or an ellipse's major axis (Fusion keeps an ellipse level this way).
+                if (isLine(p.curve) || curves[p.curve].kind === "ellipse")
                     emit({ type: tool, curve: p.curve })
             } else if (pointsPicked.length === 2) {
                 emit({ type: tool, points: pointsPicked })
@@ -382,6 +399,8 @@ Item {
             return [c.points[0][0] + c.radius * 0.707, c.points[0][1] + c.radius * 0.707]
         if (c.kind === "arc")
             return c.points[1]
+        if (c.kind === "ellipse" && c.samples)
+            return c.samples[Math.floor(c.samples.length / 8)]
         return c.points[Math.floor(c.points.length / 2)]
     }
 
@@ -424,6 +443,8 @@ Item {
         case "fix": return "⚓"
         case "diameter": return "⌀" + expr + v
         case "radius": return "R" + expr + v
+        case "major_radius": return "Ra " + expr + v
+        case "minor_radius": return "Rb " + expr + v
         case "angle": return "∠" + expr + v + "°"
         default: return expr + v
         }
@@ -461,7 +482,7 @@ Item {
                 if (i === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y)
             }
         } else {
-            c.points.forEach((p, i) => {
+            (c.kind === "ellipse" && c.samples ? c.samples : c.points).forEach((p, i) => {
                 const q = overlay.toScreen(p)
                 if (i === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y)
             })

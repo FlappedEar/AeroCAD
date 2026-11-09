@@ -142,8 +142,20 @@ Sketch curves: `line {start, end}`, `rectangle {corner, width, height | opposite
 `center_rectangle {center, width, height}`, `circle {center, radius | diameter}`,
 `arc {start, through, end}`, `center_arc {center, radius, startAngle, endAngle}`,
 `polygon {center, radius, sides, angle?}`, `slot {start, end, width}`,
-`spline {points, closed?}`, `point {at}`; any curve can be `construction: true`. Curves are split at
+`spline {points, closed?}`, `point {at}`,
+`ellipse {center, major_radius, minor_radius, angle?}`; any curve can be `construction: true`. Curves are split at
 intersections, so a circle inside a rectangle gives two profiles (ring and disk).
+
+An `ellipse` (Fusion: Create › Ellipse; ribbon CREATE menu or Sketch menu) is drawn by
+clicking the centre, the end of the major axis, and a point whose distance from that axis is
+the minor radius. Either radius can be typed (major, Enter, minor, Enter). `angle` is the
+direction of the major axis in degrees. In `sketch.curves` an ellipse has `points` [centre, end
+of the major axis], `center`, `majorRadius`, `minorRadius`, `angle` and `samples` for drawing.
+Its points for constraints are `center` and `end` (the end of the major axis). The dimensions
+`major_radius` and `minor_radius` set its size; `horizontal` / `vertical` on it level its major
+axis. The Dimension tool picks the major radius near the end of the major axis, else the minor
+one. Move, copy, scale, mirror and patterns keep it an ellipse. Trim, Extend, Break, Fillet
+and Chamfer refuse it, and Offset gives a spline.
 
 A `point` (Fusion: Create › Point, the Point tool in the sketch CREATE menu) is a sketch point:
 it has no edge and bounds no profile, and is drawn as a small cross (a dot while editing). It
@@ -163,7 +175,8 @@ right, top, left; a slot is line, arc, line, arc) and to points as
 - Geometric: `coincident`, `point_on_curve`, `midpoint`, `horizontal`, `vertical`,
   `parallel`, `perpendicular`, `collinear`, `tangent`, `equal`, `concentric`, `symmetric`, `fix`.
 - Dimensions (`value` is a number or an expression): `distance` (two points, or a point and a
-  line), `horizontal_distance`, `vertical_distance`, `length`, `radius`, `diameter`, `angle`.
+  line), `horizontal_distance`, `vertical_distance`, `length`, `radius`, `diameter`, `angle`,
+  `major_radius`, `minor_radius` (ellipse).
 
 The solver (Levenberg-Marquardt, `src/cad/src/SketchSolver.cpp`) starts from the drawn
 curves and moves them as little as possible. Curve ends that touch are merged, so outlines
