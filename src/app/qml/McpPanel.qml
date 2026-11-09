@@ -22,6 +22,13 @@ Dialog {
         anchors.fill: parent
         spacing: 10
 
+        Label {
+            Layout.fillWidth: true
+            text: qsTr("Project: %1").arg(root.access.projectTarget)
+            wrapMode: Text.WrapAnywhere
+            font.bold: true
+        }
+
         Switch {
             text: qsTr("Allow AI agents to use this project")
             checked: root.access.enabled
@@ -33,9 +40,9 @@ Dialog {
             wrapMode: Text.WordWrap
             opacity: 0.8
             text: !root.access.enabled
-                  ? qsTr("Off. Agents cannot read or change the project.")
+                  ? qsTr("Off. Agents cannot read or change the project. Turn access on to reconnect them; no MCP server restart is needed.")
                   : root.access.listening
-                    ? qsTr("On. Agents run the same commands as the user; every change appears in the view and can be undone.")
+                    ? qsTr("On for this project until New, Open, recovery or app exit. Agents can edit the project, read/write files and run programs. Undo applies only to undoable project edits.")
                     : qsTr("Could not start: %1").arg(root.access.errorString)
             color: root.access.enabled && !root.access.listening ? "#d9534f" : palette.windowText
         }
@@ -53,6 +60,8 @@ Dialog {
             Button {
                 text: qsTr("Disconnect")
                 enabled: root.access.clients.length > 0
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Disconnect all agents and turn access off until you enable it again.")
                 onClicked: root.access.disconnectClients()
             }
         }
@@ -97,7 +106,7 @@ Dialog {
                     hoverEnabled: true
                     ToolTip.visible: hovered
                     ToolTip.delay: 600
-                    ToolTip.text: modelData.client + "\n" + modelData.params
+                    ToolTip.text: modelData.client + "\n" + modelData.project + "\n" + modelData.effects + "\n" + modelData.params
                     contentItem: RowLayout {
                         spacing: 8
                         Label {

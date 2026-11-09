@@ -8,6 +8,7 @@
 #include <QFileInfo>
 #include <QLocalServer>
 #include <QLocalSocket>
+#include <QUuid>
 
 namespace aerocad::mcp {
 
@@ -95,37 +96,41 @@ bool IpcServer::listen(const QString& endpoint)
 
 void IpcServer::close(const QString& reason)
 {
-    if (!reason.isEmpty())
-        revokeAll(reason);
-    const auto sockets = m_connections.keys();
-    m_connections.clear();
-    for (QLocalSocket* s : sockets) {
-        s->disconnect(this);
-        s->abort();
-        s->deleteLater();
-    }
+    revokeAll(reason.isEmpty() ? QStringLiteral("AI agent access ended") : reason);
     if (m_server != nullptr) {
         m_server->close();
         delete m_server;
         m_server = nullptr;
     }
-    if (!sockets.isEmpty())
-        emit clientsChanged();
 }
 
 void IpcServer::revokeAll(const QString& reason)
 {
+    // Invalidate before disconnectFromServer: that call can be asynchronous and readyRead
+    // may already be queued for either client. No buffered command may outlive this grant.
+    m_accessSession = QUuid::createUuid().toString(QUuid::WithoutBraces);
     const auto sockets = m_connections.keys();
+    m_connections.clear();
     for (QLocalSocket* s : sockets) {
+        s->disconnect(this);
+        connect(s, &QLocalSocket::disconnected, s, &QObject::deleteLater);
         send(s, {{"event", "revoked"}, {"reason", reason.toStdString()}});
         s->flush();
         s->disconnectFromServer();
+        if (s->state() == QLocalSocket::UnconnectedState)
+            s->deleteLater();
     }
+    if (!sockets.isEmpty())
+        emit clientsChanged();
 }
 
 void IpcServer::onNewConnection()
 {
-    while (QLocalSocket* socket = m_server->nextPendingConnection()) {
+    while (m_server != nullptr) {
+        QLocalSocket* socket = m_server->nextPendingConnection();
+        if (socket == nullptr)
+            break;
+        socket->setParent(this); // close() must not delete a socket inside its readyRead handler
         Connection c;
         c.info.id = m_nextClientId++;
         c.info.name = QStringLiteral("MCP client");
@@ -174,15 +179,39 @@ void IpcServer::handleMessage(QLocalSocket* socket, const QByteArray& line)
 
     if (message.contains("hello")) {
         const auto& hello = message["hello"];
-        if (hello.is_object() && hello.contains("client") && hello["client"].is_string()) {
-            m_connections[socket].info.name = QString::fromStdString(hello["client"].get<std::string>());
+        if (!hello.is_object() || !hello.contains("protocol") ||
+            hello["protocol"] != kIpcProtocolVersion) {
+            send(socket, {{"id", id}, {"ok", false},
+                          {"error", "Incompatible AeroCAD MCP protocol; restart the bundled MCP server"}});
+            return;
+        }
+        // An old session cannot be reused for another grant. A fresh hello with no session
+        // binds a new connection to the grant explicitly enabled by the user.
+        if (hello.contains("session") && hello["session"] != "" &&
+            hello["session"] != m_accessSession.toStdString()) {
+            send(socket, {{"event", "revoked"}, {"reason", "The project access session changed"}});
+            return;
+        }
+        auto it = m_connections.find(socket);
+        if (it == m_connections.end())
+            return;
+        it->ready = true;
+        if (hello.contains("client") && hello["client"].is_string()) {
+            it->info.name = QString::fromStdString(hello["client"].get<std::string>());
             emit clientsChanged();
         }
-        send(socket, {{"id", id}, {"ok", true}, {"result", {{"app", "AeroCAD"}, {"protocol", kIpcProtocolVersion}}}});
+        send(socket, {{"id", id}, {"ok", true}, {"result", {{"app", "AeroCAD"},
+                     {"protocol", kIpcProtocolVersion}, {"session", m_accessSession.toStdString()}}}});
         return;
     }
     if (!message.contains("command") || !message["command"].is_string()) {
         send(socket, {{"id", id}, {"ok", false}, {"error", "Missing command"}});
+        return;
+    }
+    const auto connection = m_connections.constFind(socket);
+    if (connection == m_connections.cend() || !connection->ready ||
+        !message.contains("session") || message["session"] != m_accessSession.toStdString()) {
+        send(socket, {{"id", id}, {"ok", false}, {"error", "No valid project access session"}});
         return;
     }
     const nlohmann::json params = message.value("params", nlohmann::json::object());

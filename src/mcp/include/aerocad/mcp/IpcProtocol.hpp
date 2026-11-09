@@ -5,18 +5,21 @@
 // that only the current OS user can open. Messages are JSON objects, one per line (UTF-8,
 // '\n' terminated):
 //
-//   client -> app  {"id": 1, "hello": {"client": "Claude 1.0", "pid": 123}}
-//   app -> client  {"id": 1, "ok": true, "result": {"app": "AeroCAD", "version": "0.1.0", "protocol": 1}}
-//   client -> app  {"id": 2, "command": "part.scale", "params": {"id": 1, "factor": 2}}
+//   client -> app  {"id": 1, "hello": {"client": "Claude 1.0", "pid": 123, "protocol": 2, "session": ""}}
+//   app -> client  {"id": 1, "ok": true, "result": {"app": "AeroCAD", "protocol": 2, "session": "grant-id"}}
+//   client -> app  {"id": 2, "session": "grant-id", "command": "part.scale", "params": {"id": 1, "factor": 2}}
 //   app -> client  {"id": 2, "ok": true, "result": {...}}   or   {"id": 2, "ok": false, "error": "..."}
 //   app -> client  {"event": "revoked", "reason": "..."}    (the user disconnected the agent)
+// Each new connection performs a fresh hello. Commands keep that connection's grant ID;
+// an interrupted or queued command is never replayed after revocation. The app stops
+// listening when consent ends and listens again only after the user explicitly re-enables it.
 #pragma once
 
 #include <string>
 
 namespace aerocad::mcp {
 
-inline constexpr int kIpcProtocolVersion = 1;
+inline constexpr int kIpcProtocolVersion = 2;
 
 /// Local socket the application listens on. AEROCAD_MCP_SOCKET overrides it. Default:
 /// "$HOME/.aerocad/mcp.sock" on macOS/Linux (in a directory only the user can access),

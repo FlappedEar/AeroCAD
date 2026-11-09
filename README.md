@@ -10,7 +10,7 @@ top of an arbitrary 3D model:
 4. Design on that surface with CAD tools (sketch, extrude, shell, fillet, boolean, ...).
 5. Export the result to STEP, STL or 3MF.
 6. Run a CFD simulation separately and get charts.
-7. An AI agent (over MCP) can run the same operations as the user, see [docs/mcp.md](docs/mcp.md).
+7. An AI agent (over MCP) can run the same operations as the user with explicit access to the current project/session; New, Open and recovery revoke it. See [docs/mcp.md](docs/mcp.md).
 
 Status: early skeleton (milestone 0.1, epic CAD-1 "Foundation").
 

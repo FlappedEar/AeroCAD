@@ -720,6 +720,20 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/editing_context_reset.ui
         WORKING_DIRECTORY ${_context})
     set_tests_properties(app_editing_context_reset_test PROPERTIES LABELS gui TIMEOUT 90)
+    # CAD-42: migrate the old global grant, then exercise consent across project changes.
+    set(_mcp ${CMAKE_CURRENT_BINARY_DIR}/gui-mcp-access)
+    file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/gui-mcp-setup.cmake
+        "file(REMOVE_RECURSE \"${_mcp}\")\n"
+        "file(MAKE_DIRECTORY \"${_mcp}/config/FlappedEar\" \"${_mcp}/data\")\n"
+        "file(WRITE \"${_mcp}/config/FlappedEar/AeroCAD.conf\" \"[mcp]\\nenabled=true\\n\")\n")
+    add_test(NAME app_mcp_access_setup
+        COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_BINARY_DIR}/gui-mcp-setup.cmake)
+    set_tests_properties(app_mcp_access_setup PROPERTIES LABELS gui FIXTURES_SETUP gui_mcp)
+    add_test(NAME app_mcp_project_access_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/mcp_project_access.ui
+        WORKING_DIRECTORY ${_mcp})
+    set_tests_properties(app_mcp_project_access_test PROPERTIES LABELS gui TIMEOUT 90 FIXTURES_REQUIRED gui_mcp
+        ENVIRONMENT "XDG_DATA_HOME=${_mcp}/data;XDG_CONFIG_HOME=${_mcp}/config")
     # Runs a coarse OpenFOAM case, so it needs the engine (label openfoam, not in CI). The
     # runs directory is in the build tree: under the home directory on macOS, which the
     # engine's VM can mount.
