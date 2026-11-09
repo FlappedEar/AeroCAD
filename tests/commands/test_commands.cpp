@@ -113,6 +113,28 @@ TEST_CASE("Unknown commands and invalid params fail without throwing", "[command
     CHECK(r.toJson().at("ok") == false);
 }
 
+TEST_CASE("Importing a file twice gives unique part names", "[commands]")
+{
+    TempStl file;
+    commands::Session session;
+    auto a = session.execute("document.import", {{"path", file.utf8()}});
+    auto b = session.execute("document.import", {{"path", file.utf8()}});
+    auto c = session.execute("document.import", {{"path", file.utf8()}});
+    REQUIRE((a.ok && b.ok && c.ok));
+    const std::string stem = a.data.at("name");
+    CHECK(b.data.at("name") == stem + " (2)");
+    CHECK(c.data.at("name") == stem + " (3)");
+    // An explicit name is kept as given.
+    auto d = session.execute("document.import", {{"path", file.utf8()}, {"name", stem}});
+    REQUIRE(d.ok);
+    CHECK(d.data.at("name") == stem);
+    // Undo and redo keep the unique name.
+    REQUIRE(session.execute("edit.undo").ok);
+    REQUIRE(session.execute("edit.undo").ok);
+    REQUIRE(session.execute("edit.redo").ok);
+    CHECK(session.document().parts().back().name == stem + " (3)");
+}
+
 TEST_CASE("Import, modify, undo and redo through commands", "[commands]")
 {
     TempStl file;

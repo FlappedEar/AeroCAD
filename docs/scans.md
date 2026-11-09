@@ -90,7 +90,9 @@ keeps the points picked so far and shows a hint; it does not change the selectio
   acts on the selected imported part: mesh statistics, Repair / Flip Normals, unit
   conversion, Calibrate (Pick 2 Points, enter the true distance), Orient (Pick Points on a
   flat area, choose XY / XZ / YZ, Align; Place on Floor, Center). Picked points snap to the
-  nearest vertex of the full-resolution mesh. Esc closes the panel.
+  nearest vertex of the full-resolution mesh. Esc first stops picking (the points stay), the next
+  Esc closes the panel. Importing a file whose name is already in the Browser adds " (2)", " (3)"
+  to the new part's name (CAD-243).
 
 ## Display level of detail
 
