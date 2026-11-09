@@ -578,7 +578,8 @@ void registerSimulationCommands(CommandRegistry& r)
            objectSchema({{"run", runIdParam()},
                          {"kind",
                           {{"type", "string"},
-                           {"pattern", "^(surface|sectionHorizontal|sectionVertical|wake|vortices|streamlines|section[XYZ]_[0-9]+)$"}}},
+                           {"pattern", "^(surface|sectionHorizontal|sectionVertical|wake|vortices|streamlines|section[XYZ]_[0-9]+)$"},
+                           {"description", "Field name, see above (e.g. surface, wake, sectionX_2)."}}},
                          {"compare", runIdParam("Run B: return the surface difference B - A.")}},
                         {"run", "kind"})},
           [](CommandContext& ctx, const Json& params) {
@@ -631,7 +632,7 @@ void registerSimulationCommands(CommandRegistry& r)
            "Registers an AeroCAD OpenFOAM case directory that was run outside the app (for example on a cluster) "
            "so its results can be viewed and compared.",
            objectSchema({{"path", {{"type", "string"}, {"minLength", 1}, {"description", "Case directory."}}},
-                         {"label", {{"type", "string"}}}},
+                         {"label", {{"type", "string"}, {"description", "Optional label shown with the run."}}}},
                         {"path"})},
           [](CommandContext& ctx, const Json& params) {
               try {

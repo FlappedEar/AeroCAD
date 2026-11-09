@@ -7,6 +7,7 @@
 
 #include <cctype>
 #include <string>
+#include <vector>
 
 using namespace aerocad;
 using mcp::Json;
@@ -340,4 +341,47 @@ TEST_CASE("agent_guide recipes name only tools and parameters that exist", "[mcp
             }
         }
     }
+}
+
+namespace {
+
+// Collects "tool: path" for every property (at any depth, in items and oneOf branches) that has
+// no description.
+void undocumentedProperties(const Json& schema, const std::string& path, std::vector<std::string>& out)
+{
+    if (!schema.is_object())
+        return;
+    if (schema.contains("properties"))
+        for (const auto& [key, prop] : schema.at("properties").items()) {
+            const std::string p = path.empty() ? key : path + "." + key;
+            if (!prop.contains("description") || prop.at("description").get<std::string>().empty())
+                out.push_back(p);
+            undocumentedProperties(prop, p, out);
+        }
+    if (schema.contains("items"))
+        undocumentedProperties(schema.at("items"), path + "[]", out);
+    for (const char* alt : {"oneOf", "anyOf"})
+        if (schema.contains(alt))
+            for (const auto& branch : schema.at(alt))
+                undocumentedProperties(branch, path, out);
+}
+
+} // namespace
+
+TEST_CASE("Every tool parameter has a description (CAD-231)", "[mcp]")
+{
+    Fixture f;
+    const Json tools = f.request("tools/list").at("result").at("tools");
+    std::vector<std::string> missing;
+    for (const auto& t : tools) {
+        std::vector<std::string> props;
+        undocumentedProperties(t.at("inputSchema"), "", props);
+        for (const auto& p : props)
+            missing.push_back(t.at("name").get<std::string>() + ": " + p);
+    }
+    std::string list;
+    for (const auto& m : missing)
+        list += m + "\n";
+    INFO(list);
+    CHECK(missing.empty());
 }

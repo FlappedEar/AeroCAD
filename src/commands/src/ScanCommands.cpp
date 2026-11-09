@@ -557,7 +557,9 @@ void registerPlacementCommands(CommandRegistry& r)
     r.add({"part.place", "Place part",
            "Moves a part so its bounding box is centred on the world origin in X and Y, and either centred in Z "
            "(`onFloor` false) or resting on the Z=0 plane (`onFloor` true, default).",
-           objectSchema({{"id", idParam()}, {"onFloor", {{"type", "boolean"}}}}, {"id"}), true},
+           objectSchema({{"id", idParam()}, {"onFloor", {{"type", "boolean"}, {"description", "true (default): rest on Z=0; false: centre in Z."}}}},
+                        {"id"}),
+           true},
           [](CommandContext& ctx, const Json& params) {
               const model::Part& part = requireEditablePart(ctx.document, params, "place");
               const core::BoundingBox box = part.mesh->bounds();
