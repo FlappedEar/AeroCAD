@@ -111,6 +111,22 @@ Pane {
         return fmt(n) + " " + (Number(n) === 1 ? one : many)
     }
 
+    /// "Open boundaries" row: closed loops (with the longest, usually a scan's outline) and
+    /// boundary edges no loop closes (open chains, for example at non-manifold edges).
+    function boundaryText(s) {
+        if (!s)
+            return ""
+        if (s.boundaryEdges === 0)
+            return s.closed ? qsTr("0 (closed)") : "0"
+        const parts = []
+        if (s.holes > 0)
+            parts.push(qsTr("%1 (longest %2 edges)").arg(fmt(s.holes)).arg(fmt(s.largestBoundaryEdges)))
+        const chain = s.boundaryEdges - (s.loopedBoundaryEdges || 0)
+        if (chain > 0)
+            parts.push(qsTr("%1 not forming a loop").arg(count(chain, qsTr("open edge"), qsTr("open edges"))))
+        return parts.join(qsTr(", "))
+    }
+
     /// Status line after Repair: only what changed, and why a boundary stayed open.
     function repairSummary(r) {
         const done = []
@@ -189,9 +205,7 @@ Pane {
                     objectName: "scanOpenBoundaries"
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
-                    text: !root.stats ? ""
-                        : root.stats.holes === 0 ? qsTr("0 (closed)")
-                        : qsTr("%1 (longest %2 edges)").arg(root.fmt(root.stats.holes)).arg(root.fmt(root.stats.largestBoundaryEdges))
+                    text: root.boundaryText(root.stats)
                 }
                 Label { text: qsTr("Flipped edges") } Label { text: root.stats ? root.fmt(root.stats.inconsistentEdges) : "" }
                 Label { text: qsTr("Non-manifold edges") } Label { text: root.stats ? root.fmt(root.stats.nonManifoldEdges) : "" }

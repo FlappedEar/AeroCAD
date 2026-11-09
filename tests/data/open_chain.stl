@@ -1,0 +1,30 @@
+solid open_chain
+  facet normal 0 0 0
+    outer loop
+      vertex 0 0 0
+      vertex 10 0 0
+      vertex 0 0 10
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 10 0 0
+      vertex 0 10 0
+      vertex 0 0 10
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 0 10 0
+      vertex 0 0 0
+      vertex 0 0 10
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 0 0 0
+      vertex 10 0 0
+      vertex 0 0 10
+    endloop
+  endfacet
+endsolid open_chain

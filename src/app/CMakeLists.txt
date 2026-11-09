@@ -400,6 +400,12 @@ if(AEROCAD_BUILD_TESTS)
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_scan_panel_test PROPERTIES LABELS gui TIMEOUT 60
         ENVIRONMENT "XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/scan-panel-data;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/scan-panel-data")
+    add_test(NAME app_scan_panel_open_chain_test
+        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/open_chain.stl
+                --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/scan_panel_open_chain.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_scan_panel_open_chain_test PROPERTIES LABELS gui TIMEOUT 60
+        ENVIRONMENT "XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/scan-panel-data;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/scan-panel-data")
     # CAD-105: Simplify a scan, then Ctrl+Z restores the full mesh (also with a reduced display).
     add_test(NAME app_simplify_undo_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl

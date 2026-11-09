@@ -79,6 +79,7 @@ Json statsToJson(const core::MeshStats& s)
                 {"boundaryEdges", s.boundaryEdges},
                 {"holes", s.holes},
                 {"largestBoundaryEdges", s.largestBoundaryEdges},
+                {"loopedBoundaryEdges", s.loopedBoundaryEdges},
                 {"nonManifoldEdges", s.nonManifoldEdges},
                 {"inconsistentEdges", s.inconsistentEdges},
                 {"components", s.components},

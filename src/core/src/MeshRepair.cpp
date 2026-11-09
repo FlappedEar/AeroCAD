@@ -451,8 +451,10 @@ MeshStats meshStats(const TriangleMesh& mesh)
     }
     const auto loops = boundaryLoops(uses);
     s.holes = loops.size();
-    for (const auto& loop : loops)
+    for (const auto& loop : loops) {
         s.largestBoundaryEdges = std::max(s.largestBoundaryEdges, loop.size());
+        s.loopedBoundaryEdges += loop.size();
+    }
     return s;
 }
 

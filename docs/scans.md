@@ -48,7 +48,7 @@ To put a picked face of a scan on the floor, align with that face's triangles an
 
 | Command | What it does |
 | --- | --- |
-| `mesh.stats {"id"}` | Triangles, holes (boundary loops, every open border including the outline of a one-sided scan), `largestBoundaryEdges` (edges of the longest loop), boundary / non-manifold / inconsistent (flipped) edges, duplicate and degenerate triangles, unused vertices, shells, area, bounds. |
+| `mesh.stats {"id"}` | Triangles, holes (boundary loops, every open border including the outline of a one-sided scan), `largestBoundaryEdges` (edges of the longest loop), `loopedBoundaryEdges` (boundary edges in closed loops; the rest are open chains, for example at non-manifold edges), boundary / non-manifold / inconsistent (flipped) edges, duplicate and degenerate triangles, unused vertices, shells, area, bounds. |
 | `mesh.repair {"id", "mergeDistance", "removeDegenerate", "removeDuplicates", "fixOrientation", "maxHoleEdges"}` | Merge (close) vertices, drop degenerate and duplicate triangles, make the winding consistent (closed shells face outwards), fill holes up to `maxHoleEdges` edges, drop unused vertices. Returns the counts and the stats afterwards. |
 | `mesh.flip_normals {"id"}` | Reverse every triangle. |
 | `mesh.decimate {"id", "targetTriangles"}` | Permanently reduce the mesh (vertex clustering). Usually not needed, see below. |

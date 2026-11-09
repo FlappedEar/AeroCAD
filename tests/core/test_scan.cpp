@@ -184,6 +184,20 @@ TEST_CASE("meshStats reports holes, duplicates and flipped faces", "[core][scan]
     CHECK(s.duplicateTriangles == 1);
     CHECK(s.inconsistentEdges > 0);
     CHECK(s.unusedVertices == 1);
+    CHECK(s.loopedBoundaryEdges == 3);
+}
+
+TEST_CASE("meshStats separates boundary edges that no loop closes", "[core][scan]")
+{
+    // Tetrahedron without its bottom and with one side doubled: edge 0-1 is non-manifold,
+    // so the bottom's boundary is the open chain 1-2-0 and no loop closes it.
+    const std::vector<Vec3> v{{0, 0, 0}, {10, 0, 0}, {0, 10, 0}, {0, 0, 10}};
+    const std::vector<TriangleMesh::Triangle> t{{0, 1, 3}, {1, 2, 3}, {2, 0, 3}, {0, 1, 3}};
+    const MeshStats s = meshStats(TriangleMesh(v, t));
+    CHECK(s.boundaryEdges == 2);
+    CHECK(s.holes == 0);
+    CHECK(s.loopedBoundaryEdges == 0);
+    CHECK(s.nonManifoldEdges > 0);
 }
 
 TEST_CASE("repairMesh welds, dedupes, orients and fills holes", "[core][scan]")
