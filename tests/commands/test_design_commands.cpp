@@ -2429,6 +2429,18 @@ TEST_CASE("Design commands: holes at sketch points (CAD-241)", "[commands][cad]"
     CHECK(status(hole) == "ok");
     CHECK(volume() == Approx(8000 - 2 * pi * 4 * 4).epsilon(1e-6));
 
+    // Through all reaches a body well away from the sketch plane (Codex review): a plate at
+    // Z = 100 over a point on XY.
+    {
+        commands::Session far;
+        const auto plate = run(far, "feature.box", {{"corner", {0, 0, 100}}, {"size", {40, 20, 10}}}).at("id").get<std::uint64_t>();
+        const auto pts = run(far, "sketch.create", {{"plane", "XY"}, {"curves", Json::array({{{"type", "point"}, {"at", {10, 10}}}})}})
+                             .at("id")
+                             .get<std::uint64_t>();
+        run(far, "feature.hole", {{"body", plate}, {"sketch", pts}, {"diameter", 4}});
+        CHECK(run(far, "timeline.list").at("bodies")[0].at("volume").get<double>() == Approx(8000 - pi * 4 * 10).epsilon(1e-6));
+    }
+
     // A sketch without points, or both placements, is refused.
     const auto empty = run(s, "sketch.create",
                            {{"plane", "XY"}, {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {5, 0}}}})}})

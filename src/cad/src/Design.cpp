@@ -3004,8 +3004,8 @@ void Design::evaluateFeature(const Feature& f)
         if (r <= 0)
             throw DesignError("Hole diameter must be positive");
         const bool through = p.value("through", !has(p, "depth"));
-        const double depth = through ? b.shape.bounds().diagonal() * 2 : ev.num(p, "depth");
-        if (depth <= 0)
+        const double depth = through ? 0.0 : ev.num(p, "depth");
+        if (!through && depth <= 0)
             throw DesignError("Hole depth must be positive");
         std::vector<geometry::Plane> bases; // origin: hole centre; normal: drilling direction reversed
         if (has(p, "sketch")) {
@@ -3058,13 +3058,18 @@ void Design::evaluateFeature(const Feature& f)
             bases.push_back(base);
         }
         geometry::Shape result = b.shape;
+        const core::BoundingBox bounds = b.shape.bounds();
         for (const auto& base : bases) {
+            // Through all reaches past the body from where the hole starts: a sketch plane
+            // may lie some way off the body.
+            const double length =
+                through ? std::abs(base.normal.dot(bounds.center() - base.origin)) + bounds.diagonal() * 2 : depth;
             SketchCurve c{SketchCurve::Kind::Circle, {{0, 0}}};
             c.radius = r;
             const auto g = geometry::buildSketch(base, {c});
             // Start a hair outside the face so the cut is clean (and does not nick a body
             // on the other side of a sketch plane).
-            const geometry::Shape tool = geometry::extrude(g.profiles.at(0), base.normal * -1.0, depth, 1e-3);
+            const geometry::Shape tool = geometry::extrude(g.profiles.at(0), base.normal * -1.0, length, 1e-3);
             result = geometry::boolean(result, tool, geometry::BooleanOp::Cut);
             if (result.isNull())
                 throw DesignError("The hole removed the whole body");

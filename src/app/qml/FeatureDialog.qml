@@ -842,7 +842,8 @@ Pane {
             const patch = Object.assign({}, params)
             if (feature) {
                 for (const k in feature.params) {
-                    if (!(k in params) && spec.fields.some(f => f.key === k))
+                    // Values tied to the chosen sketch (a hole's sketch points) go with it.
+                    if (!(k in params) && (spec.fields.some(f => f.key === k) || k === "sketch_points" || k === "deletedSketchPoints"))
                         patch[k] = null
                 }
                 if (type === "cylinder" && feature.params.radius !== undefined)
@@ -995,6 +996,9 @@ Pane {
             onActivated: {
                 root.setValue(field.key, currentValue)
                 root.setValue("points", undefined)
+                // Hole: the picked sketch points (curve indices) belong to the old sketch.
+                root.setValue("sketch_points", undefined)
+                root.setValue("deletedSketchPoints", undefined)
                 // A picked sketch line belongs to the old sketch.
                 if (root.values.axis && root.values.axis.line !== undefined)
                     root.setValue("axis", "Z")
