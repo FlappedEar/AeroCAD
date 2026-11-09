@@ -193,7 +193,7 @@ Json settingsSchema()
                           "the Front view)."}}},
         {"yaw", num("Yaw (crosswind) in degrees, -30..30 (default 0): the air turns this far counter-clockwise, "
                     "seen from above, from flowDirection. Forces are in wind axes; a moving floor moves along "
-                    "flowDirection at speed * cos(yaw). Not with rotatingWheels.")},
+                    "flowDirection at speed * cos(yaw), and rotating wheels roll with it.")},
         {"mesh",
          {{"type", "string"},
           {"enum", {"coarse", "medium", "fine"}},
