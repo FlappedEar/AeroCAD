@@ -320,7 +320,7 @@ See [cad.md](cad.md) for the timeline and the commands behind the tools.
   **Construction** (X, or right-click › Construction): the selected curves become
   construction geometry, drawn dashed; they take constraints but bound no profile. X with
   only construction curves selected turns them back. One side of a rectangle can be switched.
-  **Drag points** (no tool active): drag an end or centre point of a curve; the solver
+  **Drag points** (no tool active): drag an end or centre point of a curve, or any fit point of a spline; the solver
   moves what the constraints leave free (a rectangle stays a rectangle, dimensions hold) and
   snaps the point to other points or the grid. One undo step per drag; a point the
   constraints hold (Fix, fully dimensioned) does not move.

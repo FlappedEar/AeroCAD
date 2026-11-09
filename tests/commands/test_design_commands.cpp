@@ -715,6 +715,48 @@ TEST_CASE("Design commands: dragging sketch points (CAD-123)", "[commands][cad][
     CHECK(c.at("curves")[4].at("points")[0][0].get<double>() == Approx(80).margin(1e-4));
 }
 
+TEST_CASE("Design commands: fit points between the ends of a spline (CAD-198)", "[commands][cad][solver]")
+{
+    commands::Session s;
+    const Json sk = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "spline"}, {"points", {{0, 0}, {10, 10}, {20, 0}, {30, 5}}}},
+                                                 {{"type", "line"}, {"start", {0, 30}}, {"end", {40, 30}}}})}});
+    const auto id = sk.at("id").get<std::uint64_t>();
+
+    // Dragging the second fit point moves only it; the ends stay.
+    run(s, "sketch.move_point",
+        {{"sketch", id}, {"point", {{"curve", 0}, {"point", "fit"}, {"index", 1}}}, {"to", {10, 20}}});
+    Json c = run(s, "sketch.curves", {{"sketch", id}});
+    const auto& pts = c.at("curves")[0].at("points");
+    REQUIRE(pts.size() == 4);
+    CHECK(pts[1][0].get<double>() == Approx(10).margin(1e-4));
+    CHECK(pts[1][1].get<double>() == Approx(20).margin(1e-4));
+    CHECK(pts[0][0].get<double>() == Approx(0).margin(1e-6));
+    CHECK(pts[2][0].get<double>() == Approx(20).margin(1e-6));
+    CHECK(pts[3][1].get<double>() == Approx(5).margin(1e-6));
+
+    // A fit point can be constrained too: coincident with the end of the line.
+    run(s, "sketch.add_constraints",
+        {{"sketch", id},
+         {"constraints", Json::array({{{"type", "coincident"},
+                                       {"points", Json::array({{{"curve", 0}, {"point", "fit"}, {"index", 2}},
+                                                               {{"curve", 1}, {"point", "end"}}})}}})}});
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    const auto& a = c.at("curves")[0].at("points")[2];
+    const auto& b = c.at("curves")[1].at("points")[1];
+    CHECK(a[0].get<double>() == Approx(b[0].get<double>()).margin(1e-5));
+    CHECK(a[1].get<double>() == Approx(b[1].get<double>()).margin(1e-5));
+
+    // An index past the fit points is an error, not a crash.
+    const auto bad = s.execute("sketch.move_point",
+                               {{"sketch", id}, {"point", {{"curve", 0}, {"point", "fit"}, {"index", 9}}}, {"to", {0, 0}}});
+    CHECK_FALSE(bad.ok);
+    const auto line = s.execute("sketch.move_point",
+                                {{"sketch", id}, {"point", {{"curve", 1}, {"point", "fit"}, {"index", 0}}}, {"to", {0, 0}}});
+    CHECK_FALSE(line.ok);
+}
+
 TEST_CASE("Design commands: dragging keeps expressions and regular polygons (CAD-123)", "[commands][cad][solver]")
 {
     {

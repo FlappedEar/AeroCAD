@@ -105,9 +105,11 @@ Json curveSchema()
 Json constraintPointSchema()
 {
     return Json{{"type", Json::array({"string", "object"})},
-                {"description", "\"origin\" (sketch origin) or {curve: index, point: start | end | center}."},
+                {"description", "\"origin\" (sketch origin) or {curve: index, point: start | end | center}, "
+                                "or a fit point of a spline {curve, point: fit, index} (0 = first fit point)."},
                 {"properties", {{"curve", {{"type", "integer"}, {"minimum", 0}}},
-                                {"point", {{"type", "string"}, {"enum", {"start", "end", "center"}}}}}}};
+                                {"point", {{"type", "string"}, {"enum", {"start", "end", "center", "fit"}}}},
+                                {"index", {{"type", "integer"}, {"minimum", 0}}}}}};
 }
 
 Json constraintSchema()

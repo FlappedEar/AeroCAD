@@ -83,6 +83,9 @@ Item {
             if (c.kind === "line" || c.kind === "spline") {
                 out.push({ point: { curve: c.index, point: "start" }, pos: c.points[0] })
                 out.push({ point: { curve: c.index, point: "end" }, pos: c.points[c.points.length - 1] })
+                // The fit points between the ends of a spline (Fusion drags them to reshape it).
+                for (let k = 1; c.kind === "spline" && k + 1 < c.points.length; ++k)
+                    out.push({ point: { curve: c.index, point: "fit", index: k }, pos: c.points[k] })
             } else if (c.kind === "arc") {
                 out.push({ point: { curve: c.index, point: "start" }, pos: c.points[0] })
                 out.push({ point: { curve: c.index, point: "end" }, pos: c.points[2] })
@@ -342,7 +345,8 @@ Item {
         if (ref === "origin")
             return [0, 0]
         for (const c of pointCandidates()) {
-            if (c.point !== "origin" && c.point.curve === ref.curve && c.point.point === (ref.point || "start"))
+            if (c.point !== "origin" && c.point.curve === ref.curve && c.point.point === (ref.point || "start")
+                    && (ref.point !== "fit" || c.point.index === ref.index))
                 return c.pos
         }
         return null

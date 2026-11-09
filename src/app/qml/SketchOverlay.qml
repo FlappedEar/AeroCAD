@@ -241,7 +241,8 @@ Item {
         if (p === null)
             return null
         const self = [from]
-        const now = constraintLayer.pointCandidates().find(c => c.point.curve === ref.curve && c.point.point === ref.point)
+        const now = constraintLayer.pointCandidates().find(c => c.point.curve === ref.curve && c.point.point === ref.point
+                                                               && c.point.index === ref.index)
         if (now)
             self.push(now.pos)
         for (const c of snapPoints.concat([[0, 0]])) {
