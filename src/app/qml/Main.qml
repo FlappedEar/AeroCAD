@@ -1595,6 +1595,9 @@ ApplicationWindow {
                 heatMapPanel.close()
             else if (featureDialog.visible)
                 featureDialog.close()
+            // Scan Tools: Esc first stops picking points (the points stay), then closes.
+            else if (scanPanel.visible && scanPanel.pickMode)
+                scanPanel.pickMode = ""
             else if (scanPanel.visible)
                 scanPanel.close()
             else if (window.pickingSketchPlane)

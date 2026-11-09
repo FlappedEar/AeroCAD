@@ -10,6 +10,7 @@
 #include "aerocad/geometry/Transform.hpp"
 #include "aerocad/io/Import.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <filesystem>
 #include <memory>
@@ -125,6 +126,25 @@ void registerDocumentCommands(CommandRegistry& r)
               }
 
               model::Document& doc = ctx.document;
+              // Names taken from the file are made unique, so importing the same file twice
+              // gives "dome" and "dome (2)" in the Browser (a name passed in `name` is kept as is).
+              if (!params.contains("name")) {
+                  std::vector<std::string> taken;
+                  for (const auto& p : doc.parts())
+                      taken.push_back(p.name);
+                  for (auto& part : newParts) {
+                      const auto used = [&](const std::string& n) {
+                          return std::find(taken.begin(), taken.end(), n) != taken.end();
+                      };
+                      if (used(part.name)) {
+                          int n = 2;
+                          while (used(part.name + " (" + std::to_string(n) + ")"))
+                              ++n;
+                          part.name += " (" + std::to_string(n) + ")";
+                      }
+                      taken.push_back(part.name);
+                  }
+              }
               std::vector<model::PartId> ids;
               for (auto& part : newParts) {
                   part.source = core::pathToUtf8(path);
