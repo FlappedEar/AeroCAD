@@ -2013,4 +2013,16 @@ TEST_CASE("Design commands: sketch edits start from the solved geometry (CAD-216
         const Json bottom = run(s, "sketch.curves", {{"sketch", rid}}).at("curves")[0].at("points");
         CHECK(bottom[1][0].get<double>() - bottom[0][0].get<double>() == Approx(20).margin(1e-6));
     }
+
+    // Codex (#190): a circle written with a diameter and a radius expression (the diameter wins)
+    // whose solved radius equals the expression.
+    run(s, "parameter.set", {{"name", "rr"}, {"expression", "15 mm"}});
+    const Json q = run(s, "sketch.create",
+                       {{"plane", "XY"},
+                        {"curves", Json::array({{{"type", "circle"}, {"center", {200, 0}}, {"diameter", 20}, {"radius", "rr"}}})},
+                        {"constraints", Json::array({{{"type", "radius"}, {"curve", 0}, {"value", 15}}})}});
+    const auto qid = q.at("id").get<std::uint64_t>();
+    run(s, "sketch.add_curves",
+        {{"sketch", qid}, {"curves", Json::array({{{"type", "line"}, {"start", {80, 0}}, {"end", {90, 0}}}})}});
+    CHECK(run(s, "sketch.curves", {{"sketch", qid}}).at("curves")[0].at("radius").get<double>() == Approx(15).margin(1e-6));
 }

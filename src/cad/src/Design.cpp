@@ -1088,7 +1088,7 @@ Json keepExpressions(const Eval& ev, const Json& item, Json out)
         if (out.contains(key))
             restore(restore, value, out[key]);
     }
-    if (has(item, "diameter") && out.contains("radius") && equal(ev.num(item.at("diameter")), 2 * out.at("radius").get<double>())) {
+    if (has(item, "diameter") && out.contains("radius") && equal(ev.num(item.at("diameter")), 2 * ev.num(out.at("radius")))) {
         out.erase("radius");
         out["diameter"] = item.at("diameter");
     }
