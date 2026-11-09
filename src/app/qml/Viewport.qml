@@ -1536,10 +1536,12 @@ Item {
                 return
             }
             const d = p.domainModel, b = p.partModel, f = p.flowModel
-            // Tunnel outline: the 12 edges of the domain box, dashed.
+            // Tunnel outline: the 12 edges of the domain box, dashed; its own corners when
+            // given, so a tunnel turned by a yaw is drawn turned (CAD-188).
             const c = []
             for (let i = 0; i < 8; ++i)
-                c.push(pt(i & 1 ? d.max[0] : d.min[0], i & 2 ? d.max[1] : d.min[1], i & 4 ? d.max[2] : d.min[2]))
+                c.push(p.domainCorners ? pt(p.domainCorners[i][0], p.domainCorners[i][1], p.domainCorners[i][2])
+                                       : pt(i & 1 ? d.max[0] : d.min[0], i & 2 ? d.max[1] : d.min[1], i & 4 ? d.max[2] : d.min[2]))
             ctx.strokeStyle = Theme.accent
             ctx.globalAlpha = 0.55
             ctx.lineWidth = 1.2

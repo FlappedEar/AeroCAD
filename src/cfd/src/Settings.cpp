@@ -90,6 +90,7 @@ Json toJson(const Settings& s)
         {"preset", s.preset},
         {"speed", s.speed},
         {"flowDirection", s.flowDirection},
+        {"yaw", s.yaw},
         {"kinematicViscosity", s.kinematicViscosity},
         {"density", s.density},
         {"turbulenceIntensity", s.turbulenceIntensity},
@@ -140,6 +141,12 @@ Settings settingsFromJson(const Json& j)
         if (!isValidFlowDirection(s.flowDirection))
             throw std::invalid_argument("flowDirection must be one of +X, -X, +Y, -Y");
     }
+    if (j.contains("yaw") && !j.at("yaw").is_null()) {
+        const double yaw = j.at("yaw").get<double>();
+        if (!std::isfinite(yaw) || std::abs(yaw) > 30.0)
+            throw std::invalid_argument("yaw must be between -30 and 30 degrees");
+        s.yaw = yaw;
+    }
     s.kinematicViscosity = positive(j, "kinematicViscosity", s.kinematicViscosity);
     s.density = positive(j, "density", s.density);
     s.turbulenceIntensity = positive(j, "turbulenceIntensity", s.turbulenceIntensity);
@@ -184,6 +191,9 @@ Json settingsSchema()
           {"enum", {"+X", "-X", "+Y", "-Y"}},
           {"description", "Direction the air flows in, model axes (Z up). Default +Y (air hits the side seen in "
                           "the Front view)."}}},
+        {"yaw", num("Yaw (crosswind) in degrees, -30..30 (default 0): the air turns this far counter-clockwise, "
+                    "seen from above, from flowDirection. Forces are in wind axes; a moving floor moves along "
+                    "flowDirection at speed * cos(yaw). Not with rotatingWheels.")},
         {"mesh",
          {{"type", "string"},
           {"enum", {"coarse", "medium", "fine"}},
@@ -227,6 +237,7 @@ std::string describeCondition(const std::string& key, const Json& a, const Json&
         Label{"preset", "Setup preset", "", 1.0},
         Label{"speed", "Air speed", " m/s", 1.0},
         Label{"flowDirection", "Flow direction", "", 1.0},
+        Label{"yaw", "Yaw", "°", 1.0},
         Label{"kinematicViscosity", "Air viscosity", " m²/s", 1.0},
         Label{"density", "Air density", " kg/m³", 1.0},
         Label{"turbulenceIntensity", "Turbulence intensity", " %", 100.0},
@@ -268,11 +279,22 @@ std::vector<std::string> differingConditions(const Json& a, const Json& b)
     // Everything that defines the flow problem. Processes and iterations do not change
     // a converged result, so they are not compared; neither are the reference area and
     // length, which only scale the coefficients (forces in N do not depend on them, CAD-186).
-    static constexpr std::array keys{
-        "preset",         "speed", "flowDirection", "kinematicViscosity", "density",      "turbulenceIntensity",
-        "viscosityRatio", "mesh",  "ground",        "groundMoving",       "groundHeight", "rotatingWheels"};
+    static constexpr std::array keys{"preset",
+                                     "speed",
+                                     "flowDirection",
+                                     "yaw",
+                                     "kinematicViscosity",
+                                     "density",
+                                     "turbulenceIntensity",
+                                     "viscosityRatio",
+                                     "mesh",
+                                     "ground",
+                                     "groundMoving",
+                                     "groundHeight",
+                                     "rotatingWheels"};
     // Runs written before a setting existed used what is now its default.
-    static const Json defaults{{"groundMoving", true}, {"groundHeight", nullptr}, {"rotatingWheels", false}};
+    static const Json defaults{
+        {"groundMoving", true}, {"groundHeight", nullptr}, {"rotatingWheels", false}, {"yaw", 0.0}};
     std::vector<std::string> diff;
     for (const char* key : keys) {
         const Json fallback = defaults.value(key, Json());
