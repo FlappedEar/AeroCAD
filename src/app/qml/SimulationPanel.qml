@@ -1719,6 +1719,33 @@ Pane {
                         text: root.num(root.coefficientArea(parent.s.cd, conditions), 1) + " / "
                               + root.num(root.coefficientArea(parent.s.cl, conditions), 1) + " cm²"
                     }
+                    // Aero balance of a car with two axles of turning wheels (CAD-194), in two short
+                    // rows: one long line would widen the grid and push the panel past its width.
+                    Label {
+                        text: qsTr("Front / rear axle")
+                        opacity: 0.7
+                        Layout.columnSpan: 2
+                        visible: typeof parent.s.frontLiftN === "number"
+                    }
+                    Label {
+                        objectName: "cfdSummaryBalance"
+                        Layout.columnSpan: 2
+                        visible: typeof parent.s.frontLiftN === "number"
+                        text: !visible ? "" : root.num(parent.s.frontLiftN, 3) + " / " + root.num(parent.s.rearLiftN, 3) + " N"
+                    }
+                    Label {
+                        text: qsTr("Aero balance (front)")
+                        opacity: 0.7
+                        Layout.columnSpan: 2
+                        visible: typeof parent.s.frontLiftN === "number"
+                    }
+                    Label {
+                        objectName: "cfdSummaryFrontShare"
+                        Layout.columnSpan: 2
+                        visible: typeof parent.s.frontLiftN === "number"
+                        // No share when one axle is pushed down and the other lifted.
+                        text: typeof parent.s.frontShare === "number" ? root.num(parent.s.frontShare, 1) + " %" : "–"
+                    }
                     Label { text: qsTr("Pressure / friction"); opacity: 0.7; Layout.columnSpan: 2 }
                     Label {
                         Layout.columnSpan: 2
@@ -2015,9 +2042,12 @@ Pane {
                     Repeater {
                         objectName: "cfdAbRows"
                         // Forces, the drag split and the coefficients (B on A's reference area, CAD-171).
+                        // The axle lifts (CAD-194) only when both runs are cars with two axles.
                         model: [["dragN", qsTr("Drag N")], ["liftN", qsTr("Lift N")], ["sideN", qsTr("Side N")],
-                                ["pressureDragN", qsTr("Pressure drag N")], ["viscousDragN", qsTr("Friction drag N")],
-                                ["efficiency", qsTr("L/D")], ["cd", "Cd"], ["cl", "Cl"], ["cs", "Cs"]]
+                                ["pressureDragN", qsTr("Pressure drag N")], ["viscousDragN", qsTr("Friction drag N")]]
+                               .concat(root.comparison && root.comparison.forces && root.comparison.forces.frontLiftN
+                                       ? [["frontLiftN", qsTr("Front axle lift N")], ["rearLiftN", qsTr("Rear axle lift N")]] : [])
+                               .concat([["efficiency", qsTr("L/D")], ["cd", "Cd"], ["cl", "Cl"], ["cs", "Cs"]])
                         delegate: Repeater {
                             id: rowRep
                             required property var modelData

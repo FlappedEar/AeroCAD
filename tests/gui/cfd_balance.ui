@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CAD-194: Results show the aero balance (front / rear axle lift, front share) of a car with two
+# axles of turning wheels; the A/B table adds the axle lift rows when both runs have them.
+# Injected data, no engine.
+Qt.createQmlObject('import QtQuick; Item { objectName: "cfTest"; visible: false; function find(i, name) { if (!i) return null; if (i.objectName === name) return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = find(ch[k], name); if (r) return r } return null } }', window.contentItem)
+ui.wait(800)
+ui.clickText("SIMULATE")
+ui.wait(300)
+ui.clickText("Wind Tunnel")
+ui.wait(800)
+(() => { simulationPanel.tab = 1; simulationPanel.results = { summary: { dragN: 30, liftN: -96, sideN: 0.5, cd: 0.25, cl: -0.8, cs: 0.004, pressureDragN: 24, viscousDragN: 6, iterations: 500, frontLiftN: -40, rearLiftN: -56, frontShare: 41.666 }, finalResults: { available: true, reasons: [] }, quality: { status: "ok", checks: {} }, conditions: { settings: { speed: 40, flowDirection: "+X", mesh: "coarse", ground: true, rotatingWheels: true }, wheels: [{ axle: 0, radiusMm: 150 }, { axle: 1, radiusMm: 160 }], referenceArea: 0.012, openfoam: "2406" }, fields: {}, history: { iteration: [1, 2], cd: [0.3, 0.25], cl: [-0.7, -0.8] } } })()
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const b = t.find(simulationPanel, "cfdSummaryBalance"); const f = t.find(simulationPanel, "cfdSummaryFrontShare"); ui.log("BALANCE " + b.text + " | " + f.text); if (!b.visible || b.text !== "-40.000 / -56.000 N" || f.text !== "41.7 %") ui.fail("balance: " + b.text + " | " + f.text) })()
+ui.clickText("Aero balance (front)")
+# The balance rows must not widen the panel's content past the panel.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const sc = t.find(simulationPanel, "cfdPanelScroll"); const g = t.find(simulationPanel, "cfdSummaryGrid"); ui.log("WIDTH grid " + g.width + " view " + sc.availableWidth); if (g.width > sc.availableWidth + 1) ui.fail("the Results grid is wider than the panel") })()
+ui.shot("cfd-balance-results.png")
+# Front and rear pulling opposite ways: no share; a run without axles: no balance line.
+(() => { const r = JSON.parse(JSON.stringify(simulationPanel.results)); r.summary.frontLiftN = 30.47; r.summary.rearLiftN = -11.58; r.summary.frontShare = null; simulationPanel.results = r })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const b = t.find(simulationPanel, "cfdSummaryBalance"); const f = t.find(simulationPanel, "cfdSummaryFrontShare"); if (b.text !== "30.470 / -11.580 N" || f.text !== "–") ui.fail("balance without share: " + b.text + " | " + f.text) })()
+(() => { const r = JSON.parse(JSON.stringify(simulationPanel.results)); r.summary.frontLiftN = null; r.summary.rearLiftN = null; simulationPanel.results = r })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); if (t.find(simulationPanel, "cfdSummaryBalance").visible) ui.fail("balance shown without axles") })()
+# A/B: the axle rows appear only when the comparison has them.
+(() => { simulationPanel.runs = [{ id: "r2", created: "2026-11-09T02:32:17Z", state: "finished", source: { label: "B", partName: "car" } }, { id: "r1", created: "2026-11-09T02:31:31Z", state: "finished", source: { label: "A", partName: "car" } }]; simulationPanel.comparison = { a: "r1", b: "r2", verdict: "comparable", states: { a: "finished", b: "finished" }, forces: { dragN: { a: 30, b: 31, difference: 1, percent: 3.33 }, liftN: { a: -96, b: -104, difference: -8, percent: -8.33 } }, differingConditions: [], unknownConditions: [], reasons: [], notes: [], meshSensitivity: { status: "not assessed", levels: [] }, quality: { a: { status: "ok" }, b: { status: "ok" } } }; simulationPanel.tab = 2 })()
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const n = t.find(simulationPanel, "cfdAbRows").count; ui.log("ROWS without axles " + n); if (n !== 9) ui.fail("rows without axles: " + n) })()
+(() => { const c = Object.assign({}, simulationPanel.comparison); c.forces = Object.assign({}, c.forces, { frontLiftN: { a: -40, b: -50, difference: -10, percent: -25 }, rearLiftN: { a: -56, b: -54, difference: 2, percent: 3.57 } }); simulationPanel.comparison = c })()
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cfTest"); const n = t.find(simulationPanel, "cfdAbRows").count; ui.log("ROWS with axles " + n); if (n !== 11) ui.fail("rows with axles: " + n) })()
+ui.clickText("Front axle lift N")
+ui.clickText("Rear axle lift N")
+ui.clickText("-25.0")
+ui.shot("cfd-balance-ab.png")
+ui.log("cfd balance done")
