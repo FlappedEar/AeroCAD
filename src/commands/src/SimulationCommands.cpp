@@ -600,6 +600,7 @@ void registerSimulationCommands(CommandRegistry& r)
            "A/B comparison of two runs: drag/lift/side force differences in N and %, efficiency L/D (|lift|/drag), "
            "per force and coefficient the iteration swing of A plus B (noise) and whether the difference is within it "
            "(withinNoise), "
+           "for two cars front/rear axle lift and balance (front share of lift in %, difference in percentage points), "
            "coefficients on a shared reference area, whether the conditions match (settings such as speed, direction, "
            "mesh and preset, and "
            "the resolved setup: surroundings/context geometry, flow domain and engine; unknownConditions lists what an "

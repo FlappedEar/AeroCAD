@@ -304,6 +304,11 @@ Pane {
         // L/D of A and B (CAD-187): a ratio, so never at force noise level.
         if (key === "efficiency")
             return comparison && comparison.efficiency ? comparison.efficiency : null
+        // Front share of lift in % (CAD-197): B − A in percentage points, no % of a %.
+        if (key === "balance")
+            return comparison && comparison.balance
+                   ? { a: comparison.balance.a, b: comparison.balance.b, difference: comparison.balance.difference,
+                       percent: null, withinNoise: false } : null
         const coefficient = ["cd", "cl", "cs"].indexOf(key) >= 0
         const src = !comparison ? null : coefficient ? comparison.coefficientsOnReferenceAreaOfA : comparison.forces
         const d = src && src[key] ? src[key] : null
@@ -2047,6 +2052,7 @@ Pane {
                                 ["pressureDragN", qsTr("Pressure drag N")], ["viscousDragN", qsTr("Friction drag N")]]
                                .concat(root.comparison && root.comparison.forces && root.comparison.forces.frontLiftN
                                        ? [["frontLiftN", qsTr("Front axle lift N")], ["rearLiftN", qsTr("Rear axle lift N")]] : [])
+                               .concat(root.comparison && root.comparison.balance ? [["balance", qsTr("Balance front %")]] : [])
                                .concat([["efficiency", qsTr("L/D")], ["cd", "Cd"], ["cl", "Cl"], ["cs", "Cs"]])
                         delegate: Repeater {
                             id: rowRep
@@ -2054,7 +2060,8 @@ Pane {
                             readonly property var d: root.abRow(modelData[0])
                             model: 5
                             // Coefficients to 4 decimals, so a change of a few drag counts shows.
-                            readonly property int digits: modelData[0].endsWith("N") ? 3 : modelData[0] === "efficiency" ? 2 : 4
+                            readonly property int digits: modelData[0].endsWith("N") ? 3
+                                                          : modelData[0] === "efficiency" ? 2 : modelData[0] === "balance" ? 1 : 4
                             delegate: Label {
                                 required property int index
                                 font.bold: index === 3
@@ -2064,6 +2071,7 @@ Pane {
                                     : index === 1 ? root.num(rowRep.d.a, rowRep.digits)
                                     : index === 2 ? root.num(rowRep.d.b, rowRep.digits)
                                     : index === 3 ? (rowRep.d.difference >= 0 ? "+" : "") + root.num(rowRep.d.difference, rowRep.digits)
+                                                    + (rowRep.modelData[0] === "balance" ? " pp" : "")
                                     : rowRep.d.withinNoise ? qsTr("noise")
                                     : rowRep.d.percent === null ? "–"
                                     : Math.abs(rowRep.d.percent) < 0.05 ? "0.0" // not "-0.0"

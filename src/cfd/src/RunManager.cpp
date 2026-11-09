@@ -1533,6 +1533,8 @@ std::size_t RunManager::exportComparisonCsv(const std::string& a, const std::str
          {std::pair{"frontLiftN", "Front axle lift (N)"}, std::pair{"rearLiftN", "Rear axle lift (N)"}})
         if (forces.contains(key))
             table(name, forces.at(key));
+    if (cmp.contains("balance"))
+        table("Aero balance front (%; B - A in percentage points)", cmp.at("balance"));
     table("Efficiency L/D", cmp.value("efficiency", Json()));
     const Json coeffs = cmp.value("coefficientsOnReferenceAreaOfA", Json::object());
     for (const auto& [key, name] :
@@ -2212,6 +2214,12 @@ Json RunManager::compare(const std::string& a, const std::string& b)
         e["percent"] = *ea > 1e-12 ? Json(100.0 * (*eb - *ea) / *ea) : Json(nullptr);
         j["efficiency"] = std::move(e);
     }
+    // Aero balance shift (CAD-197): the front share of lift in % of each run and B − A in
+    // percentage points; only when both runs have a balance (cars with two axles).
+    if (const Json fa = sa.value("frontShare", Json()), fb = sb.value("frontShare", Json());
+        fa.is_number() && fb.is_number())
+        j["balance"] = {
+            {"a", fa}, {"b", fb}, {"difference", fb.get<double>() - fa.get<double>()}, {"percent", nullptr}};
     // Coefficients of B on A's reference area, so Cd/Cl compare like the forces do.
     Json coeffs = Json::object();
     for (const char* key : {"cd", "cl", "cs"}) {
