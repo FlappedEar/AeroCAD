@@ -779,7 +779,7 @@ TEST_CASE("Fine real shape the fit smooths away is not called scan noise", "[geo
             v.push_back({static_cast<double>(i), static_cast<double>(j),
                          0.5 * std::sin(2.0 * std::numbers::pi * i / 3.0)});
     std::vector<core::TriangleMesh::Triangle> t;
-    const auto idx = [n](int i, int j) { return static_cast<std::uint32_t>(j * (n + 1) + i); };
+    const auto idx = [](int i, int j) { return static_cast<std::uint32_t>(j * (n + 1) + i); };
     for (int j = 0; j < n; ++j)
         for (int i = 0; i < n; ++i) {
             t.push_back({idx(i, j), idx(i + 1, j), idx(i + 1, j + 1)});
