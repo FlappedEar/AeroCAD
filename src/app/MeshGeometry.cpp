@@ -20,6 +20,25 @@ static_assert(sizeof(aerocad::core::TriangleMesh::Triangle) == 3 * sizeof(quint3
 
 namespace aerocad::app {
 
+namespace {
+
+/// Runs work(first, end) over [0, count) on up to 8 threads (this one included).
+template <typename Work>
+void parallelFor(qsizetype count, const Work& work)
+{
+    constexpr qsizetype kMinPerThread = 20000;
+    const qsizetype chunks = std::clamp<qsizetype>(static_cast<qsizetype>(std::thread::hardware_concurrency()), 1,
+                                                   std::min<qsizetype>(8, std::max<qsizetype>(1, count / kMinPerThread)));
+    std::vector<std::thread> threads;
+    for (qsizetype c = 1; c < chunks; ++c)
+        threads.emplace_back([&work, count, c, chunks] { work(count * c / chunks, count * (c + 1) / chunks); });
+    work(0, count / chunks);
+    for (auto& th : threads)
+        th.join();
+}
+
+} // namespace
+
 MeshGeometry::MeshGeometry(QQuick3DObject* parent) : QQuick3DGeometry(parent) {}
 
 void MeshGeometry::setController(AppController* controller)
@@ -112,14 +131,7 @@ bool MeshGeometry::moveBuilt(const std::shared_ptr<const core::TriangleMesh>& di
             }
         }
     };
-    const qsizetype triangles = vertexCount / 3;
-    const qsizetype chunks = std::clamp<qsizetype>(static_cast<qsizetype>(std::thread::hardware_concurrency()), 1, 8);
-    std::vector<std::thread> threads;
-    for (qsizetype c = 1; c < chunks; ++c)
-        threads.emplace_back(work, triangles * c / chunks, triangles * (c + 1) / chunks);
-    work(0, triangles / chunks);
-    for (auto& th : threads)
-        th.join();
+    parallelFor(vertexCount / 3, work);
     setVertexData(buffer);
     const core::BoundingBox box = display->bounds();
     setBounds(QVector3D(static_cast<float>(box.min.x), static_cast<float>(box.min.y), static_cast<float>(box.min.z)),
@@ -181,14 +193,39 @@ void MeshGeometry::rebuild()
         // Its vertices are averages over the cells of a grid, so flat normals show bands
         // where the surface crosses a grid plane (lines that are not on the scan); averaged
         // normals draw it as the full scan looks (core::smoothCornerNormals).
-        const std::vector<core::Vec3> normals = core::smoothCornerNormals(mesh);
         const qsizetype vertexCount = static_cast<qsizetype>(mesh.triangleCount()) * 3;
+        // Normally computed with the reduced mesh on its worker thread.
+        std::shared_ptr<const std::vector<float>> given =
+            ScanController::instance() != nullptr ? ScanController::instance()->takeDisplayNormals(display) : nullptr;
+        if (!given || static_cast<qsizetype>(given->size()) != vertexCount * 3) {
+            const std::vector<core::Vec3> smooth = core::smoothCornerNormals(mesh);
+            auto packed = std::make_shared<std::vector<float>>(smooth.size() * 3);
+            for (std::size_t i = 0; i < smooth.size(); ++i) {
+                (*packed)[3 * i] = static_cast<float>(smooth[i].x);
+                (*packed)[3 * i + 1] = static_cast<float>(smooth[i].y);
+                (*packed)[3 * i + 2] = static_cast<float>(smooth[i].z);
+            }
+            given = std::move(packed);
+        }
         QByteArray buffer(vertexCount * floatsPerVertex * static_cast<qsizetype>(sizeof(float)), Qt::Uninitialized);
         auto* out = reinterpret_cast<float*>(buffer.data());
-        std::size_t corner = 0;
-        for (const auto& tri : mesh.triangles())
-            for (const std::uint32_t vi : tri)
-                put(out, vertices[vi], normals[corner++]);
+        const float* normals = given->data();
+        const auto& tris = mesh.triangles();
+        parallelFor(static_cast<qsizetype>(tris.size()), [&](qsizetype first, qsizetype end) {
+            for (qsizetype t = first; t < end; ++t) {
+                for (qsizetype k = 0; k < 3; ++k) {
+                    const core::Vec3& v = vertices[tris[static_cast<std::size_t>(t)][static_cast<std::size_t>(k)]];
+                    float* o = out + (t * 3 + k) * floatsPerVertex;
+                    o[0] = static_cast<float>(v.x);
+                    o[1] = static_cast<float>(v.y);
+                    o[2] = static_cast<float>(v.z);
+                    const float* n = normals + (t * 3 + k) * 3;
+                    o[3] = n[0];
+                    o[4] = n[1];
+                    o[5] = n[2];
+                }
+            }
+        });
         setVertexData(buffer);
     } else if (part->shape) {
         // Tessellated B-rep: vertices are shared only within a face, so averaged vertex
@@ -218,11 +255,15 @@ void MeshGeometry::rebuild()
         const qsizetype vertexCount = static_cast<qsizetype>(mesh.triangleCount()) * 3;
         QByteArray buffer(vertexCount * floatsPerVertex * static_cast<qsizetype>(sizeof(float)), Qt::Uninitialized);
         auto* out = reinterpret_cast<float*>(buffer.data());
-        for (std::size_t t = 0; t < mesh.triangleCount(); ++t) {
-            const core::Vec3 n = mesh.faceNormal(t);
-            for (const std::uint32_t vi : mesh.triangles()[t])
-                put(out, vertices[vi], n);
-        }
+        const auto& tris = mesh.triangles();
+        parallelFor(static_cast<qsizetype>(tris.size()), [&](qsizetype first, qsizetype end) {
+            float* o = out + first * 3 * floatsPerVertex;
+            for (qsizetype t = first; t < end; ++t) {
+                const core::Vec3 n = mesh.faceNormal(static_cast<std::size_t>(t));
+                for (const std::uint32_t vi : tris[static_cast<std::size_t>(t)])
+                    put(o, vertices[vi], n);
+            }
+        });
         setVertexData(buffer);
     }
 

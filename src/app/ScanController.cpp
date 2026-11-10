@@ -506,15 +506,29 @@ std::shared_ptr<const core::TriangleMesh> ScanController::displayMesh(const mode
     QThread* worker = QThread::create([self, id, source, budget] {
         auto mesh = std::make_shared<const core::TriangleMesh>(
             core::decimateToTarget(*source, static_cast<std::size_t>(budget)));
+        // The normals the viewport draws it with, here and not on the UI thread (0.1-0.2 s
+        // for a million triangles).
+        std::shared_ptr<const std::vector<float>> normals;
+        if (mesh.get() != source.get()) {
+            const std::vector<core::Vec3> smooth = core::smoothCornerNormals(*mesh);
+            auto packed = std::make_shared<std::vector<float>>(smooth.size() * 3);
+            for (std::size_t i = 0; i < smooth.size(); ++i) {
+                (*packed)[3 * i] = static_cast<float>(smooth[i].x);
+                (*packed)[3 * i + 1] = static_cast<float>(smooth[i].y);
+                (*packed)[3 * i + 2] = static_cast<float>(smooth[i].z);
+            }
+            normals = std::move(packed);
+        }
         QMetaObject::invokeMethod(
             QCoreApplication::instance(),
-            [self, id, source, budget, mesh] {
+            [self, id, source, budget, mesh, normals] {
                 if (!self)
                     return;
                 auto entry = self->m_lods.find(id);
                 if (entry == self->m_lods.end() || entry->source != source || entry->budget != budget)
                     return; // stale (mesh changed or budget changed meanwhile)
                 entry->mesh = mesh;
+                entry->normals = normals;
                 self->rememberLod(source, budget, mesh);
                 emit self->displayMeshReady(id);
             },
@@ -522,6 +536,16 @@ std::shared_ptr<const core::TriangleMesh> ScanController::displayMesh(const mode
     });
     connect(worker, &QThread::finished, worker, &QObject::deleteLater);
     worker->start(QThread::LowPriority);
+    return nullptr;
+}
+
+std::shared_ptr<const std::vector<float>>
+ScanController::takeDisplayNormals(const std::shared_ptr<const core::TriangleMesh>& mesh)
+{
+    for (auto it = m_lods.begin(); it != m_lods.end(); ++it) {
+        if (it->mesh == mesh && it->normals)
+            return std::exchange(it->normals, nullptr);
+    }
     return nullptr;
 }
 
