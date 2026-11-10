@@ -36,6 +36,11 @@ signals:
 
 private:
     void rebuild();
+    /// Moves the uploaded corners when `display` is the built mesh after one affine
+    /// transform (a moved, turned or scaled scan). False when it is not; nothing changes then.
+    bool moveBuilt(const std::shared_ptr<const core::TriangleMesh>& display);
+    /// Smaller meshes are simply built again.
+    static constexpr std::size_t kMoveInPlaceTriangles = 50000;
     void onPartChanged(quint64 id);
 
     QPointer<AppController> m_controller;
