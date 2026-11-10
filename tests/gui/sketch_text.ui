@@ -1,0 +1,36 @@
+# CAD-263: Sketch Text (Fusion: Create > Text) with real clicks: CREATE > Text on the ribbon,
+# click where the text starts, type it, move the cursor for the height and Enter. The letters
+# are profiles with their holes: "O8" gives two. A second text with the height fixed by a
+# second click and typed afterwards, standing at an angle.
+# Run: AeroCAD --ui-script <this file>
+Qt.createQmlObject('import QtQuick; Item { objectName: "txTest"; visible: false; function at(q) { const o = viewport.sketchOverlay; const p = o.toScreen(q); return o.mapToItem(null, p.x, p.y) } function clickAt(q) { const w = at(q); ui.move(w.x, w.y); ui.wait(80); ui.click(w.x, w.y); ui.wait(150) } function moveTo(q) { const w = at(q); ui.move(w.x, w.y); ui.wait(150) } function sketch() { return controller.execute("sketch.curves", { sketch: activeSketch.id }).result } }', window.contentItem)
+ui.wait(800)
+(() => { window.createSketch({ plane: "XY" }); if (!window.activeSketch) ui.fail("no sketch") })()
+ui.wait(800)
+(() => { viewport.restoreCameraState({ pivot: [30, 10, 0], pitch: -90, yaw: 0, distance: 160, orthographic: false }) })()
+ui.wait(400)
+(() => { if (!ui.clickText("CREATE")) ui.fail("no CREATE menu on the ribbon") })()
+ui.wait(400)
+(() => { if (!ui.clickText("Text")) ui.fail("no Text in the CREATE menu") })()
+ui.wait(300)
+(() => { if (sketchTool !== "text") ui.fail("Text did not start: " + sketchTool) })()
+# Click the start, then the cursor 20 to its right: 20 mm tall, level; typing goes to the text field.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "txTest"); t.clickAt([-10, -25]); t.moveTo([10, -25]) })()
+ui.type("O8 Rev")
+ui.shot("build/sketch-text-preview.png")
+ui.key("Return")
+ui.wait(800)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "txTest"); const c = t.sketch().curves; ui.log("curves " + JSON.stringify(c.map(k => [k.kind, k.text, k.points, k.height, k.angle]))); if (c.length !== 1 || c[0].kind !== "text") ui.fail("expected one text"); else if (c[0].text !== "O8 Rev" || Math.abs(c[0].height - 20) > 0.05 || Math.abs(c[0].angle) > 0.5) ui.fail("not the text clicked: " + JSON.stringify([c[0].text, c[0].height, c[0].angle])); else if (!c[0].outlines || c[0].outlines.length < 6) ui.fail("no letter outlines") })()
+(() => { const n = controller.execute("sketch.profiles", { sketch: activeSketch.id }).result.profiles.length; ui.log("profiles " + n); if (n !== 5) ui.fail("O, 8, R, e, v should be 5 profiles, got " + n) })()
+# A second text: click the start, a second click fixes the height 10 and the angle 0, then type.
+(() => { window.sketchTool_("text") })()
+ui.wait(200)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "txTest"); t.clickAt([20, 5]); t.clickAt([30, 5]) })()
+ui.type("AeroCAD 1")
+ui.key("Return")
+ui.wait(800)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "txTest"); const c = t.sketch().curves; ui.log("second " + JSON.stringify([c[1].text, c[1].points, c[1].height, c[1].angle])); if (c.length !== 2 || c[1].text !== "AeroCAD 1" || Math.abs(c[1].height - 10) > 0.05 || Math.abs(c[1].angle) > 0.5) ui.fail("the second text is not 10 mm level") })()
+ui.shot("/mnt/project-files/ux/sketch-text.png")
+# Extruded: the letters stand up with their holes open.
+(() => { const r = controller.execute("feature.extrude", { sketch: activeSketch.id, distance: 2 }); if (!r.ok) ui.fail("extrude: " + r.error); else ui.log("extruded volume " + r.result.bodies[r.result.bodies.length - 1].volume) })()
+ui.log("Sketch Text OK")

@@ -416,6 +416,14 @@ Item {
             if (list.indexOf(c.index) < 0)
                 continue
             const r = c.kind === "circle" ? c.radius : 0
+            if (c.kind === "text" && c.outlines && c.outlines.length > 0) {
+                for (const line of c.outlines)
+                    for (const p of line) {
+                        lo = [Math.min(lo[0], p[0]), Math.min(lo[1], p[1])]
+                        hi = [Math.max(hi[0], p[0]), Math.max(hi[1], p[1])]
+                    }
+                continue
+            }
             for (const p of (c.kind === "ellipse" || c.kind === "elliptical_arc" || c.kind === "conic") && c.samples ? c.samples : c.points) {
                 lo = [Math.min(lo[0], p[0] - r), Math.min(lo[1], p[1] - r)]
                 hi = [Math.max(hi[0], p[0] + r), Math.max(hi[1], p[1] + r)]
@@ -443,6 +451,8 @@ Item {
             out.center = f(c.center)
         if (c.samples)
             out.samples = c.samples.map(f)
+        if (c.outlines)
+            out.outlines = c.outlines.map(line => line.map(f))
         if (c.radius !== undefined)
             out.radius = c.radius * k
         return out
@@ -919,6 +929,19 @@ Item {
             canvas.requestPaint()
             return
         }
+        if (tool === "text") {
+            // Fusion: Text. Click where it starts, type the text, Enter (the cursor's distance
+            // and direction set the height and angle); a second click fixes those first.
+            if (points.length === 0) {
+                points = [p]
+            } else if (dist(points[0], p) >= 1e-9) {
+                points = [points[0], p]
+                if (dimension.text.trim().length > 0)
+                    finishText(dimension.text)
+            }
+            canvas.requestPaint()
+            return
+        }
         const pts = points.concat([p])
         if (tool === "spline") {
             // As in Fusion: a click on the first point closes the spline; a second click
@@ -959,8 +982,28 @@ Item {
         canvas.requestPaint()
     }
 
+    /// Places the text typed: from the start clicked, the height and angle from the second
+    /// click or the cursor (5 mm, level, when there is none).
+    function finishText(str) {
+        if (points.length === 0 || str.trim().length === 0)
+            return
+        const a = points[0]
+        const tip = points.length >= 2 ? points[1] : hover
+        const h = tip !== null ? dist(a, tip) : 0
+        const level = h < 1e-9
+        emitCurve({ type: "text", at: a, text: str, height: level ? 5 : round6(h),
+                    angle: level ? 0 : round6(Math.atan2(tip[1] - a[1], tip[0] - a[0]) * 180 / Math.PI) })
+        points = []
+        dimension.text = ""
+        canvas.requestPaint()
+    }
+
     /// Applies a typed dimension to the curve being drawn.
     function applyDimension(text) {
+        if (tool === "text") {
+            finishText(text)
+            return
+        }
         const parts = text.split(",").map(s => s.trim()).filter(s => s.length > 0)
         if (parts.length === 0 || points.length === 0 || hover === null)
             return
@@ -1095,6 +1138,22 @@ Item {
             ctx.beginPath()
             ctx.arc(q.x, q.y, Math.max(3, ctx.lineWidth + 1), 0, 2 * Math.PI)
             ctx.stroke()
+            return
+        }
+        if (c.kind === "text") {
+            // The letters' outlines (several closed polylines); the baseline when the font
+            // could not be read.
+            ctx.setLineDash(c.construction ? [6, 4] : [])
+            const lines = c.outlines && c.outlines.length > 0 ? c.outlines : [c.points]
+            for (const line of lines) {
+                ctx.beginPath()
+                for (let i = 0; i < line.length; ++i) {
+                    const q = toScreen(line[i])
+                    if (i === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y)
+                }
+                ctx.stroke()
+            }
+            ctx.setLineDash([])
             return
         }
         let uv = []
@@ -1312,8 +1371,12 @@ Item {
             if (p !== null)
                 root.click(p)
             // Keep keyboard focus here so tool shortcuts (L, R, C, E) keep working;
-            // typing a number moves to the dimension field (Keys.onPressed below).
-            root.forceActiveFocus()
+            // typing a number moves to the dimension field (Keys.onPressed below). Text is
+            // typed right away, so its field takes the focus after the first click.
+            if (root.tool === "text" && root.points.length > 0)
+                dimension.forceActiveFocus()
+            else
+                root.forceActiveFocus()
         }
     }
 
@@ -1469,7 +1532,7 @@ Item {
                         const q = root.toScreen(uv[i])
                         if (i === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y)
                     }
-                } else if (root.tool === "line" || (pts.length === 2 && (root.tool === "arc" || root.tool === "slot" || root.tool === "circle_3point"
+                } else if (root.tool === "line" || root.tool === "text" || (pts.length === 2 && (root.tool === "arc" || root.tool === "slot" || root.tool === "circle_3point"
                                                                           || root.tool === "rectangle_3point" || root.tool === "ellipse"
                                                                           || root.tool === "conic"))) {
                     ctx.moveTo(s[0].x, s[0].y)
@@ -1616,6 +1679,8 @@ Item {
                     text = Preferences.formatLength(2 * Math.abs(b[0] - a[0]), Preferences.lengthUnit) + " × " + Preferences.formatLength(2 * Math.abs(b[1] - a[1]), Preferences.lengthUnit)
                 else if (root.tool === "center_arc")
                     text = "R " + Preferences.formatLength(root.dist(a, b), Preferences.lengthUnit)
+                else if (root.tool === "text")
+                    text = qsTr("Height") + " " + Preferences.formatLength(root.dist(a, b), Preferences.lengthUnit)
                 else if (root.tool === "conic")
                     text = pts.length >= 3 ? "ρ " + Number(root.typedRho !== null ? root.typedRho : 0.5).toFixed(2)
                                            : Preferences.formatLength(root.dist(a, b), Preferences.lengthUnit)
@@ -1707,6 +1772,7 @@ Item {
                     : root.tool === "circle_2point" ? qsTr("2-point circle: click both ends of a diameter; type the diameter")
                     : root.tool === "circle_3point" ? qsTr("3-point circle: click three points on the circle")
                     : root.tool === "ellipse" ? qsTr("Ellipse: click the centre, the end of the major axis, then a point for the minor radius; type each radius")
+                    : root.tool === "text" ? qsTr("Text: click the start, type the text, Enter (cursor distance = height, direction = angle)")
                     : root.tool === "conic" ? qsTr("Conic curve: click the start, the end, then the apex it bends towards; type rho (0 to 1, 0.5 is a parabola)")
                     : root.tool === "arc" ? qsTr("Arc: click start, end, then a point on the arc")
                     : root.tool === "polygon" ? qsTr("Polygon: click centre and a corner; type the radius")
@@ -1753,6 +1819,7 @@ Item {
                             : root.tool === "center_arc" ? qsTr("Radius") : root.tool === "line" ? qsTr("Length")
                             : root.tool === "ellipse" ? (root.points.length >= 2 ? qsTr("Minor radius") : qsTr("Major radius"))
                             : root.tool === "conic" ? (root.points.length >= 2 ? qsTr("Rho") : qsTr("Length"))
+                            : root.tool === "text" ? qsTr("Text")
                             : root.tool === "circle_2point" ? qsTr("Diameter")
                             : root.tool === "rectangle_3point" ? (root.points.length >= 2 ? qsTr("Height") : qsTr("Length"))
                             : root.tool === "offset" ? qsTr("Distance")
@@ -1763,7 +1830,8 @@ Item {
                     objectName: "sketchDimension"
                     Layout.preferredWidth: 140
                     placeholderText: root.tool === "scale" ? qsTr("e.g. 2 or 0.5")
-                                     : root.tool === "conic" && root.points.length >= 2 ? qsTr("0 to 1, e.g. 0.5") : qsTr("e.g. 40 or w/2")
+                                     : root.tool === "conic" && root.points.length >= 2 ? qsTr("0 to 1, e.g. 0.5")
+                                     : root.tool === "text" ? qsTr("e.g. Rev 2") : qsTr("e.g. 40 or w/2")
                     // onTextChanged: the first digit is put here by the overlay's key handler.
                     onTextChanged: {
                         if (root.tool === "conic" && root.points.length >= 2) {

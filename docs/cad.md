@@ -148,7 +148,7 @@ Sketch curves: `line {start, end}`, `rectangle {corner, width, height | opposite
 `spline {points, closed?}`, `point {at}`,
 `ellipse {center, major_radius, minor_radius, angle?}`,
 `elliptical_arc {center, major_radius, minor_radius, angle?, start_angle, end_angle}`,
-`conic {start, end, apex, rho?}`; any curve can be `construction: true`. Curves are split at
+`conic {start, end, apex, rho?}`, `text {at, text, height?, angle?, font?, bold?, italic?}`; any curve can be `construction: true`. Curves are split at
 intersections, so a circle inside a rectangle gives two profiles (ring and disk).
 
 An `ellipse` (Fusion: Create › Ellipse; ribbon CREATE menu or Sketch menu) is drawn by
@@ -184,6 +184,21 @@ reshapes it). `tangent` between a conic and a line puts the apex on that line at
 end nearer the line; tangent to an arc or circle is refused. Move, copy, scale (rho stays),
 mirror and patterns keep it a conic, Offset gives a spline, and other curves trim, break and
 extend at it; Trim, Break and Extend of the conic itself, Fillet and Chamfer refuse it.
+
+A `text` (Fusion: Create › Text; ribbon CREATE menu or Sketch menu) places the letters of a
+font on the sketch: `at` is where the baseline starts, `height` the size in mm (default 5),
+`angle` the direction of the baseline in degrees, `font` a family name (default: the system
+sans-serif) with `bold` and `italic`. Each letter is one profile with its holes (the inside of
+an O or an 8 stays open, so extruding the sketch gives the letters), ordered with the other
+profiles; construction text bounds none. In the GUI click where it starts, type the text and
+press Enter: the distance and direction from the start to the cursor (or to a second click
+before typing) set the height and angle. In `sketch.curves` it has `points` [start of the
+baseline, the point one height along it], `text`, `font`, `bold`, `italic`, `height`, `angle`
+and `outlines` (the letters' outlines as polylines, for drawing and picking). Its points for
+constraints are `start` and `end` (the second one gives height and angle), so Move, copy and
+scale keep it text. Mirror, Offset, Trim, Break, Extend, Fillet and Chamfer refuse it. It needs
+Open CASCADE's font support (Linux: `libocct-visualization-dev`) and a system font; a build
+without them refuses text with an error.
 
 A `point` (Fusion: Create › Point, the Point tool in the sketch CREATE menu) is a sketch point:
 it has no edge and bounds no profile, and is drawn as a small cross (a dot while editing). It

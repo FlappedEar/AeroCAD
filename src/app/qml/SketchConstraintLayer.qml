@@ -104,6 +104,10 @@ Item {
                 out.push({ point: { curve: c.index, point: "start" }, pos: c.points[0] })
                 out.push({ point: { curve: c.index, point: "end" }, pos: c.points[3] })
                 out.push({ point: { curve: c.index, point: "center" }, pos: c.points[1] })
+            } else if (c.kind === "text") {
+                // Where it starts and the point a height along its baseline.
+                out.push({ point: { curve: c.index, point: "start" }, pos: c.points[0] })
+                out.push({ point: { curve: c.index, point: "end" }, pos: c.points[1] })
             } else if (c.kind === "conic") {
                 out.push({ point: { curve: c.index, point: "start" }, pos: c.points[0] })
                 out.push({ point: { curve: c.index, point: "end" }, pos: c.points[2] })
@@ -130,6 +134,14 @@ Item {
     function curveDistance(p, c) {
         if (c.kind === "point")
             return dist(p, c.points[0])
+        if (c.kind === "text") {
+            // Along the letters' outlines.
+            let best = Infinity
+            for (const line of c.outlines || [])
+                for (let i = 0; i + 1 < line.length; ++i)
+                    best = Math.min(best, segmentDistance(p, line[i], line[i + 1]))
+            return best === Infinity ? dist(p, c.points[0]) : best
+        }
         if (c.kind === "line")
             return segmentDistance(p, c.points[0], c.points[1])
         if (c.kind === "circle")
@@ -415,6 +427,8 @@ Item {
             return [c.points[0][0] + c.radius * 0.707, c.points[0][1] + c.radius * 0.707]
         if (c.kind === "arc")
             return c.points[1]
+        if (c.kind === "text")
+            return c.points[0]
         if (c.kind === "ellipse" && c.samples)
             return c.samples[Math.floor(c.samples.length / 8)]
         if ((c.kind === "elliptical_arc" || c.kind === "conic") && c.samples)
@@ -482,6 +496,17 @@ Item {
     }
 
     function drawCurve(ctx, c) {
+        if (c.kind === "text") {
+            for (const line of c.outlines || []) {
+                ctx.beginPath()
+                line.forEach((p, i) => {
+                    const q = overlay.toScreen(p)
+                    if (i === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y)
+                })
+                ctx.stroke()
+            }
+            return
+        }
         ctx.beginPath()
         if (c.kind === "circle" || c.kind === "arc") {
             const ctr = curveCenter(c), r = curveRadius(c)
