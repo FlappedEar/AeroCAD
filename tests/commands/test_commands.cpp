@@ -13,6 +13,7 @@
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <array>
 #include <cmath>
 
 #include <filesystem>
@@ -1732,4 +1733,51 @@ TEST_CASE("project.get_context says what each part is and which feature made it"
     const auto& part = r.data.at("parts").at(0);
     CHECK(part.at("kind") == "body");
     CHECK(part.at("featureId") == 1);
+}
+
+TEST_CASE("Scan to Solid names scan noise as the reason for a missed tolerance (CAD-264)", "[commands][fit]")
+{
+    // A flat scan with 0.15 mm noise: no surface stays within 0.25 mm of every point, and
+    // smaller patches would not help. The warning must say so instead of "select a smaller region".
+    const auto path = std::filesystem::temp_directory_path() / "aerocad_noisy_plane.stl";
+    {
+        std::mt19937 rng(7);
+        std::normal_distribution<double> noise(0.0, 0.15);
+        constexpr int n = 90;
+        std::vector<std::array<double, 3>> v;
+        for (int j = 0; j <= n; ++j)
+            for (int i = 0; i <= n; ++i)
+                v.push_back({i * 1.0, j * 1.0, noise(rng)});
+        std::ofstream out(path);
+        out << "solid noisy\n";
+        auto tri = [&](int a, int b, int c) {
+            out << "facet normal 0 0 1\nouter loop\n";
+            for (const int k : {a, b, c})
+                out << "vertex " << v[static_cast<std::size_t>(k)][0] << ' ' << v[static_cast<std::size_t>(k)][1] << ' '
+                    << v[static_cast<std::size_t>(k)][2] << '\n';
+            out << "endloop\nendfacet\n";
+        };
+        for (int j = 0; j < n; ++j)
+            for (int i = 0; i < n; ++i) {
+                const int a = j * (n + 1) + i;
+                tri(a, a + 1, a + n + 2);
+                tri(a, a + n + 2, a + n + 1);
+            }
+        out << "endsolid noisy\n";
+    }
+    commands::Session session;
+    auto scan = session.execute("document.import", {{"path", path.string()}});
+    REQUIRE(scan.ok);
+    const auto id = scan.data.at("id").get<model::PartId>();
+    auto r = session.execute("surface.fit_regions", {{"id", id}, {"tolerance", 0.25}});
+    INFO(r.toJson().dump());
+    REQUIRE(r.ok);
+    const auto& patches = r.data.at("fit").at("patches");
+    CHECK(patches.size() == 1); // not split again and again
+    CHECK(patches.at(0).at("noiseLimited") == true);
+    const auto& warnings = r.data.at("warnings");
+    REQUIRE_FALSE(warnings.empty());
+    CHECK(warnings.back().get<std::string>().find("scan noise") != std::string::npos);
+    CHECK(warnings.back().get<std::string>().find("1 of 1 patches") != std::string::npos);
+    std::filesystem::remove(path);
 }

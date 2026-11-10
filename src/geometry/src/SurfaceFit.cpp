@@ -1183,6 +1183,70 @@ int cutHoles(TopoDS_Face& face, const std::vector<TopoDS_Wire>& holes, std::vect
     return cut;
 }
 
+/// True when the signed residuals of a fit (NaN: not measured) look like scan noise: a
+/// vertex's residual is uncorrelated with the mean residual of the vertices `firstRing` to
+/// `firstRing` + 3 edges away. A fit follows noise within about one control cell (its
+/// residuals are anticorrelated there), so the rings start beyond that. Real shape the fit
+/// smoothed away (fine ridges, a bump) is correlated at some of those distances, in either
+/// sign, as is a surface that misses the shape. Too few pairs to judge counts as not noise.
+bool residualLooksLikeNoise(const std::vector<double>& residual, const std::vector<std::vector<std::uint32_t>>& adj,
+                            int firstRing)
+{
+    constexpr int rings = 4;
+    const int lastRing = firstRing + rings - 1;
+    std::array<double, rings> ab{}, aa{}, bb{};
+    std::array<std::size_t, rings> pairs{};
+    std::vector<std::uint32_t> mark(adj.size(), 0);
+    std::uint32_t stamp = 0;
+    std::vector<std::uint32_t> ring, next;
+    std::size_t known = 0;
+    for (const double r : residual)
+        known += std::isnan(r) ? 0 : 1;
+    const std::size_t step = std::max<std::size_t>(1, known / 2000);
+    std::size_t seenKnown = 0;
+    for (std::uint32_t v = 0; v < adj.size(); ++v) {
+        if (std::isnan(residual[v]) || (seenKnown++ % step) != 0)
+            continue;
+        ++stamp;
+        mark[v] = stamp;
+        ring.assign(1, v);
+        for (int r = 1; r <= lastRing; ++r) {
+            next.clear();
+            for (const auto u : ring)
+                for (const auto w : adj[u])
+                    if (mark[w] != stamp) {
+                        mark[w] = stamp;
+                        next.push_back(w);
+                    }
+            if (r >= firstRing) {
+                double sum = 0.0;
+                std::size_t n = 0;
+                for (const auto w : next)
+                    if (!std::isnan(residual[w])) {
+                        sum += residual[w];
+                        ++n;
+                    }
+                if (n >= 3) {
+                    const auto k = static_cast<std::size_t>(r - firstRing);
+                    const double m = sum / static_cast<double>(n);
+                    ab[k] += residual[v] * m;
+                    aa[k] += residual[v] * residual[v];
+                    bb[k] += m * m;
+                    ++pairs[k];
+                }
+            }
+            ring.swap(next);
+        }
+    }
+    for (std::size_t k = 0; k < static_cast<std::size_t>(rings); ++k) {
+        if (pairs[k] < 200 || !(aa[k] > 0.0) || !(bb[k] > 0.0))
+            return false;
+        if (std::abs(ab[k] / std::sqrt(aa[k] * bb[k])) > 0.3)
+            return false;
+    }
+    return true;
+}
+
 } // namespace
 
 SurfaceFitResult fitSurface(const core::TriangleMesh& mesh, const core::TriangleSet& requested,
@@ -1613,11 +1677,14 @@ SurfaceFitResult fitSurface(const core::TriangleMesh& mesh, const core::Triangle
         }
         return best;
     };
+    // Signed distance of each measured vertex (by its index in pts): the noise check below.
+    std::vector<double> residual(pts.size(), std::numeric_limits<double>::quiet_NaN());
     for (std::size_t i = 0; i < measured.size(); i += stride) {
         if ((i / stride) % 1024 == 0)
             checkCancel();
         const auto l = frame.toLocal(measured[i]);
         double d = 0.0;
+        double side = 1.0;
         const auto k = seeds.nearest(l[0], l[1], l[2], d);
         try {
             locate.Perform(gp_Pnt(measured[i].x, measured[i].y, measured[i].z), seedParams[k][0], seedParams[k][1]);
@@ -1633,9 +1700,16 @@ SurfaceFitResult fitSurface(const core::TriangleMesh& mesh, const core::Triangle
                     ++nearOutline;
                 continue; // not on the created face; reported as outsideTrimMax
             }
+            gp_Pnt foot;
+            gp_Vec du, dv;
+            surface->D1(pu, pv, foot, du, dv);
+            if (gp_Vec(foot, gp_Pnt(measured[i].x, measured[i].y, measured[i].z)).Dot(du.Crossed(dv)) < 0.0)
+                side = -1.0;
         } catch (const Standard_Failure&) {
             // keep the sample distance
         }
+        if (const auto at = seen.find(measured[i]); at != seen.end())
+            residual[at->second] = side * d;
         report.meshToSurfaceMax = std::max(report.meshToSurfaceMax, d);
         sum += d * d;
         ++count;
@@ -1746,9 +1820,70 @@ SurfaceFitResult fitSurface(const core::TriangleMesh& mesh, const core::Triangle
         report.warnings.push_back(std::string("The smoothed outline leaves selected mesh up to ") + mm +
                                   " mm outside the face (rounded corners or a coarse mesh edge).");
     }
-    if (!report.withinTolerance)
+    // Scan noise: the deviation is scattered noise when it alone exceeds the tolerance (3
+    // sigma) and the residuals are spatially uncorrelated. Then no surface can meet the
+    // tolerance, and splitting the region only multiplies the work.
+    const double rms = report.meshToSurfaceRms;
+    bool noisy = false;
+    if (!report.withinTolerance && rms > 0.0 && 3.0 * rms > options.tolerance) {
+        std::vector<std::vector<std::uint32_t>> adj(pts.size());
+        for (const auto t : selection) {
+            std::array<std::uint32_t, 3> id{};
+            bool ok = true;
+            for (int k = 0; k < 3; ++k) {
+                const auto at = seen.find(mesh.vertices()[mesh.triangles()[t][static_cast<std::size_t>(k)]]);
+                if (at == seen.end())
+                    ok = false;
+                else
+                    id[static_cast<std::size_t>(k)] = at->second;
+            }
+            if (!ok)
+                continue;
+            for (int k = 0; k < 3; ++k) {
+                adj[id[static_cast<std::size_t>(k)]].push_back(id[static_cast<std::size_t>((k + 1) % 3)]);
+                adj[id[static_cast<std::size_t>((k + 1) % 3)]].push_back(id[static_cast<std::size_t>(k)]);
+            }
+        }
+        for (auto& a : adj) {
+            std::sort(a.begin(), a.end());
+            a.erase(std::unique(a.begin(), a.end()), a.end());
+        }
+        // Rings start beyond one control cell of the fit (in mean edge lengths), at least 3.
+        double edgeSum = 0.0;
+        std::size_t edges = 0;
+        for (const auto t : selection) {
+            const auto& corners = mesh.triangles()[t];
+            for (int e = 0; e < 3; ++e) {
+                edgeSum += (mesh.vertices()[corners[static_cast<std::size_t>((e + 1) % 3)]] -
+                            mesh.vertices()[corners[static_cast<std::size_t>(e)]])
+                               .length();
+                ++edges;
+            }
+        }
+        Vec3 lo = pts.front(), hi = lo;
+        for (const auto& q : pts) {
+            lo = {std::min(lo.x, q.x), std::min(lo.y, q.y), std::min(lo.z, q.z)};
+            hi = {std::max(hi.x, q.x), std::max(hi.y, q.y), std::max(hi.z, q.z)};
+        }
+        const double cell = (hi - lo).length() / std::max(1, std::max(report.uPoles, report.vPoles));
+        const double meanEdge = edges > 0 ? edgeSum / static_cast<double>(edges) : cell;
+        const int firstRing = std::clamp(static_cast<int>(std::ceil(1.5 * cell / std::max(meanEdge, 1e-9))), 3, 10);
+        noisy = residualLooksLikeNoise(residual, adj, firstRing);
+    }
+    if (!report.withinTolerance && noisy) {
+        char text[256];
+        const double suggested = std::ceil(std::max(report.meshToSurfaceMax, report.surfaceToMeshMax) * 20.0) / 20.0;
+        std::snprintf(text, sizeof text,
+                      "The deviation is scan noise: the points scatter %.2f mm (RMS) around the "
+                      "surface, so single points are up to %.2f mm off. The surface follows the scan's mean shape; "
+                      "a tolerance of about %.2f mm suits this scan.",
+                      rms, report.meshToSurfaceMax, suggested);
+        report.warnings.emplace_back(text);
+        report.noiseLimited = true;
+    } else if (!report.withinTolerance) {
         report.warnings.push_back("Deviation exceeds the tolerance; try a smaller or more compact region, or a "
                                   "larger tolerance.");
+    }
 
     result.face = wrapShape(face);
     report.milliseconds = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();

@@ -64,6 +64,9 @@ struct SurfaceFitReport {
     bool trimmed = false; ///< Face bounded by the selection outline (else the fit rectangle).
     int holes = 0;        ///< Holes of the selection cut out of the face.
     std::string method;   ///< "plane" or "unfold".
+    /// Outside the tolerance only because of scan noise (scattered deviations whose RMS
+    /// alone is a third of the tolerance or more); a warning gives the noise level.
+    bool noiseLimited = false;
     double milliseconds = 0.0;
     std::vector<std::string> warnings;
 };

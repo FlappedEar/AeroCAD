@@ -739,3 +739,63 @@ TEST_CASE("Fine clean shape is not taken for scan noise; a thin noisy outline is
     INFO("strip noise " << report.scanNoise << ", p99 " << report.p99Deviation);
     CHECK(report.scanNoise > 0.1);
 }
+
+TEST_CASE("A fit limited by scan noise says so and suggests a tolerance", "[geometry][fit]")
+{
+    // Noise of 0.15 mm (RMS) as on the bumper scan: no surface stays within 0.25 mm of
+    // every point, but the fit itself follows the shape.
+    const core::TriangleMesh noisy = noisyField(100, 0.15);
+    core::TriangleSet all(noisy.triangleCount());
+    for (std::uint32_t t = 0; t < all.size(); ++t)
+        all[t] = t;
+    geometry::SurfaceFitOptions options;
+    const auto fit = geometry::fitSurface(noisy, all, options);
+    INFO(fit.report.meshToSurfaceRms << " " << fit.report.meshToSurfaceMax);
+    CHECK_FALSE(fit.report.withinTolerance);
+    CHECK(fit.report.noiseLimited);
+    REQUIRE_FALSE(fit.report.warnings.empty());
+    CHECK(fit.report.warnings.back().find("scan noise") != std::string::npos);
+
+    // A surface too coarse for the shape misses it over whole areas: not noise.
+    const core::TriangleMesh smooth = noisyField(100, 0.0);
+    geometry::SurfaceFitOptions coarse;
+    coarse.method = geometry::SurfaceFitMethod::Plane;
+    coarse.gridSize = 4;
+    coarse.tolerance = 0.05;
+    const auto miss = geometry::fitSurface(smooth, all, coarse);
+    INFO(miss.report.meshToSurfaceRms << " " << miss.report.meshToSurfaceMax);
+    CHECK_FALSE(miss.report.withinTolerance);
+    CHECK_FALSE(miss.report.noiseLimited);
+}
+
+TEST_CASE("Fine real shape the fit smooths away is not called scan noise", "[geometry][fit]")
+{
+    // A noise-free corrugation (3 mm period on a 1 mm grid, 0.5 mm amplitude) is finer than the
+    // fit's control grid: the deviation is real shape, correlated between neighbours.
+    const int n = 60;
+    std::vector<core::Vec3> v;
+    for (int j = 0; j <= n; ++j)
+        for (int i = 0; i <= n; ++i)
+            v.push_back({static_cast<double>(i), static_cast<double>(j),
+                         0.5 * std::sin(2.0 * std::numbers::pi * i / 3.0)});
+    std::vector<core::TriangleMesh::Triangle> t;
+    const auto idx = [](int i, int j) { return static_cast<std::uint32_t>(j * (n + 1) + i); };
+    for (int j = 0; j < n; ++j)
+        for (int i = 0; i < n; ++i) {
+            t.push_back({idx(i, j), idx(i + 1, j), idx(i + 1, j + 1)});
+            t.push_back({idx(i, j), idx(i + 1, j + 1), idx(i, j + 1)});
+        }
+    const core::TriangleMesh ridges(std::move(v), std::move(t));
+    core::TriangleSet all(ridges.triangleCount());
+    for (std::uint32_t k = 0; k < all.size(); ++k)
+        all[k] = k;
+    geometry::SurfaceFitOptions options;
+    options.method = geometry::SurfaceFitMethod::Plane;
+    options.gridSize = 12;
+    const auto fit = geometry::fitSurface(ridges, all, options);
+    INFO(fit.report.meshToSurfaceRms << " " << fit.report.meshToSurfaceMax);
+    REQUIRE_FALSE(fit.report.withinTolerance); // the ridges are lost
+    CHECK_FALSE(fit.report.noiseLimited);
+    REQUIRE_FALSE(fit.report.warnings.empty());
+    CHECK(fit.report.warnings.back().find("scan noise") == std::string::npos);
+}

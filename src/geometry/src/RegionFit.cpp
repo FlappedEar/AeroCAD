@@ -233,7 +233,7 @@ RegionFitResult fitRegions(const core::TriangleMesh& mesh, const core::TriangleS
         } catch (const Standard_Failure& failure) {
             f.error = failure.GetMessageString() != nullptr ? failure.GetMessageString() : "fit failed";
         }
-        if (!o.trimTo.empty() && !(f.fit && f.fit->report.withinTolerance)) {
+        if (!o.trimTo.empty() && !(f.fit && (f.fit->report.withinTolerance || f.fit->report.noiseLimited))) {
             // The grown data may not unfold (it can close a tube again): fit on its own.
             o.trimTo.clear();
             std::optional<SurfaceFitResult> plain;
@@ -326,7 +326,8 @@ RegionFitResult fitRegions(const core::TriangleMesh& mesh, const core::TriangleS
         for (std::size_t k = 0; k < batch.size(); ++k) {
             Fitted& f = batch[k];
             const int depth = wave[k].second;
-            const bool good = f.fit && f.fit->report.withinTolerance;
+            // Splitting does not help against scan noise: smaller patches scatter as much.
+            const bool good = f.fit && (f.fit->report.withinTolerance || f.fit->report.noiseLimited);
             if (!good && depth < 3 && f.triangles.size() >= 64) {
                 auto halves = bisect(mesh, adjacency, f.triangles);
                 if (halves.size() >= 2) {
