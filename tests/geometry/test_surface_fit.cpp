@@ -739,3 +739,31 @@ TEST_CASE("Fine clean shape is not taken for scan noise; a thin noisy outline is
     INFO("strip noise " << report.scanNoise << ", p99 " << report.p99Deviation);
     CHECK(report.scanNoise > 0.1);
 }
+
+TEST_CASE("A fit limited by scan noise says so and suggests a tolerance", "[geometry][fit]")
+{
+    // Noise of 0.15 mm (RMS) as on the bumper scan: no surface stays within 0.25 mm of
+    // every point, but the fit itself follows the shape.
+    const core::TriangleMesh noisy = noisyField(100, 0.15);
+    core::TriangleSet all(noisy.triangleCount());
+    for (std::uint32_t t = 0; t < all.size(); ++t)
+        all[t] = t;
+    geometry::SurfaceFitOptions options;
+    const auto fit = geometry::fitSurface(noisy, all, options);
+    INFO(fit.report.meshToSurfaceRms << " " << fit.report.meshToSurfaceMax);
+    CHECK_FALSE(fit.report.withinTolerance);
+    CHECK(fit.report.noiseLimited);
+    REQUIRE_FALSE(fit.report.warnings.empty());
+    CHECK(fit.report.warnings.back().find("scan noise") != std::string::npos);
+
+    // A surface too coarse for the shape misses it over whole areas: not noise.
+    const core::TriangleMesh smooth = noisyField(100, 0.0);
+    geometry::SurfaceFitOptions coarse;
+    coarse.method = geometry::SurfaceFitMethod::Plane;
+    coarse.gridSize = 4;
+    coarse.tolerance = 0.05;
+    const auto miss = geometry::fitSurface(smooth, all, coarse);
+    INFO(miss.report.meshToSurfaceRms << " " << miss.report.meshToSurfaceMax);
+    CHECK_FALSE(miss.report.withinTolerance);
+    CHECK_FALSE(miss.report.noiseLimited);
+}

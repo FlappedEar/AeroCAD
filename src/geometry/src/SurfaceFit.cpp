@@ -1746,9 +1746,65 @@ SurfaceFitResult fitSurface(const core::TriangleMesh& mesh, const core::Triangle
         report.warnings.push_back(std::string("The smoothed outline leaves selected mesh up to ") + mm +
                                   " mm outside the face (rounded corners or a coarse mesh edge).");
     }
-    if (!report.withinTolerance)
+    // Scan noise, measured on the mesh itself: how far each vertex lies off the mean of its
+    // neighbours, along its normal. A smooth surface (or a missed shape) gives almost
+    // nothing; noise of sigma gives about sigma. When that explains the fit's deviation and
+    // alone exceeds the tolerance, no surface can meet the tolerance.
+    const double rms = report.meshToSurfaceRms;
+    bool noisy = false;
+    if (!report.withinTolerance && rms > 0.0) {
+        const auto& verts = mesh.vertices();
+        std::unordered_map<std::uint32_t, std::array<double, 7>> acc; // neighbour sum xyz, count, normal xyz
+        for (const auto t : selection) {
+            const auto& corner = mesh.triangles()[t];
+            const Vec3 n = (verts[corner[1]] - verts[corner[0]]).cross(verts[corner[2]] - verts[corner[0]]);
+            for (int k = 0; k < 3; ++k) {
+                auto& a = acc[corner[static_cast<std::size_t>(k)]];
+                for (int m = 1; m <= 2; ++m) {
+                    const Vec3& q = verts[corner[static_cast<std::size_t>((k + m) % 3)]];
+                    a[0] += q.x;
+                    a[1] += q.y;
+                    a[2] += q.z;
+                    a[3] += 1.0;
+                }
+                a[4] += n.x;
+                a[5] += n.y;
+                a[6] += n.z;
+            }
+        }
+        double offSum = 0.0;
+        std::size_t used = 0;
+        for (const auto& [vi, a] : acc) {
+            Vec3 n{a[4], a[5], a[6]};
+            const double len = n.length();
+            if (a[3] < 10.0 || len <= 0.0) // border vertices (fewer than 5 triangles): one-sided
+                continue;
+            n = n * (1.0 / len);
+            const Vec3 mean{a[0] / a[3], a[1] / a[3], a[2] / a[3]};
+            const double r = (verts[vi] - mean).dot(n);
+            offSum += r * r;
+            ++used;
+        }
+        // The mean of about six noisy neighbours carries noise too: sigma * sqrt(1 + 1/6).
+        const double noise = used > 0 ? std::sqrt(offSum / static_cast<double>(used)) / 1.08 : 0.0;
+        // Local roughness well above the fit's own RMS is not noise around a surface (spikes,
+        // a bad mesh): the plain warning stays.
+        noisy = noise >= 0.6 * rms && noise <= 1.5 * rms && 3.0 * noise > options.tolerance;
+    }
+    if (!report.withinTolerance && noisy) {
+        char text[256];
+        const double suggested = std::ceil(std::max(report.meshToSurfaceMax, report.surfaceToMeshMax) * 20.0) / 20.0;
+        std::snprintf(text, sizeof text,
+                      "The deviation is scan noise: the points scatter %.2f mm (RMS) around the "
+                      "surface, so single points are up to %.2f mm off. The surface follows the scan's mean shape; "
+                      "a tolerance of about %.2f mm suits this scan.",
+                      rms, report.meshToSurfaceMax, suggested);
+        report.warnings.emplace_back(text);
+        report.noiseLimited = true;
+    } else if (!report.withinTolerance) {
         report.warnings.push_back("Deviation exceeds the tolerance; try a smaller or more compact region, or a "
                                   "larger tolerance.");
+    }
 
     result.face = wrapShape(face);
     report.milliseconds = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();

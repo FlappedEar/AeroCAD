@@ -872,6 +872,7 @@ cad::FeatureEvaluator::Output surfaceStep(const model::Document& doc, const cad:
                              {"outsideTrimMax", rep.outsideTrimMax},
                              {"tolerance", options.tolerance},
                              {"withinTolerance", rep.withinTolerance},
+                             {"noiseLimited", rep.noiseLimited},
                              {"poles", {rep.uPoles, rep.vPoles}},
                              {"trimmed", rep.trimmed},
                              {"holes", rep.holes},
