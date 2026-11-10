@@ -1,0 +1,22 @@
+# CAD-267: draw an elliptical arc directly (Fusion: Create > Ellipse arc) with real clicks:
+# CREATE > Elliptical Arc, click the centre, the end of the major axis, a point for the
+# minor radius, then the start and the end of the arc: one elliptical arc, counter-clockwise.
+# Run: AeroCAD --ui-script <this file>
+Qt.createQmlObject('import QtQuick; Item { objectName: "eaTest"; visible: false; function at(q) { const o = viewport.sketchOverlay; const p = o.toScreen(q); return o.mapToItem(null, p.x, p.y) } function clickAt(q) { const w = at(q); ui.move(w.x, w.y); ui.wait(80); ui.click(w.x, w.y); ui.wait(150) } function moveTo(q) { const w = at(q); ui.move(w.x, w.y); ui.wait(150) } function sketch() { return controller.execute("sketch.curves", { sketch: activeSketch.id }).result } }', window.contentItem)
+ui.wait(800)
+(() => { window.createSketch({ plane: "XY" }); if (!window.activeSketch) ui.fail("no sketch") })()
+ui.wait(800)
+(() => { viewport.restoreCameraState({ pivot: [0, 10, 0], pitch: -90, yaw: 0, distance: 200, orthographic: false }) })()
+ui.wait(400)
+(() => { if (!ui.clickText("CREATE")) ui.fail("no CREATE menu on the ribbon") })()
+ui.wait(400)
+(() => { if (!ui.clickText("Elliptical Arc")) ui.fail("no Elliptical Arc in the CREATE menu") })()
+ui.wait(300)
+(() => { if (sketchTool !== "elliptical_arc") ui.fail("Elliptical Arc did not start: " + sketchTool) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "eaTest"); t.clickAt([0, 0]); t.clickAt([40, 0]); t.clickAt([0, 20]); t.moveTo([-30, 20]) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "eaTest"); t.clickAt([0, 20]); t.moveTo([-40, 0]); t.clickAt([-40, 0]) })()
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "eaTest"); const c = t.sketch().curves; ui.log("curves " + JSON.stringify(c.map(k => [k.kind, k.majorRadius, k.minorRadius, k.angle]))); if (c.length !== 1 || c[0].kind !== "elliptical_arc") ui.fail("expected one elliptical arc"); else if (Math.abs(c[0].majorRadius - 40) > 1e-6 || Math.abs(c[0].minorRadius - 20) > 1e-6) ui.fail("not the radii clicked: " + JSON.stringify(c[0])); else { const p = c[0].points; ui.log("points " + JSON.stringify(p)); if (Math.hypot(p[0][0], p[0][1] - 20) > 1e-6 || Math.hypot(p[3][0] + 40, p[3][1]) > 1e-6) ui.fail("the arc does not run from (0,20) to (-40,0): " + JSON.stringify(p)) } })()
+ui.key("Esc")
+ui.wait(300)
+ui.shot("/mnt/project-files/ux/sketch-elliptical-arc.png")
