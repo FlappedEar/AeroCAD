@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "aerocad/geometry/Inspect.hpp"
 
+#include "aerocad/core/MeshSection.hpp"
+#include "aerocad/core/Triangulate.hpp"
+
 #include "aerocad/geometry/Modeling.hpp"
 #include "aerocad/geometry/OcctShape.hpp"
 #include "aerocad/geometry/Sketch.hpp"
@@ -437,6 +440,75 @@ double interferenceVolume(const Shape& a, const Shape& b)
     return common.isNull() ? 0.0 : common.volume();
 }
 
+namespace {
+
+/// Fast cap of one outer loop and its holes: ear clipping on the simplified loops (a few
+/// thousand points take milliseconds, the kernel's mesher half a second). Returns false when
+/// the result does not cover the expected area, so the caller falls back to the kernel.
+bool fastCap(const std::vector<core::Polyline>& loops, std::size_t outer, const std::vector<std::ptrdiff_t>& parent,
+             const core::CutPlane& plane, const core::Vec3& n, double tolerance, core::TriangleMesh& out)
+{
+    core::Vec3 u, v;
+    core::planeAxes(n, u, v);
+    std::vector<std::vector<core::Point2>> rings;
+    double expected = 0.0;
+    auto addRing = [&](const core::Polyline& loop, bool isOuter) {
+        std::vector<core::Point2> pts;
+        for (const auto& p : loop.points) {
+            const core::Point2 q{(p - plane.origin).dot(u), (p - plane.origin).dot(v)};
+            if (!pts.empty() && std::abs(q[0] - pts.back()[0]) + std::abs(q[1] - pts.back()[1]) < tolerance * 0.1)
+                continue;
+            pts.push_back(q);
+        }
+        if (pts.size() > 1 && std::abs(pts.front()[0] - pts.back()[0]) + std::abs(pts.front()[1] - pts.back()[1]) < tolerance * 0.1)
+            pts.pop_back();
+        pts = core::simplifyRing(pts, tolerance);
+        if (pts.size() < 3)
+            return false;
+        double a = 0.0;
+        for (std::size_t i = 0, j = pts.size() - 1; i < pts.size(); j = i++)
+            a += pts[j][0] * pts[i][1] - pts[i][0] * pts[j][1];
+        expected += isOuter ? std::abs(a) / 2 : -std::abs(a) / 2;
+        rings.push_back(std::move(pts));
+        return true;
+    };
+    if (!addRing(loops[outer], true))
+        return false;
+    for (std::size_t h = 0; h < loops.size(); ++h)
+        if (parent[h] == static_cast<std::ptrdiff_t>(outer) && loops[h].closed)
+            addRing(loops[h], false); // a degenerate hole is dropped
+    if (expected <= 0.0)
+        return false;
+    const auto idx = core::triangulatePolygon(rings);
+    if (idx.size() < 3)
+        return false;
+    std::vector<core::Point2> flat;
+    for (const auto& r : rings)
+        flat.insert(flat.end(), r.begin(), r.end());
+    auto cross2 = [&](std::uint32_t ia, std::uint32_t ib, std::uint32_t ic) {
+        const auto &a = flat[ia], &b = flat[ib], &c = flat[ic];
+        return (b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1]);
+    };
+    double got = 0.0;
+    for (std::size_t t = 0; t + 2 < idx.size(); t += 3)
+        got += std::abs(cross2(idx[t], idx[t + 1], idx[t + 2])) / 2;
+    if (std::abs(got - expected) > 1e-6 * std::max(expected, 1e-12) + 1e-9)
+        return false;
+    const auto base = static_cast<std::uint32_t>(out.vertexCount());
+    for (const auto& q : flat)
+        out.addVertex(plane.origin + u * q[0] + v * q[1]);
+    for (std::size_t t = 0; t + 2 < idx.size(); t += 3) {
+        // u x v == n, so a counter-clockwise triangle already faces along n.
+        if (cross2(idx[t], idx[t + 1], idx[t + 2]) >= 0)
+            out.addTriangle(base + idx[t], base + idx[t + 1], base + idx[t + 2]);
+        else
+            out.addTriangle(base + idx[t], base + idx[t + 2], base + idx[t + 1]);
+    }
+    return true;
+}
+
+} // namespace
+
 core::TriangleMesh triangulateRegion(const std::vector<core::Polyline>& loops, const core::CutPlane& plane)
 {
     core::TriangleMesh out;
@@ -476,6 +548,8 @@ core::TriangleMesh triangulateRegion(const std::vector<core::Polyline>& loops, c
     const gp_Pln pln(toPnt(plane.origin), gp_Dir(n.x, n.y, n.z));
     for (std::size_t i = 0; i < loops.size(); ++i) {
         if (!loops[i].closed || loops[i].points.size() < 3 || depth[i] % 2 != 0)
+            continue;
+        if (fastCap(loops, i, parent, plane, n, std::max(box.diagonal() * 2e-5, minStep), out))
             continue;
         try {
             const auto outer = makeWire(loops[i]);
