@@ -900,19 +900,29 @@ cad::FeatureEvaluator::Output surfaceStep(const model::Document& doc, const cad:
         double worst = 0.0;
         double maxDeviation = 0.0;
         bool allWithin = true;
+        bool onlyNoise = true; // every patch outside the tolerance is limited by scan noise
+        int noisePatches = 0;
         for (const auto& p : fit.patches) {
             Json j{{"triangles", p.triangles.size()}};
             if (p.error.empty()) {
                 j["meshToSurfaceMax"] = p.report.meshToSurfaceMax;
                 j["surfaceToMeshMax"] = p.report.surfaceToMeshMax;
                 j["withinTolerance"] = p.report.withinTolerance;
+                j["noiseLimited"] = p.report.noiseLimited;
                 j["method"] = p.report.method;
                 worst = std::max(worst, p.report.meshToSurfaceMax);
                 maxDeviation = std::max({maxDeviation, p.report.meshToSurfaceMax, p.report.surfaceToMeshMax});
                 allWithin = allWithin && p.report.withinTolerance;
+                if (!p.report.withinTolerance) {
+                    if (p.report.noiseLimited)
+                        ++noisePatches;
+                    else
+                        onlyNoise = false;
+                }
             } else {
                 j["error"] = p.error;
                 allWithin = false;
+                onlyNoise = false;
             }
             patches.push_back(std::move(j));
         }
@@ -930,7 +940,15 @@ cad::FeatureEvaluator::Output surfaceStep(const model::Document& doc, const cad:
                          {"seamAngleMaxDeg", fit.seamAngleMaxDeg},
                          {"milliseconds", fit.milliseconds}};
         Json warnings = fit.warnings;
-        if (!allWithin)
+        if (!allWithin && onlyNoise && noisePatches > 0)
+            warnings.push_back(
+                "The deviation is scan noise: " + std::to_string(noisePatches) + " of " +
+                std::to_string(fit.patches.size()) + " patches scatter more than the requested tolerance of " +
+                formatMm(options.fit.tolerance) + " mm (worst " + formatMm(maxDeviation) +
+                " mm), and smaller patches would not reduce it. The surfaces follow the scan's mean shape; a "
+                "tolerance of about " +
+                formatMm(std::ceil(maxDeviation * 20.0) / 20.0) + " mm suits this scan; see fit.patches");
+        else if (!allWithin)
             warnings.push_back("Approximation: some patches are more than the requested tolerance of " +
                                formatMm(options.fit.tolerance) + " mm from the mesh (worst " +
                                formatMm(maxDeviation) + " mm); see fit.patches");
