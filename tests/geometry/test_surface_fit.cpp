@@ -767,3 +767,35 @@ TEST_CASE("A fit limited by scan noise says so and suggests a tolerance", "[geom
     CHECK_FALSE(miss.report.withinTolerance);
     CHECK_FALSE(miss.report.noiseLimited);
 }
+
+TEST_CASE("Fine real shape the fit smooths away is not called scan noise", "[geometry][fit]")
+{
+    // A noise-free corrugation (3 mm period on a 1 mm grid, 0.5 mm amplitude) is finer than the
+    // fit's control grid: the deviation is real shape, correlated between neighbours.
+    const int n = 60;
+    std::vector<core::Vec3> v;
+    for (int j = 0; j <= n; ++j)
+        for (int i = 0; i <= n; ++i)
+            v.push_back({static_cast<double>(i), static_cast<double>(j),
+                         0.5 * std::sin(2.0 * std::numbers::pi * i / 3.0)});
+    std::vector<core::TriangleMesh::Triangle> t;
+    const auto idx = [n](int i, int j) { return static_cast<std::uint32_t>(j * (n + 1) + i); };
+    for (int j = 0; j < n; ++j)
+        for (int i = 0; i < n; ++i) {
+            t.push_back({idx(i, j), idx(i + 1, j), idx(i + 1, j + 1)});
+            t.push_back({idx(i, j), idx(i + 1, j + 1), idx(i, j + 1)});
+        }
+    const core::TriangleMesh ridges(std::move(v), std::move(t));
+    core::TriangleSet all(ridges.triangleCount());
+    for (std::uint32_t k = 0; k < all.size(); ++k)
+        all[k] = k;
+    geometry::SurfaceFitOptions options;
+    options.method = geometry::SurfaceFitMethod::Plane;
+    options.gridSize = 12;
+    const auto fit = geometry::fitSurface(ridges, all, options);
+    INFO(fit.report.meshToSurfaceRms << " " << fit.report.meshToSurfaceMax);
+    REQUIRE_FALSE(fit.report.withinTolerance); // the ridges are lost
+    CHECK_FALSE(fit.report.noiseLimited);
+    REQUIRE_FALSE(fit.report.warnings.empty());
+    CHECK(fit.report.warnings.back().find("scan noise") == std::string::npos);
+}
