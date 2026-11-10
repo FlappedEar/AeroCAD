@@ -3,6 +3,8 @@
 
 #include "aerocad/geometry/OcctShape.hpp"
 
+#include "SketchText.hpp"
+
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAlgoAPI_BuilderAlgo.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
@@ -122,6 +124,8 @@ TopoDS_Edge makeEdge(const Plane& plane, const SketchCurve& c)
     }
     case SketchCurve::Kind::Point:
         throw ModelingError("A sketch point has no edge");
+    case SketchCurve::Kind::Text:
+        throw ModelingError("Sketch text is letters, not one curve");
     case SketchCurve::Kind::Ellipse: {
         requirePoints(2, "Ellipse");
         const Vec2 ctr = c.points[0];
@@ -271,17 +275,52 @@ SketchGeometry buildSketch(const Plane& planeIn, const std::vector<SketchCurve>&
         TopoDS_Compound all;
         builder.MakeCompound(all);
         std::vector<TopoDS_Edge> profileEdges;
+        // Text: its letters are profiles as they are (with their holes), apart from the
+        // other curves' regions.
+        std::vector<TopoDS_Face> letters;
         for (const auto& c : curves) {
             if (c.kind == SketchCurve::Kind::Point)
                 continue; // a point bounds nothing and has no edge
+            if (c.kind == SketchCurve::Kind::Text) {
+                for (const TopoDS_Face& f : detail::textFaces(plane, c)) {
+                    for (TopExp_Explorer ex(f, TopAbs_EDGE); ex.More(); ex.Next())
+                        builder.Add(all, ex.Current());
+                    if (!c.construction)
+                        letters.push_back(f);
+                }
+                continue;
+            }
             const TopoDS_Edge e = makeEdge(plane, c);
             builder.Add(all, e);
             if (!c.construction)
                 profileEdges.push_back(e);
         }
         out.curves = wrapShape(all);
-        if (profileEdges.empty())
+        struct Region {
+            Shape face;
+            Vec2 c;
+        };
+        std::vector<Region> regions;
+        // Sorted with the other profiles by centroid (x, then y).
+        auto finish = [&]() {
+            for (const TopoDS_Face& f : letters) {
+                GProp_GProps props;
+                BRepGProp::SurfaceProperties(f, props);
+                if (props.Mass() < kTol)
+                    continue;
+                regions.push_back({wrapShape(f), plane.toLocal(toVec(props.CentreOfMass()))});
+            }
+            std::sort(regions.begin(), regions.end(), [](const Region& a, const Region& b) {
+                if (std::abs(a.c.x - b.c.x) > 1e-6)
+                    return a.c.x < b.c.x;
+                return a.c.y < b.c.y;
+            });
+            for (auto& r : regions)
+                out.profiles.push_back(std::move(r.face));
             return out;
+        };
+        if (profileEdges.empty())
+            return finish();
 
         // Split all curves at their intersections (general fuse) and merge coincident ends.
         TopTools_ListOfShape args;
@@ -303,7 +342,7 @@ SketchGeometry buildSketch(const Plane& planeIn, const std::vector<SketchCurve>&
         }
         splitEdges = pruneDangling(std::move(splitEdges));
         if (splitEdges.empty())
-            return out;
+            return finish();
 
         // A frame face around everything, split by the edges: every split face that does
         // not touch the frame corners is a closed region.
@@ -354,11 +393,6 @@ SketchGeometry buildSketch(const Plane& planeIn, const std::vector<SketchCurve>&
             return false;
         };
 
-        struct Region {
-            Shape face;
-            Vec2 c;
-        };
-        std::vector<Region> regions;
         for (TopExp_Explorer ex(splitter.Shape(), TopAbs_FACE); ex.More(); ex.Next()) {
             TopoDS_Face f = TopoDS::Face(ex.Current());
             if (touchesFrame(f))
@@ -372,13 +406,7 @@ SketchGeometry buildSketch(const Plane& planeIn, const std::vector<SketchCurve>&
                 continue;
             regions.push_back({wrapShape(f), plane.toLocal(toVec(props.CentreOfMass()))});
         }
-        std::sort(regions.begin(), regions.end(), [](const Region& a, const Region& b) {
-            if (std::abs(a.c.x - b.c.x) > 1e-6)
-                return a.c.x < b.c.x;
-            return a.c.y < b.c.y;
-        });
-        for (auto& r : regions)
-            out.profiles.push_back(std::move(r.face));
+        finish();
     } catch (const Standard_Failure& e) {
         throw ModelingError(std::string("Sketch failed: ") + e.GetMessageString());
     }
@@ -394,9 +422,15 @@ Shape curveEdges(const Plane& planeIn, const std::vector<SketchCurve>& curves)
     if (curves.empty())
         throw ModelingError("No curves given");
     try {
-        for (const auto& c : curves)
-            if (c.kind != SketchCurve::Kind::Point)
+        for (const auto& c : curves) {
+            if (c.kind == SketchCurve::Kind::Text) {
+                for (const TopoDS_Face& f : detail::textFaces(plane, c))
+                    for (TopExp_Explorer ex(f, TopAbs_EDGE); ex.More(); ex.Next())
+                        builder.Add(comp, ex.Current());
+            } else if (c.kind != SketchCurve::Kind::Point) {
                 builder.Add(comp, makeEdge(plane, c));
+            }
+        }
     } catch (const Standard_Failure& e) {
         throw ModelingError(std::string("Sketch curve: ") + e.GetMessageString());
     }
@@ -411,8 +445,8 @@ std::vector<SketchCurve> offsetCurves(const std::vector<SketchCurve>& curves, do
         throw ModelingError("The offset distance must not be zero");
     const Plane xy; // plane coordinates are XY here
     for (const auto& c : curves)
-        if (c.kind == SketchCurve::Kind::Point)
-            throw ModelingError("Offset works on curves, not on sketch points");
+        if (c.kind == SketchCurve::Kind::Point || c.kind == SketchCurve::Kind::Text)
+            throw ModelingError("Offset works on curves, not on sketch points or text");
     try {
         BRepBuilderAPI_MakeWire wire;
         // Add the edges in an order that keeps the chain connected.

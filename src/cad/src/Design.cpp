@@ -774,6 +774,22 @@ void appendCurves(const Eval& ev, const Json& item, std::vector<SketchCurve>& ou
         e.joinStart = item.value("join_start", true);
         e.joinEnd = item.value("join_end", true);
         push(e);
+    } else if (type == "text") {
+        // Fusion's Text: the letters start at `at` on a baseline turned `angle` degrees, `height` tall.
+        const Vec2 at = ev.vec2(item, "at");
+        const double height = ev.num(item, "height", 5.0);
+        const double a = ev.num(item, "angle", 0.0) * kDegToRad;
+        const std::string text = required(item, "text").get<std::string>();
+        if (!(height > 0))
+            throw DesignError("Text height must be positive");
+        if (text.find_first_not_of(" \t\r\n") == std::string::npos)
+            throw DesignError("Text is empty");
+        SketchCurve t{SketchCurve::Kind::Text, {at, {at.x + height * std::cos(a), at.y + height * std::sin(a)}}};
+        t.text = text;
+        t.font = item.value("font", std::string());
+        t.bold = item.value("bold", false);
+        t.italic = item.value("italic", false);
+        push(t);
     } else if (type == "conic") {
         // Fusion's Conic Curve: from start to end, pulled towards the apex by rho
         // (0 < rho < 1; 0.5 is a parabola, less an ellipse, more a hyperbola).
@@ -1222,6 +1238,24 @@ Json ellipticalArcItem(const SketchCurve& c)
                 {"end_angle", t1}};
 }
 
+/// A text curve as a sketch item.
+Json textItem(const SketchCurve& c)
+{
+    const Vec2 at = c.points[0], e = c.points[1];
+    Json item{{"type", "text"},
+              {"at", Json::array({at.x, at.y})},
+              {"text", c.text},
+              {"height", std::hypot(e.x - at.x, e.y - at.y)},
+              {"angle", std::atan2(e.y - at.y, e.x - at.x) / kDegToRad}};
+    if (!c.font.empty())
+        item["font"] = c.font;
+    if (c.bold)
+        item["bold"] = true;
+    if (c.italic)
+        item["italic"] = true;
+    return item;
+}
+
 /// A conic curve as a sketch item.
 Json conicItem(const SketchCurve& c)
 {
@@ -1249,6 +1283,8 @@ Json curveItem(const SketchCurve& c)
         item = ellipticalArcItem(c);
     else if (c.kind == SketchCurve::Kind::Conic)
         item = conicItem(c);
+    else if (c.kind == SketchCurve::Kind::Text)
+        item = textItem(c);
     else
         throw DesignError("Only lines and arcs of a shape can be deleted separately");
     if (c.construction)
@@ -1379,6 +1415,11 @@ Json itemFromSolved(const Json& item, const SketchCurve* c, std::size_t n)
             if (item.contains(k))
                 e[k] = item[k];
         out = e;
+    } else if (type == "text") {
+        out = textItem(c[0]);
+        for (const char* k : {"construction"})
+            if (item.contains(k))
+                out[k] = item[k];
     } else if (type == "conic") {
         out["start"] = pt(c[0].points[0]);
         out["apex"] = pt(c[0].points[1]);
@@ -1731,6 +1772,8 @@ std::vector<Json> curvePointRefs(const SketchCurve& c, std::size_t i)
     // axis tips, so its axis end is held too.
     case K::EllipticalArc: return {ref("start"), ref("end"), ref("center"), ref("axis")};
     case K::Conic: return {ref("start"), ref("end"), ref("apex")};
+    // A text's start and its height point (size and angle).
+    case K::Text: return {ref("start"), ref("end")};
     case K::Spline: {
         std::vector<Json> out;
         for (std::size_t k = 0; k < c.points.size(); ++k)
@@ -2149,6 +2192,8 @@ void Design::mirrorSketchCurves(FeatureId sketchId, const std::vector<std::size_
             swappedEnds = true;
             break;
         }
+        case SketchCurve::Kind::Text:
+            throw DesignError("Mirror does not work on text");
         case SketchCurve::Kind::Conic: {
             // A conic has no direction to keep: the mirrored points are the mirrored conic.
             SketchCurve m = c;

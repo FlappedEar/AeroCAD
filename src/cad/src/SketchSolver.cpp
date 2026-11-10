@@ -264,6 +264,9 @@ public:
             case Kind::Conic:
                 c.points = {v.pts[0].at(m_x), v.pts[2].at(m_x), v.pts[1].at(m_x)};
                 break;
+            case Kind::Text:
+                c.points = {v.pts[0].at(m_x), v.pts[1].at(m_x)};
+                break;
             }
         }
     }
@@ -365,6 +368,13 @@ private:
                 if (c.points.size() != 3)
                     throw ModelingError("Sketch conic needs a start, an apex and an end");
                 v.pts = {endPoint(c.points[0], c.joinStart), endPoint(c.points[2], c.joinEnd), newPoint(c.points[1])};
+                break;
+            case Kind::Text:
+                // Start of the baseline and the point a height along it (size and angle);
+                // never joined to curve ends.
+                if (c.points.size() != 2)
+                    throw ModelingError("Sketch text needs a start and a height point");
+                v.pts = {newPoint(c.points[0]), newPoint(c.points[1])};
                 break;
             }
         }

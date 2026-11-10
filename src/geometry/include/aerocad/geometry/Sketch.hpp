@@ -68,6 +68,9 @@ struct SketchCurve {
         /// points = {start, apex, end}, radius = rho (0 < rho < 1): a rational quadratic from
         /// start to end pulled towards the apex (Fusion: Conic Curve; 0.5 is a parabola)
         Conic,
+        /// points = {start of the baseline, start + height along the baseline}: `text` in
+        /// `font` (Fusion: Text); each letter is a closed profile with its holes
+        Text,
     };
     Kind kind = Kind::Line;
     std::vector<Vec2> points;
@@ -80,6 +83,11 @@ struct SketchCurve {
     bool joinStart = true;
     /// The same for the end of a line or arc.
     bool joinEnd = true;
+    /// Text: the characters (UTF-8), the font family ("" = the system sans-serif) and style.
+    std::string text = {};
+    std::string font = {};
+    bool bold = false;
+    bool italic = false;
 };
 
 /// Result of evaluating a sketch.
@@ -122,6 +130,13 @@ struct SketchGeometry {
 
 /// The point at parameter t (0 = start, 1 = end) of a conic (Kind::Conic).
 [[nodiscard]] Vec2 conicPoint(const SketchCurve& conic, double t);
+
+/// The outlines of the letters of a Text curve as closed polylines in plane coordinates
+/// (for drawing and picking). Throws ModelingError when the font cannot be loaded.
+[[nodiscard]] std::vector<std::vector<Vec2>> textOutlines(const SketchCurve& text);
+
+/// True when sketch text can be built (this build has font support).
+[[nodiscard]] bool textSupported();
 
 /// Area of all faces of a shape in mm^2.
 [[nodiscard]] double area(const Shape& shape);

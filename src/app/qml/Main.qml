@@ -282,6 +282,7 @@ ApplicationWindow {
         SketchMenuItem { action: circle3PointAction; icon.source: Theme.iconUrl("circle-3point") }
         SketchMenuItem { action: ellipseAction; icon.source: Theme.iconUrl("ellipse") }
         SketchMenuItem { action: conicAction; icon.source: Theme.iconUrl("conic") }
+        SketchMenuItem { action: textAction; icon.source: Theme.iconUrl("text") }
         SketchMenuItem { action: arcAction; icon.source: Theme.iconUrl("arc") }
         SketchMenuItem { action: centerArcAction; icon.source: Theme.iconUrl("center-arc") }
         SketchMenuItem { action: tangentArcAction; icon.source: Theme.iconUrl("tangent-arc") }
@@ -1477,6 +1478,7 @@ ApplicationWindow {
     Action { id: centerRectangleAction; text: qsTr("Center Rectan&gle"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "center_rectangle"; onTriggered: window.sketchTool_("center_rectangle") }
     Action { id: rectangle3PointAction; text: qsTr("3-Po&int Rectangle"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "rectangle_3point"; onTriggered: window.sketchTool_("rectangle_3point") }
     Action { id: circle2PointAction; text: qsTr("&2-Point Circle"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "circle_2point"; onTriggered: window.sketchTool_("circle_2point") }
+    Action { id: textAction; text: qsTr("&Text"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "text"; onTriggered: window.sketchTool_("text") }
     Action { id: conicAction; text: qsTr("C&onic Curve"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "conic"; onTriggered: window.sketchTool_("conic") }
     Action { id: ellipseAction; text: qsTr("&Ellipse"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "ellipse"; onTriggered: window.sketchTool_("ellipse") }
     Action { id: circle3PointAction; text: qsTr("&3-Point Circle"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "circle_3point"; onTriggered: window.sketchTool_("circle_3point") }
@@ -2266,6 +2268,7 @@ ApplicationWindow {
                 ToolCommand { action: circle3PointAction; text: qsTr("3-Point Circle"); iconName: "circle-3point" }
                 ToolCommand { action: ellipseAction; text: qsTr("Ellipse"); iconName: "ellipse" }
                 ToolCommand { action: conicAction; text: qsTr("Conic Curve"); iconName: "conic" }
+                ToolCommand { action: textAction; text: qsTr("Text"); iconName: "text" }
                 ToolCommand { action: centerArcAction; text: qsTr("Center Arc"); iconName: "center-arc" }
                 ToolCommand { action: tangentArcAction; text: qsTr("Tangent Arc"); iconName: "tangent-arc" }
                 // Fusion: Create > Rectangular / Circular Pattern.

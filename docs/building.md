@@ -51,7 +51,7 @@ open build/vcpkg-macos/bin/AeroCAD.app
 sudo apt install ninja-build qt6-base-dev qt6-declarative-dev qt6-quick3d-dev qt6-shadertools-dev \
   libxkbcommon-dev qml6-module-qtquick qml6-module-quick3d qml6-module-qtquick-controls \
   qml6-module-qtquick-layouts qml6-module-qtquick-dialogs libocct-data-exchange-dev \
-  libocct-modeling-algorithms-dev libtbb-dev nlohmann-json3-dev libpugixml-dev catch2
+  libocct-modeling-algorithms-dev libocct-visualization-dev fonts-dejavu-core libtbb-dev nlohmann-json3-dev libpugixml-dev catch2
 cmake --preset dev
 cmake --build --preset dev
 ctest --preset dev

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "aerocad/commands/Session.hpp"
+#include "aerocad/geometry/Sketch.hpp"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -1847,6 +1848,30 @@ TEST_CASE("Design commands: Sketch Conic Curve (CAD-262)", "[commands][cad][solv
     }
     run(s, "edit.undo");
 
+    // Turned without a pivot: about the middle of the curve itself (not of its apex).
+    {
+        const auto turn = run(s, "sketch.create",
+                              {{"plane", "XY"},
+                               {"curves", Json::array({{{"type", "conic"}, {"start", {0, 0}}, {"end", {20, 0}}, {"apex", {10, 30}},
+                                                        {"rho", 0.3}}})}})
+                              .at("id")
+                              .get<std::uint64_t>();
+        auto middle = [&](const Json& samples) {
+            double lo[2] = {1e300, 1e300}, hi[2] = {-1e300, -1e300};
+            for (const auto& q : samples)
+                for (int d = 0; d < 2; ++d) {
+                    lo[d] = std::min(lo[d], q[d].get<double>());
+                    hi[d] = std::max(hi[d], q[d].get<double>());
+                }
+            return std::array<double, 2>{(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2};
+        };
+        const auto m0 = middle(run(s, "sketch.curves", {{"sketch", turn}}).at("curves")[0].at("samples"));
+        run(s, "sketch.move_curves", {{"sketch", turn}, {"curves", {0}}, {"angle", 90}});
+        const auto m1 = middle(run(s, "sketch.curves", {{"sketch", turn}}).at("curves")[0].at("samples"));
+        CHECK(m1[0] == Approx(m0[0]).margin(0.05));
+        CHECK(m1[1] == Approx(m0[1]).margin(0.05));
+    }
+
     // Fixed, it holds its ends and apex.
     run(s, "sketch.add_constraints", {{"sketch", sc}, {"constraints", Json::array({{{"type", "fix"}, {"curve", 0}}})}});
     CHECK(run(s, "sketch.curves", {{"sketch", sc}}).at("degreesOfFreedom") == 0);
@@ -3568,4 +3593,120 @@ TEST_CASE("Design commands: sketch Circular and Rectangular Pattern (CAD-251)", 
         CHECK_FALSE(s.execute("sketch.rectangular_pattern", {{"sketch", id}, {"curves", {9}}, {"count_x", 2}, {"spacing_x", 5}}).ok);
         CHECK(curves().at("curves").size() == 5);
     }
+}
+
+TEST_CASE("Design commands: Sketch Text (CAD-263)", "[commands][cad][solver]")
+{
+    if (!geometry::textSupported() || !commands::Session{}.execute("sketch.create", {{"plane", "XY"},
+            {"curves", Json::array({{{"type", "text"}, {"at", {0, 0}}, {"text", "I"}}})}}).ok) {
+        WARN("no system font: skipped");
+        return;
+    }
+    commands::Session s;
+    auto bbox = [](const Json& outlines) {
+        double lo[2] = {1e300, 1e300}, hi[2] = {-1e300, -1e300};
+        for (const auto& line : outlines)
+            for (const auto& p : line)
+                for (int k = 0; k < 2; ++k) {
+                    lo[k] = std::min(lo[k], p[k].get<double>());
+                    hi[k] = std::max(hi[k], p[k].get<double>());
+                }
+        return std::array<double, 4>{lo[0], lo[1], hi[0], hi[1]};
+    };
+    // "O8" at (10, 20), 10 mm tall: two letters, each one profile with its holes (O: 1, 8: 2).
+    const auto id = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "text"}, {"at", {10, 20}}, {"text", "O8"}, {"height", 10}}})}})
+                        .at("id")
+                        .get<std::uint64_t>();
+    Json c = run(s, "sketch.curves", {{"sketch", id}});
+    INFO(c.dump());
+    REQUIRE(c.at("curves").size() == 1);
+    const Json t = c.at("curves")[0];
+    CHECK(t.at("kind") == "text");
+    CHECK(t.at("text") == "O8");
+    CHECK(t.at("height").get<double>() == Approx(10));
+    CHECK(t.at("angle").get<double>() == Approx(0).margin(1e-9));
+    // The letters sit on the baseline and are about a height tall; the start is the origin.
+    const auto bb = bbox(t.at("outlines"));
+    CHECK(bb[0] >= 10 - 1.5);
+    CHECK(bb[1] >= 20 - 1.5);
+    CHECK(bb[3] - bb[1] > 4);
+    CHECK(bb[3] - bb[1] < 12);
+    CHECK(bb[2] - bb[0] > 6);
+    CHECK(run(s, "sketch.profiles", {{"sketch", id}}).at("profiles").size() == 2);
+    // Extruded, the holes stay open: the volume is below that of the letters' bounding boxes.
+    const auto ex = run(s, "feature.extrude", {{"sketch", id}, {"distance", 2}});
+    const double vol = ex.at("bodies").back().at("volume").get<double>();
+    CHECK(vol > 0);
+    CHECK(vol < (bb[2] - bb[0]) * (bb[3] - bb[1]) * 2 * 0.8);
+    run(s, "edit.undo");
+
+    // Turned 90 degrees, the same letters stand on their side.
+    const auto up = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "text"}, {"at", {0, 0}}, {"text", "O8"}, {"height", 10}, {"angle", 90}}})}})
+                        .at("id")
+                        .get<std::uint64_t>();
+    const auto bu = bbox(run(s, "sketch.curves", {{"sketch", up}}).at("curves")[0].at("outlines"));
+    CHECK(bu[3] - bu[1] > bb[2] - bb[0] - 1);
+    CHECK(bu[2] - bu[0] < bb[3] - bb[1] + 1);
+
+    // Turned without a pivot (Codex review of #227): about the middle of the letters, as the
+    // tool previews it, so the letters stay where they are (their middle does not move).
+    {
+        const auto turn = run(s, "sketch.create",
+                              {{"plane", "XY"},
+                               {"curves", Json::array({{{"type", "text"}, {"at", {10, 20}}, {"text", "O8"}, {"height", 10}}})}})
+                              .at("id")
+                              .get<std::uint64_t>();
+        const auto before = bbox(run(s, "sketch.curves", {{"sketch", turn}}).at("curves")[0].at("outlines"));
+        run(s, "sketch.move_curves", {{"sketch", turn}, {"curves", {0}}, {"angle", 90}});
+        const auto after = bbox(run(s, "sketch.curves", {{"sketch", turn}}).at("curves")[0].at("outlines"));
+        CHECK((after[0] + after[2]) / 2 == Approx((before[0] + before[2]) / 2).margin(0.05));
+        CHECK((after[1] + after[3]) / 2 == Approx((before[1] + before[3]) / 2).margin(0.05));
+    }
+
+    // Move, scale and a circular pattern keep it text; the start and the height point are
+    // its constraint points.
+    run(s, "sketch.move_curves", {{"sketch", id}, {"curves", {0}}, {"dx", 5}, {"dy", -3}});
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    CHECK(c.at("curves")[0].at("kind") == "text");
+    CHECK(c.at("curves")[0].at("points")[0][0].get<double>() == Approx(15));
+    CHECK(c.at("curves")[0].at("points")[0][1].get<double>() == Approx(17));
+    run(s, "sketch.scale_curves", {{"sketch", id}, {"curves", {0}}, {"factor", 2}, {"point", {15, 17}}});
+    c = run(s, "sketch.curves", {{"sketch", id}});
+    CHECK(c.at("curves")[0].at("height").get<double>() == Approx(20));
+    CHECK(c.at("curves")[0].at("text") == "O8");
+    run(s, "sketch.add_constraints",
+        {{"sketch", id},
+         {"constraints", Json::array({{{"type", "fix"}, {"points", Json::array({{{"curve", 0}, {"point", "start"}}})}, {"at", Json::array({Json::array({0, 0})})}},
+                                      {{"type", "horizontal"}, {"points", Json::array({{{"curve", 0}, {"point", "start"}}, {{"curve", 0}, {"point", "end"}}})}}})}});
+    CHECK(run(s, "sketch.curves", {{"sketch", id}}).at("curves")[0].at("points")[0][0].get<double>() == Approx(0).margin(1e-6));
+
+    // Construction text is shown but bounds no profile.
+    const auto cn = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "text"}, {"at", {0, 0}}, {"text", "A"}, {"construction", true}}})}})
+                        .at("id")
+                        .get<std::uint64_t>();
+    CHECK(run(s, "sketch.profiles", {{"sketch", cn}}).at("profiles").empty());
+
+    // Refused: empty text, no height; Mirror, Offset, Trim, Break, Extend and Fillet on it.
+    CHECK_FALSE(s.execute("sketch.create", {{"plane", "XY"}, {"curves", Json::array({{{"type", "text"}, {"at", {0, 0}}, {"text", "  "}}})}}).ok);
+    CHECK_FALSE(s.execute("sketch.create", {{"plane", "XY"}, {"curves", Json::array({{{"type", "text"}, {"at", {0, 0}}, {"text", "A"}, {"height", 0}}})}}).ok);
+    const auto rf = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "text"}, {"at", {0, 0}}, {"text", "A"}},
+                                                 {{"type", "line"}, {"start", {0, -5}}, {"end", {0, 10}}}})}})
+                        .at("id")
+                        .get<std::uint64_t>();
+    CHECK_FALSE(s.execute("sketch.mirror", {{"sketch", rf}, {"curves", {0}}, {"line", 1}}).ok);
+    CHECK_FALSE(s.execute("sketch.offset", {{"sketch", rf}, {"curves", {0}}, {"distance", 1}}).ok);
+    CHECK_FALSE(s.execute("sketch.trim", {{"sketch", rf}, {"curve", 0}, {"at", {1, 1}}}).ok);
+    CHECK_FALSE(s.execute("sketch.break", {{"sketch", rf}, {"curve", 0}, {"at", {1, 1}}}).ok);
+    CHECK_FALSE(s.execute("sketch.extend", {{"sketch", rf}, {"curve", 0}, {"at", {1, 1}}}).ok);
+    // Delete removes it.
+    run(s, "sketch.delete_curves", {{"sketch", rf}, {"curves", {0}}});
+    CHECK(run(s, "sketch.curves", {{"sketch", rf}}).at("curves").size() == 1);
 }
