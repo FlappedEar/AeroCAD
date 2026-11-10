@@ -576,11 +576,13 @@ SketchPointRef parsePointRef(const Json& j)
         ref.kind = SketchPointRef::Kind::Center;
     else if (which == "axis")
         ref.kind = SketchPointRef::Kind::Axis;
+    else if (which == "apex")
+        ref.kind = SketchPointRef::Kind::Apex;
     else if (which == "fit") {
         ref.kind = SketchPointRef::Kind::Fit;
         ref.index = required(j, "index").get<std::size_t>();
     } else
-        throw DesignError("Unknown constraint point '" + which + "' (start, end, center, axis, fit)");
+        throw DesignError("Unknown constraint point '" + which + "' (start, end, center, axis, apex, fit)");
     return ref;
 }
 
@@ -769,6 +771,17 @@ void appendCurves(const Eval& ev, const Json& item, std::vector<SketchCurve>& ou
         };
         SketchCurve e{SketchCurve::Kind::EllipticalArc, {at(t0), c, {c.x + major * u.x, c.y + major * u.y}, at(t1)}};
         e.radius = minor;
+        e.joinStart = item.value("join_start", true);
+        e.joinEnd = item.value("join_end", true);
+        push(e);
+    } else if (type == "conic") {
+        // Fusion's Conic Curve: from start to end, pulled towards the apex by rho
+        // (0 < rho < 1; 0.5 is a parabola, less an ellipse, more a hyperbola).
+        const double rho = ev.num(item, "rho", 0.5);
+        if (!(rho > 0) || !(rho < 1))
+            throw DesignError("Conic rho must be between 0 and 1");
+        SketchCurve e{SketchCurve::Kind::Conic, {ev.vec2(item, "start"), ev.vec2(item, "apex"), ev.vec2(item, "end")}};
+        e.radius = rho;
         e.joinStart = item.value("join_start", true);
         e.joinEnd = item.value("join_end", true);
         push(e);
@@ -1209,6 +1222,17 @@ Json ellipticalArcItem(const SketchCurve& c)
                 {"end_angle", t1}};
 }
 
+/// A conic curve as a sketch item.
+Json conicItem(const SketchCurve& c)
+{
+    auto pt = [](const Vec2& v) { return Json::array({v.x, v.y}); };
+    return Json{{"type", "conic"},
+                {"start", pt(c.points[0])},
+                {"end", pt(c.points[2])},
+                {"apex", pt(c.points[1])},
+                {"rho", c.radius}};
+}
+
 Json curveItem(const SketchCurve& c)
 {
     auto pt = [](const Vec2& v) { return Json::array({v.x, v.y}); };
@@ -1223,6 +1247,8 @@ Json curveItem(const SketchCurve& c)
         item = ellipseItem(c);
     else if (c.kind == SketchCurve::Kind::EllipticalArc)
         item = ellipticalArcItem(c);
+    else if (c.kind == SketchCurve::Kind::Conic)
+        item = conicItem(c);
     else
         throw DesignError("Only lines and arcs of a shape can be deleted separately");
     if (c.construction)
@@ -1353,6 +1379,10 @@ Json itemFromSolved(const Json& item, const SketchCurve* c, std::size_t n)
             if (item.contains(k))
                 e[k] = item[k];
         out = e;
+    } else if (type == "conic") {
+        out["start"] = pt(c[0].points[0]);
+        out["apex"] = pt(c[0].points[1]);
+        out["end"] = pt(c[0].points[2]);
     }
     return out;
 }
@@ -1436,6 +1466,9 @@ std::vector<std::pair<std::size_t, std::size_t>> weldedEnds(const std::vector<Sk
         } else if (c.kind == SketchCurve::Kind::EllipticalArc && c.points.size() == 4) {
             end(c.points[0], 2 * i, c.joinStart);
             end(c.points[3], 2 * i + 1, c.joinEnd);
+        } else if (c.kind == SketchCurve::Kind::Conic && c.points.size() == 3) {
+            end(c.points[0], 2 * i, c.joinStart);
+            end(c.points[2], 2 * i + 1, c.joinEnd);
         } else if (c.kind == SketchCurve::Kind::Arc && c.points.size() == 3) {
             end(c.points[0], 2 * i, c.joinStart);
             end(c.points[2], 2 * i + 1, c.joinEnd);
@@ -1697,6 +1730,7 @@ std::vector<Json> curvePointRefs(const SketchCurve& c, std::size_t i)
     // An elliptical arc's ends and centre do not fix its axis when its ends are the minor
     // axis tips, so its axis end is held too.
     case K::EllipticalArc: return {ref("start"), ref("end"), ref("center"), ref("axis")};
+    case K::Conic: return {ref("start"), ref("end"), ref("apex")};
     case K::Spline: {
         std::vector<Json> out;
         for (std::size_t k = 0; k < c.points.size(); ++k)
@@ -1722,6 +1756,8 @@ Vec2 curvePointAt(const SketchCurve& c, const Json& ref)
         return c.points[1];
     if (c.kind == K::EllipticalArc && name == "axis")
         return c.points[2];
+    if (c.kind == K::Conic)
+        return name == "apex" ? c.points[1] : name == "end" ? c.points[2] : c.points[0];
     if (name == "center") {
         const Vec2 p1 = c.points[0], p2 = c.points[1], p3 = c.points[2];
         const double d = 2 * (p1.x * (p2.y - p3.y) + p2.x * (p3.y - p1.y) + p3.x * (p1.y - p2.y));
@@ -1753,12 +1789,13 @@ Vec2 placedPoint(const Vec2& p, const SketchPlacement& place)
     return Vec2{place.pivot.x + ca * d.x - sa * d.y + place.offset.x, place.pivot.y + sa * d.x + ca * d.y + place.offset.y};
 }
 
-// `c` moved to a placement (its radius scaled too).
+// `c` moved to a placement (its radius scaled too; a conic's rho is a ratio and stays).
 SketchCurve placedCurve(SketchCurve c, const SketchPlacement& place)
 {
     for (auto& p : c.points)
         p = placedPoint(p, place);
-    c.radius *= place.scale;
+    if (c.kind != SketchCurve::Kind::Conic)
+        c.radius *= place.scale;
     return c;
 }
 
@@ -2112,6 +2149,14 @@ void Design::mirrorSketchCurves(FeatureId sketchId, const std::vector<std::size_
             swappedEnds = true;
             break;
         }
+        case SketchCurve::Kind::Conic: {
+            // A conic has no direction to keep: the mirrored points are the mirrored conic.
+            SketchCurve m = c;
+            m.points = {mirror(c.points[0]), mirror(c.points[1]), mirror(c.points[2])};
+            item = conicItem(m);
+            points = {"start", "end", "apex"};
+            break;
+        }
         }
         if (c.construction)
             item["construction"] = true;
@@ -2460,20 +2505,24 @@ void Design::chamferSketchCorner(FeatureId sketchId, std::size_t ia, std::size_t
 
 namespace {
 
-/// What another curve bounds an extension with: the curve itself, or a spline as the
-/// short segments of its drawn shape (128 per span, so the end lands within a hair of it).
+/// What another curve bounds an extension with: the curve itself, or a spline or conic as
+/// the short segments of its drawn shape (128 per span, 256 along a conic, so the end lands
+/// within a hair of it).
 std::vector<TrimCurve> extendBoundaries(const SketchCurve& k)
 {
     if (auto t = trimCurve(k))
         return {*t};
     std::vector<TrimCurve> out;
-    if (k.kind != SketchCurve::Kind::Spline)
-        return out;
     std::vector<Vec2> pts;
-    try {
-        pts = geometry::sampleSpline(k, 128);
-    } catch (const geometry::ModelingError&) {
-        return out;
+    if (k.kind == SketchCurve::Kind::Conic) {
+        for (int i = 0; i <= 256; ++i)
+            pts.push_back(geometry::conicPoint(k, i / 256.0));
+    } else if (k.kind == SketchCurve::Kind::Spline) {
+        try {
+            pts = geometry::sampleSpline(k, 128);
+        } catch (const geometry::ModelingError&) {
+            return out;
+        }
     }
     for (std::size_t i = 0; i + 1 < pts.size(); ++i) {
         TrimCurve seg;
@@ -2943,7 +2992,7 @@ geometry::SketchCurve Design::extendedSketchCurve(FeatureId sketchId, std::size_
         const auto& c = curves[i];
         // A sketch point on the end is joined to it too (the solver shares it like an end).
         const bool hasEnds = c.kind == SketchCurve::Kind::Line || c.kind == SketchCurve::Kind::Arc ||
-                             c.kind == SketchCurve::Kind::EllipticalArc ||
+                             c.kind == SketchCurve::Kind::EllipticalArc || c.kind == SketchCurve::Kind::Conic ||
                              c.kind == SketchCurve::Kind::Point || (c.kind == SketchCurve::Kind::Spline && !c.closed);
         if (!hasEnds || c.points.empty())
             continue;

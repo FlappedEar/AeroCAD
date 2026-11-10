@@ -28,6 +28,9 @@
 #include <Precision.hxx>
 #include <Standard_Failure.hxx>
 #include <TColgp_HArray1OfPnt.hxx>
+#include <TColStd_Array1OfInteger.hxx>
+#include <TColStd_Array1OfReal.hxx>
+#include <TColgp_Array1OfPnt.hxx>
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
@@ -165,6 +168,33 @@ TopoDS_Edge makeEdge(const Plane& plane, const SketchCurve& c)
         if (!arc.IsDone())
             throw ModelingError("Invalid elliptical arc");
         return BRepBuilderAPI_MakeEdge(arc.Value()).Edge();
+    }
+    case SketchCurve::Kind::Conic: {
+        // A rational quadratic Bezier: start, apex and end with weights 1, rho / (1 - rho), 1.
+        requirePoints(3, "Conic");
+        if (!(c.radius > 0.0 && c.radius < 1.0))
+            throw ModelingError("Conic rho must be between 0 and 1");
+        TColgp_Array1OfPnt poles(1, 3);
+        for (int k = 0; k < 3; ++k)
+            poles.SetValue(k + 1, toPnt(plane.toWorld(c.points[static_cast<std::size_t>(k)])));
+        if (poles(1).Distance(poles(3)) < kTol)
+            throw ModelingError("Conic has no length");
+        const Vec2 d1{c.points[1].x - c.points[0].x, c.points[1].y - c.points[0].y};
+        const Vec2 d2{c.points[2].x - c.points[0].x, c.points[2].y - c.points[0].y};
+        if (std::abs(d1.x * d2.y - d1.y * d2.x) <= kTol * std::hypot(d2.x, d2.y))
+            throw ModelingError("Conic apex lies on the line from start to end");
+        TColStd_Array1OfReal weights(1, 3);
+        weights.SetValue(1, 1.0);
+        weights.SetValue(2, c.radius / (1.0 - c.radius));
+        weights.SetValue(3, 1.0);
+        TColStd_Array1OfReal knots(1, 2);
+        knots.SetValue(1, 0.0);
+        knots.SetValue(2, 1.0);
+        TColStd_Array1OfInteger mults(1, 2);
+        mults.SetValue(1, 3);
+        mults.SetValue(2, 3);
+        Handle(Geom_BSplineCurve) curve = new Geom_BSplineCurve(poles, weights, knots, mults, 2);
+        return BRepBuilderAPI_MakeEdge(curve).Edge();
     }
     }
     throw ModelingError("Unknown curve kind");
@@ -732,6 +762,15 @@ bool faceContains(const Shape& face, const core::Vec3& point)
             return true;
     }
     return false;
+}
+
+Vec2 conicPoint(const SketchCurve& conic, double t)
+{
+    const double w = conic.radius / (1.0 - conic.radius);
+    const double b0 = (1 - t) * (1 - t), b1 = 2 * t * (1 - t) * w, b2 = t * t;
+    const double den = b0 + b1 + b2;
+    const Vec2 p0 = conic.points[0], p1 = conic.points[1], p2 = conic.points[2];
+    return {(b0 * p0.x + b1 * p1.x + b2 * p2.x) / den, (b0 * p0.y + b1 * p1.y + b2 * p2.y) / den};
 }
 
 std::vector<Vec2> sampleSpline(const SketchCurve& spline, int perSpan)

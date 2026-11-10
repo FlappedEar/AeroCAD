@@ -147,7 +147,8 @@ Sketch curves: `line {start, end}`, `rectangle {corner, width, height | opposite
 `polygon {center, radius, sides, angle?}`, `slot {start, end, width}`,
 `spline {points, closed?}`, `point {at}`,
 `ellipse {center, major_radius, minor_radius, angle?}`,
-`elliptical_arc {center, major_radius, minor_radius, angle?, start_angle, end_angle}`; any curve can be `construction: true`. Curves are split at
+`elliptical_arc {center, major_radius, minor_radius, angle?, start_angle, end_angle}`,
+`conic {start, end, apex, rho?}`; any curve can be `construction: true`. Curves are split at
 intersections, so a circle inside a rectangle gives two profiles (ring and disk).
 
 An `ellipse` (Fusion: Create › Ellipse; ribbon CREATE menu or Sketch menu) is drawn by
@@ -171,6 +172,19 @@ centre + major·cos t along the axis + minor·sin t across it). In `sketch.curve
 ellipse as they move, and it takes the same dimensions, H/V and Equal as an ellipse. Mirror
 keeps it an elliptical arc (its ends swap), Offset gives a spline, and Extend refuses it.
 
+A `conic` (Fusion: Create › Conic Curve; ribbon CREATE menu or Sketch menu) runs from `start`
+to `end`, tangent there to the lines towards `apex`, and bulges towards the apex by `rho`
+(0 < rho < 1, default 0.5): its middle point is rho of the way from the middle of start-end to
+the apex. 0.5 is a parabola, less an ellipse, more a hyperbola. It is the exact rational
+quadratic (weights 1, rho / (1 - rho), 1). It is drawn by clicking the start, the end and the
+apex; the chord length can be typed after the first click and rho after the second (the
+preview follows as it is typed). In `sketch.curves` it has `points` [start, apex, end], `rho`
+and `samples`. Its points for constraints are `start`, `end` and `apex` (dragging the apex
+reshapes it). `tangent` between a conic and a line puts the apex on that line at the conic's
+end nearer the line; tangent to an arc or circle is refused. Move, copy, scale (rho stays),
+mirror and patterns keep it a conic, Offset gives a spline, and other curves trim, break and
+extend at it; Trim, Break and Extend of the conic itself, Fillet and Chamfer refuse it.
+
 A `point` (Fusion: Create › Point, the Point tool in the sketch CREATE menu) is a sketch point:
 it has no edge and bounds no profile, and is drawn as a small cross (a dot while editing). It
 takes constraints and dimensions through `{curve, point: start}` (end and center mean the same
@@ -184,7 +198,7 @@ sketch's normal towards the body (Flip reverses it); the holes follow the points
 A sketch can carry `constraints` (in `sketch.create` or via `sketch.add_constraints`). They
 refer to curves by index in `sketch.curves` (a rectangle is four lines in order bottom,
 right, top, left; a slot is line, arc, line, arc) and to points as
-`{"curve": i, "point": "start" | "end" | "center" | "axis"}` or `"origin"` (`axis` is the end of an ellipse's or elliptical arc's major axis).
+`{"curve": i, "point": "start" | "end" | "center" | "axis" | "apex"}` or `"origin"` (`axis` is the end of an ellipse's or elliptical arc's major axis, `apex` a conic's apex).
 
 - Geometric: `coincident`, `point_on_curve`, `midpoint`, `horizontal`, `vertical`,
   `parallel`, `perpendicular`, `collinear`, `tangent`, `equal`, `concentric`, `symmetric`, `fix`.

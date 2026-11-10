@@ -79,6 +79,8 @@ Item {
 
     function isLine(i) { return !!curves[i] && curves[i].kind === "line" }
 
+    function isConic(i) { return !!curves[i] && curves[i].kind === "conic" }
+
     /// An ellipse or an elliptical arc (a trimmed ellipse).
     function isEllipse(i) { return !!curves[i] && (curves[i].kind === "ellipse" || curves[i].kind === "elliptical_arc") }
 
@@ -102,6 +104,10 @@ Item {
                 out.push({ point: { curve: c.index, point: "start" }, pos: c.points[0] })
                 out.push({ point: { curve: c.index, point: "end" }, pos: c.points[3] })
                 out.push({ point: { curve: c.index, point: "center" }, pos: c.points[1] })
+            } else if (c.kind === "conic") {
+                out.push({ point: { curve: c.index, point: "start" }, pos: c.points[0] })
+                out.push({ point: { curve: c.index, point: "end" }, pos: c.points[2] })
+                out.push({ point: { curve: c.index, point: "apex" }, pos: c.points[1] })
             } else if (c.kind === "ellipse") {
                 // Its centre and the end of its major axis.
                 out.push({ point: { curve: c.index, point: "center" }, pos: c.points[0] })
@@ -369,7 +375,9 @@ Item {
             if (curvesPicked.length === 2) {
                 const [i, j] = curvesPicked
                 const ok = tool === "equal" ? (isLine(i) && isLine(j)) || (isCirc(i) && isCirc(j)) || (isEllipse(i) && isEllipse(j))
-                         : tool === "tangent" ? isCirc(i) || isCirc(j)
+                         // A conic is tangent to lines only (at the end nearer the line).
+                         : tool === "tangent" ? (isConic(i) || isConic(j) ? (isConic(i) && isLine(j)) || (isLine(i) && isConic(j))
+                                                                          : isCirc(i) || isCirc(j))
                          : tool === "concentric" ? isCirc(i) && isCirc(j)
                          : isLine(i) && isLine(j)
                 if (ok && i !== j)
@@ -409,7 +417,7 @@ Item {
             return c.points[1]
         if (c.kind === "ellipse" && c.samples)
             return c.samples[Math.floor(c.samples.length / 8)]
-        if (c.kind === "elliptical_arc" && c.samples)
+        if ((c.kind === "elliptical_arc" || c.kind === "conic") && c.samples)
             return c.samples[Math.floor(c.samples.length / 2)]
         return c.points[Math.floor(c.points.length / 2)]
     }
@@ -492,7 +500,7 @@ Item {
                 if (i === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y)
             }
         } else {
-            ((c.kind === "ellipse" || c.kind === "elliptical_arc") && c.samples ? c.samples : c.points).forEach((p, i) => {
+            ((c.kind === "ellipse" || c.kind === "elliptical_arc" || c.kind === "conic") && c.samples ? c.samples : c.points).forEach((p, i) => {
                 const q = overlay.toScreen(p)
                 if (i === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y)
             })

@@ -65,6 +65,9 @@ struct SketchCurve {
         /// points = {start, center, end of the major axis, end}, radius = the minor radius;
         /// counter-clockwise from start to end (a trimmed ellipse)
         EllipticalArc,
+        /// points = {start, apex, end}, radius = rho (0 < rho < 1): a rational quadratic from
+        /// start to end pulled towards the apex (Fusion: Conic Curve; 0.5 is a parabola)
+        Conic,
     };
     Kind kind = Kind::Line;
     std::vector<Vec2> points;
@@ -116,6 +119,9 @@ struct SketchGeometry {
 /// per span between fit points, the first and last fit points included (a closed
 /// spline ends where it starts). Throws ModelingError when interpolation fails.
 [[nodiscard]] std::vector<Vec2> sampleSpline(const SketchCurve& spline, int perSpan = 16);
+
+/// The point at parameter t (0 = start, 1 = end) of a conic (Kind::Conic).
+[[nodiscard]] Vec2 conicPoint(const SketchCurve& conic, double t);
 
 /// Area of all faces of a shape in mm^2.
 [[nodiscard]] double area(const Shape& shape);
