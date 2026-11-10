@@ -100,6 +100,11 @@ public:
     /// Mesh to draw for a part: the part's mesh when it fits the budget, else a decimated
     /// copy. Returns nullptr while that copy is computed; displayMeshReady(id) follows.
     [[nodiscard]] std::shared_ptr<const core::TriangleMesh> displayMesh(const model::Part& part);
+    /// The smooth corner normals (3 floats per corner, core::smoothCornerNormals) of a reduced
+    /// mesh returned by displayMesh, computed with it on the worker thread; handed over once.
+    /// nullptr when there are none (the caller computes them).
+    [[nodiscard]] std::shared_ptr<const std::vector<float>>
+    takeDisplayNormals(const std::shared_ptr<const core::TriangleMesh>& mesh);
 
 signals:
     void busyChanged();
@@ -115,6 +120,7 @@ private:
     struct Lod {
         std::shared_ptr<const core::TriangleMesh> source;
         std::shared_ptr<const core::TriangleMesh> mesh; ///< nullptr while computing
+        std::shared_ptr<const std::vector<float>> normals; ///< of `mesh`, until taken
         int budget = 0;
     };
 
