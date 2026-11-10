@@ -1848,6 +1848,30 @@ TEST_CASE("Design commands: Sketch Conic Curve (CAD-262)", "[commands][cad][solv
     }
     run(s, "edit.undo");
 
+    // Turned without a pivot: about the middle of the curve itself (not of its apex).
+    {
+        const auto turn = run(s, "sketch.create",
+                              {{"plane", "XY"},
+                               {"curves", Json::array({{{"type", "conic"}, {"start", {0, 0}}, {"end", {20, 0}}, {"apex", {10, 30}},
+                                                        {"rho", 0.3}}})}})
+                              .at("id")
+                              .get<std::uint64_t>();
+        auto middle = [&](const Json& samples) {
+            double lo[2] = {1e300, 1e300}, hi[2] = {-1e300, -1e300};
+            for (const auto& q : samples)
+                for (int d = 0; d < 2; ++d) {
+                    lo[d] = std::min(lo[d], q[d].get<double>());
+                    hi[d] = std::max(hi[d], q[d].get<double>());
+                }
+            return std::array<double, 2>{(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2};
+        };
+        const auto m0 = middle(run(s, "sketch.curves", {{"sketch", turn}}).at("curves")[0].at("samples"));
+        run(s, "sketch.move_curves", {{"sketch", turn}, {"curves", {0}}, {"angle", 90}});
+        const auto m1 = middle(run(s, "sketch.curves", {{"sketch", turn}}).at("curves")[0].at("samples"));
+        CHECK(m1[0] == Approx(m0[0]).margin(0.05));
+        CHECK(m1[1] == Approx(m0[1]).margin(0.05));
+    }
+
     // Fixed, it holds its ends and apex.
     run(s, "sketch.add_constraints", {{"sketch", sc}, {"constraints", Json::array({{{"type", "fix"}, {"curve", 0}}})}});
     CHECK(run(s, "sketch.curves", {{"sketch", sc}}).at("degreesOfFreedom") == 0);
@@ -3627,6 +3651,21 @@ TEST_CASE("Design commands: Sketch Text (CAD-263)", "[commands][cad][solver]")
     const auto bu = bbox(run(s, "sketch.curves", {{"sketch", up}}).at("curves")[0].at("outlines"));
     CHECK(bu[3] - bu[1] > bb[2] - bb[0] - 1);
     CHECK(bu[2] - bu[0] < bb[3] - bb[1] + 1);
+
+    // Turned without a pivot (Codex review of #227): about the middle of the letters, as the
+    // tool previews it, so the letters stay where they are (their middle does not move).
+    {
+        const auto turn = run(s, "sketch.create",
+                              {{"plane", "XY"},
+                               {"curves", Json::array({{{"type", "text"}, {"at", {10, 20}}, {"text", "O8"}, {"height", 10}}})}})
+                              .at("id")
+                              .get<std::uint64_t>();
+        const auto before = bbox(run(s, "sketch.curves", {{"sketch", turn}}).at("curves")[0].at("outlines"));
+        run(s, "sketch.move_curves", {{"sketch", turn}, {"curves", {0}}, {"angle", 90}});
+        const auto after = bbox(run(s, "sketch.curves", {{"sketch", turn}}).at("curves")[0].at("outlines"));
+        CHECK((after[0] + after[2]) / 2 == Approx((before[0] + before[2]) / 2).margin(0.05));
+        CHECK((after[1] + after[3]) / 2 == Approx((before[1] + before[3]) / 2).margin(0.05));
+    }
 
     // Move, scale and a circular pattern keep it text; the start and the height point are
     // its constraint points.

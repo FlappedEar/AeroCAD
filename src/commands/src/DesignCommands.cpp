@@ -808,7 +808,24 @@ geometry::Vec2 curvesPivot(const cad::Design& d, cad::FeatureId id, const std::v
             const auto& c = it->second.curves[i];
             // An ellipse is bounded around its centre (its axis end is on it).
             const bool oval = c.kind == geometry::SketchCurve::Kind::Ellipse;
-            const auto pts = oval ? std::vector<geometry::Vec2>{c.points[0]} : c.points;
+            std::vector<geometry::Vec2> pts = oval ? std::vector<geometry::Vec2>{c.points[0]} : c.points;
+            // A conic is bounded by its curve (not its apex) and text by its letters, as the
+            // sketch tools preview it.
+            if (c.kind == geometry::SketchCurve::Kind::Conic) {
+                pts.clear();
+                for (int k = 0; k <= 64; ++k)
+                    pts.push_back(geometry::conicPoint(c, k / 64.0));
+            } else if (c.kind == geometry::SketchCurve::Kind::Text) {
+                try {
+                    std::vector<geometry::Vec2> letters;
+                    for (const auto& line : geometry::textOutlines(c))
+                        letters.insert(letters.end(), line.begin(), line.end());
+                    if (!letters.empty())
+                        pts = std::move(letters);
+                } catch (const geometry::ModelingError&) {
+                    // The baseline points stay (no font).
+                }
+            }
             for (const auto& p : pts) {
                 const double rad = c.kind == geometry::SketchCurve::Kind::Circle ? c.radius
                                    : oval ? std::max(c.radius, std::hypot(c.points[1].x - p.x, c.points[1].y - p.y))
