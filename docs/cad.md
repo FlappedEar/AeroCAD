@@ -171,6 +171,8 @@ centre + major·cos t along the axis + minor·sin t across it). In `sketch.curve
 `samples`. Its points for constraints are `start`, `end` and `center`; its ends stay on the
 ellipse as they move, and it takes the same dimensions, H/V and Equal as an ellipse. Mirror
 keeps it an elliptical arc (its ends swap), Offset gives a spline, and Extend refuses it.
+The Elliptical Arc tool (ribbon CREATE menu or Sketch menu) draws one directly: click the centre, the end of the
+major axis, a point for the minor radius, then the start and the end of the arc (counter-clockwise).
 
 A `conic` (Fusion: Create › Conic Curve; ribbon CREATE menu or Sketch menu) runs from `start`
 to `end`, tangent there to the lines towards `apex`, and bulges towards the apex by `rho`

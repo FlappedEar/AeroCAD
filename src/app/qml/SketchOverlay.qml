@@ -616,6 +616,7 @@ Item {
         case "ellipse":
         case "conic":
         case "slot": return 3
+        case "elliptical_arc": return 5
         case "spline": return Infinity // ended with Enter, a double-click or the first point
         default: return 2
         }
@@ -726,6 +727,28 @@ Item {
         return { center: ctr, radius: Math.abs(k), a0: a0, sweep: sweep }
     }
 
+    /// Frame of the ellipse of the first three points (centre, major axis end, a point for
+    /// the minor radius): {c, a, b, angle (radians)}, or null when it is degenerate.
+    function ellipseFrame(pts) {
+        const major = dist(pts[0], pts[1]), minor = Math.abs(leftOf(pts[0], pts[1], pts[2]))
+        if (major < 1e-9 || minor < 1e-9)
+            return null
+        return { c: pts[0], a: major, b: minor, angle: Math.atan2(pts[1][1] - pts[0][1], pts[1][0] - pts[0][0]) }
+    }
+
+    /// Parametric angle (degrees, 0 to 360) of the ellipse point nearest in direction to `p`.
+    function ellipseT(f, p) {
+        const dx = p[0] - f.c[0], dy = p[1] - f.c[1], ca = Math.cos(f.angle), sa = Math.sin(f.angle)
+        const t = Math.atan2((-dx * sa + dy * ca) / f.b, (dx * ca + dy * sa) / f.a) * 180 / Math.PI
+        return t < 0 ? t + 360 : t
+    }
+
+    /// Screen point of the ellipse `f` at parametric angle `t` (degrees).
+    function ellipsePoint(f, t) {
+        const r = t * Math.PI / 180, u = f.a * Math.cos(r), w = f.b * Math.sin(r)
+        return toScreen([f.c[0] + u * Math.cos(f.angle) - w * Math.sin(f.angle), f.c[1] + u * Math.sin(f.angle) + w * Math.cos(f.angle)])
+    }
+
     function curveFrom(pts, dim) {
         const a = pts[0], b = pts[1]
         switch (tool) {
@@ -810,6 +833,18 @@ Item {
             return { type: "ellipse", center: a, major_radius: typedRadius !== null ? typedRadius : round6(major),
                      minor_radius: dim && dim.length > 0 ? dim[0] : round6(minor),
                      angle: round6(Math.atan2(b[1] - a[1], b[0] - a[0]) * 180 / Math.PI) }
+        }
+        case "elliptical_arc": {
+            // Centre, the end of the major axis, a point for the minor radius, then the
+            // start and the end of the arc (counter-clockwise), as Fusion's Ellipse arc.
+            const f = pts.length >= 3 ? ellipseFrame(pts) : null
+            if (!f || pts.length < 5)
+                return null
+            const t0 = ellipseT(f, pts[3]), t1 = ellipseT(f, pts[4])
+            if (Math.abs(t1 - t0) < 1e-6 || Math.abs(Math.abs(t1 - t0) - 360) < 1e-6)
+                return null
+            return { type: "elliptical_arc", center: a, major_radius: round6(f.a), minor_radius: round6(f.b),
+                     angle: round6(f.angle * 180 / Math.PI), start_angle: round6(t0), end_angle: round6(t1) }
         }
         case "conic": {
             // Start, end, then the apex the curve bends towards (Fusion: Conic Curve); rho
@@ -1533,7 +1568,7 @@ Item {
                         if (i === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y)
                     }
                 } else if (root.tool === "line" || root.tool === "text" || (pts.length === 2 && (root.tool === "arc" || root.tool === "slot" || root.tool === "circle_3point"
-                                                                          || root.tool === "rectangle_3point" || root.tool === "ellipse"
+                                                                          || root.tool === "rectangle_3point" || root.tool === "ellipse" || root.tool === "elliptical_arc"
                                                                           || root.tool === "conic"))) {
                     ctx.moveTo(s[0].x, s[0].y)
                     ctx.lineTo(s[1].x, s[1].y)
@@ -1581,6 +1616,40 @@ Item {
                         ctx.moveTo(c[0].x, c[0].y)
                         for (let i = 1; i <= 4; ++i)
                             ctx.lineTo(c[i % 4].x, c[i % 4].y)
+                    }
+                } else if (root.tool === "elliptical_arc") {
+                    // The major axis, the ellipse through the cursor, then the start marker and
+                    // the arc up to the cursor (counter-clockwise).
+                    const f = pts.length >= 3 ? root.ellipseFrame(pts) : null
+                    ctx.moveTo(s[0].x, s[0].y)
+                    ctx.lineTo(s[1].x, s[1].y)
+                    if (f) {
+                        ctx.stroke()
+                        ctx.globalAlpha = pts.length >= 4 ? 0.35 : 1
+                        ctx.beginPath()
+                        for (let i = 0; i <= 96; ++i) {
+                            const q = root.ellipsePoint(f, 360 * i / 96)
+                            if (i === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y)
+                        }
+                        ctx.stroke()
+                        ctx.globalAlpha = 1
+                        ctx.beginPath()
+                        if (pts.length >= 4) {
+                            const t0 = root.ellipseT(f, pts[3])
+                            let sweep = pts.length >= 5 ? root.ellipseT(f, pts[4]) - t0 : 0
+                            if (sweep <= 0) sweep += 360
+                            if (pts.length < 5) {
+                                const q = root.ellipsePoint(f, t0)
+                                ctx.moveTo(s[0].x, s[0].y)
+                                ctx.lineTo(q.x, q.y)
+                            } else {
+                                ctx.lineWidth = 2.5
+                                for (let i = 0; i <= 96; ++i) {
+                                    const q = root.ellipsePoint(f, t0 + sweep * i / 96)
+                                    if (i === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y)
+                                }
+                            }
+                        }
                     }
                 } else if (root.tool === "ellipse") {
                     // The major axis, then the ellipse through the cursor.
@@ -1684,6 +1753,10 @@ Item {
                 else if (root.tool === "conic")
                     text = pts.length >= 3 ? "ρ " + Number(root.typedRho !== null ? root.typedRho : 0.5).toFixed(2)
                                            : Preferences.formatLength(root.dist(a, b), Preferences.lengthUnit)
+                else if (root.tool === "elliptical_arc")
+                    text = pts.length === 2 ? "Ra " + Preferences.formatLength(root.dist(a, b), Preferences.lengthUnit)
+                         : pts.length === 3 ? "Rb " + Preferences.formatLength(Math.abs(root.leftOf(a, b, pts[2])), Preferences.lengthUnit)
+                         : ""
                 else if (root.tool === "ellipse")
                     text = pts.length >= 3 ? "Rb " + Preferences.formatLength(Math.abs(root.leftOf(a, b, pts[2])), Preferences.lengthUnit)
                                            : "Ra " + Preferences.formatLength(root.dist(a, b), Preferences.lengthUnit)
@@ -1772,6 +1845,7 @@ Item {
                     : root.tool === "circle_2point" ? qsTr("2-point circle: click both ends of a diameter; type the diameter")
                     : root.tool === "circle_3point" ? qsTr("3-point circle: click three points on the circle")
                     : root.tool === "ellipse" ? qsTr("Ellipse: click the centre, the end of the major axis, then a point for the minor radius; type each radius")
+                    : root.tool === "elliptical_arc" ? qsTr("Elliptical arc: click the centre, the major axis end, the minor radius, then the arc start and end (counter-clockwise)")
                     : root.tool === "text" ? qsTr("Text: click the start, type the text, Enter (cursor distance = height, direction = angle)")
                     : root.tool === "conic" ? qsTr("Conic curve: click the start, the end, then the apex it bends towards; type rho (0 to 1, 0.5 is a parabola)")
                     : root.tool === "arc" ? qsTr("Arc: click start, end, then a point on the arc")
@@ -1812,7 +1886,7 @@ Item {
                 }
             }
             RowLayout {
-                visible: root.active && !root.constraintTool && root.tool !== "trim" && root.tool !== "circular_pattern" && root.tool !== "rectangular_pattern" && root.tool !== "extend" && root.tool !== "break" && root.tool !== "point" && root.tool !== "mirror" && root.tool !== "fillet" && root.tool !== "chamfer" && root.tool !== "project" && root.tool !== "spline"
+                visible: root.active && !root.constraintTool && root.tool !== "trim" && root.tool !== "circular_pattern" && root.tool !== "rectangular_pattern" && root.tool !== "extend" && root.tool !== "break" && root.tool !== "point" && root.tool !== "mirror" && root.tool !== "fillet" && root.tool !== "chamfer" && root.tool !== "project" && root.tool !== "spline" && root.tool !== "elliptical_arc"
                          && root.tool !== "tangent_arc"
                          && root.tool !== "circle_3point"
                 Label { text: root.tool === "rectangle" || root.tool === "center_rectangle" ? qsTr("Width, height")
