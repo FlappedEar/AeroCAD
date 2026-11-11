@@ -4218,6 +4218,33 @@ TEST_CASE("Design commands: Pipe (CAD-271)", "[commands][cad]")
         CHECK(r.at("bodies")[0].at("volume").get<double>() == Approx(pi * 25 * (pi / 2 * 50)).epsilon(1e-4));
     }
 
+    SECTION("deleting sketch curves keeps the pipe on its own curve (Codex review of #238)")
+    {
+        const auto two = run(s, "sketch.create",
+                             {{"plane", "XY"},
+                              {"curves", Json::array({{{"type", "line"}, {"start", {0, 30}}, {"end", {20, 30}}},
+                                                      {{"type", "line"}, {"start", {0, 60}}, {"end", {50, 60}}}})}})
+                             .at("id").get<std::uint64_t>();
+        run(s, "feature.pipe", {{"path", {{"sketch", two}, {"curves", {1}}}}, {"diameter", 10}});
+        auto status = [&] {
+            const Json tl = run(s, "timeline.list");
+            for (const auto& f : tl.at("features"))
+                if (f.at("type") == "pipe")
+                    return f.at("status").get<std::string>();
+            return std::string("missing");
+        };
+        auto pipeVolume = [&] {
+            const auto bodies = run(s, "timeline.list").at("bodies");
+            return bodies.empty() ? -1.0 : bodies[0].at("volume").get<double>();
+        };
+        REQUIRE(pipeVolume() == Approx(pi * 25 * 50).epsilon(1e-6));
+        run(s, "sketch.delete_curves", {{"sketch", two}, {"curves", {0}}});
+        CHECK(status() == "ok");
+        CHECK(pipeVolume() == Approx(pi * 25 * 50).epsilon(1e-6)); // still the 50 long line
+        run(s, "sketch.delete_curves", {{"sketch", two}, {"curves", {0}}});
+        CHECK(status() == "error");
+    }
+
     SECTION("bad sizes are errors")
     {
         CHECK_FALSE(s.execute("feature.pipe", {{"path", {{"sketch", line}}}}).ok);

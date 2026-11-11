@@ -3512,7 +3512,8 @@ void Design::deleteSketchCurves(FeatureId sketchId, const std::vector<std::size_
             else
                 axis = Json{{"deletedLine", axis["line"]}};
         }
-        if ((g.type == "sweep" || g.type == "path_pattern") && g.params.contains("path") && g.params["path"].is_object() &&
+        if ((g.type == "sweep" || g.type == "path_pattern" || g.type == "pipe" || g.type == "rib") && g.params.contains("path") &&
+            g.params["path"].is_object() &&
             g.params["path"].value("sketch", Json()) == sketchId && g.params["path"].contains("curves")) {
             Json& path = g.params["path"];
             Json kept = Json::array();

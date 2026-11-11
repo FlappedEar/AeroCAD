@@ -506,6 +506,16 @@ Pane {
         // A hole made at sketch points is edited with that placement.
         if (featureType === "hole" && initial && initial.sketch !== undefined && initial.placement === undefined)
             v.placement = "sketch"
+        // Sizing modes that are not stored as such are inferred from the stored parameters, so that
+        // reopening a feature and pressing OK does not swap in the other mode's defaults.
+        if (initial && featureType === "coil") {
+            if (initial.height !== undefined && initial.revolutions === undefined)
+                v.coilType = "height_pitch"
+            else if (initial.height !== undefined && initial.pitch === undefined)
+                v.coilType = "revolutions_height"
+        }
+        if (initial && featureType === "scale" && (initial.factor_x !== undefined || initial.factor_y !== undefined || initial.factor_z !== undefined))
+            v.scaleType = "non_uniform"
         if (!featureId) {
             if (s.fields.some(f => f.key === "sketch") && v.sketch === undefined) {
                 // A hole at sketch points starts from the latest sketch that has points.
