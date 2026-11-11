@@ -818,7 +818,7 @@ ApplicationWindow {
         if (info.kind === "body") {
             if (type === "combine" && !combineTool)
                 initial.target = info.featureId
-            else if (["fillet", "chamfer", "shell", "press_pull", "hole", "move", "mirror", "rectangular_pattern",
+            else if (["fillet", "chamfer", "shell", "press_pull", "hole", "move", "scale", "mirror", "rectangular_pattern", "path_pattern",
                       "circular_pattern", "split", "delete_faces", "draft"].includes(type))
                 initial.body = info.featureId
         }
@@ -1399,6 +1399,8 @@ ApplicationWindow {
     Action { id: draftAction; text: qsTr("D&raft"); enabled: !window.activeSketch; onTriggered: window.openFeature("draft") }
     // Fusion: Modify > Delete on faces (the gap heals from the neighbours).
     Action { id: deleteFacesAction; text: qsTr("&Delete Face"); enabled: !window.activeSketch; onTriggered: window.openFeature("delete_faces") }
+    // Fusion: Modify > Scale (uniform or non-uniform).
+    Action { id: scaleBodyAction; text: qsTr("Sc&ale"); enabled: !window.activeSketch; onTriggered: window.openFeature("scale") }
     // Fusion: Modify > Split Body (by a plane: origin plane, construction plane or flat face).
     Action { id: splitAction; text: qsTr("Spli&t Body"); enabled: !window.activeSketch; onTriggered: window.openFeature("split") }
     Action { id: combineAction; text: qsTr("Co&mbine"); onTriggered: window.openFeature("combine") }
@@ -1409,6 +1411,7 @@ ApplicationWindow {
     Action { id: sweepAction; text: qsTr("S&weep"); enabled: !window.activeSketch; onTriggered: window.openFeature("sweep") }
     Action { id: mirrorAction; text: qsTr("M&irror"); enabled: !window.activeSketch; onTriggered: window.openFeature("mirror") }
     Action { id: rectPatternAction; text: qsTr("&Rectangular Pattern"); enabled: !window.activeSketch; onTriggered: window.openFeature("rectangular_pattern") }
+    Action { id: pathPatternAction; text: qsTr("Pattern on &Path"); enabled: !window.activeSketch; onTriggered: window.openFeature("path_pattern") }
     Action { id: circPatternAction; text: qsTr("C&ircular Pattern"); enabled: !window.activeSketch; onTriggered: window.openFeature("circular_pattern") }
     Action {
         id: convertAction
@@ -1760,6 +1763,7 @@ ApplicationWindow {
                 title: qsTr("&Pattern")
                 MenuItem { action: rectPatternAction }
                 MenuItem { action: circPatternAction }
+                MenuItem { action: pathPatternAction }
             }
         }
         Menu {
@@ -1774,6 +1778,7 @@ ApplicationWindow {
             MenuItem { action: chamferAction }
             MenuItem { action: shellAction }
             MenuItem { action: combineAction }
+            MenuItem { action: scaleBodyAction }
             MenuItem { action: splitAction }
             MenuItem { action: deleteFacesAction }
             MenuItem { action: draftAction }
@@ -2071,6 +2076,7 @@ ApplicationWindow {
                 ToolCommand { action: mirrorAction; text: qsTr("Mirror"); iconName: "mirror" }
                 ToolCommand { action: rectPatternAction; text: qsTr("Pattern"); iconName: "pattern" }
                 ToolCommand { action: circPatternAction; text: qsTr("Circular Pattern"); iconName: "circular-pattern" }
+                ToolCommand { action: pathPatternAction; text: qsTr("Pattern on Path"); iconName: "pattern" }
             }
             ToolSeparator {}
             ToolGroup {
@@ -2082,6 +2088,7 @@ ApplicationWindow {
                 ToolCommand { action: chamferAction; text: qsTr("Chamfer"); iconName: "chamfer" }
                 ToolCommand { action: shellAction; text: qsTr("Shell"); iconName: "shell" }
                 ToolCommand { action: combineAction; text: qsTr("Combine"); iconName: "combine" }
+                ToolCommand { action: scaleBodyAction; text: qsTr("Scale"); iconName: "scale" }
                 ToolCommand { action: splitAction; text: qsTr("Split Body"); iconName: "section" }
                 ToolCommand { action: parametersAction; text: qsTr("Parameters"); iconName: "parameters" }
                 ToolCommand { action: deleteAction; text: qsTr("Delete"); iconName: "delete" }

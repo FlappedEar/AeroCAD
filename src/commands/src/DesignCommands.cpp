@@ -192,7 +192,8 @@ Json curveSchema()
          "{corner, opposite}; center_rectangle {center, width, height}; three_point_rectangle {start, end, height} (a side "
          "at any angle, then the other side; height is signed, positive to the left of start -> end); circle {center, radius | diameter}; "
          "arc {start, through, end} (three-point arc); center_arc {center, radius, startAngle, endAngle} "
-         "(degrees, counter-clockwise); polygon {center, radius, sides, angle?, mode?} or {mode: edge, start, end, sides}; slot {start, end, width, mode?} "
+         "(degrees, counter-clockwise); polygon {center, radius, sides, angle?, mode?} (circumscribed: radius to a side) or {mode: edge, start, end, sides} "
+         "(polygon left of start -> end); slot {start, end, width, mode?} (overall: start, end are the far points) "
          "or {mode: center_point, center, end, width}; spline {points, closed?}; point {at} (a sketch point: no edge, no profile; "
          "it joins a curve end at the same place); tangent_arc {from: {curve, point: start | end}, end} "
          "(sketch.add_curves only: an arc leaving the end of a line or arc tangentially, kept tangent); "
@@ -208,8 +209,8 @@ Json curveSchema()
             {"enum", {"line", "rectangle", "center_rectangle", "three_point_rectangle", "circle", "arc", "center_arc", "polygon", "slot",
                       "spline", "point", "tangent_arc", "tangent_circle", "ellipse", "elliptical_arc", "conic", "text"}}}},
           {"curves", {{"type", "array"}, {"items", {{"type", "integer"}, {"minimum", 0}}},
-                      {"description", "tangent_circle: 2 or 3 line indices; `radius` (optional) for two."}}},
-          {"near", point2("tangent_circle: a point near the circle wanted (picks one of the circles tangent to the lines).")},
+                      {"description", "tangent_circle: 2 or 3 line indices (`radius` optional for 2)."}}},
+          {"near", point2("tangent_circle: a point near the circle wanted.")},
           {"from", {{"type", "object"},
                     {"description", "tangent_arc: the end it starts from, {curve: index, point: start | end}."}}},
           {"start", point2("Start point.")},
@@ -228,10 +229,8 @@ Json curveSchema()
           {"sides", numberOrExpr("Number of polygon sides.")},
           {"mode", {{"type", "string"},
                     {"enum", {"inscribed", "circumscribed", "edge", "center_to_center", "overall", "center_point"}},
-                    {"description", "polygon: inscribed (default), circumscribed (`radius` to a side, `angle` = side "
-                                    "direction) or edge (`start`, `end`, polygon on the left). slot: center_to_center "
-                                    "(default; `start`, `end` = end centres), overall (`start`, `end` = far points) or "
-                                    "center_point (`center`, `end` = one end's centre)."}}},
+                    {"description", "polygon: inscribed (default; `radius` to a corner), circumscribed (`radius` to a "
+                                    "side) or edge. slot: center_to_center (default), overall or center_point."}}},
           {"angle", numberOrExpr("Polygon rotation, or the direction of an ellipse's major axis (degrees).")},
           {"major_radius", numberOrExpr("ellipse: centre to the end of the major axis (mm).")},
           {"minor_radius", numberOrExpr("ellipse: half the minor axis (mm).")},
@@ -2326,6 +2325,16 @@ void registerFeatureCommands(CommandRegistry& r)
                        {"center", point3("Rotation and scale centre [x, y, z] in mm.")}},
                       {"body"});
 
+    addFeatureCommand(r, "scale", "Scale",
+                      "Scales a body (Fusion: Modify > Scale): `factor`, or `factor_x` / `_y` / `_z` (missing: 1), about `center`.",
+                      {{"body", bodyRefSchema("Body to scale.")},
+                       {"factor", numberOrExpr("Uniform factor.")},
+                       {"factor_x", numberOrExpr("Factor along X.")},
+                       {"factor_y", numberOrExpr("Factor along Y.")},
+                       {"factor_z", numberOrExpr("Factor along Z.")},
+                       {"center", point3("Centre [x, y, z] (default: bounding box centre).")}},
+                      {"body"});
+
     addFeatureCommand(r, "rectangular_pattern", "Rectangular Pattern",
                       "Copies a body in one or two directions (Fusion: Create > Pattern > Rectangular Pattern).",
                       {{"body", bodyRefSchema("Body to pattern.")},
@@ -2337,6 +2346,25 @@ void registerFeatureCommands(CommandRegistry& r)
                        {"spacing2", numberOrExpr("Distance in the second direction (mm).")},
                        {"operation", patternOperation}},
                       {"body", "count", "spacing"});
+
+    addFeatureCommand(r, "path_pattern", "Pattern on Path",
+                      "Copies a body along sketch curves (Fusion: Pattern on Path); the body stays, copies move along the path.",
+                      {{"body", bodyRefSchema("Body to pattern.")},
+                       {"path", {{"type", "object"},
+                                 {"description", "{sketch, curves?}: connected curves (default all)."},
+                                 {"properties", {{"sketch", featureIdSchema("Path sketch.")},
+                                                 {"curves", {{"type", "array"}, {"items", {{"type", "integer"}}},
+                                                             {"description", "Curve indices."}}}}},
+                                 {"required", {"sketch"}}}},
+                       {"count", numberOrExpr("Instances including the body (2 to 1000).")},
+                       {"distance", numberOrExpr("extent: length the instances cover (default: rest of the path); spacing: gap between instances (mm).")},
+                       {"distance_type", {{"type", "string"}, {"enum", {"extent", "spacing"}}, {"description", "Meaning of distance (default extent)."}}},
+                       {"start", numberOrExpr("First instance: fraction of the path, 0 (default) to below 1.")},
+                       {"orientation", {{"type", "string"}, {"enum", {"identical", "path_direction"}},
+                                        {"description", "path_direction turns copies with the path."}}},
+                       {"flip", {{"type", "boolean"}, {"description", "Count start and distance from the other end of the path."}}},
+                       {"operation", patternOperation}},
+                      {"body", "path"});
 
     addFeatureCommand(r, "circular_pattern", "Circular Pattern",
                       "Copies a body around an axis (Fusion: Create > Pattern > Circular Pattern). A full 360 degree "

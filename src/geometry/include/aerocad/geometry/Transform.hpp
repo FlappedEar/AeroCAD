@@ -17,6 +17,11 @@ inline constexpr double kMaxScaleFactor = 1e6;
 /// non-finite origin, and KernelError if the kernel fails.
 [[nodiscard]] Shape scaled(const Shape& shape, double factor, const core::Vec3& origin);
 
+/// Returns a copy of the shape scaled by a different factor along each world axis about
+/// `origin` (Fusion: Scale, Non-Uniform). Curved faces become B-splines. Same limits and
+/// exceptions as scaled().
+[[nodiscard]] Shape scaledNonUniform(const Shape& shape, double fx, double fy, double fz, const core::Vec3& origin);
+
 /// Returns a copy of the shape translated by `offset`.
 [[nodiscard]] Shape translated(const Shape& shape, const core::Vec3& offset);
 

@@ -5,7 +5,9 @@
 #include "aerocad/geometry/Tessellation.hpp"
 #include "aerocad/core/MeshCheck.hpp"
 
+#include <BRepAdaptor_CompCurve.hxx>
 #include <BRepAdaptor_Curve.hxx>
+#include <GCPnts_AbscissaPoint.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Common.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
@@ -350,6 +352,60 @@ Shape sweep(const Shape& profileFaces, const Shape& pathEdges)
             builder.Add(comp, pipe.Shape());
         }
         return wrapShape(comp);
+    });
+}
+
+namespace {
+TopoDS_Wire pathWire(const Shape& pathEdges, const char* what)
+{
+    const TopoDS_Shape& path = occ(pathEdges, what);
+    BRepBuilderAPI_MakeWire wire;
+    TopTools_ListOfShape edgeList;
+    for (TopExp_Explorer ex(path, TopAbs_EDGE); ex.More(); ex.Next())
+        edgeList.Append(ex.Current());
+    if (edgeList.IsEmpty())
+        throw ModelingError(std::string(what) + ": the path has no curves");
+    wire.Add(edgeList);
+    if (!wire.IsDone())
+        throw ModelingError(std::string(what) + ": the path curves are not connected");
+    return wire.Wire();
+}
+} // namespace
+
+double pathLength(const Shape& pathEdges)
+{
+    return guarded("Path length", [&] {
+        const BRepAdaptor_CompCurve curve(pathWire(pathEdges, "Path"));
+        return GCPnts_AbscissaPoint::Length(curve);
+    });
+}
+
+std::vector<PathFrame> pathFrames(const Shape& pathEdges, const std::vector<double>& distances)
+{
+    return guarded("Path frames", [&] {
+        const BRepAdaptor_CompCurve curve(pathWire(pathEdges, "Path"));
+        const double length = GCPnts_AbscissaPoint::Length(curve);
+        std::vector<PathFrame> out;
+        for (const double d : distances) {
+            const double at = std::min(std::max(d, 0.0), length);
+            double param = curve.FirstParameter();
+            if (at >= length - 1e-9) {
+                param = curve.LastParameter(); // the integration is tolerance-limited at the very end
+            } else if (at > 1e-12) {
+                GCPnts_AbscissaPoint ap(curve, at, curve.FirstParameter());
+                if (!ap.IsDone())
+                    throw ModelingError("Path: cannot measure along the path");
+                param = ap.Parameter();
+            }
+            gp_Pnt pt;
+            gp_Vec tan;
+            curve.D1(param, pt, tan);
+            if (tan.Magnitude() < 1e-12)
+                throw ModelingError("Path: the path has no direction here");
+            tan.Normalize();
+            out.push_back({{pt.X(), pt.Y(), pt.Z()}, {tan.X(), tan.Y(), tan.Z()}});
+        }
+        return out;
     });
 }
 

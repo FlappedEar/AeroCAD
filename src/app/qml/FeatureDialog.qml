@@ -328,6 +328,14 @@ Pane {
             { key: "angle", type: "expr", label: qsTr("Angle (deg)"), init: 90 },
             { key: "translate", type: "vec3", label: qsTr("Move by"), init: [0, 0, 0] },
             { key: "scale", type: "expr", label: qsTr("Scale (factor)"), init: 1 }] },
+        scale: { title: qsTr("Scale"), command: "feature.scale", fields: [
+            { key: "body", type: "body", label: qsTr("Body") },
+            { key: "scaleType", type: "choice", label: qsTr("Type"), init: "uniform", local: true, options: [
+                { value: "uniform", label: qsTr("Uniform") }, { value: "non_uniform", label: qsTr("Non-Uniform") }] },
+            { key: "factor", type: "expr", label: qsTr("Scale factor"), init: 1, showIf: v => v.scaleType !== "non_uniform" },
+            { key: "factor_x", type: "expr", label: qsTr("X factor"), init: 1, showIf: v => v.scaleType === "non_uniform" },
+            { key: "factor_y", type: "expr", label: qsTr("Y factor"), init: 1, showIf: v => v.scaleType === "non_uniform" },
+            { key: "factor_z", type: "expr", label: qsTr("Z factor"), init: 1, showIf: v => v.scaleType === "non_uniform" }] },
         split: { title: qsTr("Split Body"), command: "feature.split", fields: [
             { key: "body", type: "body", label: qsTr("Body to split") },
             { key: "plane", type: "planePick", label: qsTr("Splitting plane"), init: "YZ", hint: qsTr("Origin plane, construction plane, or click a planar face") },
@@ -351,6 +359,17 @@ Pane {
             { key: "axis", type: "choice", label: qsTr("Axis"), init: "Z", options: axes },
             { key: "count", type: "expr", label: qsTr("Quantity"), init: 6 },
             { key: "angle", type: "expr", label: qsTr("Total angle (deg)"), init: 360 },
+            { key: "operation", type: "choice", label: qsTr("Operation"), init: "join", options: patternOperations }] },
+        path_pattern: { title: qsTr("Pattern on Path"), command: "feature.path_pattern", fields: [
+            { key: "body", type: "body", label: qsTr("Body") },
+            { key: "path", type: "pathSketch", label: qsTr("Path sketch") },
+            { key: "count", type: "expr", label: qsTr("Quantity"), init: 4 },
+            { key: "distance_type", type: "choice", label: qsTr("Distance type"), init: "extent", options: [
+                { value: "extent", label: qsTr("Extent") }, { value: "spacing", label: qsTr("Spacing") }] },
+            { key: "distance", type: "expr", label: qsTr("Distance (mm; empty: whole path)"), init: undefined },
+            { key: "orientation", type: "choice", label: qsTr("Orientation"), init: "identical", options: [
+                { value: "identical", label: qsTr("Identical") }, { value: "path_direction", label: qsTr("Path direction") }] },
+            { key: "flip", type: "bool", label: qsTr("Start from the other end") },
             { key: "operation", type: "choice", label: qsTr("Operation"), init: "join", options: patternOperations }] },
         // Built on a scan or surface: fitting the skin takes seconds, so no live preview.
         fit_selection: { title: qsTr("Fit Surface"), command: "surface.fit_selection", slow: true, fields: [

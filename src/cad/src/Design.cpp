@@ -131,8 +131,8 @@ const std::vector<std::string>& Design::featureTypes()
 {
     static const std::vector<std::string> types{"sketch", "extrude", "revolve", "fillet", "chamfer",
                                                 "shell",  "combine", "box",     "cylinder", "sphere", "torus", "base_body", "hole",
-                                                "mirror",  "rectangular_pattern", "circular_pattern", "loft", "sweep", "plane",
-                                                "part_on_surface", "fin_on_surface", "move", "press_pull", "split", "delete_faces", "draft",
+                                                "mirror",  "rectangular_pattern", "circular_pattern", "path_pattern", "loft", "sweep", "plane",
+                                                "part_on_surface", "fin_on_surface", "move", "scale", "press_pull", "split", "delete_faces", "draft",
                                                 "fit_selection", "fit_regions", "trim_by_sketch", "offset_surface", "thicken_surface"};
     return types;
 }
@@ -3441,7 +3441,7 @@ void Design::deleteSketchCurves(FeatureId sketchId, const std::vector<std::size_
             else
                 axis = Json{{"deletedLine", axis["line"]}};
         }
-        if (g.type == "sweep" && g.params.contains("path") && g.params["path"].is_object() &&
+        if ((g.type == "sweep" || g.type == "path_pattern") && g.params.contains("path") && g.params["path"].is_object() &&
             g.params["path"].value("sketch", Json()) == sketchId && g.params["path"].contains("curves")) {
             Json& path = g.params["path"];
             Json kept = Json::array();
@@ -3676,6 +3676,29 @@ void Design::evaluateFeature(const Feature& f)
         for (std::size_t i = 1; i < solids.size(); ++i)
             result = geometry::boolean(result, solids[i], geometry::BooleanOp::Union);
         return result;
+    };
+
+    // The connected sketch curves of a Sweep / Pattern on Path `path` {sketch, curves?} as edges.
+    auto pathEdgesOf = [&](const Json& path, const char* what) {
+        if (path.is_object() && path.value("deletedCurves", false))
+            throw DesignError(std::string("Curves of the ") + what + " path were deleted from its sketch: pick the path again");
+        const FeatureId pid = required(path, "sketch").get<FeatureId>();
+        auto it = m_sketches.find(pid);
+        if (it == m_sketches.end())
+            throw DesignError("No path sketch " + std::to_string(pid) + " at this point of the timeline");
+        std::vector<SketchCurve> curves;
+        if (has(path, "curves")) {
+            for (const auto& i : path.at("curves")) {
+                const auto idx = i.get<std::size_t>();
+                if (idx >= it->second.curves.size())
+                    throw DesignError(it->second.name + " has no curve " + std::to_string(idx));
+                curves.push_back(it->second.curves[idx]);
+            }
+        } else {
+            curves = it->second.curves;
+        }
+        it->second.consumed = true;
+        return geometry::curveEdges(it->second.plane, curves);
     };
 
     if (f.type == "sketch") {
@@ -4038,6 +4061,24 @@ void Design::evaluateFeature(const Feature& f)
         if (factor != 1.0)
             body.shape = geometry::scaled(body.shape, factor, c);
         body.shape = geometry::transformed(body.shape, tf);
+    } else if (f.type == "scale") {
+        // Fusion: Modify > Scale. Uniform (`factor`) or non-uniform (`factor_x`, `_y`, `_z`; a
+        // missing one is 1) about `center` (default: the centre of the body's bounding box).
+        Body& body = bodyRef(required(p, "body"));
+        const core::Vec3 c = has(p, "center") ? ev.vec3(p.at("center")) : body.shape.bounds().center();
+        const bool nonUniform = has(p, "factor_x") || has(p, "factor_y") || has(p, "factor_z");
+        if (nonUniform && has(p, "factor"))
+            throw DesignError("Give either `factor` or factor_x / factor_y / factor_z");
+        const double uniform = ev.num(p, "factor", 1.0);
+        const double fx = ev.num(p, "factor_x", uniform), fy = ev.num(p, "factor_y", uniform), fz = ev.num(p, "factor_z", uniform);
+        for (const double v : {fx, fy, fz}) {
+            if (!std::isfinite(v) || v < geometry::kMinScaleFactor || v > geometry::kMaxScaleFactor)
+                throw DesignError("scale factors must be between 0.000001 and 1000000");
+        }
+        if (fx == fy && fy == fz)
+            body.shape = geometry::scaled(body.shape, fx, c);
+        else
+            body.shape = geometry::scaledNonUniform(body.shape, fx, fy, fz, c);
     } else if (f.type == "mirror" || f.type == "rectangular_pattern" || f.type == "circular_pattern") {
         // Fusion: Mirror, Rectangular Pattern, Circular Pattern of a body. "join" (default)
         // merges the copies into the body, "new_body" makes one new body of the copies.
@@ -4117,6 +4158,78 @@ void Design::evaluateFeature(const Feature& f)
         } else {
             throw DesignError("Unknown operation '" + op + "' (join, new_body)");
         }
+    } else if (f.type == "path_pattern") {
+        // Fusion: Create > Pattern > Pattern on Path. Copies of a body along sketch curves; the
+        // body stays where it is, each copy moves by the path point it lands on minus the point
+        // where the first instance is, and (Orientation: Path Direction) turns with the path.
+        Body& src = bodyRef(required(p, "body"));
+        const geometry::Shape original = src.shape;
+        const geometry::Shape pathEdges = pathEdgesOf(required(p, "path"), "pattern");
+        const double length = geometry::pathLength(pathEdges);
+        const double countValue = ev.num(p, "count", 2.0);
+        const long n = std::lround(countValue);
+        if (n < 2 || n > 1000 || std::abs(countValue - static_cast<double>(n)) > 1e-9)
+            throw DesignError("count must be a whole number from 2 to 1000");
+        const double startFraction = ev.num(p, "start", 0.0);
+        if (startFraction < 0.0 || startFraction >= 1.0)
+            throw DesignError("start must be from 0 up to (not including) 1: a fraction of the path");
+        const double start = startFraction * length;
+        const std::string type = lower(p.value("distance_type", std::string("extent")));
+        double step = 0.0;
+        if (type == "spacing") {
+            if (!has(p, "distance"))
+                throw DesignError("Spacing needs a distance (the gap between instances)");
+            step = ev.num(p, "distance");
+        } else if (type == "extent") {
+            const double extent = has(p, "distance") ? ev.num(p, "distance") : length - start;
+            // Over a whole closed path the last instance would land on the first: spread them evenly.
+            const auto ends = geometry::pathFrames(pathEdges, {0.0, length});
+            const bool closed = (ends[1].point - ends[0].point).length() < 1e-6 * std::max(1.0, length);
+            const bool wholeLoop = closed && start == 0.0 && std::abs(extent - length) < 1e-9 * std::max(1.0, length);
+            step = extent / static_cast<double>(wholeLoop ? n : n - 1);
+        } else {
+            throw DesignError("Unknown distance_type '" + type + "' (extent, spacing)");
+        }
+        if (!(step > 0.0))
+            throw DesignError("The distance must be positive");
+        const bool reverse = p.value("flip", false);
+        std::vector<double> at;
+        for (long i = 0; i < n; ++i) {
+            const double d = start + step * static_cast<double>(i);
+            if (d > length + 1e-6)
+                throw DesignError("The pattern runs off the end of the path (" + std::to_string(length) +
+                                  " mm long): use a smaller distance or fewer instances");
+            at.push_back(reverse ? length - d : d);
+        }
+        const auto frames = geometry::pathFrames(pathEdges, at);
+        const bool follow = lower(p.value("orientation", std::string("identical"))) == "path_direction";
+        auto dirOf = [&](const geometry::PathFrame& fr) { return reverse ? fr.tangent * -1.0 : fr.tangent; };
+        std::vector<geometry::Shape> copies;
+        for (std::size_t i = 1; i < frames.size(); ++i) {
+            geometry::Shape copy = original;
+            if (follow) {
+                const core::Vec3 a = dirOf(frames[0]), b = dirOf(frames[i]);
+                const core::Vec3 axis = a.cross(b);
+                const double sine = axis.length();
+                const double cosine = a.dot(b);
+                if (sine > 1e-9)
+                    copy = geometry::rotated(copy, frames[0].point, axis * (1.0 / sine), std::atan2(sine, cosine) * 180.0 / std::numbers::pi);
+                else if (cosine < 0.0)
+                    throw DesignError("The path turns back on itself: Path Direction cannot orient a copy");
+            }
+            copies.push_back(geometry::translated(copy, frames[i].point - frames[0].point));
+        }
+        const std::string op = lower(p.value("operation", std::string("join")));
+        if (op == "join") {
+            geometry::Shape result = original;
+            for (const auto& c : copies)
+                result = geometry::boolean(result, c, geometry::BooleanOp::Union);
+            src.shape = result;
+        } else if (op == "new_body") {
+            newBody(unionAll(copies));
+        } else {
+            throw DesignError("Unknown operation '" + op + "' (join, new_body)");
+        }
     } else if (f.type == "loft") {
         // Fusion: Loft through profiles of several sketches, in order.
         std::vector<geometry::Shape> sections;
@@ -4143,26 +4256,7 @@ void Design::evaluateFeature(const Feature& f)
         // Fusion: Sweep profiles of `sketch` along curves of another (or the same) sketch.
         SketchResult* sk = nullptr;
         const auto faces = profiles(sk);
-        const Json& path = required(p, "path");
-        if (path.is_object() && path.value("deletedCurves", false))
-            throw DesignError("Curves of the sweep path were deleted from its sketch: pick the path again");
-        const FeatureId pid = required(path, "sketch").get<FeatureId>();
-        auto it = m_sketches.find(pid);
-        if (it == m_sketches.end())
-            throw DesignError("No path sketch " + std::to_string(pid) + " at this point of the timeline");
-        std::vector<SketchCurve> curves;
-        if (has(path, "curves")) {
-            for (const auto& i : path.at("curves")) {
-                const auto idx = i.get<std::size_t>();
-                if (idx >= it->second.curves.size())
-                    throw DesignError(it->second.name + " has no curve " + std::to_string(idx));
-                curves.push_back(it->second.curves[idx]);
-            }
-        } else {
-            curves = it->second.curves;
-        }
-        it->second.consumed = true;
-        const geometry::Shape pathEdges = geometry::curveEdges(it->second.plane, curves);
+        const geometry::Shape pathEdges = pathEdgesOf(required(p, "path"), "sweep");
         std::vector<geometry::Shape> solids;
         for (const auto& face : faces)
             solids.push_back(geometry::sweep(face, pathEdges));

@@ -3932,3 +3932,124 @@ TEST_CASE("Design commands: circle tangent to two or three lines (CAD-270)", "[c
                               {{"sketch", id}, {"curves", Json::array({{{"type", "tangent_circle"}, {"curves", {0, 3}}, {"near", {5, 5}}}})}}).ok);
     }
 }
+
+TEST_CASE("Design commands: Scale, uniform and non-uniform (CAD-271)", "[commands][cad]")
+{
+    commands::Session s;
+    const auto sk = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "rectangle"}, {"corner", {0, 0}}, {"width", 20}, {"height", 10}}})}})
+                        .at("id").get<std::uint64_t>();
+    const auto ex = run(s, "feature.extrude", {{"sketch", sk}, {"distance", 5}});
+    const auto bodyId = ex.at("bodies")[0].at("id").get<std::uint64_t>();
+
+    SECTION("non-uniform: each axis has its own factor, about the box centre by default")
+    {
+        const auto r = run(s, "feature.scale", {{"body", bodyId}, {"factor_x", 2}, {"factor_z", 0.5}});
+        CHECK(r.at("bodies")[0].at("volume").get<double>() == Approx(20 * 10 * 5 * 2 * 0.5).epsilon(1e-6));
+        const auto b = s.design().bodies().at(bodyId).shape.bounds();
+        CHECK(b.max.x - b.min.x == Approx(40).epsilon(1e-6));
+        CHECK(b.max.y - b.min.y == Approx(10).epsilon(1e-6));
+        CHECK(b.max.z - b.min.z == Approx(2.5).epsilon(1e-6));
+        CHECK((b.max.x + b.min.x) / 2 == Approx(10).epsilon(1e-6)); // the centre stayed
+    }
+
+    SECTION("uniform about a given centre")
+    {
+        run(s, "feature.scale", {{"body", bodyId}, {"factor", 3}, {"center", {0, 0, 0}}});
+        const auto b = s.design().bodies().at(bodyId).shape.bounds();
+        CHECK(b.min.x == Approx(0).margin(1e-6));
+        CHECK(b.max.x == Approx(60).epsilon(1e-6));
+        CHECK(b.max.z == Approx(15).epsilon(1e-6));
+    }
+
+    SECTION("a zero or mixed request is refused")
+    {
+        CHECK_FALSE(s.execute("feature.scale", {{"body", bodyId}, {"factor", 0}}).ok);
+        CHECK_FALSE(s.execute("feature.scale", {{"body", bodyId}, {"factor", 2}, {"factor_x", 2}}).ok);
+    }
+}
+
+TEST_CASE("Design commands: Pattern on Path (CAD-271)", "[commands][cad]")
+{
+    commands::Session s;
+    // A 20 x 4 x 4 bar at (50, 0), and a quarter-circle path (centre origin, radius 50) leaving it
+    // upwards, plus a straight path along X.
+    const auto bar = run(s, "sketch.create",
+                         {{"plane", "XY"},
+                          {"curves", Json::array({{{"type", "rectangle"}, {"corner", {50, -2}}, {"width", 20}, {"height", 4}}})}})
+                         .at("id").get<std::uint64_t>();
+    const auto bodyId = run(s, "feature.extrude", {{"sketch", bar}, {"distance", 4}}).at("bodies")[0].at("id").get<std::uint64_t>();
+    const auto arc = run(s, "sketch.create",
+                         {{"plane", "XY"},
+                          {"curves", Json::array({{{"type", "center_arc"}, {"center", {0, 0}}, {"radius", 50},
+                                                   {"startAngle", 0}, {"endAngle", 90}}})}})
+                         .at("id").get<std::uint64_t>();
+    const auto line = run(s, "sketch.create",
+                          {{"plane", "XY"},
+                           {"curves", Json::array({{{"type", "line"}, {"start", {0, 20}}, {"end", {100, 20}}}})}})
+                          .at("id").get<std::uint64_t>();
+
+    SECTION("identical orientation: copies are only translated; the whole path is the default extent")
+    {
+        const auto r = run(s, "feature.path_pattern",
+                           {{"body", bodyId}, {"path", {{"sketch", arc}}}, {"count", 2}, {"operation", "new_body"}});
+        REQUIRE(r.at("bodies").size() == 2);
+        const auto b = s.design().bodies().at(r.at("bodies")[1].at("id").get<std::uint64_t>()).shape.bounds();
+        CHECK(b.min.x == Approx(0).margin(1e-6));
+        CHECK(b.max.x == Approx(20).margin(1e-6));
+        CHECK(b.min.y == Approx(48).margin(1e-5));
+        CHECK(b.max.y == Approx(52).margin(1e-5));
+    }
+
+    SECTION("path direction: the copy turns with the path")
+    {
+        const auto r = run(s, "feature.path_pattern",
+                           {{"body", bodyId}, {"path", {{"sketch", arc}}}, {"count", 2}, {"orientation", "path_direction"},
+                            {"operation", "new_body"}});
+        const auto b = s.design().bodies().at(r.at("bodies")[1].at("id").get<std::uint64_t>()).shape.bounds();
+        CHECK(b.min.x == Approx(-2).margin(1e-5));
+        CHECK(b.max.x == Approx(2).margin(1e-5));
+        CHECK(b.min.y == Approx(50).margin(1e-5));
+        CHECK(b.max.y == Approx(70).margin(1e-5));
+    }
+
+    SECTION("spacing along a straight path joins the copies into the body")
+    {
+        const auto r = run(s, "feature.path_pattern",
+                           {{"body", bodyId}, {"path", {{"sketch", line}}}, {"count", 3}, {"distance_type", "spacing"},
+                            {"distance", 30}});
+        CHECK(r.at("bodies").size() == 1);
+        CHECK(r.at("bodies")[0].at("volume").get<double>() == Approx(3 * 20 * 4 * 4).epsilon(1e-6));
+        const auto b = s.design().bodies().at(bodyId).shape.bounds();
+        CHECK(b.max.x == Approx(70 + 60).epsilon(1e-6));
+    }
+
+    SECTION("a closed path spreads the instances evenly, none on top of the first")
+    {
+        const auto ring = run(s, "sketch.create",
+                              {{"plane", "XY"},
+                               {"curves", Json::array({{{"type", "circle"}, {"center", {0, 0}}, {"radius", 50}}})}})
+                              .at("id").get<std::uint64_t>();
+        const auto r = run(s, "feature.path_pattern",
+                           {{"body", bodyId}, {"path", {{"sketch", ring}}}, {"count", 4}, {"operation", "new_body"}});
+        // Four instances in all: the body and three copies in one new body.
+        REQUIRE(r.at("bodies").size() == 2);
+        const double single = s.design().bodies().at(bodyId).shape.volume();
+        CHECK(r.at("bodies")[1].at("volume").get<double>() == Approx(3 * single).epsilon(1e-6));
+    }
+
+    SECTION("spacing needs a distance; count must be whole")
+    {
+        CHECK_FALSE(s.execute("feature.path_pattern", {{"body", bodyId}, {"path", {{"sketch", line}}}, {"count", 3}, {"distance_type", "spacing"}}).ok);
+        CHECK_FALSE(s.execute("feature.path_pattern", {{"body", bodyId}, {"path", {{"sketch", line}}}, {"count", 2.5}}).ok);
+    }
+
+    SECTION("running off the path is an error")
+    {
+        CHECK_FALSE(s.execute("feature.path_pattern",
+                              {{"body", bodyId}, {"path", {{"sketch", line}}}, {"count", 5}, {"distance_type", "spacing"},
+                               {"distance", 30}}).ok);
+        CHECK_FALSE(s.execute("feature.path_pattern", {{"body", bodyId}, {"path", {{"sketch", line}}}, {"count", 1}}).ok);
+    }
+}

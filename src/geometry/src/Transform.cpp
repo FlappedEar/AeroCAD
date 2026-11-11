@@ -4,7 +4,11 @@
 #include "aerocad/geometry/KernelError.hpp"
 #include "aerocad/geometry/OcctShape.hpp"
 
+#include <BRepBuilderAPI_GTransform.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
+#include <gp_GTrsf.hxx>
+#include <gp_Mat.hxx>
+#include <gp_XYZ.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_Trsf.hxx>
 #include <gp_Vec.hxx>
@@ -43,6 +47,29 @@ Shape scaled(const Shape& shape, double factor, const core::Vec3& origin)
         rethrowAsKernelError();
     }
     return apply(shape, trsf);
+}
+
+Shape scaledNonUniform(const Shape& shape, double fx, double fy, double fz, const core::Vec3& origin)
+{
+    for (const double f : {fx, fy, fz}) {
+        if (!std::isfinite(f) || f < kMinScaleFactor || f > kMaxScaleFactor)
+            throw std::invalid_argument("geometry::scaledNonUniform: scale factors must be between 0.000001 and 1000000");
+    }
+    if (!std::isfinite(origin.x) || !std::isfinite(origin.y) || !std::isfinite(origin.z))
+        throw std::invalid_argument("geometry::scaledNonUniform: origin must be finite");
+    if (shape.isNull())
+        return shape;
+    try {
+        gp_GTrsf g;
+        g.SetVectorialPart(gp_Mat(fx, 0, 0, 0, fy, 0, 0, 0, fz));
+        g.SetTranslationPart(gp_XYZ(origin.x * (1 - fx), origin.y * (1 - fy), origin.z * (1 - fz)));
+        BRepBuilderAPI_GTransform op(shape.impl()->shape, g, true);
+        if (!op.IsDone())
+            throw KernelError("geometry: scaling the shape failed");
+        return wrapShape(op.Shape());
+    } catch (...) {
+        rethrowAsKernelError();
+    }
 }
 
 Shape translated(const Shape& shape, const core::Vec3& offset)
