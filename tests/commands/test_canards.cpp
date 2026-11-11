@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <memory>
@@ -509,4 +510,35 @@ TEST_CASE("Rounding a fin's edges either gives a closed printable solid or is re
     }
     // The tip and most of the outline can be rounded.
     CHECK(rounded >= edges.data.at("edges").size() / 2);
+}
+
+TEST_CASE("A filleted canard is rebuilt in seconds when the scan under it moves", "[commands][fit][canard]")
+{
+    // CAD-275: the fillet and the cut back to the surface ran on the whole fitted surface and
+    // took minutes on some positions (one rebuild never finished within 110 s) where the root
+    // needs a few centimetres of it. The fin stays where its sketch is, so the move is small
+    // enough for the root to still reach the skin.
+    BumperScene scene;
+    const Json sk = scene.sketchAt(0.0, 150.0, 0.0);
+    auto fin = scene.session.execute("surface.fin_from_sketch",
+                                     {{"sketch", sk.at("id")}, {"thickness", 3.0}, {"rootFillet", 2.0}});
+    INFO(fin.toJson().dump());
+    REQUIRE(fin.ok);
+    const double volume = fin.data.at("volume").get<double>();
+    for (const double dz : {10.0, 20.0}) {
+        const auto start = std::chrono::steady_clock::now();
+        auto moved = scene.session.execute("part.transform", {{"id", scene.scanId}, {"translate", {0.0, 0.0, dz}}});
+        const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+        INFO(moved.toJson().dump());
+        REQUIRE(moved.ok);
+        CHECK(seconds < 60.0);
+        const auto timeline = scene.session.execute("timeline.list", {});
+        REQUIRE(timeline.ok);
+        for (const auto& feature : timeline.data.at("features"))
+            CHECK(feature.at("status").get<std::string>() == "ok");
+        // The fin stays where its sketch is: still one watertight body of about the same size.
+        const auto& body = timeline.data.at("bodies").at(0);
+        CHECK(body.at("volume").get<double>() > 0.5 * volume);
+        CHECK(body.at("volume").get<double>() < 1.5 * volume);
+    }
 }
