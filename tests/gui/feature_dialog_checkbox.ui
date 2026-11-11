@@ -1,0 +1,13 @@
+# CAD-272: a checkbox in a feature dialog carries its own label next to the box (Extrude's
+# "Flip"), left aligned, and there is no separate caption line above it. Clicking the label
+# text toggles the box.
+# Run: AeroCAD --ui-script <this file>
+Qt.createQmlObject('import QtQuick; Item { objectName: "cbTest"; visible: false; function findCheck(it, key) { if (!it.visible) return null; for (let i = it.children.length - 1; i >= 0; --i) { const h = findCheck(it.children[i], key); if (h) return h } return it.field && it.field.key === key && it.checked !== undefined ? it : null } function captions(it, text, box, out) { if (!it.visible || it === box) return out; if (it.text === text) out.push(it); for (let i = 0; i < (it.children || []).length; ++i) captions(it.children[i], text, box, out); return out } }', window.contentItem)
+ui.wait(800)
+(() => { const s = controller.execute("sketch.create", { plane: "XY", curves: [{ type: "line", start: [0, 0], end: [20, 0] }, { type: "line", start: [20, 0], end: [20, 10] }, { type: "line", start: [20, 10], end: [0, 10] }, { type: "line", start: [0, 10], end: [0, 0] }] }); if (!s.ok) ui.fail("sketch: " + s.error); featureDialog.open("extrude", { sketch: s.result.id }) })()
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cbTest"); const c = t.findCheck(featureDialog, "flip"); if (!c) { ui.fail("no Flip checkbox in the Extrude dialog"); return } ui.log("CHECK text='" + c.text + "' x=" + c.mapToItem(featureDialog, 0, 0).x.toFixed(0)); if (c.text !== "Flip") ui.fail("the checkbox does not carry its label: '" + c.text + "'"); if (t.captions(featureDialog, "Flip", c, []).length !== 0) ui.fail("a separate caption 'Flip' is drawn above the checkbox"); if (c.mapToItem(featureDialog, 0, 0).x > 30) ui.fail("the checkbox is not left aligned"); if (featureDialog.values.flip) ui.fail("Flip is on before the click"); const p = c.mapToItem(null, c.contentItem.x + 6, c.height / 2); ui.click(p.x, p.y) })()
+ui.wait(300)
+(() => { if (!featureDialog.values.flip) ui.fail("clicking the label did not turn Flip on") })()
+ui.shot("feature-dialog-checkbox.png")
+ui.log("feature dialog checkbox done")
