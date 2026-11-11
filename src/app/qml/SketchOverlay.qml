@@ -64,6 +64,7 @@ Item {
     /// Circle 2-Tangent / 3-Tangent: the lines picked so far, and where they were clicked.
     property var tangentCurves: []
     property var tangentClicks: []
+    property string tangentNote: ""
     /// Move/Copy tool (Fusion: Sketch > Move/Copy, M): `curves` are to be moved by dx, dy
     /// and turned by `angle` (degrees) about their middle; with `copy`, copies are added.
     signal moveRequested(var curves, real dx, real dy, real angle, bool copy)
@@ -183,6 +184,7 @@ Item {
             mirrorCurves = []
         tangentCurves = []
         tangentClicks = []
+        tangentNote = ""
         if (tool !== "offset")
             offsetCurves = []
         if (tool !== "move") {
@@ -1006,8 +1008,13 @@ Item {
         }
         const i = curveAt(x, y)
         const c = sketchCurves.find(k => k.index === i)
-        if (!c || c.kind !== "line" || tangentCurves.indexOf(i) >= 0)
+        if (!c || c.kind !== "line" || tangentCurves.indexOf(i) >= 0) {
+            if (c)
+                tangentNote = c.kind !== "line" ? qsTr("Only lines for now: click a line") : qsTr("That line is already picked")
+            canvas.requestPaint()
             return
+        }
+        tangentNote = ""
         tangentCurves = tangentCurves.concat([i])
         tangentClicks = tangentClicks.concat([at])
         if (!two && tangentCurves.length === 3) {
@@ -1952,8 +1959,8 @@ Item {
                     : root.tool === "rectangle_3point" ? qsTr("3-point rectangle: click both ends of one side (any angle), then the far side; type the length, then the height")
                     : root.tool === "circle_2point" ? qsTr("2-point circle: click both ends of a diameter; type the diameter")
                     : root.tool === "circle_3point" ? qsTr("3-point circle: click three points on the circle")
-                    : root.tool === "circle_2tangent" ? (root.tangentCurves.length < 2 ? qsTr("2-tangent circle: click two lines") : qsTr("2-tangent circle: click where the circle goes (its size follows the click)"))
-                    : root.tool === "circle_3tangent" ? qsTr("3-tangent circle: click three lines (the circle that fits between them)")
+                    : root.tool === "circle_2tangent" ? (root.tangentNote !== "" ? root.tangentNote : root.tangentCurves.length < 2 ? qsTr("2-tangent circle: click two lines") : qsTr("2-tangent circle: click where the circle goes (its size follows the click)"))
+                    : root.tool === "circle_3tangent" ? (root.tangentNote !== "" ? root.tangentNote : qsTr("3-tangent circle: click three lines (the circle that fits between them)"))
                     : root.tool === "ellipse" ? qsTr("Ellipse: click the centre, the end of the major axis, then a point for the minor radius; type each radius")
                     : root.tool === "elliptical_arc" ? qsTr("Elliptical arc: click the centre, the major axis end, the minor radius, then the arc start and end (counter-clockwise)")
                     : root.tool === "text" ? qsTr("Text: click the start, type the text, Enter (cursor distance = height, direction = angle)")

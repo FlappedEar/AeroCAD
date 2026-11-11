@@ -192,8 +192,8 @@ Json curveSchema()
          "{corner, opposite}; center_rectangle {center, width, height}; three_point_rectangle {start, end, height} (a side "
          "at any angle, then the other side; height is signed, positive to the left of start -> end); circle {center, radius | diameter}; "
          "arc {start, through, end} (three-point arc); center_arc {center, radius, startAngle, endAngle} "
-         "(degrees, counter-clockwise); polygon {center, radius, sides, angle?}; slot {start, end, width} "
-         "(centre-to-centre); spline {points, closed?}; point {at} (a sketch point: no edge, no profile; "
+         "(degrees, counter-clockwise); polygon {center, radius, sides, angle?, mode?} or {mode: edge, start, end, sides}; slot {start, end, width, mode?} "
+         "or {mode: center_point, center, end, width}; spline {points, closed?}; point {at} (a sketch point: no edge, no profile; "
          "it joins a curve end at the same place); tangent_arc {from: {curve, point: start | end}, end} "
          "(sketch.add_curves only: an arc leaving the end of a line or arc tangentially, kept tangent); "
          "tangent_circle {curves, near, radius?} (add_curves only: a circle tangent to 2 or 3 lines). "
@@ -1090,15 +1090,16 @@ std::pair<Json, std::vector<std::pair<std::size_t, int>>> resolveTangentCircle(
         if (typed && !(want > 0))
             throw CommandError("tangent_circle: the radius must be positive");
         if (std::abs(det) < 1e-9) {
-            // Parallel lines: the circle between them, centred on the midline.
-            const double gap = (lines[1].d * (lines[0].n.x * lines[1].n.x + lines[0].n.y * lines[1].n.y) - lines[0].d);
-            const double half = std::abs(gap) / 2;
+            // Parallel lines (n2 = +-n1, so n1.x = sigma d2 on the second): the circle between
+            // them, centred on the midline.
+            const geometry::Vec2& n = lines[0].n;
+            const double sigma = n.x * lines[1].n.x + n.y * lines[1].n.y;
+            const double half = std::abs(sigma * lines[1].d - lines[0].d) / 2;
             if (half < 1e-9)
                 throw CommandError("tangent_circle: the two lines are the same line");
             if (typed && std::abs(want - half) > 1e-6 * std::max(1.0, half))
                 throw CommandError("tangent_circle: between these parallel lines the radius is " + std::to_string(half));
-            const geometry::Vec2& n = lines[0].n;
-            const double mid = (lines[0].d + (lines[0].n.x * lines[1].n.x + lines[0].n.y * lines[1].n.y) * lines[1].d) / 2;
+            const double mid = (lines[0].d + sigma * lines[1].d) / 2;
             const geometry::Vec2 along{-n.y, n.x};
             const double t = (near.x - n.x * mid) * along.x + (near.y - n.y * mid) * along.y;
             centre = {n.x * mid + along.x * t, n.y * mid + along.y * t};

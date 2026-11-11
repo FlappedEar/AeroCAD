@@ -586,16 +586,28 @@ Pane {
         }
     }
 
+    /// Revolve: the full-turn Angle was lowered by choosing Two Sides.
+    property bool angleLowered: false
+
     function setValue(key, value) {
         const v = Object.assign({}, values)
         if (value === undefined || value === "" || value === null)
             delete v[key]
         else
             v[key] = value
-        // Revolve Two Sides: both angles must fit in one turn, so the default full turn gives way.
-        if (key === "extent" && value === "two_sides" && spec && spec.fields.some(f => f.key === "angle2")
-                && (v.angle === undefined || Number(v.angle) >= 360))
-            v.angle = 90
+        // Revolve Two Sides: both angles must fit in one turn, so the default full turn gives way
+        // (and comes back when the direction changes again, unless the angle was edited).
+        if (key === "angle")
+            angleLowered = false
+        if (key === "extent" && spec && spec.fields.some(f => f.key === "angle2")) {
+            if (value === "two_sides" && (v.angle === undefined || Number(v.angle) >= 360)) {
+                v.angle = 90
+                angleLowered = true
+            } else if (value !== "two_sides" && angleLowered) {
+                v.angle = 360
+                angleLowered = false
+            }
+        }
         values = v
         // Extrude "To Object" (Fusion): the object is picked next.
         if (key === "extent" && value === "to_object" && v.to === undefined && spec && spec.fields.some(f => f.key === "to"))

@@ -42,6 +42,8 @@ ui.wait(800)
 # Two Sides: picking it must not leave the default full turn in place (it would not fit).
 (() => { featureDialog.setValue("extent", "two_sides"); featureDialog.setValue("angle2", 60); featureDialog.setValue("axis", "Z") })()
 ui.wait(800)
+(() => { featureDialog.setValue("extent", "one_side"); if (Number(featureDialog.values.angle) !== 360) ui.fail("going back to One Side does not restore the full turn: " + featureDialog.values.angle); featureDialog.setValue("extent", "two_sides") })()
+ui.wait(300)
 (() => { const v = featureDialog.values; ui.log("two sides angles " + v.angle + " / " + v.angle2); if (Number(v.angle) + Number(v.angle2) > 360) ui.fail("Two Sides keeps an angle that cannot fit: " + v.angle); if (featureDialog.error) ui.fail("Two Sides shows an error: " + featureDialog.error) })()
 (() => { if (!ui.clickText("OK")) ui.fail("no OK button") })()
 ui.wait(800)

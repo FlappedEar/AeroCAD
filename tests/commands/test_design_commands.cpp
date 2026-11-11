@@ -3907,6 +3907,24 @@ TEST_CASE("Design commands: circle tangent to two or three lines (CAD-270)", "[c
         (void)a;
     }
 
+    SECTION("2-tangent between parallel lines: half the gap, centred on the midline nearest the click")
+    {
+        const auto par = run(s, "sketch.create",
+                             {{"plane", "XY"},
+                              {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {50, 0}}},
+                                                      {{"type", "line"}, {"start", {0, 12}}, {"end", {50, 12}}}})}})
+                             .at("id").get<std::uint64_t>();
+        run(s, "sketch.add_curves",
+            {{"sketch", par}, {"curves", Json::array({{{"type", "tangent_circle"}, {"curves", {0, 1}}, {"near", {20, 3}}}})}});
+        const Json c = run(s, "sketch.curves", {{"sketch", par}});
+        const auto& k = c.at("curves")[2];
+        CHECK(k.at("radius").get<double>() == Approx(6).epsilon(1e-9));
+        CHECK(k.at("points")[0][0].get<double>() == Approx(20).epsilon(1e-9));
+        CHECK(k.at("points")[0][1].get<double>() == Approx(6).epsilon(1e-9));
+        CHECK_FALSE(s.execute("sketch.add_curves",
+                              {{"sketch", par}, {"curves", Json::array({{{"type", "tangent_circle"}, {"curves", {0, 1}}, {"near", {20, 3}}, {"radius", 3}}})}}).ok);
+    }
+
     SECTION("only lines are accepted")
     {
         run(s, "sketch.add_curves", {{"sketch", id}, {"curves", Json::array({{{"type", "circle"}, {"center", {100, 0}}, {"radius", 5}}})}});

@@ -280,8 +280,8 @@ ApplicationWindow {
         SketchMenuItem { action: circleAction; icon.source: Theme.iconUrl("circle") }
         SketchMenuItem { action: circle2PointAction; icon.source: Theme.iconUrl("circle-2point") }
         SketchMenuItem { action: circle3PointAction; icon.source: Theme.iconUrl("circle-3point") }
-        SketchMenuItem { action: circle2TangentAction; icon.source: Theme.iconUrl("circle-2point") }
-        SketchMenuItem { action: circle3TangentAction; icon.source: Theme.iconUrl("circle-3point") }
+        SketchMenuItem { action: circle2TangentAction; icon.source: Theme.iconUrl("circle-2tangent") }
+        SketchMenuItem { action: circle3TangentAction; icon.source: Theme.iconUrl("circle-3tangent") }
         SketchMenuItem { action: ellipseAction; icon.source: Theme.iconUrl("ellipse") }
         SketchMenuItem { action: ellipticalArcAction; icon.source: Theme.iconUrl("elliptical_arc") }
         SketchMenuItem { action: conicAction; icon.source: Theme.iconUrl("conic") }
@@ -2274,8 +2274,8 @@ ApplicationWindow {
                 ToolCommand { action: rectangle3PointAction; text: qsTr("3-Point Rectangle"); iconName: "rectangle-3point" }
                 ToolCommand { action: circle2PointAction; text: qsTr("2-Point Circle"); iconName: "circle-2point" }
                 ToolCommand { action: circle3PointAction; text: qsTr("3-Point Circle"); iconName: "circle-3point" }
-                ToolCommand { action: circle2TangentAction; text: qsTr("2-Tangent Circle"); iconName: "circle-2point" }
-                ToolCommand { action: circle3TangentAction; text: qsTr("3-Tangent Circle"); iconName: "circle-3point" }
+                ToolCommand { action: circle2TangentAction; text: qsTr("2-Tangent Circle"); iconName: "circle-2tangent" }
+                ToolCommand { action: circle3TangentAction; text: qsTr("3-Tangent Circle"); iconName: "circle-3tangent" }
                 ToolCommand { action: ellipseAction; text: qsTr("Ellipse"); iconName: "ellipse" }
                 ToolCommand { action: ellipticalArcAction; text: qsTr("Elliptical Arc"); iconName: "elliptical_arc" }
                 ToolCommand { action: conicAction; text: qsTr("Conic Curve"); iconName: "conic" }
