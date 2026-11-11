@@ -1128,7 +1128,31 @@ std::pair<Json, std::vector<std::pair<std::size_t, int>>> resolveTangentCircleGe
         const int rows = typed ? nk : 3; // equations: nk curves (+ through-near)
         if (rows < unknowns)
             return;
-        for (const double scale : {4.0, 15.0, 60.0, 250.0}) {
+        // Two concentric circles and a given radius: both centre equations are the same distance from
+        // the common centre, so the system is singular. It has a solution only when both targets agree;
+        // the centres then lie on a circle about the common centre and `near` picks the closest one.
+        if (typed && nk == 2 && !cv[0].line && !cv[1].line && std::hypot(cv[0].o.x - cv[1].o.x, cv[0].o.y - cv[1].o.y) < 1e-9) {
+            auto target = [&](const Cv& k, int ch) { return ch == 0 ? k.R + want : ch == 1 ? k.R - want : want - k.R; };
+            const double t0 = target(cv[0], kind[0]), t1 = target(cv[1], kind[1]);
+            if (std::abs(t0 - t1) < 1e-9 && t0 > 1e-9) {
+                const double dx = near.x - cv[0].o.x, dy = near.y - cv[0].o.y;
+                const double len = std::hypot(dx, dy);
+                const double ux = len > 1e-12 ? dx / len : 1.0, uy = len > 1e-12 ? dy / len : 0.0;
+                found.push_back({{cv[0].o.x + t0 * ux, cv[0].o.y + t0 * uy}, want, kind});
+            }
+            return;
+        }
+        // Starting radii and damping follow the size of the geometry, so that the result does not depend
+        // on the model's units or extent (the fixed scales cover ordinary millimetre sketches).
+        double extent = 0;
+        for (const Cv& k : cv)
+            extent = std::max(extent, k.line ? std::abs(k.n.x * near.x + k.n.y * near.y - k.d)
+                                             : std::hypot(near.x - k.o.x, near.y - k.o.y) + k.R);
+        std::vector<double> scales{4.0, 15.0, 60.0, 250.0};
+        if (extent > 250.0)
+            for (const double m : {0.25, 1.0, 4.0})
+                scales.push_back(extent * m);
+        for (const double scale : scales) {
             for (int sx = -1; sx <= 1; ++sx) {
                 for (int sy = -1; sy <= 1; ++sy) {
                     double cx = near.x + sx * scale, cy = near.y + sy * scale;
@@ -1199,9 +1223,10 @@ std::pair<Json, std::vector<std::pair<std::size_t, int>>> resolveTangentCircleGe
     // Three curves, or a given radius: the centre nearest `near`; two curves through `near`: the smallest.
     const Sol* best = &found[0];
     for (const auto& sol : found) {
+        const double ds = std::hypot(sol.c.x - near.x, sol.c.y - near.y), db = std::hypot(best->c.x - near.x, best->c.y - near.y);
+        // Equally near centres (concentric solutions): the smaller circle.
         const bool better = (!typed && nk == 2) ? sol.r < best->r
-                                                : std::hypot(sol.c.x - near.x, sol.c.y - near.y) <
-                                                      std::hypot(best->c.x - near.x, best->c.y - near.y);
+                                                : (ds < db - 1e-9 * std::max(1.0, db) || (std::abs(ds - db) <= 1e-9 * std::max(1.0, db) && sol.r < best->r));
         if (better)
             best = &sol;
     }

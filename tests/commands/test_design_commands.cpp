@@ -4003,6 +4003,46 @@ TEST_CASE("Design commands: circle tangent to arcs and circles (CAD-273)", "[com
         CHECK((std::abs(dB - (6 + r)) < 1e-6 || std::abs(dB - std::abs(r - 6)) < 1e-6));
     }
 
+    SECTION("large sketches: the solution does not depend on the model's size (Codex review)")
+    {
+        const auto big = run(s, "sketch.create",
+                             {{"plane", "XY"},
+                              {"curves", Json::array({{{"type", "circle"}, {"center", {-100000, 0}}, {"radius", 1000}},
+                                                      {{"type", "circle"}, {"center", {100000, 0}}, {"radius", 1000}},
+                                                      {{"type", "circle"}, {"center", {0, 100000}}, {"radius", 1000}}})}})
+                             .at("id").get<std::uint64_t>();
+        run(s, "sketch.add_curves",
+            {{"sketch", big}, {"curves", Json::array({{{"type", "tangent_circle"}, {"curves", {0, 1, 2}}, {"near", {0, 0}}}})}});
+        const Json c = run(s, "sketch.curves", {{"sketch", big}}).at("curves").back();
+        const double r = c.at("radius").get<double>();
+        const auto [x, y] = ctr(c);
+        CHECK(r == Approx(99000).epsilon(1e-6)); // two equally near circles about the origin: the smaller one
+        CHECK(x == Approx(0).margin(1e-3));
+        CHECK(y == Approx(0).margin(1e-3));
+    }
+
+    SECTION("concentric circles with a radius: the centre nearest the click on the valid locus (Codex review)")
+    {
+        const auto con = run(s, "sketch.create",
+                             {{"plane", "XY"},
+                              {"curves", Json::array({{{"type", "circle"}, {"center", {0, 0}}, {"radius", 10}},
+                                                      {{"type", "circle"}, {"center", {0, 0}}, {"radius", 30}}})}})
+                             .at("id").get<std::uint64_t>();
+        run(s, "sketch.add_curves",
+            {{"sketch", con},
+             {"curves", Json::array({{{"type", "tangent_circle"}, {"curves", {0, 1}}, {"near", {25, 0}}, {"radius", 10}}})}});
+        const Json c = run(s, "sketch.curves", {{"sketch", con}}).at("curves").back();
+        const auto [x, y] = ctr(c);
+        CHECK(c.at("radius").get<double>() == Approx(10).epsilon(1e-9));
+        CHECK(x == Approx(20).epsilon(1e-6));
+        CHECK(y == Approx(0).margin(1e-6));
+        // A radius that cannot touch both is still an error.
+        CHECK_FALSE(s.execute("sketch.add_curves",
+                              {{"sketch", con},
+                               {"curves", Json::array({{{"type", "tangent_circle"}, {"curves", {0, 1}}, {"near", {25, 0}}, {"radius", 3}}})}})
+                        .ok);
+    }
+
     SECTION("it stays tangent when a circle is resized")
     {
         run(s, "sketch.add_curves",
