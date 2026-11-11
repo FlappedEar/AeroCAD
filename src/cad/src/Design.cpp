@@ -3667,11 +3667,19 @@ void Design::evaluateFeature(const Feature& f)
         m_sketches[f.id] = std::move(sk);
     } else if (f.type == "extrude") {
         SketchResult* sk = nullptr;
-        const auto faces = profiles(sk);
+        auto faces = profiles(sk);
         const std::string extent = lower(p.value("extent", std::string("one_side")));
         core::Vec3 dir = sk->plane.normal;
         if (p.value("flip", false))
             dir = dir * -1.0;
+        // Fusion: Start > Offset. The profile starts `start_offset` away from the sketch plane,
+        // along the extrusion direction, and everything (distance, taper, To Object) counts from
+        // there.
+        const double startOffset = ev.num(p, "start_offset", 0.0);
+        if (std::abs(startOffset) > 1e-9) {
+            for (auto& face : faces)
+                face = geometry::translated(face, dir * startOffset);
+        }
         const double taper = ev.num(p, "taper", 0.0);
         if (extent == "to_object" && taper != 0.0)
             throw DesignError("Taper angle is not available with extent To Object");
@@ -3762,10 +3770,32 @@ void Design::evaluateFeature(const Feature& f)
             origin = ev.vec3(axis, "origin", {});
             dir = ev.vec3(axis, "direction", {0, 0, 1});
         }
-        const double angle = ev.num(p, "angle", 360.0);
+        // Fusion: Direction One Side / Symmetric / Two Sides. Symmetric: `angle` is the total,
+        // half on each side of the sketch plane. Two sides: `angle` forwards, `angle2` backwards.
+        const std::string extent = lower(p.value("extent", std::string("one_side")));
+        double angle = ev.num(p, "angle", 360.0);
+        double back = 0.0;
+        if (extent == "symmetric") {
+            if (angle < 360.0 - 1e-9)
+                back = angle / 2.0;
+            angle -= back;
+        } else if (extent == "two_sides") {
+            back = ev.num(p, "angle2");
+            if (back <= 0.0)
+                throw DesignError("Revolve: the second angle must be positive");
+            if (angle <= 0.0)
+                throw DesignError("Revolve: the angle must be positive");
+            if (angle + back > 360.0 + 1e-9)
+                throw DesignError("Revolve: the two angles add up to more than 360 degrees");
+        } else if (extent != "one_side") {
+            throw DesignError("Unknown extent '" + extent + "' (one_side, symmetric, two_sides)");
+        }
         std::vector<geometry::Shape> solids;
-        for (const auto& face : faces)
-            solids.push_back(geometry::revolve(face, origin, dir, angle));
+        for (const auto& face : faces) {
+            solids.push_back(back > 0.0
+                                 ? geometry::revolve(geometry::rotated(face, origin, dir, -back), origin, dir, angle + back)
+                                 : geometry::revolve(face, origin, dir, angle));
+        }
         applyOperation(unionAll(solids));
     } else if (f.type == "fillet" || f.type == "chamfer") {
         Body& b = bodyRef(required(p, "body"));

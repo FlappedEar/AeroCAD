@@ -3710,3 +3710,70 @@ TEST_CASE("Design commands: Sketch Text (CAD-263)", "[commands][cad][solver]")
     run(s, "sketch.delete_curves", {{"sketch", rf}, {"curves", {0}}});
     CHECK(run(s, "sketch.curves", {{"sketch", rf}}).at("curves").size() == 1);
 }
+
+TEST_CASE("Design commands: extrude start offset moves the whole extrusion (CAD-268)", "[commands][cad]")
+{
+    commands::Session s;
+    const auto id = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "rectangle"}, {"corner", {0, 0}}, {"width", 20}, {"height", 10}}})}})
+                        .at("id").get<std::uint64_t>();
+    const auto ex = run(s, "feature.extrude", {{"sketch", id}, {"distance", 5}, {"start_offset", 7}});
+    const auto bodyId = ex.at("bodies")[0].at("id").get<std::uint64_t>();
+    CHECK(ex.at("bodies")[0].at("volume").get<double>() == Approx(20 * 10 * 5));
+    const auto b = s.design().bodies().at(bodyId).shape.bounds();
+    CHECK(b.min.z == Approx(7).margin(1e-6));
+    CHECK(b.max.z == Approx(12).margin(1e-6));
+
+    SECTION("a negative offset and flip go the other way")
+    {
+        run(s, "feature.edit", {{"id", ex.at("id")}, {"params", {{"flip", true}}}});
+        const auto fb = s.design().bodies().at(bodyId).shape.bounds();
+        CHECK(fb.min.z == Approx(-12).margin(1e-6));
+        CHECK(fb.max.z == Approx(-7).margin(1e-6));
+    }
+}
+
+TEST_CASE("Design commands: revolve Symmetric and Two Sides extent (CAD-268)", "[commands][cad]")
+{
+    commands::Session s;
+    // A 10 x 10 square in the XZ plane, 10 mm from the Z axis: revolving it by a total of 90 degrees
+    // gives a quarter of the full ring volume.
+    const auto id = run(s, "sketch.create",
+                        {{"plane", "XZ"},
+                         {"curves", Json::array({{{"type", "rectangle"}, {"corner", {10, 0}}, {"width", 10}, {"height", 10}}})}})
+                        .at("id").get<std::uint64_t>();
+    const double pi = 3.14159265358979323846;
+    const double full = pi * (20.0 * 20.0 - 10.0 * 10.0) * 10.0;
+
+    SECTION("symmetric: the angle is the total, half on each side")
+    {
+        const auto r = run(s, "feature.revolve", {{"sketch", id}, {"axis", "Z"}, {"extent", "symmetric"}, {"angle", 90}});
+        const auto bodyId = r.at("bodies")[0].at("id").get<std::uint64_t>();
+        CHECK(r.at("bodies")[0].at("volume").get<double>() == Approx(full / 4).epsilon(1e-6));
+        const auto b = s.design().bodies().at(bodyId).shape.bounds();
+        // Centred on the sketch plane (the +X side), so it reaches equally far to +Y and -Y.
+        CHECK(b.max.y == Approx(-b.min.y).epsilon(1e-6));
+        CHECK(b.max.x == Approx(20).epsilon(1e-6));
+    }
+
+    SECTION("two sides: angle forwards, angle2 backwards")
+    {
+        const auto r = run(s, "feature.revolve",
+                           {{"sketch", id}, {"axis", "Z"}, {"extent", "two_sides"}, {"angle", 30}, {"angle2", 60}});
+        CHECK(r.at("bodies")[0].at("volume").get<double>() == Approx(full / 4).epsilon(1e-6));
+    }
+
+    SECTION("a full symmetric revolve stays a full revolve")
+    {
+        const auto r = run(s, "feature.revolve", {{"sketch", id}, {"axis", "Z"}, {"extent", "symmetric"}, {"angle", 360}});
+        CHECK(r.at("bodies")[0].at("volume").get<double>() == Approx(full).epsilon(1e-6));
+    }
+
+    SECTION("two sides adding up to more than a turn is refused")
+    {
+        const auto bad = s.execute("feature.revolve",
+                                   {{"sketch", id}, {"axis", "Z"}, {"extent", "two_sides"}, {"angle", 200}, {"angle2", 200}});
+        CHECK_FALSE(bad.ok);
+    }
+}

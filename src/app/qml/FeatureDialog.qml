@@ -224,13 +224,18 @@ Pane {
               showIf: v => v.extent === "to_object" },
             { key: "distance2", type: "expr", label: qsTr("Distance 2"), showIf: v => v.extent === "two_sides" },
             { key: "taper", type: "expr", label: qsTr("Taper Angle (deg)"), init: 0, showIf: v => v.extent !== "to_object" },
+            { key: "start_offset", type: "expr", label: qsTr("Start Offset"), init: 0 },
             { key: "flip", type: "bool", label: qsTr("Flip") },
             { key: "operation", type: "choice", label: qsTr("Operation"), init: "new_body", options: operations }] },
         revolve: { title: qsTr("Revolve"), command: "feature.revolve", fields: [
             { key: "sketch", type: "sketch", label: qsTr("Sketch") },
             { key: "points", type: "profilePicks", label: qsTr("Profiles"), hint: qsTr("All profiles (click inside profiles to pick)") },
             { key: "axis", type: "axisPick", label: qsTr("Axis"), init: "Z", hint: qsTr("Click a sketch line or a straight edge") },
+            { key: "extent", type: "choice", label: qsTr("Direction"), init: "one_side", options: [
+                { value: "one_side", label: qsTr("One Side") }, { value: "symmetric", label: qsTr("Symmetric") },
+                { value: "two_sides", label: qsTr("Two Sides") }] },
             { key: "angle", type: "expr", label: qsTr("Angle (deg)"), init: 360 },
+            { key: "angle2", type: "expr", label: qsTr("Angle 2 (deg)"), init: 90, showIf: v => v.extent === "two_sides" },
             { key: "operation", type: "choice", label: qsTr("Operation"), init: "new_body", options: operations }] },
         fillet: { title: qsTr("Fillet"), command: "feature.fillet", fields: [
             { key: "body", type: "body", label: qsTr("Body") },

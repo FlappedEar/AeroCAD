@@ -2070,6 +2070,8 @@ void registerFeatureCommands(CommandRegistry& r)
                                         "targets are followed."}}},
                 {"distance2", numberOrExpr("Backward distance for two_sides (mm).")},
                 {"flip", {{"type", "boolean"}, {"description", "Extrude against the sketch normal."}}},
+                {"start_offset", numberOrExpr("Fusion: Start > Offset (mm): the profile starts this far from the "
+                                              "sketch plane, along the extrusion direction (default 0).")},
                 {"taper", numberOrExpr("Taper angle in degrees (Fusion: Taper Angle), default 0: positive narrows "
                                        "the profile away from the sketch plane, negative widens it; with symmetric "
                                        "or two_sides each side tapers away from the plane. |taper| < 89; not with "
@@ -2086,7 +2088,13 @@ void registerFeatureCommands(CommandRegistry& r)
                           {"description", "\"X\", \"Y\", \"Z\" (world axes through the origin, default Z), "
                                           "{line: curve index of a sketch line} or {origin: [x,y,z], direction: "
                                           "[x,y,z]}."}}},
+                {"extent", {{"type", "string"},
+                            {"enum", {"one_side", "symmetric", "two_sides"}},
+                            {"description", "one_side (default): `angle` from the sketch plane; symmetric: `angle` "
+                                            "in total, half on each side of the sketch plane; two_sides: `angle` "
+                                            "forwards and `angle2` backwards (together at most 360)."}}},
                 {"angle", numberOrExpr("Angle in degrees, default 360.")},
+                {"angle2", numberOrExpr("Backward angle for two_sides (degrees).")},
                 {"operation", operationSchema()},
                 {"bodies", bodiesSchema()}}),
         {"sketch"});
