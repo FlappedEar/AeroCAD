@@ -224,13 +224,10 @@ Json curveSchema()
           {"sides", numberOrExpr("Number of polygon sides.")},
           {"mode", {{"type", "string"},
                     {"enum", {"inscribed", "circumscribed", "edge", "center_to_center", "overall", "center_point"}},
-                    {"description", "polygon: inscribed (default; `radius` to the corners, `angle` = direction of a "
-                                    "corner), circumscribed (`radius` to the middle of the sides, `angle` = "
-                                    "direction of a side) or edge (a side from `start` to `end`, the polygon on its "
-                                    "left, plus `sides`). slot: center_to_center (default; `start`/`end` = centres "
-                                    "of the ends), overall (`start`/`end` = the far points of the ends) or "
-                                    "center_point (`center` of the slot and `end` = centre of one end); all with "
-                                    "`width`."}}},
+                    {"description", "polygon: inscribed (default), circumscribed (`radius` to a side, `angle` = side "
+                                    "direction) or edge (`start`, `end`, polygon on the left). slot: center_to_center "
+                                    "(default; `start`, `end` = end centres), overall (`start`, `end` = far points) or "
+                                    "center_point (`center`, `end` = one end's centre)."}}},
           {"angle", numberOrExpr("Polygon rotation, or the direction of an ellipse's major axis (degrees).")},
           {"major_radius", numberOrExpr("ellipse: centre to the end of the major axis (mm).")},
           {"minor_radius", numberOrExpr("ellipse: half the minor axis (mm).")},
@@ -2079,8 +2076,7 @@ void registerFeatureCommands(CommandRegistry& r)
                                         "targets are followed."}}},
                 {"distance2", numberOrExpr("Backward distance for two_sides (mm).")},
                 {"flip", {{"type", "boolean"}, {"description", "Extrude against the sketch normal."}}},
-                {"start_offset", numberOrExpr("Fusion: Start > Offset (mm): the profile starts this far from the "
-                                              "sketch plane, along the extrusion direction (default 0).")},
+                {"start_offset", numberOrExpr("Start offset from the sketch plane along the extrusion direction (mm).")},
                 {"taper", numberOrExpr("Taper angle in degrees (Fusion: Taper Angle), default 0: positive narrows "
                                        "the profile away from the sketch plane, negative widens it; with symmetric "
                                        "or two_sides each side tapers away from the plane. |taper| < 89; not with "
@@ -2099,9 +2095,8 @@ void registerFeatureCommands(CommandRegistry& r)
                                           "[x,y,z]}."}}},
                 {"extent", {{"type", "string"},
                             {"enum", {"one_side", "symmetric", "two_sides"}},
-                            {"description", "one_side (default): `angle` from the sketch plane; symmetric: `angle` "
-                                            "in total, half on each side of the sketch plane; two_sides: `angle` "
-                                            "forwards and `angle2` backwards (together at most 360)."}}},
+                            {"description", "one_side (default); symmetric: `angle` in total, half each side; two_sides: "
+                                            "`angle` forwards, `angle2` backwards (at most 360 together)."}}},
                 {"angle", numberOrExpr("Angle in degrees, default 360.")},
                 {"angle2", numberOrExpr("Backward angle for two_sides (degrees).")},
                 {"operation", operationSchema()},

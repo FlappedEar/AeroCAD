@@ -392,7 +392,8 @@ TEST_CASE("tools/list is compact: shared schemas listed once, no schema boilerpl
     const Json tools = f.request("tools/list").at("result").at("tools");
     const std::string all = tools.dump();
     // The listing is loaded by every agent session before it starts; keep it from growing back.
-    CHECK(all.size() < 150000);
+    // (152000 since Revolve extents, Extrude start offset and the Polygon / Slot modes, CAD-268/269.)
+    CHECK(all.size() < 152000);
     CHECK(all.find("additionalProperties") == std::string::npos);
     CHECK(all.find("sketch.curves") == std::string::npos); // parameter descriptions name tools too
     const Json* create = nullptr;
