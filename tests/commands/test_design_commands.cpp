@@ -3770,6 +3770,12 @@ TEST_CASE("Design commands: revolve Symmetric and Two Sides extent (CAD-268)", "
         CHECK(r.at("bodies")[0].at("volume").get<double>() == Approx(full).epsilon(1e-6));
     }
 
+    SECTION("a symmetric revolve needs a positive angle")
+    {
+        CHECK_FALSE(s.execute("feature.revolve", {{"sketch", id}, {"axis", "Z"}, {"extent", "symmetric"}, {"angle", -90}}).ok);
+        CHECK_FALSE(s.execute("feature.revolve", {{"sketch", id}, {"axis", "Z"}, {"extent", "symmetric"}, {"angle", 0}}).ok);
+    }
+
     SECTION("two sides adding up to more than a turn is refused")
     {
         const auto bad = s.execute("feature.revolve",

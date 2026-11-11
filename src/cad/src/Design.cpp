@@ -3776,6 +3776,8 @@ void Design::evaluateFeature(const Feature& f)
         double angle = ev.num(p, "angle", 360.0);
         double back = 0.0;
         if (extent == "symmetric") {
+            if (angle <= 0.0 || angle > 360.0)
+                throw DesignError("Revolve: the angle must be in (0, 360] degrees");
             if (angle < 360.0 - 1e-9)
                 back = angle / 2.0;
             angle -= back;

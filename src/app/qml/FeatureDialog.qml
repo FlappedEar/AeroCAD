@@ -592,6 +592,10 @@ Pane {
             delete v[key]
         else
             v[key] = value
+        // Revolve Two Sides: both angles must fit in one turn, so the default full turn gives way.
+        if (key === "extent" && value === "two_sides" && spec && spec.fields.some(f => f.key === "angle2")
+                && (v.angle === undefined || Number(v.angle) >= 360))
+            v.angle = 90
         values = v
         // Extrude "To Object" (Fusion): the object is picked next.
         if (key === "extent" && value === "to_object" && v.to === undefined && spec && spec.fields.some(f => f.key === "to"))
