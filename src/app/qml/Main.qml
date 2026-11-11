@@ -1408,6 +1408,7 @@ ApplicationWindow {
     // Fusion: Construct > Midplane (halfway between two parallel faces or planes).
     Action { id: midplaneAction; text: qsTr("&Midplane"); enabled: !window.activeSketch; onTriggered: window.openFeature("midplane") }
     Action { id: loftAction; text: qsTr("&Loft"); enabled: !window.activeSketch; onTriggered: window.openFeature("loft") }
+    Action { id: coilAction; text: qsTr("Co&il"); enabled: !window.activeSketch; onTriggered: window.openFeature("coil") }
     Action { id: ribAction; text: qsTr("&Rib"); enabled: !window.activeSketch; onTriggered: window.openFeature("rib") }
     Action { id: pipeAction; text: qsTr("P&ipe"); enabled: !window.activeSketch; onTriggered: window.openFeature("pipe") }
     Action { id: sweepAction; text: qsTr("S&weep"); enabled: !window.activeSketch; onTriggered: window.openFeature("sweep") }
@@ -1473,6 +1474,7 @@ ApplicationWindow {
     // Fusion: Modify > Chamfer (equal distance): click a corner of two lines.
     Action { id: sketchChamferAction; text: qsTr("Chamfer"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "chamfer"; onTriggered: window.sketchTool_("chamfer") }
     Action { id: sketchFilletAction; text: qsTr("&Fillet"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "fillet"; onTriggered: window.sketchTool_("fillet") }
+    Action { id: sketchIntersectAction; text: qsTr("&Intersect"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "intersect"; onTriggered: window.sketchTool_("intersect") }
     Action { id: sketchProjectAction; text: qsTr("&Project"); shortcut: "P"; enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "project"; onTriggered: window.sketchTool_("project") }
     Action { id: sketchOffsetAction; text: qsTr("&Offset"); shortcut: "O"; enabled: !!window.activeSketch && (viewport.sketchOverlay.selectedCurves.length > 0 || window.sketchTool === "offset"); checkable: true; checked: window.sketchTool === "offset"; onTriggered: { if (window.sketchTool !== "offset") viewport.sketchOverlay.startOffset(); else window.sketchTool_("") } }
     // Fusion: Sketch > Move/Copy (M): the selected curves move or are copied.
@@ -1755,6 +1757,7 @@ ApplicationWindow {
             MenuItem { action: sweepAction }
             MenuItem { action: pipeAction }
             MenuItem { action: ribAction }
+            MenuItem { action: coilAction }
             MenuItem { action: loftAction }
             MenuItem { action: boxAction }
             MenuItem { action: cylinderAction }
@@ -1822,6 +1825,7 @@ ApplicationWindow {
             MenuItem { action: breakAction }
             MenuItem { action: sketchOffsetAction }
             MenuItem { action: sketchProjectAction }
+            MenuItem { action: sketchIntersectAction }
             MenuItem { action: sketchMoveAction }
             MenuItem { action: sketchScaleAction }
             MenuItem { action: sketchMirrorAction }
@@ -2078,6 +2082,7 @@ ApplicationWindow {
                 ToolCommand { action: sweepAction; text: qsTr("Sweep"); iconName: "sweep" }
                 ToolCommand { action: pipeAction; text: qsTr("Pipe"); iconName: "pipe" }
                 ToolCommand { action: ribAction; text: qsTr("Rib"); iconName: "rib" }
+                ToolCommand { action: coilAction; text: qsTr("Coil"); iconName: "coil" }
                 ToolCommand { action: loftAction; text: qsTr("Loft"); iconName: "loft" }
                 ToolCommand { action: mirrorAction; text: qsTr("Mirror"); iconName: "mirror" }
                 ToolCommand { action: rectPatternAction; text: qsTr("Pattern"); iconName: "pattern" }
@@ -2309,6 +2314,7 @@ ApplicationWindow {
                 ToolCommand { action: breakAction; text: qsTr("Break"); iconName: "break" }
                 ToolCommand { action: sketchOffsetAction; text: qsTr("Offset"); iconName: "offset" }
                 ToolCommand { action: sketchProjectAction; text: qsTr("Project"); iconName: "project" }
+                ToolCommand { action: sketchIntersectAction; text: qsTr("Intersect"); iconName: "intersect" }
                 ToolCommand { action: sketchMoveAction; text: qsTr("Move/Copy"); iconName: "move" }
                 ToolCommand { action: sketchMirrorAction; text: qsTr("Mirror"); iconName: "mirror" }
                 ToolCommand { action: constructionAction; text: qsTr("Construction"); iconName: "construction" }
@@ -2511,6 +2517,14 @@ ApplicationWindow {
                 if (!window.activeSketch)
                     return
                 const r = window.controller.execute("sketch.project", { sketch: window.activeSketch.id, body: body, edges: [{ point: point.map(x => Math.round(x * 1e4) / 1e4) }] })
+                if (!r.ok)
+                    window.controller.showStatus(r.error)
+                window.refreshSketchSnaps()
+            }
+            onSketchIntersectRequested: body => {
+                if (!window.activeSketch)
+                    return
+                const r = window.controller.execute("sketch.intersect", { sketch: window.activeSketch.id, body: body })
                 if (!r.ok)
                     window.controller.showStatus(r.error)
                 window.refreshSketchSnaps()

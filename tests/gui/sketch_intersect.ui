@@ -1,0 +1,16 @@
+# CAD-274: Intersect (Fusion: Sketch > Intersect) brings the curves where a body is cut by the sketch
+# plane into the sketch, fixed where they are: here the circle of a cylinder cut at z = 7.
+# Run: AeroCAD --ui-script <this file>
+ui.wait(800)
+(() => { let r = controller.execute("feature.cylinder", { center: [0, 0, 0], radius: 10, height: 15 }); if (!r.ok) ui.fail("cylinder: " + r.error); r = controller.execute("sketch.create", { plane: "XY", offset: 7 }); if (!r.ok) ui.fail("sketch: " + r.error) })()
+ui.wait(300)
+(() => { enterSketch(controller.execute("timeline.list").result.features.find(f => f.type === "sketch").id) })()
+ui.wait(800)
+(() => { viewport.restoreCameraState({ pivot: [0, 0, 7], pitch: -35, yaw: 30, distance: 120, orthographic: false }) })()
+ui.wait(500)
+(() => { if (!ui.clickText("Intersect")) ui.fail("no Intersect command"); if (sketchTool !== "intersect") ui.fail("Intersect did not start: " + sketchTool) })()
+ui.wait(300)
+(() => { const s = viewport.modelToScreen(Qt.vector3d(0, -10, 3)); const w = viewport.mapToItem(null, s.x, s.y); ui.click(w.x, w.y) })()
+ui.wait(600)
+(() => { const r = controller.execute("sketch.curves", { sketch: activeSketch.id }).result; ui.log("curves " + JSON.stringify(r.curves.map(c => [c.kind, c.radius]))); if (r.curves.length !== 1 || r.curves[0].kind !== "circle" || Math.abs(r.curves[0].radius - 10) > 1e-6) ui.fail("the cut circle was not brought into the sketch") })()
+ui.shot("sketch-intersect.png")

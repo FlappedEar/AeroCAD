@@ -131,7 +131,7 @@ const std::vector<std::string>& Design::featureTypes()
 {
     static const std::vector<std::string> types{"sketch", "extrude", "revolve", "fillet", "chamfer",
                                                 "shell",  "combine", "box",     "cylinder", "sphere", "torus", "base_body", "hole",
-                                                "mirror",  "rectangular_pattern", "circular_pattern", "path_pattern", "pipe", "rib", "loft", "sweep", "plane",
+                                                "mirror",  "rectangular_pattern", "circular_pattern", "path_pattern", "pipe", "rib", "coil", "loft", "sweep", "plane",
                                                 "part_on_surface", "fin_on_surface", "move", "scale", "press_pull", "split", "delete_faces", "draft",
                                                 "fit_selection", "fit_regions", "trim_by_sketch", "offset_surface", "thicken_surface"};
     return types;
@@ -2278,6 +2278,64 @@ void Design::mirrorSketchCurves(FeatureId sketchId, const std::vector<std::size_
     regenerateChecked(sketchId, before);
 }
 
+namespace {
+/// Adds projected or intersected curves to a sketch feature's items, fixed where they are (Fusion keeps
+/// such geometry fixed), with a radius dimension on circles and arcs. `next` is the index the first one gets.
+void appendFixedCurves(Feature& f, std::size_t next, const std::vector<SketchCurve>& made)
+{
+    auto pt = [](const Vec2& v) { return Json::array({v.x, v.y}); };
+    Json items = f.params.value("curves", Json::array());
+    Json constraints = f.params.value("constraints", Json::array());
+    for (const auto& c : made) {
+        if (c.kind == SketchCurve::Kind::Circle) {
+            items.push_back({{"type", "circle"}, {"center", pt(c.points[0])}, {"radius", c.radius}});
+        } else if (c.kind == SketchCurve::Kind::Spline) {
+            Json p = Json::array();
+            for (const auto& q : c.points)
+                p.push_back(pt(q));
+            items.push_back({{"type", "spline"}, {"points", p}, {"closed", c.closed}});
+        } else {
+            items.push_back(curveItem(c));
+        }
+        // Fusion keeps projected geometry fixed.
+        constraints.push_back({{"type", "fix"}, {"curve", next}});
+        if (c.kind == SketchCurve::Kind::Circle || c.kind == SketchCurve::Kind::Arc)
+            constraints.push_back({{"type", "radius"}, {"curve", next}, {"value",
+                c.kind == SketchCurve::Kind::Circle ? c.radius
+                    : std::hypot(c.points[0].x - circleThrough(c.points[0], c.points[1], c.points[2]).x,
+                                 c.points[0].y - circleThrough(c.points[0], c.points[1], c.points[2]).y)}});
+        ++next;
+    }
+    f.params["curves"] = items;
+    f.params["constraints"] = constraints;
+}
+} // namespace
+
+void Design::intersectToSketch(FeatureId sketchId, FeatureId bodyId)
+{
+    const State before = m_state;
+    keepSolvedSketch(sketchId);
+    Feature& f = m_state.features[indexOf(sketchId)];
+    if (f.type != "sketch")
+        throw DesignError("Feature " + std::to_string(sketchId) + " is not a sketch");
+    auto sk = m_sketches.find(sketchId);
+    auto body = m_bodies.find(bodyId);
+    if (sk == m_sketches.end())
+        throw DesignError(f.name + " is not evaluated");
+    if (body == m_bodies.end())
+        throw DesignError("No body " + std::to_string(bodyId));
+    std::vector<SketchCurve> made;
+    try {
+        made = geometry::intersectCurves(body->second.shape, sk->second.plane);
+    } catch (const geometry::ModelingError& e) {
+        throw DesignError(e.what());
+    }
+    if (made.empty())
+        throw DesignError("The sketch plane does not cut " + body->second.name);
+    appendFixedCurves(f, sk->second.curves.size(), made);
+    regenerateChecked(sketchId, before);
+}
+
 void Design::projectToSketch(FeatureId sketchId, FeatureId bodyId, const Json& edgeRefs)
 {
     const State before = m_state;
@@ -2313,32 +2371,7 @@ void Design::projectToSketch(FeatureId sketchId, FeatureId bodyId, const Json& e
     }
     if (made.empty())
         throw DesignError("The edges are seen end-on from this sketch: nothing to project");
-    auto pt = [](const Vec2& v) { return Json::array({v.x, v.y}); };
-    Json items = f.params.value("curves", Json::array());
-    Json constraints = f.params.value("constraints", Json::array());
-    std::size_t next = sk->second.curves.size();
-    for (const auto& c : made) {
-        if (c.kind == SketchCurve::Kind::Circle) {
-            items.push_back({{"type", "circle"}, {"center", pt(c.points[0])}, {"radius", c.radius}});
-        } else if (c.kind == SketchCurve::Kind::Spline) {
-            Json p = Json::array();
-            for (const auto& q : c.points)
-                p.push_back(pt(q));
-            items.push_back({{"type", "spline"}, {"points", p}, {"closed", c.closed}});
-        } else {
-            items.push_back(curveItem(c));
-        }
-        // Fusion keeps projected geometry fixed.
-        constraints.push_back({{"type", "fix"}, {"curve", next}});
-        if (c.kind == SketchCurve::Kind::Circle || c.kind == SketchCurve::Kind::Arc)
-            constraints.push_back({{"type", "radius"}, {"curve", next}, {"value",
-                c.kind == SketchCurve::Kind::Circle ? c.radius
-                    : std::hypot(c.points[0].x - circleThrough(c.points[0], c.points[1], c.points[2]).x,
-                                 c.points[0].y - circleThrough(c.points[0], c.points[1], c.points[2]).y)}});
-        ++next;
-    }
-    f.params["curves"] = items;
-    f.params["constraints"] = constraints;
+    appendFixedCurves(f, sk->second.curves.size(), made);
     regenerateChecked(sketchId, before);
 }
 
@@ -4158,6 +4191,47 @@ void Design::evaluateFeature(const Feature& f)
         } else {
             throw DesignError("Unknown operation '" + op + "' (join, new_body)");
         }
+    } else if (f.type == "coil") {
+        // Fusion: Create > Coil. A spring: `diameter` is the outer diameter of the coil, any two of
+        // `revolutions`, `pitch` and `height` fix its length.
+        const core::Vec3 center = ev.vec3(p, "center", {});
+        core::Vec3 axis{0, 0, 1};
+        if (has(p, "axis")) {
+            const Json& a = p.at("axis");
+            if (a.is_string()) {
+                const std::string name = lower(a.get<std::string>());
+                if (name == "x")
+                    axis = {1, 0, 0};
+                else if (name == "y")
+                    axis = {0, 1, 0};
+                else if (name != "z")
+                    throw DesignError("Unknown axis '" + name + "' (X, Y, Z or [x, y, z])");
+            } else {
+                axis = ev.vec3(a);
+            }
+        }
+        const double outerDiameter = ev.num(p, "diameter");
+        const double size = ev.num(p, "section_size");
+        const bool hasRev = has(p, "revolutions"), hasPitch = has(p, "pitch"), hasHeight = has(p, "height");
+        if (int(hasRev) + int(hasPitch) + int(hasHeight) != 2)
+            throw DesignError("Give two of revolutions, pitch and height");
+        double revolutions = hasRev ? ev.num(p, "revolutions") : 0.0;
+        double pitch = hasPitch ? ev.num(p, "pitch") : 0.0;
+        const double height = hasHeight ? ev.num(p, "height") : 0.0;
+        if ((hasRev && !(revolutions > 0.0)) || (hasPitch && !(pitch > 0.0)) || (hasHeight && !(height > 0.0)))
+            throw DesignError("The revolutions, pitch and height must be positive");
+        if (!hasPitch)
+            pitch = height / revolutions;
+        if (!hasRev)
+            revolutions = height / pitch;
+        const std::string section = lower(p.value("section", std::string("circular")));
+        const std::string hand = lower(p.value("handedness", std::string("right")));
+        if (section != "circular" && section != "square")
+            throw DesignError("Unknown section '" + section + "' (circular, square)");
+        if (hand != "right" && hand != "left")
+            throw DesignError("Unknown handedness '" + hand + "' (right, left)");
+        applyOperation(geometry::coil(center, axis, (outerDiameter - size) / 2.0, pitch, revolutions, size,
+                                      section == "square", hand == "left"));
     } else if (f.type == "rib") {
         // Fusion: Create > Rib. A wall built on flat sketch curves: `thickness` wide, `depth` tall,
         // either standing up from the sketch plane (normal) or reaching from the curves along the

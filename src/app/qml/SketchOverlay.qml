@@ -55,6 +55,7 @@ Item {
     /// Project tool: the edge of body `body` (feature id) nearest `point` (model mm) is to
     /// be projected onto the sketch.
     signal projectRequested(int body, var point)
+    signal intersectRequested(int body)
     /// Offset tool: `curves` (one chain) are to be offset by `distance`.
     signal offsetRequested(var curves, real distance)
     /// Curves the Offset tool offsets (the selection when it started).
@@ -1468,6 +1469,17 @@ Item {
                 root.forceActiveFocus()
                 return
             }
+            if (root.tool === "intersect") {
+                // Like Project: only bodies take the click.
+                const parts = root.viewport.controller.execute("document.parts")
+                const bodies = parts.ok ? parts.result.parts.filter(p => p.kind === "body") : []
+                const hit = root.viewport.pickPartAmong(mouse.x, mouse.y, bodies.map(p => p.id))
+                const b = hit ? bodies.find(p => p.id === hit.partId) : undefined
+                if (b)
+                    root.intersectRequested(b.featureId)
+                root.forceActiveFocus()
+                return
+            }
             if (root.tool === "fillet") {
                 root.filletAt(mouse.x, mouse.y)
                 root.forceActiveFocus()
@@ -1929,6 +1941,7 @@ Item {
                         ? qsTr("%n curve(s) selected: Delete removes, X construction, Esc clears", "", root.selectedCurves.length)
                         : qsTr("Click curves to select (Shift adds), drag points to move them; or pick a tool (L line, R rectangle, C circle, D dimension)"))
                     : root.tool === "project" ? qsTr("Project: click edges of bodies to bring them into the sketch (fixed)")
+                    : root.tool === "intersect" ? qsTr("Intersect: click a body to bring the curves where this sketch plane cuts it into the sketch (fixed)")
                     : root.tool === "offset" ? qsTr("Offset: type the distance and press Enter (negative goes inwards)")
                     : root.tool === "move" ? (root.points.length === 0
                         ? qsTr("Move/Copy %n curve(s): click a base point, or type dx, dy and press Enter", "", root.moveCurves.length)
@@ -2007,7 +2020,7 @@ Item {
                 }
             }
             RowLayout {
-                visible: root.active && !root.constraintTool && root.tool !== "trim" && root.tool !== "circular_pattern" && root.tool !== "rectangular_pattern" && root.tool !== "extend" && root.tool !== "break" && root.tool !== "point" && root.tool !== "mirror" && root.tool !== "fillet" && root.tool !== "chamfer" && root.tool !== "project" && root.tool !== "spline" && root.tool !== "elliptical_arc"
+                visible: root.active && !root.constraintTool && root.tool !== "trim" && root.tool !== "circular_pattern" && root.tool !== "rectangular_pattern" && root.tool !== "extend" && root.tool !== "break" && root.tool !== "point" && root.tool !== "mirror" && root.tool !== "fillet" && root.tool !== "chamfer" && root.tool !== "project" && root.tool !== "intersect" && root.tool !== "spline" && root.tool !== "elliptical_arc"
                          && root.tool !== "tangent_arc"
                          && root.tool !== "circle_3point" && root.tool !== "circle_2tangent" && root.tool !== "circle_3tangent"
                 Label { text: root.tool === "rectangle" || root.tool === "center_rectangle" ? qsTr("Width, height")

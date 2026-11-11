@@ -140,6 +140,13 @@ struct ChamferOptions {
 /// The tube must be thinner than the ring (tubeRadius < ringRadius).
 [[nodiscard]] Shape torus(const core::Vec3& center, double ringRadius, double tubeRadius);
 
+/// A helical coil, a spring (Fusion: Create > Coil): a circular or square section of `sectionSize`
+/// (diameter or side) following a helix of radius `helixRadius` about the axis through `origin`,
+/// `revolutions` turns rising `pitch` per turn from the origin. The section lies in a plane through the
+/// axis. Throws ModelingError when the turns would overlap (pitch <= section size).
+[[nodiscard]] Shape coil(const core::Vec3& origin, const core::Vec3& axis, double helixRadius, double pitch,
+                         double revolutions, double sectionSize, bool square = false, bool leftHanded = false);
+
 /// Draft (Fusion: Modify > Draft): tilts each face by `angleDegrees` about the line where it
 /// meets the fixed (neutral) plane through `planeOrigin` with `pullDirection` as its normal.
 /// A positive angle tilts the faces inwards along the pull direction (the part narrows away
