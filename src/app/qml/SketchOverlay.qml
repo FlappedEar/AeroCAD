@@ -69,6 +69,7 @@ Item {
     /// Move/Copy tool (Fusion: Sketch > Move/Copy, M): `curves` are to be moved by dx, dy
     /// and turned by `angle` (degrees) about their middle; with `copy`, copies are added.
     signal moveRequested(var curves, real dx, real dy, real angle, bool copy)
+    signal stretchRequested(var window, real dx, real dy)
     /// Curves the Move/Copy tool moves (the selection when it started), the turn it adds
     /// and whether it copies.
     property var moveCurves: []
@@ -668,6 +669,7 @@ Item {
         case "elliptical_arc": return 5
         case "spline": return Infinity
         case "cp_spline": return Infinity // ended with Enter, a double-click or the first point
+        case "stretch": return 4
         default: return 2
         }
     }
@@ -1114,6 +1116,23 @@ Item {
         }
         if (tool === "rectangular_pattern")
             return // set in the panel
+        if (tool === "stretch") {
+            // Fusion: Stretch. Two corners of the window, then a base point and where it goes.
+            if (points.length < 3) {
+                if (points.length === 1 && dist(points[0], p) < 1e-9)
+                    return
+                points = points.concat([p])
+            } else {
+                const window = [points[0], points[1]], from = points[2]
+                points = []
+                if (Math.abs(p[0] - from[0]) > 1e-9 || Math.abs(p[1] - from[1]) > 1e-9) {
+                    toolRequested("")
+                    stretchRequested(window, p[0] - from[0], p[1] - from[1])
+                }
+            }
+            canvas.requestPaint()
+            return
+        }
         if (tool === "move") {
             // From a base point to where it goes.
             if (points.length === 0) {
@@ -1691,6 +1710,31 @@ Item {
                     ctx.globalAlpha = 1
                 }
             }
+            // Stretch: the window, and the move from the base point to the cursor.
+            if (root.tool === "stretch" && root.points.length >= 1) {
+                const corner2 = root.points.length >= 2 ? root.points[1] : root.hover
+                if (corner2) {
+                    const a = root.toScreen(root.points[0]), b = root.toScreen(corner2)
+                    ctx.lineWidth = 1.5
+                    ctx.strokeStyle = Theme.accent
+                    ctx.fillStyle = Theme.accent
+                    ctx.setLineDash([5, 4])
+                    ctx.globalAlpha = 0.9
+                    ctx.strokeRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y))
+                    ctx.globalAlpha = 0.12
+                    ctx.fillRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y))
+                    ctx.setLineDash([])
+                    ctx.globalAlpha = 1
+                }
+                if (root.points.length === 3 && root.hover) {
+                    const a = root.toScreen(root.points[2]), b = root.toScreen(root.hover)
+                    ctx.lineWidth = 2
+                    ctx.beginPath()
+                    ctx.moveTo(a.x, a.y)
+                    ctx.lineTo(b.x, b.y)
+                    ctx.stroke()
+                }
+            }
             // Sketch Scale: the curves at the typed factor, and the point that stays.
             if (root.tool === "scale" && root.scaleCurves.length > 0) {
                 const pivot = root.scalePoint !== null ? root.scalePoint : root.curvesMiddle(root.scaleCurves)
@@ -2065,6 +2109,10 @@ Item {
                     : root.tool === "move" ? (root.points.length === 0
                         ? qsTr("Move/Copy %n curve(s): click a base point, or type dx, dy and press Enter", "", root.moveCurves.length)
                         : qsTr("Move/Copy: click where the base point goes"))
+                    : root.tool === "stretch" ? (root.points.length < 2
+                        ? qsTr("Stretch: click the two corners of a window around the points to move")
+                        : root.points.length === 2 ? qsTr("Stretch: click a base point")
+                        : qsTr("Stretch: click where the base point goes"))
                     : root.tool === "scale" ? (root.scalePoint === null
                         ? qsTr("Sketch Scale %n curve(s): type the factor and press Enter (about their middle), or click the point that stays", "", root.scaleCurves.length)
                         : qsTr("Sketch Scale: type the factor and press Enter (click again to move the point that stays)"))
@@ -2141,7 +2189,7 @@ Item {
                 }
             }
             RowLayout {
-                visible: root.active && !root.constraintTool && root.tool !== "trim" && root.tool !== "circular_pattern" && root.tool !== "rectangular_pattern" && root.tool !== "extend" && root.tool !== "break" && root.tool !== "point" && root.tool !== "mirror" && root.tool !== "fillet" && root.tool !== "chamfer" && root.tool !== "project" && root.tool !== "intersect" && root.tool !== "spline" && root.tool !== "cp_spline" && root.tool !== "elliptical_arc"
+                visible: root.active && !root.constraintTool && root.tool !== "trim" && root.tool !== "circular_pattern" && root.tool !== "rectangular_pattern" && root.tool !== "extend" && root.tool !== "break" && root.tool !== "point" && root.tool !== "mirror" && root.tool !== "fillet" && root.tool !== "chamfer" && root.tool !== "project" && root.tool !== "intersect" && root.tool !== "stretch" && root.tool !== "spline" && root.tool !== "cp_spline" && root.tool !== "elliptical_arc"
                          && root.tool !== "tangent_arc"
                          && root.tool !== "circle_3point" && root.tool !== "circle_2tangent" && root.tool !== "circle_3tangent"
                 Label { text: root.tool === "rectangle" || root.tool === "center_rectangle" ? qsTr("Width, height")

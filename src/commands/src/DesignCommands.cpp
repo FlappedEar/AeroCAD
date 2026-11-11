@@ -2119,6 +2119,30 @@ void registerSketchCommands(CommandRegistry& r)
               return addedFeature(design(ctx), ctx.document, id);
           });
 
+    r.add({"sketch.stretch", "Sketch Stretch",
+           "Stretch (Fusion: Sketch > Modify > Stretch): points inside the `window` move by `dx`, `dy`; curves wholly "
+           "inside move, those crossing its edge stretch. Refused if the window is empty or constraints hold it.",
+           objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
+                         {"window", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2},
+                                     {"items", {{"type", "array"}, {"items", {{"type", "number"}}}}},
+                                     {"description", "Opposite corners [[u, v], [u, v]] (mm)."}}},
+                         {"dx", {{"type", "number"}, {"description", "Move along x (mm), default 0."}}},
+                         {"dy", {{"type", "number"}, {"description", "Move along y (mm), default 0."}}}},
+                        {"sketch", "window"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              const auto id = params.at("sketch").get<cad::FeatureId>();
+              const Json& w = params.at("window");
+              designChange(ctx, "Stretch Sketch", [&](cad::Design& d) {
+                  (void)sketchFeature(d, id);
+                  d.stretchSketch(id, {w.at(0).at(0).get<double>(), w.at(0).at(1).get<double>()},
+                                  {w.at(1).at(0).get<double>(), w.at(1).at(1).get<double>()},
+                                  {params.value("dx", 0.0), params.value("dy", 0.0)});
+                  return Json{};
+              });
+              return addedFeature(design(ctx), ctx.document, id);
+          });
+
     r.add({"sketch.scale_curves", "Sketch Scale",
            "Scales sketch curves by `factor` about `point` (Fusion: Sketch > Sketch Scale; default point: the "
            "middle of the curves' bounds). Lengths, distances and radii dimensioned among the curves scale with "
