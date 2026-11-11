@@ -788,6 +788,35 @@ void appendCurves(const Eval& ev, const Json& item, std::vector<SketchCurve>& ou
         implicit.push_back({CT::Tangent, {first + 2, first + 1}, {}});
         implicit.push_back({CT::Tangent, {first + 2, first + 3}, {}});
         implicit.push_back({CT::Tangent, {first, first + 3}, {}});
+    } else if (type == "arc_slot") {
+        // Fusion: Slot > Center Point Arc Slot. A slot along an arc about `center`: `radius` is the centre
+        // line's, `width` the slot's, from `start_angle` counter-clockwise to `end_angle` (degrees).
+        const Vec2 c = ev.vec2(item, "center");
+        const double r = ev.num(item, "radius");
+        const double w = ev.num(item, "width") / 2;
+        const double a0 = ev.num(item, "start_angle") * kDegToRad;
+        double a1 = ev.num(item, "end_angle") * kDegToRad;
+        if (!(r > 0) || !(w > 0))
+            throw DesignError("An arc slot needs a positive radius and width");
+        if (w >= r)
+            throw DesignError("The arc slot is too wide: its width must be less than twice its radius");
+        while (a1 <= a0)
+            a1 += 2 * std::numbers::pi;
+        if (a1 - a0 >= 2 * std::numbers::pi - 1e-6)
+            throw DesignError("An arc slot must span less than a full turn");
+        const double mid = (a0 + a1) / 2;
+        auto at = [&](double radius, double a) { return Vec2{c.x + radius * std::cos(a), c.y + radius * std::sin(a)}; };
+        const Vec2 t1{-std::sin(a1), std::cos(a1)}, t0{-std::sin(a0), std::cos(a0)};
+        const Vec2 end1 = at(r, a1), end0 = at(r, a0);
+        push({SketchCurve::Kind::Arc, {at(r + w, a0), at(r + w, mid), at(r + w, a1)}});
+        push({SketchCurve::Kind::Arc, {at(r + w, a1), {end1.x + t1.x * w, end1.y + t1.y * w}, at(r - w, a1)}});
+        push({SketchCurve::Kind::Arc, {at(r - w, a1), at(r - w, mid), at(r - w, a0)}});
+        push({SketchCurve::Kind::Arc, {at(r - w, a0), {end0.x - t0.x * w, end0.y - t0.y * w}, at(r + w, a0)}});
+        implicit.push_back({CT::Concentric, {first, first + 2}, {}});
+        implicit.push_back({CT::Tangent, {first, first + 1}, {}});
+        implicit.push_back({CT::Tangent, {first + 2, first + 1}, {}});
+        implicit.push_back({CT::Tangent, {first + 2, first + 3}, {}});
+        implicit.push_back({CT::Tangent, {first, first + 3}, {}});
     } else if (type == "ellipse") {
         // Fusion's Ellipse: centre, major radius along `angle` (degrees), minor radius.
         const Vec2 c = ev.vec2(item, "center");
@@ -1451,6 +1480,15 @@ Json itemFromSolved(const Json& item, const SketchCurve* c, std::size_t n)
         out["width"] = 2 * std::hypot(c[1].points[0].x - b.x, c[1].points[0].y - b.y);
         for (const char* k : {"mode", "center"})
             out.erase(k);
+    } else if (type == "arc_slot") {
+        const Vec2 ctr = arcCenter(c[0]);
+        const double outer = std::hypot(c[0].points[0].x - ctr.x, c[0].points[0].y - ctr.y);
+        const double inner = std::hypot(c[2].points[0].x - ctr.x, c[2].points[0].y - ctr.y);
+        out["center"] = pt(ctr);
+        out["radius"] = (outer + inner) / 2;
+        out["width"] = outer - inner;
+        out["start_angle"] = std::atan2(c[0].points[0].y - ctr.y, c[0].points[0].x - ctr.x) / kDegToRad;
+        out["end_angle"] = std::atan2(c[0].points[2].y - ctr.y, c[0].points[2].x - ctr.x) / kDegToRad;
     } else if (type == "spline") {
         Json pts = Json::array();
         for (const auto& q : c[0].points)
@@ -3474,7 +3512,8 @@ void Design::deleteSketchCurves(FeatureId sketchId, const std::vector<std::size_
             else
                 axis = Json{{"deletedLine", axis["line"]}};
         }
-        if ((g.type == "sweep" || g.type == "path_pattern") && g.params.contains("path") && g.params["path"].is_object() &&
+        if ((g.type == "sweep" || g.type == "path_pattern" || g.type == "pipe" || g.type == "rib") && g.params.contains("path") &&
+            g.params["path"].is_object() &&
             g.params["path"].value("sketch", Json()) == sketchId && g.params["path"].contains("curves")) {
             Json& path = g.params["path"];
             Json kept = Json::array();

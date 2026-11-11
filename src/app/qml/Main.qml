@@ -291,6 +291,7 @@ ApplicationWindow {
         SketchMenuItem { action: tangentArcAction; icon.source: Theme.iconUrl("tangent-arc") }
         SketchMenuItem { action: polygonAction; icon.source: Theme.iconUrl("polygon") }
         SketchMenuItem { action: slotAction; icon.source: Theme.iconUrl("slot") }
+        SketchMenuItem { action: arcSlotAction; icon.source: Theme.iconUrl("arc-slot") }
         SketchMenuItem { action: splineAction; icon.source: Theme.iconUrl("spline") }
         SketchMenuItem { action: pointAction; icon.source: Theme.iconUrl("point") }
         SketchMenuItem { action: dimensionAction; icon.source: Theme.iconUrl("dimension") }
@@ -1499,6 +1500,7 @@ ApplicationWindow {
     Action { id: centerArcAction; text: qsTr("C&enter Point Arc"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "center_arc"; onTriggered: window.sketchTool_("center_arc") }
     Action { id: pointAction; text: qsTr("Poin&t"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "point"; onTriggered: window.sketchTool_("point") }
     Action { id: splineAction; text: qsTr("Spli&ne"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "spline"; onTriggered: window.sketchTool_("spline") }
+    Action { id: arcSlotAction; text: qsTr("&Arc Slot"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "arc_slot"; onTriggered: window.sketchTool_("arc_slot") }
     Action { id: slotAction; text: qsTr("Sl&ot"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "slot"; onTriggered: window.sketchTool_("slot") }
 
     // Scan area selection tools (shortcuts 1/2/3 are in Viewport.qml).
@@ -1815,6 +1817,7 @@ ApplicationWindow {
             MenuItem { action: tangentArcAction }
             MenuItem { action: polygonAction }
             MenuItem { action: slotAction }
+            MenuItem { action: arcSlotAction }
             MenuItem { action: splineAction }
             MenuItem { action: pointAction }
             MenuSeparator {}
@@ -2300,6 +2303,7 @@ ApplicationWindow {
                 ToolCommand { action: textAction; text: qsTr("Text"); iconName: "text" }
                 ToolCommand { action: centerArcAction; text: qsTr("Center Arc"); iconName: "center-arc" }
                 ToolCommand { action: tangentArcAction; text: qsTr("Tangent Arc"); iconName: "tangent-arc" }
+                ToolCommand { action: arcSlotAction; text: qsTr("Arc Slot"); iconName: "arc-slot" }
                 // Fusion: Create > Rectangular / Circular Pattern.
                 ToolCommand { action: sketchRectangularPatternAction; text: qsTr("Rectangular Pattern"); iconName: "pattern" }
                 ToolCommand { action: sketchCircularPatternAction; text: qsTr("Circular Pattern"); iconName: "circular-pattern" }
@@ -2314,12 +2318,12 @@ ApplicationWindow {
                 ToolCommand { action: breakAction; text: qsTr("Break"); iconName: "break" }
                 ToolCommand { action: sketchOffsetAction; text: qsTr("Offset"); iconName: "offset" }
                 ToolCommand { action: sketchProjectAction; text: qsTr("Project"); iconName: "project" }
-                ToolCommand { action: sketchIntersectAction; text: qsTr("Intersect"); iconName: "intersect" }
                 ToolCommand { action: sketchMoveAction; text: qsTr("Move/Copy"); iconName: "move" }
                 ToolCommand { action: sketchMirrorAction; text: qsTr("Mirror"); iconName: "mirror" }
                 ToolCommand { action: constructionAction; text: qsTr("Construction"); iconName: "construction" }
                 ToolCommand { action: sketchScaleAction; text: qsTr("Sketch Scale"); iconName: "scale" }
                 ToolCommand { action: sketchChamferAction; text: qsTr("Chamfer"); iconName: "chamfer" }
+                ToolCommand { action: sketchIntersectAction; text: qsTr("Intersect"); iconName: "intersect" }
             }
             ToolSeparator { tab: "sketch" }
             ToolGroup {

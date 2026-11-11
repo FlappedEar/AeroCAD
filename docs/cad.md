@@ -151,9 +151,11 @@ Sketch curves: `line {start, end}`, `rectangle {corner, width, height | opposite
 `center_rectangle {center, width, height}`, `circle {center, radius | diameter}`,
 `arc {start, through, end}`, `center_arc {center, radius, startAngle, endAngle}`,
 `polygon {center, radius, sides, angle?}`, `slot {start, end, width}`,
+`arc_slot {center, radius, width, start_angle, end_angle}` (a slot along an arc, `radius` of its centre line, counter-clockwise),
 `spline {points, closed?}`, `point {at}`,
 `ellipse {center, major_radius, minor_radius, angle?}`,
 `elliptical_arc {center, major_radius, minor_radius, angle?, start_angle, end_angle}`,
+`tangent_circle {curves: [2 or 3 lines, arcs or circles], near, radius?}` (a circle tangent to them; with two curves and no radius it passes through `near`),
 `conic {start, end, apex, rho?}`, `text {at, text, height?, angle?, font?, bold?, italic?}`; any curve can be `construction: true`. Curves are split at
 intersections, so a circle inside a rectangle gives two profiles (ring and disk).
 
