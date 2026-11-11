@@ -1,0 +1,22 @@
+# CAD-276: while a sketch is drawn on a scan the Properties panel does not show the scan's
+# Details (name field, size, type) under "Drawing a sketch"; they are back after Finish Sketch.
+# Run: AeroCAD tests/data/models/dome_scan.stl --ui-script <this file>
+ui.wait(2500)
+(() => { const p = controller.execute("document.parts").result.parts[0]; window.selectPart(p.id) })()
+ui.wait(500)
+ui.clickText("Sketch on the scan")
+ui.wait(500)
+(() => { const b = window.selectionInfo; const top = Qt.vector3d(b.center[0], b.center[1], b.center[2] + b.sizeZ / 2); const v = viewport.viewPoint(top); const c = viewport.mapToItem(null, v.x, v.y); ui.click(c.x, c.y) })()
+ui.wait(2500)
+ui.shot("sketch-details-hidden.png")
+(() => { const f = (it) => { if (!it.visible) return null; if (it.text === "DETAILS") return it; for (let i = 0; i < (it.children || []).length; ++i) { const r = f(it.children[i]); if (r) return r } return null }; ui.log("DETAILS visible while sketching: " + !!f(window.contentItem)); if (f(window.contentItem)) ui.fail("details of the scan are shown while a sketch is drawn") })()
+ui.key("R")
+ui.wait(300)
+(() => { const v = viewport.viewPoint(Qt.vector3d(window.activeSketch.origin[0], window.activeSketch.origin[1], window.activeSketch.origin[2])); const c = viewport.mapToItem(null, v.x, v.y); ui.drag(c.x - 60, c.y - 40, c.x + 60, c.y + 40, "left", "", 12) })()
+ui.wait(600)
+ui.clickText("Finish Sketch")
+ui.wait(800)
+ui.clickText("Not now")
+ui.wait(500)
+(() => { const f = (it) => { if (!it.visible) return null; if (it.text === "DETAILS") return it; for (let i = 0; i < (it.children || []).length; ++i) { const r = f(it.children[i]); if (r) return r } return null }; if (!f(window.contentItem)) ui.fail("details are not shown after the sketch is finished") })()
+ui.log("sketch details done")
