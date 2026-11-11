@@ -1170,7 +1170,7 @@ std::pair<Json, std::vector<std::pair<std::size_t, int>>> resolveTangentCircleGe
                             break;
                         }
                         // Newton step: a square system (3x3, or 2x2 for a typed radius).
-                        double m[3][4];
+                        double m[3][4] = {};
                         for (int i = 0; i < unknowns; ++i) {
                             for (int j = 0; j < unknowns; ++j)
                                 m[i][j] = J[i][j];
@@ -1305,7 +1305,7 @@ std::pair<Json, std::vector<std::pair<std::size_t, int>>> resolveTangentCircle(
     if (lines.size() == 3) {
         // n_i . c - s_i r = d_i for the sign choices s_i: three linear equations in (cx, cy, r).
         for (int mask = 0; mask < 8; ++mask) {
-            double m[3][4];
+            double m[3][4] = {};
             for (int i = 0; i < 3; ++i) {
                 m[i][0] = lines[i].n.x;
                 m[i][1] = lines[i].n.y;
