@@ -3836,3 +3836,81 @@ TEST_CASE("Design commands: polygon modes and slot modes (CAD-269)", "[commands]
                                                         {"end", {5, 0}}, {"width", 6}}})}}).ok);
     }
 }
+
+TEST_CASE("Design commands: circle tangent to two or three lines (CAD-270)", "[commands][cad][solver]")
+{
+    commands::Session s;
+    // A triangle with legs 30 and 40 (hypotenuse 50): its incircle has radius (30 + 40 - 50) / 2 = 10.
+    const auto id = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {40, 0}}},
+                                                 {{"type", "line"}, {"start", {40, 0}}, {"end", {0, 30}}},
+                                                 {{"type", "line"}, {"start", {0, 30}}, {"end", {0, 0}}}})}})
+                        .at("id").get<std::uint64_t>();
+
+    SECTION("3-tangent: the circle nearest the click is the incircle, and it stays tangent")
+    {
+        run(s, "sketch.add_curves",
+            {{"sketch", id}, {"curves", Json::array({{{"type", "tangent_circle"}, {"curves", {0, 1, 2}}, {"near", {10, 10}}}})}});
+        Json c = run(s, "sketch.curves", {{"sketch", id}});
+        const auto& circle = c.at("curves")[3];
+        REQUIRE(circle.at("kind") == "circle");
+        CHECK(circle.at("radius").get<double>() == Approx(10).epsilon(1e-9));
+        CHECK(circle.at("points")[0][0].get<double>() == Approx(10).epsilon(1e-9));
+        CHECK(circle.at("points")[0][1].get<double>() == Approx(10).epsilon(1e-9));
+        CHECK(c.at("degreesOfFreedom").get<int>() == 6); // the 3 lines (6 DOF) are free, the circle is fully constrained
+        // Stretching the base keeps the circle tangent to all three lines.
+        run(s, "sketch.add_constraints",
+            {{"sketch", id}, {"constraints", Json::array({{{"type", "fix"}, {"points", Json::array({{{"curve", 2}, {"point", "end"}}})}},
+                                                         {{"type", "length"}, {"curve", 0}, {"value", 60}}})}});
+        c = run(s, "sketch.curves", {{"sketch", id}});
+        const auto& moved = c.at("curves")[3];
+        const double r = moved.at("radius").get<double>();
+        const auto& ctr = moved.at("points")[0];
+        // Distance from the centre to each side (as an infinite line) equals the radius.
+        const double cx = ctr[0].get<double>(), cy = ctr[1].get<double>();
+        for (int i = 0; i < 3; ++i) {
+            const auto& pts = c.at("curves")[static_cast<std::size_t>(i)].at("points");
+            const double ax = pts[0][0].get<double>(), ay = pts[0][1].get<double>();
+            const double bx = pts[1][0].get<double>(), by = pts[1][1].get<double>();
+            const double dist = std::abs((bx - ax) * (cy - ay) - (by - ay) * (cx - ax)) / std::hypot(bx - ax, by - ay);
+            CHECK(dist == Approx(r).epsilon(1e-6));
+        }
+        const auto& base = c.at("curves")[0].at("points");
+        CHECK(std::hypot(base[1][0].get<double>() - base[0][0].get<double>(), base[1][1].get<double>() - base[0][1].get<double>()) ==
+              Approx(60).epsilon(1e-6));
+    }
+
+    SECTION("an excircle is picked by clicking outside")
+    {
+        run(s, "sketch.add_curves",
+            {{"sketch", id}, {"curves", Json::array({{{"type", "tangent_circle"}, {"curves", {0, 1, 2}}, {"near", {60, 60}}}})}});
+        const Json c = run(s, "sketch.curves", {{"sketch", id}});
+        CHECK(c.at("curves")[3].at("radius").get<double>() > 10.5);
+    }
+
+    SECTION("2-tangent: the click picks the wedge and the size; a typed radius fixes it")
+    {
+        const Json a = run(s, "sketch.add_curves",
+                           {{"sketch", id}, {"curves", Json::array({{{"type", "tangent_circle"}, {"curves", {0, 2}}, {"near", {5, 5}}}})}});
+        const Json c = run(s, "sketch.curves", {{"sketch", id}});
+        const auto& circle = c.at("curves")[3];
+        // The corner is the origin, both lines are axes: the centre on the bisector nearest (5, 5).
+        CHECK(circle.at("points")[0][0].get<double>() == Approx(5).epsilon(1e-9));
+        CHECK(circle.at("points")[0][1].get<double>() == Approx(5).epsilon(1e-9));
+        CHECK(circle.at("radius").get<double>() == Approx(5).epsilon(1e-9));
+        run(s, "sketch.add_curves",
+            {{"sketch", id}, {"curves", Json::array({{{"type", "tangent_circle"}, {"curves", {0, 2}}, {"near", {-3, 3}}, {"radius", 4}}})}});
+        const Json d = run(s, "sketch.curves", {{"sketch", id}});
+        CHECK(d.at("curves")[4].at("radius").get<double>() == Approx(4).epsilon(1e-9));
+        CHECK(d.at("curves")[4].at("points")[0][0].get<double>() == Approx(-4).epsilon(1e-9));
+        (void)a;
+    }
+
+    SECTION("only lines are accepted")
+    {
+        run(s, "sketch.add_curves", {{"sketch", id}, {"curves", Json::array({{{"type", "circle"}, {"center", {100, 0}}, {"radius", 5}}})}});
+        CHECK_FALSE(s.execute("sketch.add_curves",
+                              {{"sketch", id}, {"curves", Json::array({{{"type", "tangent_circle"}, {"curves", {0, 3}}, {"near", {5, 5}}}})}}).ok);
+    }
+}

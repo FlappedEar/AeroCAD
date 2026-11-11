@@ -1,0 +1,37 @@
+# CAD-270: Circle 2-Tangent / 3-Tangent (Fusion: Create > Circle) with real clicks: click the
+# lines of a 30-40-50 triangle and get its incircle (radius 10), kept tangent. Then a
+# 2-Tangent circle in the corner: two lines, then a click where the circle goes.
+# Run: AeroCAD --ui-script <this file>
+Qt.createQmlObject('import QtQuick; Item { objectName: "ctTest"; visible: false; function at(q) { const o = viewport.sketchOverlay; const p = o.toScreen(q); return o.mapToItem(null, p.x, p.y) } function clickAt(q) { const w = at(q); ui.move(w.x, w.y); ui.wait(80); ui.click(w.x, w.y); ui.wait(200) } function curves() { return controller.execute("sketch.curves", { sketch: activeSketch.id }).result.curves } }', window.contentItem)
+ui.wait(800)
+(() => { window.createSketch({ plane: "XY" }); if (!window.activeSketch) ui.fail("no sketch") })()
+ui.wait(500)
+(() => { const r = controller.execute("sketch.add_curves", { sketch: activeSketch.id, curves: [{ type: "line", start: [0, 0], end: [40, 0] }, { type: "line", start: [40, 0], end: [0, 30] }, { type: "line", start: [0, 30], end: [0, 0] }] }); if (!r.ok) ui.fail("triangle: " + r.error) })()
+ui.wait(800)
+(() => { viewport.restoreCameraState({ pivot: [20, 35, 0], pitch: -90, yaw: 0, distance: 150, orthographic: false }) })()
+ui.wait(400)
+(() => { if (!ui.clickText("CREATE")) ui.fail("no CREATE menu on the ribbon") })()
+ui.wait(400)
+(() => { if (!ui.clickText("3-Tangent Circle")) ui.fail("no 3-Tangent Circle in the CREATE menu") })()
+ui.wait(300)
+(() => { if (sketchTool !== "circle_3tangent") ui.fail("3-Tangent Circle did not start: " + sketchTool) })()
+# Click the three sides (not at their corners).
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "ctTest"); t.clickAt([20, 0]); t.clickAt([20, 15]); })()
+ui.shot("build/sketch-circle-3tangent-picking.png")
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "ctTest"); t.clickAt([0, 15]) })()
+ui.wait(600)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "ctTest"); const c = t.curves(); const k = c[3]; ui.log("curves " + c.length + (k ? ", " + k.kind + " r " + k.radius + " at " + JSON.stringify(k.points[0]) : "")); if (c.length !== 4 || k.kind !== "circle") ui.fail("no circle was added"); else if (Math.abs(k.radius - 10) > 1e-6 || Math.abs(k.points[0][0] - 10) > 1e-6 || Math.abs(k.points[0][1] - 10) > 1e-6) ui.fail("not the incircle: " + JSON.stringify(k)) })()
+(() => { const s = controller.execute("sketch.curves", { sketch: activeSketch.id }).result; const n = s.constraints.filter(c => c.type === "tangent").length; ui.log("tangent constraints " + n); if (n !== 3) ui.fail("expected 3 tangent constraints, got " + n) })()
+ui.shot("/mnt/project-files/ux/sketch-circle-3tangent.png")
+# 2-Tangent: the two legs, then a click inside the corner at (5, 5) -> radius 5.
+(() => { if (!ui.clickText("CREATE")) ui.fail("no CREATE menu on the ribbon") })()
+ui.wait(400)
+(() => { if (!ui.clickText("2-Tangent Circle")) ui.fail("no 2-Tangent Circle in the CREATE menu") })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "ctTest"); t.clickAt([30, 0]); t.clickAt([0, 25]); })()
+(() => { ui.log("picked " + JSON.stringify(viewport.sketchOverlay.tangentCurves) + " tool " + sketchTool) })()
+ui.shot("build/sketch-circle-2tangent-picking.png")
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "ctTest"); t.clickAt([5, 5]) })()
+ui.wait(600)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "ctTest"); const c = t.curves(); const k = c[4]; ui.log("curves " + c.length + (k ? ", " + k.kind + " r " + k.radius : "")); if (c.length !== 5 || k.kind !== "circle") ui.fail("no 2-tangent circle was added"); else if (Math.abs(k.radius - 5) > 1e-6) ui.fail("expected radius 5: " + JSON.stringify(k)) })()
+ui.log("Circle 2/3-Tangent OK")

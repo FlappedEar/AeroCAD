@@ -61,6 +61,9 @@ Item {
     property var offsetCurves: []
     /// Curves the Mirror tool copies (the selection when it started).
     property var mirrorCurves: []
+    /// Circle 2-Tangent / 3-Tangent: the lines picked so far, and where they were clicked.
+    property var tangentCurves: []
+    property var tangentClicks: []
     /// Move/Copy tool (Fusion: Sketch > Move/Copy, M): `curves` are to be moved by dx, dy
     /// and turned by `angle` (degrees) about their middle; with `copy`, copies are added.
     signal moveRequested(var curves, real dx, real dy, real angle, bool copy)
@@ -178,6 +181,8 @@ Item {
         clearSelection()
         if (tool !== "mirror")
             mirrorCurves = []
+        tangentCurves = []
+        tangentClicks = []
         if (tool !== "offset")
             offsetCurves = []
         if (tool !== "move") {
@@ -984,6 +989,36 @@ Item {
         return out
     }
 
+    /// Circle 2-Tangent / 3-Tangent: a click picks a line (the third click of the 2-tangent
+    /// circle says where the circle goes); the command works out the circle.
+    function tangentClick(x, y) {
+        const at = screenToLocal(x, y)
+        if (at === null)
+            return
+        const two = tool === "circle_2tangent"
+        if (two && tangentCurves.length === 2) {
+            const p = snap(x, y) // snaps like any click, so a round radius is easy
+            emitCurve({ type: "tangent_circle", curves: tangentCurves, near: p !== null ? p : [round6(at[0]), round6(at[1])] })
+            tangentCurves = []
+            tangentClicks = []
+            canvas.requestPaint()
+            return
+        }
+        const i = curveAt(x, y)
+        const c = sketchCurves.find(k => k.index === i)
+        if (!c || c.kind !== "line" || tangentCurves.indexOf(i) >= 0)
+            return
+        tangentCurves = tangentCurves.concat([i])
+        tangentClicks = tangentClicks.concat([at])
+        if (!two && tangentCurves.length === 3) {
+            const mean = [0, 1].map(k => (tangentClicks[0][k] + tangentClicks[1][k] + tangentClicks[2][k]) / 3)
+            emitCurve({ type: "tangent_circle", curves: tangentCurves, near: [round6(mean[0]), round6(mean[1])] })
+            tangentCurves = []
+            tangentClicks = []
+        }
+        canvas.requestPaint()
+    }
+
     function emitCurve(curve) {
         if (curve !== null)
             curveDrawn(curve)
@@ -1347,7 +1382,7 @@ Item {
                 root.pieceHover(mouse.x, mouse.y)
                 return
             }
-            if (root.tool === "trim" || root.tool === "mirror") {
+            if (root.tool === "trim" || root.tool === "mirror" || root.tool === "circle_2tangent" || root.tool === "circle_3tangent") {
                 const i = root.curveAt(mouse.x, mouse.y)
                 if (i !== root.hoverCurve) {
                     root.hoverCurve = i
@@ -1405,6 +1440,11 @@ Item {
                     if (list.length > 0)
                         root.mirrorRequested(list, i)
                 }
+                root.forceActiveFocus()
+                return
+            }
+            if (root.tool === "circle_2tangent" || root.tool === "circle_3tangent") {
+                root.tangentClick(mouse.x, mouse.y)
                 root.forceActiveFocus()
                 return
             }
@@ -1538,6 +1578,7 @@ Item {
             // Select mode: the curve under the cursor and the selected curves, highlighted.
             for (const c of root.sketchCurves) {
                 const sel = root.selectedCurves.indexOf(c.index) >= 0 || root.mirrorCurves.indexOf(c.index) >= 0
+                            || root.tangentCurves.indexOf(c.index) >= 0
                             || root.offsetCurves.indexOf(c.index) >= 0 || root.moveCurves.indexOf(c.index) >= 0
                             || root.patternCurves.indexOf(c.index) >= 0 || root.scaleCurves.indexOf(c.index) >= 0
                 if (!sel && c.index !== root.hoverCurve)
@@ -1911,6 +1952,8 @@ Item {
                     : root.tool === "rectangle_3point" ? qsTr("3-point rectangle: click both ends of one side (any angle), then the far side; type the length, then the height")
                     : root.tool === "circle_2point" ? qsTr("2-point circle: click both ends of a diameter; type the diameter")
                     : root.tool === "circle_3point" ? qsTr("3-point circle: click three points on the circle")
+                    : root.tool === "circle_2tangent" ? (root.tangentCurves.length < 2 ? qsTr("2-tangent circle: click two lines") : qsTr("2-tangent circle: click where the circle goes (its size follows the click)"))
+                    : root.tool === "circle_3tangent" ? qsTr("3-tangent circle: click three lines (the circle that fits between them)")
                     : root.tool === "ellipse" ? qsTr("Ellipse: click the centre, the end of the major axis, then a point for the minor radius; type each radius")
                     : root.tool === "elliptical_arc" ? qsTr("Elliptical arc: click the centre, the major axis end, the minor radius, then the arc start and end (counter-clockwise)")
                     : root.tool === "text" ? qsTr("Text: click the start, type the text, Enter (cursor distance = height, direction = angle)")
@@ -1959,7 +2002,7 @@ Item {
             RowLayout {
                 visible: root.active && !root.constraintTool && root.tool !== "trim" && root.tool !== "circular_pattern" && root.tool !== "rectangular_pattern" && root.tool !== "extend" && root.tool !== "break" && root.tool !== "point" && root.tool !== "mirror" && root.tool !== "fillet" && root.tool !== "chamfer" && root.tool !== "project" && root.tool !== "spline" && root.tool !== "elliptical_arc"
                          && root.tool !== "tangent_arc"
-                         && root.tool !== "circle_3point"
+                         && root.tool !== "circle_3point" && root.tool !== "circle_2tangent" && root.tool !== "circle_3tangent"
                 Label { text: root.tool === "rectangle" || root.tool === "center_rectangle" ? qsTr("Width, height")
                             : root.tool === "center_arc" ? qsTr("Radius") : root.tool === "line" ? qsTr("Length")
                             : root.tool === "ellipse" ? (root.points.length >= 2 ? qsTr("Minor radius") : qsTr("Major radius"))
