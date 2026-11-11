@@ -3926,11 +3926,113 @@ TEST_CASE("Design commands: circle tangent to two or three lines (CAD-270)", "[c
                               {{"sketch", par}, {"curves", Json::array({{{"type", "tangent_circle"}, {"curves", {0, 1}}, {"near", {20, 3}}, {"radius", 3}}})}}).ok);
     }
 
-    SECTION("only lines are accepted")
+    SECTION("splines and points are not accepted")
     {
-        run(s, "sketch.add_curves", {{"sketch", id}, {"curves", Json::array({{{"type", "circle"}, {"center", {100, 0}}, {"radius", 5}}})}});
+        run(s, "sketch.add_curves", {{"sketch", id}, {"curves", Json::array({{{"type", "spline"}, {"points", {{100, 0}, {110, 10}, {120, 0}}}}})}});
         CHECK_FALSE(s.execute("sketch.add_curves",
                               {{"sketch", id}, {"curves", Json::array({{{"type", "tangent_circle"}, {"curves", {0, 3}}, {"near", {5, 5}}}})}}).ok);
+    }
+}
+
+TEST_CASE("Design commands: circle tangent to arcs and circles (CAD-273)", "[commands][cad][solver]")
+{
+    commands::Session s;
+    // Circle A (centre (0,0), R 10), circle B (centre (40,0), R 6) and a line y = -30.
+    const auto id = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "circle"}, {"center", {0, 0}}, {"radius", 10}},
+                                                 {{"type", "circle"}, {"center", {40, 0}}, {"radius", 6}},
+                                                 {{"type", "line"}, {"start", {-60, -30}}, {"end", {100, -30}}}})}})
+                        .at("id").get<std::uint64_t>();
+    auto last = [&]() {
+        const Json c = run(s, "sketch.curves", {{"sketch", id}});
+        return c.at("curves").back();
+    };
+    auto ctr = [](const Json& c) { return std::pair<double, double>{c.at("points")[0][0].get<double>(), c.at("points")[0][1].get<double>()}; };
+
+    SECTION("3-tangent: two circles and a line, below between them")
+    {
+        run(s, "sketch.add_curves",
+            {{"sketch", id}, {"curves", Json::array({{{"type", "tangent_circle"}, {"curves", {0, 1, 2}}, {"near", {20, -20}}}})}});
+        const Json c = last();
+        REQUIRE(c.at("kind") == "circle");
+        const double r = c.at("radius").get<double>();
+        const auto [x, y] = ctr(c);
+        CHECK(std::abs(y + 30) == Approx(r).epsilon(1e-6));                    // touches the line
+        CHECK(std::hypot(x, y) == Approx(10 + r).epsilon(1e-6));               // outside A
+        CHECK(std::hypot(x - 40, y) == Approx(6 + r).epsilon(1e-6));           // outside B
+        CHECK(x > 0);
+        CHECK(x < 40);
+    }
+
+    SECTION("3-tangent: a circle around both circles, touching them from inside")
+    {
+        // Hugging A and B from outside: the circle contains both and touches the line y = -30 from above.
+        run(s, "sketch.add_curves",
+            {{"sketch", id}, {"curves", Json::array({{{"type", "tangent_circle"}, {"curves", {0, 1, 2}}, {"near", {20, 20}}}})}});
+        const Json c = last();
+        const double r = c.at("radius").get<double>();
+        const auto [x, y] = ctr(c);
+        CHECK(std::abs(y + 30) == Approx(r).epsilon(1e-6));
+        CHECK(std::hypot(x, y) == Approx(std::abs(r - 10)).epsilon(1e-6));
+        CHECK(std::hypot(x - 40, y) == Approx(std::abs(r - 6)).epsilon(1e-6));
+    }
+
+    SECTION("2-tangent with a radius: touching a circle and a line")
+    {
+        run(s, "sketch.add_curves",
+            {{"sketch", id}, {"curves", Json::array({{{"type", "tangent_circle"}, {"curves", {0, 2}}, {"near", {-30, -5}}, {"radius", 25}}})}});
+        const Json c = last();
+        CHECK(c.at("radius").get<double>() == Approx(25).epsilon(1e-9));
+        const auto [x, y] = ctr(c);
+        CHECK(std::abs(y + 30) == Approx(25).epsilon(1e-6));
+        CHECK(std::hypot(x, y) == Approx(35).epsilon(1e-6));
+        CHECK(x < 0);
+    }
+
+    SECTION("2-tangent without a radius: through the click, touching two circles")
+    {
+        run(s, "sketch.add_curves",
+            {{"sketch", id}, {"curves", Json::array({{{"type", "tangent_circle"}, {"curves", {0, 1}}, {"near", {20, 12}}}})}});
+        const Json c = last();
+        const double r = c.at("radius").get<double>();
+        const auto [x, y] = ctr(c);
+        CHECK(std::hypot(x - 20, y - 12) == Approx(r).epsilon(1e-6)); // passes through the click
+        const double dA = std::hypot(x, y), dB = std::hypot(x - 40, y);
+        CHECK((std::abs(dA - (10 + r)) < 1e-6 || std::abs(dA - std::abs(r - 10)) < 1e-6));
+        CHECK((std::abs(dB - (6 + r)) < 1e-6 || std::abs(dB - std::abs(r - 6)) < 1e-6));
+    }
+
+    SECTION("it stays tangent when a circle is resized")
+    {
+        run(s, "sketch.add_curves",
+            {{"sketch", id}, {"curves", Json::array({{{"type", "tangent_circle"}, {"curves", {0, 1, 2}}, {"near", {20, -20}}}})}});
+        run(s, "sketch.add_constraints",
+            {{"sketch", id}, {"constraints", Json::array({{{"type", "radius"}, {"curve", 0}, {"value", 12}}})}});
+        // The solver is free to move everything: check tangency against the curves as they are now.
+        const Json all = run(s, "sketch.curves", {{"sketch", id}});
+        const Json& cs = all.at("curves");
+        const Json& c = cs[3];
+        const double r = c.at("radius").get<double>();
+        const auto [x, y] = ctr(c);
+        const auto [ax, ay] = ctr(cs[0]);
+        CHECK(cs[0].at("radius").get<double>() == Approx(12).epsilon(1e-6));
+        CHECK(std::hypot(x - ax, y - ay) == Approx(12 + r).epsilon(1e-4));
+        const double lx0 = cs[2].at("points")[0][0].get<double>(), ly0 = cs[2].at("points")[0][1].get<double>();
+        const double lx1 = cs[2].at("points")[1][0].get<double>(), ly1 = cs[2].at("points")[1][1].get<double>();
+        const double len = std::hypot(lx1 - lx0, ly1 - ly0);
+        CHECK(std::abs((lx1 - lx0) * (y - ly0) - (ly1 - ly0) * (x - lx0)) / len == Approx(r).epsilon(1e-4));
+        const auto [bx, by] = ctr(cs[1]);
+        CHECK(std::hypot(x - bx, y - by) == Approx(cs[1].at("radius").get<double>() + r).epsilon(1e-4));
+    }
+
+    SECTION("a radius with three curves, or no tangent circle, is an error")
+    {
+        CHECK_FALSE(s.execute("sketch.add_curves",
+                              {{"sketch", id}, {"curves", Json::array({{{"type", "tangent_circle"}, {"curves", {0, 1, 2}}, {"near", {20, -20}}, {"radius", 3}}})}}).ok);
+        // A radius too small to reach two circles 40 apart.
+        CHECK_FALSE(s.execute("sketch.add_curves",
+                              {{"sketch", id}, {"curves", Json::array({{{"type", "tangent_circle"}, {"curves", {0, 1}}, {"near", {20, 0}}, {"radius", 0.1}}})}}).ok);
     }
 }
 
@@ -4314,5 +4416,55 @@ TEST_CASE("Design commands: Intersect a body with a sketch plane (CAD-274)", "[c
     {
         const auto id = run(s, "sketch.create", {{"plane", "XY"}, {"offset", 100}}).at("id").get<std::uint64_t>();
         CHECK_FALSE(s.execute("sketch.intersect", {{"sketch", id}, {"body", box}}).ok);
+    }
+}
+
+TEST_CASE("Design commands: arc slot (CAD-273)", "[commands][cad]")
+{
+    commands::Session s;
+    const double pi = 3.14159265358979323846;
+    auto make = [&](const Json& item) {
+        return run(s, "sketch.create", {{"plane", "XY"}, {"curves", Json::array({item})}}).at("id").get<std::uint64_t>();
+    };
+
+    SECTION("a quarter turn: an annular sector with round ends")
+    {
+        const auto id = make({{"type", "arc_slot"}, {"center", {0, 0}}, {"radius", 30}, {"width", 10},
+                              {"start_angle", 0}, {"end_angle", 90}});
+        const Json c = run(s, "sketch.curves", {{"sketch", id}});
+        REQUIRE(c.at("curves").size() == 4);
+        for (const auto& curve : c.at("curves"))
+            CHECK(curve.at("kind") == "arc");
+        const auto profiles = run(s, "sketch.profiles", {{"sketch", id}}).at("profiles");
+        REQUIRE(profiles.size() == 1);
+        CHECK(profiles[0].at("area").get<double>() == Approx(2 * (pi / 2) * 30 * 5 + pi * 25).epsilon(1e-6));
+    }
+
+    SECTION("an arc through the x axis (start above end modulo 360)")
+    {
+        const auto id = make({{"type", "arc_slot"}, {"center", {5, 5}}, {"radius", 20}, {"width", 4},
+                              {"start_angle", 300}, {"end_angle", 30}});
+        const auto profiles = run(s, "sketch.profiles", {{"sketch", id}}).at("profiles");
+        REQUIRE(profiles.size() == 1);
+        CHECK(profiles[0].at("area").get<double>() == Approx(2 * (pi / 2) * 20 * 2 + pi * 4).epsilon(1e-6));
+    }
+
+    SECTION("it stays a slot when the solver runs (a dimension is added)")
+    {
+        const auto id = make({{"type", "arc_slot"}, {"center", {0, 0}}, {"radius", 30}, {"width", 10},
+                              {"start_angle", 0}, {"end_angle", 90}});
+        run(s, "sketch.add_constraints",
+            {{"sketch", id}, {"constraints", Json::array({{{"type", "radius"}, {"curve", 0}, {"value", 40}}})}});
+        const auto profiles = run(s, "sketch.profiles", {{"sketch", id}}).at("profiles");
+        REQUIRE(profiles.size() == 1);
+        CHECK(profiles[0].at("area").get<double>() > 0);
+    }
+
+    SECTION("bad values are errors")
+    {
+        for (const Json& item : {Json{{"type", "arc_slot"}, {"center", {0, 0}}, {"radius", 4}, {"width", 10}, {"start_angle", 0}, {"end_angle", 90}},
+                                 Json{{"type", "arc_slot"}, {"center", {0, 0}}, {"radius", 30}, {"width", 0}, {"start_angle", 0}, {"end_angle", 90}},
+                                 Json{{"type", "arc_slot"}, {"center", {0, 0}}, {"radius", 30}, {"width", 5}, {"start_angle", 0}, {"end_angle", 360}}})
+            CHECK_FALSE(s.execute("sketch.create", {{"plane", "XY"}, {"curves", Json::array({item})}}).ok);
     }
 }

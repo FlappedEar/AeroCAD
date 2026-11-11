@@ -10,6 +10,7 @@
 #include "aerocad/geometry/Tessellation.hpp"
 
 #include <algorithm>
+#include <functional>
 #include <cmath>
 #include <numbers>
 #include <array>
@@ -210,7 +211,8 @@ Json curveSchema()
          "or {mode: center_point, center, end, width}; spline {points, closed?}; point {at} (a sketch point: no edge, no profile; "
          "it joins a curve end at the same place); tangent_arc {from: {curve, point: start | end}, end} "
          "(sketch.add_curves only: an arc leaving the end of a line or arc tangentially, kept tangent); "
-         "tangent_circle {curves, near, radius?} (add_curves only: a circle tangent to 2 or 3 lines). "
+         "tangent_circle {curves, near, radius?} (add_curves only: a circle tangent to 2 or 3 lines, arcs or circles); "
+         "arc_slot {center, radius, width, start_angle, end_angle} (slot along an arc). "
          "conic {start, end, apex, rho?} (tangent at its ends to the lines towards apex); "
          "text {at, text, height?, angle?, font?, bold?, italic?} (letters are profiles; at = baseline start, "
          "height mm, default 5). "
@@ -220,9 +222,9 @@ Json curveSchema()
            {{"type", "string"},
             {"description", "Curve kind; selects which other fields apply."},
             {"enum", {"line", "rectangle", "center_rectangle", "three_point_rectangle", "circle", "arc", "center_arc", "polygon", "slot",
-                      "spline", "point", "tangent_arc", "tangent_circle", "ellipse", "elliptical_arc", "conic", "text"}}}},
+                      "spline", "point", "tangent_arc", "tangent_circle", "arc_slot", "ellipse", "elliptical_arc", "conic", "text"}}}},
           {"curves", {{"type", "array"}, {"items", {{"type", "integer"}, {"minimum", 0}}},
-                      {"description", "tangent_circle: 2 or 3 line indices (`radius` optional for 2)."}}},
+                      {"description", "tangent_circle: 2 or 3 line, arc or circle indices (`radius` optional for 2)."}}},
           {"near", point2("tangent_circle: a point near the circle wanted.")},
           {"from", {{"type", "object"},
                     {"description", "tangent_arc: the end it starts from, {curve: index, point: start | end}."}}},
@@ -248,8 +250,9 @@ Json curveSchema()
           {"major_radius", numberOrExpr("ellipse: centre to the end of the major axis (mm).")},
           {"minor_radius", numberOrExpr("ellipse: half the minor axis (mm).")},
           {"start_angle", numberOrExpr("elliptical_arc: parametric start angle (degrees; x = major cos t, y = minor sin t "
-                                       "along the axes), counter-clockwise to end_angle.")},
-          {"end_angle", numberOrExpr("elliptical_arc: parametric end angle (degrees).")},
+                                       "along the axes), counter-clockwise to end_angle. arc_slot: {center, radius of "
+                                       "the centre line, width, start_angle, end_angle}, counter-clockwise.")},
+          {"end_angle", numberOrExpr("elliptical_arc: parametric end angle (degrees); arc_slot: end angle.")},
           {"text", {{"type", "string"}, {"description", "text: characters."}}},
           {"font", {{"type", "string"}, {"description", "text: family."}}},
           {"bold", {{"type", "boolean"}, {"description", "text: bold."}}},
@@ -1010,6 +1013,221 @@ std::tuple<Json, std::size_t, int> resolveTangentArc(const cad::Design& design,
     return {arc, i, tangentSide};
 }
 
+/// A circle tangent to two or three curves of which some are arcs or circles (Apollonius): solved by
+/// Newton's method for every way of touching each curve, from many starting guesses. With a given
+/// `radius` and two curves the centre nearest `near` is taken; otherwise the circle also passes through
+/// `near` (two curves) or is simply the one with the centre nearest to it (three curves). Returns the
+/// circle item and, per curve, the explicit tangent side as the tangent constraint wants it
+/// (new circle first): line +1/-1 (centre left/right of the line's direction), circle +1 outside,
+/// -1 new circle larger and around the other one, -2 the other one larger and around the new one.
+std::pair<Json, std::vector<std::pair<std::size_t, int>>> resolveTangentCircleGeneral(
+    const cad::Design& design, const std::vector<geometry::SketchCurve>& curves, const Json& item,
+    const std::vector<std::size_t>& idx)
+{
+    using geometry::SketchCurve;
+    using geometry::Vec2;
+    struct Cv {
+        bool line = false;
+        Vec2 a{}, n{}; // line: a point, unit normal
+        double d = 0;  // line: n . x = d
+        Vec2 o{};      // circle: centre
+        double R = 0;  // circle: radius
+    };
+    std::vector<Cv> cv;
+    for (const std::size_t i : idx) {
+        if (i >= curves.size())
+            throw CommandError("No curve " + std::to_string(i) + " in the sketch");
+        const auto& c = curves[i];
+        Cv k;
+        if (c.kind == SketchCurve::Kind::Line) {
+            const Vec2 a = c.points[0], b = c.points[1];
+            const double len = std::hypot(b.x - a.x, b.y - a.y);
+            if (len < 1e-12)
+                throw CommandError("tangent_circle: curve " + std::to_string(i) + " is a point");
+            k.line = true;
+            k.a = a;
+            k.n = {-(b.y - a.y) / len, (b.x - a.x) / len};
+            k.d = k.n.x * a.x + k.n.y * a.y;
+        } else if (c.kind == SketchCurve::Kind::Circle) {
+            k.o = c.points[0];
+            k.R = c.radius;
+        } else if (c.kind == SketchCurve::Kind::Arc) {
+            const Vec2 p1 = c.points[0], p2 = c.points[1], p3 = c.points[2];
+            const double d = 2 * (p1.x * (p2.y - p3.y) + p2.x * (p3.y - p1.y) + p3.x * (p1.y - p2.y));
+            if (std::abs(d) < 1e-12)
+                throw CommandError("tangent_circle: curve " + std::to_string(i) + " is a straight arc");
+            const double s1 = p1.x * p1.x + p1.y * p1.y, s2 = p2.x * p2.x + p2.y * p2.y, s3 = p3.x * p3.x + p3.y * p3.y;
+            k.o = {(s1 * (p2.y - p3.y) + s2 * (p3.y - p1.y) + s3 * (p1.y - p2.y)) / d,
+                   (s1 * (p3.x - p2.x) + s2 * (p1.x - p3.x) + s3 * (p2.x - p1.x)) / d};
+            k.R = std::hypot(p1.x - k.o.x, p1.y - k.o.y);
+        } else {
+            throw CommandError("tangent_circle: curve " + std::to_string(i) + " is not a line, arc or circle");
+        }
+        cv.push_back(k);
+    }
+    const auto& nr = item.at("near");
+    const Vec2 near{design.evaluate(nr.at(0)), design.evaluate(nr.at(1))};
+    const bool typed = item.contains("radius");
+    const double want = typed ? design.evaluate(item.at("radius")) : 0.0;
+    if (typed && !(want > 0))
+        throw CommandError("tangent_circle: the radius must be positive");
+    if (cv.size() == 3 && typed)
+        throw CommandError("tangent_circle: a radius cannot be given with three curves");
+    const int nk = static_cast<int>(cv.size());
+    // Unknowns (cx, cy, r); with a typed radius r is fixed and one equation is dropped.
+    const int unknowns = typed ? 2 : 3;
+    struct Sol {
+        Vec2 c;
+        double r;
+        std::vector<int> kind;
+    };
+    std::vector<Sol> found;
+    std::vector<int> kind(static_cast<std::size_t>(nk), 0);
+    // Choices per curve: line {0: n.c - d = r, 1: = -r}; circle {0 outside, 1 new inside, 2 new around}.
+    std::function<void(int)> enumerate = [&](int at) {
+        if (at < nk) {
+            for (int c = 0; c < (cv[static_cast<std::size_t>(at)].line ? 2 : 3); ++c) {
+                kind[static_cast<std::size_t>(at)] = c;
+                enumerate(at + 1);
+            }
+            return;
+        }
+        // Residuals and Jacobian rows of the nk curve equations (+ passing through `near` for two curves
+        // without a radius).
+        auto system = [&](double cx, double cy, double r, double* f, double (*J)[3]) {
+            int row = 0;
+            for (int i = 0; i < nk; ++i, ++row) {
+                const Cv& k = cv[static_cast<std::size_t>(i)];
+                const int ch = kind[static_cast<std::size_t>(i)];
+                if (k.line) {
+                    const double sg = ch == 0 ? 1.0 : -1.0;
+                    f[row] = k.n.x * cx + k.n.y * cy - k.d - sg * r;
+                    J[row][0] = k.n.x;
+                    J[row][1] = k.n.y;
+                    J[row][2] = -sg;
+                } else {
+                    const double dist = std::max(std::hypot(cx - k.o.x, cy - k.o.y), 1e-12);
+                    const double ux = (cx - k.o.x) / dist, uy = (cy - k.o.y) / dist;
+                    // outside: dist = R + r; new inside: dist = R - r; new around: dist = r - R.
+                    const double target = ch == 0 ? k.R + r : ch == 1 ? k.R - r : r - k.R;
+                    const double dr = ch == 0 ? -1.0 : ch == 1 ? 1.0 : -1.0;
+                    f[row] = dist - target;
+                    J[row][0] = ux;
+                    J[row][1] = uy;
+                    J[row][2] = dr;
+                }
+            }
+            if (!typed && nk == 2) {
+                const double dist = std::max(std::hypot(cx - near.x, cy - near.y), 1e-12);
+                f[row] = dist - r;
+                J[row][0] = (cx - near.x) / dist;
+                J[row][1] = (cy - near.y) / dist;
+                J[row][2] = -1.0;
+            }
+        };
+        const int rows = typed ? nk : 3; // equations: nk curves (+ through-near)
+        if (rows < unknowns)
+            return;
+        for (const double scale : {4.0, 15.0, 60.0, 250.0}) {
+            for (int sx = -1; sx <= 1; ++sx) {
+                for (int sy = -1; sy <= 1; ++sy) {
+                    double cx = near.x + sx * scale, cy = near.y + sy * scale;
+                    double r = typed ? want : scale;
+                    bool ok = false;
+                    for (int it = 0; it < 60; ++it) {
+                        double f[3] = {0, 0, 0};
+                        double J[3][3] = {{0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
+                        system(cx, cy, r, f, J);
+                        double err = 0;
+                        for (int i = 0; i < rows; ++i)
+                            err = std::max(err, std::abs(f[i]));
+                        if (err < 1e-10) {
+                            ok = true;
+                            break;
+                        }
+                        // Newton step: a square system (3x3, or 2x2 for a typed radius).
+                        double m[3][4];
+                        for (int i = 0; i < unknowns; ++i) {
+                            for (int j = 0; j < unknowns; ++j)
+                                m[i][j] = J[i][j];
+                            m[i][unknowns] = -f[i];
+                        }
+                        bool singular = false;
+                        for (int col = 0; col < unknowns && !singular; ++col) {
+                            int piv = col;
+                            for (int q = col + 1; q < unknowns; ++q)
+                                if (std::abs(m[q][col]) > std::abs(m[piv][col]))
+                                    piv = q;
+                            if (std::abs(m[piv][col]) < 1e-12) {
+                                singular = true;
+                                break;
+                            }
+                            for (int k = 0; k <= unknowns; ++k)
+                                std::swap(m[col][k], m[piv][k]);
+                            for (int q = 0; q < unknowns; ++q) {
+                                if (q == col)
+                                    continue;
+                                const double fct = m[q][col] / m[col][col];
+                                for (int k = col; k <= unknowns; ++k)
+                                    m[q][k] -= fct * m[col][k];
+                            }
+                        }
+                        if (singular)
+                            break;
+                        double step[3] = {m[0][unknowns] / m[0][0], m[1][unknowns] / m[1][1], unknowns == 3 ? m[2][unknowns] / m[2][2] : 0.0};
+                        const double len = std::max(std::hypot(step[0], step[1]), std::abs(step[2]));
+                        const double damp = len > 3 * scale ? 3 * scale / len : 1.0;
+                        cx += damp * step[0];
+                        cy += damp * step[1];
+                        if (!typed)
+                            r += damp * step[2];
+                    }
+                    if (!ok || !(r > 1e-9) || !std::isfinite(cx) || !std::isfinite(cy))
+                        continue;
+                    bool dup = false;
+                    for (const auto& sol : found)
+                        dup = dup || (std::hypot(sol.c.x - cx, sol.c.y - cy) < 1e-6 && std::abs(sol.r - r) < 1e-6);
+                    if (!dup)
+                        found.push_back({{cx, cy}, r, kind});
+                }
+            }
+        }
+    };
+    enumerate(0);
+    if (found.empty())
+        throw CommandError("tangent_circle: no circle is tangent to these curves there");
+    // Three curves, or a given radius: the centre nearest `near`; two curves through `near`: the smallest.
+    const Sol* best = &found[0];
+    for (const auto& sol : found) {
+        const bool better = (!typed && nk == 2) ? sol.r < best->r
+                                                : std::hypot(sol.c.x - near.x, sol.c.y - near.y) <
+                                                      std::hypot(best->c.x - near.x, best->c.y - near.y);
+        if (better)
+            best = &sol;
+    }
+    std::vector<std::pair<std::size_t, int>> sides;
+    for (int i = 0; i < nk; ++i) {
+        const Cv& k = cv[static_cast<std::size_t>(i)];
+        const int ch = best->kind[static_cast<std::size_t>(i)];
+        int side;
+        if (k.line)
+            side = ch == 0 ? 1 : -1; // placeholder, fixed below from the real geometry
+        else
+            side = ch == 0 ? 1 : ch == 1 ? -2 : -1;
+        sides.emplace_back(idx[static_cast<std::size_t>(i)], side);
+        if (k.line) {
+            const auto& c = curves[idx[static_cast<std::size_t>(i)]];
+            const Vec2 a = c.points[0], b = c.points[1];
+            const double cr = (b.x - a.x) * (best->c.y - a.y) - (b.y - a.y) * (best->c.x - a.x);
+            sides.back().second = cr > 0 ? 1 : -1;
+        }
+    }
+    Json circle{{"type", "circle"}, {"center", Json::array({best->c.x, best->c.y})}, {"radius", best->r}};
+    if (item.value("construction", false))
+        circle["construction"] = true;
+    return {circle, sides};
+}
+
 /// A circle tangent to two or three lines (Fusion: Circle > 2-Tangent / 3-Tangent): item
 /// {curves: [i, j (, k)], near, radius?}, lines of the solved sketch (their extensions count).
 /// With three lines the circle nearest to `near` of the (up to four) circles tangent to all of
@@ -1020,10 +1238,20 @@ std::pair<Json, std::vector<std::pair<std::size_t, int>>> resolveTangentCircle(
     const cad::Design& design, const std::vector<geometry::SketchCurve>& curves, const Json& item)
 {
     if (!item.contains("curves") || !item.at("curves").is_array() || !item.contains("near"))
-        throw CommandError("tangent_circle: give curves [2 or 3 line indices] and near [x, y]");
+        throw CommandError("tangent_circle: give curves [2 or 3 line, arc or circle indices] and near [x, y]");
     const auto idx = item.at("curves").get<std::vector<std::size_t>>();
     if (idx.size() != 2 && idx.size() != 3)
-        throw CommandError("tangent_circle: pick 2 or 3 lines");
+        throw CommandError("tangent_circle: pick 2 or 3 curves");
+    {
+        bool allLines = true;
+        for (const std::size_t i : idx)
+            allLines = allLines && i < curves.size() && curves[i].kind == geometry::SketchCurve::Kind::Line;
+        if (!allLines) {
+            if (std::count(idx.begin(), idx.end(), idx[0]) > 1 || (idx.size() == 3 && idx[1] == idx[2]))
+                throw CommandError("tangent_circle: pick different curves");
+            return resolveTangentCircleGeneral(design, curves, item, idx);
+        }
+    }
     struct L {
         geometry::Vec2 a, n; // a point and the unit normal
         double d;            // n . x = d on the line

@@ -664,6 +664,7 @@ Item {
         case "ellipse":
         case "conic":
         case "slot": return 3
+        case "arc_slot": return 4
         case "elliptical_arc": return 5
         case "spline": return Infinity // ended with Enter, a double-click or the first point
         default: return 2
@@ -938,6 +939,25 @@ Item {
             if (!tangentFrom || !tangentArc(tangentFrom, b))
                 return null
             return { type: "tangent_arc", from: tangentFrom.ref, end: b }
+        case "arc_slot": {
+            // Centre, then the start of the centre line (radius and start angle), then the end of the
+            // arc (shorter way round), then a point for the width.
+            if (pts.length < 4)
+                return null
+            const r = dist(a, b)
+            if (r < 1e-9)
+                return null
+            const ang = p => Math.atan2(p[1] - a[1], p[0] - a[0]) * 180 / Math.PI
+            const ccw = (b[0] - a[0]) * (pts[2][1] - a[1]) - (b[1] - a[1]) * (pts[2][0] - a[0]) >= 0
+            const from = ccw ? ang(b) : ang(pts[2])
+            const to = ccw ? ang(pts[2]) : ang(b)
+            if (Math.abs(to - from) < 1e-6)
+                return null
+            const width = dim && dim.length > 0 ? dim[0] : round6(2 * Math.abs(dist(a, pts[3]) - r))
+            if (!(sizeGiven(dim, 0, 2 * Math.abs(dist(a, pts[3]) - r))))
+                return null
+            return { type: "arc_slot", center: a, radius: round6(r), width: width, start_angle: round6(from), end_angle: round6(to) }
+        }
         case "slot": {
             if (pts.length < 3)
                 return null
@@ -992,7 +1012,7 @@ Item {
         return out
     }
 
-    /// Circle 2-Tangent / 3-Tangent: a click picks a line (the third click of the 2-tangent
+    /// Circle 2-Tangent / 3-Tangent: a click picks a line, arc or circle (the third click of the 2-tangent
     /// circle says where the circle goes); the command works out the circle.
     function tangentClick(x, y) {
         const at = screenToLocal(x, y)
@@ -1009,9 +1029,10 @@ Item {
         }
         const i = curveAt(x, y)
         const c = sketchCurves.find(k => k.index === i)
-        if (!c || c.kind !== "line" || tangentCurves.indexOf(i) >= 0) {
+        const usable = c && (c.kind === "line" || c.kind === "arc" || c.kind === "circle")
+        if (!usable || tangentCurves.indexOf(i) >= 0) {
             if (c)
-                tangentNote = c.kind !== "line" ? qsTr("Only lines for now: click a line") : qsTr("That line is already picked")
+                tangentNote = !usable ? qsTr("Click a line, an arc or a circle") : qsTr("That curve is already picked")
             canvas.requestPaint()
             return
         }
@@ -1686,7 +1707,7 @@ Item {
                         const q = root.toScreen(uv[i])
                         if (i === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y)
                     }
-                } else if (root.tool === "line" || root.tool === "text" || (pts.length === 2 && (root.tool === "arc" || root.tool === "slot" || root.tool === "circle_3point"
+                } else if (root.tool === "line" || root.tool === "text" || (pts.length === 2 && (root.tool === "arc" || root.tool === "slot" || root.tool === "arc_slot" || root.tool === "circle_3point"
                                                                           || root.tool === "rectangle_3point" || root.tool === "ellipse" || root.tool === "elliptical_arc"
                                                                           || root.tool === "conic"))) {
                     ctx.moveTo(s[0].x, s[0].y)
@@ -1841,6 +1862,37 @@ Item {
                             if (i === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y)
                         }
                     }
+                } else if (root.tool === "arc_slot" && pts.length >= 3) {
+                    // The centre line's arc while the end is placed; the whole slot when the width is.
+                    const c0 = pts[0], r0 = root.dist(c0, pts[1])
+                    const ang = p => Math.atan2(p[1] - c0[1], p[0] - c0[0])
+                    const ccw = (pts[1][0] - c0[0]) * (pts[2][1] - c0[1]) - (pts[1][1] - c0[1]) * (pts[2][0] - c0[0]) >= 0
+                    let from = ccw ? ang(pts[1]) : ang(pts[2])
+                    let to = ccw ? ang(pts[2]) : ang(pts[1])
+                    while (to <= from) to += 2 * Math.PI
+                    const arc = (rad, a0, a1) => {
+                        for (let i = 0; i <= 48; ++i) {
+                            const a = a0 + (a1 - a0) * i / 48
+                            const q = root.toScreen([c0[0] + rad * Math.cos(a), c0[1] + rad * Math.sin(a)])
+                            if (i === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y)
+                        }
+                    }
+                    const w = curve && curve.width !== undefined ? Number(curve.width) / 2 : 0
+                    if (w > 0 && w < r0) {
+                        arc(r0 + w, from, to)
+                        arc(r0 - w, from, to)
+                        // Round ends: half circles, bulging past each end of the centre line.
+                        for (const [a, dir] of [[from, -1], [to, 1]]) {
+                            const m = [c0[0] + r0 * Math.cos(a), c0[1] + r0 * Math.sin(a)]
+                            for (let i = 0; i <= 24; ++i) {
+                                const t = a + dir * Math.PI * i / 24
+                                const q = root.toScreen([m[0] + w * Math.cos(t), m[1] + w * Math.sin(t)])
+                                if (i === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y)
+                            }
+                        }
+                    } else {
+                        arc(r0, from, to)
+                    }
                 } else if (root.tool === "slot" && pts.length >= 3 && curve) {
                     const w = curve.width / 2
                     const ends = root.slotCentres(pts[0], pts[1], w, root.slotMode)
@@ -1972,8 +2024,8 @@ Item {
                     : root.tool === "rectangle_3point" ? qsTr("3-point rectangle: click both ends of one side (any angle), then the far side; type the length, then the height")
                     : root.tool === "circle_2point" ? qsTr("2-point circle: click both ends of a diameter; type the diameter")
                     : root.tool === "circle_3point" ? qsTr("3-point circle: click three points on the circle")
-                    : root.tool === "circle_2tangent" ? (root.tangentNote !== "" ? root.tangentNote : root.tangentCurves.length < 2 ? qsTr("2-tangent circle: click two lines") : qsTr("2-tangent circle: click where the circle goes (its size follows the click)"))
-                    : root.tool === "circle_3tangent" ? (root.tangentNote !== "" ? root.tangentNote : qsTr("3-tangent circle: click three lines (the circle that fits between them)"))
+                    : root.tool === "circle_2tangent" ? (root.tangentNote !== "" ? root.tangentNote : root.tangentCurves.length < 2 ? qsTr("2-tangent circle: click two lines, arcs or circles") : qsTr("2-tangent circle: click where the circle goes (its size follows the click)"))
+                    : root.tool === "circle_3tangent" ? (root.tangentNote !== "" ? root.tangentNote : qsTr("3-tangent circle: click three lines, arcs or circles (the circle that fits between them)"))
                     : root.tool === "ellipse" ? qsTr("Ellipse: click the centre, the end of the major axis, then a point for the minor radius; type each radius")
                     : root.tool === "elliptical_arc" ? qsTr("Elliptical arc: click the centre, the major axis end, the minor radius, then the arc start and end (counter-clockwise)")
                     : root.tool === "text" ? qsTr("Text: click the start, type the text, Enter (cursor distance = height, direction = angle)")
@@ -1983,6 +2035,7 @@ Item {
                                                  : root.polygonMode === "circumscribed" ? qsTr("Circumscribed polygon: click the centre and the middle of a side; type the radius")
                                                  : qsTr("Polygon: click centre and a corner; type the radius"))
                     : root.tool === "spline" ? qsTr("Spline: click fit points; Enter, a double-click or Esc ends it, the first point closes it")
+                    : root.tool === "arc_slot" ? qsTr("Arc slot: click the centre, the start of the centre line, its end, then the width")
                     : root.slotMode === "overall" ? qsTr("Overall slot: click both far ends, then the width")
                     : root.slotMode === "center_point" ? qsTr("Center point slot: click the middle, the centre of one end, then the width")
                     : qsTr("Slot: click both centres, then the width")

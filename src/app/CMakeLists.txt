@@ -715,6 +715,16 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_intersect.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_sketch_intersect_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-273: Arc Slot.
+    add_test(NAME app_sketch_arc_slot_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_arc_slot.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_sketch_arc_slot_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-273: Circle 2-Tangent / 3-Tangent also to arcs and circles.
+    add_test(NAME app_sketch_circle_tangent_arcs_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_circle_tangent_arcs.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_sketch_circle_tangent_arcs_test PROPERTIES LABELS gui TIMEOUT 60)
     # CAD-115: Export suggests a file name.
     add_test(NAME app_export_file_name_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl
