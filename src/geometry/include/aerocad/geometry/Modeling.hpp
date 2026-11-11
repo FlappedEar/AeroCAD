@@ -35,6 +35,19 @@ namespace aerocad::geometry {
 /// Sweeps profile faces along a path of connected edges (Fusion: Sweep).
 [[nodiscard]] Shape sweep(const Shape& profileFaces, const Shape& pathEdges);
 
+/// A point of a path and the unit direction of travel there.
+struct PathFrame {
+    core::Vec3 point;
+    core::Vec3 tangent;
+};
+
+/// Length of a path of connected edges (mm); throws ModelingError when they do not connect.
+[[nodiscard]] double pathLength(const Shape& pathEdges);
+
+/// The points and tangents at the given distances (mm along the path, from its start; values
+/// are clamped to [0, length]). Used by Pattern on Path.
+[[nodiscard]] std::vector<PathFrame> pathFrames(const Shape& pathEdges, const std::vector<double>& distances);
+
 /// Combines shapes into one compound (null shapes are skipped).
 [[nodiscard]] Shape makeCompound(const std::vector<Shape>& shapes);
 

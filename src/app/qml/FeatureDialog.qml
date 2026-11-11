@@ -360,6 +360,17 @@ Pane {
             { key: "count", type: "expr", label: qsTr("Quantity"), init: 6 },
             { key: "angle", type: "expr", label: qsTr("Total angle (deg)"), init: 360 },
             { key: "operation", type: "choice", label: qsTr("Operation"), init: "join", options: patternOperations }] },
+        path_pattern: { title: qsTr("Pattern on Path"), command: "feature.path_pattern", fields: [
+            { key: "body", type: "body", label: qsTr("Body") },
+            { key: "path", type: "pathSketch", label: qsTr("Path sketch") },
+            { key: "count", type: "expr", label: qsTr("Quantity"), init: 4 },
+            { key: "distance_type", type: "choice", label: qsTr("Distance type"), init: "extent", options: [
+                { value: "extent", label: qsTr("Extent") }, { value: "spacing", label: qsTr("Spacing") }] },
+            { key: "distance", type: "expr", label: qsTr("Distance (mm; empty: whole path)"), init: undefined },
+            { key: "orientation", type: "choice", label: qsTr("Orientation"), init: "identical", options: [
+                { value: "identical", label: qsTr("Identical") }, { value: "path_direction", label: qsTr("Path direction") }] },
+            { key: "flip", type: "bool", label: qsTr("Start from the other end") },
+            { key: "operation", type: "choice", label: qsTr("Operation"), init: "join", options: patternOperations }] },
         // Built on a scan or surface: fitting the skin takes seconds, so no live preview.
         fit_selection: { title: qsTr("Fit Surface"), command: "surface.fit_selection", slow: true, fields: [
             { key: "id", type: "reference", label: qsTr("Source part") },

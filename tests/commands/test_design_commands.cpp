@@ -3969,3 +3969,67 @@ TEST_CASE("Design commands: Scale, uniform and non-uniform (CAD-271)", "[command
         CHECK_FALSE(s.execute("feature.scale", {{"body", bodyId}, {"factor", 2}, {"factor_x", 2}}).ok);
     }
 }
+
+TEST_CASE("Design commands: Pattern on Path (CAD-271)", "[commands][cad]")
+{
+    commands::Session s;
+    // A 20 x 4 x 4 bar at (50, 0), and a quarter-circle path (centre origin, radius 50) leaving it
+    // upwards, plus a straight path along X.
+    const auto bar = run(s, "sketch.create",
+                         {{"plane", "XY"},
+                          {"curves", Json::array({{{"type", "rectangle"}, {"corner", {50, -2}}, {"width", 20}, {"height", 4}}})}})
+                         .at("id").get<std::uint64_t>();
+    const auto bodyId = run(s, "feature.extrude", {{"sketch", bar}, {"distance", 4}}).at("bodies")[0].at("id").get<std::uint64_t>();
+    const auto arc = run(s, "sketch.create",
+                         {{"plane", "XY"},
+                          {"curves", Json::array({{{"type", "center_arc"}, {"center", {0, 0}}, {"radius", 50},
+                                                   {"startAngle", 0}, {"endAngle", 90}}})}})
+                         .at("id").get<std::uint64_t>();
+    const auto line = run(s, "sketch.create",
+                          {{"plane", "XY"},
+                           {"curves", Json::array({{{"type", "line"}, {"start", {0, 20}}, {"end", {100, 20}}}})}})
+                          .at("id").get<std::uint64_t>();
+
+    SECTION("identical orientation: copies are only translated; the whole path is the default extent")
+    {
+        const auto r = run(s, "feature.path_pattern",
+                           {{"body", bodyId}, {"path", {{"sketch", arc}}}, {"count", 2}, {"operation", "new_body"}});
+        REQUIRE(r.at("bodies").size() == 2);
+        const auto b = s.design().bodies().at(r.at("bodies")[1].at("id").get<std::uint64_t>()).shape.bounds();
+        CHECK(b.min.x == Approx(0).margin(1e-6));
+        CHECK(b.max.x == Approx(20).margin(1e-6));
+        CHECK(b.min.y == Approx(48).margin(1e-5));
+        CHECK(b.max.y == Approx(52).margin(1e-5));
+    }
+
+    SECTION("path direction: the copy turns with the path")
+    {
+        const auto r = run(s, "feature.path_pattern",
+                           {{"body", bodyId}, {"path", {{"sketch", arc}}}, {"count", 2}, {"orientation", "path_direction"},
+                            {"operation", "new_body"}});
+        const auto b = s.design().bodies().at(r.at("bodies")[1].at("id").get<std::uint64_t>()).shape.bounds();
+        CHECK(b.min.x == Approx(-2).margin(1e-5));
+        CHECK(b.max.x == Approx(2).margin(1e-5));
+        CHECK(b.min.y == Approx(50).margin(1e-5));
+        CHECK(b.max.y == Approx(70).margin(1e-5));
+    }
+
+    SECTION("spacing along a straight path joins the copies into the body")
+    {
+        const auto r = run(s, "feature.path_pattern",
+                           {{"body", bodyId}, {"path", {{"sketch", line}}}, {"count", 3}, {"distance_type", "spacing"},
+                            {"distance", 30}});
+        CHECK(r.at("bodies").size() == 1);
+        CHECK(r.at("bodies")[0].at("volume").get<double>() == Approx(3 * 20 * 4 * 4).epsilon(1e-6));
+        const auto b = s.design().bodies().at(bodyId).shape.bounds();
+        CHECK(b.max.x == Approx(70 + 60).epsilon(1e-6));
+    }
+
+    SECTION("running off the path is an error")
+    {
+        CHECK_FALSE(s.execute("feature.path_pattern",
+                              {{"body", bodyId}, {"path", {{"sketch", line}}}, {"count", 5}, {"distance_type", "spacing"},
+                               {"distance", 30}}).ok);
+        CHECK_FALSE(s.execute("feature.path_pattern", {{"body", bodyId}, {"path", {{"sketch", line}}}, {"count", 1}}).ok);
+    }
+}

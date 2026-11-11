@@ -2346,6 +2346,25 @@ void registerFeatureCommands(CommandRegistry& r)
                        {"operation", patternOperation}},
                       {"body", "count", "spacing"});
 
+    addFeatureCommand(r, "path_pattern", "Pattern on Path",
+                      "Copies a body along sketch curves (Fusion: Pattern on Path); the body stays, copies move along the path.",
+                      {{"body", bodyRefSchema("Body to pattern.")},
+                       {"path", {{"type", "object"},
+                                 {"description", "{sketch, curves?}: connected curves (default all)."},
+                                 {"properties", {{"sketch", featureIdSchema("Path sketch.")},
+                                                 {"curves", {{"type", "array"}, {"items", {{"type", "integer"}}},
+                                                             {"description", "Curve indices."}}}}},
+                                 {"required", {"sketch"}}}},
+                       {"count", numberOrExpr("Instances including the body (2 to 1000).")},
+                       {"distance", numberOrExpr("extent: length the instances cover (default: rest of the path); spacing: gap between instances (mm).")},
+                       {"distance_type", {{"type", "string"}, {"enum", {"extent", "spacing"}}, {"description", "Meaning of distance (default extent)."}}},
+                       {"start", numberOrExpr("First instance: fraction of the path, 0 (default) to below 1.")},
+                       {"orientation", {{"type", "string"}, {"enum", {"identical", "path_direction"}},
+                                        {"description", "path_direction turns copies with the path."}}},
+                       {"flip", {{"type", "boolean"}, {"description", "Start at the other end."}}},
+                       {"operation", patternOperation}},
+                      {"body", "path"});
+
     addFeatureCommand(r, "circular_pattern", "Circular Pattern",
                       "Copies a body around an axis (Fusion: Create > Pattern > Circular Pattern). A full 360 degree "
                       "angle spreads the instances evenly.",

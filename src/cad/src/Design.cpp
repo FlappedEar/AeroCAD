@@ -131,7 +131,7 @@ const std::vector<std::string>& Design::featureTypes()
 {
     static const std::vector<std::string> types{"sketch", "extrude", "revolve", "fillet", "chamfer",
                                                 "shell",  "combine", "box",     "cylinder", "sphere", "torus", "base_body", "hole",
-                                                "mirror",  "rectangular_pattern", "circular_pattern", "loft", "sweep", "plane",
+                                                "mirror",  "rectangular_pattern", "circular_pattern", "path_pattern", "loft", "sweep", "plane",
                                                 "part_on_surface", "fin_on_surface", "move", "scale", "press_pull", "split", "delete_faces", "draft",
                                                 "fit_selection", "fit_regions", "trim_by_sketch", "offset_surface", "thicken_surface"};
     return types;
@@ -3441,7 +3441,7 @@ void Design::deleteSketchCurves(FeatureId sketchId, const std::vector<std::size_
             else
                 axis = Json{{"deletedLine", axis["line"]}};
         }
-        if (g.type == "sweep" && g.params.contains("path") && g.params["path"].is_object() &&
+        if ((g.type == "sweep" || g.type == "path_pattern") && g.params.contains("path") && g.params["path"].is_object() &&
             g.params["path"].value("sketch", Json()) == sketchId && g.params["path"].contains("curves")) {
             Json& path = g.params["path"];
             Json kept = Json::array();
@@ -4124,6 +4124,90 @@ void Design::evaluateFeature(const Feature& f)
         }
         if (copies.empty())
             throw DesignError("The pattern makes no copies (count 1)");
+        const std::string op = lower(p.value("operation", std::string("join")));
+        if (op == "join") {
+            geometry::Shape result = original;
+            for (const auto& c : copies)
+                result = geometry::boolean(result, c, geometry::BooleanOp::Union);
+            src.shape = result;
+        } else if (op == "new_body") {
+            newBody(unionAll(copies));
+        } else {
+            throw DesignError("Unknown operation '" + op + "' (join, new_body)");
+        }
+    } else if (f.type == "path_pattern") {
+        // Fusion: Create > Pattern > Pattern on Path. Copies of a body along sketch curves; the
+        // body stays where it is, each copy moves by the path point it lands on minus the point
+        // where the first instance is, and (Orientation: Path Direction) turns with the path.
+        Body& src = bodyRef(required(p, "body"));
+        const geometry::Shape original = src.shape;
+        const Json& path = required(p, "path");
+        if (path.is_object() && path.value("deletedCurves", false))
+            throw DesignError("Curves of the pattern path were deleted from its sketch: pick the path again");
+        const FeatureId pid = required(path, "sketch").get<FeatureId>();
+        auto it = m_sketches.find(pid);
+        if (it == m_sketches.end())
+            throw DesignError("No path sketch " + std::to_string(pid) + " at this point of the timeline");
+        std::vector<SketchCurve> curves;
+        if (has(path, "curves")) {
+            for (const auto& i : path.at("curves")) {
+                const auto idx = i.get<std::size_t>();
+                if (idx >= it->second.curves.size())
+                    throw DesignError(it->second.name + " has no curve " + std::to_string(idx));
+                curves.push_back(it->second.curves[idx]);
+            }
+        } else {
+            curves = it->second.curves;
+        }
+        it->second.consumed = true;
+        const geometry::Shape pathEdges = geometry::curveEdges(it->second.plane, curves);
+        const double length = geometry::pathLength(pathEdges);
+        const long n = std::lround(ev.num(p, "count", 2.0));
+        if (n < 2 || n > 1000)
+            throw DesignError("count must be between 2 and 1000");
+        const double startFraction = ev.num(p, "start", 0.0);
+        if (startFraction < 0.0 || startFraction >= 1.0)
+            throw DesignError("start must be from 0 up to (not including) 1: a fraction of the path");
+        const double start = startFraction * length;
+        const std::string type = lower(p.value("distance_type", std::string("extent")));
+        double step = 0.0;
+        if (type == "spacing") {
+            step = ev.num(p, "distance");
+        } else if (type == "extent") {
+            const double extent = has(p, "distance") ? ev.num(p, "distance") : length - start;
+            step = extent / static_cast<double>(n - 1);
+        } else {
+            throw DesignError("Unknown distance_type '" + type + "' (extent, spacing)");
+        }
+        if (!(step > 0.0))
+            throw DesignError("The distance must be positive");
+        const bool reverse = p.value("flip", false);
+        std::vector<double> at;
+        for (long i = 0; i < n; ++i) {
+            const double d = start + step * static_cast<double>(i);
+            if (d > length + 1e-6)
+                throw DesignError("The pattern runs off the end of the path (" + std::to_string(length) +
+                                  " mm long): use a smaller distance or fewer instances");
+            at.push_back(reverse ? length - d : d);
+        }
+        const auto frames = geometry::pathFrames(pathEdges, at);
+        const bool follow = lower(p.value("orientation", std::string("identical"))) == "path_direction";
+        auto dirOf = [&](const geometry::PathFrame& fr) { return reverse ? fr.tangent * -1.0 : fr.tangent; };
+        std::vector<geometry::Shape> copies;
+        for (std::size_t i = 1; i < frames.size(); ++i) {
+            geometry::Shape copy = original;
+            if (follow) {
+                const core::Vec3 a = dirOf(frames[0]), b = dirOf(frames[i]);
+                const core::Vec3 axis = a.cross(b);
+                const double sine = axis.length();
+                const double cosine = a.dot(b);
+                if (sine > 1e-9)
+                    copy = geometry::rotated(copy, frames[0].point, axis * (1.0 / sine), std::atan2(sine, cosine) * 180.0 / std::numbers::pi);
+                else if (cosine < 0.0)
+                    throw DesignError("The path turns back on itself: Path Direction cannot orient a copy");
+            }
+            copies.push_back(geometry::translated(copy, frames[i].point - frames[0].point));
+        }
         const std::string op = lower(p.value("operation", std::string("join")));
         if (op == "join") {
             geometry::Shape result = original;

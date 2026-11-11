@@ -684,6 +684,11 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/scale_body.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_scale_body_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-271: Pattern on Path.
+    add_test(NAME app_path_pattern_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/path_pattern.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_path_pattern_test PROPERTIES LABELS gui TIMEOUT 60)
     # CAD-115: Export suggests a file name.
     add_test(NAME app_export_file_name_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl

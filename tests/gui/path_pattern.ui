@@ -1,0 +1,22 @@
+# CAD-271: Pattern on Path (Fusion: Create > Pattern > Pattern on Path) from the SOLID tab: a
+# 10 x 10 x 10 block copied 4 times along a 90 mm line gives four blocks 30 mm apart (joined,
+# since 10 mm blocks do not touch).
+# Run: AeroCAD --ui-script <this file>
+ui.wait(800)
+(() => { let r = controller.execute("sketch.create", { plane: "XY", curves: [{ type: "rectangle", corner: [0, 0], width: 10, height: 10 }] }); if (!r.ok) ui.fail("block sketch: " + r.error); r = controller.execute("feature.extrude", { sketch: r.result.id, distance: 10 }); if (!r.ok) ui.fail("block: " + r.error); r = controller.execute("sketch.create", { plane: "XY", curves: [{ type: "line", start: [0, 30], end: [90, 30] }] }); if (!r.ok) ui.fail("path sketch: " + r.error) })()
+ui.wait(300)
+(() => { viewport.restoreCameraState({ pivot: [45, 15, 5], pitch: -30, yaw: 20, distance: 220, orthographic: false }) })()
+ui.wait(300)
+(() => { if (!ui.clickText("SOLID")) ui.fail("no SOLID tab") })()
+ui.wait(300)
+(() => { if (!ui.clickText("CREATE")) ui.log("no CREATE caption menu") })()
+ui.wait(300)
+(() => { if (!ui.clickText("Pattern on Path")) ui.fail("no Pattern on Path command") })()
+ui.wait(800)
+(() => { const sk = controller.execute("timeline.list").result.features.filter(f => f.type === "sketch").pop(); featureDialog.setValue("path", { sketch: sk.id }); featureDialog.setValue("count", 4); featureDialog.setValue("distance_type", "extent") })()
+ui.wait(800)
+ui.shot("path-pattern.png")
+(() => { if (featureDialog.error) ui.fail("dialog error: " + featureDialog.error) })()
+(() => { if (!ui.clickText("OK")) ui.fail("no OK button") })()
+ui.wait(800)
+(() => { const tl = controller.execute("timeline.list").result; const b = tl.bodies[0]; ui.log("volume " + b.volume.toFixed(2) + " bodies " + tl.bodies.length); if (tl.bodies.length !== 1 || Math.abs(b.volume - 4000) > 1) ui.fail("expected one body of four 10 mm blocks (4000 mm3), got " + b.volume); const f = tl.features.find(x => x.type === "path_pattern"); if (!f || Number(f.params.count) !== 4) ui.fail("the pattern feature does not store count 4") })()

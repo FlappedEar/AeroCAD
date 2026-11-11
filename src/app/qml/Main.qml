@@ -818,7 +818,7 @@ ApplicationWindow {
         if (info.kind === "body") {
             if (type === "combine" && !combineTool)
                 initial.target = info.featureId
-            else if (["fillet", "chamfer", "shell", "press_pull", "hole", "move", "scale", "mirror", "rectangular_pattern",
+            else if (["fillet", "chamfer", "shell", "press_pull", "hole", "move", "scale", "mirror", "rectangular_pattern", "path_pattern",
                       "circular_pattern", "split", "delete_faces", "draft"].includes(type))
                 initial.body = info.featureId
         }
@@ -1410,6 +1410,7 @@ ApplicationWindow {
     Action { id: sweepAction; text: qsTr("S&weep"); enabled: !window.activeSketch; onTriggered: window.openFeature("sweep") }
     Action { id: mirrorAction; text: qsTr("M&irror"); enabled: !window.activeSketch; onTriggered: window.openFeature("mirror") }
     Action { id: rectPatternAction; text: qsTr("&Rectangular Pattern"); enabled: !window.activeSketch; onTriggered: window.openFeature("rectangular_pattern") }
+    Action { id: pathPatternAction; text: qsTr("Pattern on &Path"); enabled: !window.activeSketch; onTriggered: window.openFeature("path_pattern") }
     Action { id: circPatternAction; text: qsTr("C&ircular Pattern"); enabled: !window.activeSketch; onTriggered: window.openFeature("circular_pattern") }
     Action {
         id: convertAction
@@ -1761,6 +1762,7 @@ ApplicationWindow {
                 title: qsTr("&Pattern")
                 MenuItem { action: rectPatternAction }
                 MenuItem { action: circPatternAction }
+                MenuItem { action: pathPatternAction }
             }
         }
         Menu {
@@ -2073,6 +2075,7 @@ ApplicationWindow {
                 ToolCommand { action: mirrorAction; text: qsTr("Mirror"); iconName: "mirror" }
                 ToolCommand { action: rectPatternAction; text: qsTr("Pattern"); iconName: "pattern" }
                 ToolCommand { action: circPatternAction; text: qsTr("Circular Pattern"); iconName: "circular-pattern" }
+                ToolCommand { action: pathPatternAction; text: qsTr("Pattern on Path"); iconName: "pattern" }
             }
             ToolSeparator {}
             ToolGroup {

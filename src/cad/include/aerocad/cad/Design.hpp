@@ -36,7 +36,7 @@ public:
 struct Feature {
     FeatureId id = 0;
     std::string type; ///< sketch, extrude, revolve, fillet, chamfer, shell, combine, box, cylinder,
-                      ///< base_body, mirror, rectangular_pattern, circular_pattern, loft, sweep, plane,
+                      ///< base_body, mirror, rectangular_pattern, circular_pattern, path_pattern, scale, loft, sweep, plane,
                       ///< part_on_surface, fin_on_surface, fit_selection, fit_regions, trim_by_sketch,
                       ///< offset_surface, thicken_surface (evaluated by a FeatureEvaluator)
     std::string name; ///< e.g. "Extrude1"
