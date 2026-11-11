@@ -222,6 +222,15 @@ Json curveSchema()
           {"startAngle", numberOrExpr("Start angle (degrees).")},
           {"endAngle", numberOrExpr("End angle (degrees).")},
           {"sides", numberOrExpr("Number of polygon sides.")},
+          {"mode", {{"type", "string"},
+                    {"enum", {"inscribed", "circumscribed", "edge", "center_to_center", "overall", "center_point"}},
+                    {"description", "polygon: inscribed (default; `radius` to the corners, `angle` = direction of a "
+                                    "corner), circumscribed (`radius` to the middle of the sides, `angle` = "
+                                    "direction of a side) or edge (a side from `start` to `end`, the polygon on its "
+                                    "left, plus `sides`). slot: center_to_center (default; `start`/`end` = centres "
+                                    "of the ends), overall (`start`/`end` = the far points of the ends) or "
+                                    "center_point (`center` of the slot and `end` = centre of one end); all with "
+                                    "`width`."}}},
           {"angle", numberOrExpr("Polygon rotation, or the direction of an ellipse's major axis (degrees).")},
           {"major_radius", numberOrExpr("ellipse: centre to the end of the major axis (mm).")},
           {"minor_radius", numberOrExpr("ellipse: half the minor axis (mm).")},

@@ -3783,3 +3783,56 @@ TEST_CASE("Design commands: revolve Symmetric and Two Sides extent (CAD-268)", "
         CHECK_FALSE(bad.ok);
     }
 }
+
+TEST_CASE("Design commands: polygon modes and slot modes (CAD-269)", "[commands][cad]")
+{
+    commands::Session s;
+    const double pi = 3.14159265358979323846;
+    // Area of a regular n-gon with apothem a: n a^2 tan(pi/n).
+    auto areaOf = [&](const Json& curves) {
+        const auto id = run(s, "sketch.create", {{"plane", "XY"}, {"curves", curves}}).at("id").get<std::uint64_t>();
+        return run(s, "sketch.profiles", {{"sketch", id}}).at("profiles")[0].at("area").get<double>();
+    };
+
+    SECTION("circumscribed: the radius reaches the middle of the sides")
+    {
+        const double a = 10;
+        CHECK(areaOf(Json::array({{{"type", "polygon"}, {"mode", "circumscribed"}, {"center", {0, 0}}, {"radius", a},
+                                   {"sides", 6}}})) == Approx(6 * a * a * std::tan(pi / 6)).epsilon(1e-9));
+        const double inscribed = areaOf(Json::array({{{"type", "polygon"}, {"center", {0, 0}}, {"radius", a}, {"sides", 6}}}));
+        CHECK(inscribed == Approx(3 * std::sqrt(3.0) / 2 * a * a).epsilon(1e-9));
+    }
+
+    SECTION("edge: a side from start to end, the polygon on its left")
+    {
+        const auto id = run(s, "sketch.create",
+                            {{"plane", "XY"},
+                             {"curves", Json::array({{{"type", "polygon"}, {"mode", "edge"}, {"start", {0, 0}},
+                                                      {"end", {10, 0}}, {"sides", 5}}})}})
+                            .at("id").get<std::uint64_t>();
+        const Json prof = run(s, "sketch.profiles", {{"sketch", id}}).at("profiles")[0];
+        // Pentagon of side 10: area = 5/4 * 10^2 / tan(pi/5), above the x axis.
+        CHECK(prof.at("area").get<double>() == Approx(5.0 / 4 * 100 / std::tan(pi / 5)).epsilon(1e-9));
+        CHECK(prof.at("centroid")[1].get<double>() > 0);
+        CHECK(prof.at("centroid")[0].get<double>() == Approx(5).epsilon(1e-9));
+        // The curves list shows it as an ordinary polygon item afterwards.
+        const Json c = run(s, "sketch.curves", {{"sketch", id}});
+        CHECK(c.at("curves").size() == 5);
+    }
+
+    SECTION("slot: overall and centre point match the centre-to-centre slot")
+    {
+        const double w = 6, centres = 20;
+        const double expected = centres * w + pi * (w / 2) * (w / 2);
+        CHECK(areaOf(Json::array({{{"type", "slot"}, {"start", {0, 0}}, {"end", {centres, 0}}, {"width", w}}})) ==
+              Approx(expected).epsilon(1e-9));
+        CHECK(areaOf(Json::array({{{"type", "slot"}, {"mode", "overall"}, {"start", {-3, 0}}, {"end", {23, 0}}, {"width", w}}})) ==
+              Approx(expected).epsilon(1e-9));
+        CHECK(areaOf(Json::array({{{"type", "slot"}, {"mode", "center_point"}, {"center", {10, 0}}, {"end", {20, 0}},
+                                   {"width", w}}})) == Approx(expected).epsilon(1e-9));
+        CHECK_FALSE(s.execute("sketch.create",
+                              {{"plane", "XY"},
+                               {"curves", Json::array({{{"type", "slot"}, {"mode", "overall"}, {"start", {0, 0}},
+                                                        {"end", {5, 0}}, {"width", 6}}})}}).ok);
+    }
+}
