@@ -6,7 +6,9 @@
 #include <BRepAlgoAPI_Common.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
+#include <BRepBuilderAPI_Copy.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
+#include <Geom_BSplineSurface.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <TopoDS_Vertex.hxx>
@@ -275,6 +277,42 @@ void addImages(Algo& algo, const TopoDS_Shape& shape, TopTools_MapOfShape& into)
         into.Add(it.Value());
 }
 
+/// `face` on a copy of its surface cropped to the face's own parameter box (plus a margin).
+/// A fitted scan surface carries every knot span of the whole fitted area, while the fin
+/// root needs a few centimetres of it: the fillet and the cut back to the surface (their
+/// surface/surface walks) cost minutes on the whole surface and milliseconds on the part
+/// (CAD-275). Segment keeps the parametrisation, so the edges' pcurves stay valid; the copy
+/// shares one surface object between the face and its edges, which is cropped in place.
+/// Anything other than a B-spline surface is returned as it is.
+TopoDS_Face croppedToFace(const TopoDS_Face& face)
+{
+    try {
+        BRepBuilderAPI_Copy copy(face, true, false);
+        if (!copy.IsDone())
+            return face;
+        const TopoDS_Face cropped = TopoDS::Face(copy.Shape());
+        TopLoc_Location location;
+        const Handle(Geom_BSplineSurface) bspline =
+            Handle(Geom_BSplineSurface)::DownCast(BRep_Tool::Surface(cropped, location));
+        if (bspline.IsNull() || bspline->IsUPeriodic() || bspline->IsVPeriodic())
+            return face;
+        double u0, u1, v0, v1, bu0, bu1, bv0, bv1;
+        BRepTools::UVBounds(cropped, u0, u1, v0, v1);
+        bspline->Bounds(bu0, bu1, bv0, bv1);
+        const double du = 0.1 * (u1 - u0) + 1e-6 * (bu1 - bu0), dv = 0.1 * (v1 - v0) + 1e-6 * (bv1 - bv0);
+        u0 = std::max(bu0, u0 - du);
+        u1 = std::min(bu1, u1 + du);
+        v0 = std::max(bv0, v0 - dv);
+        v1 = std::min(bv1, v1 + dv);
+        if (u1 - u0 < 1e-9 * (bu1 - bu0) || v1 - v0 < 1e-9 * (bv1 - bv0))
+            return face;
+        bspline->Segment(u0, u1, v0, v1);
+        return cropped;
+    } catch (const Standard_Failure&) {
+        return face;
+    }
+}
+
 /// The fin blanks (outlines extruded, root reaching through `surface`) standing on the
 /// `up` side, with a concave fillet of `radius` mm where they meet the surface, and nothing
 /// below the surface. A pad under the root (the surface around it, swept down past the
@@ -326,10 +364,11 @@ TopoDS_Shape filletedFin(const TopTools_ListOfShape& blanks, const TopoDS_Shape&
                           " mm");
     }
     TopExp_Explorer topFaces(top, TopAbs_FACE);
-    const TopoDS_Face topFace = TopoDS::Face(topFaces.Current());
+    TopoDS_Face topFace = TopoDS::Face(topFaces.Current());
     topFaces.Next();
     if (topFaces.More())
         throw OffsetError("The surface folds under the fin root; the root fillet needs one smooth piece of it");
+    topFace = croppedToFace(topFace);
     Bnd_Box topBox;
     BRepBndLib::Add(topFace, topBox);
     topBox.Get(xs[0], ys[0], zs[0], xs[1], ys[1], zs[1]);
