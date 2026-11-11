@@ -41,6 +41,13 @@ struct PathFrame {
     core::Vec3 tangent;
 };
 
+/// Rib helpers (Fusion: Create > Rib). thickenCurves() turns flat connected curves into the flat
+/// faces of their outline `thickness` wide (in the plane with that normal) (open curves are rounded off at the ends);
+/// curveWall() sweeps the curves `distance` along `direction` into a wall (faces, no thickness).
+/// Extrude either with extrude() to get the rib solid.
+[[nodiscard]] Shape thickenCurves(const Shape& pathEdges, double thickness, const core::Vec3& planeNormal);
+[[nodiscard]] Shape curveWall(const Shape& pathEdges, const core::Vec3& direction, double distance);
+
 /// Length of a path of connected edges (mm); throws ModelingError when they do not connect.
 [[nodiscard]] double pathLength(const Shape& pathEdges);
 

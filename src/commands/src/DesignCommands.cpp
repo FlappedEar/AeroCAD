@@ -177,6 +177,19 @@ Json featureIdSchema(const std::string& description)
     return Json{{"type", "integer"}, {"minimum", 1}, {"description", description}};
 }
 
+/// A path of connected sketch curves (sweep, pipe, rib, pattern on path). One shared definition, so the
+/// tool listing shows it once.
+Json pathSchema()
+{
+    return Json{{"type", "object"},
+                {"description", "{sketch: id, curves: [indices]} (default: all curves of that sketch); "
+                                "the curves must connect."},
+                {"properties", {{"sketch", featureIdSchema("Path sketch.")},
+                                {"curves", {{"type", "array"}, {"items", {{"type", "integer"}}},
+                                            {"description", "Curve indices (default: all)."}}}}},
+                {"required", {"sketch"}}};
+}
+
 Json bodyRefSchema(const std::string& description)
 {
     return Json{{"type", Json::array({"integer", "string"})},
@@ -2347,15 +2360,32 @@ void registerFeatureCommands(CommandRegistry& r)
                        {"operation", patternOperation}},
                       {"body", "count", "spacing"});
 
+    addFeatureCommand(r, "pipe", "Pipe",
+                      "A round or square section swept along sketch curves (Fusion: Create > Pipe), solid or hollow.",
+                      {{"path", pathSchema()},
+                       {"diameter", numberOrExpr("Outer diameter (square: side), mm.")},
+                       {"radius", numberOrExpr("Instead of diameter.")},
+                       {"thickness", numberOrExpr("Wall, mm; 0 (default): solid.")},
+                       {"section", {{"type", "string"}, {"enum", {"circular", "square"}}, {"description", "Default circular."}}},
+                       {"operation", operationSchema()}},
+                      {"path"});
+
+    addFeatureCommand(r, "rib", "Rib",
+                      "A wall on flat sketch curves (Fusion: Create > Rib). direction normal: `depth` up from the "
+                      "sketch plane; parallel: `depth` along the plane, to the right of the curves' start-to-end "
+                      "direction (flip: left), thickness centred on the plane.",
+                      {{"path", pathSchema()},
+                       {"thickness", numberOrExpr("Wall thickness (mm).")},
+                       {"depth", numberOrExpr("Wall height (mm).")},
+                       {"direction", {{"type", "string"}, {"enum", {"normal", "parallel"}}, {"description", "Default normal."}}},
+                       {"flip", {{"type", "boolean"}, {"description", "Other side."}}},
+                       {"operation", operationSchema()}},
+                      {"path", "thickness", "depth"});
+
     addFeatureCommand(r, "path_pattern", "Pattern on Path",
                       "Copies a body along sketch curves (Fusion: Pattern on Path); the body stays, copies move along the path.",
                       {{"body", bodyRefSchema("Body to pattern.")},
-                       {"path", {{"type", "object"},
-                                 {"description", "{sketch, curves?}: connected curves (default all)."},
-                                 {"properties", {{"sketch", featureIdSchema("Path sketch.")},
-                                                 {"curves", {{"type", "array"}, {"items", {{"type", "integer"}}},
-                                                             {"description", "Curve indices."}}}}},
-                                 {"required", {"sketch"}}}},
+                       {"path", pathSchema()},
                        {"count", numberOrExpr("Instances including the body (2 to 1000).")},
                        {"distance", numberOrExpr("extent: length the instances cover (default: rest of the path); spacing: gap between instances (mm).")},
                        {"distance_type", {{"type", "string"}, {"enum", {"extent", "spacing"}}, {"description", "Meaning of distance (default extent)."}}},
@@ -2395,13 +2425,7 @@ void registerFeatureCommands(CommandRegistry& r)
         "Sweeps sketch profiles along a path made of sketch curves (Fusion: Create > Sweep). The path is usually "
         "drawn in a sketch perpendicular to the profile.",
         merged(profileSelection(),
-               {{"path", {{"type", "object"},
-                          {"description", "{sketch: id, curves: [indices]} (default: all curves of that sketch); "
-                                          "the curves must connect."},
-                          {"properties", {{"sketch", featureIdSchema("Path sketch.")},
-                                          {"curves", {{"type", "array"}, {"items", {{"type", "integer"}}},
-                                                       {"description", "Curve indices (default: all)."}}}}},
-                          {"required", {"sketch"}}}},
+               {{"path", pathSchema()},
                 {"operation", operationSchema()},
                 {"bodies", bodiesSchema()}}),
         {"sketch", "path"});

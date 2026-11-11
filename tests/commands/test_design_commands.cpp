@@ -4053,3 +4053,125 @@ TEST_CASE("Design commands: Pattern on Path (CAD-271)", "[commands][cad]")
         CHECK_FALSE(s.execute("feature.path_pattern", {{"body", bodyId}, {"path", {{"sketch", line}}}, {"count", 1}}).ok);
     }
 }
+
+TEST_CASE("Design commands: Pipe (CAD-271)", "[commands][cad]")
+{
+    commands::Session s;
+    const auto line = run(s, "sketch.create",
+                          {{"plane", "XY"},
+                           {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {100, 0}}}})}})
+                          .at("id").get<std::uint64_t>();
+    const auto arc = run(s, "sketch.create",
+                         {{"plane", "XY"},
+                          {"curves", Json::array({{{"type", "center_arc"}, {"center", {0, 0}}, {"radius", 50},
+                                                   {"startAngle", 0}, {"endAngle", 90}}})}})
+                         .at("id").get<std::uint64_t>();
+    const double pi = 3.14159265358979323846;
+
+    SECTION("a solid round pipe along a line")
+    {
+        const auto r = run(s, "feature.pipe", {{"path", {{"sketch", line}}}, {"diameter", 10}});
+        REQUIRE(r.at("bodies").size() == 1);
+        CHECK(r.at("bodies")[0].at("volume").get<double>() == Approx(pi * 25 * 100).epsilon(1e-6));
+        const auto b = s.design().bodies().at(r.at("bodies")[0].at("id").get<std::uint64_t>()).shape.bounds();
+        CHECK(b.min.x == Approx(0).margin(1e-6));
+        CHECK(b.max.x == Approx(100).margin(1e-6));
+        CHECK(b.max.y - b.min.y == Approx(10).epsilon(1e-6));
+        CHECK(b.max.z - b.min.z == Approx(10).epsilon(1e-6));
+    }
+
+    SECTION("a hollow tube has a wall")
+    {
+        const auto r = run(s, "feature.pipe", {{"path", {{"sketch", line}}}, {"radius", 5}, {"thickness", 2}});
+        CHECK(r.at("bodies")[0].at("volume").get<double>() == Approx(pi * (25 - 9) * 100).epsilon(1e-6));
+    }
+
+    SECTION("a square section, solid and hollow")
+    {
+        const auto a = run(s, "feature.pipe", {{"path", {{"sketch", line}}}, {"diameter", 10}, {"section", "square"}});
+        CHECK(a.at("bodies")[0].at("volume").get<double>() == Approx(10 * 10 * 100).epsilon(1e-6));
+        const auto b = run(s, "feature.pipe",
+                           {{"path", {{"sketch", line}}}, {"diameter", 10}, {"section", "square"}, {"thickness", 2}});
+        CHECK(b.at("bodies").back().at("volume").get<double>() == Approx((100 - 36) * 100).epsilon(1e-6));
+    }
+
+    SECTION("it follows a curved path")
+    {
+        const auto r = run(s, "feature.pipe", {{"path", {{"sketch", arc}}}, {"diameter", 10}});
+        // Pappus: section area times the path length of its centre.
+        CHECK(r.at("bodies")[0].at("volume").get<double>() == Approx(pi * 25 * (pi / 2 * 50)).epsilon(1e-4));
+    }
+
+    SECTION("bad sizes are errors")
+    {
+        CHECK_FALSE(s.execute("feature.pipe", {{"path", {{"sketch", line}}}}).ok);
+        CHECK_FALSE(s.execute("feature.pipe", {{"path", {{"sketch", line}}}, {"diameter", 0}}).ok);
+        CHECK_FALSE(s.execute("feature.pipe", {{"path", {{"sketch", line}}}, {"diameter", 10}, {"thickness", 5}}).ok);
+        CHECK_FALSE(s.execute("feature.pipe", {{"path", {{"sketch", line}}}, {"diameter", 10}, {"section", "hex"}}).ok);
+    }
+}
+
+TEST_CASE("Design commands: Rib (CAD-271)", "[commands][cad]")
+{
+    commands::Session s;
+    const auto line = run(s, "sketch.create",
+                          {{"plane", "XY"},
+                           {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {50, 0}}}})}})
+                          .at("id").get<std::uint64_t>();
+    const double pi = 3.14159265358979323846;
+
+    SECTION("normal: the thickened curve stands up from the sketch plane")
+    {
+        const auto r = run(s, "feature.rib", {{"path", {{"sketch", line}}}, {"thickness", 4}, {"depth", 10}});
+        REQUIRE(r.at("bodies").size() == 1);
+        CHECK(r.at("bodies")[0].at("volume").get<double>() == Approx((50 * 4 + pi * 4) * 10).epsilon(1e-4));
+        const auto b = s.design().bodies().at(r.at("bodies")[0].at("id").get<std::uint64_t>()).shape.bounds();
+        CHECK(b.min.z == Approx(0).margin(1e-6));
+        CHECK(b.max.z == Approx(10).margin(1e-6));
+        CHECK(b.min.x == Approx(-2).margin(1e-5));
+        CHECK(b.max.x == Approx(52).margin(1e-5));
+    }
+
+    SECTION("flip stands it down")
+    {
+        const auto r = run(s, "feature.rib", {{"path", {{"sketch", line}}}, {"thickness", 4}, {"depth", 10}, {"flip", true}});
+        const auto b = s.design().bodies().at(r.at("bodies")[0].at("id").get<std::uint64_t>()).shape.bounds();
+        CHECK(b.min.z == Approx(-10).margin(1e-6));
+        CHECK(b.max.z == Approx(0).margin(1e-6));
+    }
+
+    SECTION("parallel: the wall reaches along the plane, thickness centred on it")
+    {
+        const auto r = run(s, "feature.rib",
+                           {{"path", {{"sketch", line}}}, {"thickness", 4}, {"depth", 10}, {"direction", "parallel"}});
+        CHECK(r.at("bodies")[0].at("volume").get<double>() == Approx(50 * 10 * 4).epsilon(1e-6));
+        const auto b = s.design().bodies().at(r.at("bodies")[0].at("id").get<std::uint64_t>()).shape.bounds();
+        CHECK(b.min.y == Approx(0).margin(1e-6));
+        CHECK(b.max.y == Approx(10).margin(1e-6));
+        CHECK(b.min.z == Approx(-2).margin(1e-6));
+        CHECK(b.max.z == Approx(2).margin(1e-6));
+        const auto f = run(s, "feature.rib",
+                           {{"path", {{"sketch", line}}}, {"thickness", 4}, {"depth", 10}, {"direction", "parallel"}, {"flip", true}});
+        const auto bf = s.design().bodies().at(f.at("bodies").back().at("id").get<std::uint64_t>()).shape.bounds();
+        CHECK(bf.max.y == Approx(0).margin(1e-6));
+        CHECK(bf.min.y == Approx(-10).margin(1e-6));
+    }
+
+    SECTION("a curved rib follows the curve")
+    {
+        const auto arc = run(s, "sketch.create",
+                             {{"plane", "XY"},
+                              {"curves", Json::array({{{"type", "center_arc"}, {"center", {0, 0}}, {"radius", 50},
+                                                       {"startAngle", 0}, {"endAngle", 90}}})}})
+                             .at("id").get<std::uint64_t>();
+        const auto r = run(s, "feature.rib", {{"path", {{"sketch", arc}}}, {"thickness", 4}, {"depth", 10}});
+        CHECK(r.at("bodies")[0].at("volume").get<double>() == Approx((pi / 4 * (52 * 52 - 48 * 48) + pi * 4) * 10).epsilon(1e-3));
+    }
+
+    SECTION("bad values are errors")
+    {
+        CHECK_FALSE(s.execute("feature.rib", {{"path", {{"sketch", line}}}, {"thickness", 0}, {"depth", 10}}).ok);
+        CHECK_FALSE(s.execute("feature.rib", {{"path", {{"sketch", line}}}, {"thickness", 4}, {"depth", 0}}).ok);
+        CHECK_FALSE(s.execute("feature.rib", {{"path", {{"sketch", line}}}, {"thickness", 4}, {"depth", 10}, {"direction", "up"}}).ok);
+    }
+}

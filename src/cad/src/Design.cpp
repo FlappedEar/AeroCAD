@@ -131,7 +131,7 @@ const std::vector<std::string>& Design::featureTypes()
 {
     static const std::vector<std::string> types{"sketch", "extrude", "revolve", "fillet", "chamfer",
                                                 "shell",  "combine", "box",     "cylinder", "sphere", "torus", "base_body", "hole",
-                                                "mirror",  "rectangular_pattern", "circular_pattern", "path_pattern", "loft", "sweep", "plane",
+                                                "mirror",  "rectangular_pattern", "circular_pattern", "path_pattern", "pipe", "rib", "loft", "sweep", "plane",
                                                 "part_on_surface", "fin_on_surface", "move", "scale", "press_pull", "split", "delete_faces", "draft",
                                                 "fit_selection", "fit_regions", "trim_by_sketch", "offset_surface", "thicken_surface"};
     return types;
@@ -4158,6 +4158,70 @@ void Design::evaluateFeature(const Feature& f)
         } else {
             throw DesignError("Unknown operation '" + op + "' (join, new_body)");
         }
+    } else if (f.type == "rib") {
+        // Fusion: Create > Rib. A wall built on flat sketch curves: `thickness` wide, `depth` tall,
+        // either standing up from the sketch plane (normal) or reaching from the curves along the
+        // plane (parallel: thickness is then measured across the plane, centred on it).
+        const Json& path = required(p, "path");
+        const geometry::Shape pathEdges = pathEdgesOf(path, "rib");
+        const Plane plane = m_sketches.at(path.at("sketch").get<FeatureId>()).plane;
+        const double thickness = ev.num(p, "thickness");
+        const double depth = ev.num(p, "depth");
+        const std::string direction = lower(p.value("direction", std::string("normal")));
+        if (direction != "normal" && direction != "parallel")
+            throw DesignError("Unknown rib direction '" + direction + "' (normal, parallel)");
+        if (!(thickness > 0.0) || !(depth > 0.0))
+            throw DesignError("The rib thickness and depth must be positive");
+        const double sign = p.value("flip", false) ? -1.0 : 1.0;
+        if (direction == "normal") {
+            applyOperation(geometry::extrude(geometry::thickenCurves(pathEdges, thickness, plane.normal), plane.normal * sign, depth));
+        } else {
+            const double length = geometry::pathLength(pathEdges);
+            const auto ends = geometry::pathFrames(pathEdges, {0.0, length});
+            core::Vec3 chord = ends[1].point - ends[0].point;
+            if (chord.length() < 1e-6)
+                chord = ends[0].tangent;
+            const core::Vec3 side = plane.normal.cross(chord).normalized() * sign;
+            const geometry::Shape wall = geometry::curveWall(pathEdges, side, depth);
+            applyOperation(geometry::extrude(wall, plane.normal, thickness / 2.0, thickness / 2.0));
+        }
+    } else if (f.type == "pipe") {
+        // Fusion: Create > Pipe. A round (or square) section swept along sketch curves, solid or
+        // hollow (`thickness` = wall).
+        const geometry::Shape pathEdges = pathEdgesOf(required(p, "path"), "pipe");
+        const double outer = has(p, "diameter") ? ev.num(p, "diameter") / 2.0 : ev.num(p, "radius");
+        const double wall = ev.num(p, "thickness", 0.0);
+        const std::string section = lower(p.value("section", std::string("circular")));
+        if (section != "circular" && section != "square")
+            throw DesignError("Unknown section '" + section + "' (circular, square)");
+        if (!(outer > 0.0))
+            throw DesignError("The pipe size must be positive");
+        if (wall < 0.0 || wall >= outer)
+            throw DesignError("The wall thickness must be from 0 up to (not including) the pipe radius");
+        const auto start = geometry::pathFrames(pathEdges, {0.0}).front();
+        Plane at;
+        at.origin = start.point;
+        at.normal = start.tangent;
+        at.xDir = std::abs(start.tangent.z) < 0.9 ? core::Vec3{0, 0, 1}.cross(start.tangent) : core::Vec3{1, 0, 0};
+        at = at.normalized();
+        auto sectionFace = [&](double half) {
+            std::vector<SketchCurve> c;
+            if (section == "circular") {
+                SketchCurve circle{SketchCurve::Kind::Circle, {{0, 0}}};
+                circle.radius = half;
+                c.push_back(circle);
+            } else {
+                c = {lineCurve({-half, -half}, {half, -half}, false), lineCurve({half, -half}, {half, half}, false),
+                     lineCurve({half, half}, {-half, half}, false), lineCurve({-half, half}, {-half, -half}, false)};
+            }
+            return geometry::buildSketch(at, c).profiles.at(0);
+        };
+        geometry::Shape pipe = geometry::sweep(sectionFace(outer), pathEdges);
+        if (wall > 0.0) {
+            const geometry::Shape bore = geometry::sweep(sectionFace(outer - wall), pathEdges);
+            pipe = geometry::boolean(pipe, bore, geometry::BooleanOp::Cut);
+        }
+        applyOperation(pipe);
     } else if (f.type == "path_pattern") {
         // Fusion: Create > Pattern > Pattern on Path. Copies of a body along sketch curves; the
         // body stays where it is, each copy moves by the path point it lands on minus the point

@@ -16,6 +16,8 @@
 #include <BRepAlgoAPI_Splitter.hxx>
 #include <BRepBndLib.hxx>
 #include <BRepClass_FaceClassifier.hxx>
+#include <GC_MakeArcOfCircle.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepBuilderAPI_MakeSolid.hxx>
@@ -37,6 +39,7 @@
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepOffset_MakeOffset.hxx>
 #include <BRepOffsetAPI_DraftAngle.hxx>
+#include <BRepOffsetAPI_MakeOffset.hxx>
 #include <BRepOffsetAPI_MakePipe.hxx>
 #include <BRepOffsetAPI_MakeOffsetShape.hxx>
 #include <BRepOffsetAPI_MakeThickSolid.hxx>
@@ -371,6 +374,74 @@ TopoDS_Wire pathWire(const Shape& pathEdges, const char* what)
     return wire.Wire();
 }
 } // namespace
+
+Shape thickenCurves(const Shape& pathEdges, double thickness, const core::Vec3& planeNormal)
+{
+    if (!(thickness > 0.0))
+        throw ModelingError("Rib: the thickness must be positive");
+    return guarded("Rib", [&] {
+        const TopoDS_Wire wire = pathWire(pathEdges, "Rib");
+        const double h = thickness / 2.0;
+        BRep_Builder builder;
+        TopoDS_Compound comp;
+        builder.MakeCompound(comp);
+        TopoDS_Wire outline;
+        int edgeCount = 0;
+        TopoDS_Edge only;
+        for (TopExp_Explorer ex(wire, TopAbs_EDGE); ex.More(); ex.Next()) {
+            ++edgeCount;
+            only = TopoDS::Edge(ex.Current());
+        }
+        if (edgeCount == 1 && BRepAdaptor_Curve(only).GetType() == GeomAbs_Line) {
+            // A single straight curve does not determine a plane for the offset algorithm: build the
+            // rounded-off outline directly.
+            const BRepAdaptor_Curve line(only);
+            const gp_Pnt p0 = line.Value(line.FirstParameter());
+            const gp_Pnt p1 = line.Value(line.LastParameter());
+            const gp_Vec along = gp_Vec(p0, p1).Normalized();
+            const gp_Vec across = gp_Vec(gp_Dir(planeNormal.x, planeNormal.y, planeNormal.z)).Crossed(along).Normalized();
+            const gp_Pnt a0 = p0.Translated(across * h), a1 = p1.Translated(across * h);
+            const gp_Pnt b0 = p0.Translated(-across * h), b1 = p1.Translated(-across * h);
+            BRepBuilderAPI_MakeWire mk;
+            mk.Add(BRepBuilderAPI_MakeEdge(a0, a1).Edge());
+            mk.Add(BRepBuilderAPI_MakeEdge(GC_MakeArcOfCircle(a1, p1.Translated(along * h), b1).Value()).Edge());
+            mk.Add(BRepBuilderAPI_MakeEdge(b1, b0).Edge());
+            mk.Add(BRepBuilderAPI_MakeEdge(GC_MakeArcOfCircle(b0, p0.Translated(-along * h), a0).Value()).Edge());
+            outline = mk.Wire();
+        } else {
+            BRepOffsetAPI_MakeOffset offset(wire, GeomAbs_Arc, Standard_False);
+            offset.Perform(h);
+            if (!offset.IsDone() || offset.Shape().IsNull())
+                throw ModelingError("Rib: the curve cannot be thickened by that much (it must be a flat curve, and "
+                                    "the thickness smaller than its tightest bend allows)");
+            for (TopExp_Explorer ex(offset.Shape(), TopAbs_WIRE); ex.More(); ex.Next()) {
+                outline = TopoDS::Wire(ex.Current());
+                break;
+            }
+        }
+        if (outline.IsNull())
+            throw ModelingError("Rib: the curve cannot be thickened");
+        BRepBuilderAPI_MakeFace face(outline, true);
+        if (!face.IsDone())
+            throw ModelingError("Rib: the thickened curve is not flat");
+        builder.Add(comp, face.Face());
+        return wrapShape(comp);
+    });
+}
+
+Shape curveWall(const Shape& pathEdges, const core::Vec3& direction, double distance)
+{
+    const core::Vec3 dir = direction.normalized();
+    if (dir.length() < 0.5 || std::abs(distance) < 1e-9)
+        throw ModelingError("Rib: zero depth or direction");
+    return guarded("Rib", [&] {
+        const TopoDS_Wire wire = pathWire(pathEdges, "Rib");
+        BRepPrimAPI_MakePrism prism(wire, gp_Vec(dir.x * distance, dir.y * distance, dir.z * distance), true);
+        if (!prism.IsDone())
+            throw ModelingError("Rib failed");
+        return wrapShape(prism.Shape());
+    });
+}
 
 double pathLength(const Shape& pathEdges)
 {
