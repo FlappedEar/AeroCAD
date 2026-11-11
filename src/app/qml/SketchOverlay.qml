@@ -61,6 +61,10 @@ Item {
     property var offsetCurves: []
     /// Curves the Mirror tool copies (the selection when it started).
     property var mirrorCurves: []
+    /// Circle 2-Tangent / 3-Tangent: the lines picked so far, and where they were clicked.
+    property var tangentCurves: []
+    property var tangentClicks: []
+    property string tangentNote: ""
     /// Move/Copy tool (Fusion: Sketch > Move/Copy, M): `curves` are to be moved by dx, dy
     /// and turned by `angle` (degrees) about their middle; with `copy`, copies are added.
     signal moveRequested(var curves, real dx, real dy, real angle, bool copy)
@@ -129,6 +133,46 @@ Item {
     property bool hoverSnapped: false
     readonly property real snapPixels: 10
     property int polygonSides: 6
+    /// Fusion's Polygon types: "inscribed" (centre, corner), "circumscribed" (centre, middle
+    /// of a side) and "edge" (both ends of one side; the polygon goes to its left).
+    property string polygonMode: "inscribed"
+    /// Fusion's Slot types: "center_to_center", "overall" (the far points of the ends) and
+    /// "center_point" (the middle of the slot, then the centre of one end).
+    property string slotMode: "center_to_center"
+
+    /// Corners (sketch coordinates) of the polygon the two clicks `a`, `b` make in the
+    /// current polygon type; [] when the clicks are on the same spot.
+    function polygonCorners(a, b, sides, mode) {
+        const half = Math.PI / sides
+        let c = a, r = dist(a, b), rot = Math.atan2(b[1] - a[1], b[0] - a[0])
+        if (r < 1e-9)
+            return []
+        if (mode === "circumscribed") {
+            r /= Math.cos(half)
+            rot -= half
+        } else if (mode === "edge") {
+            const len = r
+            const apothem = len / (2 * Math.tan(half))
+            c = [(a[0] + b[0]) / 2 - (b[1] - a[1]) / len * apothem, (a[1] + b[1]) / 2 + (b[0] - a[0]) / len * apothem]
+            r = len / (2 * Math.sin(half))
+            rot = Math.atan2(a[1] - c[1], a[0] - c[0])
+        }
+        const out = []
+        for (let i = 0; i <= sides; ++i)
+            out.push([c[0] + r * Math.cos(rot + 2 * Math.PI * i / sides), c[1] + r * Math.sin(rot + 2 * Math.PI * i / sides)])
+        return out
+    }
+
+    /// The centres of the two ends of the slot the clicks `a`, `b` make with half-width `w`.
+    function slotCentres(a, b, w, mode) {
+        const len = dist(a, b)
+        if (mode === "center_point")
+            return [[2 * a[0] - b[0], 2 * a[1] - b[1]], b]
+        if (mode === "overall" && len > 2 * w)
+            return [[a[0] + (b[0] - a[0]) / len * w, a[1] + (b[1] - a[1]) / len * w],
+                    [b[0] - (b[0] - a[0]) / len * w, b[1] - (b[1] - a[1]) / len * w]]
+        return [a, b]
+    }
 
     enabled: sketch !== null
     visible: sketch !== null
@@ -138,6 +182,9 @@ Item {
         clearSelection()
         if (tool !== "mirror")
             mirrorCurves = []
+        tangentCurves = []
+        tangentClicks = []
+        tangentNote = ""
         if (tool !== "offset")
             offsetCurves = []
         if (tool !== "move") {
@@ -865,8 +912,22 @@ Item {
             const r = dist(a, b)
             if (r < 1e-9)
                 return null
-            return { type: "polygon", center: a, radius: dim && dim.length > 0 ? dim[0] : round6(r),
-                     sides: polygonSides, angle: round6(Math.atan2(b[1] - a[1], b[0] - a[0]) * 180 / Math.PI) }
+            if (polygonMode === "edge") {
+                // A typed length moves the second corner along the drawn direction.
+                let end = b
+                if (dim && dim.length > 0) {
+                    const typed = evaluateTyped(dim[0], qsTr("Side"))
+                    if (!(typed > 0))
+                        return null
+                    end = [round6(a[0] + (b[0] - a[0]) / r * typed), round6(a[1] + (b[1] - a[1]) / r * typed)]
+                }
+                return { type: "polygon", mode: "edge", start: a, end: end, sides: polygonSides }
+            }
+            const item = { type: "polygon", center: a, radius: dim && dim.length > 0 ? dim[0] : round6(r),
+                           sides: polygonSides, angle: round6(Math.atan2(b[1] - a[1], b[0] - a[0]) * 180 / Math.PI) }
+            if (polygonMode === "circumscribed")
+                item.mode = "circumscribed"
+            return item
         }
         case "arc":
             if (pts.length < 3)
@@ -885,7 +946,12 @@ Item {
             if (len < 1e-9)
                 return null
             const off = Math.abs((pts[2][0] - a[0]) * dy - (pts[2][1] - a[1]) * dx) / len
-            return { type: "slot", start: a, end: b, width: dim && dim.length > 0 ? dim[0] : round6(2 * off) }
+            const width = dim && dim.length > 0 ? dim[0] : round6(2 * off)
+            if (slotMode === "center_point")
+                return { type: "slot", mode: "center_point", center: a, end: b, width: width }
+            if (slotMode === "overall")
+                return { type: "slot", mode: "overall", start: a, end: b, width: width }
+            return { type: "slot", start: a, end: b, width: width }
         }
         }
         return null
@@ -923,6 +989,41 @@ Item {
         }
         out.push(closed ? pts[0] : pts[n - 1])
         return out
+    }
+
+    /// Circle 2-Tangent / 3-Tangent: a click picks a line (the third click of the 2-tangent
+    /// circle says where the circle goes); the command works out the circle.
+    function tangentClick(x, y) {
+        const at = screenToLocal(x, y)
+        if (at === null)
+            return
+        const two = tool === "circle_2tangent"
+        if (two && tangentCurves.length === 2) {
+            const p = snap(x, y) // snaps like any click, so a round radius is easy
+            emitCurve({ type: "tangent_circle", curves: tangentCurves, near: p !== null ? p : [round6(at[0]), round6(at[1])] })
+            tangentCurves = []
+            tangentClicks = []
+            canvas.requestPaint()
+            return
+        }
+        const i = curveAt(x, y)
+        const c = sketchCurves.find(k => k.index === i)
+        if (!c || c.kind !== "line" || tangentCurves.indexOf(i) >= 0) {
+            if (c)
+                tangentNote = c.kind !== "line" ? qsTr("Only lines for now: click a line") : qsTr("That line is already picked")
+            canvas.requestPaint()
+            return
+        }
+        tangentNote = ""
+        tangentCurves = tangentCurves.concat([i])
+        tangentClicks = tangentClicks.concat([at])
+        if (!two && tangentCurves.length === 3) {
+            const mean = [0, 1].map(k => (tangentClicks[0][k] + tangentClicks[1][k] + tangentClicks[2][k]) / 3)
+            emitCurve({ type: "tangent_circle", curves: tangentCurves, near: [round6(mean[0]), round6(mean[1])] })
+            tangentCurves = []
+            tangentClicks = []
+        }
+        canvas.requestPaint()
     }
 
     function emitCurve(curve) {
@@ -1288,7 +1389,7 @@ Item {
                 root.pieceHover(mouse.x, mouse.y)
                 return
             }
-            if (root.tool === "trim" || root.tool === "mirror") {
+            if (root.tool === "trim" || root.tool === "mirror" || root.tool === "circle_2tangent" || root.tool === "circle_3tangent") {
                 const i = root.curveAt(mouse.x, mouse.y)
                 if (i !== root.hoverCurve) {
                     root.hoverCurve = i
@@ -1346,6 +1447,11 @@ Item {
                     if (list.length > 0)
                         root.mirrorRequested(list, i)
                 }
+                root.forceActiveFocus()
+                return
+            }
+            if (root.tool === "circle_2tangent" || root.tool === "circle_3tangent") {
+                root.tangentClick(mouse.x, mouse.y)
                 root.forceActiveFocus()
                 return
             }
@@ -1479,6 +1585,7 @@ Item {
             // Select mode: the curve under the cursor and the selected curves, highlighted.
             for (const c of root.sketchCurves) {
                 const sel = root.selectedCurves.indexOf(c.index) >= 0 || root.mirrorCurves.indexOf(c.index) >= 0
+                            || root.tangentCurves.indexOf(c.index) >= 0
                             || root.offsetCurves.indexOf(c.index) >= 0 || root.moveCurves.indexOf(c.index) >= 0
                             || root.patternCurves.indexOf(c.index) >= 0 || root.scaleCurves.indexOf(c.index) >= 0
                 if (!sel && c.index !== root.hoverCurve)
@@ -1687,6 +1794,12 @@ Item {
                             if (i === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y)
                         }
                     }
+                } else if (root.tool === "polygon" && root.polygonMode !== "inscribed") {
+                    const corners = root.polygonCorners(pts[0], pts[1], root.polygonSides, root.polygonMode)
+                    for (let i = 0; i < corners.length; ++i) {
+                        const q = root.toScreen(corners[i])
+                        if (i === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y)
+                    }
                 } else if (root.tool === "circle" || root.tool === "polygon") {
                     const r = root.dist(pts[0], pts[1])
                     const n = root.tool === "polygon" ? root.polygonSides : 64
@@ -1717,7 +1830,9 @@ Item {
                         }
                     }
                 } else if (root.tool === "slot" && pts.length >= 3 && curve) {
-                    const a = pts[0], b = pts[1], w = curve.width / 2
+                    const w = curve.width / 2
+                    const ends = root.slotCentres(pts[0], pts[1], w, root.slotMode)
+                    const a = ends[0], b = ends[1]
                     const len = root.dist(a, b)
                     const n = [-(b[1] - a[1]) / len * w, (b[0] - a[0]) / len * w]
                     const q = [[a[0] + n[0], a[1] + n[1]], [b[0] + n[0], b[1] + n[1]],
@@ -1773,7 +1888,7 @@ Item {
                     text = c ? "⌀ " + Preferences.formatLength(2 * c.radius, Preferences.lengthUnit) : ""
                 }
                 else if (root.tool === "polygon")
-                    text = "R " + Preferences.formatLength(root.dist(a, b), Preferences.lengthUnit)
+                    text = (root.polygonMode === "edge" ? qsTr("Side") + " " : "R ") + Preferences.formatLength(root.dist(a, b), Preferences.lengthUnit)
                 ctx.font = "12px sans-serif"
                 ctx.fillStyle = Theme.text
                 const last = s[s.length - 1]
@@ -1844,13 +1959,19 @@ Item {
                     : root.tool === "rectangle_3point" ? qsTr("3-point rectangle: click both ends of one side (any angle), then the far side; type the length, then the height")
                     : root.tool === "circle_2point" ? qsTr("2-point circle: click both ends of a diameter; type the diameter")
                     : root.tool === "circle_3point" ? qsTr("3-point circle: click three points on the circle")
+                    : root.tool === "circle_2tangent" ? (root.tangentNote !== "" ? root.tangentNote : root.tangentCurves.length < 2 ? qsTr("2-tangent circle: click two lines") : qsTr("2-tangent circle: click where the circle goes (its size follows the click)"))
+                    : root.tool === "circle_3tangent" ? (root.tangentNote !== "" ? root.tangentNote : qsTr("3-tangent circle: click three lines (the circle that fits between them)"))
                     : root.tool === "ellipse" ? qsTr("Ellipse: click the centre, the end of the major axis, then a point for the minor radius; type each radius")
                     : root.tool === "elliptical_arc" ? qsTr("Elliptical arc: click the centre, the major axis end, the minor radius, then the arc start and end (counter-clockwise)")
                     : root.tool === "text" ? qsTr("Text: click the start, type the text, Enter (cursor distance = height, direction = angle)")
                     : root.tool === "conic" ? qsTr("Conic curve: click the start, the end, then the apex it bends towards; type rho (0 to 1, 0.5 is a parabola)")
                     : root.tool === "arc" ? qsTr("Arc: click start, end, then a point on the arc")
-                    : root.tool === "polygon" ? qsTr("Polygon: click centre and a corner; type the radius")
+                    : root.tool === "polygon" ? (root.polygonMode === "edge" ? qsTr("Edge polygon: click both ends of one side (counter-clockwise); type its length")
+                                                 : root.polygonMode === "circumscribed" ? qsTr("Circumscribed polygon: click the centre and the middle of a side; type the radius")
+                                                 : qsTr("Polygon: click centre and a corner; type the radius"))
                     : root.tool === "spline" ? qsTr("Spline: click fit points; Enter, a double-click or Esc ends it, the first point closes it")
+                    : root.slotMode === "overall" ? qsTr("Overall slot: click both far ends, then the width")
+                    : root.slotMode === "center_point" ? qsTr("Center point slot: click the middle, the centre of one end, then the width")
                     : qsTr("Slot: click both centres, then the width")
                 font.weight: Font.DemiBold
             }
@@ -1888,7 +2009,7 @@ Item {
             RowLayout {
                 visible: root.active && !root.constraintTool && root.tool !== "trim" && root.tool !== "circular_pattern" && root.tool !== "rectangular_pattern" && root.tool !== "extend" && root.tool !== "break" && root.tool !== "point" && root.tool !== "mirror" && root.tool !== "fillet" && root.tool !== "chamfer" && root.tool !== "project" && root.tool !== "spline" && root.tool !== "elliptical_arc"
                          && root.tool !== "tangent_arc"
-                         && root.tool !== "circle_3point"
+                         && root.tool !== "circle_3point" && root.tool !== "circle_2tangent" && root.tool !== "circle_3tangent"
                 Label { text: root.tool === "rectangle" || root.tool === "center_rectangle" ? qsTr("Width, height")
                             : root.tool === "center_arc" ? qsTr("Radius") : root.tool === "line" ? qsTr("Length")
                             : root.tool === "ellipse" ? (root.points.length >= 2 ? qsTr("Minor radius") : qsTr("Major radius"))
@@ -1960,6 +2081,26 @@ Item {
                     text: qsTr("Copy")
                     checked: root.moveCopy
                     onToggled: root.moveCopy = checked
+                }
+                ComboBox {
+                    objectName: "polygonModeBox"
+                    visible: root.tool === "polygon"
+                    textRole: "text"
+                    valueRole: "value"
+                    model: [ { value: "inscribed", text: qsTr("Inscribed") }, { value: "circumscribed", text: qsTr("Circumscribed") },
+                             { value: "edge", text: qsTr("Edge") } ]
+                    currentIndex: Math.max(0, indexOfValue(root.polygonMode))
+                    onActivated: { root.polygonMode = currentValue; root.points = []; root.forceActiveFocus() }
+                }
+                ComboBox {
+                    objectName: "slotModeBox"
+                    visible: root.tool === "slot"
+                    textRole: "text"
+                    valueRole: "value"
+                    model: [ { value: "center_to_center", text: qsTr("Center to Center") }, { value: "overall", text: qsTr("Overall") },
+                             { value: "center_point", text: qsTr("Center Point") } ]
+                    currentIndex: Math.max(0, indexOfValue(root.slotMode))
+                    onActivated: { root.slotMode = currentValue; root.points = []; root.forceActiveFocus() }
                 }
                 Label { visible: root.tool === "polygon"; text: qsTr("Sides") }
                 SpinBox {

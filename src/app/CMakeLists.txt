@@ -580,6 +580,16 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_ellipse.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_sketch_ellipse_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-269: Polygon and Slot types with real clicks.
+    add_test(NAME app_sketch_polygon_slot_types_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_polygon_slot_types.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_sketch_polygon_slot_types_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-270: Circle 2-Tangent / 3-Tangent with real clicks.
+    add_test(NAME app_sketch_circle_tangent_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_circle_tangent.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_sketch_circle_tangent_test PROPERTIES LABELS gui TIMEOUT 60)
     # CAD-258: Trim an ellipse into an elliptical arc with real clicks.
     add_test(NAME app_sketch_ellipse_trim_test
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_ellipse_trim.ui
@@ -664,6 +674,11 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/extrude_taper.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_extrude_taper_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-268: Extrude Start Offset, Revolve Symmetric / Two Sides.
+    add_test(NAME app_extent_options_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/extent_options.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_extent_options_test PROPERTIES LABELS gui TIMEOUT 60)
     # CAD-115: Export suggests a file name.
     add_test(NAME app_export_file_name_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl

@@ -192,10 +192,11 @@ Json curveSchema()
          "{corner, opposite}; center_rectangle {center, width, height}; three_point_rectangle {start, end, height} (a side "
          "at any angle, then the other side; height is signed, positive to the left of start -> end); circle {center, radius | diameter}; "
          "arc {start, through, end} (three-point arc); center_arc {center, radius, startAngle, endAngle} "
-         "(degrees, counter-clockwise); polygon {center, radius, sides, angle?}; slot {start, end, width} "
-         "(centre-to-centre); spline {points, closed?}; point {at} (a sketch point: no edge, no profile; "
+         "(degrees, counter-clockwise); polygon {center, radius, sides, angle?, mode?} or {mode: edge, start, end, sides}; slot {start, end, width, mode?} "
+         "or {mode: center_point, center, end, width}; spline {points, closed?}; point {at} (a sketch point: no edge, no profile; "
          "it joins a curve end at the same place); tangent_arc {from: {curve, point: start | end}, end} "
-         "(sketch.add_curves only: an arc leaving the end of a line or arc tangentially, kept tangent). "
+         "(sketch.add_curves only: an arc leaving the end of a line or arc tangentially, kept tangent); "
+         "tangent_circle {curves, near, radius?} (add_curves only: a circle tangent to 2 or 3 lines). "
          "conic {start, end, apex, rho?} (tangent at its ends to the lines towards apex); "
          "text {at, text, height?, angle?, font?, bold?, italic?} (letters are profiles; at = baseline start, "
          "height mm, default 5). "
@@ -205,7 +206,10 @@ Json curveSchema()
            {{"type", "string"},
             {"description", "Curve kind; selects which other fields apply."},
             {"enum", {"line", "rectangle", "center_rectangle", "three_point_rectangle", "circle", "arc", "center_arc", "polygon", "slot",
-                      "spline", "point", "tangent_arc", "ellipse", "elliptical_arc", "conic", "text"}}}},
+                      "spline", "point", "tangent_arc", "tangent_circle", "ellipse", "elliptical_arc", "conic", "text"}}}},
+          {"curves", {{"type", "array"}, {"items", {{"type", "integer"}, {"minimum", 0}}},
+                      {"description", "tangent_circle: 2 or 3 line indices; `radius` (optional) for two."}}},
+          {"near", point2("tangent_circle: a point near the circle wanted (picks one of the circles tangent to the lines).")},
           {"from", {{"type", "object"},
                     {"description", "tangent_arc: the end it starts from, {curve: index, point: start | end}."}}},
           {"start", point2("Start point.")},
@@ -222,6 +226,12 @@ Json curveSchema()
           {"startAngle", numberOrExpr("Start angle (degrees).")},
           {"endAngle", numberOrExpr("End angle (degrees).")},
           {"sides", numberOrExpr("Number of polygon sides.")},
+          {"mode", {{"type", "string"},
+                    {"enum", {"inscribed", "circumscribed", "edge", "center_to_center", "overall", "center_point"}},
+                    {"description", "polygon: inscribed (default), circumscribed (`radius` to a side, `angle` = side "
+                                    "direction) or edge (`start`, `end`, polygon on the left). slot: center_to_center "
+                                    "(default; `start`, `end` = end centres), overall (`start`, `end` = far points) or "
+                                    "center_point (`center`, `end` = one end's centre)."}}},
           {"angle", numberOrExpr("Polygon rotation, or the direction of an ellipse's major axis (degrees).")},
           {"major_radius", numberOrExpr("ellipse: centre to the end of the major axis (mm).")},
           {"minor_radius", numberOrExpr("ellipse: half the minor axis (mm).")},
@@ -988,6 +998,152 @@ std::tuple<Json, std::size_t, int> resolveTangentArc(const cad::Design& design,
     return {arc, i, tangentSide};
 }
 
+/// A circle tangent to two or three lines (Fusion: Circle > 2-Tangent / 3-Tangent): item
+/// {curves: [i, j (, k)], near, radius?}, lines of the solved sketch (their extensions count).
+/// With three lines the circle nearest to `near` of the (up to four) circles tangent to all of
+/// them; with two, `near` picks the wedge and the size (the circle whose centre is nearest to it
+/// along the wedge's bisector) unless a `radius` is given. Returns the circle item and, per line,
+/// the side of it the centre lies on (the explicit tangent side, as for tangent arcs).
+std::pair<Json, std::vector<std::pair<std::size_t, int>>> resolveTangentCircle(
+    const cad::Design& design, const std::vector<geometry::SketchCurve>& curves, const Json& item)
+{
+    if (!item.contains("curves") || !item.at("curves").is_array() || !item.contains("near"))
+        throw CommandError("tangent_circle: give curves [2 or 3 line indices] and near [x, y]");
+    const auto idx = item.at("curves").get<std::vector<std::size_t>>();
+    if (idx.size() != 2 && idx.size() != 3)
+        throw CommandError("tangent_circle: pick 2 or 3 lines");
+    struct L {
+        geometry::Vec2 a, n; // a point and the unit normal
+        double d;            // n . x = d on the line
+    };
+    std::vector<L> lines;
+    for (const std::size_t i : idx) {
+        if (i >= curves.size())
+            throw CommandError("No curve " + std::to_string(i) + " in the sketch");
+        const auto& c = curves[i];
+        if (c.kind != geometry::SketchCurve::Kind::Line)
+            throw CommandError("tangent_circle: curve " + std::to_string(i) + " is not a line");
+        const geometry::Vec2 a = c.points[0], b = c.points[1];
+        const double len = std::hypot(b.x - a.x, b.y - a.y);
+        if (len < 1e-12)
+            throw CommandError("tangent_circle: curve " + std::to_string(i) + " is a point");
+        const geometry::Vec2 n{-(b.y - a.y) / len, (b.x - a.x) / len};
+        lines.push_back({a, n, n.x * a.x + n.y * a.y});
+    }
+    if (std::count(idx.begin(), idx.end(), idx[0]) > 1 || (idx.size() == 3 && idx[1] == idx[2]))
+        throw CommandError("tangent_circle: pick different lines");
+    const auto& nr = item.at("near");
+    const geometry::Vec2 near{design.evaluate(nr.at(0)), design.evaluate(nr.at(1))};
+    geometry::Vec2 centre{};
+    double radius = -1.0;
+    double best = 1e300;
+    if (lines.size() == 3) {
+        // n_i . c - s_i r = d_i for the sign choices s_i: three linear equations in (cx, cy, r).
+        for (int mask = 0; mask < 8; ++mask) {
+            double m[3][4];
+            for (int i = 0; i < 3; ++i) {
+                m[i][0] = lines[i].n.x;
+                m[i][1] = lines[i].n.y;
+                m[i][2] = (mask >> i & 1) ? 1.0 : -1.0;
+                m[i][3] = lines[i].d;
+            }
+            // Gauss with partial pivoting.
+            bool ok = true;
+            for (int col = 0; col < 3 && ok; ++col) {
+                int piv = col;
+                for (int r = col + 1; r < 3; ++r)
+                    if (std::abs(m[r][col]) > std::abs(m[piv][col]))
+                        piv = r;
+                if (std::abs(m[piv][col]) < 1e-9) {
+                    ok = false;
+                    break;
+                }
+                for (int k = 0; k < 4; ++k)
+                    std::swap(m[col][k], m[piv][k]);
+                for (int r = 0; r < 3; ++r) {
+                    if (r == col)
+                        continue;
+                    const double f = m[r][col] / m[col][col];
+                    for (int k = col; k < 4; ++k)
+                        m[r][k] -= f * m[col][k];
+                }
+            }
+            if (!ok)
+                continue;
+            const double cx = m[0][3] / m[0][0], cy = m[1][3] / m[1][1], r = m[2][3] / m[2][2];
+            if (!(r > 1e-9))
+                continue;
+            const double dist = std::hypot(cx - near.x, cy - near.y);
+            if (dist < best) {
+                best = dist;
+                centre = {cx, cy};
+                radius = r;
+            }
+        }
+        if (radius < 0)
+            throw CommandError("tangent_circle: no circle is tangent to these three lines (parallel lines?)");
+    } else {
+        // Centre c(r) = c0 + r v for the sign choice (s1, s2): n1.c - s1 r = d1, n2.c - s2 r = d2.
+        const double det = lines[0].n.x * lines[1].n.y - lines[0].n.y * lines[1].n.x;
+        const bool typed = item.contains("radius");
+        const double want = typed ? design.evaluate(item.at("radius")) : 0.0;
+        if (typed && !(want > 0))
+            throw CommandError("tangent_circle: the radius must be positive");
+        if (std::abs(det) < 1e-9) {
+            // Parallel lines (n2 = +-n1, so n1.x = sigma d2 on the second): the circle between
+            // them, centred on the midline.
+            const geometry::Vec2& n = lines[0].n;
+            const double sigma = n.x * lines[1].n.x + n.y * lines[1].n.y;
+            const double half = std::abs(sigma * lines[1].d - lines[0].d) / 2;
+            if (half < 1e-9)
+                throw CommandError("tangent_circle: the two lines are the same line");
+            if (typed && std::abs(want - half) > 1e-6 * std::max(1.0, half))
+                throw CommandError("tangent_circle: between these parallel lines the radius is " + std::to_string(half));
+            const double mid = (lines[0].d + sigma * lines[1].d) / 2;
+            const geometry::Vec2 along{-n.y, n.x};
+            const double t = (near.x - n.x * mid) * along.x + (near.y - n.y * mid) * along.y;
+            centre = {n.x * mid + along.x * t, n.y * mid + along.y * t};
+            radius = half;
+        } else {
+            for (const int s1 : {-1, 1}) {
+                for (const int s2 : {-1, 1}) {
+                    // Solve n1.c = d1 + s1 r, n2.c = d2 + s2 r: c = c0 + r v.
+                    auto solve = [&](double r1, double r2) {
+                        return geometry::Vec2{(r1 * lines[1].n.y - r2 * lines[0].n.y) / det,
+                                              (lines[0].n.x * r2 - lines[1].n.x * r1) / det};
+                    };
+                    const geometry::Vec2 c0 = solve(lines[0].d, lines[1].d);
+                    const geometry::Vec2 v = solve(s1, s2);
+                    const double vv = v.x * v.x + v.y * v.y;
+                    double r = typed ? want : ((near.x - c0.x) * v.x + (near.y - c0.y) * v.y) / vv;
+                    if (!(r > 1e-9))
+                        continue;
+                    const geometry::Vec2 c{c0.x + r * v.x, c0.y + r * v.y};
+                    const double dist = std::hypot(c.x - near.x, c.y - near.y);
+                    if (dist < best) {
+                        best = dist;
+                        centre = c;
+                        radius = r;
+                    }
+                }
+            }
+            if (radius < 0)
+                throw CommandError("tangent_circle: the click is not between the lines' sides");
+        }
+    }
+    std::vector<std::pair<std::size_t, int>> sides;
+    for (std::size_t k = 0; k < lines.size(); ++k) {
+        const auto& c = curves[idx[k]];
+        const geometry::Vec2 a = c.points[0], b = c.points[1];
+        const double cr = (b.x - a.x) * (centre.y - a.y) - (b.y - a.y) * (centre.x - a.x);
+        sides.emplace_back(idx[k], cr > 0 ? 1 : -1);
+    }
+    Json circle{{"type", "circle"}, {"center", Json::array({centre.x, centre.y})}, {"radius", radius}};
+    if (item.value("construction", false))
+        circle["construction"] = true;
+    return {circle, sides};
+}
+
 /// The ends of lines, arcs and open splines at `at` (the solver joins those ends), as
 /// {curve, "start" | "end"}.
 std::vector<std::pair<std::size_t, std::string>> curveEndsAt(const std::vector<geometry::SketchCurve>& curves,
@@ -1264,6 +1420,19 @@ void registerSketchCommands(CommandRegistry& r)
                   Json constraints = f->params.value("constraints", Json::array());
                   std::vector<PlacedArc> placed;
                   for (const auto& c : params.at("curves")) {
+                      if (c.value("type", std::string()) == "tangent_circle") {
+                          // Like a tangent arc, it refers to the solved lines.
+                          d.editFeature(id, {{"curves", curves}});
+                          const auto solved = d.sketches().find(id);
+                          if (solved == d.sketches().end())
+                              throw CommandError("The sketch is not evaluated");
+                          const std::size_t next = solved->second.curves.size();
+                          auto [circle, sides] = resolveTangentCircle(d, solved->second.curves, c);
+                          curves.push_back(circle);
+                          for (const auto& [line, side] : sides)
+                              constraints.push_back({{"type", "tangent"}, {"curves", Json::array({next, line})}, {"side", side}});
+                          continue;
+                      }
                       if (c.value("type", std::string()) != "tangent_arc") {
                           curves.push_back(c);
                           continue;
@@ -2070,6 +2239,7 @@ void registerFeatureCommands(CommandRegistry& r)
                                         "targets are followed."}}},
                 {"distance2", numberOrExpr("Backward distance for two_sides (mm).")},
                 {"flip", {{"type", "boolean"}, {"description", "Extrude against the sketch normal."}}},
+                {"start_offset", numberOrExpr("Start offset from the sketch plane along the extrusion direction (mm).")},
                 {"taper", numberOrExpr("Taper angle in degrees (Fusion: Taper Angle), default 0: positive narrows "
                                        "the profile away from the sketch plane, negative widens it; with symmetric "
                                        "or two_sides each side tapers away from the plane. |taper| < 89; not with "
@@ -2086,7 +2256,12 @@ void registerFeatureCommands(CommandRegistry& r)
                           {"description", "\"X\", \"Y\", \"Z\" (world axes through the origin, default Z), "
                                           "{line: curve index of a sketch line} or {origin: [x,y,z], direction: "
                                           "[x,y,z]}."}}},
+                {"extent", {{"type", "string"},
+                            {"enum", {"one_side", "symmetric", "two_sides"}},
+                            {"description", "one_side (default); symmetric: `angle` in total, half each side; two_sides: "
+                                            "`angle` forwards, `angle2` backwards (at most 360 together)."}}},
                 {"angle", numberOrExpr("Angle in degrees, default 360.")},
+                {"angle2", numberOrExpr("Backward angle for two_sides (degrees).")},
                 {"operation", operationSchema()},
                 {"bodies", bodiesSchema()}}),
         {"sketch"});

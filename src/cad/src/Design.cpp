@@ -707,12 +707,39 @@ void appendCurves(const Eval& ev, const Json& item, std::vector<SketchCurve>& ou
         auto at = [&](double a) { return Vec2{c.x + r * std::cos(a), c.y + r * std::sin(a)}; };
         push({SketchCurve::Kind::Arc, {at(a0), at(am), at(a1)}});
     } else if (type == "polygon") {
-        const Vec2 c = ev.vec2(item, "center");
-        const double r = ev.num(item, "radius");
+        // Fusion: Polygon > Inscribed (corners on the circle `radius`), Circumscribed (sides
+        // touch it; `angle` points at the middle of a side) or Edge (a side from `start` to
+        // `end`, the polygon on its left). All become the same regular polygon.
         const int sides = static_cast<int>(std::lround(ev.num(item, "sides")));
-        const double rot = ev.num(item, "angle", 0.0) * kDegToRad;
         if (sides < 3 || sides > 256)
             throw DesignError("Polygon needs 3 to 256 sides");
+        const std::string mode = lower(item.value("mode", std::string("inscribed")));
+        const double halfTurn = std::numbers::pi / sides;
+        Vec2 c{};
+        double r = 0.0;
+        double rot = 0.0;
+        if (mode == "edge") {
+            const Vec2 a = ev.vec2(item, "start");
+            const Vec2 b = ev.vec2(item, "end");
+            const double len = std::hypot(b.x - a.x, b.y - a.y);
+            if (len < 1e-9)
+                throw DesignError("Polygon edge needs two distinct points");
+            const Vec2 mid{(a.x + b.x) / 2, (a.y + b.y) / 2};
+            const double apothem = len / (2 * std::tan(halfTurn));
+            c = Vec2{mid.x - (b.y - a.y) / len * apothem, mid.y + (b.x - a.x) / len * apothem};
+            r = len / (2 * std::sin(halfTurn));
+            rot = std::atan2(a.y - c.y, a.x - c.x);
+        } else {
+            c = ev.vec2(item, "center");
+            r = ev.num(item, "radius");
+            rot = ev.num(item, "angle", 0.0) * kDegToRad;
+            if (mode == "circumscribed") {
+                r /= std::cos(halfTurn);
+                rot -= halfTurn;
+            } else if (mode != "inscribed") {
+                throw DesignError("Unknown polygon mode '" + mode + "' (inscribed, circumscribed, edge)");
+            }
+        }
         auto at = [&](int i) {
             const double a = rot + 2 * std::numbers::pi * i / sides;
             return Vec2{c.x + r * std::cos(a), c.y + r * std::sin(a)};
@@ -722,10 +749,31 @@ void appendCurves(const Eval& ev, const Json& item, std::vector<SketchCurve>& ou
         for (int i = 1; i < sides; ++i)
             implicit.push_back({CT::Equal, {first, first + static_cast<std::size_t>(i)}, {}});
     } else if (type == "slot") {
-        // Center-to-center slot: two parallel lines joined by half circles.
-        const Vec2 a = ev.vec2(item, "start");
-        const Vec2 b = ev.vec2(item, "end");
+        // Two parallel lines joined by half circles. Fusion: Slot > Center to Center (`start`,
+        // `end` are the centres of the ends), Overall (they are the far points of the ends) or
+        // Center Point (`center` of the slot and `end`, the centre of one end).
+        const std::string mode = lower(item.value("mode", std::string("center_to_center")));
+        Vec2 a{};
+        Vec2 b{};
         const double r = ev.num(item, "width") / 2;
+        if (mode == "center_point") {
+            const Vec2 m = ev.vec2(item, "center");
+            b = ev.vec2(item, "end");
+            a = Vec2{2 * m.x - b.x, 2 * m.y - b.y};
+        } else {
+            a = ev.vec2(item, "start");
+            b = ev.vec2(item, "end");
+            if (mode == "overall") {
+                const double span = std::hypot(b.x - a.x, b.y - a.y);
+                if (span <= 2 * r + 1e-9)
+                    throw DesignError("An overall slot must be longer than its width");
+                const Vec2 u{(b.x - a.x) / span, (b.y - a.y) / span};
+                a = Vec2{a.x + u.x * r, a.y + u.y * r};
+                b = Vec2{b.x - u.x * r, b.y - u.y * r};
+            } else if (mode != "center_to_center") {
+                throw DesignError("Unknown slot mode '" + mode + "' (center_to_center, overall, center_point)");
+            }
+        }
         const double len = std::hypot(b.x - a.x, b.y - a.y);
         if (len < 1e-9 || r <= 0)
             throw DesignError("Slot needs distinct centres and a positive width");
@@ -1393,11 +1441,16 @@ Json itemFromSolved(const Json& item, const SketchCurve* c, std::size_t n)
         out["center"] = pt(ctr);
         out["radius"] = std::hypot(v.x - ctr.x, v.y - ctr.y);
         out["angle"] = std::atan2(v.y - ctr.y, v.x - ctr.x) / kDegToRad;
+        // Whatever way it was drawn, it is now an inscribed polygon with these numbers.
+        for (const char* k : {"mode", "start", "end"})
+            out.erase(k);
     } else if (type == "slot") {
         const Vec2 a = arcCenter(c[3]), b = arcCenter(c[1]);
         out["start"] = pt(a);
         out["end"] = pt(b);
         out["width"] = 2 * std::hypot(c[1].points[0].x - b.x, c[1].points[0].y - b.y);
+        for (const char* k : {"mode", "center"})
+            out.erase(k);
     } else if (type == "spline") {
         Json pts = Json::array();
         for (const auto& q : c[0].points)
@@ -3667,11 +3720,19 @@ void Design::evaluateFeature(const Feature& f)
         m_sketches[f.id] = std::move(sk);
     } else if (f.type == "extrude") {
         SketchResult* sk = nullptr;
-        const auto faces = profiles(sk);
+        auto faces = profiles(sk);
         const std::string extent = lower(p.value("extent", std::string("one_side")));
         core::Vec3 dir = sk->plane.normal;
         if (p.value("flip", false))
             dir = dir * -1.0;
+        // Fusion: Start > Offset. The profile starts `start_offset` away from the sketch plane,
+        // along the extrusion direction, and everything (distance, taper, To Object) counts from
+        // there.
+        const double startOffset = ev.num(p, "start_offset", 0.0);
+        if (std::abs(startOffset) > 1e-9) {
+            for (auto& face : faces)
+                face = geometry::translated(face, dir * startOffset);
+        }
         const double taper = ev.num(p, "taper", 0.0);
         if (extent == "to_object" && taper != 0.0)
             throw DesignError("Taper angle is not available with extent To Object");
@@ -3762,10 +3823,34 @@ void Design::evaluateFeature(const Feature& f)
             origin = ev.vec3(axis, "origin", {});
             dir = ev.vec3(axis, "direction", {0, 0, 1});
         }
-        const double angle = ev.num(p, "angle", 360.0);
+        // Fusion: Direction One Side / Symmetric / Two Sides. Symmetric: `angle` is the total,
+        // half on each side of the sketch plane. Two sides: `angle` forwards, `angle2` backwards.
+        const std::string extent = lower(p.value("extent", std::string("one_side")));
+        double angle = ev.num(p, "angle", 360.0);
+        double back = 0.0;
+        if (extent == "symmetric") {
+            if (angle <= 0.0 || angle > 360.0)
+                throw DesignError("Revolve: the angle must be in (0, 360] degrees");
+            if (angle < 360.0 - 1e-9)
+                back = angle / 2.0;
+            angle -= back;
+        } else if (extent == "two_sides") {
+            back = ev.num(p, "angle2");
+            if (back <= 0.0)
+                throw DesignError("Revolve: the second angle must be positive");
+            if (angle <= 0.0)
+                throw DesignError("Revolve: the angle must be positive");
+            if (angle + back > 360.0 + 1e-9)
+                throw DesignError("Revolve: the two angles add up to more than 360 degrees");
+        } else if (extent != "one_side") {
+            throw DesignError("Unknown extent '" + extent + "' (one_side, symmetric, two_sides)");
+        }
         std::vector<geometry::Shape> solids;
-        for (const auto& face : faces)
-            solids.push_back(geometry::revolve(face, origin, dir, angle));
+        for (const auto& face : faces) {
+            solids.push_back(back > 0.0
+                                 ? geometry::revolve(geometry::rotated(face, origin, dir, -back), origin, dir, angle + back)
+                                 : geometry::revolve(face, origin, dir, angle));
+        }
         applyOperation(unionAll(solids));
     } else if (f.type == "fillet" || f.type == "chamfer") {
         Body& b = bodyRef(required(p, "body"));
