@@ -489,6 +489,12 @@ if(AEROCAD_BUILD_TESTS)
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/scan_to_part_next_steps.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_scan_to_part_next_steps_test PROPERTIES LABELS gui TIMEOUT 90)
+    # CAD-276: the scan's Details are not shown in the Properties panel while a sketch is drawn.
+    add_test(NAME app_sketch_details_hidden_test
+        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl
+                --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_details_hidden.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_sketch_details_hidden_test PROPERTIES LABELS gui TIMEOUT 90)
     # CAD-246, CAD-247: Both sides refuses a fin across the mirror plane; no selection toolbar under the pane.
     add_test(NAME app_fin_both_sides_centre_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl

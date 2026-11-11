@@ -20,6 +20,9 @@ Pane {
     /// Measuring waits while this is true: geometry.measure would end a Move / Rotate /
     /// Scale preview (an explicit analysis commits it), so it is left until the tool ends.
     property bool busy: false
+    /// While a sketch is being drawn the selection can still be the scan under it: its name
+    /// and size are not what the panel is about then (the guide says "Drawing a sketch").
+    readonly property bool detailsShown: !!info.id && !(registry.host.activeSketch && info.kind !== "sketch")
 
     function refresh() {
         info = partId ? controller.partInfo(partId) : ({})
@@ -77,14 +80,14 @@ Pane {
             }
 
             Rectangle {
-                visible: !!root.info.id
+                visible: root.detailsShown
                 Layout.fillWidth: true
                 implicitHeight: 1
                 color: Theme.separator
             }
 
             Text {
-                visible: !!root.info.id
+                visible: root.detailsShown
                 Layout.leftMargin: Theme.space3
                 Layout.topMargin: Theme.space1
                 text: qsTr("DETAILS")
@@ -95,7 +98,7 @@ Pane {
             }
 
             GridLayout {
-                visible: !!root.info.id
+                visible: root.detailsShown
                 Layout.fillWidth: true
                 Layout.leftMargin: Theme.space3
                 Layout.rightMargin: Theme.space3
