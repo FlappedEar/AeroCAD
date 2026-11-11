@@ -623,9 +623,6 @@ SketchConstraint parseConstraint(const Eval& ev, const Json& j)
     return c;
 }
 
-/// Appends the curves of one sketch item. `implicit` receives the constraints that the
-/// shape implies (a rectangle has horizontal and vertical sides, a slot tangent ends), so
-/// that dimensions added later keep the shape, like Fusion's sketch tools.
 /// Points along the B-spline of a control polygon (Fusion: Spline > Control Point Spline): a clamped
 /// open curve (starts and ends on the first and last control point) or a closed periodic one, of the
 /// given degree, `perSpan` points per knot span. The sketch keeps it as a spline through these points.
@@ -674,6 +671,9 @@ std::vector<Vec2> sampleControlSpline(const std::vector<Vec2>& ctrl, int degree,
     return out;
 }
 
+/// Appends the curves of one sketch item. `implicit` receives the constraints that the
+/// shape implies (a rectangle has horizontal and vertical sides, a slot tangent ends), so
+/// that dimensions added later keep the shape, like Fusion's sketch tools.
 void appendCurves(const Eval& ev, const Json& item, std::vector<SketchCurve>& out,
                   std::vector<SketchConstraint>& implicit)
 {
@@ -937,6 +937,8 @@ void appendCurves(const Eval& ev, const Json& item, std::vector<SketchCurve>& ou
         for (const auto& p : required(item, "points"))
             ctrl.push_back(ev.vec2(p));
         const bool closed = item.value("closed", false);
+        if (item.contains("degree") && !item["degree"].is_number_integer())
+            throw DesignError("A control point spline has an integer degree from 2 to 5");
         const int degree = item.value("degree", 3);
         if (degree < 2 || degree > 5)
             throw DesignError("A control point spline has degree 2 to 5");
