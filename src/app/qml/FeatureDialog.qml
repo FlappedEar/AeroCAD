@@ -367,6 +367,22 @@ Pane {
             { key: "diameter", type: "expr", label: qsTr("Outer size (diameter / side)"), init: 10 },
             { key: "thickness", type: "expr", label: qsTr("Wall thickness (0: solid)"), init: 0 },
             { key: "operation", type: "choice", label: qsTr("Operation"), init: "new_body", options: operations }] },
+        coil: { title: qsTr("Coil"), command: "feature.coil", fields: [
+            { key: "diameter", type: "expr", label: qsTr("Outer diameter"), init: 30 },
+            { key: "section_size", type: "expr", label: qsTr("Wire diameter (square: side)"), init: 4 },
+            { key: "coilType", type: "choice", label: qsTr("Size by"), init: "revolutions_pitch", local: true, options: [
+                { value: "revolutions_pitch", label: qsTr("Revolutions and pitch") }, { value: "revolutions_height", label: qsTr("Revolutions and height") },
+                { value: "height_pitch", label: qsTr("Height and pitch") }] },
+            { key: "revolutions", type: "expr", label: qsTr("Revolutions"), init: 5, showIf: v => v.coilType !== "height_pitch" },
+            { key: "pitch", type: "expr", label: qsTr("Pitch"), init: 8, showIf: v => v.coilType !== "revolutions_height" },
+            { key: "height", type: "expr", label: qsTr("Height"), init: 40, showIf: v => v.coilType !== "revolutions_pitch" },
+            { key: "axis", type: "choice", label: qsTr("Axis"), init: "Z", options: [
+                { value: "X", label: qsTr("X") }, { value: "Y", label: qsTr("Y") }, { value: "Z", label: qsTr("Z") }] },
+            { key: "section", type: "choice", label: qsTr("Section"), init: "circular", options: [
+                { value: "circular", label: qsTr("Circular") }, { value: "square", label: qsTr("Square") }] },
+            { key: "handedness", type: "choice", label: qsTr("Handedness"), init: "right", options: [
+                { value: "right", label: qsTr("Right") }, { value: "left", label: qsTr("Left") }] },
+            { key: "operation", type: "choice", label: qsTr("Operation"), init: "new_body", options: operations }] },
         rib: { title: qsTr("Rib"), command: "feature.rib", fields: [
             { key: "path", type: "pathSketch", label: qsTr("Curve sketch") },
             { key: "thickness", type: "expr", label: qsTr("Thickness"), init: 3 },

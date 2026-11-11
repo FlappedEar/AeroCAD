@@ -4202,3 +4202,117 @@ TEST_CASE("Design commands: Rib (CAD-271)", "[commands][cad]")
         CHECK_FALSE(s.execute("feature.rib", {{"path", {{"sketch", line}}}, {"thickness", 4}, {"depth", 10}, {"direction", "up"}}).ok);
     }
 }
+
+TEST_CASE("Design commands: Coil (CAD-271)", "[commands][cad]")
+{
+    commands::Session s;
+    const double pi = 3.14159265358979323846;
+    // Outer diameter 30, wire 4: helix radius 13. Section area times the length of the centroid path.
+    const double sectionArea = pi * 2 * 2;
+
+    SECTION("revolutions and pitch")
+    {
+        const auto r = run(s, "feature.coil", {{"diameter", 30}, {"section_size", 4}, {"revolutions", 5}, {"pitch", 8}});
+        REQUIRE(r.at("bodies").size() == 1);
+        CHECK(r.at("bodies")[0].at("volume").get<double>() == Approx(sectionArea * 2 * pi * 13 * 5).epsilon(2e-3));
+        const auto b = s.design().bodies().at(r.at("bodies")[0].at("id").get<std::uint64_t>()).shape.bounds();
+        CHECK(geometry::isValid(s.design().bodies().at(r.at("bodies")[0].at("id").get<std::uint64_t>()).shape));
+        // (Bounding boxes of swept surfaces are not tight, so only the start is checked exactly.)
+        CHECK(b.max.x - b.min.x >= 30 - 1e-3);
+        CHECK(b.min.z == Approx(-2).margin(1e-3));
+        CHECK(b.max.z >= 40 + 2 - 1e-3);
+    }
+
+    SECTION("height and pitch give the turns; height and revolutions give the pitch")
+    {
+        const auto a = run(s, "feature.coil", {{"diameter", 30}, {"section_size", 4}, {"height", 40}, {"pitch", 8}});
+        CHECK(a.at("bodies")[0].at("volume").get<double>() == Approx(sectionArea * 2 * pi * 13 * 5).epsilon(2e-3));
+        const auto b = run(s, "feature.coil", {{"diameter", 30}, {"section_size", 4}, {"height", 40}, {"revolutions", 5}});
+        CHECK(b.at("bodies").back().at("volume").get<double>() == Approx(sectionArea * 2 * pi * 13 * 5).epsilon(2e-3));
+    }
+
+    SECTION("a square wire, a left-handed coil about X")
+    {
+        const auto r = run(s, "feature.coil",
+                           {{"diameter", 30}, {"section_size", 4}, {"revolutions", 3}, {"pitch", 8}, {"section", "square"},
+                            {"handedness", "left"}, {"axis", "X"}});
+        CHECK(r.at("bodies")[0].at("volume").get<double>() == Approx(16 * 2 * pi * 13 * 3).epsilon(2e-3));
+        const auto b = s.design().bodies().at(r.at("bodies")[0].at("id").get<std::uint64_t>()).shape.bounds();
+        CHECK(b.max.x - b.min.x == Approx(24 + 4).margin(1e-2));
+    }
+
+    SECTION("a tight pitch still gives a valid solid or a clear error")
+    {
+        const auto r = s.execute("feature.coil", {{"diameter", 30}, {"section_size", 4}, {"revolutions", 5}, {"pitch", 4.5}});
+        if (r.ok)
+            CHECK(geometry::isValid(s.design().bodies().at(r.data.at("bodies")[0].at("id").get<std::uint64_t>()).shape));
+        else
+            CHECK_FALSE(r.error.empty());
+    }
+
+    SECTION("bad values are errors")
+    {
+        CHECK_FALSE(s.execute("feature.coil", {{"diameter", 30}, {"section_size", 4}, {"revolutions", 5}}).ok);
+        CHECK_FALSE(s.execute("feature.coil", {{"diameter", 30}, {"section_size", 4}, {"revolutions", 5}, {"pitch", 8}, {"height", 40}}).ok);
+        CHECK_FALSE(s.execute("feature.coil", {{"diameter", 30}, {"section_size", 4}, {"revolutions", 5}, {"pitch", 3}}).ok);
+        CHECK_FALSE(s.execute("feature.coil", {{"diameter", 3}, {"section_size", 4}, {"revolutions", 5}, {"pitch", 8}}).ok);
+        CHECK_FALSE(s.execute("feature.coil", {{"diameter", 30}, {"section_size", 4}, {"revolutions", 0}, {"pitch", 8}}).ok);
+    }
+}
+
+TEST_CASE("Design commands: Intersect a body with a sketch plane (CAD-274)", "[commands][cad]")
+{
+    commands::Session s;
+    run(s, "feature.cylinder", {{"center", {30, 0, 0}}, {"radius", 10}, {"height", 15}});
+    const auto box = run(s, "feature.box", {{"corner", {-20, -5, 0}}, {"size", {10, 10, 10}}}).at("id").get<std::uint64_t>();
+    const double pi = 3.14159265358979323846;
+
+    SECTION("a box cut by a plane gives its four edges, fixed, and a profile")
+    {
+        const auto id = run(s, "sketch.create", {{"plane", "XY"}, {"offset", 5}}).at("id").get<std::uint64_t>();
+        run(s, "sketch.intersect", {{"sketch", id}, {"body", box}});
+        const Json c = run(s, "sketch.curves", {{"sketch", id}});
+        REQUIRE(c.at("curves").size() == 4);
+        for (const auto& curve : c.at("curves"))
+            CHECK(curve.at("kind") == "line");
+        CHECK(c.at("degreesOfFreedom") == 0);
+        const auto profiles = run(s, "sketch.profiles", {{"sketch", id}}).at("profiles");
+        REQUIRE(profiles.size() == 1);
+        CHECK(profiles[0].at("area").get<double>() == Approx(100).epsilon(1e-6));
+    }
+
+    SECTION("a cylinder cut across gives a circle; along its axis, a rectangle")
+    {
+        const auto top = run(s, "sketch.create", {{"plane", "XY"}, {"offset", 7}}).at("id").get<std::uint64_t>();
+        run(s, "sketch.intersect", {{"sketch", top}, {"body", "Body1"}});
+        const Json c = run(s, "sketch.curves", {{"sketch", top}});
+        REQUIRE(c.at("curves").size() == 1);
+        CHECK(c.at("curves")[0].at("kind") == "circle");
+        CHECK(c.at("curves")[0].at("radius").get<double>() == Approx(10).margin(1e-6));
+        const auto side = run(s, "sketch.create", {{"plane", "XZ"}, {"offset", 0}}).at("id").get<std::uint64_t>();
+        run(s, "sketch.intersect", {{"sketch", side}, {"body", "Body1"}});
+        const auto profiles = run(s, "sketch.profiles", {{"sketch", side}}).at("profiles");
+        REQUIRE(profiles.size() == 1);
+        CHECK(profiles[0].at("area").get<double>() == Approx(20 * 15).epsilon(1e-6));
+    }
+
+    SECTION("a slanted plane through a cylinder gives a closed curve (an ellipse)")
+    {
+        const auto id = run(s, "sketch.create",
+                            {{"plane", {{"origin", {30, 0, 7.5}}, {"normal", {0.5, 0, std::sqrt(3.0) / 2}}}}})
+                            .at("id").get<std::uint64_t>();
+        run(s, "sketch.intersect", {{"sketch", id}, {"body", "Body1"}});
+        const Json c = run(s, "sketch.curves", {{"sketch", id}});
+        REQUIRE(c.at("curves").size() == 1);
+        CHECK(c.at("curves")[0].at("kind") == "spline");
+        const auto profiles = run(s, "sketch.profiles", {{"sketch", id}}).at("profiles");
+        REQUIRE(profiles.size() == 1);
+        CHECK(profiles[0].at("area").get<double>() == Approx(pi * 100 / (std::sqrt(3.0) / 2)).epsilon(5e-3));
+    }
+
+    SECTION("a plane that misses the body is an error")
+    {
+        const auto id = run(s, "sketch.create", {{"plane", "XY"}, {"offset", 100}}).at("id").get<std::uint64_t>();
+        CHECK_FALSE(s.execute("sketch.intersect", {{"sketch", id}, {"body", box}}).ok);
+    }
+}

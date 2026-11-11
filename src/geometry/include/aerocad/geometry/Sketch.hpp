@@ -115,6 +115,11 @@ struct SketchGeometry {
 /// curves are not one chain or the offset collapses.
 [[nodiscard]] std::vector<SketchCurve> offsetCurves(const std::vector<SketchCurve>& curves, double distance);
 
+/// The curves where `shape` is cut by `plane` (Fusion: Sketch > Intersect), as sketch curves in plane
+/// coordinates (same conversion as projectEdges; duplicates, e.g. along a face boundary, are dropped).
+/// Empty when the plane misses the shape.
+[[nodiscard]] std::vector<SketchCurve> intersectCurves(const Shape& shape, const Plane& plane);
+
 /// Edges `edgeIndices` of `shape` (indices as Modeling's edges()) projected onto `plane`
 /// as sketch curves in plane coordinates (Fusion: Sketch > Project): lines stay lines,
 /// circles and arcs parallel to the plane stay circles and arcs, anything else becomes a

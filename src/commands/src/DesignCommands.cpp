@@ -1550,6 +1550,24 @@ void registerSketchCommands(CommandRegistry& r)
               return addedFeature(design(ctx), ctx.document, id);
           });
 
+    r.add({"sketch.intersect", "Intersect",
+           "Adds the curves where a body is cut by a sketch's plane (Fusion: Sketch > Intersect), e.g. the outline "
+           "of a wing section: lines, circles and arcs stay so, other curves become splines. They are added at the "
+           "end of sketch.curves, fixed where they are; they do not follow later changes of the body.",
+           objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
+                         {"body", bodyRefSchema("Body cut by the sketch plane.")}},
+                        {"sketch", "body"}),
+           true},
+          [](CommandContext& ctx, const Json& params) {
+              const auto id = params.at("sketch").get<cad::FeatureId>();
+              designChange(ctx, "Intersect", [&](cad::Design& d) {
+                  (void)sketchFeature(d, id);
+                  d.intersectToSketch(id, requireBody(d, params.at("body")).id);
+                  return Json{};
+              });
+              return addedFeature(design(ctx), ctx.document, id);
+          });
+
     r.add({"sketch.offset", "Sketch Offset",
            "Offsets a connected chain of sketch curves (Fusion: Sketch > Offset): `distance` > 0 outwards for a "
            "closed chain (to the left of an open one), < 0 the other way. Corners are rounded. The offset curves "
@@ -2369,6 +2387,21 @@ void registerFeatureCommands(CommandRegistry& r)
                        {"section", {{"type", "string"}, {"enum", {"circular", "square"}}, {"description", "Default circular."}}},
                        {"operation", operationSchema()}},
                       {"path"});
+
+    addFeatureCommand(r, "coil", "Coil",
+                      "A spring (Fusion: Create > Coil): a round or square wire winding about an axis. Give two of "
+                      "revolutions, pitch and height.",
+                      {{"center", point3("Start centre [x, y, z] (default origin).")},
+                       {"axis", {{"type", Json::array({"string", "array"})}, {"description", "X, Y, Z (default) or [x, y, z]."}}},
+                       {"diameter", numberOrExpr("Outer diameter of the coil (mm).")},
+                       {"section_size", numberOrExpr("Wire diameter (square: side), mm.")},
+                       {"revolutions", numberOrExpr("Turns.")},
+                       {"pitch", numberOrExpr("Rise per turn (mm); must exceed section_size.")},
+                       {"height", numberOrExpr("Total rise (mm).")},
+                       {"section", {{"type", "string"}, {"enum", {"circular", "square"}}, {"description", "Default circular."}}},
+                       {"handedness", {{"type", "string"}, {"enum", {"right", "left"}}, {"description", "Default right."}}},
+                       {"operation", operationSchema()}},
+                      {"diameter", "section_size"});
 
     addFeatureCommand(r, "rib", "Rib",
                       "A wall on flat sketch curves (Fusion: Create > Rib). direction normal: `depth` up from the "

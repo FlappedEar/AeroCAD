@@ -18,6 +18,11 @@
 #include <BRepClass_FaceClassifier.hxx>
 #include <GC_MakeArcOfCircle.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepOffsetAPI_MakePipeShell.hxx>
+#include <Geom_CylindricalSurface.hxx>
+#include <Geom2d_Line.hxx>
+#include <gp_Circ.hxx>
+#include <gp_Dir2d.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepBuilderAPI_MakeSolid.hxx>
@@ -1297,6 +1302,64 @@ Shape sphere(const core::Vec3& center, double radius)
     if (!std::isfinite(radius) || radius <= 0)
         throw ModelingError("Sphere: the diameter must be positive");
     return guarded("Sphere", [&] { return wrapShape(BRepPrimAPI_MakeSphere(toPnt(center), radius).Solid()); });
+}
+
+Shape coil(const core::Vec3& origin, const core::Vec3& axis, double helixRadius, double pitch, double revolutions,
+           double sectionSize, bool square, bool leftHanded)
+{
+    if (!(helixRadius > 0.0) || !(pitch > 0.0) || !(revolutions > 0.0) || !(sectionSize > 0.0))
+        throw ModelingError("Coil: the diameter, pitch, revolutions and section size must be positive");
+    if (axis.length() < 1e-9)
+        throw ModelingError("Coil: zero axis");
+    if (sectionSize / 2.0 >= helixRadius)
+        throw ModelingError("Coil: the section is too big for that diameter");
+    if (!(pitch > sectionSize))
+        throw ModelingError("Coil: the pitch must be larger than the section size, or the turns overlap");
+    return guarded("Coil", [&] {
+        const core::Vec3 dir = axis.normalized();
+        // Any direction across the axis starts the helix.
+        const core::Vec3 across = (std::abs(dir.z) < 0.9 ? core::Vec3{0, 0, 1} : core::Vec3{1, 0, 0}).cross(dir).normalized();
+        const gp_Ax3 frame(toPnt(origin), gp_Dir(dir.x, dir.y, dir.z), gp_Dir(across.x, across.y, across.z));
+        const double twoPi = 2.0 * std::numbers::pi;
+        Handle(Geom_CylindricalSurface) cylinder = new Geom_CylindricalSurface(frame, helixRadius);
+        Handle(Geom2d_Line) line = new Geom2d_Line(gp_Pnt2d(0, 0), gp_Dir2d(leftHanded ? -twoPi : twoPi, pitch));
+        const double length = revolutions * std::sqrt(twoPi * twoPi + pitch * pitch);
+        TopoDS_Edge helix = BRepBuilderAPI_MakeEdge(line, cylinder, 0.0, length).Edge();
+        BRepLib::BuildCurves3d(helix);
+        const TopoDS_Wire spine = BRepBuilderAPI_MakeWire(helix).Wire();
+        // The section lies in the plane through the axis and the start point.
+        const gp_Pnt start = toPnt(origin + across * helixRadius);
+        const gp_Dir radial(across.x, across.y, across.z);
+        const gp_Dir up(dir.x, dir.y, dir.z);
+        const gp_Dir planeNormal = radial.Crossed(up);
+        const double h = sectionSize / 2.0;
+        TopoDS_Wire profile;
+        if (square) {
+            const gp_Vec r(radial), u(up);
+            BRepBuilderAPI_MakePolygon poly;
+            poly.Add(start.Translated(-r * h - u * h));
+            poly.Add(start.Translated(r * h - u * h));
+            poly.Add(start.Translated(r * h + u * h));
+            poly.Add(start.Translated(-r * h + u * h));
+            poly.Close();
+            profile = poly.Wire();
+        } else {
+            profile = BRepBuilderAPI_MakeWire(BRepBuilderAPI_MakeEdge(gp_Circ(gp_Ax2(start, planeNormal), h)).Edge()).Wire();
+        }
+        BRepOffsetAPI_MakePipeShell shell(spine);
+        shell.SetMode(up); // keeps the section turned the same way to the axis all along
+        shell.Add(profile);
+        shell.Build();
+        if (!shell.IsDone() || !shell.MakeSolid())
+            throw ModelingError("Coil failed");
+        TopoDS_Shape solid = shell.Shape();
+        // A left-handed helix flips the orientation of the result.
+        if (GProp_GProps props; (BRepGProp::VolumeProperties(solid, props), props.Mass() < 0.0))
+            solid.Reverse();
+        if (!BRepCheck_Analyzer(solid).IsValid())
+            throw ModelingError("Coil failed: the swept solid is not valid (try a larger pitch or a thinner wire)");
+        return wrapShape(solid);
+    });
 }
 
 Shape torus(const core::Vec3& center, double ringRadius, double tubeRadius)

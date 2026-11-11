@@ -7,6 +7,7 @@
 
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAlgoAPI_BuilderAlgo.hxx>
+#include <BRepAlgoAPI_Section.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepGProp_Face.hxx>
 #include <BRepOffsetAPI_MakeOffset.hxx>
@@ -766,6 +767,48 @@ std::vector<SketchCurve> projectEdges(const Shape& shape, const std::vector<std:
         throw ModelingError(std::string("Project failed: ") + e.GetMessageString());
     }
     return out;
+}
+
+std::vector<SketchCurve> intersectCurves(const Shape& shape, const Plane& planeIn)
+{
+    const Plane plane = planeIn.normalized();
+    if (shape.isNull())
+        throw ModelingError("Nothing to intersect");
+    try {
+        const gp_Pln pln(gp_Pnt(plane.origin.x, plane.origin.y, plane.origin.z), toDir(plane.normal));
+        BRepAlgoAPI_Section section(shape.impl()->shape, pln, Standard_False);
+        section.Approximation(Standard_True);
+        section.Build();
+        if (!section.IsDone())
+            throw ModelingError("The section failed");
+        TopTools_IndexedMapOfShape map;
+        TopExp::MapShapes(section.Shape(), TopAbs_EDGE, map);
+        if (map.Extent() == 0)
+            return {};
+        std::vector<std::size_t> idx;
+        for (int i = 0; i < map.Extent(); ++i)
+            idx.push_back(static_cast<std::size_t>(i));
+        std::vector<SketchCurve> all = projectEdges(wrapShape(section.Shape()), idx, plane);
+        // A plane along a face boundary gives the same edge from both faces: keep one.
+        const auto same = [](const SketchCurve& a, const SketchCurve& b) {
+            if (a.kind != b.kind || a.points.size() != b.points.size() || std::abs(a.radius - b.radius) > 1e-6)
+                return false;
+            const auto close = [&](bool reversed) {
+                for (std::size_t i = 0; i < a.points.size(); ++i)
+                    if (distance2d(a.points[i], b.points[reversed ? a.points.size() - 1 - i : i]) > 1e-6)
+                        return false;
+                return true;
+            };
+            return close(false) || close(true);
+        };
+        std::vector<SketchCurve> unique;
+        for (auto& c : all)
+            if (std::none_of(unique.begin(), unique.end(), [&](const SketchCurve& u) { return same(u, c); }))
+                unique.push_back(std::move(c));
+        return unique;
+    } catch (const Standard_Failure& e) {
+        throw ModelingError(std::string("Intersect failed: ") + e.GetMessageString());
+    }
 }
 
 double area(const Shape& shape)

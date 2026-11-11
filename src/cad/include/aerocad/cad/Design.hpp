@@ -256,6 +256,9 @@ public:
     /// projected curves are added at the end, fixed where they are. `edges` as feature
     /// edge references (indices or {point}). They do not follow later changes of the body.
     void projectToSketch(FeatureId sketch, FeatureId body, const Json& edges);
+    /// Adds the curves where body `body` is cut by the sketch plane (Fusion: Sketch > Intersect), fixed
+    /// where they are. Throws DesignError when the plane misses the body.
+    void intersectToSketch(FeatureId sketch, FeatureId body);
     /// Writes where the solver put a sketch's curves into its items (Fusion keeps sketch
     /// geometry where it is solved), so the next edit starts from what is shown: new curves
     /// join the shown ends and branch choices (tangent side, ...) follow the shown shape.
