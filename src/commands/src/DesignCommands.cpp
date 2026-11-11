@@ -2326,6 +2326,17 @@ void registerFeatureCommands(CommandRegistry& r)
                        {"center", point3("Rotation and scale centre [x, y, z] in mm.")}},
                       {"body"});
 
+    addFeatureCommand(r, "scale", "Scale",
+                      "Scales a body (Fusion: Modify > Scale): `factor` for uniform, or `factor_x`, `factor_y`, "
+                      "`factor_z` (a missing one is 1) for non-uniform, about `center`.",
+                      {{"body", bodyRefSchema("Body to scale.")},
+                       {"factor", numberOrExpr("Uniform scale factor.")},
+                       {"factor_x", numberOrExpr("Non-uniform: factor along X.")},
+                       {"factor_y", numberOrExpr("Non-uniform: factor along Y.")},
+                       {"factor_z", numberOrExpr("Non-uniform: factor along Z.")},
+                       {"center", point3("Scale centre [x, y, z] in mm (default: bounding box centre).")}},
+                      {"body"});
+
     addFeatureCommand(r, "rectangular_pattern", "Rectangular Pattern",
                       "Copies a body in one or two directions (Fusion: Create > Pattern > Rectangular Pattern).",
                       {{"body", bodyRefSchema("Body to pattern.")},

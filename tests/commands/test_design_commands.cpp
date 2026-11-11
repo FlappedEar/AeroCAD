@@ -3932,3 +3932,40 @@ TEST_CASE("Design commands: circle tangent to two or three lines (CAD-270)", "[c
                               {{"sketch", id}, {"curves", Json::array({{{"type", "tangent_circle"}, {"curves", {0, 3}}, {"near", {5, 5}}}})}}).ok);
     }
 }
+
+TEST_CASE("Design commands: Scale, uniform and non-uniform (CAD-271)", "[commands][cad]")
+{
+    commands::Session s;
+    const auto sk = run(s, "sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "rectangle"}, {"corner", {0, 0}}, {"width", 20}, {"height", 10}}})}})
+                        .at("id").get<std::uint64_t>();
+    const auto ex = run(s, "feature.extrude", {{"sketch", sk}, {"distance", 5}});
+    const auto bodyId = ex.at("bodies")[0].at("id").get<std::uint64_t>();
+
+    SECTION("non-uniform: each axis has its own factor, about the box centre by default")
+    {
+        const auto r = run(s, "feature.scale", {{"body", bodyId}, {"factor_x", 2}, {"factor_z", 0.5}});
+        CHECK(r.at("bodies")[0].at("volume").get<double>() == Approx(20 * 10 * 5 * 2 * 0.5).epsilon(1e-6));
+        const auto b = s.design().bodies().at(bodyId).shape.bounds();
+        CHECK(b.max.x - b.min.x == Approx(40).epsilon(1e-6));
+        CHECK(b.max.y - b.min.y == Approx(10).epsilon(1e-6));
+        CHECK(b.max.z - b.min.z == Approx(2.5).epsilon(1e-6));
+        CHECK((b.max.x + b.min.x) / 2 == Approx(10).epsilon(1e-6)); // the centre stayed
+    }
+
+    SECTION("uniform about a given centre")
+    {
+        run(s, "feature.scale", {{"body", bodyId}, {"factor", 3}, {"center", {0, 0, 0}}});
+        const auto b = s.design().bodies().at(bodyId).shape.bounds();
+        CHECK(b.min.x == Approx(0).margin(1e-6));
+        CHECK(b.max.x == Approx(60).epsilon(1e-6));
+        CHECK(b.max.z == Approx(15).epsilon(1e-6));
+    }
+
+    SECTION("a zero or mixed request is refused")
+    {
+        CHECK_FALSE(s.execute("feature.scale", {{"body", bodyId}, {"factor", 0}}).ok);
+        CHECK_FALSE(s.execute("feature.scale", {{"body", bodyId}, {"factor", 2}, {"factor_x", 2}}).ok);
+    }
+}

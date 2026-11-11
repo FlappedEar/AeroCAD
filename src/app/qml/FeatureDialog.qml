@@ -328,6 +328,14 @@ Pane {
             { key: "angle", type: "expr", label: qsTr("Angle (deg)"), init: 90 },
             { key: "translate", type: "vec3", label: qsTr("Move by"), init: [0, 0, 0] },
             { key: "scale", type: "expr", label: qsTr("Scale (factor)"), init: 1 }] },
+        scale: { title: qsTr("Scale"), command: "feature.scale", fields: [
+            { key: "body", type: "body", label: qsTr("Body") },
+            { key: "scaleType", type: "choice", label: qsTr("Type"), init: "uniform", local: true, options: [
+                { value: "uniform", label: qsTr("Uniform") }, { value: "non_uniform", label: qsTr("Non-Uniform") }] },
+            { key: "factor", type: "expr", label: qsTr("Scale factor"), init: 1, showIf: v => v.scaleType !== "non_uniform" },
+            { key: "factor_x", type: "expr", label: qsTr("X factor"), init: 1, showIf: v => v.scaleType === "non_uniform" },
+            { key: "factor_y", type: "expr", label: qsTr("Y factor"), init: 1, showIf: v => v.scaleType === "non_uniform" },
+            { key: "factor_z", type: "expr", label: qsTr("Z factor"), init: 1, showIf: v => v.scaleType === "non_uniform" }] },
         split: { title: qsTr("Split Body"), command: "feature.split", fields: [
             { key: "body", type: "body", label: qsTr("Body to split") },
             { key: "plane", type: "planePick", label: qsTr("Splitting plane"), init: "YZ", hint: qsTr("Origin plane, construction plane, or click a planar face") },

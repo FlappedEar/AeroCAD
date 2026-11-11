@@ -132,7 +132,7 @@ const std::vector<std::string>& Design::featureTypes()
     static const std::vector<std::string> types{"sketch", "extrude", "revolve", "fillet", "chamfer",
                                                 "shell",  "combine", "box",     "cylinder", "sphere", "torus", "base_body", "hole",
                                                 "mirror",  "rectangular_pattern", "circular_pattern", "loft", "sweep", "plane",
-                                                "part_on_surface", "fin_on_surface", "move", "press_pull", "split", "delete_faces", "draft",
+                                                "part_on_surface", "fin_on_surface", "move", "scale", "press_pull", "split", "delete_faces", "draft",
                                                 "fit_selection", "fit_regions", "trim_by_sketch", "offset_surface", "thicken_surface"};
     return types;
 }
@@ -4038,6 +4038,24 @@ void Design::evaluateFeature(const Feature& f)
         if (factor != 1.0)
             body.shape = geometry::scaled(body.shape, factor, c);
         body.shape = geometry::transformed(body.shape, tf);
+    } else if (f.type == "scale") {
+        // Fusion: Modify > Scale. Uniform (`factor`) or non-uniform (`factor_x`, `_y`, `_z`; a
+        // missing one is 1) about `center` (default: the centre of the body's bounding box).
+        Body& body = bodyRef(required(p, "body"));
+        const core::Vec3 c = has(p, "center") ? ev.vec3(p.at("center")) : body.shape.bounds().center();
+        const bool nonUniform = has(p, "factor_x") || has(p, "factor_y") || has(p, "factor_z");
+        if (nonUniform && has(p, "factor"))
+            throw DesignError("Give either `factor` or factor_x / factor_y / factor_z");
+        const double uniform = ev.num(p, "factor", 1.0);
+        const double fx = ev.num(p, "factor_x", uniform), fy = ev.num(p, "factor_y", uniform), fz = ev.num(p, "factor_z", uniform);
+        for (const double v : {fx, fy, fz}) {
+            if (!std::isfinite(v) || v < geometry::kMinScaleFactor || v > geometry::kMaxScaleFactor)
+                throw DesignError("scale factors must be between 0.000001 and 1000000");
+        }
+        if (std::abs(fx - fy) < 1e-12 && std::abs(fy - fz) < 1e-12)
+            body.shape = geometry::scaled(body.shape, fx, c);
+        else
+            body.shape = geometry::scaledNonUniform(body.shape, fx, fy, fz, c);
     } else if (f.type == "mirror" || f.type == "rectangular_pattern" || f.type == "circular_pattern") {
         // Fusion: Mirror, Rectangular Pattern, Circular Pattern of a body. "join" (default)
         // merges the copies into the body, "new_body" makes one new body of the copies.
