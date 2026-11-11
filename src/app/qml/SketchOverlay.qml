@@ -238,7 +238,7 @@ Item {
     /// Ends the curve being drawn (a line chain) or the constraint pick, as Esc does. A
     /// spline is kept as an open spline through the points clicked so far.
     function endCurrent() {
-        if (tool === "spline")
+        if (tool === "spline" || tool === "cp_spline")
             finishSpline(false)
         reset()
         constraintLayer.reset()
@@ -666,7 +666,8 @@ Item {
         case "slot": return 3
         case "arc_slot": return 4
         case "elliptical_arc": return 5
-        case "spline": return Infinity // ended with Enter, a double-click or the first point
+        case "spline": return Infinity
+        case "cp_spline": return Infinity // ended with Enter, a double-click or the first point
         default: return 2
         }
     }
@@ -980,10 +981,55 @@ Item {
 
     /// Ends the spline being drawn: an open one needs 2 fit points, a closed one 3.
     function finishSpline(closed) {
-        if (points.length >= (closed ? 3 : 2))
+        if (tool === "cp_spline") {
+            // A control point spline needs 3 control points (degree 2), 4 or more make it cubic.
+            if (points.length >= 3)
+                emitCurve({ type: "control_spline", points: points, closed: closed, degree: Math.min(3, points.length - 1) })
+        } else if (points.length >= (closed ? 3 : 2)) {
             emitCurve({ type: "spline", points: points, closed: closed })
+        }
         points = []
         canvas.requestPaint()
+    }
+
+    /// Preview of the B-spline of a control polygon (clamped open, or periodic closed), as the
+    /// command makes it: degree 3, or 2 with only 3 points.
+    function controlSplinePreview(pts, closed) {
+        const n = pts.length
+        if (n < 3)
+            return pts
+        const d = Math.min(3, n - 1)
+        const poles = pts.slice()
+        if (closed)
+            for (let i = 0; i < d; ++i)
+                poles.push(pts[i])
+        const np = poles.length
+        const knots = []
+        for (let j = 0; j < np + d + 1; ++j)
+            knots.push(closed ? j : (j <= d ? 0 : (j >= np ? np - d : j - d)))
+        const lo = knots[d], hi = knots[np]
+        const evalAt = u => {
+            let k = d
+            while (k < np - 1 && u >= knots[k + 1])
+                ++k
+            const c = []
+            for (let j = 0; j <= d; ++j)
+                c.push(poles[j + k - d])
+            for (let r = 1; r <= d; ++r) {
+                for (let j = d; j >= r; --j) {
+                    const a = knots[j + k - d], b = knots[j + 1 + k - r]
+                    const w = b > a ? (u - a) / (b - a) : 0
+                    c[j] = [(1 - w) * c[j - 1][0] + w * c[j][0], (1 - w) * c[j - 1][1] + w * c[j][1]]
+                }
+            }
+            return c[d]
+        }
+        const total = (closed ? n : np - d) * 16
+        const out = []
+        for (let i = 0; i < total; ++i)
+            out.push(evalAt(lo + (hi - lo) * i / total))
+        out.push(closed ? out[0] : poles[np - 1])
+        return out
     }
 
     /// Smooth preview through fit points (centripetal Catmull-Rom); the finished spline
@@ -1101,7 +1147,7 @@ Item {
             return
         }
         const pts = points.concat([p])
-        if (tool === "spline") {
+        if (tool === "spline" || tool === "cp_spline") {
             // As in Fusion: a click on the first point closes the spline; a second click
             // on the last point (a double-click) ends it open.
             if (points.length >= 3 && dist(points[0], p) < 1e-9)
@@ -1560,7 +1606,7 @@ Item {
             if (!cancelPointDrag())
                 endCurrent()
             event.accepted = true
-        } else if (tool === "spline" && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)) {
+        } else if ((tool === "spline" || tool === "cp_spline") && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)) {
             finishSpline(false)
             event.accepted = true
         } else if ((tool === "circular_pattern" || tool === "rectangular_pattern") && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)) {
@@ -1571,7 +1617,7 @@ Item {
             // Enter still applies the factor typed (and previewed).
             applyScale(scaleFactor)
             event.accepted = true
-        } else if (active && !constraintTool && tool !== "spline" && tool !== "tangent_arc" && (points.length > 0 || tool === "offset" || tool === "move" || tool === "scale") && /^[0-9.(\-]$/.test(event.text)) {
+        } else if (active && !constraintTool && tool !== "spline" && tool !== "cp_spline" && tool !== "tangent_arc" && (points.length > 0 || tool === "offset" || tool === "move" || tool === "scale") && /^[0-9.(\-]$/.test(event.text)) {
             dimension.text = event.text
             dimension.forceActiveFocus()
             event.accepted = true
@@ -1703,6 +1749,27 @@ Item {
                     // Snapped onto the first point (3 or more clicked): the closed spline.
                     const closing = root.points.length >= 3 && root.hover !== null && root.dist(root.points[0], root.hover) < 1e-9
                     const uv = root.splinePreview(closing ? root.points : pts, closing)
+                    for (let i = 0; i < uv.length; ++i) {
+                        const q = root.toScreen(uv[i])
+                        if (i === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y)
+                    }
+                } else if (root.tool === "cp_spline") {
+                    // The control polygon (dashed) and the curve it makes.
+                    const closing = root.points.length >= 3 && root.hover !== null && root.dist(root.points[0], root.hover) < 1e-9
+                    const cps = closing ? root.points : pts
+                    ctx.setLineDash([4, 4])
+                    ctx.globalAlpha = 0.6
+                    ctx.beginPath()
+                    for (let i = 0; i < cps.length; ++i) {
+                        const q = root.toScreen(cps[i])
+                        if (i === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y)
+                    }
+                    if (closing) ctx.closePath()
+                    ctx.stroke()
+                    ctx.setLineDash([])
+                    ctx.globalAlpha = 1
+                    ctx.beginPath()
+                    const uv = root.controlSplinePreview(cps, closing)
                     for (let i = 0; i < uv.length; ++i) {
                         const q = root.toScreen(uv[i])
                         if (i === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y)
@@ -2035,6 +2102,7 @@ Item {
                                                  : root.polygonMode === "circumscribed" ? qsTr("Circumscribed polygon: click the centre and the middle of a side; type the radius")
                                                  : qsTr("Polygon: click centre and a corner; type the radius"))
                     : root.tool === "spline" ? qsTr("Spline: click fit points; Enter, a double-click or Esc ends it, the first point closes it")
+                    : root.tool === "cp_spline" ? qsTr("Control point spline: click control points; Enter, a double-click or Esc ends it, the first point closes it")
                     : root.tool === "arc_slot" ? qsTr("Arc slot: click the centre, the start of the centre line, its end, then the width")
                     : root.slotMode === "overall" ? qsTr("Overall slot: click both far ends, then the width")
                     : root.slotMode === "center_point" ? qsTr("Center point slot: click the middle, the centre of one end, then the width")
@@ -2073,7 +2141,7 @@ Item {
                 }
             }
             RowLayout {
-                visible: root.active && !root.constraintTool && root.tool !== "trim" && root.tool !== "circular_pattern" && root.tool !== "rectangular_pattern" && root.tool !== "extend" && root.tool !== "break" && root.tool !== "point" && root.tool !== "mirror" && root.tool !== "fillet" && root.tool !== "chamfer" && root.tool !== "project" && root.tool !== "intersect" && root.tool !== "spline" && root.tool !== "elliptical_arc"
+                visible: root.active && !root.constraintTool && root.tool !== "trim" && root.tool !== "circular_pattern" && root.tool !== "rectangular_pattern" && root.tool !== "extend" && root.tool !== "break" && root.tool !== "point" && root.tool !== "mirror" && root.tool !== "fillet" && root.tool !== "chamfer" && root.tool !== "project" && root.tool !== "intersect" && root.tool !== "spline" && root.tool !== "cp_spline" && root.tool !== "elliptical_arc"
                          && root.tool !== "tangent_arc"
                          && root.tool !== "circle_3point" && root.tool !== "circle_2tangent" && root.tool !== "circle_3tangent"
                 Label { text: root.tool === "rectangle" || root.tool === "center_rectangle" ? qsTr("Width, height")

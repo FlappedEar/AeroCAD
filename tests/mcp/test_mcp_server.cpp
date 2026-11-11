@@ -394,9 +394,10 @@ TEST_CASE("tools/list is compact: shared schemas listed once, no schema boilerpl
     // The listing is loaded by every agent session before it starts; keep it from growing back.
     // (Raised 150000 -> 152000 for Revolve extents, Extrude start offset, Polygon / Slot modes (CAD-268/269),
     // then to 155000 for tangent circles and Scale (CAD-270/271), to 159000 for Pipe, Rib, Coil and Sketch Intersect (after sharing
-    // the path schema, threshold 200): each new feature adds about 1 to 1.5 kB.
+    // the path schema, threshold 200), to 160000 for arc slots, tangent circles to arcs and control point splines:
+    // each new feature adds about 1 to 1.5 kB.
     // Trim existing descriptions before raising it again.)
-    CHECK(all.size() < 159000);
+    CHECK(all.size() < 160000);
     CHECK(all.find("additionalProperties") == std::string::npos);
     CHECK(all.find("sketch.curves") == std::string::npos); // parameter descriptions name tools too
     const Json* create = nullptr;

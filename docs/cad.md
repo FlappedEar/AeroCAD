@@ -153,6 +153,7 @@ Sketch curves: `line {start, end}`, `rectangle {corner, width, height | opposite
 `polygon {center, radius, sides, angle?}`, `slot {start, end, width}`,
 `arc_slot {center, radius, width, start_angle, end_angle}` (a slot along an arc, `radius` of its centre line, counter-clockwise),
 `spline {points, closed?}`, `point {at}`,
+`control_spline {points, degree?, closed?}` (the B-spline of a control polygon, degree 2 to 5, default 3: clamped, so it starts and ends on the end points, or periodic when closed; the sketch keeps it as a spline through points sampled on the curve),
 `ellipse {center, major_radius, minor_radius, angle?}`,
 `elliptical_arc {center, major_radius, minor_radius, angle?, start_angle, end_angle}`,
 `tangent_circle {curves: [2 or 3 lines, arcs or circles], near, radius?}` (a circle tangent to them; with two curves and no radius it passes through `near`),
