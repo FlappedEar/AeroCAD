@@ -1408,6 +1408,8 @@ ApplicationWindow {
     // Fusion: Construct > Midplane (halfway between two parallel faces or planes).
     Action { id: midplaneAction; text: qsTr("&Midplane"); enabled: !window.activeSketch; onTriggered: window.openFeature("midplane") }
     Action { id: loftAction; text: qsTr("&Loft"); enabled: !window.activeSketch; onTriggered: window.openFeature("loft") }
+    Action { id: ribAction; text: qsTr("&Rib"); enabled: !window.activeSketch; onTriggered: window.openFeature("rib") }
+    Action { id: pipeAction; text: qsTr("P&ipe"); enabled: !window.activeSketch; onTriggered: window.openFeature("pipe") }
     Action { id: sweepAction; text: qsTr("S&weep"); enabled: !window.activeSketch; onTriggered: window.openFeature("sweep") }
     Action { id: mirrorAction; text: qsTr("M&irror"); enabled: !window.activeSketch; onTriggered: window.openFeature("mirror") }
     Action { id: rectPatternAction; text: qsTr("&Rectangular Pattern"); enabled: !window.activeSketch; onTriggered: window.openFeature("rectangular_pattern") }
@@ -1751,6 +1753,8 @@ ApplicationWindow {
             MenuItem { action: extrudeAction }
             MenuItem { action: revolveAction }
             MenuItem { action: sweepAction }
+            MenuItem { action: pipeAction }
+            MenuItem { action: ribAction }
             MenuItem { action: loftAction }
             MenuItem { action: boxAction }
             MenuItem { action: cylinderAction }
@@ -2072,6 +2076,8 @@ ApplicationWindow {
                 ToolCommand { action: sphereAction; text: qsTr("Sphere"); iconName: "sphere" }
                 ToolCommand { action: torusAction; text: qsTr("Torus"); iconName: "torus" }
                 ToolCommand { action: sweepAction; text: qsTr("Sweep"); iconName: "sweep" }
+                ToolCommand { action: pipeAction; text: qsTr("Pipe"); iconName: "pipe" }
+                ToolCommand { action: ribAction; text: qsTr("Rib"); iconName: "rib" }
                 ToolCommand { action: loftAction; text: qsTr("Loft"); iconName: "loft" }
                 ToolCommand { action: mirrorAction; text: qsTr("Mirror"); iconName: "mirror" }
                 ToolCommand { action: rectPatternAction; text: qsTr("Pattern"); iconName: "pattern" }

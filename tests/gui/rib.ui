@@ -1,0 +1,21 @@
+# CAD-271: Rib (Fusion: Create > Rib) from the SOLID tab: a 60 mm line sketch becomes a 4 mm thick,
+# 12 mm tall wall with square ends standing on the sketch plane.
+# Run: AeroCAD --ui-script <this file>
+ui.wait(800)
+(() => { const r = controller.execute("sketch.create", { plane: "XY", curves: [{ type: "line", start: [0, 0], end: [60, 0] }] }); if (!r.ok) ui.fail("curve sketch: " + r.error) })()
+ui.wait(300)
+(() => { viewport.restoreCameraState({ pivot: [30, 0, 5], pitch: -30, yaw: 20, distance: 200, orthographic: false }) })()
+ui.wait(300)
+(() => { if (!ui.clickText("SOLID")) ui.fail("no SOLID tab") })()
+ui.wait(300)
+(() => { if (!ui.clickText("CREATE")) ui.log("no CREATE caption menu") })()
+ui.wait(300)
+(() => { if (!ui.clickText("Rib")) ui.fail("no Rib command") })()
+ui.wait(800)
+(() => { const sk = controller.execute("timeline.list").result.features.filter(f => f.type === "sketch").pop(); featureDialog.setValue("path", { sketch: sk.id }); featureDialog.setValue("thickness", 4); featureDialog.setValue("depth", 12) })()
+ui.wait(800)
+ui.shot("rib.png")
+(() => { if (featureDialog.error) ui.fail("dialog error: " + featureDialog.error) })()
+(() => { if (!ui.clickText("OK")) ui.fail("no OK button") })()
+ui.wait(800)
+(() => { const tl = controller.execute("timeline.list").result; const b = tl.bodies[0]; const want = 60 * 4 * 12; ui.log("volume " + b.volume.toFixed(2) + " want " + want.toFixed(2)); if (tl.bodies.length !== 1 || Math.abs(b.volume - want) > 1) ui.fail("expected one rib of " + want + " mm3, got " + b.volume); if (!tl.features.find(x => x.type === "rib")) ui.fail("no rib feature in the timeline") })()

@@ -16,6 +16,8 @@
 #include <BRepAlgoAPI_Splitter.hxx>
 #include <BRepBndLib.hxx>
 #include <BRepClass_FaceClassifier.hxx>
+#include <GC_MakeArcOfCircle.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepBuilderAPI_MakeSolid.hxx>
@@ -37,6 +39,7 @@
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepOffset_MakeOffset.hxx>
 #include <BRepOffsetAPI_DraftAngle.hxx>
+#include <BRepOffsetAPI_MakeOffset.hxx>
 #include <BRepOffsetAPI_MakePipe.hxx>
 #include <BRepOffsetAPI_MakeOffsetShape.hxx>
 #include <BRepOffsetAPI_MakeThickSolid.hxx>
@@ -371,6 +374,137 @@ TopoDS_Wire pathWire(const Shape& pathEdges, const char* what)
     return wire.Wire();
 }
 } // namespace
+
+namespace {
+/// The first wire of an offset result (null when there is none).
+TopoDS_Wire firstWire(const TopoDS_Shape& s)
+{
+    for (TopExp_Explorer ex(s, TopAbs_WIRE); ex.More(); ex.Next())
+        return TopoDS::Wire(ex.Current());
+    return {};
+}
+
+double boxDiagonal(const TopoDS_Shape& s)
+{
+    Bnd_Box box;
+    BRepBndLib::Add(s, box);
+    return box.IsVoid() ? 0.0 : box.CornerMax().Distance(box.CornerMin());
+}
+} // namespace
+
+Shape thickenCurves(const Shape& pathEdges, double thickness, const core::Vec3& planeNormal)
+{
+    if (!(thickness > 0.0))
+        throw ModelingError("Rib: the thickness must be positive");
+    return guarded("Rib", [&] {
+        const TopoDS_Wire wire = pathWire(pathEdges, "Rib");
+        const double h = thickness / 2.0;
+        const char* tooThick = "Rib: the curve cannot be thickened by that much (it must be a flat curve, and the "
+                               "thickness smaller than its tightest bend allows)";
+        int edgeCount = 0;
+        TopoDS_Edge only;
+        for (TopExp_Explorer ex(wire, TopAbs_EDGE); ex.More(); ex.Next()) {
+            ++edgeCount;
+            only = TopoDS::Edge(ex.Current());
+        }
+        BRepBuilderAPI_MakeFace face;
+        if (edgeCount == 1 && BRepAdaptor_Curve(only).GetType() == GeomAbs_Line) {
+            // A single straight curve does not determine a plane for the offset algorithm: build the
+            // outline directly (a rectangle).
+            const BRepAdaptor_Curve line(only);
+            const gp_Pnt p0 = line.Value(line.FirstParameter());
+            const gp_Pnt p1 = line.Value(line.LastParameter());
+            const gp_Vec along = gp_Vec(p0, p1).Normalized();
+            const gp_Vec across = gp_Vec(gp_Dir(planeNormal.x, planeNormal.y, planeNormal.z)).Crossed(along).Normalized();
+            BRepBuilderAPI_MakePolygon poly;
+            poly.Add(p0.Translated(across * h));
+            poly.Add(p1.Translated(across * h));
+            poly.Add(p1.Translated(-across * h));
+            poly.Add(p0.Translated(-across * h));
+            poly.Close();
+            face = BRepBuilderAPI_MakeFace(poly.Wire(), true);
+        } else if (BRep_Tool::IsClosed(wire)) {
+            // A closed curve gives a ring: the outline outwards and the one inwards.
+            TopoDS_Wire outer, inner;
+            {
+                BRepOffsetAPI_MakeOffset off(wire, GeomAbs_Arc, Standard_False);
+                off.Perform(h);
+                if (!off.IsDone())
+                    throw ModelingError(tooThick);
+                outer = firstWire(off.Shape());
+            }
+            {
+                BRepOffsetAPI_MakeOffset off(wire, GeomAbs_Arc, Standard_False);
+                off.Perform(-h);
+                if (!off.IsDone())
+                    throw ModelingError(tooThick);
+                inner = firstWire(off.Shape());
+            }
+            if (outer.IsNull() || inner.IsNull())
+                throw ModelingError(tooThick);
+            if (boxDiagonal(inner) > boxDiagonal(outer))
+                std::swap(inner, outer);
+            face = BRepBuilderAPI_MakeFace(outer, true);
+            face.Add(TopoDS::Wire(inner.Reversed()));
+        } else {
+            // An open curve gives a band with square ends: its two offsets joined at the ends.
+            TopoDS_Wire left, right;
+            {
+                BRepOffsetAPI_MakeOffset off(wire, GeomAbs_Arc, Standard_True);
+                off.Perform(h);
+                if (!off.IsDone())
+                    throw ModelingError(tooThick);
+                left = firstWire(off.Shape());
+            }
+            {
+                BRepOffsetAPI_MakeOffset off(wire, GeomAbs_Arc, Standard_True);
+                off.Perform(-h);
+                if (!off.IsDone())
+                    throw ModelingError(tooThick);
+                right = firstWire(off.Shape());
+            }
+            if (left.IsNull() || right.IsNull())
+                throw ModelingError(tooThick);
+            TopoDS_Vertex l0, l1, r0, r1;
+            TopExp::Vertices(left, l0, l1);
+            TopExp::Vertices(right, r0, r1);
+            // Pair each end of one side with the nearer end of the other.
+            const gp_Pnt pl0 = BRep_Tool::Pnt(l0), pl1 = BRep_Tool::Pnt(l1);
+            const bool same = pl0.Distance(BRep_Tool::Pnt(r0)) + pl1.Distance(BRep_Tool::Pnt(r1)) <=
+                              pl0.Distance(BRep_Tool::Pnt(r1)) + pl1.Distance(BRep_Tool::Pnt(r0));
+            const TopoDS_Vertex ra = same ? r0 : r1, rb = same ? r1 : r0;
+            BRepBuilderAPI_MakeWire mk;
+            mk.Add(left);
+            mk.Add(BRepBuilderAPI_MakeEdge(l1, rb).Edge());
+            mk.Add(right);
+            mk.Add(BRepBuilderAPI_MakeEdge(ra, l0).Edge());
+            if (!mk.IsDone())
+                throw ModelingError(tooThick);
+            face = BRepBuilderAPI_MakeFace(mk.Wire(), true);
+        }
+        if (!face.IsDone())
+            throw ModelingError("Rib: the thickened curve is not flat");
+        BRep_Builder builder;
+        TopoDS_Compound comp;
+        builder.MakeCompound(comp);
+        builder.Add(comp, face.Face());
+        return wrapShape(comp);
+    });
+}
+
+Shape curveWall(const Shape& pathEdges, const core::Vec3& direction, double distance)
+{
+    const core::Vec3 dir = direction.normalized();
+    if (dir.length() < 0.5 || std::abs(distance) < 1e-9)
+        throw ModelingError("Rib: zero depth or direction");
+    return guarded("Rib", [&] {
+        const TopoDS_Wire wire = pathWire(pathEdges, "Rib");
+        BRepPrimAPI_MakePrism prism(wire, gp_Vec(dir.x * distance, dir.y * distance, dir.z * distance), true);
+        if (!prism.IsDone())
+            throw ModelingError("Rib failed");
+        return wrapShape(prism.Shape());
+    });
+}
 
 double pathLength(const Shape& pathEdges)
 {

@@ -360,6 +360,21 @@ Pane {
             { key: "count", type: "expr", label: qsTr("Quantity"), init: 6 },
             { key: "angle", type: "expr", label: qsTr("Total angle (deg)"), init: 360 },
             { key: "operation", type: "choice", label: qsTr("Operation"), init: "join", options: patternOperations }] },
+        pipe: { title: qsTr("Pipe"), command: "feature.pipe", fields: [
+            { key: "path", type: "pathSketch", label: qsTr("Path sketch") },
+            { key: "section", type: "choice", label: qsTr("Section"), init: "circular", options: [
+                { value: "circular", label: qsTr("Circular") }, { value: "square", label: qsTr("Square") }] },
+            { key: "diameter", type: "expr", label: qsTr("Outer size (diameter / side)"), init: 10 },
+            { key: "thickness", type: "expr", label: qsTr("Wall thickness (0: solid)"), init: 0 },
+            { key: "operation", type: "choice", label: qsTr("Operation"), init: "new_body", options: operations }] },
+        rib: { title: qsTr("Rib"), command: "feature.rib", fields: [
+            { key: "path", type: "pathSketch", label: qsTr("Curve sketch") },
+            { key: "thickness", type: "expr", label: qsTr("Thickness"), init: 3 },
+            { key: "depth", type: "expr", label: qsTr("Height"), init: 10 },
+            { key: "direction", type: "choice", label: qsTr("Direction"), init: "normal", options: [
+                { value: "normal", label: qsTr("Normal to sketch plane") }, { value: "parallel", label: qsTr("Parallel to sketch plane") }] },
+            { key: "flip", type: "bool", label: qsTr("Flip side"), init: false },
+            { key: "operation", type: "choice", label: qsTr("Operation"), init: "new_body", options: operations }] },
         path_pattern: { title: qsTr("Pattern on Path"), command: "feature.path_pattern", fields: [
             { key: "body", type: "body", label: qsTr("Body") },
             { key: "path", type: "pathSketch", label: qsTr("Path sketch") },

@@ -1,0 +1,21 @@
+# CAD-271: Pipe (Fusion: Create > Pipe) from the SOLID tab: a 10 mm round pipe along a 90 mm line
+# is one 90 mm long cylinder; with a 2 mm wall it is a tube.
+# Run: AeroCAD --ui-script <this file>
+ui.wait(800)
+(() => { const r = controller.execute("sketch.create", { plane: "XY", curves: [{ type: "line", start: [0, 0], end: [90, 0] }] }); if (!r.ok) ui.fail("path sketch: " + r.error) })()
+ui.wait(300)
+(() => { viewport.restoreCameraState({ pivot: [45, 0, 0], pitch: -30, yaw: 20, distance: 200, orthographic: false }) })()
+ui.wait(300)
+(() => { if (!ui.clickText("SOLID")) ui.fail("no SOLID tab") })()
+ui.wait(300)
+(() => { if (!ui.clickText("CREATE")) ui.log("no CREATE caption menu") })()
+ui.wait(300)
+(() => { if (!ui.clickText("Pipe")) ui.fail("no Pipe command") })()
+ui.wait(800)
+(() => { const sk = controller.execute("timeline.list").result.features.filter(f => f.type === "sketch").pop(); featureDialog.setValue("path", { sketch: sk.id }); featureDialog.setValue("diameter", 10); featureDialog.setValue("thickness", 2) })()
+ui.wait(800)
+ui.shot("pipe.png")
+(() => { if (featureDialog.error) ui.fail("dialog error: " + featureDialog.error) })()
+(() => { if (!ui.clickText("OK")) ui.fail("no OK button") })()
+ui.wait(800)
+(() => { const tl = controller.execute("timeline.list").result; const b = tl.bodies[0]; const want = Math.PI * (25 - 9) * 90; ui.log("volume " + b.volume.toFixed(2) + " want " + want.toFixed(2)); if (tl.bodies.length !== 1 || Math.abs(b.volume - want) > 1) ui.fail("expected one tube of " + want + " mm3, got " + b.volume); const f = tl.features.find(x => x.type === "pipe"); if (!f) ui.fail("no pipe feature in the timeline") })()
