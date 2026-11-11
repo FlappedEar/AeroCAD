@@ -2076,8 +2076,8 @@ ApplicationWindow {
                 ToolCommand { action: sphereAction; text: qsTr("Sphere"); iconName: "sphere" }
                 ToolCommand { action: torusAction; text: qsTr("Torus"); iconName: "torus" }
                 ToolCommand { action: sweepAction; text: qsTr("Sweep"); iconName: "sweep" }
-                ToolCommand { action: pipeAction; text: qsTr("Pipe"); iconName: "sweep" }
-                ToolCommand { action: ribAction; text: qsTr("Rib"); iconName: "extrude" }
+                ToolCommand { action: pipeAction; text: qsTr("Pipe"); iconName: "pipe" }
+                ToolCommand { action: ribAction; text: qsTr("Rib"); iconName: "rib" }
                 ToolCommand { action: loftAction; text: qsTr("Loft"); iconName: "loft" }
                 ToolCommand { action: mirrorAction; text: qsTr("Mirror"); iconName: "mirror" }
                 ToolCommand { action: rectPatternAction; text: qsTr("Pattern"); iconName: "pattern" }

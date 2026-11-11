@@ -4178,9 +4178,9 @@ void Design::evaluateFeature(const Feature& f)
         } else {
             const double length = geometry::pathLength(pathEdges);
             const auto ends = geometry::pathFrames(pathEdges, {0.0, length});
-            core::Vec3 chord = ends[1].point - ends[0].point;
+            const core::Vec3 chord = ends[1].point - ends[0].point;
             if (chord.length() < 1e-6)
-                chord = ends[0].tangent;
+                throw DesignError("A parallel rib needs an open curve: this one ends where it starts");
             const core::Vec3 side = plane.normal.cross(chord).normalized() * sign;
             const geometry::Shape wall = geometry::curveWall(pathEdges, side, depth);
             applyOperation(geometry::extrude(wall, plane.normal, thickness / 2.0, thickness / 2.0));
@@ -4189,6 +4189,10 @@ void Design::evaluateFeature(const Feature& f)
         // Fusion: Create > Pipe. A round (or square) section swept along sketch curves, solid or
         // hollow (`thickness` = wall).
         const geometry::Shape pathEdges = pathEdgesOf(required(p, "path"), "pipe");
+        if (has(p, "diameter") && has(p, "radius"))
+            throw DesignError("Give the pipe size as either diameter or radius, not both");
+        if (!has(p, "diameter") && !has(p, "radius"))
+            throw DesignError("Give the pipe size: diameter or radius");
         const double outer = has(p, "diameter") ? ev.num(p, "diameter") / 2.0 : ev.num(p, "radius");
         const double wall = ev.num(p, "thickness", 0.0);
         const std::string section = lower(p.value("section", std::string("circular")));
