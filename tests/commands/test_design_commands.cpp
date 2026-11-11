@@ -4025,6 +4025,26 @@ TEST_CASE("Design commands: Pattern on Path (CAD-271)", "[commands][cad]")
         CHECK(b.max.x == Approx(70 + 60).epsilon(1e-6));
     }
 
+    SECTION("a closed path spreads the instances evenly, none on top of the first")
+    {
+        const auto ring = run(s, "sketch.create",
+                              {{"plane", "XY"},
+                               {"curves", Json::array({{{"type", "circle"}, {"center", {0, 0}}, {"radius", 50}}})}})
+                              .at("id").get<std::uint64_t>();
+        const auto r = run(s, "feature.path_pattern",
+                           {{"body", bodyId}, {"path", {{"sketch", ring}}}, {"count", 4}, {"operation", "new_body"}});
+        // Four instances in all: the body and three copies in one new body.
+        REQUIRE(r.at("bodies").size() == 2);
+        const double single = s.design().bodies().at(bodyId).shape.volume();
+        CHECK(r.at("bodies")[1].at("volume").get<double>() == Approx(3 * single).epsilon(1e-6));
+    }
+
+    SECTION("spacing needs a distance; count must be whole")
+    {
+        CHECK_FALSE(s.execute("feature.path_pattern", {{"body", bodyId}, {"path", {{"sketch", line}}}, {"count", 3}, {"distance_type", "spacing"}}).ok);
+        CHECK_FALSE(s.execute("feature.path_pattern", {{"body", bodyId}, {"path", {{"sketch", line}}}, {"count", 2.5}}).ok);
+    }
+
     SECTION("running off the path is an error")
     {
         CHECK_FALSE(s.execute("feature.path_pattern",

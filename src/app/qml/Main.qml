@@ -1399,8 +1399,9 @@ ApplicationWindow {
     Action { id: draftAction; text: qsTr("D&raft"); enabled: !window.activeSketch; onTriggered: window.openFeature("draft") }
     // Fusion: Modify > Delete on faces (the gap heals from the neighbours).
     Action { id: deleteFacesAction; text: qsTr("&Delete Face"); enabled: !window.activeSketch; onTriggered: window.openFeature("delete_faces") }
-    // Fusion: Modify > Split Body (by a plane: origin plane, construction plane or flat face).
+    // Fusion: Modify > Scale (uniform or non-uniform).
     Action { id: scaleBodyAction; text: qsTr("Sc&ale"); enabled: !window.activeSketch; onTriggered: window.openFeature("scale") }
+    // Fusion: Modify > Split Body (by a plane: origin plane, construction plane or flat face).
     Action { id: splitAction; text: qsTr("Spli&t Body"); enabled: !window.activeSketch; onTriggered: window.openFeature("split") }
     Action { id: combineAction; text: qsTr("Co&mbine"); onTriggered: window.openFeature("combine") }
     Action { id: planeAction; text: qsTr("Construction &Plane"); enabled: !window.activeSketch; onTriggered: window.openFeature("plane") }

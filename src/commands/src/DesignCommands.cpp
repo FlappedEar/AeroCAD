@@ -192,7 +192,8 @@ Json curveSchema()
          "{corner, opposite}; center_rectangle {center, width, height}; three_point_rectangle {start, end, height} (a side "
          "at any angle, then the other side; height is signed, positive to the left of start -> end); circle {center, radius | diameter}; "
          "arc {start, through, end} (three-point arc); center_arc {center, radius, startAngle, endAngle} "
-         "(degrees, counter-clockwise); polygon {center, radius, sides, angle?, mode?} or {mode: edge, start, end, sides}; slot {start, end, width, mode?} "
+         "(degrees, counter-clockwise); polygon {center, radius, sides, angle?, mode?} (circumscribed: radius to a side) or {mode: edge, start, end, sides} "
+         "(polygon left of start -> end); slot {start, end, width, mode?} (overall: start, end are the far points) "
          "or {mode: center_point, center, end, width}; spline {points, closed?}; point {at} (a sketch point: no edge, no profile; "
          "it joins a curve end at the same place); tangent_arc {from: {curve, point: start | end}, end} "
          "(sketch.add_curves only: an arc leaving the end of a line or arc tangentially, kept tangent); "
@@ -208,7 +209,7 @@ Json curveSchema()
             {"enum", {"line", "rectangle", "center_rectangle", "three_point_rectangle", "circle", "arc", "center_arc", "polygon", "slot",
                       "spline", "point", "tangent_arc", "tangent_circle", "ellipse", "elliptical_arc", "conic", "text"}}}},
           {"curves", {{"type", "array"}, {"items", {{"type", "integer"}, {"minimum", 0}}},
-                      {"description", "tangent_circle: 2 or 3 line indices."}}},
+                      {"description", "tangent_circle: 2 or 3 line indices (`radius` optional for 2)."}}},
           {"near", point2("tangent_circle: a point near the circle wanted.")},
           {"from", {{"type", "object"},
                     {"description", "tangent_arc: the end it starts from, {curve: index, point: start | end}."}}},
@@ -2361,7 +2362,7 @@ void registerFeatureCommands(CommandRegistry& r)
                        {"start", numberOrExpr("First instance: fraction of the path, 0 (default) to below 1.")},
                        {"orientation", {{"type", "string"}, {"enum", {"identical", "path_direction"}},
                                         {"description", "path_direction turns copies with the path."}}},
-                       {"flip", {{"type", "boolean"}, {"description", "Start at the other end."}}},
+                       {"flip", {{"type", "boolean"}, {"description", "Count start and distance from the other end of the path."}}},
                        {"operation", patternOperation}},
                       {"body", "path"});
 

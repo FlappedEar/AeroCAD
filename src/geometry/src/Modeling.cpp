@@ -388,12 +388,18 @@ std::vector<PathFrame> pathFrames(const Shape& pathEdges, const std::vector<doub
         std::vector<PathFrame> out;
         for (const double d : distances) {
             const double at = std::min(std::max(d, 0.0), length);
-            GCPnts_AbscissaPoint ap(curve, at, curve.FirstParameter());
-            if (!ap.IsDone())
-                throw ModelingError("Path: cannot measure along the path");
+            double param = curve.FirstParameter();
+            if (at >= length - 1e-9) {
+                param = curve.LastParameter(); // the integration is tolerance-limited at the very end
+            } else if (at > 1e-12) {
+                GCPnts_AbscissaPoint ap(curve, at, curve.FirstParameter());
+                if (!ap.IsDone())
+                    throw ModelingError("Path: cannot measure along the path");
+                param = ap.Parameter();
+            }
             gp_Pnt pt;
             gp_Vec tan;
-            curve.D1(ap.Parameter(), pt, tan);
+            curve.D1(param, pt, tan);
             if (tan.Magnitude() < 1e-12)
                 throw ModelingError("Path: the path has no direction here");
             tan.Normalize();
