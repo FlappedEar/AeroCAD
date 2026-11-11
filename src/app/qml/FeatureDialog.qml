@@ -920,7 +920,8 @@ Pane {
                 visible: !field.showIf || field.showIf(root.values)
                 spacing: 2
 
-                Label { text: fieldItem.field.label; opacity: 0.75 }
+                // A checkbox carries its own label (inline, like the rest of the app).
+                Label { visible: fieldItem.field.type !== "bool"; text: fieldItem.field.label; opacity: 0.75 }
 
                 Loader {
                     Layout.fillWidth: true
@@ -1001,6 +1002,7 @@ Pane {
         id: boolEditor
         CheckBox {
             property var field: parent ? parent.field : ({})
+            text: field.label || ""
             checked: !!root.values[field.key]
             onToggled: root.setValue(field.key, checked ? true : undefined)
         }
