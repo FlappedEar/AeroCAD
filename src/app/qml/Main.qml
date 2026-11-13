@@ -286,6 +286,7 @@ ApplicationWindow {
         SketchMenuItem { action: ellipticalArcAction; icon.source: Theme.iconUrl("elliptical_arc") }
         SketchMenuItem { action: conicAction; icon.source: Theme.iconUrl("conic") }
         SketchMenuItem { action: airfoilAction; icon.source: Theme.iconUrl("airfoil") }
+        SketchMenuItem { action: airfoilFileAction; icon.source: Theme.iconUrl("airfoil") }
         SketchMenuItem { action: textAction; icon.source: Theme.iconUrl("text") }
         SketchMenuItem { action: arcAction; icon.source: Theme.iconUrl("arc") }
         SketchMenuItem { action: centerArcAction; icon.source: Theme.iconUrl("center-arc") }
@@ -779,6 +780,19 @@ ApplicationWindow {
         viewport.sketchDegreesOfFreedom = -1
     }
 
+    /// Airfoil from File: the text of a .dat file read; the next two clicks place it.
+    function startAirfoilFromText(text) {
+        if (!activeSketch)
+            return
+        if (!text || text.trim().length === 0) {
+            controller.setStatus(qsTr("Could not read the airfoil file (a text file of at most 256 KB)"))
+            return
+        }
+        viewport.sketchOverlay.reset() // a half-placed airfoil of the NACA tool is dropped
+        viewport.sketchOverlay.airfoilDat = text
+        sketchTool = "airfoil"
+    }
+
     function sketchTool_(tool) {
         if (activeSketch)
             sketchTool = tool
@@ -995,6 +1009,13 @@ ApplicationWindow {
             then = null
         }
         onRejected: then = null
+    }
+
+    FileDialog {
+        id: airfoilDialog
+        title: qsTr("Airfoil coordinates")
+        nameFilters: [qsTr("Airfoil coordinates (*.dat *.txt)"), qsTr("All files (*)")]
+        onAccepted: window.startAirfoilFromText(window.controller.readTextFile(selectedFile))
     }
 
     FileDialog {
@@ -1514,7 +1535,8 @@ ApplicationWindow {
     Action { id: circle2PointAction; text: qsTr("&2-Point Circle"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "circle_2point"; onTriggered: window.sketchTool_("circle_2point") }
     Action { id: textAction; text: qsTr("&Text"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "text"; onTriggered: window.sketchTool_("text") }
     Action { id: ellipticalArcAction; text: qsTr("Ellipti&cal Arc"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "elliptical_arc"; onTriggered: window.sketchTool_("elliptical_arc") }
-    Action { id: airfoilAction; text: qsTr("&Airfoil"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "airfoil"; onTriggered: window.sketchTool_("airfoil") }
+    Action { id: airfoilAction; text: qsTr("&Airfoil"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "airfoil" && viewport.sketchOverlay.airfoilDat === ""; onTriggered: { viewport.sketchOverlay.airfoilDat = ""; window.sketchTool_("airfoil") } }
+    Action { id: airfoilFileAction; text: qsTr("Airfoil from &File..."); enabled: !!window.activeSketch; onTriggered: airfoilDialog.open() }
     Action { id: conicAction; text: qsTr("C&onic Curve"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "conic"; onTriggered: window.sketchTool_("conic") }
     Action { id: ellipseAction; text: qsTr("&Ellipse"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "ellipse"; onTriggered: window.sketchTool_("ellipse") }
     Action { id: circle3PointAction; text: qsTr("&3-Point Circle"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "circle_3point"; onTriggered: window.sketchTool_("circle_3point") }

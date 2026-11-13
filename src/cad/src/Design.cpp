@@ -674,6 +674,124 @@ std::vector<Vec2> sampleControlSpline(const std::vector<Vec2>& ctrl, int degree,
     return out;
 }
 
+/// The coordinates of an airfoil .dat file (the UIUC database): a title line, then "x y" pairs. Selig
+/// order runs from the trailing edge over the upper surface to the leading edge and back along the
+/// lower one. Lednicer has a line with the two point counts, then the upper surface and the lower
+/// one, each from the leading edge to the trailing edge. Returned in Selig order.
+std::vector<Vec2> parseAirfoilDat(const std::string& text)
+{
+    std::vector<std::vector<Vec2>> blocks(1);
+    std::vector<Vec2> counts;
+    std::istringstream in(text);
+    std::string line;
+    while (std::getline(in, line)) {
+        for (char& c : line)
+            if (c == ',' || c == ';' || c == '\t' || c == '\r')
+                c = ' ';
+        std::istringstream ls(line);
+        double x = 0, y = 0;
+        std::string extra;
+        if (!(ls >> x >> y) || (ls >> extra)) {
+            // A title, a comment, or an empty line (which splits the Lednicer blocks).
+            if (line.find_first_not_of(' ') == std::string::npos && !blocks.back().empty())
+                blocks.emplace_back();
+            continue;
+        }
+        if (!std::isfinite(x) || !std::isfinite(y))
+            throw DesignError("Airfoil coordinates must be finite numbers");
+        // The Lednicer count line: two whole numbers above 1, before any coordinate.
+        if (blocks.size() == 1 && blocks[0].empty() && counts.empty() && x > 1 && y > 1 && x == std::floor(x) && y == std::floor(y)) {
+            counts.push_back({x, y});
+            continue;
+        }
+        blocks.back().push_back({x, y});
+    }
+    if (blocks.back().empty() && blocks.size() > 1)
+        blocks.pop_back();
+    if (!counts.empty()) {
+        if (counts[0].x > 100000 || counts[0].y > 100000)
+            throw DesignError("Airfoil Lednicer file: too many points announced");
+        const auto nu = static_cast<std::size_t>(counts[0].x), nl = static_cast<std::size_t>(counts[0].y);
+        std::vector<Vec2> all;
+        for (const auto& b : blocks)
+            all.insert(all.end(), b.begin(), b.end());
+        if (all.size() != nu + nl)
+            throw DesignError("Airfoil Lednicer file: " + std::to_string(nu) + " + " + std::to_string(nl) + " points announced, " +
+                              std::to_string(all.size()) + " found");
+        std::vector<Vec2> selig(all.begin() + static_cast<std::ptrdiff_t>(nu), all.end());
+        std::vector<Vec2> upper(all.begin(), all.begin() + static_cast<std::ptrdiff_t>(nu));
+        std::reverse(upper.begin(), upper.end());
+        // The leading edge is the first point of both surfaces: once.
+        if (!upper.empty() && !selig.empty() && std::hypot(upper.back().x - selig.front().x, upper.back().y - selig.front().y) < 1e-9)
+            selig.erase(selig.begin());
+        upper.insert(upper.end(), selig.begin(), selig.end());
+        return upper;
+    }
+    std::vector<Vec2> all;
+    for (const auto& b : blocks)
+        all.insert(all.end(), b.begin(), b.end());
+    return all;
+}
+
+/// Splits airfoil coordinates in Selig order at the leading edge (the point farthest from the trailing
+/// edge, the middle of the first and last point) and normalises them: leading edge (0, 0), trailing
+/// edge middle (1, 0). `over` runs from the leading edge to the trailing edge, `under` from the
+/// trailing edge back, both meeting at the leading edge exactly; at a sharp trailing edge also at it.
+void splitAirfoilCoordinates(const std::vector<Vec2>& pts, std::vector<Vec2>& over, std::vector<Vec2>& under)
+{
+    if (pts.size() < 7)
+        throw DesignError("Airfoil coordinates need at least 7 points");
+    const Vec2 te{(pts.front().x + pts.back().x) / 2, (pts.front().y + pts.back().y) / 2};
+    std::size_t lead = 0;
+    double far = -1;
+    for (std::size_t i = 0; i < pts.size(); ++i) {
+        const double d = std::hypot(pts[i].x - te.x, pts[i].y - te.y);
+        if (d > far) {
+            far = d;
+            lead = i;
+        }
+    }
+    if (far < 1e-9 || lead < 3 || lead + 3 > pts.size() - 1)
+        throw DesignError("Airfoil coordinates: no leading edge found (they run from the trailing edge over the upper surface to "
+                          "the leading edge and back along the lower surface, or in Lednicer order)");
+    // Into chord units: the chord line leading edge -> trailing edge middle is the x axis.
+    const Vec2 le = pts[lead];
+    const double c = far;
+    const Vec2 u{(te.x - le.x) / c, (te.y - le.y) / c};
+    auto norm = [&](const Vec2& q) {
+        const double dx = q.x - le.x, dy = q.y - le.y;
+        return Vec2{(dx * u.x + dy * u.y) / c, (u.x * dy - u.y * dx) / c};
+    };
+    // Which surface is on top: the first points (before the leading edge) lie above the chord line.
+    double above = 0;
+    for (std::size_t i = 1; i + 1 < lead; ++i)
+        above += norm(pts[i]).y;
+    std::vector<Vec2> first, second;
+    for (std::size_t i = 0; i <= lead; ++i)
+        first.push_back(norm(pts[i]));
+    for (std::size_t i = lead; i < pts.size(); ++i)
+        second.push_back(norm(pts[i]));
+    // over: leading edge -> trailing edge along the upper surface; under: trailing edge -> leading edge.
+    std::reverse(first.begin(), first.end()); // now leading edge -> trailing edge (the first part)
+    if (above >= 0) {
+        over = first;
+        under = second;
+        std::reverse(under.begin(), under.end());
+    } else {
+        over = second;
+        under = first;
+        std::reverse(under.begin(), under.end());
+    }
+    // Exactly the leading edge on both; a sharp trailing edge shared.
+    over.front() = {0, 0};
+    under.back() = {0, 0};
+    // A sharp trailing edge (a gap below 1e-6 chord) is the one point (1, 0), the middle of the two ends.
+    if (std::hypot(over.back().x - under.front().x, over.back().y - under.front().y) < 1e-6) {
+        over.back() = {1, 0};
+        under.front() = {1, 0};
+    }
+}
+
 /// Appends the curves of one sketch item. `implicit` receives the constraints that the
 /// shape implies (a rectangle has horizontal and vertical sides, a slot tangent ends), so
 /// that dimensions added later keep the shape, like Fusion's sketch tools.
@@ -930,62 +1048,88 @@ void appendCurves(const Eval& ev, const Json& item, std::vector<SketchCurve>& ou
         e.joinEnd = item.value("join_end", true);
         push(e);
     } else if (type == "airfoil") {
-        // A NACA 4-digit airfoil (cosine-spaced points on a closed trailing edge) as two splines: the
-        // upper surface from the leading edge `at` to the trailing edge, the lower one back. Together
-        // they bound a profile that extrudes, lofts and sweeps like any other.
-        const Json& code = required(item, "naca");
-        std::string digits;
-        if (code.is_number_integer()) {
-            digits = std::to_string(code.get<long long>());
-            digits.insert(0, digits.size() < 4 ? 4 - digits.size() : 0, '0'); // 12 -> 0012
-        } else if (code.is_string()) {
-            digits = lower(code.get<std::string>());
-            digits.erase(std::remove_if(digits.begin(), digits.end(), [](unsigned char c) { return std::isspace(c); }), digits.end());
-            if (digits.rfind("naca", 0) == 0)
-                digits.erase(0, 4);
-        }
-        if (digits.size() != 4 || digits.find_first_not_of("0123456789") != std::string::npos)
-            throw DesignError("Airfoil naca needs 4 digits, e.g. \"2412\"");
-        const double camber = (digits[0] - '0') / 100.0;
-        const double camberAt = (digits[1] - '0') / 10.0;
-        const double thick = ((digits[2] - '0') * 10 + (digits[3] - '0')) / 100.0;
-        if (thick <= 0)
-            throw DesignError("Airfoil thickness (the last two digits) must be above 0");
-        if (camber > 0 && camberAt <= 0)
-            throw DesignError("A cambered airfoil needs a non-zero position of maximum camber (second digit)");
+        // An airfoil as splines: the upper surface from the leading edge to the trailing edge, the lower
+        // one back (and a line closing a blunt trailing edge). They bound a profile that extrudes, lofts
+        // and sweeps like any other. Either a NACA 4-digit section (cosine-spaced points on a closed
+        // trailing edge) or the coordinates of any airfoil (`dat`: the text of a Selig or Lednicer .dat
+        // file, or `coordinates`: [[x, y], ...] in Selig order), scaled to `chord` from the leading
+        // edge `at`, turned `angle` degrees.
         const double chord = ev.num(item, "chord");
         if (!(chord > 0))
             throw DesignError("Airfoil chord must be positive");
         const Vec2 le = has(item, "at") ? ev.vec2(item, "at") : Vec2{0, 0};
         const double a = ev.num(item, "angle", 0.0) * kDegToRad;
-        const int n = 40;
-        auto place = [&](double x, double y) {
-            return Vec2{le.x + chord * (x * std::cos(a) - y * std::sin(a)), le.y + chord * (x * std::sin(a) + y * std::cos(a))};
+        auto place = [&](const Vec2& q) {
+            return Vec2{le.x + chord * (q.x * std::cos(a) - q.y * std::sin(a)), le.y + chord * (q.x * std::sin(a) + q.y * std::cos(a))};
         };
-        std::vector<Vec2> over, under;
-        for (int i = 0; i <= n; ++i) {
-            const double x = (1 - std::cos(std::numbers::pi * i / n)) / 2;
-            // The thickness polynomial with the closed trailing edge (-0.1036 x^4).
-            const double yt = 5 * thick * (0.2969 * std::sqrt(x) - 0.1260 * x - 0.3516 * x * x + 0.2843 * x * x * x - 0.1036 * x * x * x * x);
-            double yc = 0.0, slope = 0.0;
-            if (camber > 0) {
-                const double p = camberAt;
-                if (x < p) {
-                    yc = camber / (p * p) * (2 * p * x - x * x);
-                    slope = 2 * camber / (p * p) * (p - x);
-                } else {
-                    yc = camber / ((1 - p) * (1 - p)) * ((1 - 2 * p) + 2 * p * x - x * x);
-                    slope = 2 * camber / ((1 - p) * (1 - p)) * (p - x);
-                }
+        std::vector<Vec2> over, under; // chord units: leading edge (0, 0), trailing edge (1, 0)
+        const int sources = int(has(item, "naca")) + int(has(item, "dat")) + int(has(item, "coordinates"));
+        if (sources != 1)
+            throw DesignError("An airfoil needs exactly one of naca, dat or coordinates");
+        if (!has(item, "naca")) {
+            std::vector<Vec2> pts;
+            if (has(item, "dat")) {
+                if (!item.at("dat").is_string())
+                    throw DesignError("Airfoil dat is the text of a coordinate file");
+                pts = parseAirfoilDat(item.at("dat").get<std::string>());
+            } else {
+                for (const auto& q : item.at("coordinates"))
+                    pts.push_back(ev.vec2(q));
             }
-            const double th = std::atan(slope);
-            const bool end = i == 0 || i == n; // exactly the leading and trailing edge, shared
-            over.push_back(end ? place(x, 0.0) : place(x - yt * std::sin(th), yc + yt * std::cos(th)));
-            under.push_back(end ? place(x, 0.0) : place(x + yt * std::sin(th), yc - yt * std::cos(th)));
+            splitAirfoilCoordinates(pts, over, under);
+        } else {
+            const Json& code = item.at("naca");
+            std::string digits;
+            if (code.is_number_integer()) {
+                digits = std::to_string(code.get<long long>());
+                digits.insert(0, digits.size() < 4 ? 4 - digits.size() : 0, '0'); // 12 -> 0012
+            } else if (code.is_string()) {
+                digits = lower(code.get<std::string>());
+                digits.erase(std::remove_if(digits.begin(), digits.end(), [](unsigned char c) { return std::isspace(c); }), digits.end());
+                if (digits.rfind("naca", 0) == 0)
+                    digits.erase(0, 4);
+            }
+            if (digits.size() != 4 || digits.find_first_not_of("0123456789") != std::string::npos)
+                throw DesignError("Airfoil naca needs 4 digits, e.g. \"2412\"");
+            const double camber = (digits[0] - '0') / 100.0;
+            const double camberAt = (digits[1] - '0') / 10.0;
+            const double thick = ((digits[2] - '0') * 10 + (digits[3] - '0')) / 100.0;
+            if (thick <= 0)
+                throw DesignError("Airfoil thickness (the last two digits) must be above 0");
+            if (camber > 0 && camberAt <= 0)
+                throw DesignError("A cambered airfoil needs a non-zero position of maximum camber (second digit)");
+            const int n = 40;
+            for (int i = 0; i <= n; ++i) {
+                const double x = (1 - std::cos(std::numbers::pi * i / n)) / 2;
+                // The thickness polynomial with the closed trailing edge (-0.1036 x^4).
+                const double yt = 5 * thick * (0.2969 * std::sqrt(x) - 0.1260 * x - 0.3516 * x * x + 0.2843 * x * x * x - 0.1036 * x * x * x * x);
+                double yc = 0.0, slope = 0.0;
+                if (camber > 0) {
+                    const double p = camberAt;
+                    if (x < p) {
+                        yc = camber / (p * p) * (2 * p * x - x * x);
+                        slope = 2 * camber / (p * p) * (p - x);
+                    } else {
+                        yc = camber / ((1 - p) * (1 - p)) * ((1 - 2 * p) + 2 * p * x - x * x);
+                        slope = 2 * camber / ((1 - p) * (1 - p)) * (p - x);
+                    }
+                }
+                const double th = std::atan(slope);
+                const bool end = i == 0 || i == n; // exactly the leading and trailing edge, shared
+                over.push_back(end ? Vec2{x, 0.0} : Vec2{x - yt * std::sin(th), yc + yt * std::cos(th)});
+                under.push_back(end ? Vec2{x, 0.0} : Vec2{x + yt * std::sin(th), yc - yt * std::cos(th)});
+            }
+            std::reverse(under.begin(), under.end());
         }
-        std::reverse(under.begin(), under.end());
+        for (auto& q : over)
+            q = place(q);
+        for (auto& q : under)
+            q = place(q);
         push(SketchCurve{SketchCurve::Kind::Spline, over});
         push(SketchCurve{SketchCurve::Kind::Spline, under});
+        // A blunt trailing edge (an airfoil file with a thick one): a line closes it.
+        if (std::hypot(over.back().x - under.front().x, over.back().y - under.front().y) > 1e-6 * chord)
+            push(SketchCurve{SketchCurve::Kind::Line, {over.back(), under.front()}});
     } else if (type == "spline") {
         SketchCurve c{SketchCurve::Kind::Spline, {}};
         for (const auto& p : required(item, "points"))
@@ -1642,8 +1786,9 @@ Json itemFromSolved(const Json& item, const SketchCurve* c, std::size_t n)
             if (item.contains(k))
                 out[k] = item[k];
     } else if (type == "airfoil") {
-        // Moved or turned by the solver: its leading and trailing edge say where it is now.
-        const Vec2 le = c[0].points.front(), te = c[0].points.back();
+        // Moved or turned by the solver: its leading edge and the middle of its trailing edge say where it is now.
+        const Vec2 le = c[0].points.front();
+        const Vec2 te{(c[0].points.back().x + c[1].points.front().x) / 2, (c[0].points.back().y + c[1].points.front().y) / 2};
         out["at"] = pt(le);
         out["chord"] = std::hypot(te.x - le.x, te.y - le.y);
         out["angle"] = std::atan2(te.y - le.y, te.x - le.x) / kDegToRad;

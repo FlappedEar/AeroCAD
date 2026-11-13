@@ -214,7 +214,7 @@ Json curveSchema()
          "arc_slot {center, radius, width, start_angle, end_angle} (slot along an arc); "
          "control_spline {points (control polygon), degree? 2-5, closed?}. "
          "conic {start, end, apex, rho?} (tangent at its ends to the lines towards apex); "
-         "airfoil {naca: 4 digits e.g. \"2412\", chord, at? (leading edge), angle?} (two splines, closed trailing edge); "
+         "airfoil {naca \"2412\" | dat (.dat file text) | coordinates, chord, at? (leading edge), angle?}; "
          "text {at, text, height?, angle?, font?, bold?, italic?} (letters are profiles; at = baseline start, "
          "height mm, default 5). "
          "construction: true excludes it from profiles."},
@@ -260,6 +260,8 @@ Json curveSchema()
           {"italic", {{"type", "boolean"}, {"description", "text: italic."}}},
           {"apex", point2("conic: where its end tangents meet.")},
           {"naca", {{"type", Json::array({"string", "integer"})}, {"description", "airfoil: NACA 4-digit code."}}},
+          {"dat", {{"type", "string"}, {"description", "airfoil: .dat text (Selig or Lednicer)."}}},
+          {"coordinates", {{"type", "array"}, {"items", point2("Point.")}, {"description", "airfoil: [x, y], Selig order."}}},
           {"chord", numberOrExpr("airfoil: chord length (mm).")},
           {"rho", numberOrExpr("conic: 0 to 1, default 0.5 (parabola).")},
           {"points", {{"type", "array"}, {"items", point2("Fit point.")}, {"minItems", 2},
@@ -2807,7 +2809,7 @@ void registerFeatureCommands(CommandRegistry& r)
         {{"sections", {{"type", "array"},
                        {"minItems", 2},
                        {"items", {{"type", Json::array({"integer", "object"})}}},
-                       {"description", "Sketch ids, {sketch, profile}, or a point as the first or last section: {point: [x, y, z]} or a sketch holding one point."}}},
+                       {"description", "Sketch ids, {sketch, profile}; first/last may be {point: [x, y, z]} or a one-point sketch."}}},
          {"solid", {{"type", "boolean"}, {"description", "Closed solid (default) or open surface."}}},
          {"ruled", {{"type", "boolean"}, {"description", "Straight sections between profiles."}}},
          {"operation", operationSchema()},

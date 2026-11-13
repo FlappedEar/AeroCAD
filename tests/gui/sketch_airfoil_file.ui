@@ -1,0 +1,25 @@
+# Airfoil from File (UIUC .dat, Selig order): the file text goes through the same path as the Sketch > Airfoil from
+# File dialog (the native file dialog cannot be driven); then two real clicks place it, leading edge first, 60 mm chord.
+# Run: AeroCAD --ui-script <this file>
+Qt.createQmlObject('import QtQuick; Item { objectName: "afdTest"; visible: false; function at(q) { const o = viewport.sketchOverlay; const p = o.toScreen(q); return o.mapToItem(null, p.x, p.y) } function clickAt(q) { const w = at(q); ui.move(w.x, w.y); ui.wait(80); ui.click(w.x, w.y); ui.wait(150) } function sketch() { return controller.execute("sketch.curves", { sketch: activeSketch.id }).result } }', window.contentItem)
+ui.wait(800)
+(() => { window.createSketch({ plane: "XY" }); if (!window.activeSketch) ui.fail("no sketch") })()
+ui.wait(800)
+(() => { viewport.restoreCameraState({ pivot: [30, 10, 0], pitch: -90, yaw: 0, distance: 160, orthographic: false }) })()
+ui.wait(400)
+(() => { window.startAirfoilFromText("NACA 2412\n 1.00000  -0.00000\n 0.99390  0.00130\n 0.97575  0.00509\n 0.94597  0.01110\n 0.90524  0.01891\n 0.85453  0.02799\n 0.79505  0.03776\n 0.72822  0.04765\n 0.65566  0.05707\n 0.57915  0.06547\n 0.50059  0.07230\n 0.42192  0.07708\n 0.34468  0.07918\n 0.27111  0.07780\n 0.20331  0.07294\n 0.14309  0.06494\n 0.09200  0.05433\n 0.05132  0.04181\n 0.02205  0.02815\n 0.00483  0.01405\n 0.00000  0.00000\n 0.00748  -0.01283\n 0.02689  -0.02341\n 0.05767  -0.03165\n 0.09899  -0.03751\n 0.14980  -0.04101\n 0.20890  -0.04234\n 0.27490  -0.04183\n 0.34630  -0.03992\n 0.42164  -0.03713\n 0.49941  -0.03341\n 0.57728  -0.02900\n 0.65336  -0.02427\n 0.72577  -0.01953\n 0.79274  -0.01500\n 0.85258  -0.01084\n 0.90378  -0.00719\n 0.94504  -0.00417\n 0.97530  -0.00190\n 0.99379  -0.00048\n 1.00000  0.00000\n") })()
+ui.wait(300)
+(() => { if (sketchTool !== "airfoil" || viewport.sketchOverlay.airfoilDat === "") ui.fail("the file airfoil did not start: " + sketchTool) })()
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "afdTest"); t.clickAt([-10, 0]); t.clickAt([50, 0]) })()
+ui.wait(800)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "afdTest"); const c = t.sketch().curves; ui.log("curves " + JSON.stringify(c.map(k => [k.kind, k.points.length, k.points[0]]))); if (c.length !== 2 || c[0].kind !== "spline") ui.fail("expected two splines, got " + c.length); else if (Math.abs(c[0].points[0][0] + 10) > 1e-3 || Math.abs(c[0].points[c[0].points.length - 1][0] - 50) > 0.05) ui.fail("not the chord clicked") })()
+(() => { const r = controller.execute("sketch.profiles", { sketch: activeSketch.id }).result; ui.log("profiles " + JSON.stringify(r.profiles.map(p => p.area))); const want = 0.0814 * 3600; if (r.profiles.length !== 1 || Math.abs(r.profiles[0].area - want) > want * 0.01) ui.fail("one profile of about " + want + " mm2 expected") })()
+# The tool ends with the airfoil; a normal Airfoil afterwards is the typed NACA again, not the file.
+(() => { if (!ui.clickText("CREATE")) ui.fail("no CREATE menu") })()
+ui.wait(300)
+(() => { if (!ui.clickText("Airfoil")) ui.fail("no Airfoil in the CREATE menu") })()
+ui.wait(300)
+(() => { if (viewport.sketchOverlay.airfoilDat !== "") ui.fail("the NACA tool still holds the file") })()
+ui.shot("build/sketch-airfoil-file.png")
+(() => { const r = controller.execute("feature.extrude", { sketch: activeSketch.id, distance: 2 }); if (!r.ok) ui.fail("extrude: " + r.error) })()
+ui.log("Airfoil from file OK")

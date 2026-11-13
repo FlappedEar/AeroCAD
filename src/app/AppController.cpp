@@ -67,6 +67,14 @@ QString AppController::localPath(const QUrl& url) const
     return toLocalPath(url);
 }
 
+QString AppController::readTextFile(const QUrl& url) const
+{
+    QFile file(toLocalPath(url));
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text) || file.size() > (256 << 10))
+        return {};
+    return QString::fromUtf8(file.readAll());
+}
+
 AppController::AppController(QObject* parent) : QObject(parent), m_parts(m_session.document())
 {
     m_session.project().generator = std::string("AeroCAD ") + aerocad::buildStamp();

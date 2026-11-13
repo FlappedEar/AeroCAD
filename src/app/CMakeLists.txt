@@ -610,6 +610,10 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_airfoil.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_sketch_airfoil_test PROPERTIES LABELS gui TIMEOUT 60)
+    add_test(NAME app_sketch_airfoil_file_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_airfoil_file.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_sketch_airfoil_file_test PROPERTIES LABELS gui TIMEOUT 60)
     # Loft to a point: a sketch point ends the loft (Loft dialog).
     add_test(NAME app_loft_point_test
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/loft_point.ui

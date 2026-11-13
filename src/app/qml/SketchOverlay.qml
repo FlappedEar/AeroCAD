@@ -125,6 +125,8 @@ Item {
     property var typedRadius: null
     /// Conic Curve: rho typed while placing the apex (null: 0.5, a parabola).
     property var typedRho: null
+    /// Airfoil from File: the text of the .dat file read; the airfoil tool then needs only the two clicks.
+    property string airfoilDat: ""
     /// 3-Point Rectangle: the height typed after the first side (number or expression,
     /// signed to the side of the cursor), kept for the finished rectangle.
     property var typedHeight: null
@@ -180,6 +182,8 @@ Item {
     visible: sketch !== null
 
     onToolChanged: {
+        if (tool !== "airfoil")
+            airfoilDat = ""
         reset()
         clearSelection()
         if (tool !== "mirror")
@@ -1197,7 +1201,9 @@ Item {
                 points = [p]
             } else if (dist(points[0], p) >= 1e-9) {
                 points = [points[0], p]
-                if (dimension.text.trim().length > 0)
+                if (tool === "airfoil" && airfoilDat !== "")
+                    finishAirfoil("")
+                else if (dimension.text.trim().length > 0)
                     tool === "airfoil" ? finishAirfoil(dimension.text) : finishText(dimension.text)
             }
             canvas.requestPaint()
@@ -1271,8 +1277,8 @@ Item {
     function finishAirfoil(str) {
         if (points.length === 0)
             return
-        const code = nacaCode(str)
-        if (code === "") {
+        const code = airfoilDat !== "" ? "" : nacaCode(str)
+        if (airfoilDat === "" && code === "") {
             root.viewport.controller.showStatus(qsTr("Airfoil: type a NACA 4-digit code with a thickness, e.g. 2412 (a camber needs its position: 2012 is not one)"))
             return
         }
@@ -1283,8 +1289,9 @@ Item {
             root.viewport.controller.showStatus(qsTr("Airfoil: click the trailing edge (the cursor distance is the chord)"))
             return
         }
-        emitCurve({ type: "airfoil", naca: code, at: a, chord: round6(c),
-                    angle: round6(Math.atan2(tip[1] - a[1], tip[0] - a[0]) * 180 / Math.PI) })
+        const placed = { at: a, chord: round6(c), angle: round6(Math.atan2(tip[1] - a[1], tip[0] - a[0]) * 180 / Math.PI) }
+        emitCurve(airfoilDat !== "" ? Object.assign({ type: "airfoil", dat: airfoilDat }, placed)
+                                    : Object.assign({ type: "airfoil", naca: code }, placed))
         points = []
         dimension.text = ""
         canvas.requestPaint()
@@ -1917,7 +1924,7 @@ Item {
                     // The chord, then the airfoil typed so far (0012 until a code is typed).
                     ctx.moveTo(s[0].x, s[0].y)
                     ctx.lineTo(s[1].x, s[1].y)
-                    if (root.dist(pts[0], pts[1]) > 1e-9) {
+                    if (root.airfoilDat === "" && root.dist(pts[0], pts[1]) > 1e-9) {
                         const o = root.airfoilOutline(root.nacaCode(dimension.text) || "0012", pts[0], pts[1])
                         for (let i = 0; i < o.length; ++i) {
                             const q = root.toScreen(o[i])
@@ -2256,7 +2263,8 @@ Item {
                     : root.tool === "circle_3tangent" ? (root.tangentNote !== "" ? root.tangentNote : qsTr("3-tangent circle: click three lines, arcs or circles (the circle that fits between them)"))
                     : root.tool === "ellipse" ? qsTr("Ellipse: click the centre, the end of the major axis, then a point for the minor radius; type each radius")
                     : root.tool === "elliptical_arc" ? qsTr("Elliptical arc: click the centre, the major axis end, the minor radius, then the arc start and end (counter-clockwise)")
-                    : root.tool === "airfoil" ? qsTr("Airfoil: click the leading edge, type a NACA code (e.g. 2412), click the trailing edge or press Enter (cursor distance = chord)")
+                    : root.tool === "airfoil" ? (root.airfoilDat !== "" ? qsTr("Airfoil from file: click the leading edge, then the trailing edge (the distance is the chord)")
+                                                          : qsTr("Airfoil: click the leading edge, type a NACA code (e.g. 2412), click the trailing edge or press Enter (cursor distance = chord)"))
                     : root.tool === "text" ? qsTr("Text: click the start, type the text, Enter (cursor distance = height, direction = angle)")
                     : root.tool === "conic" ? qsTr("Conic curve: click the start, the end, then the apex it bends towards; type rho (0 to 1, 0.5 is a parabola)")
                     : root.tool === "arc" ? qsTr("Arc: click start, end, then a point on the arc")
@@ -2312,7 +2320,7 @@ Item {
                             : root.tool === "ellipse" ? (root.points.length >= 2 ? qsTr("Minor radius") : qsTr("Major radius"))
                             : root.tool === "conic" ? (root.points.length >= 2 ? qsTr("Rho") : qsTr("Length"))
                             : root.tool === "text" ? qsTr("Text")
-                            : root.tool === "airfoil" ? qsTr("NACA")
+                            : root.tool === "airfoil" ? (root.airfoilDat !== "" ? qsTr("File") : qsTr("NACA"))
                             : root.tool === "circle_2point" ? qsTr("Diameter")
                             : root.tool === "rectangle_3point" ? (root.points.length >= 2 ? qsTr("Height") : qsTr("Length"))
                             : root.tool === "offset" ? qsTr("Distance")
@@ -2324,7 +2332,7 @@ Item {
                     Layout.preferredWidth: 140
                     placeholderText: root.tool === "scale" ? qsTr("e.g. 2 or 0.5")
                                      : root.tool === "conic" && root.points.length >= 2 ? qsTr("0 to 1, e.g. 0.5")
-                                     : root.tool === "airfoil" ? qsTr("e.g. 2412")
+                                     : root.tool === "airfoil" ? (root.airfoilDat !== "" ? qsTr("click the trailing edge") : qsTr("e.g. 2412"))
                                      : root.tool === "text" ? qsTr("e.g. Rev 2") : qsTr("e.g. 40 or w/2")
                     // onTextChanged: the first digit is put here by the overlay's key handler.
                     onTextChanged: {
