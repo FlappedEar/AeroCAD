@@ -7,6 +7,7 @@
 
 #include <BRepAdaptor_CompCurve.hxx>
 #include <BRepAdaptor_Curve.hxx>
+#include <BRepTools_WireExplorer.hxx>
 #include <GCPnts_AbscissaPoint.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Common.hxx>
@@ -645,7 +646,36 @@ Shape sweep(const Shape& profileFaces, const Shape& pathEdges, const SweepOption
         frameAt(length, end, tEnd);
         if (start.Distance(end) < 1e-6 * std::max(1.0, length))
             throw ModelingError("Sweep: a closed path cannot be twisted or scaled");
-        // A smooth path only: the sections are lofted, which would round off a corner.
+        // A smooth path only: the sections are lofted, which would round off a corner. The edges meet
+        // tangentially (checked at every junction, in path order); the turning along the path sets
+        // how many sections are needed.
+        {
+            const TopoDS_Wire wire = pathWire(pathEdges, "Sweep");
+            auto tangentOf = [](const TopoDS_Edge& edge, bool atEnd) {
+                BRepAdaptor_Curve c(edge);
+                gp_Pnt pt;
+                gp_Vec tan;
+                c.D1(atEnd ? c.LastParameter() : c.FirstParameter(), pt, tan);
+                if (tan.Magnitude() < 1e-12)
+                    throw ModelingError("Sweep: the path has no direction here");
+                tan.Normalize();
+                return edge.Orientation() == TopAbs_REVERSED ? tan.Reversed() : tan;
+            };
+            std::optional<gp_Vec> endOfPrevious;
+            for (BRepTools_WireExplorer we(wire); we.More(); we.Next()) {
+                const TopoDS_Edge& edge = we.Current();
+                if (BRep_Tool::Degenerated(edge))
+                    continue;
+                // A reversed edge is walked from its last point to its first.
+                const bool reversed = edge.Orientation() == TopAbs_REVERSED;
+                const gp_Vec first = tangentOf(edge, reversed);
+                const gp_Vec last = tangentOf(edge, !reversed);
+                if (endOfPrevious && endOfPrevious->Angle(first) > 1.0 * std::numbers::pi / 180.0)
+                    throw ModelingError("Sweep: a twist, an end scale or a parallel orientation needs a smooth path "
+                                        "(no sharp corners)");
+                endOfPrevious = last;
+            }
+        }
         constexpr int kProbe = 400;
         double turning = 0.0;
         gp_Vec previous = t0;
@@ -653,11 +683,7 @@ Shape sweep(const Shape& profileFaces, const Shape& pathEdges, const SweepOption
             gp_Pnt pt;
             gp_Vec tan;
             frameAt(length * i / kProbe, pt, tan);
-            const double angle = previous.Angle(tan);
-            if (angle > 10.0 * std::numbers::pi / 180.0)
-                throw ModelingError("Sweep: a twist, an end scale or a parallel orientation needs a smooth path "
-                                    "(no sharp corners)");
-            turning += angle;
+            turning += previous.Angle(tan);
             previous = tan;
         }
         const double twist = options.twistDegrees * std::numbers::pi / 180.0;

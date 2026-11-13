@@ -5727,6 +5727,21 @@ TEST_CASE("Design commands: sweep twist, end scale and parallel orientation (Fus
         CHECK(hasTopEdgeAt(8.66, 5.0));
         CHECK_FALSE(hasTopEdgeAt(8.66, -5.0));
     }
+    SECTION("smoothness is judged at the joints: a tight tangent arc passes, a 5 degree corner does not")
+    {
+        commands::Session s;
+        const Json prof = square(s);
+        const Json smooth = run(s, "sketch.create", {{"plane", "XZ"}, {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {0, 20}}}})}});
+        run(s, "sketch.add_curves", {{"sketch", smooth.at("id")}, {"curves", Json::array({{{"type", "tangent_arc"}, {"from", {{"curve", 0}, {"point", "end"}}}, {"end", {1, 21}}}})}});
+        const auto ok = s.execute("feature.sweep", {{"sketch", prof.at("id")}, {"path", {{"sketch", smooth.at("id")}}}, {"end_scale", 0.9}});
+        INFO(ok.error);
+        CHECK(ok.ok);
+        const Json slight = run(s, "sketch.create", {{"plane", "XZ"}, {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {0, 20}}},
+                                                                                            {{"type", "line"}, {"start", {0, 20}}, {"end", {1.75, 40}}}})}});
+        const auto bad = s.execute("feature.sweep", {{"sketch", prof.at("id")}, {"path", {{"sketch", slight.at("id")}}}, {"end_scale", 0.9}});
+        CHECK_FALSE(bad.ok);
+        CHECK(bad.error.find("smooth") != std::string::npos);
+    }
     SECTION("a twist over the limit or a profile with two holes is an error")
     {
         commands::Session s;
