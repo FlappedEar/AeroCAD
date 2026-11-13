@@ -131,6 +131,12 @@ enum class BooleanOp { Union, Cut, Intersect };
 [[nodiscard]] Shape fillet(const Shape& shape, const std::vector<std::size_t>& edgeIndices, double radius,
                            double endRadius = 0.0);
 
+/// Full round fillet (Fusion: Fillet > Full Round): the two parallel straight edges that bound one flat
+/// face (each on one side of it) are rounded with the radius that takes up the whole face (half its
+/// width), so the face disappears into one half-round. The radius is a hair under half the width while
+/// the fillet is built and the sliver left is then removed (the two round faces meet within 2e-3 mm).
+[[nodiscard]] Shape fullRoundFillet(const Shape& shape, const std::vector<std::size_t>& edgeIndices);
+
 /// Chamfer types, as in Fusion's Chamfer dialog.
 enum class ChamferType {
     EqualDistance, ///< `distance` on both faces (45 degrees on a right-angled edge).

@@ -1,0 +1,22 @@
+# Full Round fillet (Fusion: Fillet > Full Round) from the SOLID tab: the two long edges of a 4 mm plate's
+# side face are rounded into one half circle, so the flat face disappears. The Radius fields are hidden
+# while Full round is on and no radius is stored.
+# Run: AeroCAD --ui-script <this file>
+ui.wait(800)
+(() => { const r = controller.execute("feature.box", { corner: [0, 0, 0], size: [100, 40, 4] }); if (!r.ok) ui.fail("box: " + r.error) })()
+ui.wait(300)
+(() => { viewport.restoreCameraState({ pivot: [50, 20, 2], pitch: -25, yaw: 30, distance: 250, orthographic: false }) })()
+ui.wait(300)
+(() => { if (!ui.clickText("SOLID")) ui.fail("no SOLID tab") })()
+ui.wait(300)
+(() => { if (!ui.clickText("Fillet")) ui.fail("no Fillet command") })()
+ui.wait(800)
+(() => { featureDialog.setValue("edges", [{ point: [50, 0, 0] }, { point: [50, 0, 4] }]); featureDialog.setValue("full_round", true) })()
+ui.wait(800)
+ui.shot("fillet-full-round.png")
+(() => { if (featureDialog.error) ui.fail("dialog error: " + featureDialog.error) })()
+(() => { if (!ui.clickText("OK")) ui.fail("no OK button") })()
+ui.wait(1000)
+(() => { const tl = controller.execute("timeline.list").result; const f = tl.features.find(x => x.type === "fillet"); if (!f) ui.fail("no fillet feature"); if (f.params.radius !== undefined || f.params.radius_end !== undefined) ui.fail("a radius was stored: " + JSON.stringify(f.params)); if (f.params.full_round !== true) ui.fail("full_round not stored: " + JSON.stringify(f.params)); const v = tl.bodies[0].volume; const expect = 16000 - 2 * (1 - Math.PI / 4) * 4 * 100; ui.log("full round volume " + v.toFixed(1) + " (expected " + expect.toFixed(1) + ")"); if (Math.abs(v - expect) > 0.01 * 16000 * 0.02) ui.fail("volume " + v); if (tl.bodies[0].faces !== 7) ui.fail("faces " + tl.bodies[0].faces); featureDialog.open("fillet", f.params, f.id) })()
+ui.wait(500)
+(() => { if (featureDialog.values.full_round !== true) ui.fail("reopened fillet lost Full round: " + JSON.stringify(featureDialog.values)) })()

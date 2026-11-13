@@ -2873,9 +2873,11 @@ void registerFeatureCommands(CommandRegistry& r)
                       "rounded with the picked edge; a radius that does not fit is reported with the largest that does.",
                       {{"body", bodyRefSchema("Body.")},
                        {"edges", topologyListSchema("edge")},
-                       {"radius", numberOrExpr("Radius (mm); variable: at the edge start.")},
-                       {"radius_end", numberOrExpr("Radius at the edge end (variable).")}},
-                      {"body", "edges", "radius"});
+                       {"radius", numberOrExpr("Radius (mm); variable: at the edge start. Not with full_round.")},
+                       {"radius_end", numberOrExpr("Radius at the edge end (variable).")},
+                       {"full_round", {{"type", "boolean"},
+                                       {"description", "Round away the flat face between two parallel straight edges (edges: those two)."}}}},
+                      {"body", "edges"});
 
     addFeatureCommand(r, "chamfer", "Chamfer",
                       "Bevels edges of a body (Fusion: Chamfer): equal distance (default), two distances, or a "
