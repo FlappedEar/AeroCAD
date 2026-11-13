@@ -395,7 +395,7 @@ TEST_CASE("tools/list is compact: shared schemas listed once, no schema boilerpl
     // (Raised 150000 -> 152000 for Revolve extents, Extrude start offset, Polygon / Slot modes (CAD-268/269),
     // then to 155000 for tangent circles and Scale (CAD-270/271), to 159000 for Pipe, Rib, Coil and Sketch Intersect (after sharing
     // the path schema, threshold 200), to 160000 for arc slots, tangent circles to arcs and control point splines:
-    // each new feature adds about 1 to 1.5 kB.
+    // each new feature adds about 1 to 1.5 kB. Sub-schemas of 120 characters (was 200) that repeat are listed once.
     // Trim existing descriptions before raising it again.
     // Lowered by about 1.7 kB when the result-format text of simulation_results / _field / _compare moved
     // into the agent_guide topic "results" (CAD-240); 158.3 kB then.)

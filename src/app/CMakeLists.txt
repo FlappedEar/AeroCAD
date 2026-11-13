@@ -745,6 +745,11 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/extrude_all.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_extrude_all_test PROPERTIES LABELS gui TIMEOUT 60)
+    # Hole type countersink / counterbore.
+    add_test(NAME app_hole_countersink_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/hole_countersink.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_hole_countersink_test PROPERTIES LABELS gui TIMEOUT 60)
     # Variable radius fillet from the SOLID tab.
     add_test(NAME app_fillet_variable_test
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/fillet_variable.ui

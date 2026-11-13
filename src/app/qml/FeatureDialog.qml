@@ -297,6 +297,14 @@ Pane {
             { key: "sketch", type: "sketch", label: qsTr("Sketch with points"), showIf: v => v.placement === "sketch" },
             { key: "diameter", type: "expr", label: qsTr("Diameter"), init: 5 },
             { key: "depth", type: "expr", label: qsTr("Depth (empty: through all)") },
+            // Fusion: Hole type (a seat for a screw head).
+            { key: "hole_type", type: "choice", label: qsTr("Hole type"), init: "simple", options: [
+                { value: "simple", label: qsTr("Simple") }, { value: "counterbore", label: qsTr("Counterbore") },
+                { value: "countersink", label: qsTr("Countersink") }] },
+            { key: "cbore_diameter", type: "expr", label: qsTr("Counterbore diameter"), init: 10, showIf: v => v.hole_type === "counterbore" },
+            { key: "cbore_depth", type: "expr", label: qsTr("Counterbore depth"), init: 3, showIf: v => v.hole_type === "counterbore" },
+            { key: "csink_diameter", type: "expr", label: qsTr("Countersink diameter"), init: 10, showIf: v => v.hole_type === "countersink" },
+            { key: "csink_angle", type: "expr", label: qsTr("Countersink angle (deg)"), init: 90, showIf: v => v.hole_type === "countersink" },
             { key: "flip", type: "bool", label: qsTr("Flip direction"), showIf: v => v.placement === "sketch" }] },
         box: { title: qsTr("Box"), command: "feature.box", fields: [
             { key: "corner", type: "vec3", label: qsTr("Corner"), init: [0, 0, 0] },

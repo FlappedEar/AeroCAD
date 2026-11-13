@@ -2876,7 +2876,12 @@ void registerFeatureCommands(CommandRegistry& r)
                        {"flip", {{"type", "boolean"}, {"description", "With `sketch`: drill away from the body side."}}},
                        {"diameter", numberOrExpr("Diameter (mm).")},
                        {"depth", numberOrExpr("Depth (mm); omit for through all.")},
-                       {"through", {{"type", "boolean"}, {"description", "Through all (default when no depth)."}}}},
+                       {"through", {{"type", "boolean"}, {"description", "Through all (default when no depth)."}}},
+                       {"hole_type", {{"type", "string"}, {"enum", {"simple", "counterbore", "countersink"}}, {"description", "Default simple."}}},
+                       {"cbore_diameter", numberOrExpr("Counterbore diameter (mm).")},
+                       {"cbore_depth", numberOrExpr("Counterbore depth (mm).")},
+                       {"csink_diameter", numberOrExpr("Countersink diameter at the face (mm).")},
+                       {"csink_angle", numberOrExpr("Countersink angle in degrees, default 90.")}},
                       {"body", "diameter"});
 
     r.add({"feature.base_body", "Convert to Body",

@@ -33,7 +33,7 @@ Json errorResponse(const Json& id, int code, const std::string& message)
 }
 
 /// Sub-schemas at least this long (JSON characters) are listed once; later uses point to it.
-constexpr std::size_t kSharedSchemaMinChars = 200;
+constexpr std::size_t kSharedSchemaMinChars = 120;
 
 constexpr const char* kInstructions =
     "AeroCAD is a CAD application. These tools run the same commands as its user interface, on the project "

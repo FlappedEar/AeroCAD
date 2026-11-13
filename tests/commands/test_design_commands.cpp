@@ -4956,3 +4956,39 @@ TEST_CASE("Design commands: extrude extent All cuts through every body (Fusion: 
                         .at("id").get<std::uint64_t>();
     CHECK_FALSE(s.execute("feature.extrude", {{"sketch", id}, {"extent", "everything"}, {"distance", 5}}).ok);
 }
+
+TEST_CASE("Design commands: counterbore and countersink holes (Fusion: Hole type)", "[commands][cad]")
+{
+    const double pi = 3.14159265358979323846;
+    const auto volume = [](commands::Session& s) { return run(s, "timeline.list").at("bodies").at(0).at("volume").get<double>(); };
+    const double plain = 30.0 * 30.0 * 12.0;
+    SECTION("counterbore")
+    {
+        commands::Session s;
+        run(s, "feature.box", {{"corner", {0, 0, 0}}, {"size", {30, 30, 12}}});
+        run(s, "feature.hole", {{"body", "Body1"}, {"point", {15, 15, 12}}, {"diameter", 6}, {"hole_type", "counterbore"},
+                                {"cbore_diameter", 10}, {"cbore_depth", 4}});
+        // A 6 mm hole through 12 mm plus the extra ring of the 10 mm seat over 4 mm.
+        const double expected = plain - pi * 9 * 12 - pi * (25 - 9) * 4;
+        CHECK(volume(s) == Approx(expected).epsilon(1e-4));
+        CHECK_FALSE(s.execute("feature.hole", {{"body", "Body1"}, {"point", {5, 5, 12}}, {"diameter", 6}, {"hole_type", "counterbore"},
+                                               {"cbore_diameter", 5}, {"cbore_depth", 2}}).ok);
+        CHECK_FALSE(s.execute("feature.hole", {{"body", "Body1"}, {"point", {5, 5, 12}}, {"diameter", 6}, {"hole_type", "counterbore"},
+                                               {"cbore_diameter", 10}}).ok);
+    }
+    SECTION("countersink")
+    {
+        commands::Session s;
+        run(s, "feature.box", {{"corner", {0, 0, 0}}, {"size", {30, 30, 12}}});
+        run(s, "feature.hole", {{"body", "Body1"}, {"point", {15, 15, 12}}, {"diameter", 6}, {"hole_type", "countersink"},
+                                {"csink_diameter", 12}});
+        // A 90 degree countersink 12 mm wide over a 6 mm hole is a cone 3 mm deep: a frustum minus the hole's share.
+        const double rBig = 6, rSmall = 3, h = 3;
+        const double frustum = pi * h / 3.0 * (rBig * rBig + rBig * rSmall + rSmall * rSmall);
+        const double expected = plain - pi * 9 * 12 - (frustum - pi * 9 * h);
+        CHECK(volume(s) == Approx(expected).epsilon(2e-4));
+        CHECK_FALSE(s.execute("feature.hole", {{"body", "Body1"}, {"point", {5, 5, 12}}, {"diameter", 6}, {"hole_type", "countersink"},
+                                               {"csink_diameter", 12}, {"csink_angle", 200}}).ok);
+        CHECK_FALSE(s.execute("feature.hole", {{"body", "Body1"}, {"point", {5, 5, 12}}, {"diameter", 6}, {"hole_type", "slotted"}}).ok);
+    }
+}

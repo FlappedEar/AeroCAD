@@ -4672,6 +4672,31 @@ void Design::evaluateFeature(const Feature& f)
         const double depth = through ? 0.0 : ev.num(p, "depth");
         if (!through && depth <= 0)
             throw DesignError("Hole depth must be positive");
+        // Fusion: Hole type Counterbore (a wider, flat-bottomed seat) or Countersink (a cone at the mouth).
+        const std::string holeType = lower(p.value("hole_type", std::string("simple")));
+        if (holeType != "simple" && holeType != "counterbore" && holeType != "countersink")
+            throw DesignError("Unknown hole_type '" + holeType + "' (simple, counterbore, countersink)");
+        double seatRadius = 0.0, seatDepth = 0.0, sinkAngle = 90.0;
+        if (holeType == "counterbore") {
+            seatRadius = ev.num(p, "cbore_diameter") / 2;
+            seatDepth = ev.num(p, "cbore_depth");
+            if (!(seatRadius > r))
+                throw DesignError("The counterbore diameter must be larger than the hole diameter");
+            if (!(seatDepth > 0))
+                throw DesignError("The counterbore depth must be positive");
+            if (!through && seatDepth >= depth)
+                throw DesignError("The counterbore must be shallower than the hole");
+        } else if (holeType == "countersink") {
+            seatRadius = ev.num(p, "csink_diameter") / 2;
+            sinkAngle = ev.num(p, "csink_angle", 90.0);
+            if (!(seatRadius > r))
+                throw DesignError("The countersink diameter must be larger than the hole diameter");
+            if (!(sinkAngle > 0.0 && sinkAngle < 180.0))
+                throw DesignError("The countersink angle must be between 0 and 180 degrees");
+            seatDepth = (seatRadius - r) / std::tan(sinkAngle * std::numbers::pi / 360.0);
+            if (!through && seatDepth >= depth)
+                throw DesignError("The countersink is deeper than the hole: make the hole deeper or the countersink narrower");
+        }
         std::vector<geometry::Plane> bases; // origin: hole centre; normal: drilling direction reversed
         if (has(p, "sketch")) {
             if (has(p, "point"))
@@ -4738,6 +4763,17 @@ void Design::evaluateFeature(const Feature& f)
             result = geometry::boolean(result, tool, geometry::BooleanOp::Cut);
             if (result.isNull())
                 throw DesignError("The hole removed the whole body");
+            if (holeType != "simple") {
+                SketchCurve seat{SketchCurve::Kind::Circle, {{0, 0}}};
+                seat.radius = seatRadius;
+                const auto sg = geometry::buildSketch(base, {seat});
+                // A counterbore is a straight cylinder, a countersink a cone whose walls lean by half its angle.
+                const geometry::Shape seatTool = geometry::extrude(sg.profiles.at(0), base.normal * -1.0, seatDepth, 1e-3,
+                                                                   holeType == "countersink" ? sinkAngle / 2.0 : 0.0);
+                result = geometry::boolean(result, seatTool, geometry::BooleanOp::Cut);
+                if (result.isNull())
+                    throw DesignError("The hole removed the whole body");
+            }
         }
         b.shape = result;
     } else if (f.type == "base_body") {

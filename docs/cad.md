@@ -137,7 +137,7 @@ rebuilding, AeroCAD reports the problem; Undo restores the previous source.
 | `feature.draft` | Draft | `body`, `faces`, `plane` (fixed plane: XY default / XZ / YZ / construction plane / {origin, normal} / planar face; its normal is the pull direction), `angle` in degrees (positive leans the faces in along the pull direction, negative out) |
 | `feature.delete_faces` | Delete Face | `body`, `faces`: removes them and heals the gap from the neighbouring faces (a hole, fillet or boss disappears); an error when the neighbours cannot close it |
 | `feature.split` | Split Body | `body`, `plane` XY / XZ / YZ / {plane: construction plane} / {origin, normal} / planar face, `offset`; the body keeps what is behind the plane, a new body (the feature's id) gets what is in front |
-| `feature.hole` | Hole (H) | `point` on a planar face, or `sketch` (one hole per sketch point, optional `sketch_points`, `flip`); `diameter`, `depth` or through all |
+| `feature.hole` | Hole (H) | `point` on a planar face, or `sketch` (one hole per sketch point, optional `sketch_points`, `flip`); `diameter`, `depth` or through all, `hole_type` simple / counterbore (`cbore_diameter`, `cbore_depth`) / countersink (`csink_diameter`, `csink_angle` default 90) |
 | `feature.combine` | Combine, Split Body | `target`, `tools` (bodies, or imported parts `{part: id}`), join / cut / intersect, `keepTools`, `flip` |
 | `feature.box`, `feature.cylinder` | Box, Cylinder | primitives with an operation |
 | `feature.sphere`, `feature.torus` | Sphere, Torus | `center` (default origin), `diameter`; torus: ring `diameter` (centre line, around +Z) and `tube_diameter` (smaller than `diameter`); with an operation |
