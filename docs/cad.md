@@ -127,7 +127,7 @@ rebuilding, AeroCAD reports the problem; Undo restores the previous source.
 | `feature.rib` | Rib | `path` {sketch, curves} (flat curves; a closed curve gives a ring), `thickness` (square ends on open curves), `depth`, `direction` normal (default; stands up from the sketch plane) / parallel (reaches along the plane, to the right of the start-to-end direction, thickness centred on the plane), `flip`, `operation` new_body / join / cut |
 | `feature.coil` | Coil | `diameter` (outer), `section_size` (wire diameter / side), two of `revolutions` / `pitch` / `height`, `center`, `axis` X / Y / Z or [x, y, z], `section` circular / square, `handedness` right / left, `operation`; the pitch must exceed the section size |
 | `feature.scale` | Scale | `body`, `factor` (uniform) or `factor_x` / `factor_y` / `factor_z` (non-uniform, a missing one is 1), `center` (default: bounding box centre) |
-| `feature.circular_pattern` | Circular Pattern: the axis is X / Y / Z or picked in the view (a straight or circular edge, or a cylindrical face) | `axis` X / Y / Z or {origin, direction}, `count`, `angle` (360 = full turn) |
+| `feature.circular_pattern` | Circular Pattern | `axis` X / Y / Z or {origin, direction} (in the dialog: pick a straight or circular edge or a cylindrical face), `count`, `angle` (360 = full turn) |
 | `feature.plane` | Construct > Offset Plane, Plane at Angle, Midplane, Plane Through Three Points | `base` (XY / XZ / YZ, {plane: id}, planar face {body, point}), `offset`, `angle` + `axis` x / y, `base2` (midplane) or `points` (3 points) |
 | `feature.fillet` | Fillet (F) | `edges`, `radius`; tangent chains are rounded with the picked edge |
 | `feature.chamfer` | Chamfer | `edges`, `type` equal_distance (default) / two_distances (`distance`, `distance2`) / distance_angle (`distance`, `angle`), `flip` swaps the first face |
@@ -146,7 +146,7 @@ rebuilding, AeroCAD reports the problem; Undo restores the previous source.
 | `feature.edit` / `rename` / `suppress` / `delete` | timeline context menu | edit = JSON merge patch of params |
 | `timeline.list`, `timeline.set_marker`, `timeline.move_feature` | timeline | |
 | `parameter.set` / `remove` | Change Parameters | |
-| `body.faces`, `body.edges` | | for picking by index or point; cylinder / cone / torus faces and line / circle edges give an `axis` {origin, direction}; `point` adds the nearest edge / face (and the face normal there), `before` lists the body as it is before a feature (rolled back, as when editing it) |
+| `body.faces`, `body.edges` | | for picking by index or point; cylinder / cone / torus faces and line / circle edges give an `axis` {origin, direction} (`seam`: the seam of a cylinder); `point` adds the nearest edge / face (and the face normal there), `before` lists the body as it is before a feature (rolled back, as when editing it) |
 
 Sketch curves: `line {start, end}`, `rectangle {corner, width, height | opposite}`,
 `center_rectangle {center, width, height}`, `circle {center, radius | diameter}`,

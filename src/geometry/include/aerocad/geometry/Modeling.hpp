@@ -196,6 +196,7 @@ struct EdgeInfo {
     core::Vec3 end{};
     core::Vec3 middle{};
     /// Axis of a line (through it) or circle (through its centre, along its normal) edge.
+    bool seam = false; ///< the seam of a closed face (a cylinder's), not a real edge of the body
     bool hasAxis = false;
     core::Vec3 axisOrigin{};
     core::Vec3 axisDirection{};

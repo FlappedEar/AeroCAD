@@ -780,9 +780,10 @@ Pane {
         const dot = (u, v) => u[0] * v[0] + u[1] * v[1] + u[2] * v[2]
         const p = [point.x, point.y, point.z]
         let best = null, bestD = Infinity
+        const cross = (u, v) => [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]]
         for (const e of er.result.edges) {
-            if (!e.axis)
-                continue
+            if (!e.axis || e.seam)
+                continue // a cylinder's seam is not an edge to take an axis from
             let dist
             if (e.type === "line") {
                 const a = e.start
@@ -799,6 +800,18 @@ Pane {
                 const h = dot(cp, n)
                 const radial = Math.hypot(cp[0] - h * n[0], cp[1] - h * n[1], cp[2] - h * n[2])
                 dist = Math.hypot(h, radial - radius)
+                // An arc covers only part of the ring: a point beside it is near an end at best.
+                const open = Math.hypot(e.end[0] - e.start[0], e.end[1] - e.start[1], e.end[2] - e.start[2]) > 1e-6
+                if (open && radial > 1e-9) {
+                    const u = [e.start[0] - c[0], e.start[1] - c[1], e.start[2] - c[2]]
+                    const w = cross(n, u)
+                    const ang = q => { const d = [q[0] - c[0], q[1] - c[1], q[2] - c[2]]; return (Math.atan2(dot(d, w), dot(d, u)) + 2 * Math.PI) % (2 * Math.PI) }
+                    const aEnd = ang(e.end), aMid = ang(e.middle), aP = ang(p)
+                    const inside = aMid < aEnd ? aP <= aEnd : aP >= aEnd
+                    if (!inside)
+                        dist = Math.min(Math.hypot(p[0] - e.start[0], p[1] - e.start[1], p[2] - e.start[2]),
+                                        Math.hypot(p[0] - e.end[0], p[1] - e.end[1], p[2] - e.end[2]))
+                }
             }
             if (dist < bestD) { best = e; bestD = dist }
         }
@@ -810,9 +823,10 @@ Pane {
             if (f && f.axis)
                 return axisOf(f.axis)
         }
-        return best ? axisOf(best.axis) : null
+        // Nothing under the click (a flat face, say): the nearest edge when it is close, else nothing.
+        return best && bestD <= 5 * tol ? axisOf(best.axis) : null
     }
-    
+
     /// Viewport pick while the dialog is open: `part` is controller.partInfo().
     function addPick(part, point) {
         if (!spec || !pickKey || !part || !part.id)

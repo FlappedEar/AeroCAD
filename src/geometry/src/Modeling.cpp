@@ -1541,11 +1541,18 @@ std::vector<EdgeInfo> edges(const Shape& shape)
     if (shape.isNull())
         return out;
     const auto map = mapOf(shape.impl()->shape, TopAbs_EDGE);
+    TopTools_IndexedDataMapOfShapeListOfShape edgeFaces;
+    TopExp::MapShapesAndAncestors(shape.impl()->shape, TopAbs_EDGE, TopAbs_FACE, edgeFaces);
     for (int i = 1; i <= map.Extent(); ++i) {
         const TopoDS_Edge& e = TopoDS::Edge(map(i));
         if (BRep_Tool::Degenerated(e))
             continue;
         EdgeInfo info;
+        if (const int k = edgeFaces.FindIndex(e); k > 0) {
+            for (const TopoDS_Shape& f : edgeFaces(k))
+                if (BRep_Tool::IsClosed(e, TopoDS::Face(f)))
+                    info.seam = true;
+        }
         info.index = static_cast<std::size_t>(i - 1);
         info.type = curveType(e);
         BRepAdaptor_Curve c(e);

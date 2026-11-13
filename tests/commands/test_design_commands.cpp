@@ -4764,4 +4764,20 @@ TEST_CASE("Design commands: body.faces and body.edges give axes of cylinders, ci
     }
     CHECK(circles == 2);
     CHECK(lines == 1); // the seam
+    for (const auto& e : edges.at("edges"))
+        CHECK((e.at("type") == "line") == e.value("seam", false)); // only the line is a seam
+    // A torus gives its axis too.
+    commands::Session t;
+    run(t, "feature.torus", {{"center", {5, 6, 7}}, {"diameter", 40}, {"tube_diameter", 10}});
+    const Json torusFaces = run(t, "body.faces", {{"body", "Body1"}});
+    bool found = false;
+    for (const auto& f : torusFaces.at("faces")) {
+        if (f.at("type") == "torus") {
+            found = true;
+            CHECK(f.at("axis").at("origin")[0].get<double>() == Approx(5).margin(1e-6));
+            CHECK(f.at("axis").at("origin")[1].get<double>() == Approx(6).margin(1e-6));
+            CHECK(std::abs(f.at("axis").at("direction")[2].get<double>()) == Approx(1.0).margin(1e-6));
+        }
+    }
+    CHECK(found);
 }

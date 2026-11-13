@@ -3191,6 +3191,8 @@ void registerBodyCommands(CommandRegistry& r)
                             {"end", vec(e.end)}};
                   if (e.hasAxis)
                       edge["axis"] = {{"origin", vec(e.axisOrigin)}, {"direction", vec(e.axisDirection)}};
+                  if (e.seam)
+                      edge["seam"] = true;
                   out.push_back(edge);
               }
               Json result{{"body", b.id}, {"name", b.name}, {"edges", out}};
