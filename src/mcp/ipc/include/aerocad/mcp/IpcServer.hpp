@@ -40,6 +40,8 @@ public:
     /// Immediately drops all queued commands, rotates the access session, sends
     /// {"event": "revoked"} to all clients and disconnects them. Does not stop listening;
     /// use close() to end consent until the user explicitly grants access again.
+    /// The client whose command is being handled right now (e.g. project.new ending its own
+    /// grant) first gets that command's reply, then the revoked event (CAD-222).
     void revokeAll(const QString& reason);
 
     [[nodiscard]] bool isListening() const;
@@ -61,6 +63,7 @@ private:
     void onReadyRead(QLocalSocket* socket);
     void handleMessage(QLocalSocket* socket, const QByteArray& line);
     void send(QLocalSocket* socket, const nlohmann::json& message);
+    void sendRevoked(QLocalSocket* socket, const QString& reason);
 
     Handler m_handler;
     QLocalServer* m_server = nullptr;
@@ -69,6 +72,9 @@ private:
     QString m_error;
     QString m_accessSession; ///< Changes when access ends, including an explicit Disconnect.
     quint64 m_nextClientId = 1;
+    QLocalSocket* m_handling = nullptr; ///< The socket whose command the handler is running.
+    bool m_revokeAfterReply = false;    ///< The handler ended the grant of m_handling.
+    QString m_revokeAfterReplyReason;
 };
 
 } // namespace aerocad::mcp
