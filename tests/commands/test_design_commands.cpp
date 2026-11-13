@@ -4853,3 +4853,64 @@ TEST_CASE("Design commands: variable fillet radius follows body.edges start and 
     }
 }
 
+
+TEST_CASE("Design commands: thread (Fusion: Create > Thread)", "[commands][cad]")
+{
+    const auto bodyVolume = [](commands::Session& s, const char* body) {
+        const Json bodies = run(s, "timeline.list").at("bodies");
+        for (const auto& b : bodies)
+            if (b.at("name") == body)
+                return b.at("volume").get<double>();
+        return -1.0;
+    };
+    const auto cylinderFace = [](commands::Session& s, const char* body) {
+        const Json faces = run(s, "body.faces", {{"body", body}});
+        for (const auto& f : faces.at("faces"))
+            if (f.at("type") == "cylinder")
+                return f.at("index").get<int>();
+        return -1;
+    };
+    SECTION("an outer cylinder is cut inwards and keeps its diameter")
+    {
+        commands::Session s;
+        run(s, "feature.cylinder", {{"center", {0, 0, 0}}, {"radius", 5}, {"height", 20}});
+        const double before = bodyVolume(s, "Body1");
+        const int face = cylinderFace(s, "Body1");
+        REQUIRE(face >= 0);
+        run(s, "feature.thread", {{"body", "Body1"}, {"faces", {face}}, {"pitch", 2}});
+        const double after = bodyVolume(s, "Body1");
+        // A 1.2 mm deep V groove of about 0.8 * pitch at the surface over ~8 turns removes roughly
+        // turns * 2 pi r * (0.5 * (0.8 + 0.1) * 2 * 1.2) mm3 ~ 8 * 31.4 * 1.1 = 280 mm3 (less: it narrows inwards).
+        const double removed = before - after;
+        INFO("removed " << removed);
+        CHECK(removed > 80.0);
+        CHECK(removed < 400.0);
+        CHECK(run(s, "timeline.list").at("bodies").size() == 1);
+    }
+    SECTION("a hole is cut outwards, left-handed and flipped threads work too")
+    {
+        commands::Session s;
+        run(s, "feature.box", {{"corner", {0, 0, 0}}, {"size", {30, 30, 12}}});
+        run(s, "feature.hole", {{"body", "Body1"}, {"point", {15, 15, 12}}, {"diameter", 8}});
+        const double before = bodyVolume(s, "Body1");
+        const int face = cylinderFace(s, "Body1");
+        REQUIRE(face >= 0);
+        run(s, "feature.thread", {{"body", "Body1"}, {"faces", {face}}, {"pitch", 1.5}, {"handedness", "left"}, {"flip", true}});
+        const double removed = before - bodyVolume(s, "Body1");
+        INFO("removed " << removed);
+        CHECK(removed > 20.0); // the groove cut material from the wall
+        CHECK(removed < 300.0);
+    }
+    SECTION("a face that is not a cylinder, a missing pitch and a too long pitch are reported")
+    {
+        commands::Session s;
+        run(s, "feature.box", {{"corner", {0, 0, 0}}, {"size", {10, 10, 10}}});
+        CHECK_FALSE(s.execute("feature.thread", {{"body", "Body1"}, {"faces", {0}}, {"pitch", 2}}).ok);
+        commands::Session c;
+        run(c, "feature.cylinder", {{"center", {0, 0, 0}}, {"radius", 5}, {"height", 4}});
+        const int face = cylinderFace(c, "Body1");
+        CHECK_FALSE(c.execute("feature.thread", {{"body", "Body1"}, {"faces", {face}}, {"pitch", 6}}).ok);
+        CHECK_FALSE(c.execute("feature.thread", {{"body", "Body1"}, {"faces", {face}}, {"pitch", 0}}).ok);
+        CHECK_FALSE(c.execute("feature.thread", {{"body", "Body1"}, {"faces", {face}}, {"pitch", 1}, {"handedness", "sideways"}}).ok);
+    }
+}

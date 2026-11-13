@@ -132,7 +132,7 @@ const std::vector<std::string>& Design::featureTypes()
     static const std::vector<std::string> types{"sketch", "extrude", "revolve", "fillet", "chamfer",
                                                 "shell",  "combine", "box",     "cylinder", "sphere", "torus", "base_body", "hole",
                                                 "mirror",  "rectangular_pattern", "circular_pattern", "path_pattern", "pipe", "rib", "coil", "loft", "sweep", "plane",
-                                                "part_on_surface", "fin_on_surface", "move", "scale", "press_pull", "split", "delete_faces", "draft",
+                                                "part_on_surface", "fin_on_surface", "move", "scale", "press_pull", "split", "delete_faces", "draft", "thread",
                                                 "fit_selection", "fit_regions", "trim_by_sketch", "offset_surface", "thicken_surface"};
     return types;
 }
@@ -4130,6 +4130,15 @@ void Design::evaluateFeature(const Feature& f)
         const auto idx = resolveIndices(b.shape, required(p, "faces"), false);
         const Plane pl = resolvePlane(p.value("plane", Json("XY"))).normalized();
         b.shape = geometry::draft(b.shape, idx, pl.origin, pl.normal, ev.num(p, "angle"));
+    } else if (f.type == "thread") {
+        // Fusion: Create > Thread (modeled): a helical groove cut along cylindrical faces.
+        Body& b = bodyRef(required(p, "body"));
+        const auto idx = resolveIndices(b.shape, required(p, "faces"), false);
+        const std::string hand = lower(p.value("handedness", std::string("right")));
+        if (hand != "right" && hand != "left")
+            throw DesignError("Unknown handedness '" + hand + "' (right, left)");
+        b.shape = geometry::thread(b.shape, idx, ev.num(p, "pitch"), ev.num(p, "depth", 0.0), ev.num(p, "length", 0.0),
+                                   hand == "left", p.value("flip", false));
     } else if (f.type == "delete_faces") {
         // Fusion: Modify > Delete on faces: the gap closes from the neighbouring faces.
         Body& b = bodyRef(required(p, "body"));

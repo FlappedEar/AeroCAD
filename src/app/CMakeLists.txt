@@ -735,6 +735,11 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_arc_slot_3pt.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_sketch_arc_slot_3pt_test PROPERTIES LABELS gui TIMEOUT 60)
+    # Thread on a cylindrical face from the SOLID tab.
+    add_test(NAME app_thread_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/thread.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_thread_test PROPERTIES LABELS gui TIMEOUT 60)
     # Variable radius fillet from the SOLID tab.
     add_test(NAME app_fillet_variable_test
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/fillet_variable.ui

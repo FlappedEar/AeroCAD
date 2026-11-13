@@ -22,6 +22,7 @@
 #include <Geom_CylindricalSurface.hxx>
 #include <Geom2d_Line.hxx>
 #include <gp_Circ.hxx>
+#include <gp_Cylinder.hxx>
 #include <gp_Lin.hxx>
 #include <gp_Dir2d.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
@@ -1368,6 +1369,96 @@ Shape coil(const core::Vec3& origin, const core::Vec3& axis, double helixRadius,
             throw ModelingError("Coil failed: the swept solid is not valid (try a larger pitch or a thinner wire)");
         return wrapShape(solid);
     });
+}
+
+Shape thread(const Shape& shape, const std::vector<std::size_t>& faceIndices, double pitch, double depth, double length,
+             bool leftHanded, bool flip)
+{
+    const TopoDS_Shape& s = occ(shape, "Thread");
+    if (!std::isfinite(pitch) || pitch <= 0.0)
+        throw ModelingError("Thread: the pitch must be positive");
+    if (!std::isfinite(depth) || depth < 0.0 || !std::isfinite(length))
+        throw ModelingError("Thread: the depth must be positive");
+    if (faceIndices.empty())
+        throw ModelingError("Thread: pick a cylindrical face");
+    if (depth <= 0.0)
+        depth = 0.6134 * pitch;
+    const auto map = mapOf(s, TopAbs_FACE);
+    TopoDS_Shape result = s;
+    for (const std::size_t index : faceIndices) {
+        if (index >= static_cast<std::size_t>(map.Extent()))
+            throw ModelingError("Thread: face " + std::to_string(index) + " does not exist");
+        const TopoDS_Face face = TopoDS::Face(map(static_cast<int>(index) + 1));
+        const BRepAdaptor_Surface surf(face);
+        if (surf.GetType() != GeomAbs_Cylinder)
+            throw ModelingError("Thread: face " + std::to_string(index) + " is not cylindrical");
+        const gp_Cylinder cyl = surf.Cylinder();
+        const double radius = cyl.Radius();
+        const double base = 0.8 * pitch, tip = 0.1 * pitch, over = 0.2 * depth;
+        // A hole (normal towards the axis) is cut outwards, an outer cylinder inwards.
+        const double uMid = (surf.FirstUParameter() + surf.LastUParameter()) / 2;
+        const double vMid = (surf.FirstVParameter() + surf.LastVParameter()) / 2;
+        BRepLProp_SLProps lp(surf, uMid, vMid, 1, 1e-6);
+        gp_Pnt mid = surf.Value(uMid, vMid);
+        gp_Vec outward(cyl.Location(), mid);
+        outward.Subtract(gp_Vec(cyl.Axis().Direction()) * outward.Dot(gp_Vec(cyl.Axis().Direction())));
+        gp_Dir normal = lp.IsNormalDefined() ? lp.Normal() : gp_Dir(outward);
+        if (face.Orientation() == TopAbs_REVERSED)
+            normal.Reverse();
+        const bool internal = gp_Vec(normal).Dot(outward) < 0.0;
+        const double side = internal ? 1.0 : -1.0; // radial direction of the groove tip: -1 inwards
+        if (!internal && depth >= radius)
+            throw ModelingError("Thread: the depth does not fit the cylinder");
+        const double v0 = surf.FirstVParameter(), v1 = surf.LastVParameter();
+        const double faceLength = v1 - v0;
+        const double usable = (length > 0.0 ? std::min(length, faceLength) : faceLength) - base - 0.1 * pitch;
+        if (!(usable > 0.0))
+            throw ModelingError("Thread: the face is too short for that pitch");
+        const double revolutions = usable / pitch;
+        gp_Dir up = cyl.Axis().Direction();
+        const gp_Dir across = cyl.XAxis().Direction();
+        const double startV = flip ? v1 - (base / 2 + 0.05 * pitch) : v0 + base / 2 + 0.05 * pitch;
+        if (flip)
+            up.Reverse();
+        const gp_Pnt origin = cyl.Location().Translated(gp_Vec(cyl.Axis().Direction()) * startV);
+        const double twoPi = 2.0 * std::numbers::pi;
+        TopoDS_Shape groove;
+        try {
+            const gp_Ax3 frame(origin, up, across);
+            Handle(Geom_CylindricalSurface) surface = new Geom_CylindricalSurface(frame, radius);
+            // Counter-clockwise about `up` is a right-handed helix; the flipped axis turns the sense.
+            Handle(Geom2d_Line) line = new Geom2d_Line(gp_Pnt2d(0, 0), gp_Dir2d(leftHanded ? -twoPi : twoPi, pitch));
+            const double helixLength = revolutions * std::sqrt(twoPi * twoPi + pitch * pitch);
+            TopoDS_Edge helix = BRepBuilderAPI_MakeEdge(line, surface, 0.0, helixLength).Edge();
+            BRepLib::BuildCurves3d(helix);
+            const TopoDS_Wire spine = BRepBuilderAPI_MakeWire(helix).Wire();
+            const gp_Pnt start = origin.Translated(gp_Vec(across) * radius);
+            const gp_Vec r(across), u(up);
+            // The V groove: wide at the surface (reaching past it by `over`), narrow flat at its tip.
+            BRepBuilderAPI_MakePolygon poly;
+            poly.Add(start.Translated(r * (-side * over) - u * (base / 2)));
+            poly.Add(start.Translated(r * (side * depth) - u * (tip / 2)));
+            poly.Add(start.Translated(r * (side * depth) + u * (tip / 2)));
+            poly.Add(start.Translated(r * (-side * over) + u * (base / 2)));
+            poly.Close();
+            BRepOffsetAPI_MakePipeShell shell(spine);
+            shell.SetMode(up);
+            shell.Add(poly.Wire());
+            shell.Build();
+            if (!shell.IsDone() || !shell.MakeSolid())
+                throw ModelingError("Thread failed");
+            groove = shell.Shape();
+            if (GProp_GProps props; (BRepGProp::VolumeProperties(groove, props), props.Mass() < 0.0))
+                groove.Reverse();
+            if (!BRepCheck_Analyzer(groove).IsValid())
+                throw ModelingError("Thread failed: the groove is not valid (try another pitch)");
+        } catch (const Standard_Failure&) {
+            throw ModelingError("Thread failed on face " + std::to_string(index));
+        }
+        const Shape cut = boolean(wrapShape(result), wrapShape(groove), BooleanOp::Cut);
+        result = occ(cut, "Thread");
+    }
+    return wrapShape(result);
 }
 
 Shape torus(const core::Vec3& center, double ringRadius, double tubeRadius)

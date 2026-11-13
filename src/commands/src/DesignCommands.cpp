@@ -203,11 +203,10 @@ Json curveSchema()
         {"type", "object"},
         {"description",
          "A sketch curve. type selects the fields: line {start, end}; rectangle {corner, width, height} or "
-         "{corner, opposite}; center_rectangle {center, width, height}; three_point_rectangle {start, end, height} (a side "
-         "at any angle, then the other side; height is signed, positive to the left of start -> end); circle {center, radius | diameter}; "
+         "{corner, opposite}; center_rectangle {center, width, height}; three_point_rectangle {start, end, height} (signed: "
+         "positive to the left of start -> end); circle {center, radius | diameter}; "
          "arc {start, through, end} (three-point arc); center_arc {center, radius, startAngle, endAngle} "
-         "(degrees, counter-clockwise); polygon {center, radius, sides, angle?, mode?} (circumscribed: radius to a side) or {mode: edge, start, end, sides} "
-         "(polygon left of start -> end); slot {start, end, width, mode?} (overall: start, end are the far points) "
+         "(degrees, counter-clockwise); polygon {center, radius, sides, angle?, mode?} (circumscribed: radius to a side) or {mode: edge, start, end, sides} (left of start -> end); slot {start, end, width, mode?} (overall: start, end are the far points) "
          "or {mode: center_point, center, end, width}; spline {points, closed?}; point {at} (a sketch point: no edge, no profile; "
          "joins a curve end there); tangent_arc {from: {curve, point: start | end}, end} "
          "(add_curves only: leaves a line or arc end tangentially); "
@@ -365,16 +364,15 @@ Json operationSchema(bool withNewBody = true)
                               : Json::array({"join", "cut", "intersect"});
     return Json{{"type", "string"},
                 {"enum", values},
-                {"description", "What to do with the result (Fusion's Operation): new_body (default), join, cut or "
-                                "intersect. join/cut/intersect act on `bodies`, or on all bodies the result "
-                                "touches."}};
+                {"description", "Fusion's Operation: new_body (default), join, cut or intersect; the last three act on "
+                                "`bodies`, or every body the result touches."}};
 }
 
 Json bodiesSchema()
 {
     return Json{{"type", "array"},
                 {"items", bodyRefSchema("Body.")},
-                {"description", "Target bodies for join/cut/intersect. Default: every body the result touches."}};
+                {"description", "Bodies to join/cut/intersect (default: every body touched)."}};
 }
 
 Json topologyListSchema(const std::string& what)
@@ -382,10 +380,8 @@ Json topologyListSchema(const std::string& what)
     return Json{{"type", "array"},
                 {"items", {{"type", Json::array({"integer", "object"})}}},
                 {"minItems", 1},
-                {"description", what + " to use: indices from body." + what + "s, or {point: [x,y,z]} to take the " +
-                                    what + " nearest to a point. Point references are stored with the point relative "
-                                    "to the body's bounding box and the " + what + "'s direction and type, so they "
-                                    "follow the body when earlier dimensions change."}};
+                {"description", what + " indices (body." + what + "s) or {point: [x,y,z]} for the " + what +
+                                    " nearest to it; point references follow the body when earlier dimensions change."}};
 }
 
 Json profileSelection()
@@ -772,7 +768,7 @@ Json describeTopologyRefs(const cad::Design& d, const std::string& type, Json pa
 {
     if ((type == "fillet" || type == "chamfer") && params.contains("edges") && params.contains("body"))
         addTopologyHints(d, params["body"], params["edges"], true);
-    else if ((type == "shell" || type == "press_pull" || type == "delete_faces" || type == "draft") && params.contains("faces") &&
+    else if ((type == "shell" || type == "press_pull" || type == "delete_faces" || type == "draft" || type == "thread") && params.contains("faces") &&
              params.contains("body"))
         addTopologyHints(d, params["body"], params["faces"], false);
     else if (type == "extrude" && params.contains("to") && params["to"].is_object() &&
@@ -2606,6 +2602,18 @@ void registerFeatureCommands(CommandRegistry& r)
                                                   "plane id or name}, {origin, normal}, or a planar face {body, index | point}."}}},
                        {"angle", numberOrExpr("Draft angle in degrees (negative leans the faces out).")}},
                       {"body", "faces", "angle"});
+
+    addFeatureCommand(r, "thread", "Thread",
+                      "A modeled screw thread on cylindrical faces (Fusion: Create > Thread): a helical V groove cut along "
+                      "the axis, inwards on an outer cylinder (its diameter stays the major one), outwards in a hole.",
+                      {{"body", bodyRefSchema("Body.")},
+                       {"faces", topologyListSchema("face")},
+                       {"pitch", numberOrExpr("Distance between turns (mm).")},
+                       {"depth", numberOrExpr("Groove depth (mm), default 0.6134 * pitch.")},
+                       {"length", numberOrExpr("Threaded length from the lower end, default the whole face.")},
+                       {"handedness", {{"type", "string"}, {"enum", {"right", "left"}}, {"description", "Default right."}}},
+                       {"flip", {{"type", "boolean"}, {"description", "Start at the other end."}}}},
+                      {"body", "faces", "pitch"});
 
     addFeatureCommand(r, "delete_faces", "Delete Face",
                       "Removes faces of a body and heals the gap from the neighbouring faces (Fusion: Modify > "

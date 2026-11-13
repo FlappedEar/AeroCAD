@@ -151,6 +151,15 @@ struct ChamferOptions {
 [[nodiscard]] Shape coil(const core::Vec3& origin, const core::Vec3& axis, double helixRadius, double pitch,
                          double revolutions, double sectionSize, bool square = false, bool leftHanded = false);
 
+/// A modeled thread on cylindrical faces (Fusion: Create > Thread): a helical V groove of the given
+/// `pitch` and `depth` (default 0.6134 * pitch, the ISO external thread depth) cut into each face along
+/// its axis, over `length` from its lower end (<= 0: the whole face; `flip`: from the other end). An
+/// outer cylinder keeps its diameter as the major diameter and is cut inwards; a hole keeps its diameter
+/// as the minor diameter and is cut outwards. Throws ModelingError for a face that is not a cylinder,
+/// a face too short for the pitch, or a depth that does not fit.
+[[nodiscard]] Shape thread(const Shape& shape, const std::vector<std::size_t>& faceIndices, double pitch, double depth = 0.0,
+                           double length = 0.0, bool leftHanded = false, bool flip = false);
+
 /// Draft (Fusion: Modify > Draft): tilts each face by `angleDegrees` about the line where it
 /// meets the fixed (neutral) plane through `planeOrigin` with `pullDirection` as its normal.
 /// A positive angle tilts the faces inwards along the pull direction (the part narrows away

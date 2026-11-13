@@ -264,6 +264,15 @@ Pane {
             { key: "faces", type: "facePicks", label: qsTr("Faces to tilt"), hint: qsTr("Click the side faces"), required: true },
             { key: "plane", type: "planePick", label: qsTr("Fixed plane"), init: "XY", hint: qsTr("Origin plane, construction plane, or click a planar face") },
             { key: "angle", type: "expr", label: qsTr("Angle (deg, negative: outwards)"), init: 3 }] },
+        thread: { title: qsTr("Thread"), command: "feature.thread", fields: [
+            { key: "body", type: "body", label: qsTr("Body") },
+            { key: "faces", type: "facePicks", label: qsTr("Cylindrical faces"), hint: qsTr("Click the cylinder or hole to thread"), required: true },
+            { key: "pitch", type: "expr", label: qsTr("Pitch"), init: 1.5 },
+            { key: "depth", type: "expr", label: qsTr("Depth (0: automatic)"), init: 0 },
+            { key: "length", type: "expr", label: qsTr("Length (0: whole face)"), init: 0 },
+            { key: "handedness", type: "choice", label: qsTr("Handedness"), init: "right", options: [
+                { value: "right", label: qsTr("Right") }, { value: "left", label: qsTr("Left") }] },
+            { key: "flip", type: "bool", label: qsTr("Start at the other end") }] },
         delete_faces: { title: qsTr("Delete Face"), command: "feature.delete_faces", fields: [
             { key: "body", type: "body", label: qsTr("Body") },
             { key: "faces", type: "facePicks", label: qsTr("Faces to delete"), hint: qsTr("Click every face of the hole, fillet or boss"), required: true }] },

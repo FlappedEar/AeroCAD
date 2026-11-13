@@ -800,7 +800,7 @@ ApplicationWindow {
         // editable first, so its edges can be rounded or bevelled in one step. The dialog
         // owns the conversion: Cancel undoes it, OK makes it one undo step with the feature.
         const convert = info.kind !== "body" && info.kind !== "sketch" && info.hasBrep && (info.solids ?? 0) > 0
-                        && ["fillet", "chamfer", "shell", "press_pull", "hole", "combine", "split", "delete_faces", "draft"].includes(type)
+                        && ["fillet", "chamfer", "shell", "press_pull", "hole", "combine", "split", "delete_faces", "draft", "thread"].includes(type)
         if (convert) {
             const b = featureDialog.convertToBody(info.id)
             if (b) {
@@ -822,7 +822,7 @@ ApplicationWindow {
             if (type === "combine" && !combineTool)
                 initial.target = info.featureId
             else if (["fillet", "chamfer", "shell", "press_pull", "hole", "move", "scale", "mirror", "rectangular_pattern", "path_pattern",
-                      "circular_pattern", "split", "delete_faces", "draft"].includes(type))
+                      "circular_pattern", "split", "delete_faces", "draft", "thread"].includes(type))
                 initial.body = info.featureId
         }
         pickingSketchPlane = false
@@ -1411,6 +1411,8 @@ ApplicationWindow {
     // Fusion: Construct > Midplane (halfway between two parallel faces or planes).
     Action { id: midplaneAction; text: qsTr("&Midplane"); enabled: !window.activeSketch; onTriggered: window.openFeature("midplane") }
     Action { id: loftAction; text: qsTr("&Loft"); enabled: !window.activeSketch; onTriggered: window.openFeature("loft") }
+    // Fusion: Create > Thread (modeled threads on cylindrical faces).
+    Action { id: threadAction; text: qsTr("&Thread"); enabled: !window.activeSketch; onTriggered: window.openFeature("thread") }
     Action { id: coilAction; text: qsTr("Co&il"); enabled: !window.activeSketch; onTriggered: window.openFeature("coil") }
     Action { id: ribAction; text: qsTr("&Rib"); enabled: !window.activeSketch; onTriggered: window.openFeature("rib") }
     Action { id: pipeAction; text: qsTr("P&ipe"); enabled: !window.activeSketch; onTriggered: window.openFeature("pipe") }
@@ -1765,6 +1767,7 @@ ApplicationWindow {
             MenuItem { action: pipeAction }
             MenuItem { action: ribAction }
             MenuItem { action: coilAction }
+            MenuItem { action: threadAction }
             MenuItem { action: loftAction }
             MenuItem { action: boxAction }
             MenuItem { action: cylinderAction }
@@ -2094,6 +2097,7 @@ ApplicationWindow {
                 ToolCommand { action: pipeAction; text: qsTr("Pipe"); iconName: "pipe" }
                 ToolCommand { action: ribAction; text: qsTr("Rib"); iconName: "rib" }
                 ToolCommand { action: coilAction; text: qsTr("Coil"); iconName: "coil" }
+                ToolCommand { action: threadAction; text: qsTr("Thread"); iconName: "thread" }
                 ToolCommand { action: loftAction; text: qsTr("Loft"); iconName: "loft" }
                 ToolCommand { action: mirrorAction; text: qsTr("Mirror"); iconName: "mirror" }
                 ToolCommand { action: rectPatternAction; text: qsTr("Pattern"); iconName: "pattern" }
