@@ -178,6 +178,12 @@ struct SplitResult {
 /// ModelingError when the plane does not cut through the body.
 [[nodiscard]] SplitResult splitByPlane(const Shape& shape, const core::Vec3& origin, const core::Vec3& normal);
 
+/// Splits the picked faces along the plane through `origin` with `normal` (Fusion: Modify >
+/// Split Face). The body stays one solid; each cut face becomes two or more faces that can be
+/// pushed, drafted or deleted separately. Throws ModelingError when the plane misses the faces.
+[[nodiscard]] Shape splitFaces(const Shape& shape, const std::vector<std::size_t>& faceIndices, const core::Vec3& origin,
+                               const core::Vec3& normal);
+
 /// True when the shape passes the B-rep validity check.
 [[nodiscard]] bool isValid(const Shape& shape);
 

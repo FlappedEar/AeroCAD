@@ -13,7 +13,9 @@
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Defeaturing.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
+#include <BRepAlgoAPI_Section.hxx>
 #include <BRepAlgoAPI_Splitter.hxx>
+#include <BRepFeat_SplitShape.hxx>
 #include <BRepBndLib.hxx>
 #include <BRepClass_FaceClassifier.hxx>
 #include <GC_MakeArcOfCircle.hxx>
@@ -1567,6 +1569,55 @@ SplitResult splitByPlane(const Shape& shape, const core::Vec3& origin, const cor
             throw ModelingError("Split Body: the plane does not cut through the body; move it (offset) or pick another plane");
         return SplitResult{wrapShape(nBack == 1 ? lastBack : TopoDS_Shape(back)),
                            wrapShape(nFront == 1 ? lastFront : TopoDS_Shape(front))};
+    });
+}
+
+Shape splitFaces(const Shape& shape, const std::vector<std::size_t>& faceIndices, const core::Vec3& origin,
+                 const core::Vec3& normal)
+{
+    const TopoDS_Shape& s = occ(shape, "Split Face");
+    if (faceIndices.empty())
+        throw ModelingError("Split Face: pick a face");
+    const gp_Dir n = dirOf(normal, "Split Face");
+    return guarded("Split Face", [&] {
+        const auto map = mapOf(s, TopAbs_FACE);
+        const int facesBefore = map.Extent();
+        Bnd_Box box;
+        BRepBndLib::Add(s, box);
+        const double size = 2.0 * std::sqrt(box.SquareExtent()) + 1.0;
+        const gp_Pnt o = toPnt(origin);
+        const gp_Pln plane(o, n);
+        const TopoDS_Face tool = BRepBuilderAPI_MakeFace(plane, -size, size, -size, size).Face();
+        // Cut the picked faces along their intersection with the plane. The solid, its
+        // volume and its other faces stay as they are; only the picked faces get more edges.
+        BRepFeat_SplitShape splitter(s);
+        int cuts = 0;
+        for (const std::size_t i : faceIndices) {
+            if (i >= static_cast<std::size_t>(facesBefore))
+                throw ModelingError("Split Face: no face " + std::to_string(i));
+            const TopoDS_Face face = TopoDS::Face(map(static_cast<int>(i) + 1));
+            BRepAlgoAPI_Section section(face, tool, false);
+            section.ComputePCurveOn1(true);
+            section.Approximation(true);
+            section.Build();
+            if (!section.IsDone())
+                continue;
+            for (TopExp_Explorer e(section.Shape(), TopAbs_EDGE); e.More(); e.Next()) {
+                splitter.Add(TopoDS::Edge(e.Current()), face);
+                ++cuts;
+            }
+        }
+        if (cuts == 0)
+            throw ModelingError("Split Face: the plane does not cross the picked face(s); move it (offset) or pick another plane");
+        splitter.Build();
+        if (!splitter.IsDone())
+            throw ModelingError("Split Face failed: the plane does not cut the face cleanly");
+        const TopoDS_Shape result = splitter.Shape();
+        if (result.IsNull() || !hasSubShapes(result, TopAbs_SOLID) || !BRepCheck_Analyzer(result).IsValid())
+            throw ModelingError("Split Face failed: the result is not a valid solid");
+        if (mapOf(result, TopAbs_FACE).Extent() <= facesBefore)
+            throw ModelingError("Split Face: the plane only touches the picked face(s) at an edge; move it into the face");
+        return wrapShape(result);
     });
 }
 

@@ -800,7 +800,7 @@ ApplicationWindow {
         // editable first, so its edges can be rounded or bevelled in one step. The dialog
         // owns the conversion: Cancel undoes it, OK makes it one undo step with the feature.
         const convert = info.kind !== "body" && info.kind !== "sketch" && info.hasBrep && (info.solids ?? 0) > 0
-                        && ["fillet", "chamfer", "shell", "press_pull", "hole", "combine", "split", "delete_faces", "draft", "thread"].includes(type)
+                        && ["fillet", "chamfer", "shell", "press_pull", "hole", "combine", "split", "split_face", "delete_faces", "draft", "thread"].includes(type)
         if (convert) {
             const b = featureDialog.convertToBody(info.id)
             if (b) {
@@ -822,7 +822,7 @@ ApplicationWindow {
             if (type === "combine" && !combineTool)
                 initial.target = info.featureId
             else if (["fillet", "chamfer", "shell", "press_pull", "hole", "move", "scale", "mirror", "rectangular_pattern", "path_pattern",
-                      "circular_pattern", "split", "delete_faces", "draft", "thread"].includes(type))
+                      "circular_pattern", "split", "split_face", "delete_faces", "draft", "thread"].includes(type))
                 initial.body = info.featureId
         }
         pickingSketchPlane = false
@@ -1401,6 +1401,7 @@ ApplicationWindow {
     // Fusion: Modify > Draft (tilt faces by an angle from a fixed plane).
     Action { id: draftAction; text: qsTr("D&raft"); enabled: !window.activeSketch; onTriggered: window.openFeature("draft") }
     // Fusion: Modify > Delete on faces (the gap heals from the neighbours).
+    Action { id: splitFaceAction; text: qsTr("Split &Face"); enabled: !window.activeSketch; onTriggered: window.openFeature("split_face") }
     Action { id: deleteFacesAction; text: qsTr("&Delete Face"); enabled: !window.activeSketch; onTriggered: window.openFeature("delete_faces") }
     // Fusion: Modify > Scale (uniform or non-uniform).
     Action { id: scaleBodyAction; text: qsTr("Sc&ale"); enabled: !window.activeSketch; onTriggered: window.openFeature("scale") }
@@ -1797,6 +1798,7 @@ ApplicationWindow {
             MenuItem { action: combineAction }
             MenuItem { action: scaleBodyAction }
             MenuItem { action: splitAction }
+            MenuItem { action: splitFaceAction }
             MenuItem { action: deleteFacesAction }
             MenuItem { action: draftAction }
             MenuSeparator {}

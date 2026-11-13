@@ -265,13 +265,11 @@ void registerProjectContext(CommandRegistry& r)
 void registerMeasure(CommandRegistry& r)
 {
     r.add({"geometry.measure", "Measure",
-           "Measures geometry. All lengths in millimetres. kind='distance': distance between two points "
-           "(needs 'points'). kind='part': bounds, surface area, volume, closedness and centre of mass "
-           "(uniform density) of a part (needs 'id'). "
-           "kind='point_to_part': distance from a point to the surface of a part, the closest point and the surface "
-           "normal there, smoothed on scans (needs 'id', 'point'). "
-           "kind='clearance': minimum distance between two parts (needs 'id', 'other_id'). The result names the "
-           "method used and lists data-quality warnings.",
+           "Measures geometry (mm). kind='distance': between two points (needs 'points'). kind='part': bounds, "
+           "area, volume, closedness and centre of mass (uniform density) of a part (needs 'id'). "
+           "kind='point_to_part': distance from a point to a part's surface, the closest point and the normal "
+           "there, smoothed on scans (needs 'id', 'point'). kind='clearance': minimum distance between two parts "
+           "(needs 'id', 'other_id'). The result names the method and lists data-quality warnings.",
            Json{{"type", "object"},
                 {"properties",
                  {{"kind",

@@ -808,12 +808,11 @@ Json dimensionJson(CommandContext& ctx, const Dimension& d)
 void registerMeasure(CommandRegistry& r)
 {
     r.add({"inspect.measure", "Measure",
-           "Measures one or two selections like Fusion's Inspect > Measure: with one selection its "
-           "properties (position, length, area, radius, volume) and, on a face of a solid or a point of a "
-           "closed mesh, the wall thickness there (thickness: value, pointA on the surface, pointB on the "
-           "opposite wall); with two the minimum distance, the closest points, the X/Y/Z deltas and, for "
-           "planar faces, straight edges and the axes of round faces and circles, the angle in degrees. "
-           "Exact on B-rep parts and sketch curves; on meshes (scans) distances are to the triangle surface.",
+           "Measures one or two selections (Fusion: Inspect > Measure): one gives its properties (position, "
+           "length, area, radius, volume) and, on a solid face or a closed mesh point, the wall thickness there "
+           "(thickness: value, pointA, pointB); two give the minimum distance, closest points, X/Y/Z deltas and, "
+           "for planar faces, straight edges and the axes of round faces and circles, the angle in degrees. "
+           "Exact on B-rep parts and sketch curves; on meshes distances are to the triangle surface.",
            objectSchema({{"a", entitySchema("First selection.")}, {"b", entitySchema("Second selection (optional).")}},
                         {"a"})},
           [](CommandContext& ctx, const Json& params) { return measure(ctx, params); });

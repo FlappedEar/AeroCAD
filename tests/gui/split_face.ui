@@ -1,0 +1,28 @@
+# Split Face (Fusion: Modify > Split Face) with real clicks:
+#  - a click selects the box; Modify > Split Face opens the dialog on it with the YZ plane;
+#  - a click on the top face picks it; OK cuts it along the plane at an offset (one undo step);
+#  - the body stays one solid with the same volume and gets one more face.
+# Run: AeroCAD --ui-script <this file>
+Qt.createQmlObject('import QtQuick; Item { objectName: "sfTest"; visible: false; function clickAt(x, y, z) { const v = viewport.viewPoint(Qt.vector3d(x, y, z)); const p = viewport.mapToItem(null, v.x, v.y); ui.click(p.x, p.y) } function info() { const b = controller.execute("timeline.list").result.bodies[0]; return { faces: b.faces, volume: b.volume, solids: b.solids } } }', window.contentItem)
+ui.wait(800)
+(() => { const b = controller.execute("feature.box", { size: [40, 40, 20] }); if (!b.ok) ui.fail("setup"); viewport.fitAll() })()
+ui.wait(500)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "sfTest").clickAt(20, 20, 20) })()
+ui.wait(300)
+(() => { if (!ui.clickText("Modify")) ui.fail("no Modify menu") })()
+ui.wait(400)
+(() => { if (!ui.clickText("Split Face")) ui.fail("no Split Face in the Modify menu") })()
+ui.wait(400)
+(() => { ui.log("dialog " + featureDialog.visible + " type " + featureDialog.type); if (!featureDialog.visible || featureDialog.type !== "split_face") ui.fail("Split Face did not open"); if (featureDialog.values.body === undefined) ui.fail("Split Face did not take the selected body") })()
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "sfTest").clickAt(20, 20, 20) })()
+ui.wait(800)
+(() => { const f = featureDialog.values.faces || []; ui.log("picked " + JSON.stringify(f)); if (f.length !== 1) ui.fail("the click did not pick the top face") })()
+(() => { featureDialog.setValue("offset", "10") })()
+ui.wait(600)
+(() => { if (!ui.clickText("OK")) ui.fail("no OK button") })()
+ui.wait(800)
+(() => { const i = Array.from(window.contentItem.children).find(c => c.objectName === "sfTest").info(); ui.log("after OK: " + JSON.stringify(i) + ", undo '" + controller.undoText + "'"); if (i.faces !== 7 || i.solids !== 1 || Math.abs(i.volume - 32000) > 0.5) ui.fail("the top face was not split: " + JSON.stringify(i)) })()
+ui.shot("build/split-face.png")
+(() => { undoAction.trigger() })()
+ui.wait(500)
+(() => { const i = Array.from(window.contentItem.children).find(c => c.objectName === "sfTest").info(); ui.log("Ctrl+Z: " + JSON.stringify(i)); if (i.faces !== 6) ui.fail("one undo did not restore the box: " + JSON.stringify(i)) })()

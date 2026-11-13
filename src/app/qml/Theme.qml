@@ -147,7 +147,7 @@ QtObject {
         "box": "box", "cylinder": "cylinder", "sphere": "sphere", "torus": "torus", "hole": "hole", "line": "line", "rectangle": "rectangle",
         "circle": "circle", "arc": "arc", "center rectangle": "center-rectangle", "3-point rectangle": "rectangle-3point", "center arc": "center-arc", "tangent arc": "tangent-arc", "2-point circle": "circle-2point", "3-point circle": "circle-3point", "polygon": "polygon", "slot": "slot", "arc slot": "arc-slot", "3-point arc slot": "arc-slot-3pt", "spline": "spline", "control point spline": "cp-spline", "dimension": "dimension",
         "finish sketch": "finish-sketch", "press pull": "extrude", "fillet": "fillet", "chamfer": "chamfer", "shell": "shell",
-        "combine": "combine", "split body": "section", "delete face": "delete", "draft": "shell", "thread": "thread", "parameters": "parameters", "show/hide": "visible", "delete": "delete",
+        "combine": "combine", "split body": "section", "split face": "section", "delete face": "delete", "draft": "shell", "thread": "thread", "parameters": "parameters", "show/hide": "visible", "delete": "delete",
         "selected": "export", "all": "export", "export": "export", "fit": "fit", "home": "home",
         "ortho": "ortho", "sweep": "sweep", "loft": "loft", "mirror": "mirror", "pattern": "pattern",
         "circular pattern": "circular-pattern", "plane": "plane", "midplane": "plane", "measure": "measure",
@@ -181,6 +181,7 @@ QtObject {
         "thread": qsTr("Screw thread on a cylinder or in a hole: pick the cylindrical face, set the pitch (Fusion: Thread)."),
         "draft": qsTr("Tilt faces of a body by an angle from a fixed plane, e.g. mould walls (Fusion: Draft)."),
         "delete face": qsTr("Remove faces of a body (a hole, a fillet, a boss) and close the gap from the faces around them (Fusion: Delete)."),
+        "split face": qsTr("Cut the faces you click along a plane, so part of a face can be pushed or drafted on its own (Fusion: Split Face)."),
         "split body": qsTr("Cut a body with a plane into two bodies, e.g. to print a part larger than the printer bed (Fusion: Split Body)."),
         "parameters": qsTr("Named values (e.g. wall = 2 mm) that dimensions can use; change one to update the design."),
         "delete": qsTr("Delete the selected part. Undo brings it back."),
@@ -227,7 +228,7 @@ QtObject {
             hole: "hole", base_body: "mesh-to-body", sweep: "sweep", loft: "loft", mirror: "mirror",
             pattern: "pattern", rectangular_pattern: "pattern", circular_pattern: "circular-pattern", path_pattern: "pattern", pipe: "pipe", rib: "rib", coil: "coil", thread: "thread", scale: "scale",
             plane: "plane", body: "body", imported: "mesh", mesh: "mesh",
-            part_on_surface: "surface", fin_on_surface: "surface", move: "move", press_pull: "extrude", split: "section", delete_faces: "delete", draft: "shell",
+            part_on_surface: "surface", fin_on_surface: "surface", move: "move", press_pull: "extrude", split: "section", split_face: "section", delete_faces: "delete", draft: "shell",
             fit_selection: "surface", fit_regions: "surface", trim_by_sketch: "section",
             offset_surface: "plane", thicken_surface: "thickness"
         }

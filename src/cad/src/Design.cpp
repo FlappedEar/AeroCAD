@@ -132,7 +132,7 @@ const std::vector<std::string>& Design::featureTypes()
     static const std::vector<std::string> types{"sketch", "extrude", "revolve", "fillet", "chamfer",
                                                 "shell",  "combine", "box",     "cylinder", "sphere", "torus", "base_body", "hole",
                                                 "mirror",  "rectangular_pattern", "circular_pattern", "path_pattern", "pipe", "rib", "coil", "loft", "sweep", "plane",
-                                                "part_on_surface", "fin_on_surface", "move", "scale", "press_pull", "split", "delete_faces", "draft", "thread",
+                                                "part_on_surface", "fin_on_surface", "move", "scale", "press_pull", "split", "split_face", "delete_faces", "draft", "thread",
                                                 "fit_selection", "fit_regions", "trim_by_sketch", "offset_surface", "thicken_surface"};
     return types;
 }
@@ -225,6 +225,7 @@ std::string Design::defaultName(const std::string& type) const
     std::string base = type == "part_on_surface" ? "PartOnSurface" : type == "fin_on_surface" ? "Fin"
                        : type == "press_pull"     ? "PressPull"
                        : type == "split"          ? "Split"
+                       : type == "split_face"     ? "SplitFace"
                        : type == "delete_faces"   ? "DeleteFace"
                        : type == "fit_selection"  ? "FitSurface"
                        : type == "fit_regions"    ? "FitPatches"
@@ -4172,6 +4173,13 @@ void Design::evaluateFeature(const Feature& f)
         Body& b = bodyRef(required(p, "body"));
         const auto idx = resolveIndices(b.shape, required(p, "faces"), false);
         b.shape = geometry::deleteFaces(b.shape, idx);
+    } else if (f.type == "split_face") {
+        // Fusion: Modify > Split Face by a plane: the faces stay on the same solid.
+        Body& b = bodyRef(required(p, "body"));
+        const auto idx = resolveIndices(b.shape, required(p, "faces"), false);
+        const Plane pl = resolvePlane(p.value("plane", Json("YZ"))).normalized();
+        const core::Vec3 origin = pl.origin + pl.normal * ev.num(p, "offset", 0.0);
+        b.shape = geometry::splitFaces(b.shape, idx, origin, pl.normal);
     } else if (f.type == "split") {
         // Fusion: Split Body by a plane. The body keeps what is behind the plane; a new
         // body gets what is in front of it (along the plane's normal).

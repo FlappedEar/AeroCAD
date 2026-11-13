@@ -328,13 +328,11 @@ void registerPlacementCommands(CommandRegistry& r)
           });
 
     r.add({"part.face_orientation", "Orient part by a face",
-           "Works out how to turn a part by one of its faces, e.g. to set it up for a wind tunnel run: "
-           "`down` lays it on the face, on the ground (lowest point at Z 0); `front` turns it about Z so the face "
-           "looks at the Front view (-Y, where the air comes from with the default +Y flow), keeping its height. "
-           "The face direction is the normal of the surface patch around `point` (`radius`, default 3 % of the "
-           "part size), so scan noise does not tilt it. Changes nothing: the result is the whole transform "
-           "(on top of an optional pending one given in the same parameters) for part.transform or, on a body, "
-           "feature.move.",
+           "Works out how to turn a part by one of its faces, e.g. for a wind tunnel run: `down` lays it on the "
+           "face on the ground (lowest point at Z 0); `front` turns it about Z so the face looks at the Front view "
+           "(-Y), keeping its height. The face direction is the normal of the patch around `point` (`radius`, "
+           "default 3 % of the part size). Changes nothing: the result is the whole transform (on top of an "
+           "optional pending one in the same parameters) for part.transform or, on a body, feature.move.",
            objectSchema(
                {{"id", idParam()},
                 {"point", pointParam("Point on the face [x, y, z] in mm, in the part's current coordinates.")},
