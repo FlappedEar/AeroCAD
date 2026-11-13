@@ -6002,3 +6002,95 @@ TEST_CASE("Design commands: Loft to a point", "[commands][cad]")
         CHECK(open.at("bodies").size() >= 1);
     }
 }
+
+TEST_CASE("Design commands: Sketch Airfoil from coordinates (.dat)", "[commands][cad]")
+{
+    commands::Session s;
+    // NACA 0012 on 30 points per surface; `last` is the x^4 coefficient (-0.1036 closes the trailing edge,
+    // -0.1015 leaves the classic blunt one).
+    auto upperLower = [](double last, std::vector<std::pair<double, double>>& up, std::vector<std::pair<double, double>>& lo) {
+        for (int i = 0; i <= 30; ++i) {
+            const double x = (1 - std::cos(3.14159265358979 * i / 30)) / 2;
+            const double yt = 0.6 * (0.2969 * std::sqrt(x) - 0.1260 * x - 0.3516 * x * x + 0.2843 * x * x * x + last * x * x * x * x);
+            up.push_back({x, yt});
+            lo.push_back({x, -yt});
+        }
+    };
+    auto fmt = [](double v) { return std::to_string(v); };
+    std::vector<std::pair<double, double>> up, lo;
+    upperLower(-0.1036, up, lo);
+    // Selig: trailing edge over the upper surface to the leading edge, back along the lower one.
+    std::string selig = "NACA 0012 (from the UIUC database)\n";
+    for (int i = 30; i >= 0; --i)
+        selig += " " + fmt(up[static_cast<std::size_t>(i)].first) + "  " + fmt(up[static_cast<std::size_t>(i)].second) + "\n";
+    for (int i = 1; i <= 30; ++i)
+        selig += " " + fmt(lo[static_cast<std::size_t>(i)].first) + "  " + fmt(lo[static_cast<std::size_t>(i)].second) + "\n";
+    // Lednicer: counts, the upper surface and the lower one from the leading edge, a blank line between.
+    std::string lednicer = "NACA 0012\n 31. 31.\n\n";
+    for (int i = 0; i <= 30; ++i)
+        lednicer += " " + fmt(up[static_cast<std::size_t>(i)].first) + "  " + fmt(up[static_cast<std::size_t>(i)].second) + "\n";
+    lednicer += "\n";
+    for (int i = 0; i <= 30; ++i)
+        lednicer += " " + fmt(lo[static_cast<std::size_t>(i)].first) + "  " + fmt(lo[static_cast<std::size_t>(i)].second) + "\n";
+
+    auto area = [&](const Json& item) {
+        const auto r = s.execute("sketch.create", {{"plane", "XY"}, {"curves", Json::array({item})}});
+        INFO(r.error);
+        REQUIRE(r.ok);
+        const auto id = r.data.at("id").get<std::uint64_t>();
+        const Json profiles = run(s, "sketch.profiles", {{"sketch", id}}).at("profiles");
+        REQUIRE(profiles.size() == 1);
+        return profiles[0].at("area").get<double>();
+    };
+    // Chord 100: the NACA 0012 area, 0.0817 c^2, from either file layout.
+    CHECK(area({{"type", "airfoil"}, {"dat", selig}, {"chord", 100}}) == Approx(817.1).epsilon(0.002));
+    CHECK(area({{"type", "airfoil"}, {"dat", lednicer}, {"chord", 100}}) == Approx(817.1).epsilon(0.002));
+    // The coordinates as an array, placed and turned: the same area.
+    Json coords = Json::array();
+    for (int i = 30; i >= 0; --i)
+        coords.push_back({up[static_cast<std::size_t>(i)].first, up[static_cast<std::size_t>(i)].second});
+    for (int i = 1; i <= 30; ++i)
+        coords.push_back({lo[static_cast<std::size_t>(i)].first, lo[static_cast<std::size_t>(i)].second});
+    CHECK(area({{"type", "airfoil"}, {"coordinates", coords}, {"chord", 100}, {"at", {10, 5}}, {"angle", 30}}) ==
+          Approx(817.1).epsilon(0.002));
+    // The lower surface first (some files): the same profile.
+    Json flipped = Json::array();
+    for (int i = 30; i >= 0; --i)
+        flipped.push_back({lo[static_cast<std::size_t>(i)].first, lo[static_cast<std::size_t>(i)].second});
+    for (int i = 1; i <= 30; ++i)
+        flipped.push_back({up[static_cast<std::size_t>(i)].first, up[static_cast<std::size_t>(i)].second});
+    CHECK(area({{"type", "airfoil"}, {"coordinates", flipped}, {"chord", 100}}) == Approx(817.1).epsilon(0.002));
+    // The leading edge sits at `at`, the trailing edge a chord away along `angle`.
+    const auto id = run(s, "sketch.create",
+                        {{"plane", "XY"}, {"curves", Json::array({{{"type", "airfoil"}, {"dat", selig}, {"chord", 100}, {"at", {10, 5}}, {"angle", 90}}})}})
+                        .at("id");
+    const Json c = run(s, "sketch.curves", {{"sketch", id}});
+    const Json& upper = c.at("curves")[0].at("points");
+    CHECK(std::hypot(upper[0][0].get<double>() - 10, upper[0][1].get<double>() - 5) < 1e-6);
+    CHECK(std::hypot(upper[upper.size() - 1][0].get<double>() - 10, upper[upper.size() - 1][1].get<double>() - 105) < 1e-6);
+    CHECK(c.at("curves").size() == 2); // a closed trailing edge needs no line
+
+    // A blunt trailing edge is closed by a line: three curves, still one profile.
+    std::vector<std::pair<double, double>> bu, bl;
+    upperLower(-0.1015, bu, bl);
+    std::string blunt = "NACA 0012 blunt\n";
+    for (int i = 30; i >= 0; --i)
+        blunt += fmt(bu[static_cast<std::size_t>(i)].first) + " " + fmt(bu[static_cast<std::size_t>(i)].second) + "\n";
+    for (int i = 1; i <= 30; ++i)
+        blunt += fmt(bl[static_cast<std::size_t>(i)].first) + " " + fmt(bl[static_cast<std::size_t>(i)].second) + "\n";
+    const auto bid = run(s, "sketch.create", {{"plane", "XY"}, {"curves", Json::array({{{"type", "airfoil"}, {"dat", blunt}, {"chord", 100}}})}})
+                         .at("id");
+    CHECK(run(s, "sketch.curves", {{"sketch", bid}}).at("curves").size() == 3);
+    CHECK(run(s, "sketch.profiles", {{"sketch", bid}}).at("profiles").size() == 1);
+
+    // Errors: no source, two sources, too few points, text without numbers, a count that does not match.
+    for (const Json& bad : {Json{{"type", "airfoil"}, {"chord", 10}},
+                            Json{{"type", "airfoil"}, {"chord", 10}, {"naca", "0012"}, {"dat", selig}},
+                            Json{{"type", "airfoil"}, {"chord", 10}, {"coordinates", {{1, 0}, {0, 0}, {1, 0}}}},
+                            Json{{"type", "airfoil"}, {"chord", 10}, {"dat", "no numbers here"}},
+                            Json{{"type", "airfoil"}, {"chord", 10}, {"dat", "x\n 40. 40.\n 0 0\n 1 0\n"}}}) {
+        INFO(bad.dump().substr(0, 80));
+        const auto r = s.execute("sketch.create", {{"plane", "XY"}, {"curves", Json::array({bad})}});
+        CHECK_FALSE(r.error.empty());
+    }
+}

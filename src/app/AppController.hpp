@@ -135,6 +135,8 @@ public:
                                       const QString& expectedState = {});
     /// Local file path of a file-dialog URL, for commands that take a path.
     Q_INVOKABLE QString localPath(const QUrl& url) const;
+    /// The text of a local file (UTF-8, at most 256 KB), or an empty string when it cannot be read.
+    Q_INVOKABLE QString readTextFile(const QUrl& url) const;
     /// Runs a JSON command script: an array of {"name": ..., "params": {...}} objects (the
     /// same calls an MCP client makes). Stops at the first failing command. Returns false
     /// and sets the status message on errors.

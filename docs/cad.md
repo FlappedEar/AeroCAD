@@ -164,7 +164,7 @@ Sketch curves: `line {start, end}`, `rectangle {corner, width, height | opposite
 `ellipse {center, major_radius, minor_radius, angle?}`,
 `elliptical_arc {center, major_radius, minor_radius, angle?, start_angle, end_angle}`,
 `tangent_circle {curves: [2 or 3 lines, arcs or circles], near, radius?}` (a circle tangent to them; with two curves and no radius it passes through `near`),
-`conic {start, end, apex, rho?}`, `airfoil {naca, chord, at?, angle?}`, `text {at, text, height?, angle?, font?, bold?, italic?}`; any curve can be `construction: true`. Curves are split at
+`conic {start, end, apex, rho?}`, `airfoil {naca | dat | coordinates, chord, at?, angle?}`, `text {at, text, height?, angle?, font?, bold?, italic?}`; any curve can be `construction: true`. Curves are split at
 intersections, so a circle inside a rectangle gives two profiles (ring and disk).
 
 An `ellipse` (Fusion: Create › Ellipse; ribbon CREATE menu or Sketch menu) is drawn by
@@ -213,9 +213,16 @@ the trailing edge and the lower one back, meeting exactly at both ends (the trai
 closed, so the section is one profile that extrudes, lofts and sweeps like any other; loft
 sections of different codes or chords make a tapered wing). In the app: click the leading
 edge, type the code, click (or move the cursor to) the trailing edge and press Enter; the
-preview shows the section as the code is typed. In `sketch.curves` it is those two splines;
-moving it keeps it an airfoil (it follows its leading and trailing edge); 5-digit and
-6-series codes are not supported.
+preview shows the section as the code is typed. Sketch menu › Airfoil from File… reads a
+coordinate file instead (UIUC database `.dat`, Selig order from the trailing edge over the
+upper surface to the leading edge and back, or Lednicer with its point-count line): click the
+leading edge, then the trailing edge. In a command give the file's text as `dat` or the points
+as `coordinates` (`[[x, y], ...]` in Selig order; the lower surface first is accepted); they
+are turned and scaled so that the leading edge is the farthest point from the middle of the
+trailing edge, the chord `chord`. A blunt trailing edge gets a closing line (three curves).
+In `sketch.curves` it is those two splines;
+moving it keeps it an airfoil (it follows its leading edge and the middle of its trailing edge);
+5-digit and 6-series codes are given as coordinates.
 
 A `text` (Fusion: Create › Text; ribbon CREATE menu or Sketch menu) places the letters of a
 font on the sketch: `at` is where the baseline starts, `height` the size in mm (default 5),
