@@ -785,8 +785,11 @@ void splitAirfoilCoordinates(const std::vector<Vec2>& pts, std::vector<Vec2>& ov
     // Exactly the leading edge on both; a sharp trailing edge shared.
     over.front() = {0, 0};
     under.back() = {0, 0};
-    if (std::hypot(over.back().x - under.front().x, over.back().y - under.front().y) < 1e-6)
-        under.front() = over.back();
+    // A sharp trailing edge (a gap below 1e-6 chord) is the one point (1, 0), the middle of the two ends.
+    if (std::hypot(over.back().x - under.front().x, over.back().y - under.front().y) < 1e-6) {
+        over.back() = {1, 0};
+        under.front() = {1, 0};
+    }
 }
 
 /// Appends the curves of one sketch item. `implicit` receives the constraints that the

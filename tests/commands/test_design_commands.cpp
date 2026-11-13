@@ -6083,6 +6083,22 @@ TEST_CASE("Design commands: Sketch Airfoil from coordinates (.dat)", "[commands]
     CHECK(run(s, "sketch.curves", {{"sketch", bid}}).at("curves").size() == 3);
     CHECK(run(s, "sketch.profiles", {{"sketch", bid}}).at("profiles").size() == 1);
 
+    // A trailing edge open by 4e-7 chord counts as sharp: one point at the middle of the two ends, so the
+    // airfoil still moves as a whole (the item follows its leading edge and the middle of its trailing edge).
+    Json nearSharp = coords;
+    nearSharp[0][1] = nearSharp[0][1].get<double>() + 2e-7;
+    nearSharp[nearSharp.size() - 1][1] = nearSharp[nearSharp.size() - 1][1].get<double>() - 2e-7;
+    const auto nid = run(s, "sketch.create", {{"plane", "XY"}, {"curves", Json::array({{{"type", "airfoil"}, {"coordinates", nearSharp}, {"chord", 100}}})}})
+                         .at("id");
+    CHECK(run(s, "sketch.curves", {{"sketch", nid}}).at("curves").size() == 2);
+    run(s, "sketch.move_curves", {{"sketch", nid}, {"curves", {0, 1}}, {"dx", 7}, {"dy", 3}});
+    const Json moved = run(s, "sketch.curves", {{"sketch", nid}});
+    CHECK(moved.at("curves")[0].at("points")[0][0].get<double>() == Approx(7).margin(1e-6));
+    CHECK(moved.at("curves")[0].at("points")[0][1].get<double>() == Approx(3).margin(1e-6));
+    const Json& up2 = moved.at("curves")[0].at("points");
+    CHECK(up2[up2.size() - 1][0].get<double>() == Approx(107).margin(1e-6));
+    CHECK(up2[up2.size() - 1][1].get<double>() == Approx(3).margin(1e-6));
+
     // Errors: no source, two sources, too few points, text without numbers, a count that does not match.
     for (const Json& bad : {Json{{"type", "airfoil"}, {"chord", 10}},
                             Json{{"type", "airfoil"}, {"chord", 10}, {"naca", "0012"}, {"dat", selig}},
