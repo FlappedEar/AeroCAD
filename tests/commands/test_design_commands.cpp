@@ -557,6 +557,12 @@ TEST_CASE("Design commands: tangent plane (Fusion: Tangent Plane)", "[commands][
     // The face is stored with a hint, so the plane follows when the cylinder moves.
     run(s, "feature.edit", {{"id", cyl}, {"params", {{"center", {5, 0, 0}}}}});
     CHECK(s.design().planes().at(r.at("id").get<std::uint64_t>()).plane.origin.x == Approx(15).margin(1e-4));
+    // Moved sideways, the plane keeps the same spot of the face (still the +X side), not the old world point.
+    run(s, "feature.edit", {{"id", cyl}, {"params", {{"center", {0, 7, 0}}}}});
+    const auto& moved = s.design().planes().at(r.at("id").get<std::uint64_t>()).plane;
+    CHECK(moved.origin.x == Approx(10).margin(1e-4));
+    CHECK(moved.origin.y == Approx(7).margin(1e-4));
+    CHECK(moved.normal.x == Approx(1).margin(1e-4));
     // Errors: no such body, other modes together with `tangent`, a malformed reference.
     CHECK_FALSE(s.execute("feature.plane", {{"tangent", {{"body", 9999}, {"point", {0, 0, 0}}}}}).ok);
     CHECK_FALSE(s.execute("feature.plane", {{"tangent", {{"body", cyl}, {"point", {12, 0, 15}}}}, {"base", "XY"}}).ok);

@@ -5047,7 +5047,14 @@ void Design::evaluateFeature(const Feature& f)
             const auto infos = geometry::faces(body.shape);
             if (idx >= infos.size())
                 throw DesignError(body.name + " has no face " + std::to_string(idx));
-            const core::Vec3 near = ev.vec3(ref.at("point"));
+            // The touch point follows the body: the hint's relative position in its current box, if any.
+            core::Vec3 near = ev.vec3(ref.at("point"));
+            if (has(ref, "relative")) {
+                const core::Vec3 rel = ev.vec3(ref.at("relative"));
+                const auto box = body.shape.bounds();
+                const core::Vec3 size = box.size();
+                near = {box.min.x + rel.x * size.x, box.min.y + rel.y * size.y, box.min.z + rel.z * size.z};
+            }
             const auto sp = geometry::faceSurfaceNear(body.shape, idx, near);
             if (!sp)
                 throw DesignError("The surface of face " + std::to_string(idx) + " of " + body.name + " has no normal there");
