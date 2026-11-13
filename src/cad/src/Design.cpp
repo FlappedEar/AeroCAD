@@ -4027,6 +4027,11 @@ void Design::evaluateFeature(const Feature& f)
         double d2 = 0.0;
         if (extent == "all" || extent == "all_two_sides") {
             // Fusion: Extent "All": through every body at this point of the timeline, one way or both ways.
+            const std::string op = lower(p.value("operation", std::string("new_body")));
+            if (op != "cut" && op != "intersect")
+                throw DesignError("Extent All goes through every body: use it with the operation cut or intersect");
+            if (taper != 0.0)
+                throw DesignError("Taper angle is not available with extent All");
             // Far enough to leave the biggest box around the profile and all bodies, wherever they are.
             core::BoundingBox reach;
             for (const auto& face : faces) {
@@ -4691,8 +4696,8 @@ void Design::evaluateFeature(const Feature& f)
             sinkAngle = ev.num(p, "csink_angle", 90.0);
             if (!(seatRadius > r))
                 throw DesignError("The countersink diameter must be larger than the hole diameter");
-            if (!(sinkAngle > 0.0 && sinkAngle < 180.0))
-                throw DesignError("The countersink angle must be between 0 and 180 degrees");
+            if (!(sinkAngle > 0.0 && sinkAngle < 175.0))
+                throw DesignError("The countersink angle must be between 0 and 175 degrees");
             seatDepth = (seatRadius - r) / std::tan(sinkAngle * std::numbers::pi / 360.0);
             if (!through && seatDepth >= depth)
                 throw DesignError("The countersink is deeper than the hole: make the hole deeper or the countersink narrower");
@@ -4768,11 +4773,13 @@ void Design::evaluateFeature(const Feature& f)
                 seat.radius = seatRadius;
                 const auto sg = geometry::buildSketch(base, {seat});
                 // A counterbore is a straight cylinder, a countersink a cone whose walls lean by half its angle.
-                const geometry::Shape seatTool = geometry::extrude(sg.profiles.at(0), base.normal * -1.0, seatDepth, 1e-3,
+                // The cone runs a hair past its tip, inside the hole, so its edge does not touch the hole wall.
+                const geometry::Shape seatTool = geometry::extrude(sg.profiles.at(0), base.normal * -1.0,
+                                                                   seatDepth + (holeType == "countersink" ? 1e-2 : 0.0), 1e-3,
                                                                    holeType == "countersink" ? sinkAngle / 2.0 : 0.0);
                 result = geometry::boolean(result, seatTool, geometry::BooleanOp::Cut);
                 if (result.isNull())
-                    throw DesignError("The hole removed the whole body");
+                    throw DesignError("The " + holeType + " removed the whole body");
             }
         }
         b.shape = result;

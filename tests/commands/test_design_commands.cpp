@@ -4955,6 +4955,10 @@ TEST_CASE("Design commands: extrude extent All cuts through every body (Fusion: 
     const auto id = run(s, "sketch.create", {{"plane", "XY"}, {"curves", Json::array({{{"type", "rectangle"}, {"corner", {15, 15}}, {"width", 10}, {"height", 10}}})}})
                         .at("id").get<std::uint64_t>();
     CHECK_FALSE(s.execute("feature.extrude", {{"sketch", id}, {"extent", "everything"}, {"distance", 5}}).ok);
+    // Through all makes sense as a cut or an intersection only, and takes no taper.
+    CHECK_FALSE(s.execute("feature.extrude", {{"sketch", id}, {"extent", "all"}}).ok);
+    CHECK_FALSE(s.execute("feature.extrude", {{"sketch", id}, {"extent", "all"}, {"operation", "join"}}).ok);
+    CHECK_FALSE(s.execute("feature.extrude", {{"sketch", id}, {"extent", "all"}, {"operation", "cut"}, {"taper", 3}}).ok);
 }
 
 TEST_CASE("Design commands: counterbore and countersink holes (Fusion: Hole type)", "[commands][cad]")
@@ -4988,7 +4992,7 @@ TEST_CASE("Design commands: counterbore and countersink holes (Fusion: Hole type
         const double expected = plain - pi * 9 * 12 - (frustum - pi * 9 * h);
         CHECK(volume(s) == Approx(expected).epsilon(2e-4));
         CHECK_FALSE(s.execute("feature.hole", {{"body", "Body1"}, {"point", {5, 5, 12}}, {"diameter", 6}, {"hole_type", "countersink"},
-                                               {"csink_diameter", 12}, {"csink_angle", 200}}).ok);
+                                               {"csink_diameter", 12}, {"csink_angle", 178}}).ok);
         CHECK_FALSE(s.execute("feature.hole", {{"body", "Body1"}, {"point", {5, 5, 12}}, {"diameter", 6}, {"hole_type", "slotted"}}).ok);
     }
 }

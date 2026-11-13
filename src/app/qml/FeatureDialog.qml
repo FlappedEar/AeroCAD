@@ -42,12 +42,15 @@ Pane {
         return out
     }
 
+    /// Extrude extents that go through every body (no distance, no taper).
+    function isAllExtent(extent) { return extent === "all" || extent === "all_two_sides" }
+
     /// Extrude: the distance arrow on the profile, along the sketch normal (Viewport
     /// distanceArrow), or null. The distance is signed: negative means Flip.
     readonly property var distanceArrow: {
         if (type === "fillet" || type === "chamfer" || type === "shell" || type === "press_pull")
             return sizeArrow()
-        if (type !== "extrude" || values.sketch === undefined || values.extent === "to_object" || (values.extent || "").startsWith("all"))
+        if (type !== "extrude" || values.sketch === undefined || values.extent === "to_object" || isAllExtent(values.extent))
             return null
         const d = Number(values.distance)
         if (!isFinite(d))
@@ -216,7 +219,7 @@ Pane {
         extrude: { title: qsTr("Extrude"), command: "feature.extrude", fields: [
             { key: "sketch", type: "sketch", label: qsTr("Sketch") },
             { key: "points", type: "profilePicks", label: qsTr("Profiles"), hint: qsTr("All profiles (click inside profiles to pick)") },
-            { key: "distance", type: "expr", label: qsTr("Distance"), init: 10, showIf: v => v.extent !== "to_object" && !(v.extent || "").startsWith("all") },
+            { key: "distance", type: "expr", label: qsTr("Distance"), init: 10, showIf: v => v.extent !== "to_object" && !root.isAllExtent(v.extent) },
             { key: "extent", type: "choice", label: qsTr("Extent"), init: "one_side", options: [
                 { value: "one_side", label: qsTr("One Side") }, { value: "symmetric", label: qsTr("Symmetric") },
                 { value: "two_sides", label: qsTr("Two Sides") }, { value: "to_object", label: qsTr("To Object") },
@@ -224,7 +227,7 @@ Pane {
             { key: "to", type: "objectPick", label: qsTr("Object"), hint: qsTr("Click the face, body, surface or scan to extrude up to"),
               showIf: v => v.extent === "to_object" },
             { key: "distance2", type: "expr", label: qsTr("Distance 2"), showIf: v => v.extent === "two_sides" },
-            { key: "taper", type: "expr", label: qsTr("Taper Angle (deg)"), init: 0, showIf: v => v.extent !== "to_object" },
+            { key: "taper", type: "expr", label: qsTr("Taper Angle (deg)"), init: 0, showIf: v => v.extent !== "to_object" && !root.isAllExtent(v.extent) },
             { key: "start_offset", type: "expr", label: qsTr("Start Offset"), init: 0 },
             { key: "flip", type: "bool", label: qsTr("Flip") },
             { key: "operation", type: "choice", label: qsTr("Operation"), init: "new_body", options: operations }] },
