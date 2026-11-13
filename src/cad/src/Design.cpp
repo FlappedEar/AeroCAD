@@ -4634,26 +4634,35 @@ void Design::evaluateFeature(const Feature& f)
             const geometry::Shape target = resolveExtentTarget(*toRef, {start}, way, targetFaces, "Rib");
             return geometry::extrudeToObject(start, way, target, targetFaces);
         };
-        if (direction == "normal") {
-            const geometry::Shape outline = geometry::thickenCurves(pathEdges, thickness, plane.normal);
-            const core::Vec3 up = plane.normal * sign;
-            applyOperation(toObject ? toTarget(outline, up) : geometry::extrude(outline, up, depth));
-        } else {
-            const double length = geometry::pathLength(pathEdges);
-            const auto ends = geometry::pathFrames(pathEdges, {0.0, length});
+        // Fusion: Web. Curves that do not join (crossing, or apart) are walls of their own, all in one body.
+        const auto buildWall = [&](const geometry::Shape& group) {
+            if (direction == "normal") {
+                const geometry::Shape outline = geometry::thickenCurves(group, thickness, plane.normal);
+                const core::Vec3 up = plane.normal * sign;
+                return toObject ? toTarget(outline, up) : geometry::extrude(outline, up, depth);
+            }
+            const double length = geometry::pathLength(group);
+            const auto ends = geometry::pathFrames(group, {0.0, length});
             const core::Vec3 chord = ends[1].point - ends[0].point;
             if (chord.length() < 1e-6)
-                throw DesignError("A parallel rib needs an open curve: this one ends where it starts");
+                throw DesignError("A parallel rib or web needs open curves: a curve here ends where it starts (use the normal direction)");
             const core::Vec3 side = plane.normal.cross(chord).normalized() * sign;
             if (toObject) {
                 // The curves stood up `thickness` across the plane, centred on it, grow along `side`.
-                const geometry::Shape band = geometry::translated(geometry::curveWall(pathEdges, plane.normal, thickness),
+                const geometry::Shape band = geometry::translated(geometry::curveWall(group, plane.normal, thickness),
                                                                   plane.normal * (-thickness / 2.0));
-                applyOperation(toTarget(band, side));
-            } else {
-                const geometry::Shape wall = geometry::curveWall(pathEdges, side, depth);
-                applyOperation(geometry::extrude(wall, plane.normal, thickness / 2.0, thickness / 2.0));
+                return toTarget(band, side);
             }
+            const geometry::Shape wall = geometry::curveWall(group, side, depth);
+            return geometry::extrude(wall, plane.normal, thickness / 2.0, thickness / 2.0);
+        };
+        try {
+            std::vector<geometry::Shape> walls;
+            for (const auto& group : geometry::splitPaths(pathEdges))
+                walls.push_back(buildWall(group));
+            applyOperation(unionAll(walls));
+        } catch (const geometry::ModelingError& e) {
+            throw DesignError(e.what());
         }
     } else if (f.type == "pipe") {
         // Fusion: Create > Pipe. A round (or square) section swept along sketch curves, solid or

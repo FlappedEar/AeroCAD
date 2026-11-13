@@ -447,6 +447,18 @@ Pane {
                 { value: "normal", label: qsTr("Normal to sketch plane") }, { value: "parallel", label: qsTr("Parallel to sketch plane") }] },
             { key: "flip", type: "bool", label: qsTr("Flip side"), init: false },
             { key: "operation", type: "choice", label: qsTr("Operation"), init: "new_body", options: operations }] },
+        web: { title: qsTr("Web"), command: "feature.rib", fields: [
+            { key: "path", type: "pathSketch", label: qsTr("Curve sketch"), hint: qsTr("Every curve of the sketch becomes a wall; curves may cross or stand apart") },
+            { key: "thickness", type: "expr", label: qsTr("Thickness"), init: 3 },
+            { key: "extent", type: "choice", label: qsTr("Extent"), init: "distance", options: [
+                { value: "distance", label: qsTr("Distance") }, { value: "to_object", label: qsTr("To Next Body") }] },
+            { key: "depth", type: "expr", label: qsTr("Height"), init: 10, showIf: v => v.extent !== "to_object" },
+            { key: "to", type: "objectPick", label: qsTr("Next body"), hint: qsTr("Click the body, face or surface the rib grows up to"),
+              required: true, showIf: v => v.extent === "to_object" },
+            { key: "direction", type: "choice", label: qsTr("Direction"), init: "normal", options: [
+                { value: "normal", label: qsTr("Normal to sketch plane") }, { value: "parallel", label: qsTr("Parallel to sketch plane") }] },
+            { key: "flip", type: "bool", label: qsTr("Flip side"), init: false },
+            { key: "operation", type: "choice", label: qsTr("Operation"), init: "new_body", options: operations }] },
         path_pattern: { title: qsTr("Pattern on Path"), command: "feature.path_pattern", fields: [
             { key: "body", type: "body", label: qsTr("Body") },
             { key: "path", type: "pathSketch", label: qsTr("Path sketch") },

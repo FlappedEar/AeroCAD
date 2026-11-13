@@ -56,6 +56,8 @@
 #include <BRepOffsetAPI_MakeThickSolid.hxx>
 #include <BRepOffsetAPI_ThruSections.hxx>
 #include <BRepTools.hxx>
+#include <ShapeAnalysis_FreeBounds.hxx>
+#include <TopTools_HSequenceOfShape.hxx>
 #include <gp_Ax2.hxx>
 #include <gp_Ax3.hxx>
 #include <gp_Pln.hxx>
@@ -386,6 +388,33 @@ TopoDS_Wire pathWire(const Shape& pathEdges, const char* what)
     return wire.Wire();
 }
 } // namespace
+
+std::vector<Shape> splitPaths(const Shape& pathEdges)
+{
+    const TopoDS_Shape& path = occ(pathEdges, "Rib");
+    return guarded("Rib", [&] {
+        // Curves that already form one connected path stay exactly as drawn (order and direction),
+        // so a plain rib keeps its geometry; only a path that falls apart is split into its pieces.
+        try {
+            pathWire(pathEdges, "Rib");
+            return std::vector<Shape>{pathEdges};
+        } catch (const ModelingError&) {
+        }
+        Handle(TopTools_HSequenceOfShape) edges = new TopTools_HSequenceOfShape;
+        for (TopExp_Explorer ex(path, TopAbs_EDGE); ex.More(); ex.Next())
+            edges->Append(ex.Current());
+        if (edges->IsEmpty())
+            throw ModelingError("Rib: the path has no curves");
+        Handle(TopTools_HSequenceOfShape) wires;
+        ShapeAnalysis_FreeBounds::ConnectEdgesToWires(edges, 1e-6, Standard_False, wires);
+        std::vector<Shape> out;
+        for (int i = 1; i <= wires->Length(); ++i)
+            out.push_back(wrapShape(wires->Value(i)));
+        if (out.empty())
+            throw ModelingError("Rib: the path curves could not be joined");
+        return out;
+    });
+}
 
 namespace {
 /// The first wire of an offset result (null when there is none).
