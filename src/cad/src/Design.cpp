@@ -2044,6 +2044,81 @@ std::vector<std::pair<std::size_t, std::size_t>> itemRanges(const Eval& ev, cons
 
 } // namespace
 
+void Design::stretchSketch(FeatureId sketchId, const geometry::Vec2& windowMin, const geometry::Vec2& windowMax,
+                           const geometry::Vec2& delta)
+{
+    if (!std::isfinite(delta.x) || !std::isfinite(delta.y))
+        throw DesignError("The stretch distance must be a number");
+    const State before = m_state;
+    keepSolvedSketch(sketchId);
+    Feature& f = m_state.features[indexOf(sketchId)];
+    if (f.type != "sketch")
+        throw DesignError("Feature " + std::to_string(sketchId) + " is not a sketch");
+    auto it = m_sketches.find(sketchId);
+    if (it == m_sketches.end())
+        throw DesignError(f.name + " is not evaluated");
+    const std::vector<SketchCurve> curves = it->second.curves;
+    const double lox = std::min(windowMin.x, windowMax.x), hix = std::max(windowMin.x, windowMax.x);
+    const double loy = std::min(windowMin.y, windowMax.y), hiy = std::max(windowMin.y, windowMax.y);
+    constexpr double tol = 1e-9;
+    auto inside = [&](const Vec2& q) { return q.x >= lox - tol && q.x <= hix + tol && q.y >= loy - tol && q.y <= hiy + tol; };
+
+    // Hold every point inside the window where it goes; the rest is left to the solver, so curves
+    // crossing the window edge stretch (a line keeps its far end, a rectangle its other corners)
+    // and curves wholly inside move. Fusion: Sketch > Modify > Stretch.
+    Json constraints = f.params.value("constraints", Json::array());
+    Json held = constraints;
+    std::size_t holds = 0;
+    for (std::size_t i = 0; i < curves.size(); ++i) {
+        const auto refs = curvePointRefs(curves[i], i);
+        bool all = !refs.empty();
+        for (const Json& ref : refs)
+            all = all && inside(curvePointAt(curves[i], ref));
+        for (const Json& ref : refs) {
+            const Vec2 at = curvePointAt(curves[i], ref);
+            if (!inside(at))
+                continue;
+            const Vec2 to{at.x + delta.x, at.y + delta.y};
+            held.push_back({{"type", "fix"}, {"points", Json::array({ref})}, {"at", Json::array({Json::array({to.x, to.y})})}});
+            ++holds;
+        }
+        if (all && curves[i].kind == SketchCurve::Kind::Circle)
+            held.push_back({{"type", "radius"}, {"curve", i}, {"value", curves[i].radius}});
+        if (all && (curves[i].kind == SketchCurve::Kind::Ellipse || curves[i].kind == SketchCurve::Kind::EllipticalArc))
+            held.push_back({{"type", "minor_radius"}, {"curve", i}, {"value", curves[i].radius}});
+    }
+    if (holds == 0)
+        throw DesignError("The window holds no sketch points: drag it over the geometry to stretch");
+    const Eval ev{*this};
+    Json items = f.params.value("curves", Json::array());
+    const auto ranges = itemRanges(ev, items, curves.size(), f.name);
+    for (std::size_t k = 0; k < items.size(); ++k) {
+        if (lower(items[k].at("type").get<std::string>()) != "polygon")
+            continue;
+        const auto [first, count] = ranges[k];
+        const double turn = 360.0 / static_cast<double>(count);
+        for (std::size_t i = 0; i + 1 < count; ++i)
+            held.push_back({{"type", "angle"}, {"curves", Json::array({first + i, first + i + 1})}, {"value", turn}});
+    }
+    f.params["constraints"] = held;
+    regenerate();
+    const FeatureStatus st = status(sketchId);
+    it = m_sketches.find(sketchId);
+    if (st.state == FeatureStatus::State::Error || it == m_sketches.end()) {
+        m_state = before;
+        regenerate();
+        throw DesignError("That cannot stretch: the constraints hold the geometry (" + st.message + ")");
+    }
+    const Json newItems = itemsFromSolved(ev, items, &curves, it->second.curves, false);
+    Feature& g = m_state.features[indexOf(sketchId)];
+    g.params["curves"] = newItems;
+    if (constraints.empty() && !before.features[indexOf(sketchId)].params.contains("constraints"))
+        g.params.erase("constraints");
+    else
+        g.params["constraints"] = constraints;
+    regenerateChecked(sketchId, before);
+}
+
 void Design::moveSketchCurves(FeatureId sketchId, const std::vector<std::size_t>& picked, const SketchPlacement& place,
                               bool copy)
 {

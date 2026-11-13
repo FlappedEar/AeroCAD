@@ -1476,6 +1476,7 @@ ApplicationWindow {
     // Fusion: Modify > Chamfer (equal distance): click a corner of two lines.
     Action { id: sketchChamferAction; text: qsTr("Chamfer"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "chamfer"; onTriggered: window.sketchTool_("chamfer") }
     Action { id: sketchFilletAction; text: qsTr("&Fillet"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "fillet"; onTriggered: window.sketchTool_("fillet") }
+    Action { id: sketchStretchAction; text: qsTr("St&retch"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "stretch"; onTriggered: window.sketchTool_("stretch") }
     Action { id: sketchIntersectAction; text: qsTr("&Intersect"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "intersect"; onTriggered: window.sketchTool_("intersect") }
     Action { id: sketchProjectAction; text: qsTr("&Project"); shortcut: "P"; enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "project"; onTriggered: window.sketchTool_("project") }
     Action { id: sketchOffsetAction; text: qsTr("&Offset"); shortcut: "O"; enabled: !!window.activeSketch && (viewport.sketchOverlay.selectedCurves.length > 0 || window.sketchTool === "offset"); checkable: true; checked: window.sketchTool === "offset"; onTriggered: { if (window.sketchTool !== "offset") viewport.sketchOverlay.startOffset(); else window.sketchTool_("") } }
@@ -1832,6 +1833,7 @@ ApplicationWindow {
             MenuItem { action: sketchOffsetAction }
             MenuItem { action: sketchProjectAction }
             MenuItem { action: sketchIntersectAction }
+            MenuItem { action: sketchStretchAction }
             MenuItem { action: sketchMoveAction }
             MenuItem { action: sketchScaleAction }
             MenuItem { action: sketchMirrorAction }
@@ -2328,6 +2330,7 @@ ApplicationWindow {
                 ToolCommand { action: sketchScaleAction; text: qsTr("Sketch Scale"); iconName: "scale" }
                 ToolCommand { action: sketchChamferAction; text: qsTr("Chamfer"); iconName: "chamfer" }
                 ToolCommand { action: sketchIntersectAction; text: qsTr("Intersect"); iconName: "intersect" }
+                ToolCommand { action: sketchStretchAction; text: qsTr("Stretch"); iconName: "stretch" }
             }
             ToolSeparator { tab: "sketch" }
             ToolGroup {
@@ -2569,6 +2572,14 @@ ApplicationWindow {
                 if (!window.activeSketch)
                     return
                 const r = window.controller.execute("sketch.move_curves", { sketch: window.activeSketch.id, curves: curves, dx: dx, dy: dy, angle: angle, copy: copy })
+                if (!r.ok)
+                    window.controller.showStatus(r.error)
+                window.refreshSketchSnaps()
+            }
+            onSketchStretchRequested: (win, dx, dy) => {
+                if (!window.activeSketch)
+                    return
+                const r = window.controller.execute("sketch.stretch", { sketch: window.activeSketch.id, window: win, dx: dx, dy: dy })
                 if (!r.ok)
                     window.controller.showStatus(r.error)
                 window.refreshSketchSnaps()
