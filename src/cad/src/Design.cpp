@@ -4096,7 +4096,7 @@ void Design::evaluateFeature(const Feature& f)
         Body& b = bodyRef(required(p, "body"));
         const auto idx = resolveIndices(b.shape, required(p, "edges"), true);
         if (f.type == "fillet") {
-            b.shape = geometry::fillet(b.shape, idx, ev.num(p, "radius"));
+            b.shape = geometry::fillet(b.shape, idx, ev.num(p, "radius"), ev.num(p, "radius_end", 0.0));
         } else {
             geometry::ChamferOptions o;
             const std::string type = lower(p.value("type", std::string("equal_distance")));

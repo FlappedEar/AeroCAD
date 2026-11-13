@@ -921,19 +921,26 @@ std::vector<TopoDS_Edge> pickedEdges(const TopoDS_Shape& s, const std::vector<st
 
 } // namespace
 
-Shape fillet(const Shape& shape, const std::vector<std::size_t>& edgeIndices, double radius)
+Shape fillet(const Shape& shape, const std::vector<std::size_t>& edgeIndices, double radius, double endRadius)
 {
     const TopoDS_Shape& s = occ(shape, "Fillet");
     if (!std::isfinite(radius) || radius <= 0.0)
         throw ModelingError("Fillet: radius must be positive");
+    if (!std::isfinite(endRadius) || endRadius < 0.0)
+        throw ModelingError("Fillet: the end radius must be positive");
+    const double endRatio = endRadius > 0.0 ? endRadius / radius : 0.0;
     if (edgeIndices.empty())
         throw ModelingError("Fillet: no edges selected");
     const auto picked = pickedEdges(s, edgeIndices, "Fillet");
     const char* edgesName = picked.size() == 1 ? "this edge" : "these edges";
     return wrapShape(blendWithHint("Fillet", "radius", edgesName, radius, [&](double r) {
         BRepFilletAPI_MakeFillet mk(s);
-        for (const auto& e : picked)
-            mk.Add(r, e);
+        for (const auto& e : picked) {
+            if (endRatio > 0.0)
+                mk.Add(r, r * endRatio, e);
+            else
+                mk.Add(r, e);
+        }
         mk.Build();
         return mk.IsDone() ? mk.Shape() : TopoDS_Shape();
     }));

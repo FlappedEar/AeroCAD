@@ -129,7 +129,7 @@ rebuilding, AeroCAD reports the problem; Undo restores the previous source.
 | `feature.scale` | Scale | `body`, `factor` (uniform) or `factor_x` / `factor_y` / `factor_z` (non-uniform, a missing one is 1), `center` (default: bounding box centre) |
 | `feature.circular_pattern` | Circular Pattern | `axis` X / Y / Z or {origin, direction} (in the dialog: pick a straight or circular edge or a cylindrical face), `count`, `angle` (360 = full turn) |
 | `feature.plane` | Construct > Offset Plane, Plane at Angle, Midplane, Plane Through Three Points | `base` (XY / XZ / YZ, {plane: id}, planar face {body, point}), `offset`, `angle` + `axis` x / y, `base2` (midplane) or `points` (3 points) |
-| `feature.fillet` | Fillet (F) | `edges`, `radius`; tangent chains are rounded with the picked edge |
+| `feature.fillet` | Fillet (F); Radius type Constant / Variable | `edges`, `radius`, `radius_end` (variable: `radius` at the start of each edge as `body.edges` gives it, `radius_end` at its end); tangent chains are rounded with the picked edge |
 | `feature.chamfer` | Chamfer | `edges`, `type` equal_distance (default) / two_distances (`distance`, `distance2`) / distance_angle (`distance`, `angle`), `flip` swaps the first face |
 | `feature.shell` | Shell | `faces` to remove, `thickness` |
 | `feature.press_pull` | Press Pull (Q) | `faces` (flat or curved: a curved face is offset, like Fusion's Offset Face; a fillet face is refused, change its radius instead), `distance` along the outward normal (negative pushes in) |

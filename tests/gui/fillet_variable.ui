@@ -1,0 +1,23 @@
+# Variable radius fillet (Fusion: Fillet > Radius type: Variable) from the SOLID tab: an edge of a 40 mm
+# cube rounded from 2 mm at its start to 8 mm at its end removes more material than a constant 2 mm
+# fillet and less than a constant 8 mm one; reopening the feature keeps it variable.
+# Run: AeroCAD --ui-script <this file>
+ui.wait(800)
+(() => { const r = controller.execute("feature.box", { corner: [0, 0, 0], size: [40, 40, 40] }); if (!r.ok) ui.fail("box: " + r.error) })()
+ui.wait(300)
+(() => { viewport.restoreCameraState({ pivot: [20, 20, 20], pitch: -25, yaw: 30, distance: 200, orthographic: false }) })()
+ui.wait(300)
+(() => { if (!ui.clickText("SOLID")) ui.fail("no SOLID tab") })()
+ui.wait(300)
+(() => { if (!ui.clickText("Fillet")) ui.fail("no Fillet command") })()
+ui.wait(800)
+(() => { featureDialog.setValue("edges", [{ point: [0, 0, 20] }]); featureDialog.setValue("radiusType", "variable"); featureDialog.setValue("radius", 2); featureDialog.setValue("radius_end", 8) })()
+ui.wait(800)
+ui.shot("fillet-variable.png")
+(() => { if (!ui.clickText("End radius")) ui.fail("the End radius field is not shown for a variable fillet") })()
+(() => { if (featureDialog.error) ui.fail("dialog error: " + featureDialog.error) })()
+(() => { if (!ui.clickText("OK")) ui.fail("no OK button") })()
+ui.wait(1000)
+(() => { const tl = controller.execute("timeline.list").result; const f = tl.features.find(x => x.type === "fillet"); if (!f) ui.fail("no fillet feature"); const v = tl.bodies[0].volume; const loss = 64000 - v; const quarter = r => (1 - Math.PI / 4) * r * r * 40; ui.log("variable fillet removed " + loss.toFixed(1) + " mm3 (constant 2 mm: " + quarter(2).toFixed(1) + ", 8 mm: " + quarter(8).toFixed(1) + ")"); if (!(loss > quarter(2) * 1.5 && loss < quarter(8) * 0.9)) ui.fail("the variable fillet removed " + loss + " mm3"); if (Number(f.params.radius_end) !== 8) ui.fail("radius_end not stored: " + JSON.stringify(f.params)); featureDialog.open("fillet", f.params, f.id) })()
+ui.wait(500)
+(() => { if (featureDialog.values.radiusType !== "variable") ui.fail("reopened fillet lost its variable radius: " + JSON.stringify(featureDialog.values)) })()

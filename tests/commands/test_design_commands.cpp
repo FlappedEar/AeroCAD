@@ -4781,3 +4781,75 @@ TEST_CASE("Design commands: body.faces and body.edges give axes of cylinders, ci
     }
     CHECK(found);
 }
+
+TEST_CASE("Design commands: variable radius fillet runs from the start of the edge to its end", "[commands][cad]")
+{
+    const auto blendZ = [](commands::Session& s) {
+        double sum = 0, weight = 0;
+        const Json faces = run(s, "body.faces", {{"body", "Body1"}});
+        for (const auto& f : faces.at("faces")) {
+            if (f.at("type") == "plane")
+                continue;
+            sum += f.at("center")[2].get<double>() * f.at("area").get<double>();
+            weight += f.at("area").get<double>();
+        }
+        REQUIRE(weight > 0);
+        return sum / weight;
+    };
+    for (const bool reversed : {false, true}) {
+        commands::Session s;
+        run(s, "feature.box", {{"corner", {0, 0, 0}}, {"size", {20, 20, 20}}});
+        // The vertical edge at the origin corner; body.edges gives its start and end.
+        const Json edges = run(s, "body.edges", {{"body", "Body1"}});
+        int index = -1;
+        bool startLow = false;
+        for (const auto& e : edges.at("edges")) {
+            const auto a = e.at("start"), b = e.at("end");
+            if (std::abs(a[0].get<double>()) < 1e-9 && std::abs(a[1].get<double>()) < 1e-9 && std::abs(b[0].get<double>()) < 1e-9
+                && std::abs(b[1].get<double>()) < 1e-9 && e.at("type") == "line") {
+                index = e.at("index").get<int>();
+                startLow = a[2].get<double>() < b[2].get<double>();
+            }
+        }
+        REQUIRE(index >= 0);
+        // Small radius at the edge start, large at its end: the blend is bigger around the end.
+        run(s, "feature.fillet", {{"body", "Body1"}, {"edges", {index}}, {"radius", reversed ? 6 : 1}, {"radius_end", reversed ? 1 : 6}});
+        const double z = blendZ(s);
+        CHECK(((z > 10.0) == (startLow != reversed)));
+    }
+    commands::Session s;
+    run(s, "feature.box", {{"corner", {0, 0, 0}}, {"size", {20, 20, 20}}});
+    CHECK_FALSE(s.execute("feature.fillet", {{"body", "Body1"}, {"edges", {0}}, {"radius", 1}, {"radius_end", -2}}).ok);
+}
+
+TEST_CASE("Design commands: variable fillet radius follows body.edges start and end on every edge", "[commands][cad]")
+{
+    for (int index = 0; index < 12; ++index) {
+        commands::Session s;
+        run(s, "feature.box", {{"corner", {0, 0, 0}}, {"size", {20, 20, 20}}});
+        const Json edges = run(s, "body.edges", {{"body", "Body1"}});
+        const Json& e = edges.at("edges").at(index);
+        const auto a = e.at("start"), b = e.at("end");
+        run(s, "feature.fillet", {{"body", "Body1"}, {"edges", {index}}, {"radius", 1}, {"radius_end", 6}});
+        // The blend face is the only one that is not a plane; its centre lies towards the end of the edge.
+        const Json faces = run(s, "body.faces", {{"body", "Body1"}});
+        double along = 0;
+        int blends = 0;
+        for (const auto& f : faces.at("faces")) {
+            if (f.at("type") == "plane")
+                continue;
+            ++blends;
+            double dot = 0, len2 = 0;
+            for (int k = 0; k < 3; ++k) {
+                const double d = b[k].get<double>() - a[k].get<double>();
+                dot += (f.at("center")[k].get<double>() - e.at("middle")[k].get<double>()) * d;
+                len2 += d * d;
+            }
+            along = dot / std::sqrt(len2);
+        }
+        INFO("edge " << index);
+        CHECK(blends == 1);
+        CHECK(along > 0.5);
+    }
+}
+

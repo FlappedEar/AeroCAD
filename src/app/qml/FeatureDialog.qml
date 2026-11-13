@@ -240,7 +240,10 @@ Pane {
         fillet: { title: qsTr("Fillet"), command: "feature.fillet", fields: [
             { key: "body", type: "body", label: qsTr("Body") },
             { key: "edges", type: "edgePicks", label: qsTr("Edges"), hint: qsTr("Click near edges of the body"), required: true },
-            { key: "radius", type: "expr", label: qsTr("Radius"), init: 1 }] },
+            { key: "radiusType", type: "choice", label: qsTr("Radius type"), init: "constant", local: true, options: [
+                { value: "constant", label: qsTr("Constant") }, { value: "variable", label: qsTr("Variable (start to end)") }] },
+            { key: "radius", type: "expr", label: qsTr("Radius"), init: 1 },
+            { key: "radius_end", type: "expr", label: qsTr("End radius"), init: 2, showIf: v => v.radiusType === "variable" }] },
         chamfer: { title: qsTr("Chamfer"), command: "feature.chamfer", fields: [
             { key: "body", type: "body", label: qsTr("Body") },
             { key: "edges", type: "edgePicks", label: qsTr("Edges"), hint: qsTr("Click near edges of the body"), required: true },
@@ -514,6 +517,8 @@ Pane {
             else if (initial.height !== undefined && initial.pitch === undefined)
                 v.coilType = "revolutions_height"
         }
+        if (initial && featureType === "fillet" && initial.radius_end !== undefined)
+            v.radiusType = "variable"
         if (initial && featureType === "scale" && (initial.factor_x !== undefined || initial.factor_y !== undefined || initial.factor_z !== undefined))
             v.scaleType = "non_uniform"
         if (!featureId) {

@@ -93,7 +93,11 @@ enum class BooleanOp { Union, Cut, Intersect };
 /// When the radius does not fit, the error names the largest radius that does (when one
 /// is found), e.g. "Fillet: a 5 mm radius does not fit these edges; the largest that
 /// works is about 2.4 mm".
-[[nodiscard]] Shape fillet(const Shape& shape, const std::vector<std::size_t>& edgeIndices, double radius);
+/// With `endRadius` > 0 the radius runs linearly from `radius` at the start of each edge (as
+/// edges() gives it) to `endRadius` at its end (Fusion: variable radius fillet); the hint then
+/// scales both.
+[[nodiscard]] Shape fillet(const Shape& shape, const std::vector<std::size_t>& edgeIndices, double radius,
+                           double endRadius = 0.0);
 
 /// Chamfer types, as in Fusion's Chamfer dialog.
 enum class ChamferType {
