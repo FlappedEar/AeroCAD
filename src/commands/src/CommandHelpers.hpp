@@ -38,6 +38,7 @@ inline Json partToJson(const model::Part& p)
         {"kind", p.kind == model::PartKind::Body     ? "body"
                  : p.kind == model::PartKind::Sketch ? "sketch"
                  : p.kind == model::PartKind::Plane  ? "plane"
+                 : p.kind == model::PartKind::Axis   ? "axis"
                                                      : "imported"},
         {"featureId", p.featureId},
         {"frozen", model::frozenSurfaceResult(p)},

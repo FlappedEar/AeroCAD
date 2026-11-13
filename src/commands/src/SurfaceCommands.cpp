@@ -1315,12 +1315,11 @@ void registerSurfaceCommands(CommandRegistry& r)
               return addSurfaceFeature(ctx, "part_on_surface", params, "Part on surface");
           });
     r.add({"surface.fin_from_sketch", "Fin on surface",
-           "One step from a fin outline to a solid fin standing on a curved surface or scan, e.g. a canard on a "
-           "scanned bumper: make the sketch across the surface (sketch.create with surface: {part, point, across: "
-           "true}; sketch X points outward along the normal), then the outline is extruded `thickness` mm "
-           "symmetrically and its root cut to the surface. Draw the root a little into the surface (x < 0). On a "
-           "scan a smooth surface is fitted under the root first. rootFillet flares the root into the surface "
-           "with a concave fillet of that radius.",
+           "A solid fin standing on a curved surface or scan (a canard on a scanned bumper) in one step: sketch "
+           "across the surface (sketch.create with surface: {part, point, across: true}; sketch X points outward), "
+           "then the outline is extruded `thickness` mm symmetrically and its root cut to the surface. Draw the "
+           "root a little into the surface (x < 0). On a scan a smooth surface is fitted under the root first. "
+           "rootFillet flares the root with a concave fillet of that radius.",
            objectSchema({{"sketch", {{"type", "integer"}, {"minimum", 1}, {"description", "Sketch feature id."}}},
                          {"id", idParam()},
                          {"thickness", {{"type", "number"}, {"exclusiveMinimum", 0}, {"description", "mm."}}},

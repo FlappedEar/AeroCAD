@@ -145,6 +145,18 @@ struct ConstructionPlane {
     double size = 25.0;
 };
 
+/// Construction axis (Fusion: Construct > Axis Through Two Points / Edge / Cylinder / Two Planes /
+/// Perpendicular to Plane): an infinite line other features can turn about.
+struct ConstructionAxis {
+    FeatureId id = 0;
+    std::string name;
+    core::Vec3 origin{};
+    /// Unit direction.
+    core::Vec3 direction{0, 0, 1};
+    /// Half the length of the line drawn in the view (mm).
+    double size = 25.0;
+};
+
 class Design {
 public:
     /// The timeline was rolled back to just after a sketch so it can be edited (Fusion: Edit
@@ -327,6 +339,7 @@ public:
     [[nodiscard]] const std::map<FeatureId, Body>& bodies() const { return m_bodies; }
     [[nodiscard]] const std::map<FeatureId, SketchResult>& sketches() const { return m_sketches; }
     [[nodiscard]] const std::map<FeatureId, ConstructionPlane>& planes() const { return m_planes; }
+    [[nodiscard]] const std::map<FeatureId, ConstructionAxis>& axes() const { return m_axes; }
     [[nodiscard]] const std::map<FeatureId, FeatureStatus>& statuses() const { return m_statuses; }
     [[nodiscard]] FeatureStatus status(FeatureId id) const;
 
@@ -397,6 +410,7 @@ private:
     std::map<FeatureId, Body> m_bodies;
     std::map<FeatureId, SketchResult> m_sketches;
     std::map<FeatureId, ConstructionPlane> m_planes;
+    std::map<FeatureId, ConstructionAxis> m_axes;
     std::map<FeatureId, FeatureStatus> m_statuses;
     std::map<FeatureId, Json> m_reports;
     /// Body / sketch feature id -> document part id (kept across undo).

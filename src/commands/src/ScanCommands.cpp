@@ -454,10 +454,9 @@ void registerPlacementCommands(CommandRegistry& r)
 
     r.add({"part.align", "Align to world",
            "Orients a part (typically a scan) to the world axes. A reference plane is fitted to `points` (3 or "
-           "more picked points), to `triangles` (indices of a selected region) or given directly by `origin` + "
-           "`normal`. The plane is turned onto the `target` world plane (its normal onto +Z for \"xy\", +Y for "
-           "\"xz\", +X for \"yz\"; `flip` reverses it), the plane origin (or `origin`) moves to the world origin, "
-           "and `xDirection` (optional) becomes the world X axis (Y for target \"yz\").",
+           "more), to `triangles` (a selected region) or given by `origin` + `normal`. It is turned onto the "
+           "`target` world plane (normal onto +Z for \"xy\", +Y for \"xz\", +X for \"yz\"; `flip` reverses it), its "
+           "origin moves to the world origin, and `xDirection` (optional) becomes the world X axis.",
            objectSchema(
                {{"id", idParam()},
                 {"points",

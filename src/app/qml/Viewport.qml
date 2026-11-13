@@ -699,7 +699,7 @@ Item {
                              && root.hiddenPartIds.indexOf(partId) < 0
                     pickable: (root.pickKind === "" || kind === root.pickKind
                                || (root.pickKind === "solid" && (kind === "body" || (kind === "imported" && hasBrep)))
-                               || (root.pickKind === "axis" && kind === "body" && featureId != root.unpickableBody)
+                               || (root.pickKind === "axis" && (kind === "axis" || (kind === "body" && featureId != root.unpickableBody)))
                                || (root.pickKind === "object" && (kind === "imported" || (kind === "body" && featureId != root.unpickableBody))))
                               && !(kind === "plane" && featureId == root.unpickablePlane)
                     geometry: sectioned ? clippedGeometry : heatMapped ? heatGeometry : plainGeometry
@@ -707,7 +707,8 @@ Item {
                     materials: heatMapped && !sectioned ? [heatMaterial] : [plainMaterial]
                     PrincipledMaterial {
                         id: plainMaterial
-                        baseColor: partModel.selected ? (partModel.kind === "plane" ? Theme.planeSelected : Theme.selectedColor)
+                        baseColor: partModel.kind === "axis" ? (partModel.selected ? Theme.selectedColor : partModel.hovered ? Theme.planeHover : Theme.planeEdge)
+                                 : partModel.selected ? (partModel.kind === "plane" ? Theme.planeSelected : Theme.selectedColor)
                                  : partModel.kind === "sketch" ? (partModel.hovered ? Theme.planeHover : Theme.sketchProfile)
                                  : partModel.kind === "plane" ? (partModel.hovered ? Theme.planeHover : Theme.planeFill)
                                  : Qt.tint(partModel.partColor !== "" ? partModel.partColor
@@ -804,7 +805,7 @@ Item {
                         materials: PrincipledMaterial {
                             lighting: PrincipledMaterial.NoLighting
                             baseColor: partModel.kind === "sketch" ? Theme.sketchColor
-                                     : partModel.kind === "plane" ? Theme.planeEdge : Theme.edgeColor
+                                     : partModel.kind === "plane" || partModel.kind === "axis" ? Theme.planeEdge : Theme.edgeColor
                         }
                     }
                 }
@@ -1314,7 +1315,7 @@ Item {
     function startTransform(info) {
         if (transformTarget)
             finishTransform(true)
-        if (!info || !info.id || info.kind === "sketch" || info.kind === "plane"
+        if (!info || !info.id || info.kind === "sketch" || info.kind === "plane" || info.kind === "axis"
                 || !info.center || info.center.length !== 3)
             return false
         transformMove = Qt.vector3d(0, 0, 0)

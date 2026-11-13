@@ -150,7 +150,7 @@ QtObject {
         "combine": "combine", "split body": "section", "split face": "section", "boundary fill": "combine", "align": "move", "delete face": "delete", "draft": "shell", "thread": "thread", "parameters": "parameters", "show/hide": "visible", "delete": "delete",
         "selected": "export", "all": "export", "export": "export", "fit": "fit", "home": "home",
         "ortho": "ortho", "sweep": "sweep", "loft": "loft", "mirror": "mirror", "pattern": "pattern",
-        "circular pattern": "circular-pattern", "plane": "plane", "midplane": "plane", "measure": "measure",
+        "circular pattern": "circular-pattern", "plane": "plane", "midplane": "plane", "axis": "axis", "measure": "measure",
         "clearance": "clearance", "section": "section", "deviation": "deviation",
         "thickness": "thickness", "a/b": "variants", "new": "duplicate", "variant": "variants"
     })
@@ -229,7 +229,7 @@ QtObject {
             chamfer: "chamfer", shell: "shell", combine: "combine", box: "box", cylinder: "cylinder", sphere: "sphere", torus: "torus",
             hole: "hole", base_body: "mesh-to-body", sweep: "sweep", loft: "loft", mirror: "mirror",
             pattern: "pattern", rectangular_pattern: "pattern", circular_pattern: "circular-pattern", path_pattern: "pattern", pipe: "pipe", rib: "rib", coil: "coil", thread: "thread", scale: "scale",
-            plane: "plane", body: "body", imported: "mesh", mesh: "mesh",
+            plane: "plane", axis: "axis", body: "body", imported: "mesh", mesh: "mesh",
             part_on_surface: "surface", fin_on_surface: "surface", move: "move", press_pull: "extrude", split: "section", split_face: "section", boundary_fill: "combine", align: "move", delete_faces: "delete", draft: "shell",
             fit_selection: "surface", fit_regions: "surface", trim_by_sketch: "section",
             offset_surface: "plane", thicken_surface: "thickness"

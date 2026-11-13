@@ -160,6 +160,7 @@ Pane {
                     text: root.info.kind === "sketch" ? qsTr("Sketch")
                           : root.info.kind === "body" ? qsTr("Body (editable, from the timeline)")
                           : root.info.kind === "plane" ? qsTr("Construction plane (reference only)")
+                          : root.info.kind === "axis" ? qsTr("Construction axis (reference only)")
                           : root.info.hasBrep
                           ? ((root.info.solids ?? 0) > 0 ? qsTr("Exact solid") : ((root.info.faces ?? 0) === 1 ? qsTr("Exact surface (1 face)") : qsTr("Exact surface (%1 faces)").arg(root.info.faces ?? 0)))
                           : qsTr("Triangle mesh")

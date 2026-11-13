@@ -971,7 +971,7 @@ Pane {
             const parts = controller.execute("document.parts")
             if (parts.ok)
                 params.context = parts.result.parts
-                    .filter(p => p.id !== partInfo.id && p.visible && p.kind !== "sketch" && p.kind !== "plane").map(p => p.id)
+                    .filter(p => p.id !== partInfo.id && p.visible && p.kind !== "sketch" && p.kind !== "plane" && p.kind !== "axis").map(p => p.id)
         }
         return params
     }
@@ -983,7 +983,7 @@ Pane {
     /// Why the planned run cannot be set up (for example a floor above the part); "" = fine.
     property string proposalError: ""
     function refreshProposal() {
-        if (!visible || tab !== 0 || !partInfo.id || partInfo.kind === "sketch" || partInfo.kind === "plane") {
+        if (!visible || tab !== 0 || !partInfo.id || partInfo.kind === "sketch" || partInfo.kind === "plane" || partInfo.kind === "axis") {
             proposal = null
             proposalError = ""
             return
@@ -1540,7 +1540,7 @@ Pane {
                         Layout.fillWidth: true
                         text: qsTr("Run CFD")
                         highlighted: true
-                        enabled: !!root.partInfo.id && root.partInfo.kind !== "sketch" && root.partInfo.kind !== "plane"
+                        enabled: !!root.partInfo.id && root.partInfo.kind !== "sketch" && root.partInfo.kind !== "plane" && root.partInfo.kind !== "axis"
                                  && root.speedValid && root.refAreaValid && root.yawValid
                         onClicked: root.startRun()
                     }

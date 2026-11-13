@@ -26,7 +26,7 @@ Popup {
     /// Opens the swatches for part `id` at x, y (parent coordinates), kept inside the parent.
     function openFor(id, x, y) {
         const info = controller.partInfo(id)
-        if (!info.id || info.kind === "sketch" || info.kind === "plane")
+        if (!info.id || info.kind === "sketch" || info.kind === "plane" || info.kind === "axis")
             return false
         partId = id
         current = info.color ?? ""

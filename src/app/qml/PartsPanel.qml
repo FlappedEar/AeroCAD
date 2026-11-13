@@ -210,6 +210,7 @@ Pane {
                                 : row.kind === "body" ? qsTr("Body")
                                 : row.kind === "sketch" ? qsTr("Sketch")
                                 : row.kind === "plane" ? qsTr("Construction plane")
+                                : row.kind === "axis" ? qsTr("Construction axis")
                                 : row.shapeKind === "solid" ? qsTr("Solid")
                                 : qsTr("Mesh · %1 triangles").arg(Number(row.triangles).toLocaleString(Qt.locale(), "f", 0))
                             color: Theme.textFaint
