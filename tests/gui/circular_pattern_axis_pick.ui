@@ -1,0 +1,35 @@
+# Circular Pattern about an axis picked in the view (Fusion: Axis = cylindrical face or edge): a click on
+# the side of a cylinder gives its axis (through the cylinder centre along Z), a click on a circular edge
+# gives the axis through its centre. Before, only the world X / Y / Z axes could be chosen.
+# Run: AeroCAD --ui-script <this file>
+ui.wait(800)
+(() => { let r = controller.execute("feature.cylinder", { center: [30, 0, 0], radius: 10, height: 20 }); if (!r.ok) ui.fail("cylinder: " + r.error); r = controller.execute("feature.box", { corner: [60, -4, 0], size: [8, 8, 8] }); if (!r.ok) ui.fail("box: " + r.error) })()
+ui.wait(300)
+(() => { viewport.setViewDirection(Qt.vector3d(0, -1, 0)); viewport.fitAll(); const c = viewport.cameraState(); c.pivot = [0, 0, 10]; c.distance = 150; viewport.restoreCameraState(c) })()
+ui.wait(500)
+(() => { if (!ui.clickText("SOLID")) ui.fail("no SOLID tab") })()
+ui.wait(300)
+(() => { if (!ui.clickText("CREATE")) ui.log("no CREATE caption menu") })()
+ui.wait(300)
+(() => { if (!ui.clickText("Circular Pattern")) ui.fail("no Circular Pattern command") })()
+ui.wait(800)
+(() => { const box = controller.execute("timeline.list").result.features.find(f => f.type === "box"); if (!box) ui.fail("no box feature"); featureDialog.setValue("body", box.id); featureDialog.setValue("operation", "new_body"); featureDialog.setValue("count", 4) })()
+ui.wait(300)
+# The axis field is waiting for a click already (the body was set).
+# The side of the cylinder facing the camera (y = -10), away from its rim.
+(() => { const s = viewport.modelToScreen(Qt.vector3d(30, -10, 10)); const w = viewport.mapToItem(null, s.x, s.y); ui.click(w.x, w.y) })()
+ui.wait(800)
+(() => { const a = featureDialog.values.axis; ui.log("axis " + JSON.stringify(a)); if (!a || !a.direction || Math.abs(Math.abs(a.direction[2]) - 1) > 1e-6 || Math.abs(a.origin[0] - 30) > 1e-3 || Math.abs(a.origin[1]) > 1e-3) ui.fail("the cylinder side was not picked as the axis: " + JSON.stringify(a)) })()
+# Just beside the seam of the cylinder (its silhouette at x = 40): the cylinder axis, not the seam line.
+(() => { const s = viewport.modelToScreen(Qt.vector3d(39.9, -0.9, 10)); const w = viewport.mapToItem(null, s.x, s.y); ui.click(w.x, w.y) })()
+ui.wait(800)
+(() => { const a = featureDialog.values.axis; ui.log("seam axis " + JSON.stringify(a)); if (!a || !a.direction || Math.abs(a.origin[0] - 30) > 1e-3 || Math.abs(a.origin[1]) > 1e-3) ui.fail("a click beside the seam did not give the cylinder axis: " + JSON.stringify(a)) })()
+# The circular rim of the top face (z = 20), clicked on its front: the axis through its centre along Z.
+(() => { const s = viewport.modelToScreen(Qt.vector3d(30, -10, 20)); const w = viewport.mapToItem(null, s.x, s.y); ui.click(w.x, w.y) })()
+ui.wait(800)
+(() => { const a = featureDialog.values.axis; ui.log("rim axis " + JSON.stringify(a)); if (!a || !a.direction || Math.abs(Math.abs(a.direction[2]) - 1) > 1e-6 || Math.abs(a.origin[0] - 30) > 1e-3 || Math.abs(a.origin[2] - 20) > 1e-3) ui.fail("the top rim was not picked as an axis through its centre: " + JSON.stringify(a)) })()
+ui.shot("circular-pattern-axis.png")
+(() => { if (featureDialog.error) ui.fail("dialog error: " + featureDialog.error) })()
+(() => { if (!ui.clickText("OK")) ui.fail("no OK button") })()
+ui.wait(800)
+(() => { const tl = controller.execute("timeline.list").result; const f = tl.features.find(x => x.type === "circular_pattern"); if (!f) ui.fail("no circular pattern feature"); const pts = tl.bodies.length; ui.log("bodies " + pts + " " + JSON.stringify(tl.bodies.map(x => x.volume)) + " params " + JSON.stringify(f.params)); if (tl.bodies.length < 3) ui.fail("the copies were not made: " + tl.bodies.length + " bodies") })()

@@ -3148,11 +3148,14 @@ void registerBodyCommands(CommandRegistry& r)
               const cad::Body& b = requireBody(rolled ? *rolled : design(ctx), params.at("body"));
               Json out = Json::array();
               for (const auto& f : geometry::faces(b.shape)) {
-                  out.push_back({{"index", f.index},
-                                 {"type", f.type},
-                                 {"area", f.area},
-                                 {"center", vec(f.center)},
-                                 {"normal", vec(f.normal)}});
+                  Json face{{"index", f.index},
+                            {"type", f.type},
+                            {"area", f.area},
+                            {"center", vec(f.center)},
+                            {"normal", vec(f.normal)}};
+                  if (f.hasAxis)
+                      face["axis"] = {{"origin", vec(f.axisOrigin)}, {"direction", vec(f.axisDirection)}};
+                  out.push_back(face);
               }
               Json result{{"body", b.id}, {"name", b.name}, {"faces", out}};
               if (params.contains("point")) {
@@ -3180,12 +3183,17 @@ void registerBodyCommands(CommandRegistry& r)
               const cad::Body& b = requireBody(rolled ? *rolled : design(ctx), params.at("body"));
               Json out = Json::array();
               for (const auto& e : geometry::edges(b.shape)) {
-                  out.push_back({{"index", e.index},
-                                 {"type", e.type},
-                                 {"length", e.length},
-                                 {"start", vec(e.start)},
-                                 {"middle", vec(e.middle)},
-                                 {"end", vec(e.end)}});
+                  Json edge{{"index", e.index},
+                            {"type", e.type},
+                            {"length", e.length},
+                            {"start", vec(e.start)},
+                            {"middle", vec(e.middle)},
+                            {"end", vec(e.end)}};
+                  if (e.hasAxis)
+                      edge["axis"] = {{"origin", vec(e.axisOrigin)}, {"direction", vec(e.axisDirection)}};
+                  if (e.seam)
+                      edge["seam"] = true;
+                  out.push_back(edge);
               }
               Json result{{"body", b.id}, {"name", b.name}, {"edges", out}};
               if (params.contains("point")) {
