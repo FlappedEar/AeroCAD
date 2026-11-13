@@ -4023,14 +4023,40 @@ void Design::evaluateFeature(const Feature& f)
             applyOperation(unionAll(solids));
             return;
         }
-        double d1 = ev.num(p, "distance");
+        double d1 = 0.0;
         double d2 = 0.0;
-        if (extent == "symmetric")
-            d2 = d1;
-        else if (extent == "two_sides")
-            d2 = ev.num(p, "distance2");
-        else if (extent != "one_side")
-            throw DesignError("Unknown extent '" + extent + "' (one_side, symmetric, two_sides, to_object)");
+        if (extent == "all" || extent == "all_two_sides") {
+            // Fusion: Extent "All": through every body at this point of the timeline, one way or both ways.
+            const std::string op = lower(p.value("operation", std::string("new_body")));
+            if (op != "cut" && op != "intersect")
+                throw DesignError("Extent All goes through every body: use it with the operation cut or intersect");
+            if (taper != 0.0)
+                throw DesignError("Taper angle is not available with extent All");
+            // Far enough to leave the biggest box around the profile and all bodies, wherever they are.
+            core::BoundingBox reach;
+            for (const auto& face : faces) {
+                const auto b = face.bounds();
+                reach.extend(b.min);
+                reach.extend(b.max);
+            }
+            for (const auto& [_, body] : m_bodies) {
+                if (body.shape.isNull())
+                    continue;
+                const auto b = body.shape.bounds();
+                reach.extend(b.min);
+                reach.extend(b.max);
+            }
+            d1 = 2.0 * (reach.max - reach.min).length() + 1.0;
+            d2 = extent == "all_two_sides" ? d1 : 0.0;
+        } else {
+            d1 = ev.num(p, "distance");
+            if (extent == "symmetric")
+                d2 = d1;
+            else if (extent == "two_sides")
+                d2 = ev.num(p, "distance2");
+            else if (extent != "one_side")
+                throw DesignError("Unknown extent '" + extent + "' (one_side, symmetric, two_sides, to_object, all, all_two_sides)");
+        }
         std::vector<geometry::Shape> solids;
         for (const auto& face : faces)
             solids.push_back(geometry::extrude(face, dir, d1, d2, taper));
@@ -4651,6 +4677,31 @@ void Design::evaluateFeature(const Feature& f)
         const double depth = through ? 0.0 : ev.num(p, "depth");
         if (!through && depth <= 0)
             throw DesignError("Hole depth must be positive");
+        // Fusion: Hole type Counterbore (a wider, flat-bottomed seat) or Countersink (a cone at the mouth).
+        const std::string holeType = lower(p.value("hole_type", std::string("simple")));
+        if (holeType != "simple" && holeType != "counterbore" && holeType != "countersink")
+            throw DesignError("Unknown hole_type '" + holeType + "' (simple, counterbore, countersink)");
+        double seatRadius = 0.0, seatDepth = 0.0, sinkAngle = 90.0;
+        if (holeType == "counterbore") {
+            seatRadius = ev.num(p, "cbore_diameter") / 2;
+            seatDepth = ev.num(p, "cbore_depth");
+            if (!(seatRadius > r))
+                throw DesignError("The counterbore diameter must be larger than the hole diameter");
+            if (!(seatDepth > 0))
+                throw DesignError("The counterbore depth must be positive");
+            if (!through && seatDepth >= depth)
+                throw DesignError("The counterbore must be shallower than the hole");
+        } else if (holeType == "countersink") {
+            seatRadius = ev.num(p, "csink_diameter") / 2;
+            sinkAngle = ev.num(p, "csink_angle", 90.0);
+            if (!(seatRadius > r))
+                throw DesignError("The countersink diameter must be larger than the hole diameter");
+            if (!(sinkAngle > 0.0 && sinkAngle < 175.0))
+                throw DesignError("The countersink angle must be between 0 and 175 degrees");
+            seatDepth = (seatRadius - r) / std::tan(sinkAngle * std::numbers::pi / 360.0);
+            if (!through && seatDepth >= depth)
+                throw DesignError("The countersink is deeper than the hole: make the hole deeper or the countersink narrower");
+        }
         std::vector<geometry::Plane> bases; // origin: hole centre; normal: drilling direction reversed
         if (has(p, "sketch")) {
             if (has(p, "point"))
@@ -4717,6 +4768,19 @@ void Design::evaluateFeature(const Feature& f)
             result = geometry::boolean(result, tool, geometry::BooleanOp::Cut);
             if (result.isNull())
                 throw DesignError("The hole removed the whole body");
+            if (holeType != "simple") {
+                SketchCurve seat{SketchCurve::Kind::Circle, {{0, 0}}};
+                seat.radius = seatRadius;
+                const auto sg = geometry::buildSketch(base, {seat});
+                // A counterbore is a straight cylinder, a countersink a cone whose walls lean by half its angle.
+                // The cone runs a hair past its tip, inside the hole, so its edge does not touch the hole wall.
+                const geometry::Shape seatTool = geometry::extrude(sg.profiles.at(0), base.normal * -1.0,
+                                                                   seatDepth + (holeType == "countersink" ? 1e-2 : 0.0), 1e-3,
+                                                                   holeType == "countersink" ? sinkAngle / 2.0 : 0.0);
+                result = geometry::boolean(result, seatTool, geometry::BooleanOp::Cut);
+                if (result.isNull())
+                    throw DesignError("The " + holeType + " removed the whole body");
+            }
         }
         b.shape = result;
     } else if (f.type == "base_body") {

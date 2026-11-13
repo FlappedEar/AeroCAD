@@ -2535,10 +2535,11 @@ void registerFeatureCommands(CommandRegistry& r)
         merged(profileSelection(),
                {{"distance", numberOrExpr("Distance along the sketch normal (mm); negative goes the other way.")},
                 {"extent", {{"type", "string"},
-                            {"enum", {"one_side", "symmetric", "two_sides", "to_object"}},
+                            {"enum", {"one_side", "symmetric", "two_sides", "to_object", "all", "all_two_sides"}},
                             {"description", "one_side (default); symmetric: `distance` on both sides; two_sides: "
-                                            "`distance` forwards and `distance2` backwards; to_object: up to `to` "
-                                            "(no `distance`)."}}},
+                                            "`distance` forwards and `distance2` backwards; to_object: up to `to`; "
+                                            "all / all_two_sides: through all bodies (operation cut / intersect), one way "
+                                            "or both. to_object and all take no `distance`."}}},
                 {"to", {{"type", "object"},
                         {"description", "For extent to_object (Fusion: To Object): {body: id} (up to the first "
                                         "face reached), {body: id, faces: [index or {point: [x,y,z]}]} (up to "
@@ -2548,9 +2549,8 @@ void registerFeatureCommands(CommandRegistry& r)
                 {"flip", {{"type", "boolean"}, {"description", "Extrude against the sketch normal."}}},
                 {"start_offset", numberOrExpr("Start offset from the sketch plane along the extrusion direction (mm).")},
                 {"taper", numberOrExpr("Taper angle in degrees (Fusion: Taper Angle), default 0: positive narrows "
-                                       "the profile away from the sketch plane, negative widens it; with symmetric "
-                                       "or two_sides each side tapers away from the plane. |taper| < 89; not with "
-                                       "to_object.")},
+                                       "the profile away from the sketch plane, negative widens it (each side with "
+                                       "symmetric / two_sides). |taper| < 89; not with to_object or all.")},
                 {"operation", operationSchema()},
                 {"bodies", bodiesSchema()}}),
         {"sketch"});
@@ -2876,7 +2876,12 @@ void registerFeatureCommands(CommandRegistry& r)
                        {"flip", {{"type", "boolean"}, {"description", "With `sketch`: drill away from the body side."}}},
                        {"diameter", numberOrExpr("Diameter (mm).")},
                        {"depth", numberOrExpr("Depth (mm); omit for through all.")},
-                       {"through", {{"type", "boolean"}, {"description", "Through all (default when no depth)."}}}},
+                       {"through", {{"type", "boolean"}, {"description", "Through all (default when no depth)."}}},
+                       {"hole_type", {{"type", "string"}, {"enum", {"simple", "counterbore", "countersink"}}, {"description", "Default simple."}}},
+                       {"cbore_diameter", numberOrExpr("Counterbore diameter (mm).")},
+                       {"cbore_depth", numberOrExpr("Counterbore depth (mm).")},
+                       {"csink_diameter", numberOrExpr("Countersink diameter at the face (mm).")},
+                       {"csink_angle", numberOrExpr("Countersink angle in degrees, default 90.")}},
                       {"body", "diameter"});
 
     r.add({"feature.base_body", "Convert to Body",

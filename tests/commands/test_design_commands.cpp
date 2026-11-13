@@ -4930,3 +4930,69 @@ TEST_CASE("Design commands: thread (Fusion: Create > Thread)", "[commands][cad]"
         CHECK_FALSE(c.execute("feature.thread", {{"body", "Body1"}, {"faces", {face}}, {"pitch", 1}, {"handedness", "sideways"}}).ok);
     }
 }
+
+TEST_CASE("Design commands: extrude extent All cuts through every body (Fusion: Extent All)", "[commands][cad]")
+{
+    const auto volume = [](commands::Session& s) {
+        const Json bodies = run(s, "timeline.list").at("bodies");
+        return bodies.at(0).at("volume").get<double>();
+    };
+    for (const std::string extent : {"all", "all_two_sides"}) {
+        commands::Session s;
+        run(s, "feature.box", {{"corner", {0, 0, 0}}, {"size", {40, 40, 20}}});
+        // A 10 x 10 square in the XY plane halfway up: the hole goes the whole way down (flip) or both ways.
+        const auto id = run(s, "sketch.create",
+                            {{"plane", {{"origin", {0, 0, 10}}, {"normal", {0, 0, 1}}, {"xDir", {1, 0, 0}}}},
+                             {"curves", Json::array({{{"type", "rectangle"}, {"corner", {15, 15}}, {"width", 10}, {"height", 10}}})}})
+                            .at("id").get<std::uint64_t>();
+        run(s, "feature.extrude", {{"sketch", id}, {"extent", extent}, {"flip", true}, {"operation", "cut"}, {"bodies", Json::array({"Body1"})}});
+        const double expected = extent == "all" ? 32000.0 - 10 * 10 * 10 : 32000.0 - 10 * 10 * 20;
+        INFO(extent);
+        CHECK(volume(s) == Approx(expected).epsilon(1e-4));
+    }
+    commands::Session s;
+    run(s, "feature.box", {{"corner", {0, 0, 0}}, {"size", {40, 40, 20}}});
+    const auto id = run(s, "sketch.create", {{"plane", "XY"}, {"curves", Json::array({{{"type", "rectangle"}, {"corner", {15, 15}}, {"width", 10}, {"height", 10}}})}})
+                        .at("id").get<std::uint64_t>();
+    CHECK_FALSE(s.execute("feature.extrude", {{"sketch", id}, {"extent", "everything"}, {"distance", 5}}).ok);
+    // Through all makes sense as a cut or an intersection only, and takes no taper.
+    CHECK_FALSE(s.execute("feature.extrude", {{"sketch", id}, {"extent", "all"}}).ok);
+    CHECK_FALSE(s.execute("feature.extrude", {{"sketch", id}, {"extent", "all"}, {"operation", "join"}}).ok);
+    CHECK_FALSE(s.execute("feature.extrude", {{"sketch", id}, {"extent", "all"}, {"operation", "cut"}, {"taper", 3}}).ok);
+}
+
+TEST_CASE("Design commands: counterbore and countersink holes (Fusion: Hole type)", "[commands][cad]")
+{
+    const double pi = 3.14159265358979323846;
+    const auto volume = [](commands::Session& s) { return run(s, "timeline.list").at("bodies").at(0).at("volume").get<double>(); };
+    const double plain = 30.0 * 30.0 * 12.0;
+    SECTION("counterbore")
+    {
+        commands::Session s;
+        run(s, "feature.box", {{"corner", {0, 0, 0}}, {"size", {30, 30, 12}}});
+        run(s, "feature.hole", {{"body", "Body1"}, {"point", {15, 15, 12}}, {"diameter", 6}, {"hole_type", "counterbore"},
+                                {"cbore_diameter", 10}, {"cbore_depth", 4}});
+        // A 6 mm hole through 12 mm plus the extra ring of the 10 mm seat over 4 mm.
+        const double expected = plain - pi * 9 * 12 - pi * (25 - 9) * 4;
+        CHECK(volume(s) == Approx(expected).epsilon(1e-4));
+        CHECK_FALSE(s.execute("feature.hole", {{"body", "Body1"}, {"point", {5, 5, 12}}, {"diameter", 6}, {"hole_type", "counterbore"},
+                                               {"cbore_diameter", 5}, {"cbore_depth", 2}}).ok);
+        CHECK_FALSE(s.execute("feature.hole", {{"body", "Body1"}, {"point", {5, 5, 12}}, {"diameter", 6}, {"hole_type", "counterbore"},
+                                               {"cbore_diameter", 10}}).ok);
+    }
+    SECTION("countersink")
+    {
+        commands::Session s;
+        run(s, "feature.box", {{"corner", {0, 0, 0}}, {"size", {30, 30, 12}}});
+        run(s, "feature.hole", {{"body", "Body1"}, {"point", {15, 15, 12}}, {"diameter", 6}, {"hole_type", "countersink"},
+                                {"csink_diameter", 12}});
+        // A 90 degree countersink 12 mm wide over a 6 mm hole is a cone 3 mm deep: a frustum minus the hole's share.
+        const double rBig = 6, rSmall = 3, h = 3;
+        const double frustum = pi * h / 3.0 * (rBig * rBig + rBig * rSmall + rSmall * rSmall);
+        const double expected = plain - pi * 9 * 12 - (frustum - pi * 9 * h);
+        CHECK(volume(s) == Approx(expected).epsilon(2e-4));
+        CHECK_FALSE(s.execute("feature.hole", {{"body", "Body1"}, {"point", {5, 5, 12}}, {"diameter", 6}, {"hole_type", "countersink"},
+                                               {"csink_diameter", 12}, {"csink_angle", 178}}).ok);
+        CHECK_FALSE(s.execute("feature.hole", {{"body", "Body1"}, {"point", {5, 5, 12}}, {"diameter", 6}, {"hole_type", "slotted"}}).ok);
+    }
+}

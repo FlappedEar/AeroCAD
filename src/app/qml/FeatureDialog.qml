@@ -42,12 +42,15 @@ Pane {
         return out
     }
 
+    /// Extrude extents that go through every body (no distance, no taper).
+    function isAllExtent(extent) { return extent === "all" || extent === "all_two_sides" }
+
     /// Extrude: the distance arrow on the profile, along the sketch normal (Viewport
     /// distanceArrow), or null. The distance is signed: negative means Flip.
     readonly property var distanceArrow: {
         if (type === "fillet" || type === "chamfer" || type === "shell" || type === "press_pull")
             return sizeArrow()
-        if (type !== "extrude" || values.sketch === undefined || values.extent === "to_object")
+        if (type !== "extrude" || values.sketch === undefined || values.extent === "to_object" || isAllExtent(values.extent))
             return null
         const d = Number(values.distance)
         if (!isFinite(d))
@@ -216,14 +219,15 @@ Pane {
         extrude: { title: qsTr("Extrude"), command: "feature.extrude", fields: [
             { key: "sketch", type: "sketch", label: qsTr("Sketch") },
             { key: "points", type: "profilePicks", label: qsTr("Profiles"), hint: qsTr("All profiles (click inside profiles to pick)") },
-            { key: "distance", type: "expr", label: qsTr("Distance"), init: 10, showIf: v => v.extent !== "to_object" },
+            { key: "distance", type: "expr", label: qsTr("Distance"), init: 10, showIf: v => v.extent !== "to_object" && !root.isAllExtent(v.extent) },
             { key: "extent", type: "choice", label: qsTr("Extent"), init: "one_side", options: [
                 { value: "one_side", label: qsTr("One Side") }, { value: "symmetric", label: qsTr("Symmetric") },
-                { value: "two_sides", label: qsTr("Two Sides") }, { value: "to_object", label: qsTr("To Object") }] },
+                { value: "two_sides", label: qsTr("Two Sides") }, { value: "to_object", label: qsTr("To Object") },
+                { value: "all", label: qsTr("All") }, { value: "all_two_sides", label: qsTr("All, Both Sides") }] },
             { key: "to", type: "objectPick", label: qsTr("Object"), hint: qsTr("Click the face, body, surface or scan to extrude up to"),
               showIf: v => v.extent === "to_object" },
             { key: "distance2", type: "expr", label: qsTr("Distance 2"), showIf: v => v.extent === "two_sides" },
-            { key: "taper", type: "expr", label: qsTr("Taper Angle (deg)"), init: 0, showIf: v => v.extent !== "to_object" },
+            { key: "taper", type: "expr", label: qsTr("Taper Angle (deg)"), init: 0, showIf: v => v.extent !== "to_object" && !root.isAllExtent(v.extent) },
             { key: "start_offset", type: "expr", label: qsTr("Start Offset"), init: 0 },
             { key: "flip", type: "bool", label: qsTr("Flip") },
             { key: "operation", type: "choice", label: qsTr("Operation"), init: "new_body", options: operations }] },
@@ -296,6 +300,14 @@ Pane {
             { key: "sketch", type: "sketch", label: qsTr("Sketch with points"), showIf: v => v.placement === "sketch" },
             { key: "diameter", type: "expr", label: qsTr("Diameter"), init: 5 },
             { key: "depth", type: "expr", label: qsTr("Depth (empty: through all)") },
+            // Fusion: Hole type (a seat for a screw head).
+            { key: "hole_type", type: "choice", label: qsTr("Hole type"), init: "simple", options: [
+                { value: "simple", label: qsTr("Simple") }, { value: "counterbore", label: qsTr("Counterbore") },
+                { value: "countersink", label: qsTr("Countersink") }] },
+            { key: "cbore_diameter", type: "expr", label: qsTr("Counterbore diameter"), init: 10, showIf: v => v.hole_type === "counterbore" },
+            { key: "cbore_depth", type: "expr", label: qsTr("Counterbore depth"), init: 3, showIf: v => v.hole_type === "counterbore" },
+            { key: "csink_diameter", type: "expr", label: qsTr("Countersink diameter"), init: 10, showIf: v => v.hole_type === "countersink" },
+            { key: "csink_angle", type: "expr", label: qsTr("Countersink angle (deg)"), init: 90, showIf: v => v.hole_type === "countersink" },
             { key: "flip", type: "bool", label: qsTr("Flip direction"), showIf: v => v.placement === "sketch" }] },
         box: { title: qsTr("Box"), command: "feature.box", fields: [
             { key: "corner", type: "vec3", label: qsTr("Corner"), init: [0, 0, 0] },
