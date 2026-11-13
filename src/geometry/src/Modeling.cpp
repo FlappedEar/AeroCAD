@@ -83,6 +83,7 @@
 #include <gp_Vec.hxx>
 
 #include <algorithm>
+#include <set>
 #include <cmath>
 #include <functional>
 #include <iomanip>
@@ -1592,7 +1593,8 @@ Shape splitFaces(const Shape& shape, const std::vector<std::size_t>& faceIndices
         // volume and its other faces stay as they are; only the picked faces get more edges.
         BRepFeat_SplitShape splitter(s);
         int cuts = 0;
-        for (const std::size_t i : faceIndices) {
+        std::set<std::size_t> picked(faceIndices.begin(), faceIndices.end());
+        for (const std::size_t i : picked) {
             if (i >= static_cast<std::size_t>(facesBefore))
                 throw ModelingError("Split Face: no face " + std::to_string(i));
             const TopoDS_Face face = TopoDS::Face(map(static_cast<int>(i) + 1));
@@ -1600,8 +1602,8 @@ Shape splitFaces(const Shape& shape, const std::vector<std::size_t>& faceIndices
             section.ComputePCurveOn1(true);
             section.Approximation(true);
             section.Build();
-            if (!section.IsDone())
-                continue;
+            if (!section.IsDone() || section.HasErrors())
+                throw ModelingError("Split Face: could not intersect face " + std::to_string(i) + " with the plane");
             for (TopExp_Explorer e(section.Shape(), TopAbs_EDGE); e.More(); e.Next()) {
                 splitter.Add(TopoDS::Edge(e.Current()), face);
                 ++cuts;

@@ -4973,6 +4973,10 @@ TEST_CASE("Design commands: split face keeps one solid and cuts the picked face 
         CHECK_FALSE(s.execute("feature.split_face", {{"body", "Body1"}, {"faces", {face}}, {"plane", "YZ"}, {"offset", 100}}).ok);
         CHECK_FALSE(s.execute("feature.split_face", {{"body", "Body1"}, {"faces", {face}}, {"plane", "XY"}, {"offset", 20}}).ok);
         CHECK_FALSE(s.execute("feature.split_face", {{"body", "Body1"}, {"faces", Json::array()}}).ok);
+        // A plane along the face's own edge only touches it, and a repeated index is the same face.
+        CHECK_FALSE(s.execute("feature.split_face", {{"body", "Body1"}, {"faces", {face}}, {"plane", "YZ"}, {"offset", 0}}).ok);
+        run(s, "feature.split_face", {{"body", "Body1"}, {"faces", {face, face}}, {"plane", "YZ"}, {"offset", 10}});
+        CHECK(faceCount(s) == 7);
     }
 }
 

@@ -1400,8 +1400,9 @@ ApplicationWindow {
     Action { id: shellAction; text: qsTr("S&hell"); onTriggered: window.openFeature("shell") }
     // Fusion: Modify > Draft (tilt faces by an angle from a fixed plane).
     Action { id: draftAction; text: qsTr("D&raft"); enabled: !window.activeSketch; onTriggered: window.openFeature("draft") }
-    // Fusion: Modify > Delete on faces (the gap heals from the neighbours).
+    // Fusion: Modify > Split Face (cut faces along a plane, the body stays one solid).
     Action { id: splitFaceAction; text: qsTr("Split &Face"); enabled: !window.activeSketch; onTriggered: window.openFeature("split_face") }
+    // Fusion: Modify > Delete on faces (the gap heals from the neighbours).
     Action { id: deleteFacesAction; text: qsTr("&Delete Face"); enabled: !window.activeSketch; onTriggered: window.openFeature("delete_faces") }
     // Fusion: Modify > Scale (uniform or non-uniform).
     Action { id: scaleBodyAction; text: qsTr("Sc&ale"); enabled: !window.activeSketch; onTriggered: window.openFeature("scale") }
