@@ -1188,15 +1188,17 @@ Item {
             canvas.requestPaint()
             return
         }
-        if (tool === "text") {
+        if (tool === "text" || tool === "airfoil") {
             // Fusion: Text. Click where it starts, type the text, Enter (the cursor's distance
             // and direction set the height and angle); a second click fixes those first.
+            // Airfoil: the same with the NACA code typed, the leading edge clicked first and
+            // the trailing edge second (chord length and direction).
             if (points.length === 0) {
                 points = [p]
             } else if (dist(points[0], p) >= 1e-9) {
                 points = [points[0], p]
                 if (dimension.text.trim().length > 0)
-                    finishText(dimension.text)
+                    tool === "airfoil" ? finishAirfoil(dimension.text) : finishText(dimension.text)
             }
             canvas.requestPaint()
             return
@@ -1257,10 +1259,67 @@ Item {
         canvas.requestPaint()
     }
 
+    /// The NACA 4-digit code of a typed text ("2412", "NACA 2412"), or "" when it is not one.
+    function nacaCode(str) {
+        const m = /^\s*(?:naca)?\s*(\d{4})\s*$/i.exec(str)
+        // The same codes the model takes: some thickness, and a camber needs its position.
+        return m && Number(m[1].slice(2)) > 0 && !(m[1][0] !== "0" && m[1][1] === "0") ? m[1] : ""
+    }
+
+    /// Places the airfoil typed: its leading edge is the first click, the trailing edge the
+    /// second click or the cursor.
+    function finishAirfoil(str) {
+        if (points.length === 0)
+            return
+        const code = nacaCode(str)
+        if (code === "") {
+            root.viewport.controller.showStatus(qsTr("Airfoil: type a NACA 4-digit code with a thickness, e.g. 2412 (a camber needs its position: 2012 is not one)"))
+            return
+        }
+        const a = points[0]
+        const tip = points.length >= 2 ? points[1] : hover
+        const c = tip !== null ? dist(a, tip) : 0
+        if (c < 1e-9) {
+            root.viewport.controller.showStatus(qsTr("Airfoil: click the trailing edge (the cursor distance is the chord)"))
+            return
+        }
+        emitCurve({ type: "airfoil", naca: code, at: a, chord: round6(c),
+                    angle: round6(Math.atan2(tip[1] - a[1], tip[0] - a[0]) * 180 / Math.PI) })
+        points = []
+        dimension.text = ""
+        canvas.requestPaint()
+    }
+
+    /// The outline of a NACA 4-digit airfoil from the leading edge `a` to the trailing edge
+    /// `b` (a chord long, turned like a -> b), as a closed list of points for the preview.
+    function airfoilOutline(code, a, b) {
+        const m = Number(code[0]) / 100, p = Number(code[1]) / 10, t = Number(code.slice(2)) / 100
+        const c = dist(a, b), ux = (b[0] - a[0]) / c, uy = (b[1] - a[1]) / c
+        const n = 32, up = [], down = []
+        for (let i = 0; i <= n; ++i) {
+            const x = (1 - Math.cos(Math.PI * i / n)) / 2
+            const yt = 5 * t * (0.2969 * Math.sqrt(x) - 0.1260 * x - 0.3516 * x * x + 0.2843 * x * x * x - 0.1036 * x * x * x * x)
+            let yc = 0, slope = 0
+            if (m > 0 && p > 0) {
+                yc = x < p ? m / (p * p) * (2 * p * x - x * x) : m / ((1 - p) * (1 - p)) * ((1 - 2 * p) + 2 * p * x - x * x)
+                slope = x < p ? 2 * m / (p * p) * (p - x) : 2 * m / ((1 - p) * (1 - p)) * (p - x)
+            }
+            const th = Math.atan(slope)
+            const put = (px, py) => [a[0] + c * (px * ux - py * uy), a[1] + c * (px * uy + py * ux)]
+            up.push(put(x - yt * Math.sin(th), yc + yt * Math.cos(th)))
+            down.push(put(x + yt * Math.sin(th), yc - yt * Math.cos(th)))
+        }
+        return up.concat(down.reverse())
+    }
+
     /// Applies a typed dimension to the curve being drawn.
     function applyDimension(text) {
         if (tool === "text") {
             finishText(text)
+            return
+        }
+        if (tool === "airfoil") {
+            finishAirfoil(text)
             return
         }
         const parts = text.split(",").map(s => s.trim()).filter(s => s.length > 0)
@@ -1648,7 +1707,7 @@ Item {
             // Keep keyboard focus here so tool shortcuts (L, R, C, E) keep working;
             // typing a number moves to the dimension field (Keys.onPressed below). Text is
             // typed right away, so its field takes the focus after the first click.
-            if (root.tool === "text" && root.points.length > 0)
+            if ((root.tool === "text" || root.tool === "airfoil") && root.points.length > 0)
                 dimension.forceActiveFocus()
             else
                 root.forceActiveFocus()
@@ -1853,6 +1912,17 @@ Item {
                     for (let i = 0; i < uv.length; ++i) {
                         const q = root.toScreen(uv[i])
                         if (i === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y)
+                    }
+                } else if (root.tool === "airfoil") {
+                    // The chord, then the airfoil typed so far (0012 until a code is typed).
+                    ctx.moveTo(s[0].x, s[0].y)
+                    ctx.lineTo(s[1].x, s[1].y)
+                    if (root.dist(pts[0], pts[1]) > 1e-9) {
+                        const o = root.airfoilOutline(root.nacaCode(dimension.text) || "0012", pts[0], pts[1])
+                        for (let i = 0; i < o.length; ++i) {
+                            const q = root.toScreen(o[i])
+                            if (i === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y)
+                        }
                     }
                 } else if (root.tool === "line" || root.tool === "text" || (pts.length === 2 && (root.tool === "arc" || root.tool === "slot" || root.tool === "arc_slot" || root.tool === "arc_slot_3pt" || root.tool === "circle_3point"
                                                                           || root.tool === "rectangle_3point" || root.tool === "ellipse" || root.tool === "elliptical_arc"
@@ -2079,6 +2149,8 @@ Item {
                     text = Preferences.formatLength(2 * Math.abs(b[0] - a[0]), Preferences.lengthUnit) + " × " + Preferences.formatLength(2 * Math.abs(b[1] - a[1]), Preferences.lengthUnit)
                 else if (root.tool === "center_arc")
                     text = "R " + Preferences.formatLength(root.dist(a, b), Preferences.lengthUnit)
+                else if (root.tool === "airfoil")
+                    text = qsTr("Chord") + " " + Preferences.formatLength(root.dist(a, b), Preferences.lengthUnit)
                 else if (root.tool === "text")
                     text = qsTr("Height") + " " + Preferences.formatLength(root.dist(a, b), Preferences.lengthUnit)
                 else if (root.tool === "conic")
@@ -2184,6 +2256,7 @@ Item {
                     : root.tool === "circle_3tangent" ? (root.tangentNote !== "" ? root.tangentNote : qsTr("3-tangent circle: click three lines, arcs or circles (the circle that fits between them)"))
                     : root.tool === "ellipse" ? qsTr("Ellipse: click the centre, the end of the major axis, then a point for the minor radius; type each radius")
                     : root.tool === "elliptical_arc" ? qsTr("Elliptical arc: click the centre, the major axis end, the minor radius, then the arc start and end (counter-clockwise)")
+                    : root.tool === "airfoil" ? qsTr("Airfoil: click the leading edge, type a NACA code (e.g. 2412), click the trailing edge or press Enter (cursor distance = chord)")
                     : root.tool === "text" ? qsTr("Text: click the start, type the text, Enter (cursor distance = height, direction = angle)")
                     : root.tool === "conic" ? qsTr("Conic curve: click the start, the end, then the apex it bends towards; type rho (0 to 1, 0.5 is a parabola)")
                     : root.tool === "arc" ? qsTr("Arc: click start, end, then a point on the arc")
@@ -2239,6 +2312,7 @@ Item {
                             : root.tool === "ellipse" ? (root.points.length >= 2 ? qsTr("Minor radius") : qsTr("Major radius"))
                             : root.tool === "conic" ? (root.points.length >= 2 ? qsTr("Rho") : qsTr("Length"))
                             : root.tool === "text" ? qsTr("Text")
+                            : root.tool === "airfoil" ? qsTr("NACA")
                             : root.tool === "circle_2point" ? qsTr("Diameter")
                             : root.tool === "rectangle_3point" ? (root.points.length >= 2 ? qsTr("Height") : qsTr("Length"))
                             : root.tool === "offset" ? qsTr("Distance")
@@ -2250,6 +2324,7 @@ Item {
                     Layout.preferredWidth: 140
                     placeholderText: root.tool === "scale" ? qsTr("e.g. 2 or 0.5")
                                      : root.tool === "conic" && root.points.length >= 2 ? qsTr("0 to 1, e.g. 0.5")
+                                     : root.tool === "airfoil" ? qsTr("e.g. 2412")
                                      : root.tool === "text" ? qsTr("e.g. Rev 2") : qsTr("e.g. 40 or w/2")
                     // onTextChanged: the first digit is put here by the overlay's key handler.
                     onTextChanged: {
@@ -2259,6 +2334,8 @@ Item {
                             root.typedRho = text.length > 0 && r > 0 && r < 1 ? r : null
                             canvas.requestPaint()
                         }
+                        if (root.tool === "airfoil")
+                            canvas.requestPaint()
                         if (root.tool === "scale") {
                             const f = Number(text)
                             root.scaleFactor = isFinite(f) && f > 0 ? f : 1

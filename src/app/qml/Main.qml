@@ -285,6 +285,7 @@ ApplicationWindow {
         SketchMenuItem { action: ellipseAction; icon.source: Theme.iconUrl("ellipse") }
         SketchMenuItem { action: ellipticalArcAction; icon.source: Theme.iconUrl("elliptical_arc") }
         SketchMenuItem { action: conicAction; icon.source: Theme.iconUrl("conic") }
+        SketchMenuItem { action: airfoilAction; icon.source: Theme.iconUrl("airfoil") }
         SketchMenuItem { action: textAction; icon.source: Theme.iconUrl("text") }
         SketchMenuItem { action: arcAction; icon.source: Theme.iconUrl("arc") }
         SketchMenuItem { action: centerArcAction; icon.source: Theme.iconUrl("center-arc") }
@@ -1513,6 +1514,7 @@ ApplicationWindow {
     Action { id: circle2PointAction; text: qsTr("&2-Point Circle"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "circle_2point"; onTriggered: window.sketchTool_("circle_2point") }
     Action { id: textAction; text: qsTr("&Text"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "text"; onTriggered: window.sketchTool_("text") }
     Action { id: ellipticalArcAction; text: qsTr("Ellipti&cal Arc"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "elliptical_arc"; onTriggered: window.sketchTool_("elliptical_arc") }
+    Action { id: airfoilAction; text: qsTr("&Airfoil"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "airfoil"; onTriggered: window.sketchTool_("airfoil") }
     Action { id: conicAction; text: qsTr("C&onic Curve"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "conic"; onTriggered: window.sketchTool_("conic") }
     Action { id: ellipseAction; text: qsTr("&Ellipse"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "ellipse"; onTriggered: window.sketchTool_("ellipse") }
     Action { id: circle3PointAction; text: qsTr("&3-Point Circle"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "circle_3point"; onTriggered: window.sketchTool_("circle_3point") }
@@ -2343,6 +2345,7 @@ ApplicationWindow {
                 ToolCommand { action: ellipseAction; text: qsTr("Ellipse"); iconName: "ellipse" }
                 ToolCommand { action: ellipticalArcAction; text: qsTr("Elliptical Arc"); iconName: "elliptical_arc" }
                 ToolCommand { action: conicAction; text: qsTr("Conic Curve"); iconName: "conic" }
+                ToolCommand { action: airfoilAction; text: qsTr("Airfoil"); iconName: "airfoil" }
                 ToolCommand { action: textAction; text: qsTr("Text"); iconName: "text" }
                 ToolCommand { action: centerArcAction; text: qsTr("Center Arc"); iconName: "center-arc" }
                 ToolCommand { action: tangentArcAction; text: qsTr("Tangent Arc"); iconName: "tangent-arc" }

@@ -5742,6 +5742,22 @@ TEST_CASE("Design commands: sweep twist, end scale and parallel orientation (Fus
         CHECK_FALSE(bad.ok);
         CHECK(bad.error.find("smooth") != std::string::npos);
     }
+    SECTION("a hollow duct narrowing from 3 to 2 inches along a bend (brake duct)")
+    {
+        commands::Session s;
+        // A ring (outer 76.2 mm, 3 mm wall) swept along a 100 mm line and a tangent quarter arc of radius 80 mm, scaled to 2/3.
+        const Json prof = run(s, "sketch.create", {{"plane", "XY"}, {"curves", Json::array({{{"type", "circle"}, {"center", {0, 0}}, {"radius", 38.1}},
+                                                                                           {{"type", "circle"}, {"center", {0, 0}}, {"radius", 35.1}}})}});
+        const Json path = run(s, "sketch.create", {{"plane", "XZ"}, {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {0, 100}}}})}});
+        run(s, "sketch.add_curves", {{"sketch", path.at("id")}, {"curves", Json::array({{{"type", "tangent_arc"}, {"from", {{"curve", 0}, {"point", "end"}}}, {"end", {80, 180}}}})}});
+        const Json r = run(s, "feature.sweep", {{"sketch", prof.at("id")}, {"points", Json::array({Json::array({36.6, 0})})},
+                                                {"path", {{"sketch", path.at("id")}}}, {"end_scale", 2.0 / 3.0}});
+        const double wall = std::numbers::pi * (38.1 * 38.1 - 35.1 * 35.1);
+        const double length = 100 + 80 * std::numbers::pi / 2;
+        // The ring's area shrinks with the square of the scale, which falls linearly from 1 to 2/3 along the path.
+        CHECK(r.at("bodies").at(0).at("volume").get<double>() == Catch::Approx(wall * length * (1 - 1.0 / 3 + 1.0 / 27)).epsilon(0.01));
+        CHECK(r.at("bodies").at(0).at("faces").get<int>() == 4);
+    }
     SECTION("a twist over the limit or a profile with two holes is an error")
     {
         commands::Session s;
@@ -5790,5 +5806,92 @@ TEST_CASE("Design commands: sweep twist, end scale and parallel orientation (Fus
         CHECK_FALSE(s.execute("feature.sweep", {{"sketch", prof.at("id")}, {"path", {{"sketch", path.at("id")}}}, {"orientation", "sideways"}}).ok);
         // A plain sweep still works on a path with corners.
         CHECK(s.execute("feature.sweep", {{"sketch", prof.at("id")}, {"path", {{"sketch", bent.at("id")}}}}).ok);
+    }
+}
+
+TEST_CASE("Design commands: Sketch Airfoil (NACA 4-digit)", "[commands][cad]")
+{
+    commands::Session s;
+    auto near = [](const Json& p, double x, double y, double tol = 1e-6) {
+        return std::hypot(p[0].get<double>() - x, p[1].get<double>() - y) < tol;
+    };
+    // NACA 0012, chord 100: two splines from the leading edge to the trailing edge and back.
+    const auto id = run(s, "sketch.create",
+                        {{"plane", "XY"}, {"curves", Json::array({{{"type", "airfoil"}, {"naca", "0012"}, {"chord", 100}}})}})
+                        .at("id")
+                        .get<std::uint64_t>();
+    Json c = run(s, "sketch.curves", {{"sketch", id}});
+    INFO(c.dump());
+    REQUIRE(c.at("curves").size() == 2);
+    const Json& up = c.at("curves")[0].at("points");
+    const Json& down = c.at("curves")[1].at("points");
+    CHECK(c.at("curves")[0].at("kind") == "spline");
+    CHECK(near(up[0], 0, 0));
+    CHECK(near(up[up.size() - 1], 100, 0));
+    CHECK(near(down[0], 100, 0));
+    CHECK(near(down[down.size() - 1], 0, 0));
+    // Thickest (12 %) near 30 % of the chord: the upper surface there is about 6 % of the chord.
+    double top = 0;
+    for (const auto& p : up)
+        top = std::max(top, p[1].get<double>());
+    CHECK(top == Approx(6.0).epsilon(0.01));
+    // One profile; its area is the NACA 0012 area, 0.08171 c^2.
+    CHECK(run(s, "sketch.profiles", {{"sketch", id}}).at("profiles").size() == 1);
+    CHECK(run(s, "sketch.profiles", {{"sketch", id}}).at("profiles")[0].at("area").get<double>() == Approx(817.1).epsilon(0.001));
+    CHECK(run(s, "feature.extrude", {{"sketch", id}, {"distance", 1}}).at("bodies").size() == 1);
+
+    // Cambered (2412), placed at (10, 5) and turned to 90 degrees: the chord runs up.
+    const auto id2 = run(s, "sketch.create",
+                         {{"plane", "XY"},
+                          {"curves", Json::array({{{"type", "airfoil"}, {"naca", 2412}, {"chord", 100}, {"at", {10, 5}}, {"angle", 90}}})}})
+                         .at("id")
+                         .get<std::uint64_t>();
+    c = run(s, "sketch.curves", {{"sketch", id2}});
+    const Json& u2 = c.at("curves")[0].at("points");
+    CHECK(near(u2[0], 10, 5, 1e-9));
+    CHECK(near(u2[u2.size() - 1], 10, 105, 1e-9));
+    // Camber bends it towards +x before the turn (y up) -> after a 90 degree turn towards -x.
+    double mostLeft = 1e9;
+    for (const auto& p : u2)
+        mostLeft = std::min(mostLeft, p[0].get<double>());
+    CHECK(mostLeft < 10 - 5.0);
+    CHECK(run(s, "sketch.profiles", {{"sketch", id2}}).at("profiles").size() == 1);
+
+    // Moving it keeps it an airfoil of the same chord (the item follows its leading edge).
+    run(s, "sketch.move_curves", {{"sketch", id2}, {"curves", {0, 1}}, {"dx", 20}});
+    c = run(s, "sketch.curves", {{"sketch", id2}});
+    CHECK(near(c.at("curves")[0].at("points")[0], 30, 5, 1e-6));
+    CHECK(c.at("curves").size() == 2);
+
+    // Two sections of different codes and chords loft into a tapered wing (root 100 mm, tip 60 mm, 200 mm apart).
+    const auto root = run(s, "sketch.create",
+                          {{"plane", "XY"}, {"curves", Json::array({{{"type", "airfoil"}, {"naca", "2412"}, {"chord", 100}}})}})
+                          .at("id");
+    const auto tip = run(s, "sketch.create",
+                         {{"plane", "XY"}, {"offset", 200}, {"curves", Json::array({{{"type", "airfoil"}, {"naca", "0009"}, {"chord", 60}}})}})
+                         .at("id");
+    const auto wing = run(s, "feature.loft", {{"sections", Json::array({root, tip})}});
+    const double v = wing.at("bodies").back().at("volume").get<double>();
+    INFO(wing.dump());
+    // Between a prism of the tip section and one of the root section (areas 0.0817 c^2).
+    CHECK(v > 0.0817 * 3600 * 200 * 0.8);
+    CHECK(v < 0.0817 * 10000 * 200);
+
+    // Errors.
+    for (const Json& bad : {Json{{"type", "airfoil"}, {"naca", "241"}, {"chord", 10}},
+                            Json{{"type", "airfoil"}, {"naca", "24x2"}, {"chord", 10}},
+                            Json{{"type", "airfoil"}, {"naca", "2400"}, {"chord", 10}},
+                            Json{{"type", "airfoil"}, {"naca", "2012"}, {"chord", 10}},
+                            Json{{"type", "airfoil"}, {"naca", "0012"}, {"chord", 0}},
+                            Json{{"type", "airfoil"}, {"chord", 10}}}) {
+        INFO(bad.dump());
+        const auto r = s.execute("sketch.create", {{"plane", "XY"}, {"curves", Json::array({bad})}});
+        CHECK_FALSE(r.error.empty());
+    }
+    // The prefix and spaces are allowed: "NACA0009", "NACA 2412", " 2412 ".
+    for (const char* form : {"NACA0009", "NACA 2412", " 2412 ", "naca  2412"}) {
+        INFO(form);
+        const auto r = s.execute("sketch.create", {{"plane", "XY"}, {"curves", Json::array({{{"type", "airfoil"}, {"naca", form}, {"chord", 10}}})}});
+        CHECK(r.error.empty());
     }
 }

@@ -117,7 +117,7 @@ rebuilding, AeroCAD reports the problem; Undo restores the previous source.
 | `sketch.curves` | | solved curves, constraints, degrees of freedom |
 | `feature.extrude` | Extrude (E) | `distance`, `extent` one_side / symmetric / two_sides / to_object / all / all_two_sides (Fusion Extent All: through every body, one way or both; no `distance`), `to` (to_object: `{body, faces?}` or `{part}`; stops on the target's shape, curved too; an error when it is not reached), `flip`, `start_offset` (Fusion Start > Offset: the profile starts this far from the sketch plane along the extrusion direction), `taper` (degrees, Fusion Taper Angle: positive narrows away from the sketch plane, holes grow; each side of symmetric / two_sides tapers away from the plane; not with to_object; a taper that closes the profile is an error), `profiles` or `points` |
 | `feature.revolve` | Revolve | `axis` X / Y / Z, {line: sketch curve index} or {origin, direction} (the UI sets these from a clicked sketch line or straight body edge); `angle`, `extent` one_side / symmetric (`angle` in total, half each side of the sketch plane) / two_sides (`angle` forwards, `angle2` backwards, together at most 360) |
-| `feature.sweep` | Sweep | profiles of `sketch` moved along `path` {sketch, curves} (default: all curves of the path sketch); `twist` (degrees, total spin about the path), `end_scale` (size at the path end relative to the start) and `orientation` perpendicular / parallel (the profile keeps its direction) make the sweep a loft through sections along the path, so they need a smooth open path (no sharp corners, not closed), a profile at the path start (it spins and scales about the path) and at most one hole per profile; twist within 1440 degrees |
+| `feature.sweep` | Sweep | profiles of `sketch` moved along `path` {sketch, curves} (default: all curves of the path sketch); `twist` (degrees, total spin about the path), `end_scale` (size at the path end relative to the start) and `orientation` perpendicular / parallel (the profile keeps its direction) make the sweep a loft through sections along the path, so they need a smooth open path (no sharp corners, not closed), a profile at the path start (it spins and scales about the path) and at most one hole per profile; twist within 1440 degrees. A hollow duct that narrows from 3 to 2 inches along a bend: a ring profile (pick it with `points`), a smooth path and `end_scale` 0.667 |
 | `feature.loft` | Loft | `sections`: sketch ids or {sketch, profile}, in order; `solid`, `ruled` |
 | `feature.mirror` | Mirror | `body`, `plane` XY / XZ / YZ / {origin, normal} / planar face, `offset`; join or new_body |
 | `feature.move` | Move/Rotate/Scale | `body`, `scale` (uniform factor, default 1), `axis` X / Y / Z or [x, y, z], `angle` (deg); scale and rotation about `center` (default the body's box centre), then `translate` [dx, dy, dz]; `copy: true` adds the moved body as a new one and leaves the original (Fusion: Move/Copy, M) |
@@ -164,7 +164,7 @@ Sketch curves: `line {start, end}`, `rectangle {corner, width, height | opposite
 `ellipse {center, major_radius, minor_radius, angle?}`,
 `elliptical_arc {center, major_radius, minor_radius, angle?, start_angle, end_angle}`,
 `tangent_circle {curves: [2 or 3 lines, arcs or circles], near, radius?}` (a circle tangent to them; with two curves and no radius it passes through `near`),
-`conic {start, end, apex, rho?}`, `text {at, text, height?, angle?, font?, bold?, italic?}`; any curve can be `construction: true`. Curves are split at
+`conic {start, end, apex, rho?}`, `airfoil {naca, chord, at?, angle?}`, `text {at, text, height?, angle?, font?, bold?, italic?}`; any curve can be `construction: true`. Curves are split at
 intersections, so a circle inside a rectangle gives two profiles (ring and disk).
 
 An `ellipse` (Fusion: Create › Ellipse; ribbon CREATE menu or Sketch menu) is drawn by
@@ -202,6 +202,20 @@ reshapes it). `tangent` between a conic and a line puts the apex on that line at
 end nearer the line; tangent to an arc or circle is refused. Move, copy, scale (rho stays),
 mirror and patterns keep it a conic, Offset gives a spline, and other curves trim, break and
 extend at it; Trim, Break and Extend of the conic itself, Fillet and Chamfer refuse it.
+
+An `airfoil` (CREATE menu or Sketch menu › Airfoil; not in Fusion) is a NACA 4-digit section
+for wings, spoilers and canards: `naca` is the code (`"2412"`, `"NACA 2412"` or the number
+`2412`; digits: max camber in % of the chord, its position in tenths, thickness in %),
+`chord` the length in mm, `at` the leading edge (default the sketch origin) and `angle` the
+direction of the chord in degrees (default along +x; the upper surface is on its left). It
+is two splines through 41 cosine-spaced points each, the upper surface from the leading to
+the trailing edge and the lower one back, meeting exactly at both ends (the trailing edge is
+closed, so the section is one profile that extrudes, lofts and sweeps like any other; loft
+sections of different codes or chords make a tapered wing). In the app: click the leading
+edge, type the code, click (or move the cursor to) the trailing edge and press Enter; the
+preview shows the section as the code is typed. In `sketch.curves` it is those two splines;
+moving it keeps it an airfoil (it follows its leading and trailing edge); 5-digit and
+6-series codes are not supported.
 
 A `text` (Fusion: Create › Text; ribbon CREATE menu or Sketch menu) places the letters of a
 font on the sketch: `at` is where the baseline starts, `height` the size in mm (default 5),

@@ -929,6 +929,63 @@ void appendCurves(const Eval& ev, const Json& item, std::vector<SketchCurve>& ou
         e.joinStart = item.value("join_start", true);
         e.joinEnd = item.value("join_end", true);
         push(e);
+    } else if (type == "airfoil") {
+        // A NACA 4-digit airfoil (cosine-spaced points on a closed trailing edge) as two splines: the
+        // upper surface from the leading edge `at` to the trailing edge, the lower one back. Together
+        // they bound a profile that extrudes, lofts and sweeps like any other.
+        const Json& code = required(item, "naca");
+        std::string digits;
+        if (code.is_number_integer()) {
+            digits = std::to_string(code.get<long long>());
+            digits.insert(0, digits.size() < 4 ? 4 - digits.size() : 0, '0'); // 12 -> 0012
+        } else if (code.is_string()) {
+            digits = lower(code.get<std::string>());
+            digits.erase(std::remove_if(digits.begin(), digits.end(), [](unsigned char c) { return std::isspace(c); }), digits.end());
+            if (digits.rfind("naca", 0) == 0)
+                digits.erase(0, 4);
+        }
+        if (digits.size() != 4 || digits.find_first_not_of("0123456789") != std::string::npos)
+            throw DesignError("Airfoil naca needs 4 digits, e.g. \"2412\"");
+        const double camber = (digits[0] - '0') / 100.0;
+        const double camberAt = (digits[1] - '0') / 10.0;
+        const double thick = ((digits[2] - '0') * 10 + (digits[3] - '0')) / 100.0;
+        if (thick <= 0)
+            throw DesignError("Airfoil thickness (the last two digits) must be above 0");
+        if (camber > 0 && camberAt <= 0)
+            throw DesignError("A cambered airfoil needs a non-zero position of maximum camber (second digit)");
+        const double chord = ev.num(item, "chord");
+        if (!(chord > 0))
+            throw DesignError("Airfoil chord must be positive");
+        const Vec2 le = has(item, "at") ? ev.vec2(item, "at") : Vec2{0, 0};
+        const double a = ev.num(item, "angle", 0.0) * kDegToRad;
+        const int n = 40;
+        auto place = [&](double x, double y) {
+            return Vec2{le.x + chord * (x * std::cos(a) - y * std::sin(a)), le.y + chord * (x * std::sin(a) + y * std::cos(a))};
+        };
+        std::vector<Vec2> over, under;
+        for (int i = 0; i <= n; ++i) {
+            const double x = (1 - std::cos(std::numbers::pi * i / n)) / 2;
+            // The thickness polynomial with the closed trailing edge (-0.1036 x^4).
+            const double yt = 5 * thick * (0.2969 * std::sqrt(x) - 0.1260 * x - 0.3516 * x * x + 0.2843 * x * x * x - 0.1036 * x * x * x * x);
+            double yc = 0.0, slope = 0.0;
+            if (camber > 0) {
+                const double p = camberAt;
+                if (x < p) {
+                    yc = camber / (p * p) * (2 * p * x - x * x);
+                    slope = 2 * camber / (p * p) * (p - x);
+                } else {
+                    yc = camber / ((1 - p) * (1 - p)) * ((1 - 2 * p) + 2 * p * x - x * x);
+                    slope = 2 * camber / ((1 - p) * (1 - p)) * (p - x);
+                }
+            }
+            const double th = std::atan(slope);
+            const bool end = i == 0 || i == n; // exactly the leading and trailing edge, shared
+            over.push_back(end ? place(x, 0.0) : place(x - yt * std::sin(th), yc + yt * std::cos(th)));
+            under.push_back(end ? place(x, 0.0) : place(x + yt * std::sin(th), yc - yt * std::cos(th)));
+        }
+        std::reverse(under.begin(), under.end());
+        push(SketchCurve{SketchCurve::Kind::Spline, over});
+        push(SketchCurve{SketchCurve::Kind::Spline, under});
     } else if (type == "spline") {
         SketchCurve c{SketchCurve::Kind::Spline, {}};
         for (const auto& p : required(item, "points"))
@@ -1584,6 +1641,12 @@ Json itemFromSolved(const Json& item, const SketchCurve* c, std::size_t n)
         for (const char* k : {"construction"})
             if (item.contains(k))
                 out[k] = item[k];
+    } else if (type == "airfoil") {
+        // Moved or turned by the solver: its leading and trailing edge say where it is now.
+        const Vec2 le = c[0].points.front(), te = c[0].points.back();
+        out["at"] = pt(le);
+        out["chord"] = std::hypot(te.x - le.x, te.y - le.y);
+        out["angle"] = std::atan2(te.y - le.y, te.x - le.x) / kDegToRad;
     } else if (type == "conic") {
         out["start"] = pt(c[0].points[0]);
         out["apex"] = pt(c[0].points[1]);

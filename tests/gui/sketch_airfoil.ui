@@ -1,0 +1,45 @@
+# Sketch Airfoil (NACA 4-digit) with real clicks: CREATE > Airfoil on the ribbon, click the leading
+# edge, type the code, move the cursor to the trailing edge (its distance is the chord) and press
+# Enter. The two splines bound one profile that extrudes. A second airfoil: both edges clicked
+# first (turned 90 degrees), the code typed afterwards.
+# Run: AeroCAD --ui-script <this file>
+Qt.createQmlObject('import QtQuick; Item { objectName: "afTest"; visible: false; function at(q) { const o = viewport.sketchOverlay; const p = o.toScreen(q); return o.mapToItem(null, p.x, p.y) } function clickAt(q) { const w = at(q); ui.move(w.x, w.y); ui.wait(80); ui.click(w.x, w.y); ui.wait(150) } function moveTo(q) { const w = at(q); ui.move(w.x, w.y); ui.wait(150) } function sketch() { return controller.execute("sketch.curves", { sketch: activeSketch.id }).result } }', window.contentItem)
+ui.wait(800)
+(() => { window.createSketch({ plane: "XY" }); if (!window.activeSketch) ui.fail("no sketch") })()
+ui.wait(800)
+(() => { viewport.restoreCameraState({ pivot: [30, 10, 0], pitch: -90, yaw: 0, distance: 160, orthographic: false }) })()
+ui.wait(400)
+(() => { if (!ui.clickText("CREATE")) ui.fail("no CREATE menu on the ribbon") })()
+ui.wait(400)
+(() => { if (!ui.clickText("Airfoil")) ui.fail("no Airfoil in the CREATE menu") })()
+ui.wait(300)
+(() => { if (sketchTool !== "airfoil") ui.fail("Airfoil did not start: " + sketchTool) })()
+# Leading edge at (-10, 0); the cursor 60 to its right is the chord; typing goes to the code field.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "afTest"); t.clickAt([-10, 0]); t.moveTo([50, 0]) })()
+ui.type("2412")
+ui.wait(200)
+ui.shot("build/sketch-airfoil-preview.png")
+ui.key("Return")
+ui.wait(800)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "afTest"); const c = t.sketch().curves; ui.log("curves " + JSON.stringify(c.map(k => [k.kind, k.points[0], k.points[k.points.length - 1]]))); if (c.length !== 2 || c[0].kind !== "spline" || c[1].kind !== "spline") ui.fail("expected two splines"); else if (Math.abs(c[0].points[0][0] + 10) > 1e-3 || Math.abs(c[0].points[c[0].points.length - 1][0] - 50) > 0.05) ui.fail("not the chord clicked: " + JSON.stringify([c[0].points[0], c[0].points[c[0].points.length - 1]])) })()
+(() => { const r = controller.execute("sketch.profiles", { sketch: activeSketch.id }).result; ui.log("profiles " + JSON.stringify(r.profiles.map(p => p.area))); if (r.profiles.length !== 1 || Math.abs(r.profiles[0].area - 0.0817 * 3600) > 6) ui.fail("one NACA profile of about 294 mm2 expected") })()
+# A second airfoil, turned 30 degrees: both edges clicked, then the code.
+(() => { window.sketchTool_("airfoil") })()
+ui.wait(200)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "afTest"); t.clickAt([20, -20]); t.clickAt([20 + 30 * Math.cos(Math.PI / 6), -20 + 30 * Math.sin(Math.PI / 6)]) })()
+ui.type("NACA 0009")
+ui.key("Return")
+ui.wait(800)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "afTest"); const c = t.sketch().curves; ui.log("second " + JSON.stringify(c.map(k => [k.points[0], k.points[k.points.length - 1]]))); if (c.length !== 4) ui.fail("expected four splines, got " + c.length); else if (Math.abs(c[2].points[0][0] - 20) > 0.05 || Math.abs(c[2].points[0][1] + 20) > 0.05 || Math.abs(c[2].points[c[2].points.length - 1][1] + 5) > 0.1) ui.fail("the second airfoil is not the 30 mm chord clicked") })()
+# A wrong code (2012: camber without a position) is refused and nothing is drawn.
+(() => { window.sketchTool_("airfoil") })()
+ui.wait(200)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "afTest"); t.clickAt([60, -30]); t.moveTo([90, -30]) })()
+ui.type("2012")
+ui.key("Return")
+ui.wait(400)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "afTest"); if (t.sketch().curves.length !== 4) ui.fail("an invalid code drew a curve") })()
+ui.key("Escape")
+ui.shot("build/sketch-airfoil.png")
+(() => { const r = controller.execute("feature.extrude", { sketch: activeSketch.id, distance: 2 }); if (!r.ok) ui.fail("extrude: " + r.error); else ui.log("extruded bodies " + r.result.bodies.length) })()
+ui.log("Sketch Airfoil OK")
