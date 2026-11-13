@@ -2735,11 +2735,13 @@ void registerFeatureCommands(CommandRegistry& r)
                       "direction (flip: left), thickness centred on the plane.",
                       {{"path", pathSchema()},
                        {"thickness", numberOrExpr("Wall thickness (mm).")},
-                       {"depth", numberOrExpr("Wall height (mm).")},
+                       {"depth", numberOrExpr("Wall height (mm); not with extent to_object.")},
+                       {"extent", {{"type", "string"}, {"enum", {"distance", "to_object"}}, {"description", "to_object: grow up to `to`."}}},
+                       {"to", {{"type", "object"}, {"description", "extent to_object: {body, faces?} or {part}."}}},
                        {"direction", {{"type", "string"}, {"enum", {"normal", "parallel"}}, {"description", "Default normal."}}},
                        {"flip", {{"type", "boolean"}, {"description", "Other side."}}},
                        {"operation", operationSchema()}},
-                      {"path", "thickness", "depth"});
+                      {"path", "thickness"});
 
     addFeatureCommand(r, "path_pattern", "Pattern on Path",
                       "Copies a body along sketch curves (Fusion: Pattern on Path); the body stays, copies move along the path.",

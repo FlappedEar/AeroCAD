@@ -426,7 +426,11 @@ Pane {
         rib: { title: qsTr("Rib"), command: "feature.rib", fields: [
             { key: "path", type: "pathSketch", label: qsTr("Curve sketch") },
             { key: "thickness", type: "expr", label: qsTr("Thickness"), init: 3 },
-            { key: "depth", type: "expr", label: qsTr("Height"), init: 10 },
+            { key: "extent", type: "choice", label: qsTr("Extent"), init: "distance", options: [
+                { value: "distance", label: qsTr("Distance") }, { value: "to_object", label: qsTr("To Next Body") }] },
+            { key: "depth", type: "expr", label: qsTr("Height"), init: 10, showIf: v => v.extent !== "to_object" },
+            { key: "to", type: "objectPick", label: qsTr("Next body"), hint: qsTr("Click the body, face or surface the rib grows up to"),
+              required: true, showIf: v => v.extent === "to_object" },
             { key: "direction", type: "choice", label: qsTr("Direction"), init: "normal", options: [
                 { value: "normal", label: qsTr("Normal to sketch plane") }, { value: "parallel", label: qsTr("Parallel to sketch plane") }] },
             { key: "flip", type: "bool", label: qsTr("Flip side"), init: false },

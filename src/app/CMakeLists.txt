@@ -705,6 +705,10 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/rib.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_rib_test PROPERTIES LABELS gui TIMEOUT 60)
+    add_test(NAME app_rib_to_next_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/rib_to_next.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_rib_to_next_test PROPERTIES LABELS gui TIMEOUT 60)
     # CAD-271: Coil.
     add_test(NAME app_coil_test
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/coil.ui

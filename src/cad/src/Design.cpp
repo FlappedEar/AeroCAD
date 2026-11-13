@@ -3890,6 +3890,50 @@ void Design::evaluateFeature(const Feature& f)
         return chosen;
     };
 
+    // Fusion: Extent "To Object": the body (some of its faces) or the imported surface, solid or
+    // scan `to` {body, faces?} | {part}, that an extrusion or rib reaches. `reachShapes` are the
+    // profiles, `dir` the way they go (a scan is meshed far enough ahead).
+    auto resolveExtentTarget = [&](const Json& to, const std::vector<geometry::Shape>& reachShapes, const core::Vec3& dir,
+                                   std::vector<std::size_t>& targetFaces, const char* what) {
+        geometry::Shape target;
+        if (has(to, "body")) {
+            const Body& t = bodyRef(to.at("body"));
+            target = t.shape;
+            if (has(to, "faces"))
+                targetFaces = resolveIndices(target, to.at("faces"), false);
+        } else if (has(to, "part")) {
+            const auto partId = to.at("part").get<model::PartId>();
+            const model::Part* part = m_partLookup ? m_partLookup(partId) : nullptr;
+            if (part == nullptr)
+                throw DesignError("No part with id " + std::to_string(partId));
+            if (part->shape && !part->shape->isNull()) {
+                target = *part->shape;
+            } else if (part->mesh) {
+                core::BoundingBox reach;
+                for (const auto& face : reachShapes) {
+                    const auto b = face.bounds();
+                    reach.extend(b.min);
+                    reach.extend(b.max);
+                }
+                // Far enough to reach the scan wherever it is: the size of the box around
+                // both the profile and the scan.
+                const auto pb = part->mesh->bounds();
+                core::BoundingBox both = reach;
+                both.extend(pb.min);
+                both.extend(pb.max);
+                const double span = 2.0 * (both.max - both.min).length();
+                reach.extend(reach.min + dir * span);
+                reach.extend(reach.max + dir * span);
+                target = scanSurfaceUnder(*part, reach);
+            } else {
+                throw DesignError("Part '" + part->name + "' has no geometry");
+            }
+        } else {
+            throw DesignError(std::string(what) + " to object: give `to` as {body, faces?} or {part}");
+        }
+        return target;
+    };
+
     auto unionAll = [](const std::vector<geometry::Shape>& solids) {
         geometry::Shape result = solids.front();
         for (std::size_t i = 1; i < solids.size(); ++i)
@@ -3981,44 +4025,8 @@ void Design::evaluateFeature(const Feature& f)
         if (extent == "to_object") {
             // Fusion: Extent "To Object": up to a body, some of its faces, or an imported
             // surface, solid or scan.
-            const Json& to = required(p, "to");
-            geometry::Shape target;
             std::vector<std::size_t> targetFaces;
-            if (has(to, "body")) {
-                const Body& t = bodyRef(to.at("body"));
-                target = t.shape;
-                if (has(to, "faces"))
-                    targetFaces = resolveIndices(target, to.at("faces"), false);
-            } else if (has(to, "part")) {
-                const auto partId = to.at("part").get<model::PartId>();
-                const model::Part* part = m_partLookup ? m_partLookup(partId) : nullptr;
-                if (part == nullptr)
-                    throw DesignError("No part with id " + std::to_string(partId));
-                if (part->shape && !part->shape->isNull()) {
-                    target = *part->shape;
-                } else if (part->mesh) {
-                    core::BoundingBox reach;
-                    for (const auto& face : faces) {
-                        const auto b = face.bounds();
-                        reach.extend(b.min);
-                        reach.extend(b.max);
-                    }
-                    // Far enough to reach the scan wherever it is: the size of the box around
-                    // both the profile and the scan.
-                    const auto pb = part->mesh->bounds();
-                    core::BoundingBox both = reach;
-                    both.extend(pb.min);
-                    both.extend(pb.max);
-                    const double span = 2.0 * (both.max - both.min).length();
-                    reach.extend(reach.min + dir * span);
-                    reach.extend(reach.max + dir * span);
-                    target = scanSurfaceUnder(*part, reach);
-                } else {
-                    throw DesignError("Part '" + part->name + "' has no geometry");
-                }
-            } else {
-                throw DesignError("Extrude to object: give `to` as {body, faces?} or {part}");
-            }
+            const geometry::Shape target = resolveExtentTarget(required(p, "to"), faces, dir, targetFaces, "Extrude");
             std::vector<geometry::Shape> solids;
             for (const auto& face : faces)
                 solids.push_back(geometry::extrudeToObject(face, dir, target, targetFaces));
@@ -4586,15 +4594,28 @@ void Design::evaluateFeature(const Feature& f)
         const geometry::Shape pathEdges = pathEdgesOf(path, "rib");
         const Plane plane = m_sketches.at(path.at("sketch").get<FeatureId>()).plane;
         const double thickness = ev.num(p, "thickness");
-        const double depth = ev.num(p, "depth");
+        // Fusion: Extent "To Next": the wall grows until it reaches `to` {body, faces?} | {part}.
+        const std::string extent = lower(p.value("extent", std::string("distance")));
+        if (extent != "distance" && extent != "to_object")
+            throw DesignError("Unknown rib extent '" + extent + "' (distance, to_object)");
+        const bool toObject = extent == "to_object";
+        const double depth = toObject ? 0.0 : ev.num(p, "depth");
         const std::string direction = lower(p.value("direction", std::string("normal")));
         if (direction != "normal" && direction != "parallel")
             throw DesignError("Unknown rib direction '" + direction + "' (normal, parallel)");
-        if (!(thickness > 0.0) || !(depth > 0.0))
+        if (!(thickness > 0.0) || (!toObject && !(depth > 0.0)))
             throw DesignError("The rib thickness and depth must be positive");
         const double sign = p.value("flip", false) ? -1.0 : 1.0;
+        const Json* toRef = toObject ? &required(p, "to") : nullptr;
+        const auto toTarget = [&](const geometry::Shape& start, const core::Vec3& way) {
+            std::vector<std::size_t> targetFaces;
+            const geometry::Shape target = resolveExtentTarget(*toRef, {start}, way, targetFaces, "Rib");
+            return geometry::extrudeToObject(start, way, target, targetFaces);
+        };
         if (direction == "normal") {
-            applyOperation(geometry::extrude(geometry::thickenCurves(pathEdges, thickness, plane.normal), plane.normal * sign, depth));
+            const geometry::Shape outline = geometry::thickenCurves(pathEdges, thickness, plane.normal);
+            const core::Vec3 up = plane.normal * sign;
+            applyOperation(toObject ? toTarget(outline, up) : geometry::extrude(outline, up, depth));
         } else {
             const double length = geometry::pathLength(pathEdges);
             const auto ends = geometry::pathFrames(pathEdges, {0.0, length});
@@ -4602,8 +4623,15 @@ void Design::evaluateFeature(const Feature& f)
             if (chord.length() < 1e-6)
                 throw DesignError("A parallel rib needs an open curve: this one ends where it starts");
             const core::Vec3 side = plane.normal.cross(chord).normalized() * sign;
-            const geometry::Shape wall = geometry::curveWall(pathEdges, side, depth);
-            applyOperation(geometry::extrude(wall, plane.normal, thickness / 2.0, thickness / 2.0));
+            if (toObject) {
+                // The curves stood up `thickness` across the plane, centred on it, grow along `side`.
+                const geometry::Shape band = geometry::translated(geometry::curveWall(pathEdges, plane.normal, thickness),
+                                                                  plane.normal * (-thickness / 2.0));
+                applyOperation(toTarget(band, side));
+            } else {
+                const geometry::Shape wall = geometry::curveWall(pathEdges, side, depth);
+                applyOperation(geometry::extrude(wall, plane.normal, thickness / 2.0, thickness / 2.0));
+            }
         }
     } else if (f.type == "pipe") {
         // Fusion: Create > Pipe. A round (or square) section swept along sketch curves, solid or
