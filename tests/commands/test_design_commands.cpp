@@ -4942,7 +4942,16 @@ TEST_CASE("Design commands: Move with Create Copy leaves the original (Fusion: M
     CHECK(list.at("bodies").at(1).at("bounds").at("min").at(0).get<double>() == Catch::Approx(50).margin(1e-6));
     // Without it the body itself moves.
     run(s, "feature.move", {{"body", "Body1"}, {"translate", {0, 20, 0}}});
-    CHECK(run(s, "timeline.list").at("bodies").size() == 2);
+    const Json after = run(s, "timeline.list");
+    REQUIRE(after.at("bodies").size() == 2);
+    CHECK(after.at("bodies").at(0).at("bounds").at("min").at(1).get<double>() == Catch::Approx(20).margin(1e-6));
+    CHECK(after.at("bodies").at(1).at("bounds").at("min").at(1).get<double>() == Catch::Approx(0).margin(1e-6));
+    // A turned and scaled copy: 2x about its own centre, then turned 90 degrees about Z: still 20 mm wide.
+    run(s, "feature.move", {{"body", "Body1"}, {"axis", "Z"}, {"angle", 90}, {"scale", 2}, {"copy", true}});
+    const Json three = run(s, "timeline.list");
+    REQUIRE(three.at("bodies").size() == 3);
+    CHECK(three.at("bodies").at(2).at("volume").get<double>() == Catch::Approx(8000).epsilon(1e-6));
+    CHECK(three.at("bodies").at(0).at("volume").get<double>() == Catch::Approx(1000).epsilon(1e-6));
 }
 
 TEST_CASE("Design commands: align lays a face of a body on a face of another (Fusion: Align)", "[commands][cad]")
