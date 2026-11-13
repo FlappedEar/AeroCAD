@@ -1877,11 +1877,11 @@ std::optional<std::size_t> nearestFace(const Shape& shape, const core::Vec3& poi
     return guarded("Face lookup", [&] { return nearest(shape, point, TopAbs_FACE); });
 }
 
-std::optional<core::Vec3> faceNormalNear(const Shape& shape, std::size_t faceIndex, const core::Vec3& point)
+std::optional<SurfacePoint> faceSurfaceNear(const Shape& shape, std::size_t faceIndex, const core::Vec3& point)
 {
     if (shape.isNull())
         return std::nullopt;
-    return guarded("Face normal", [&]() -> std::optional<core::Vec3> {
+    return guarded("Face normal", [&]() -> std::optional<SurfacePoint> {
         const auto map = mapOf(shape.impl()->shape, TopAbs_FACE);
         if (faceIndex >= static_cast<std::size_t>(map.Extent()))
             return std::nullopt;
@@ -1905,8 +1905,17 @@ std::optional<core::Vec3> faceNormalNear(const Shape& shape, std::size_t faceInd
         gp_Dir n = lp.Normal();
         if (f.Orientation() == TopAbs_REVERSED)
             n.Reverse();
-        return core::Vec3{n.X(), n.Y(), n.Z()};
+        const gp_Pnt on = dist.PointOnShape2(1);
+        return SurfacePoint{{on.X(), on.Y(), on.Z()}, {n.X(), n.Y(), n.Z()}};
     });
+}
+
+std::optional<core::Vec3> faceNormalNear(const Shape& shape, std::size_t faceIndex, const core::Vec3& point)
+{
+    const auto sp = faceSurfaceNear(shape, faceIndex, point);
+    if (!sp)
+        return std::nullopt;
+    return sp->normal;
 }
 
 std::vector<double> edgeDistances(const Shape& shape, const core::Vec3& point)

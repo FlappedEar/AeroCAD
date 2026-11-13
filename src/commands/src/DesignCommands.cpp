@@ -776,7 +776,13 @@ Json describeTopologyRefs(const cad::Design& d, const std::string& type, Json pa
     else if ((type == "extrude" || type == "rib") && params.contains("to") && params["to"].is_object() &&
              params["to"].contains("faces") && params["to"].contains("body"))
         addTopologyHints(d, params["to"]["body"], params["to"]["faces"], false);
-    else if (type == "axis") {
+    else if (type == "plane" && params.contains("tangent") && params["tangent"].is_object() && params["tangent"].contains("body") &&
+             !params["tangent"].contains("index")) {
+        // The face a tangent plane touches: {body, point} gets a hint that follows the body.
+        Json one = Json::array({params["tangent"]});
+        addTopologyHints(d, one[0]["body"], one, false);
+        params["tangent"] = one[0];
+    } else if (type == "axis") {
         // The edge or face an axis goes through: {body, point} gets a hint that follows the body.
         for (const char* key : {"edge", "face"}) {
             if (params.contains(key) && params[key].is_object() && params[key].contains("body") && !params[key].contains("index")) {
@@ -2810,11 +2816,12 @@ void registerFeatureCommands(CommandRegistry& r)
         addFeatureCommand(
             r, "plane", "Construction Plane",
             "Creates a construction plane to sketch on (sketch.create plane {plane: id}): offset (base + offset), at angle "
-            "(angle about its x or y axis, or `about`), midplane (base + base2), through three points, along a path.",
+            "(angle about its x or y axis, or `about`), midplane (base + base2), through three points, along a path, tangent to a face.",
             {{"base", basePlane},
              {"offset", numberOrExpr("Offset along the plane normal (mm), applied after the angle.")},
              {"angle", numberOrExpr("Rotation in degrees about the base plane's axis through its origin.")},
              {"axis", {{"type", "string"}, {"enum", {"x", "y"}}, {"description", "Axis of the base plane for angle (default x)."}}},
+             {"tangent", {{"type", "object"}, {"description", "Touch a curved face: {body, point} (where it touches; optional index); offset moves it along the outward normal."}}},
              {"path", pathSchema()},
              {"position", numberOrExpr("With path: 0 (start) to 1 (end) along it (default 0).")},
              {"about", {{"type", Json::array({"string", "object"})},

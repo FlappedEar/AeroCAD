@@ -1420,6 +1420,8 @@ ApplicationWindow {
     Action { id: midplaneAction; text: qsTr("&Midplane"); enabled: !window.activeSketch; onTriggered: window.openFeature("midplane") }
     // Fusion: Construct > Plane Along Path (perpendicular to a sketch path).
     Action { id: planePathAction; text: qsTr("Plane Along &Path"); enabled: !window.activeSketch; onTriggered: window.openFeature("plane_path") }
+    // Fusion: Construct > Tangent Plane (touches a curved face).
+    Action { id: planeTangentAction; text: qsTr("&Tangent Plane"); enabled: !window.activeSketch; onTriggered: window.openFeature("plane_tangent") }
     Action { id: loftAction; text: qsTr("&Loft"); enabled: !window.activeSketch; onTriggered: window.openFeature("loft") }
     // Fusion: Create > Thread (modeled threads on cylindrical faces).
     Action { id: threadAction; text: qsTr("&Thread"); enabled: !window.activeSketch; onTriggered: window.openFeature("thread") }
@@ -1803,6 +1805,7 @@ ApplicationWindow {
             MenuItem { action: planeAction }
             MenuItem { action: midplaneAction }
             MenuItem { action: planePathAction }
+            MenuItem { action: planeTangentAction }
             MenuItem { action: axisAction }
         }
         Menu {
@@ -2147,6 +2150,7 @@ ApplicationWindow {
                 ToolCommand { action: planeAction; text: qsTr("Plane"); iconName: "plane" }
                 ToolCommand { action: midplaneAction; text: qsTr("Midplane"); iconName: "plane" }
                 ToolCommand { action: planePathAction; text: qsTr("Plane on path"); iconName: "plane" }
+                ToolCommand { action: planeTangentAction; text: qsTr("Tangent plane"); iconName: "plane" }
                 ToolCommand { action: axisAction; text: qsTr("Axis"); iconName: "axis" }
             }
             ToolSeparator {}

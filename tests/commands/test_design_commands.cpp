@@ -532,6 +532,47 @@ TEST_CASE("Design commands: plane along a path (Fusion: Plane Along Path)", "[co
             CHECK(p.value("visible", true));
 }
 
+TEST_CASE("Design commands: tangent plane (Fusion: Tangent Plane)", "[commands][cad]")
+{
+    commands::Session s;
+    const auto near = [](const Json& v, double x, double y, double z) {
+        return v.at(0).get<double>() == Approx(x).margin(1e-4) && v.at(1).get<double>() == Approx(y).margin(1e-4) &&
+               v.at(2).get<double>() == Approx(z).margin(1e-4);
+    };
+    // A cylinder of radius 10 about Z: a plane touching it at the +X side stands at x = 10, normal +X.
+    const auto cyl = run(s, "feature.cylinder", {{"center", {0, 0, 0}}, {"radius", 10}, {"height", 30}}).at("id").get<std::uint64_t>();
+    const Json r = run(s, "feature.plane", {{"tangent", {{"body", cyl}, {"point", {12, 0, 15}}}}});
+    CHECK(near(r.at("plane").at("origin"), 10, 0, 15));
+    CHECK(near(r.at("plane").at("normal"), 1, 0, 0));
+    // The other side, and an offset along the outward normal.
+    const Json l = run(s, "feature.plane", {{"tangent", {{"body", cyl}, {"point", {0, -9, 5}}}}, {"offset", 4}});
+    CHECK(near(l.at("plane").at("origin"), 0, -14, 5));
+    CHECK(near(l.at("plane").at("normal"), 0, -1, 0));
+    // A sketch can be placed on it, and a sphere works as well.
+    run(s, "sketch.create", {{"plane", {{"plane", r.at("id")}}}, {"curves", Json::array({{{"type", "circle"}, {"center", {0, 0}}, {"radius", 2}}})}});
+    const auto ball = run(s, "feature.sphere", {{"center", {50, 0, 0}}, {"diameter", 14}}).at("id").get<std::uint64_t>();
+    const Json b = run(s, "feature.plane", {{"tangent", {{"body", ball}, {"point", {50, 0, 9}}}}});
+    CHECK(near(b.at("plane").at("origin"), 50, 0, 7));
+    CHECK(near(b.at("plane").at("normal"), 0, 0, 1));
+    // The face is stored with a hint, so the plane follows when the cylinder moves.
+    run(s, "feature.edit", {{"id", cyl}, {"params", {{"center", {5, 0, 0}}}}});
+    CHECK(s.design().planes().at(r.at("id").get<std::uint64_t>()).plane.origin.x == Approx(15).margin(1e-4));
+    // Moved sideways, the plane keeps the same spot of the face (still the +X side), not the old world point.
+    run(s, "feature.edit", {{"id", cyl}, {"params", {{"center", {0, 7, 0}}}}});
+    const auto& moved = s.design().planes().at(r.at("id").get<std::uint64_t>()).plane;
+    CHECK(moved.origin.x == Approx(10).margin(1e-4));
+    CHECK(moved.origin.y == Approx(7).margin(1e-4));
+    CHECK(moved.normal.x == Approx(1).margin(1e-4));
+    // Errors: no such body, other modes together with `tangent`, a malformed reference.
+    CHECK_FALSE(s.execute("feature.plane", {{"tangent", {{"body", 9999}, {"point", {0, 0, 0}}}}}).ok);
+    CHECK_FALSE(s.execute("feature.plane", {{"tangent", {{"body", cyl}, {"point", {12, 0, 15}}}}, {"base", "XY"}}).ok);
+    CHECK_FALSE(s.execute("feature.plane", {{"tangent", 5}}).ok);
+    // The touch point is required, and an index must be a plain number.
+    CHECK_FALSE(s.execute("feature.plane", {{"tangent", {{"body", cyl}, {"index", 0}}}}).ok);
+    CHECK_FALSE(s.execute("feature.plane", {{"tangent", {{"body", cyl}, {"index", "a"}, {"point", {12, 0, 15}}}}}).ok);
+    CHECK_FALSE(s.execute("feature.plane", {{"tangent", {{"body", cyl}, {"index", -1}, {"point", {12, 0, 15}}}}}).ok);
+}
+
 TEST_CASE("Design commands: loft of rings stays hollow", "[commands][cad][pattern]")
 {
     commands::Session s;

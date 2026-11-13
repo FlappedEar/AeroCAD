@@ -246,6 +246,14 @@ struct EdgeInfo {
 /// too), or std::nullopt for invalid indices and undefined normals.
 [[nodiscard]] std::optional<core::Vec3> faceNormalNear(const Shape& shape, std::size_t faceIndex,
                                                        const core::Vec3& point);
+/// The surface point of face `faceIndex` nearest to `point` and the outward normal there (curved
+/// faces too), or std::nullopt for invalid indices and undefined normals.
+struct SurfacePoint {
+    core::Vec3 point{};
+    core::Vec3 normal{};
+};
+[[nodiscard]] std::optional<SurfacePoint> faceSurfaceNear(const Shape& shape, std::size_t faceIndex,
+                                                          const core::Vec3& point);
 /// Distance from a point to every edge / face (same order as edges() / faces();
 /// infinity for degenerate edges).
 [[nodiscard]] std::vector<double> edgeDistances(const Shape& shape, const core::Vec3& point);
