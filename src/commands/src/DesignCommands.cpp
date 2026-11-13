@@ -214,6 +214,7 @@ Json curveSchema()
          "arc_slot {center, radius, width, start_angle, end_angle} (slot along an arc); "
          "control_spline {points (control polygon), degree? 2-5, closed?}. "
          "conic {start, end, apex, rho?} (tangent at its ends to the lines towards apex); "
+         "airfoil {naca: 4 digits e.g. \"2412\", chord, at? (leading edge), angle?} (two splines, closed trailing edge); "
          "text {at, text, height?, angle?, font?, bold?, italic?} (letters are profiles; at = baseline start, "
          "height mm, default 5). "
          "construction: true excludes it from profiles."},
@@ -222,7 +223,7 @@ Json curveSchema()
            {{"type", "string"},
             {"description", "Curve kind; selects which other fields apply."},
             {"enum", {"line", "rectangle", "center_rectangle", "three_point_rectangle", "circle", "arc", "center_arc", "polygon", "slot",
-                      "spline", "point", "tangent_arc", "tangent_circle", "arc_slot", "control_spline", "ellipse", "elliptical_arc", "conic", "text"}}}},
+                      "spline", "point", "tangent_arc", "tangent_circle", "arc_slot", "control_spline", "ellipse", "elliptical_arc", "conic", "airfoil", "text"}}}},
           {"curves", {{"type", "array"}, {"items", {{"type", "integer"}, {"minimum", 0}}},
                       {"description", "tangent_circle: 2 or 3 line, arc or circle indices (`radius` optional for 2)."}}},
           {"near", point2("tangent_circle: a point near the circle wanted.")},
@@ -258,6 +259,8 @@ Json curveSchema()
           {"bold", {{"type", "boolean"}, {"description", "text: bold."}}},
           {"italic", {{"type", "boolean"}, {"description", "text: italic."}}},
           {"apex", point2("conic: where its end tangents meet.")},
+          {"naca", {{"type", Json::array({"string", "integer"})}, {"description", "airfoil: NACA 4-digit code."}}},
+          {"chord", numberOrExpr("airfoil: chord length (mm).")},
           {"rho", numberOrExpr("conic: 0 to 1, default 0.5 (parabola).")},
           {"points", {{"type", "array"}, {"items", point2("Fit point.")}, {"minItems", 2},
                       {"description", "spline: fit points (2+); control_spline: control points (degree + 1+)."}}},
