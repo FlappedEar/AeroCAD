@@ -464,6 +464,34 @@ TEST_CASE("Design commands: construction planes carry sketches", "[commands][cad
     CHECK(found);
 }
 
+TEST_CASE("Design commands: plane at angle about an axis or edge (Fusion: Plane at Angle)", "[commands][cad]")
+{
+    commands::Session s;
+    const auto near = [](const Json& v, double x, double y, double z) {
+        return v.at(0).get<double>() == Approx(x).margin(1e-6) && v.at(1).get<double>() == Approx(y).margin(1e-6) &&
+               v.at(2).get<double>() == Approx(z).margin(1e-6);
+    };
+    // XY turned 90 degrees about the line through (10, 0, 0) along Y: the plane stands on that line.
+    const Json r = run(s, "feature.plane", {{"base", "XY"}, {"angle", 90}, {"about", {{"origin", {10, 0, 0}}, {"direction", {0, 1, 0}}}}});
+    CHECK(std::abs(r.at("plane").at("normal")[0].get<double>()) == Approx(1).margin(1e-9));
+    CHECK(near(r.at("plane").at("origin"), 10, 0, 10));
+    // A construction axis gives the same, and the world axis names work.
+    const Json ax = run(s, "feature.axis", {{"from", {10, 0, 0}}, {"to", {10, 5, 0}}});
+    const Json c = run(s, "feature.plane", {{"base", "XY"}, {"angle", 90}, {"about", {{"feature", ax.at("id")}}}});
+    CHECK(near(c.at("plane").at("origin"), 10, 0, 10));
+    const Json x = run(s, "feature.plane", {{"base", "XY"}, {"angle", 90}, {"about", "X"}});
+    CHECK(std::abs(x.at("plane").at("normal")[1].get<double>()) == Approx(1).margin(1e-9));
+    // Both rotation lines, a zero direction and an object without a line are errors.
+    CHECK_FALSE(s.execute("feature.plane", {{"base", "XY"}, {"angle", 90}, {"axis", "y"}, {"about", "X"}}).ok);
+    CHECK_FALSE(s.execute("feature.plane", {{"base", "XY"}, {"angle", 90}, {"about", {{"origin", {0, 0, 0}}, {"direction", {0, 0, 0}}}}}).ok);
+    CHECK_FALSE(s.execute("feature.plane", {{"base", "XY"}, {"angle", 90}, {"about", {{"line", 1}}}}).ok);
+    CHECK_FALSE(s.execute("feature.plane", {{"base", "XY"}, {"angle", 90}, {"about", "W"}}).ok);
+    // A bad line is an error at angle 0 too; offset applies after the turn; a long direction is normalised.
+    CHECK_FALSE(s.execute("feature.plane", {{"base", "XY"}, {"angle", 0}, {"about", "W"}}).ok);
+    const Json o = run(s, "feature.plane", {{"base", "XY"}, {"angle", 90}, {"offset", 5}, {"about", {{"origin", {10, 0, 0}}, {"direction", {0, 5, 0}}}}});
+    CHECK(near(o.at("plane").at("origin"), 15, 0, 10)); // the normal after the turn is +X: 5 further along it
+}
+
 TEST_CASE("Design commands: loft of rings stays hollow", "[commands][cad][pattern]")
 {
     commands::Session s;

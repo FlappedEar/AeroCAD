@@ -2730,8 +2730,7 @@ void registerFeatureCommands(CommandRegistry& r)
                       "revolutions, pitch and height.",
                       {{"center", point3("Start centre [x, y, z] (default origin).")},
                        {"axis", {{"type", Json::array({"string", "array", "object"})},
-                                 {"description", "X, Y, Z (default), [x, y, z], {origin, direction} or {feature} (construction axis; "
-                                                 "the coil then starts on it unless center is given)."}}},
+                                 {"description", "X, Y, Z (default), [x, y, z], {origin, direction} or {feature}; the coil starts on an object axis."}}},
                        {"diameter", numberOrExpr("Outer diameter of the coil (mm).")},
                        {"section_size", numberOrExpr("Wire diameter (square: side), mm.")},
                        {"revolutions", numberOrExpr("Turns.")},
@@ -2811,12 +2810,14 @@ void registerFeatureCommands(CommandRegistry& r)
         addFeatureCommand(
             r, "plane", "Construction Plane",
             "Creates a construction plane that sketches can be placed on (sketch.create plane {plane: id}). Fusion: "
-            "Construct > Offset Plane (base + offset), Plane at Angle (base + angle about its x or y axis), Midplane "
-            "(base + base2, parallel) and Plane Through Three Points (points).",
+            "Offset Plane (base + offset), Plane at Angle (base + angle about its x or y axis, or `about`), Midplane "
+            "(base + base2, parallel), Plane Through Three Points (points).",
             {{"base", basePlane},
              {"offset", numberOrExpr("Offset along the plane normal (mm), applied after the angle.")},
              {"angle", numberOrExpr("Rotation in degrees about the base plane's axis through its origin.")},
              {"axis", {{"type", "string"}, {"enum", {"x", "y"}}, {"description", "Axis of the base plane for angle (default x)."}}},
+             {"about", {{"type", Json::array({"string", "object"})},
+                        {"description", "Turn about this line instead of `axis`: X, Y, Z, {origin, direction} or {feature}."}}},
              {"base2", basePlane},
              {"points", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", point3("Point.")},
                          {"description", "Three points the plane passes through (instead of base)."}}}},
@@ -2825,13 +2826,12 @@ void registerFeatureCommands(CommandRegistry& r)
         const Json topoRef{{"type", "object"}, {"description", "{body, index or point}."}};
         addFeatureCommand(
             r, "axis", "Construction Axis",
-            "Creates a construction axis (Fusion: Construct > Axis) to turn about: axis {feature: id or name} in revolve, "
-            "circular_pattern, move. Give one of from + to (two points), line (\"X\"/\"Y\"/\"Z\" or {origin, direction}), "
-            "edge (straight or circular), face (cylinder, cone, torus) or plane (perpendicular to it, through `point`; "
-            "with plane2: where the two planes meet).",
+            "Creates a construction axis (Fusion: Construct > Axis); use it as {feature: id or name} in revolve, circular_pattern, "
+            "move, coil, plane. Give one of from + to, line, edge (straight or circular), face (cylinder, cone, torus) or "
+            "plane (perpendicular to it, through `point`; with plane2: where they meet).",
             {{"from", point3("Start point.")},
              {"to", point3("Second point.")},
-             {"line", {{"type", Json::array({"string", "object"})}, {"description", "\"X\", \"Y\", \"Z\", {origin, direction} or {feature: construction axis}."}}},
+             {"line", {{"type", Json::array({"string", "object"})}, {"description", "X, Y, Z, {origin, direction} or {feature}."}}},
              {"edge", topoRef},
              {"face", topoRef},
              {"plane", basePlane},

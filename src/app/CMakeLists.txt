@@ -717,6 +717,10 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/axis.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_axis_test PROPERTIES LABELS gui TIMEOUT 60)
+    add_test(NAME app_plane_about_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/plane_about.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_plane_about_test PROPERTIES LABELS gui TIMEOUT 60)
     add_test(NAME app_coil_axis_test
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/coil_axis.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
