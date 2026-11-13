@@ -83,6 +83,7 @@
 #include <TopoDS.hxx>
 #include <TopoDS_Compound.hxx>
 #include <gp_Ax1.hxx>
+#include <gp_Quaternion.hxx>
 #include <gp_Trsf.hxx>
 #include <gp_Vec.hxx>
 
@@ -602,6 +603,103 @@ std::vector<PathFrame> pathFrames(const Shape& pathEdges, const std::vector<doub
             out.push_back({{pt.X(), pt.Y(), pt.Z()}, {tan.X(), tan.Y(), tan.Z()}});
         }
         return out;
+    });
+}
+
+Shape sweep(const Shape& profileFaces, const Shape& pathEdges, const SweepOptions& options)
+{
+    if (std::abs(options.twistDegrees) < 1e-9 && std::abs(options.endScale - 1.0) < 1e-9 && !options.parallel)
+        return sweep(profileFaces, pathEdges);
+    const TopoDS_Shape& prof = occ(profileFaces, "Sweep");
+    if (!hasSubShapes(prof, TopAbs_FACE))
+        throw ModelingError("Sweep: no profile faces");
+    if (!std::isfinite(options.endScale) || options.endScale <= 0.0)
+        throw ModelingError("Sweep: the end scale must be positive");
+    if (!std::isfinite(options.twistDegrees) || std::abs(options.twistDegrees) > 1440.0)
+        throw ModelingError("Sweep: the twist must be within 1440 degrees");
+    return guarded("Sweep", [&] {
+        const BRepAdaptor_CompCurve curve(pathWire(pathEdges, "Sweep"));
+        const double length = GCPnts_AbscissaPoint::Length(curve);
+        if (!(length > 1e-9))
+            throw ModelingError("Sweep: the path has no length");
+        auto paramAt = [&](double at) {
+            if (at >= length - 1e-9)
+                return curve.LastParameter();
+            if (at <= 1e-12)
+                return curve.FirstParameter();
+            GCPnts_AbscissaPoint ap(curve, at, curve.FirstParameter());
+            if (!ap.IsDone())
+                throw ModelingError("Sweep: cannot measure along the path");
+            return ap.Parameter();
+        };
+        auto frameAt = [&](double at, gp_Pnt& pt, gp_Vec& tan) {
+            curve.D1(paramAt(at), pt, tan);
+            if (tan.Magnitude() < 1e-12)
+                throw ModelingError("Sweep: the path has no direction here");
+            tan.Normalize();
+        };
+        gp_Pnt start, end;
+        gp_Vec t0;
+        frameAt(0.0, start, t0);
+        gp_Vec tEnd;
+        frameAt(length, end, tEnd);
+        if (start.Distance(end) < 1e-6 * std::max(1.0, length))
+            throw ModelingError("Sweep: a closed path cannot be twisted or scaled");
+        // A smooth path only: the sections are lofted, which would round off a corner.
+        constexpr int kProbe = 400;
+        double turning = 0.0;
+        gp_Vec previous = t0;
+        for (int i = 1; i <= kProbe; ++i) {
+            gp_Pnt pt;
+            gp_Vec tan;
+            frameAt(length * i / kProbe, pt, tan);
+            const double angle = previous.Angle(tan);
+            if (angle > 10.0 * std::numbers::pi / 180.0)
+                throw ModelingError("Sweep: a twist, an end scale or a parallel orientation needs a smooth path "
+                                    "(no sharp corners)");
+            turning += angle;
+            previous = tan;
+        }
+        const double twist = options.twistDegrees * std::numbers::pi / 180.0;
+        const int sections = std::clamp(static_cast<int>(std::ceil(std::max({std::abs(options.twistDegrees) / 10.0,
+                                                                              turning * 180.0 / std::numbers::pi / 8.0, 12.0}))),
+                                        12, 160);
+        BRep_Builder builder;
+        TopoDS_Compound comp;
+        builder.MakeCompound(comp);
+        for (TopExp_Explorer ex(prof, TopAbs_FACE); ex.More(); ex.Next()) {
+            std::vector<Shape> faces;
+            gp_Quaternion carried; // the path's turn so far (parallel transport: no spin about the path)
+            gp_Vec before = t0;
+            for (int i = 0; i <= sections; ++i) {
+                const double u = static_cast<double>(i) / sections;
+                gp_Pnt pt;
+                gp_Vec tan;
+                frameAt(length * u, pt, tan);
+                if (!options.parallel && i > 0 && before.Angle(tan) > 1e-9) {
+                    gp_Quaternion step;
+                    step.SetRotation(before, tan);
+                    carried = step * carried;
+                }
+                before = tan;
+                // x -> pt + scale * twist(carried(x - start)): the profile follows the path like a rigid
+                // body, spins about it and grows or shrinks.
+                gp_Trsf toOrigin, turn, spin, scale, place;
+                toOrigin.SetTranslation(gp_Vec(start, gp_Pnt(0, 0, 0)));
+                turn.SetRotation(carried);
+                spin.SetRotation(gp_Ax1(gp_Pnt(0, 0, 0), gp_Dir(tan)), twist * u);
+                scale.SetScale(gp_Pnt(0, 0, 0), 1.0 + (options.endScale - 1.0) * u);
+                place.SetTranslation(gp_Vec(gp_Pnt(0, 0, 0), pt));
+                const gp_Trsf all = place * scale * spin * turn * toOrigin;
+                faces.push_back(wrapShape(BRepBuilderAPI_Transform(ex.Current(), all, true).Shape()));
+            }
+            try {
+                builder.Add(comp, loft(faces, true, false).impl()->shape);
+            } catch (const ModelingError& e) {
+                throw ModelingError(std::string("Sweep with twist, end scale or parallel orientation: ") + e.what());
+            }
+        }
+        return wrapShape(comp);
     });
 }
 

@@ -4863,9 +4863,17 @@ void Design::evaluateFeature(const Feature& f)
         SketchResult* sk = nullptr;
         const auto faces = profiles(sk);
         const geometry::Shape pathEdges = pathEdgesOf(required(p, "path"), "sweep");
+        // Fusion: Twist Angle, Taper (as an end scale) and Orientation.
+        geometry::SweepOptions options;
+        options.twistDegrees = ev.num(p, "twist", 0.0);
+        options.endScale = ev.num(p, "end_scale", 1.0);
+        const std::string orientation = lower(p.value("orientation", std::string("perpendicular")));
+        if (orientation != "perpendicular" && orientation != "parallel")
+            throw DesignError("Unknown sweep orientation '" + orientation + "' (perpendicular, parallel)");
+        options.parallel = orientation == "parallel";
         std::vector<geometry::Shape> solids;
         for (const auto& face : faces)
-            solids.push_back(geometry::sweep(face, pathEdges));
+            solids.push_back(geometry::sweep(face, pathEdges, options));
         applyOperation(unionAll(solids));
     } else if (f.type == "box") {
         const core::Vec3 corner = ev.vec3(p, "corner", {});

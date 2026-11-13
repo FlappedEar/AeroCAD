@@ -709,6 +709,10 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/rib_to_next.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_rib_to_next_test PROPERTIES LABELS gui TIMEOUT 60)
+    add_test(NAME app_sweep_twist_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sweep_twist.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_sweep_twist_test PROPERTIES LABELS gui TIMEOUT 60)
     add_test(NAME app_web_test
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/web.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})

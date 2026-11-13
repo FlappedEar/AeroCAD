@@ -5681,3 +5681,99 @@ TEST_CASE("Design commands: replace face moves a flat face onto a plane or anoth
         CHECK(volumeOf(s) == Catch::Approx(32000).margin(0.01));
     }
 }
+
+TEST_CASE("Design commands: sweep twist, end scale and parallel orientation (Fusion: Sweep options)", "[commands][cad]")
+{
+    const auto square = [](commands::Session& s) {
+        return run(s, "sketch.create", {{"plane", "XY"}, {"curves", Json::array({{{"type", "center_rectangle"}, {"center", {0, 0}}, {"width", 10}, {"height", 10}}})}});
+    };
+    const auto linePath = [](commands::Session& s) {
+        return run(s, "sketch.create", {{"plane", "XZ"}, {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {0, 40}}}})}});
+    };
+    const auto arcPath = [](commands::Session& s) {
+        return run(s, "sketch.create", {{"plane", "XZ"}, {"curves", Json::array({{{"type", "arc"}, {"start", {0, 0}},
+                                                                                {"through", {30 - 30 * std::cos(std::numbers::pi / 4), 30 * std::sin(std::numbers::pi / 4)}},
+                                                                                {"end", {30, 30}}}})}});
+    };
+    const auto volumeOf = [](const Json& r, std::size_t i = 0) { return r.at("bodies").at(i).at("volume").get<double>(); };
+
+    SECTION("a twisted bar keeps its cross section area, so the volume stays")
+    {
+        commands::Session s;
+        const Json prof = square(s);
+        const Json path = linePath(s);
+        const Json r = run(s, "feature.sweep", {{"sketch", prof.at("id")}, {"path", {{"sketch", path.at("id")}}}, {"twist", 90}});
+        CHECK(volumeOf(r) == Catch::Approx(100 * 40.0).epsilon(0.01));
+        // The middle section is turned by 45 degrees: the body is wider than the 10 mm profile there.
+        const Json bounds = r.at("bodies").at(0).at("bounds");
+        CHECK(bounds.at("max")[0].get<double>() > 5.5);
+    }
+    SECTION("a positive twist turns counter-clockwise about the path direction")
+    {
+        commands::Session s;
+        const Json prof = run(s, "sketch.create", {{"plane", "XY"}, {"curves", Json::array({{{"type", "center_rectangle"}, {"center", {0, 0}}, {"width", 20}, {"height", 10}}})}});
+        const Json path = linePath(s);
+        run(s, "feature.sweep", {{"sketch", prof.at("id")}, {"path", {{"sketch", path.at("id")}}}, {"twist", 30}});
+        // The right-hand side of the top rectangle (x = 10, from y = -5 to 5) is turned 30 degrees: its middle is at (8.66, 5, 40).
+        const auto hasTopEdgeAt = [&](double x, double y) {
+            const Json edges = run(s, "body.edges", {{"body", "Body1"}}).at("edges");
+            for (const auto& e : edges) {
+                const auto& m = e.at("middle");
+                if (std::abs(m[2].get<double>() - 40) < 1e-3 && std::abs(m[0].get<double>() - x) < 0.05 && std::abs(m[1].get<double>() - y) < 0.05)
+                    return true;
+            }
+            return false;
+        };
+        CHECK(hasTopEdgeAt(8.66, 5.0));
+        CHECK_FALSE(hasTopEdgeAt(8.66, -5.0));
+    }
+    SECTION("a twist over the limit or a profile with two holes is an error")
+    {
+        commands::Session s;
+        const Json prof = square(s);
+        const Json path = linePath(s);
+        CHECK_FALSE(s.execute("feature.sweep", {{"sketch", prof.at("id")}, {"path", {{"sketch", path.at("id")}}}, {"twist", 5000}}).ok);
+        const Json holes = run(s, "sketch.create", {{"plane", "XY"}, {"curves", Json::array({{{"type", "center_rectangle"}, {"center", {0, 0}}, {"width", 30}, {"height", 10}},
+                                                                                          {{"type", "circle"}, {"center", {-8, 0}}, {"radius", 1.5}},
+                                                                                          {{"type", "circle"}, {"center", {8, 0}}, {"radius", 1.5}}})}});
+        CHECK(s.execute("feature.sweep", {{"sketch", holes.at("id")}, {"path", {{"sketch", path.at("id")}}}}).ok);
+        const auto r = s.execute("feature.sweep", {{"sketch", holes.at("id")}, {"path", {{"sketch", path.at("id")}}}, {"twist", 10}});
+        CHECK_FALSE(r.ok);
+        CHECK(r.error.find("Sweep") != std::string::npos);
+    }
+    SECTION("an end scale tapers the bar")
+    {
+        commands::Session s;
+        const Json prof = square(s);
+        const Json path = linePath(s);
+        const Json r = run(s, "feature.sweep", {{"sketch", prof.at("id")}, {"path", {{"sketch", path.at("id")}}}, {"end_scale", 0.5}});
+        // The side runs from 10 to 5 mm: V = A L (1 - 0.5 + 0.25 / 3).
+        CHECK(volumeOf(r) == Catch::Approx(100 * 40.0 * (1 - 0.5 + 0.25 / 3.0)).epsilon(0.01));
+    }
+    SECTION("perpendicular follows the arc, parallel keeps the profile direction")
+    {
+        commands::Session s;
+        const Json prof = square(s);
+        const Json path = arcPath(s);
+        const Json plain = run(s, "feature.sweep", {{"sketch", prof.at("id")}, {"path", {{"sketch", path.at("id")}}}});
+        CHECK(volumeOf(plain) == Catch::Approx(100 * std::numbers::pi / 2 * 30).epsilon(0.01));
+        const Json par = run(s, "feature.sweep", {{"sketch", prof.at("id")}, {"path", {{"sketch", path.at("id")}}}, {"orientation", "parallel"}});
+        // The profile faces +Z all along and the path rises 30 mm... the volume is A times the path's rise on the profile normal.
+        CHECK(volumeOf(par, 1) == Catch::Approx(100 * 30.0).epsilon(0.01));
+    }
+    SECTION("errors")
+    {
+        commands::Session s;
+        const Json prof = square(s);
+        const Json bent = run(s, "sketch.create", {{"plane", "XZ"}, {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {0, 20}}},
+                                                                                           {{"type", "line"}, {"start", {0, 20}}, {"end", {20, 20}}}})}});
+        const auto corner = s.execute("feature.sweep", {{"sketch", prof.at("id")}, {"path", {{"sketch", bent.at("id")}}}, {"twist", 30}});
+        CHECK_FALSE(corner.ok);
+        CHECK(corner.error.find("smooth") != std::string::npos);
+        const Json path = linePath(s);
+        CHECK_FALSE(s.execute("feature.sweep", {{"sketch", prof.at("id")}, {"path", {{"sketch", path.at("id")}}}, {"end_scale", 0}}).ok);
+        CHECK_FALSE(s.execute("feature.sweep", {{"sketch", prof.at("id")}, {"path", {{"sketch", path.at("id")}}}, {"orientation", "sideways"}}).ok);
+        // A plain sweep still works on a path with corners.
+        CHECK(s.execute("feature.sweep", {{"sketch", prof.at("id")}, {"path", {{"sketch", bent.at("id")}}}}).ok);
+    }
+}
