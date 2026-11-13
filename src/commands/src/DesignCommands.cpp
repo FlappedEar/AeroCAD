@@ -2652,7 +2652,8 @@ void registerFeatureCommands(CommandRegistry& r)
                        {"axis", directionSchema},
                        {"angle", numberOrExpr("Rotation in degrees (right-hand rule about the axis).")},
                        {"scale", numberOrExpr("Uniform scale factor about `center` (default 1).")},
-                       {"center", point3("Rotation and scale centre [x, y, z] in mm.")}},
+                       {"center", point3("Rotation and scale centre [x, y, z] in mm.")},
+                       {"copy", {{"type", "boolean"}, {"description", "Add the moved body as a copy; the original stays."}}}},
                       {"body"});
 
     addFeatureCommand(r, "align", "Align",
