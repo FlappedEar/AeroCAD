@@ -4781,9 +4781,12 @@ void Design::evaluateFeature(const Feature& f)
                 seat.radius = seatRadius;
                 const auto sg = geometry::buildSketch(base, {seat});
                 // A counterbore is a straight cylinder, a countersink a cone whose walls lean by half its angle.
-                // The cone runs a hair past its tip, inside the hole, so its edge does not touch the hole wall.
+                // The cone runs a hair past the hole wall, inside the hole, so its edge does not touch it;
+                // never past its own apex (small holes with a wide angle have little cone left).
+                const double overshoot =
+                    holeType == "countersink" ? std::min(1e-2, 0.5 * r / std::tan(sinkAngle * std::numbers::pi / 360.0)) : 0.0;
                 const geometry::Shape seatTool = geometry::extrude(sg.profiles.at(0), base.normal * -1.0,
-                                                                   seatDepth + (holeType == "countersink" ? 1e-2 : 0.0), 1e-3,
+                                                                   seatDepth + overshoot, 1e-3,
                                                                    holeType == "countersink" ? sinkAngle / 2.0 : 0.0);
                 result = geometry::boolean(result, seatTool, geometry::BooleanOp::Cut);
                 if (result.isNull())

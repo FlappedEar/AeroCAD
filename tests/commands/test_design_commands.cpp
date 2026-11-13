@@ -5040,4 +5040,13 @@ TEST_CASE("Design commands: counterbore and countersink holes (Fusion: Hole type
                                                {"csink_diameter", 12}, {"csink_angle", 178}}).ok);
         CHECK_FALSE(s.execute("feature.hole", {{"body", "Body1"}, {"point", {5, 5, 12}}, {"diameter", 6}, {"hole_type", "slotted"}}).ok);
     }
+    SECTION("a tiny hole with a very wide countersink still works (the cone is not cut past its apex)")
+    {
+        commands::Session s;
+        run(s, "feature.box", {{"corner", {0, 0, 0}}, {"size", {30, 30, 12}}});
+        const auto r = s.execute("feature.hole", {{"body", "Body1"}, {"point", {15, 15, 12}}, {"diameter", 0.3}, {"hole_type", "countersink"},
+                                                  {"csink_diameter", 1}, {"csink_angle", 174}});
+        INFO(r.error);
+        CHECK(r.ok);
+    }
 }
