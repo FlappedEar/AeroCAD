@@ -2807,7 +2807,7 @@ void registerFeatureCommands(CommandRegistry& r)
         {{"sections", {{"type", "array"},
                        {"minItems", 2},
                        {"items", {{"type", Json::array({"integer", "object"})}}},
-                       {"description", "Sketch ids, {sketch, profile}, or {point: [x, y, z]} as the first or last section."}}},
+                       {"description", "Sketch ids, {sketch, profile}, or a point as the first or last section: {point: [x, y, z]} or a sketch holding one point."}}},
          {"solid", {{"type", "boolean"}, {"description", "Closed solid (default) or open surface."}}},
          {"ruled", {{"type", "boolean"}, {"description", "Straight sections between profiles."}}},
          {"operation", operationSchema()},

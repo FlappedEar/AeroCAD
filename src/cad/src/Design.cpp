@@ -4924,8 +4924,26 @@ void Design::evaluateFeature(const Feature& f)
             if (it == m_sketches.end())
                 throw DesignError("No sketch " + std::to_string(sid) + " at this point of the timeline");
             const auto& profs = it->second.geometry.profiles;
+            if (profs.empty()) {
+                // Fusion: a sketch point can end a loft. A sketch of one point (and no profile) is that point.
+                std::optional<Vec2> only;
+                int count = 0;
+                for (const auto& c : it->second.curves) {
+                    if (c.construction)
+                        continue;
+                    ++count;
+                    if (c.kind == SketchCurve::Kind::Point && !c.points.empty())
+                        only = c.points[0];
+                }
+                if (count == 1 && only) {
+                    sections.push_back(geometry::pointShape(it->second.plane.toWorld(*only)));
+                    it->second.consumed = true;
+                    continue;
+                }
+            }
             if (profile >= profs.size())
-                throw DesignError(it->second.name + " has no profile " + std::to_string(profile));
+                throw DesignError(it->second.name + (profs.empty() ? " has no profile and is not a sketch of a single point"
+                                                                   : " has no profile " + std::to_string(profile)));
             sections.push_back(profs[profile]);
             it->second.consumed = true;
         }

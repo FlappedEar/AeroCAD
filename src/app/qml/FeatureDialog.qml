@@ -331,7 +331,7 @@ Pane {
             { key: "tube_diameter", type: "expr", label: qsTr("Tube diameter"), init: 10 },
             { key: "operation", type: "choice", label: qsTr("Operation"), init: "new_body", options: operations }] },
         loft: { title: qsTr("Loft"), command: "feature.loft", fields: [
-            { key: "sections", type: "sketchList", label: qsTr("Profiles (in order)") },
+            { key: "sections", type: "sketchList", label: qsTr("Profiles, or a sketch point at either end (in order)") },
             { key: "ruled", type: "bool", label: qsTr("Straight between profiles") },
             { key: "operation", type: "choice", label: qsTr("Operation"), init: "new_body", options: operations }] },
         sweep: { title: qsTr("Sweep"), command: "feature.sweep", fields: [
