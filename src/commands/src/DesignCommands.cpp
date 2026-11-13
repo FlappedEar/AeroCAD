@@ -2809,13 +2809,14 @@ void registerFeatureCommands(CommandRegistry& r)
                                              "a planar face {body, point or index}, or {origin, normal, xDir}."}};
         addFeatureCommand(
             r, "plane", "Construction Plane",
-            "Creates a construction plane that sketches can be placed on (sketch.create plane {plane: id}). Fusion: "
-            "Offset Plane (base + offset), Plane at Angle (base + angle about its x or y axis, or `about`), Midplane "
-            "(base + base2, parallel), Plane Through Three Points (points).",
+            "Creates a construction plane to sketch on (sketch.create plane {plane: id}): offset (base + offset), at angle "
+            "(angle about its x or y axis, or `about`), midplane (base + base2), through three points, along a path.",
             {{"base", basePlane},
              {"offset", numberOrExpr("Offset along the plane normal (mm), applied after the angle.")},
              {"angle", numberOrExpr("Rotation in degrees about the base plane's axis through its origin.")},
              {"axis", {{"type", "string"}, {"enum", {"x", "y"}}, {"description", "Axis of the base plane for angle (default x)."}}},
+             {"path", pathSchema()},
+             {"position", numberOrExpr("With path: 0 (start) to 1 (end) along it (default 0).")},
              {"about", {{"type", Json::array({"string", "object"})},
                         {"description", "Turn about this line instead of `axis`: X, Y, Z, {origin, direction} or {feature}."}}},
              {"base2", basePlane},

@@ -492,6 +492,46 @@ TEST_CASE("Design commands: plane at angle about an axis or edge (Fusion: Plane 
     CHECK(near(o.at("plane").at("origin"), 15, 0, 10)); // the normal after the turn is +X: 5 further along it
 }
 
+TEST_CASE("Design commands: plane along a path (Fusion: Plane Along Path)", "[commands][cad]")
+{
+    commands::Session s;
+    const auto near = [](const Json& v, double x, double y, double z) {
+        return v.at(0).get<double>() == Approx(x).margin(1e-6) && v.at(1).get<double>() == Approx(y).margin(1e-6) &&
+               v.at(2).get<double>() == Approx(z).margin(1e-6);
+    };
+    const auto line = run(s, "sketch.create",
+                          {{"plane", "XY"}, {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {40, 0}}}})}})
+                          .at("id").get<std::uint64_t>();
+    // Halfway along a line along X: the plane stands across it there.
+    const Json mid = run(s, "feature.plane", {{"path", {{"sketch", line}}}, {"position", 0.5}});
+    CHECK(near(mid.at("plane").at("origin"), 20, 0, 0));
+    CHECK(std::abs(mid.at("plane").at("normal")[0].get<double>()) == Approx(1).margin(1e-9));
+    // The default is the start; offset moves along the path direction.
+    const Json start = run(s, "feature.plane", {{"path", {{"sketch", line}}}, {"offset", 5}});
+    CHECK(near(start.at("plane").at("origin"), 5, 0, 0));
+    // Two joined lines: a quarter of 20 + 20 is the first line's middle; a sketch can be placed on the plane.
+    const auto bend = run(s, "sketch.create",
+                          {{"plane", "XY"}, {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {20, 0}}},
+                                                                     {{"type", "line"}, {"start", {20, 0}}, {"end", {20, 20}}}})}})
+                          .at("id").get<std::uint64_t>();
+    const Json q = run(s, "feature.plane", {{"path", {{"sketch", bend}}}, {"position", 0.25}});
+    CHECK(near(q.at("plane").at("origin"), 10, 0, 0));
+    const Json three = run(s, "feature.plane", {{"path", {{"sketch", bend}}}, {"position", 0.75}});
+    CHECK(near(three.at("plane").at("origin"), 20, 10, 0));
+    CHECK(std::abs(three.at("plane").at("normal")[1].get<double>()) == Approx(1).margin(1e-9));
+    run(s, "sketch.create", {{"plane", {{"plane", mid.at("id")}}}, {"curves", Json::array({{{"type", "circle"}, {"center", {0, 0}}, {"radius", 3}}})}});
+    // Errors: out of range, both a path and points, no such sketch.
+    CHECK_FALSE(s.execute("feature.plane", {{"path", {{"sketch", line}}}, {"position", 1.5}}).ok);
+    CHECK_FALSE(s.execute("feature.plane", {{"path", {{"sketch", line}}}, {"points", Json::array({{0, 0, 0}, {1, 0, 0}, {0, 1, 0}})}}).ok);
+    CHECK_FALSE(s.execute("feature.plane", {{"path", {{"sketch", 9999}}}}).ok);
+    CHECK_FALSE(s.execute("feature.plane", {{"path", {{"sketch", line}}}, {"base", "XZ"}, {"angle", 30}}).ok);
+    CHECK_FALSE(s.execute("feature.plane", {{"base", "XY"}, {"position", 0.5}}).ok);
+    // The path sketch stays visible: a plane only reads its geometry.
+    for (const auto& p : run(s, "document.parts").at("parts"))
+        if (p.at("kind") == "sketch" && p.at("featureId") == line)
+            CHECK(p.value("visible", true));
+}
+
 TEST_CASE("Design commands: loft of rings stays hollow", "[commands][cad][pattern]")
 {
     commands::Session s;
