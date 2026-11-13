@@ -920,7 +920,16 @@ Pane {
             // Align's first pick must be a face of the body that moves.
             if (key === "face" && type === "align" && (part.kind !== "body" || part.featureId !== values.body))
                 return
-            if (part.kind === "plane")
+            if (key === "face" && type === "align") {
+                // The body may already be moved by the preview: look the face up on the body as it
+                // was before this step (a move keeps the topology) and store the centre of that face
+                // there, a point that still finds the face if earlier steps change the topology.
+                const at = [point.x, point.y, point.z].map(x => Math.round(x * 1e4) / 1e4)
+                const before = editId ? editId : (previewFeatureId > 0 ? previewFeatureId : 0)
+                const r = controller.execute("body.faces", Object.assign({ body: values.body, point: at }, before ? { before: before } : {}))
+                const face = r.ok && r.result.nearest ? r.result.faces.find(x => x.index === r.result.nearest.index) : null
+                setValue(key, { point: face && face.center ? face.center.map(x => Math.round(x * 1e4) / 1e4) : at })
+            } else if (part.kind === "plane")
                 setValue(key, { plane: part.featureId })
             else if ((part = asBody(part)))
                 setValue(key, { body: part.featureId, point: [point.x, point.y, point.z].map(x => Math.round(x * 1e4) / 1e4) })
