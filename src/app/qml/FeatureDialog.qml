@@ -400,6 +400,11 @@ Pane {
             { key: "faces", type: "facePicks", label: qsTr("Faces to split"), hint: qsTr("Click the faces the plane cuts"), required: true },
             { key: "plane", type: "planePick", label: qsTr("Splitting plane"), init: "YZ", hint: qsTr("Origin plane, construction plane, or click a planar face") },
             { key: "offset", type: "expr", label: qsTr("Offset"), init: 0 }] },
+        replace_face: { title: qsTr("Replace Face"), command: "feature.replace_face", fields: [
+            { key: "body", type: "body", label: qsTr("Body") },
+            { key: "faces", type: "facePicks", label: qsTr("Faces to replace"), hint: qsTr("Click the flat faces that should move"), required: true },
+            { key: "to", type: "objectPick", label: qsTr("Replace with"), hint: qsTr("Click a construction plane, a face of another body, a surface or a scan"),
+              withPlanes: true, required: true }] },
         split: { title: qsTr("Split Body"), command: "feature.split", fields: [
             { key: "body", type: "body", label: qsTr("Body to split") },
             { key: "plane", type: "planePick", label: qsTr("Splitting plane"), init: "YZ", hint: qsTr("Origin plane, construction plane, or click a planar face") },
@@ -688,7 +693,7 @@ Pane {
         if (f.type === "axisPick")
             return "axis" // lines of sketches, straight edges of bodies other than the preview
         if (f.type === "objectPick")
-            return "object" // bodies other than the preview, surfaces, solids and scans
+            return f.withPlanes ? "objectPlane" : "object" // bodies other than the preview, surfaces, solids and scans (and planes)
         // "solid": bodies and exact solids outside the timeline, made editable when picked.
         return f.type === "profilePicks" ? "sketch" : "solid"
     }
@@ -985,6 +990,8 @@ Pane {
                 setValue(pickKey, { body: part.featureId, faces: [{ point: [point.x, point.y, point.z].map(x => Math.round(x * 1e4) / 1e4) }] })
             else if (part.kind === "imported")
                 setValue(pickKey, { part: part.id })
+            else if (part.kind === "plane")
+                setValue(pickKey, { plane: { plane: part.featureId } })
             return
         }
         if (field.type === "planePick") {
@@ -1407,6 +1414,11 @@ Pane {
     function pickName(ref) {
         if (typeof ref === "object" && ref && ref.body !== undefined)
             return ref.faces ? qsTr("Face of %1").arg(pickName(ref.body)) : pickName(ref.body)
+        if (typeof ref === "object" && ref && ref.plane !== undefined) {
+            const plane = ref.plane && ref.plane.plane !== undefined ? ref.plane.plane : ref.plane
+            const found = (timeline.features || []).find(f => f.type === "plane" && (f.id === plane || f.name === plane))
+            return found ? found.name : qsTr("Plane")
+        }
         if (typeof ref === "object" && ref)
             return controller.partInfo(ref.part).name || qsTr("Part %1").arg(ref.part)
         const b = (timeline.bodies || []).find(b => b.id === ref)

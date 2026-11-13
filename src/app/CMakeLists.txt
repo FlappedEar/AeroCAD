@@ -721,6 +721,10 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/plane_path.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_plane_path_test PROPERTIES LABELS gui TIMEOUT 60)
+    add_test(NAME app_replace_face_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/replace_face.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_replace_face_test PROPERTIES LABELS gui TIMEOUT 60)
     add_test(NAME app_plane_tangent_test
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/plane_tangent.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})

@@ -800,7 +800,7 @@ ApplicationWindow {
         // editable first, so its edges can be rounded or bevelled in one step. The dialog
         // owns the conversion: Cancel undoes it, OK makes it one undo step with the feature.
         const convert = info.kind !== "body" && info.kind !== "sketch" && info.hasBrep && (info.solids ?? 0) > 0
-                        && ["fillet", "chamfer", "shell", "press_pull", "hole", "combine", "split", "split_face", "align", "delete_faces", "draft", "thread"].includes(type)
+                        && ["fillet", "chamfer", "shell", "press_pull", "hole", "combine", "split", "split_face", "align", "delete_faces", "draft", "thread", "replace_face"].includes(type)
         if (convert) {
             const b = featureDialog.convertToBody(info.id)
             if (b) {
@@ -824,7 +824,7 @@ ApplicationWindow {
             if (type === "combine" && !combineTool)
                 initial.target = info.featureId
             else if (["fillet", "chamfer", "shell", "press_pull", "hole", "move", "scale", "mirror", "rectangular_pattern", "path_pattern",
-                      "circular_pattern", "split", "split_face", "align", "delete_faces", "draft", "thread"].includes(type))
+                      "circular_pattern", "split", "split_face", "replace_face", "align", "delete_faces", "draft", "thread"].includes(type))
                 initial.body = info.featureId
         }
         pickingSketchPlane = false
@@ -1406,6 +1406,8 @@ ApplicationWindow {
     Action { id: alignAction; text: qsTr("&Align"); enabled: !window.activeSketch; onTriggered: window.openFeature("align") }
     // Fusion: Modify > Split Face (cut faces along a plane, the body stays one solid).
     Action { id: splitFaceAction; text: qsTr("Split &Face"); enabled: !window.activeSketch; onTriggered: window.openFeature("split_face") }
+    // Fusion: Modify > Replace Face (flat faces move onto a plane, surface, scan or another body's face).
+    Action { id: replaceFaceAction; text: qsTr("&Replace Face"); enabled: !window.activeSketch; onTriggered: window.openFeature("replace_face") }
     // Fusion: Modify > Delete on faces (the gap heals from the neighbours).
     Action { id: deleteFacesAction; text: qsTr("&Delete Face"); enabled: !window.activeSketch; onTriggered: window.openFeature("delete_faces") }
     // Fusion: Modify > Scale (uniform or non-uniform).
@@ -1819,6 +1821,7 @@ ApplicationWindow {
             MenuItem { action: splitAction }
             MenuItem { action: alignAction }
             MenuItem { action: splitFaceAction }
+            MenuItem { action: replaceFaceAction }
             MenuItem { action: deleteFacesAction }
             MenuItem { action: draftAction }
             MenuSeparator {}

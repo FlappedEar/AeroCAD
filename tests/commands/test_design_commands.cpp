@@ -5569,3 +5569,109 @@ TEST_CASE("Design commands: counterbore and countersink holes (Fusion: Hole type
         CHECK(r.ok);
     }
 }
+
+TEST_CASE("Design commands: replace face moves a flat face onto a plane or another body's face (Fusion: Replace Face)", "[commands][cad]")
+{
+    const auto volumeOf = [](commands::Session& s, std::size_t i = 0) {
+        return run(s, "timeline.list").at("bodies").at(i).at("volume").get<double>();
+    };
+    const auto faceAt = [](commands::Session& s, const char* body, const Json& point) {
+        return run(s, "body.faces", {{"body", body}, {"point", point}}).at("nearest").at("index").get<int>();
+    };
+    const auto makeBox = [](commands::Session& s) { run(s, "feature.box", {{"corner", {0, 0, 0}}, {"size", {40, 40, 20}}}); };
+    const Json xyPlane = {{"origin", {0, 0, 0}}, {"normal", {0, 0, 1}}};
+
+    SECTION("a plane above grows the body up to it")
+    {
+        commands::Session s;
+        makeBox(s);
+        run(s, "feature.replace_face", {{"body", "Body1"}, {"faces", {faceAt(s, "Body1", {20, 20, 20})}},
+                                        {"to", {{"plane", xyPlane}, {"offset", 30}}}});
+        CHECK(volumeOf(s) == Catch::Approx(40 * 40 * 30.0).margin(0.01));
+        CHECK(run(s, "body.faces", {{"body", "Body1"}}).at("faces").size() == 6);
+    }
+    SECTION("a plane inside cuts the body back to it")
+    {
+        commands::Session s;
+        makeBox(s);
+        run(s, "feature.replace_face", {{"body", "Body1"}, {"faces", {faceAt(s, "Body1", {20, 20, 20})}},
+                                        {"to", {{"plane", xyPlane}, {"offset", 12}}}});
+        CHECK(volumeOf(s) == Catch::Approx(40 * 40 * 12.0).margin(0.01));
+    }
+    SECTION("a tilted plane makes a sloped top")
+    {
+        commands::Session s;
+        makeBox(s);
+        // z = 21 - 0.1 x crosses the old top (z = 20) at x = 10: it grows on one side and is cut on the other; the mean height is 19.
+        run(s, "feature.replace_face", {{"body", "Body1"}, {"faces", {faceAt(s, "Body1", {20, 20, 20})}},
+                                        {"to", {{"plane", {{"origin", {0, 0, 21}}, {"normal", {0.1, 0, 1}}}}}}});
+        CHECK(volumeOf(s) == Catch::Approx(40 * 40 * 19.0).margin(0.5));
+    }
+    SECTION("a face of another body is the tool")
+    {
+        commands::Session s;
+        makeBox(s);
+        run(s, "feature.box", {{"corner", {0, 0, 35}}, {"size", {40, 40, 5}}});
+        const int toolFace = faceAt(s, "Body2", {20, 20, 35});
+        run(s, "feature.replace_face", {{"body", "Body1"}, {"faces", {faceAt(s, "Body1", {20, 20, 20})}},
+                                        {"to", {{"body", "Body2"}, {"faces", {toolFace}}}}});
+        CHECK(volumeOf(s, 0) == Catch::Approx(40 * 40 * 35.0).margin(0.01));
+        CHECK(volumeOf(s, 1) == Catch::Approx(40 * 40 * 5.0).margin(0.01));
+    }
+    SECTION("a whole body as the tool: the nearest face of it")
+    {
+        commands::Session s;
+        makeBox(s);
+        run(s, "feature.box", {{"corner", {0, 0, 35}}, {"size", {40, 40, 5}}});
+        run(s, "feature.replace_face", {{"body", "Body1"}, {"faces", {faceAt(s, "Body1", {20, 20, 20})}}, {"to", {{"body", "Body2"}}}});
+        CHECK(volumeOf(s, 0) == Catch::Approx(40 * 40 * 35.0).margin(0.01));
+    }
+    SECTION("the tool's face is kept through edits of the tool body")
+    {
+        commands::Session s;
+        makeBox(s);
+        run(s, "feature.box", {{"corner", {0, 0, 35}}, {"size", {40, 40, 5}}});
+        const auto tool = run(s, "timeline.list").at("bodies").at(1).at("id");
+        const Json r = run(s, "feature.replace_face",
+                           {{"body", "Body1"}, {"faces", {faceAt(s, "Body1", {20, 20, 20})}},
+                            {"to", {{"body", "Body2"}, {"faces", Json::array({Json{{"point", {20, 20, 35}}}})}}}});
+        const auto& params = s.design().feature(r.at("id").get<cad::FeatureId>())->params;
+        CHECK(params.at("to").at("faces").at(0).contains("relative"));
+        // Make the tool box taller from below: its bottom face is still the one found.
+        run(s, "feature.edit", {{"id", tool}, {"params", {{"corner", {0, 0, 32}}, {"size", {40, 40, 8}}}}});
+        CHECK(volumeOf(s, 0) == Catch::Approx(40 * 40 * 32.0).margin(0.01));
+    }
+    SECTION("the replaced face follows the body when an earlier step moves it")
+    {
+        commands::Session s;
+        makeBox(s);
+        const auto box = run(s, "timeline.list").at("bodies").at(0).at("id");
+        const Json r = run(s, "feature.replace_face", {{"body", "Body1"}, {"faces", {faceAt(s, "Body1", {20, 20, 20})}},
+                                                       {"to", {{"plane", xyPlane}, {"offset", 30}}}});
+        REQUIRE(r.contains("id"));
+        run(s, "feature.edit", {{"id", box}, {"params", {{"size", {40, 40, 25}}}}});
+        CHECK(volumeOf(s) == Catch::Approx(40 * 40 * 30.0).margin(0.01));
+    }
+    SECTION("errors")
+    {
+        commands::Session s;
+        makeBox(s);
+        const int top = faceAt(s, "Body1", {20, 20, 20});
+        // A plane the face never reaches, a face that does not exist, no faces, no tool.
+        CHECK_FALSE(s.execute("feature.replace_face", {{"body", "Body1"}, {"faces", {top}},
+                                                       {"to", {{"plane", {{"origin", {0, 0, 0}}, {"normal", {1, 0, 0}}}}}}}).ok);
+        CHECK_FALSE(s.execute("feature.replace_face", {{"body", "Body1"}, {"faces", {99}}, {"to", {{"plane", xyPlane}, {"offset", 30}}}}).ok);
+        CHECK_FALSE(s.execute("feature.replace_face", {{"body", "Body1"}, {"faces", Json::array()}, {"to", {{"plane", xyPlane}}}}).ok);
+        CHECK_FALSE(s.execute("feature.replace_face", {{"body", "Body1"}, {"faces", {top}}}).ok);
+        // Its own faces are not a tool.
+        CHECK_FALSE(s.execute("feature.replace_face", {{"body", "Body1"}, {"faces", {top}}, {"to", {{"body", "Body1"}}}}).ok);
+        // A curved face is refused with a hint.
+        run(s, "feature.cylinder", {{"center", {100, 0, 0}}, {"radius", 10}, {"height", 20}});
+        const int side = faceAt(s, "Body2", {110, 0, 10});
+        const auto r = s.execute("feature.replace_face", {{"body", "Body2"}, {"faces", {side}}, {"to", {{"plane", xyPlane}, {"offset", 30}}}});
+        CHECK_FALSE(r.ok);
+        CHECK(r.error.find("curved") != std::string::npos);
+        // Nothing was added by the failures.
+        CHECK(volumeOf(s) == Catch::Approx(32000).margin(0.01));
+    }
+}

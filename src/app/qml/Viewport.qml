@@ -700,7 +700,8 @@ Item {
                     pickable: (root.pickKind === "" || kind === root.pickKind
                                || (root.pickKind === "solid" && (kind === "body" || (kind === "imported" && hasBrep)))
                                || (root.pickKind === "axis" && (kind === "axis" || (kind === "body" && featureId != root.unpickableBody)))
-                               || (root.pickKind === "object" && (kind === "imported" || (kind === "body" && featureId != root.unpickableBody))))
+                               || (root.pickKind === "object" && (kind === "imported" || (kind === "body" && featureId != root.unpickableBody)))
+                               || (root.pickKind === "objectPlane" && (kind === "imported" || kind === "plane" || (kind === "body" && featureId != root.unpickableBody))))
                               && !(kind === "plane" && featureId == root.unpickablePlane)
                     geometry: sectioned ? clippedGeometry : heatMapped ? heatGeometry : plainGeometry
                     // Fusion-like colours: grey bodies, translucent orange sketch profiles and planes.
@@ -941,11 +942,13 @@ Item {
                     root.transformStatus(qsTr("Click a face of %1.").arg(root.transformTarget.name))
                 return
             }
-            // Extrude To Object: only bodies (not the preview), surfaces, solids and scans
-            // take the click; planes and sketches in front are clicked through.
-            if (root.pickKind === "object") {
+            // Extrude To Object: only bodies (not the preview), surfaces, solids and scans take the
+            // click; planes and sketches in front are clicked through. Replace Face (objectPlane)
+            // also takes construction planes.
+            if (root.pickKind === "object" || root.pickKind === "objectPlane") {
                 const parts = root.controller.execute("document.parts")
-                const ids = parts.ok ? parts.result.parts.filter(p => p.kind === "imported"
+                const withPlanes = root.pickKind === "objectPlane"
+                const ids = parts.ok ? parts.result.parts.filter(p => p.kind === "imported" || (withPlanes && p.kind === "plane")
                                                                   || (p.kind === "body" && p.featureId != root.unpickableBody)).map(p => p.id) : []
                 hit = root.pickPartAmong(eventPoint.position.x, eventPoint.position.y, ids)
             }

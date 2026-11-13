@@ -271,17 +271,18 @@ struct Entity {
     core::Vec3 point{};               ///< The picked / given point.
 };
 
-Json entitySchema(const std::string& description)
+Json entitySchema(const std::string& description, bool sameAsA = false)
 {
-    return Json{
-        {"type", "object"},
-        {"description",
-         description +
+    // The forms are explained once, on `a`; `b` only points there (the listing is loaded by every agent).
+    const std::string forms = sameAsA ? std::string(" Same forms as `a`.") : std::string(
              " Either a free point {point}, or a part selection {part, ...}: {part, point, pick?} picks the "
              "vertex, edge or face of a B-rep part under a surface point (pick: auto = vertex/edge within "
              "tolerance, else face; point = the point itself; body = the whole part), {part, face | edge | "
              "vertex} selects by index (see body.faces / body.edges), {part} alone is the whole body. "
-             "Mesh parts (scans, STL) have no faces or edges: picks on them are points, or the body."},
+             "Mesh parts (scans, STL) have no faces or edges: picks on them are points, or the body.");
+    return Json{
+        {"type", "object"},
+        {"description", description + forms},
         {"properties",
          {{"part", partIdSchema("Part to measure on.")},
           {"point", point3("Point on the part surface (e.g. a click) or a free point.")},
@@ -813,7 +814,7 @@ void registerMeasure(CommandRegistry& r)
            "(thickness: value, pointA, pointB); two give the minimum distance, closest points, X/Y/Z deltas and, "
            "for planar faces, straight edges and the axes of round faces and circles, the angle in degrees. "
            "Exact on B-rep parts and sketch curves; on meshes distances are to the triangle surface.",
-           objectSchema({{"a", entitySchema("First selection.")}, {"b", entitySchema("Second selection (optional).")}},
+           objectSchema({{"a", entitySchema("First selection.")}, {"b", entitySchema("Second selection (optional).", true)}},
                         {"a"})},
           [](CommandContext& ctx, const Json& params) { return measure(ctx, params); });
 
@@ -836,7 +837,7 @@ void registerMeasure(CommandRegistry& r)
            "length of one). The value is measured again whenever it is shown, so it follows edits, and it is "
            "saved with the project. Fails when the selections do not give that value now.",
            objectSchema({{"a", entitySchema("First selection.")},
-                         {"b", entitySchema("Second selection (distance, angle).")},
+                         {"b", entitySchema("Second selection (distance, angle).", true)},
                          {"show", {{"type", "string"},
                                    {"enum", {"distance", "angle", "thickness", "radius", "length"}},
                                    {"description", "Default: distance with two selections, else thickness."}}}},

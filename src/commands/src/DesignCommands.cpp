@@ -768,9 +768,13 @@ void addTopologyHints(const cad::Design& d, const Json& bodyRef, Json& items, bo
 /// extrude or rib up to faces of a body (to.faces), and a construction axis through an edge or face.
 Json describeTopologyRefs(const cad::Design& d, const std::string& type, Json params)
 {
+    // Replace Face has both: the faces that move and, as the tool, faces of another body.
+    if (type == "replace_face" && params.contains("to") && params["to"].is_object() && params["to"].contains("faces") &&
+        params["to"].contains("body"))
+        addTopologyHints(d, params["to"]["body"], params["to"]["faces"], false);
     if ((type == "fillet" || type == "chamfer") && params.contains("edges") && params.contains("body"))
         addTopologyHints(d, params["body"], params["edges"], true);
-    else if ((type == "shell" || type == "press_pull" || type == "delete_faces" || type == "draft" || type == "thread" || type == "split_face") && params.contains("faces") &&
+    else if ((type == "shell" || type == "press_pull" || type == "delete_faces" || type == "draft" || type == "thread" || type == "split_face" || type == "replace_face") && params.contains("faces") &&
              params.contains("body"))
         addTopologyHints(d, params["body"], params["faces"], false);
     else if ((type == "extrude" || type == "rib") && params.contains("to") && params["to"].is_object() &&
@@ -2628,6 +2632,14 @@ void registerFeatureCommands(CommandRegistry& r)
                                   {"description", "Splitting plane (as for split)."}}},
                        {"offset", numberOrExpr("Offset of the plane along its normal (mm).")}},
                       {"body", "faces"});
+
+    addFeatureCommand(r, "replace_face", "Replace Face",
+                      "Moves flat faces of a body onto a plane, surface, scan or face of another body (Fusion: Modify > "
+                      "Replace Face): the body grows up to the tool or is cut back to it, sides straight along the face normal.",
+                      {{"body", bodyRefSchema("Body.")},
+                       {"faces", topologyListSchema("face")},
+                       {"to", {{"type", "object"}, {"description", "Tool: {body, faces?}, {part} or {plane, offset?}."}}}},
+                      {"body", "faces", "to"});
 
     addFeatureCommand(r, "thread", "Thread",
                       "A modeled screw thread on cylindrical faces (Fusion: Create > Thread): a helical V groove cut along "
