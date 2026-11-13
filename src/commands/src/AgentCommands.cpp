@@ -471,6 +471,35 @@ const char* const kGuideTopics[][2] = {
      "then view_screenshot to see where the pressure is high.\n"
      "5. A/B: variant_create / variant_activate {variant} (or two parts), run both with the same settings, "
      "simulation_compare {a, b}; read its verdict (comparable / not comparable) before drawing conclusions."},
+    {"results",
+     "What the simulation results contain (all are plain JSON; names below are the keys):\n"
+     "simulation_results: summary has Cd, Cl, Cs and drag, lift and side force in N, averaged over the last 20 % "
+     "of the iterations. For a car with two axles there are frontLiftN, rearLiftN and frontShare; with rotating "
+     "wheels the wheels' own wheelDragN and wheelLiftN. Summary values are null until the run finishes "
+     "successfully with complete finite force outputs; finalResults gives availability and reasons. Histories "
+     "stay available and provisional is true until final results are available. While the run is running, "
+     "current gives the same means over the iterations so far (never final). Also: residuals, quality checks "
+     "(mesh, mass balance, residuals, force convergence) and conditions.\n"
+     "simulation_field kinds: surface (pressure on the part: p, Cp, pressure in Pa); sectionHorizontal and "
+     "sectionVertical (velocity sections through the part centre: speed in m/s, Cp); a plane of a section stack "
+     "(sectionX_<i> across the flow, sectionY_<i> vertical along it, sectionZ_<i> horizontal; the positions are "
+     "in the results under fields.sections); wake (isosurface of zero total pressure, Cp0 = 0, around and behind "
+     "the part: speed, Cp); vortices (vortex cores, Q-criterion isosurface at 20 (U / L)^2, from three surface "
+     "cells off the part: speed, Cp); streamlines. available is false until the run has written the field. "
+     "Scalars have min, max, mean and the 2nd and 98th percentiles p02 and p98. With compare (run B) and kind "
+     "surface the field is the pressure difference B - A on the part surface of run (dCp, dpressure in Pa), NaN "
+     "where B's part has no surface within 1 % of the part size.\n"
+     "simulation_compare: force differences in N and %, efficiency L/D (lift magnitude over drag), per force and "
+     "coefficient the iteration swing of A plus B (noise) and whether the difference is within it (withinNoise); "
+     "for two cars front and rear axle lift and balance (front share of lift in %, difference in percentage "
+     "points) and the wheels' own drag and lift; coefficients on a shared reference area; whether the conditions "
+     "match (settings such as speed, direction, mesh and preset, and the resolved setup: surroundings, flow "
+     "domain and engine; unknownConditions lists what an older run did not record); quality of both; shared "
+     "colour scale ranges. Both runs need successful completion with complete finite force outputs; otherwise "
+     "the verdict is not comparable, deltas and scales are empty, and states and reasons explain why. Verdict "
+     "'different domains' when the only difference is the flow domain of a target-part variant. meshSensitivity "
+     "tells whether the difference holds on another mesh level (A and B run there too, see simulation_refine); "
+     "verdict 'difference inconclusive' when refinement changes it about as much as its size."},
     {"variants",
      "A/B design variants: variant_create {name} copies the active variant's timeline and parameters; "
      "variant_activate {variant} switches; feature_* / parameter_* / sketch_* edits apply to the active one; imported "
@@ -492,7 +521,7 @@ void registerGuide(CommandRegistry& r)
            "Step-by-step recipes for common tasks with these tools, in the order a user would do them in the app. "
            "Read 'basics' first, then the topic you need: scan (import and clean a scan), sketch_on_surface "
            "(a part following a curved scan), fin (canard/winglet on a surface), solid (parametric sketch and "
-           "features), cfd (wind tunnel run and results), variants (A/B), export. Without topic: all of them.",
+           "features), cfd (wind tunnel run), results (what simulation_results, simulation_field and simulation_compare return), variants (A/B), export. Without topic: all of them.",
            objectSchema({{"topic", {{"type", "string"}, {"enum", topics}, {"description", "Which recipe."}}}})},
           [](CommandContext&, const Json& params) {
               const std::string topic = params.value("topic", std::string());
