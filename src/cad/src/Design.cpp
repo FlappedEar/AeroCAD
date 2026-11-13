@@ -3659,7 +3659,8 @@ void Design::deleteSketchCurves(FeatureId sketchId, const std::vector<std::size_
             else
                 axis = Json{{"deletedLine", axis["line"]}};
         }
-        if ((g.type == "sweep" || g.type == "path_pattern" || g.type == "pipe" || g.type == "rib") && g.params.contains("path") &&
+        if ((g.type == "sweep" || g.type == "path_pattern" || g.type == "pipe" || g.type == "rib" || g.type == "plane") &&
+            g.params.contains("path") &&
             g.params["path"].is_object() &&
             g.params["path"].value("sketch", Json()) == sketchId && g.params["path"].contains("curves")) {
             Json& path = g.params["path"];
@@ -5015,7 +5016,36 @@ void Design::evaluateFeature(const Feature& f)
     } else if (f.type == "plane") {
         // Fusion: Construct > Offset Plane, Plane at Angle, Midplane, Plane Through Three Points.
         Plane pl;
-        if (has(p, "points")) {
+        if (has(p, "path")) {
+            for (const char* other : {"points", "base", "base2", "angle", "axis", "about"})
+                if (has(p, other))
+                    throw DesignError(std::string("A plane along a path takes `path`, `position` and `offset`, not `") + other + "`");
+        } else if (has(p, "position")) {
+            throw DesignError("`position` goes with `path`");
+        }
+        if (has(p, "path")) {
+            // Plane Along Path: perpendicular to the path at `position` (fraction of its length).
+            // The path only guides the plane, so its sketch stays visible (pathEdgesOf would hide it).
+            const auto pathSketch = m_sketches.find(required(p.at("path"), "sketch").get<FeatureId>());
+            const bool wasConsumed = pathSketch != m_sketches.end() && pathSketch->second.consumed;
+            const geometry::Shape pathEdges = pathEdgesOf(p.at("path"), "plane");
+            if (pathSketch != m_sketches.end())
+                pathSketch->second.consumed = wasConsumed;
+            const double position = ev.num(p, "position", 0.0);
+            if (!(position >= 0.0 && position <= 1.0))
+                throw DesignError("The position along the path must be from 0 (start) to 1 (end)");
+            geometry::PathFrame frame;
+            try {
+                frame = geometry::pathFrames(pathEdges, {position * geometry::pathLength(pathEdges)}).front();
+            } catch (const geometry::ModelingError& e) {
+                throw DesignError(e.what());
+            }
+            pl.origin = frame.point;
+            pl.normal = frame.tangent;
+            pl.xDir = std::abs(frame.tangent.z) < 0.9 ? core::Vec3{0, 0, 1}.cross(frame.tangent) : core::Vec3{1, 0, 0};
+            pl = pl.normalized();
+            pl.origin = pl.origin + pl.normal * ev.num(p, "offset", 0.0);
+        } else if (has(p, "points")) {
             const Json& pts = p.at("points");
             if (!pts.is_array() || pts.size() != 3)
                 throw DesignError("A plane through points needs exactly 3 points");

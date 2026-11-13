@@ -342,6 +342,10 @@ Pane {
         midplane: { title: qsTr("Midplane"), command: "feature.plane", fields: [
             { key: "base", type: "planePick", label: qsTr("First plane or face"), hint: qsTr("Click a planar face, or choose a plane"), required: true },
             { key: "base2", type: "planePick", label: qsTr("Second plane or face"), hint: qsTr("Click the opposite face, or choose a plane"), required: true }] },
+        plane_path: { title: qsTr("Plane Along Path"), command: "feature.plane", fields: [
+            { key: "path", type: "pathSketch", label: qsTr("Path sketch"), hint: qsTr("The plane stands perpendicular to this path"), required: true },
+            { key: "position", type: "expr", label: qsTr("Position (0 start, 1 end)"), init: 0.5 },
+            { key: "offset", type: "expr", label: qsTr("Offset along the path"), init: 0 }] },
         plane: { title: qsTr("Construction Plane"), command: "feature.plane", fields: [
             { key: "base", type: "planePick", label: qsTr("Base plane"), init: "XY", hint: qsTr("Origin plane, construction plane, or click a planar face") },
             { key: "offset", type: "expr", label: qsTr("Offset"), init: 10 },
@@ -556,6 +560,8 @@ Pane {
         // A plane made halfway between two (Construct > Midplane) is edited in its own dialog.
         if (featureType === "plane" && featureId && initial && initial.base2 !== undefined)
             featureType = "midplane"
+        if (featureType === "plane" && initial && initial.path !== undefined)
+            featureType = "plane_path"
         const s = specs[featureType]
         if (!s)
             return false
@@ -659,7 +665,7 @@ Pane {
     property bool previewApplied: false
     property var previewFeatureId: -1
     /// The plane being created or edited must not catch the clicks meant for faces behind it.
-    readonly property var ownPlane: type !== "plane" && type !== "midplane" ? -1 : editId ? editId : previewFeatureId
+    readonly property var ownPlane: type !== "plane" && type !== "midplane" && type !== "plane_path" ? -1 : editId ? editId : previewFeatureId
 
     /// What viewport clicks should hit while the dialog waits for picks: profiles live on
     /// sketches, edges/faces/points on bodies (the preview body would hide the sketch).

@@ -1418,6 +1418,8 @@ ApplicationWindow {
     Action { id: axisAction; text: qsTr("Construction &Axis"); enabled: !window.activeSketch; onTriggered: window.openFeature("axis") }
     // Fusion: Construct > Midplane (halfway between two parallel faces or planes).
     Action { id: midplaneAction; text: qsTr("&Midplane"); enabled: !window.activeSketch; onTriggered: window.openFeature("midplane") }
+    // Fusion: Construct > Plane Along Path (perpendicular to a sketch path).
+    Action { id: planePathAction; text: qsTr("Plane Along &Path"); enabled: !window.activeSketch; onTriggered: window.openFeature("plane_path") }
     Action { id: loftAction; text: qsTr("&Loft"); enabled: !window.activeSketch; onTriggered: window.openFeature("loft") }
     // Fusion: Create > Thread (modeled threads on cylindrical faces).
     Action { id: threadAction; text: qsTr("&Thread"); enabled: !window.activeSketch; onTriggered: window.openFeature("thread") }
@@ -1800,6 +1802,7 @@ ApplicationWindow {
             title: qsTr("C&onstruct")
             MenuItem { action: planeAction }
             MenuItem { action: midplaneAction }
+            MenuItem { action: planePathAction }
             MenuItem { action: axisAction }
         }
         Menu {
@@ -2143,6 +2146,7 @@ ApplicationWindow {
                 caption: qsTr("CONSTRUCT")
                 ToolCommand { action: planeAction; text: qsTr("Plane"); iconName: "plane" }
                 ToolCommand { action: midplaneAction; text: qsTr("Midplane"); iconName: "plane" }
+                ToolCommand { action: planePathAction; text: qsTr("Plane on path"); iconName: "plane" }
                 ToolCommand { action: axisAction; text: qsTr("Axis"); iconName: "axis" }
             }
             ToolSeparator {}
