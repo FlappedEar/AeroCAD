@@ -2817,6 +2817,10 @@ void registerFeatureCommands(CommandRegistry& r)
         "drawn in a sketch perpendicular to the profile.",
         merged(profileSelection(),
                {{"path", pathSchema()},
+                {"twist", numberOrExpr("Spin about the path (deg); smooth open path.")},
+                {"end_scale", numberOrExpr("Size at the path end, relative to the start.")},
+                {"orientation", {{"type", "string"}, {"enum", {"perpendicular", "parallel"}},
+                                 {"description", "Default perpendicular; parallel keeps the profile direction."}}},
                 {"operation", operationSchema()},
                 {"bodies", bodiesSchema()}}),
         {"sketch", "path"});

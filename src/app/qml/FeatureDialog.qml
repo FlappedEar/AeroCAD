@@ -338,6 +338,10 @@ Pane {
             { key: "sketch", type: "sketch", label: qsTr("Profile sketch") },
             { key: "points", type: "profilePicks", label: qsTr("Profiles"), hint: qsTr("All profiles (click inside profiles to pick)") },
             { key: "path", type: "pathSketch", label: qsTr("Path sketch") },
+            { key: "orientation", type: "choice", label: qsTr("Orientation"), init: "perpendicular", options: [
+                { value: "perpendicular", label: qsTr("Perpendicular") }, { value: "parallel", label: qsTr("Parallel") }] },
+            { key: "twist", type: "expr", label: qsTr("Twist Angle (deg)"), init: 0 },
+            { key: "end_scale", type: "expr", label: qsTr("End Scale"), init: 1 },
             { key: "operation", type: "choice", label: qsTr("Operation"), init: "new_body", options: operations }] },
         midplane: { title: qsTr("Midplane"), command: "feature.plane", fields: [
             { key: "base", type: "planePick", label: qsTr("First plane or face"), hint: qsTr("Click a planar face, or choose a plane"), required: true },

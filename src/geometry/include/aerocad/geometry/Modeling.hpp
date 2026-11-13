@@ -35,6 +35,18 @@ namespace aerocad::geometry {
 /// Sweeps profile faces along a path of connected edges (Fusion: Sweep).
 [[nodiscard]] Shape sweep(const Shape& profileFaces, const Shape& pathEdges);
 
+/// Sweep options (Fusion: Sweep > Twist Angle, Taper, Orientation). With any of them the profile is
+/// placed at sections along the path and lofted: it spins by `twistDegrees` about the path over its
+/// whole length, scales to `endScale` times its size, and with `parallel` keeps its own orientation
+/// (it is only moved along the path) instead of turning with it. The path must be smooth, open and
+/// not closed; throws ModelingError otherwise.
+struct SweepOptions {
+    double twistDegrees = 0.0;
+    double endScale = 1.0;
+    bool parallel = false;
+};
+[[nodiscard]] Shape sweep(const Shape& profileFaces, const Shape& pathEdges, const SweepOptions& options);
+
 /// A point of a path and the unit direction of travel there.
 struct PathFrame {
     core::Vec3 point;
