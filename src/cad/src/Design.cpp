@@ -132,7 +132,7 @@ const std::vector<std::string>& Design::featureTypes()
     static const std::vector<std::string> types{"sketch", "extrude", "revolve", "fillet", "chamfer",
                                                 "shell",  "combine", "box",     "cylinder", "sphere", "torus", "base_body", "hole",
                                                 "mirror",  "rectangular_pattern", "circular_pattern", "path_pattern", "pipe", "rib", "coil", "loft", "sweep", "plane",
-                                                "part_on_surface", "fin_on_surface", "move", "scale", "press_pull", "align", "split", "split_face", "delete_faces", "draft", "thread",
+                                                "part_on_surface", "fin_on_surface", "move", "scale", "press_pull", "align", "boundary_fill", "split", "split_face", "delete_faces", "draft", "thread",
                                                 "fit_selection", "fit_regions", "trim_by_sketch", "offset_surface", "thicken_surface"};
     return types;
 }
@@ -226,6 +226,7 @@ std::string Design::defaultName(const std::string& type) const
                        : type == "press_pull"     ? "PressPull"
                        : type == "split"          ? "Split"
                        : type == "split_face"     ? "SplitFace"
+                       : type == "boundary_fill"  ? "BoundaryFill"
                        : type == "delete_faces"   ? "DeleteFace"
                        : type == "fit_selection"  ? "FitSurface"
                        : type == "fit_regions"    ? "FitPatches"
@@ -4289,6 +4290,73 @@ void Design::evaluateFeature(const Feature& f)
         // Editors need the evaluated tool kind even after keepTools=false consumed it.
         // Rebuilt with the feature, this also works when reopening older project files.
         m_reports[f.id] = {{"surfaceTools", std::move(surfaceTools)}};
+    } else if (f.type == "boundary_fill") {
+        // Fusion: Create > Boundary Fill. The closed spaces between the tool bodies / surfaces
+        // become one new body (a solid per space); `cells` keeps only the ones picked by a
+        // point inside or by index.
+        std::vector<FeatureId> tools;
+        std::vector<geometry::Shape> shapes;
+        for (const auto& ref : required(p, "tools")) {
+            if (ref.is_object() && has(ref, "part")) {
+                // A solid or surface outside the timeline (a fin, a STEP import, a fitted surface).
+                const auto partId = ref.at("part").get<model::PartId>();
+                const model::Part* part = m_partLookup ? m_partLookup(partId) : nullptr;
+                if (part == nullptr)
+                    throw DesignError("No part with id " + std::to_string(partId));
+                if (part->kind != model::PartKind::Imported || !part->shape || part->shape->isNull())
+                    throw DesignError("Part '" + part->name + "' has no exact shape to fill between: use a solid or surface");
+                shapes.push_back(*part->shape);
+                continue;
+            }
+            const Body& t = bodyRef(ref);
+            if (std::find(tools.begin(), tools.end(), t.id) == tools.end()) {
+                tools.push_back(t.id);
+                shapes.push_back(t.shape);
+            }
+        }
+        if (shapes.empty())
+            throw DesignError("Select at least one tool body");
+        std::vector<geometry::Shape> cells;
+        try {
+            cells = geometry::boundaryFill(shapes);
+        } catch (const geometry::ModelingError& e) {
+            throw DesignError(e.what());
+        }
+        if (has(p, "cells") && !p.at("cells").empty()) {
+            std::vector<geometry::Shape> picked;
+            std::set<std::size_t> pickedIdx;
+            for (const auto& pick : p.at("cells")) {
+                if (pick.is_number_integer()) {
+                    const auto n = pick.get<long long>();
+                    if (n < 0 || static_cast<std::size_t>(n) >= cells.size())
+                        throw DesignError("No space " + std::to_string(n) + " (" + std::to_string(cells.size()) +
+                                          " spaces; give each as a point [x, y, z] or an index)");
+                    const auto i = static_cast<std::size_t>(n);
+                    pickedIdx.insert(i);
+                    continue;
+                }
+                const core::Vec3 pt = ev.vec3(pick.is_object() ? required(pick, "point") : pick);
+                const auto hit = std::find_if(cells.begin(), cells.end(),
+                                              [&](const geometry::Shape& cell) { return geometry::containsPoint(cell, pt); });
+                if (hit == cells.end())
+                    throw DesignError("No enclosed space at " + std::to_string(pt.x) + ", " + std::to_string(pt.y) + ", " +
+                                      std::to_string(pt.z));
+                pickedIdx.insert(static_cast<std::size_t>(hit - cells.begin()));
+            }
+            // Each space once, in the order the fill made them.
+            for (const std::size_t i : pickedIdx)
+                picked.push_back(cells[i]);
+            cells = std::move(picked);
+        }
+        geometry::Shape filled = cells.size() == 1 ? cells.front() : geometry::makeCompound(cells);
+        if (filled.isNull())
+            throw DesignError("Boundary Fill produced no solid");
+        // Only timeline tools can be removed; imported solids and surfaces stay.
+        if (p.value("removeTools", false)) {
+            for (const FeatureId t : tools)
+                m_bodies.erase(t);
+        }
+        newBody(std::move(filled));
     } else if (f.type == "move") {
         // Fusion: Modify > Move/Copy (M). Scales the body uniformly and rotates it about an
         // axis through `center` (default: the centre of its bounding box), then translates it.

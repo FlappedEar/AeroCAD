@@ -818,6 +818,8 @@ ApplicationWindow {
             if (info.kind === "body")
                 initial.keepTools = true // Keep the reference surface, as for imported surfaces.
         }
+        if (type === "boundary_fill" && info.kind === "body")
+            initial.tools = [info.featureId]
         if (info.kind === "body") {
             if (type === "combine" && !combineTool)
                 initial.target = info.featureId
@@ -1417,6 +1419,8 @@ ApplicationWindow {
     Action { id: loftAction; text: qsTr("&Loft"); enabled: !window.activeSketch; onTriggered: window.openFeature("loft") }
     // Fusion: Create > Thread (modeled threads on cylindrical faces).
     Action { id: threadAction; text: qsTr("&Thread"); enabled: !window.activeSketch; onTriggered: window.openFeature("thread") }
+    // Fusion: Create > Boundary Fill (the spaces enclosed by bodies or surfaces).
+    Action { id: boundaryFillAction; text: qsTr("&Boundary Fill"); enabled: !window.activeSketch; onTriggered: window.openFeature("boundary_fill") }
     Action { id: coilAction; text: qsTr("Co&il"); enabled: !window.activeSketch; onTriggered: window.openFeature("coil") }
     Action { id: ribAction; text: qsTr("&Rib"); enabled: !window.activeSketch; onTriggered: window.openFeature("rib") }
     Action { id: pipeAction; text: qsTr("P&ipe"); enabled: !window.activeSketch; onTriggered: window.openFeature("pipe") }
@@ -1772,6 +1776,7 @@ ApplicationWindow {
             MenuItem { action: ribAction }
             MenuItem { action: coilAction }
             MenuItem { action: threadAction }
+            MenuItem { action: boundaryFillAction }
             MenuItem { action: loftAction }
             MenuItem { action: boxAction }
             MenuItem { action: cylinderAction }
@@ -2104,6 +2109,7 @@ ApplicationWindow {
                 ToolCommand { action: ribAction; text: qsTr("Rib"); iconName: "rib" }
                 ToolCommand { action: coilAction; text: qsTr("Coil"); iconName: "coil" }
                 ToolCommand { action: threadAction; text: qsTr("Thread"); iconName: "thread" }
+                ToolCommand { action: boundaryFillAction; text: qsTr("Boundary Fill"); iconName: "combine" }
                 ToolCommand { action: loftAction; text: qsTr("Loft"); iconName: "loft" }
                 ToolCommand { action: mirrorAction; text: qsTr("Mirror"); iconName: "mirror" }
                 ToolCommand { action: rectPatternAction; text: qsTr("Pattern"); iconName: "pattern" }

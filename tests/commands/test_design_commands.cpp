@@ -4931,6 +4931,48 @@ TEST_CASE("Design commands: thread (Fusion: Create > Thread)", "[commands][cad]"
     }
 }
 
+TEST_CASE("Design commands: boundary fill makes a body of the enclosed spaces (Fusion: Boundary Fill)", "[commands][cad]")
+{
+    const auto volumes = [](commands::Session& s) {
+        std::vector<std::pair<std::string, double>> out;
+        const Json list = run(s, "timeline.list");
+        for (const auto& b : list.at("bodies"))
+            out.emplace_back(b.at("name").get<std::string>(), b.at("volume").get<double>());
+        return out;
+    };
+    commands::Session s;
+    run(s, "feature.box", {{"corner", {0, 0, 0}}, {"size", {20, 20, 20}}});
+    run(s, "feature.box", {{"corner", {10, 0, 0}}, {"size", {20, 20, 20}}});
+    SECTION("two overlapping boxes give three spaces")
+    {
+        run(s, "feature.boundary_fill", {{"tools", {"Body1", "Body2"}}});
+        const auto v = volumes(s);
+        REQUIRE(v.size() == 3);
+        CHECK(v.at(2).second == Catch::Approx(12000).epsilon(1e-6)); // 6000 + 2000 + 4000 = all three, one body
+    }
+    SECTION("a point picks the overlap only")
+    {
+        run(s, "feature.boundary_fill", {{"tools", {"Body1", "Body2"}}, {"cells", {{{"point", {15, 10, 10}}}}}});
+        const auto v = volumes(s);
+        REQUIRE(v.size() == 3);
+        CHECK(v.at(2).second == Catch::Approx(10 * 20 * 20).epsilon(1e-6));
+    }
+    SECTION("the same space picked twice counts once; a negative index is an error")
+    {
+        run(s, "feature.boundary_fill", {{"tools", {"Body1", "Body2"}}, {"cells", {{{"point", {15, 10, 10}}}, {{"point", {16, 11, 11}}}}}});
+        CHECK(volumes(s).at(2).second == Catch::Approx(10 * 20 * 20).epsilon(1e-6));
+        CHECK_FALSE(s.execute("feature.boundary_fill", {{"tools", {"Body1", "Body2"}}, {"cells", {-1}}}).ok);
+    }
+    SECTION("remove tools leaves the new body only; a point in no space is an error")
+    {
+        CHECK_FALSE(s.execute("feature.boundary_fill", {{"tools", {"Body1", "Body2"}}, {"cells", {{{"point", {100, 0, 0}}}}}}).ok);
+        CHECK_FALSE(s.execute("feature.boundary_fill", {{"tools", {"Body1", "Body2"}}, {"cells", {7}}}).ok);
+        run(s, "feature.boundary_fill", {{"tools", {"Body1", "Body2"}}, {"removeTools", true}});
+        CHECK(volumes(s).size() == 1);
+    }
+    CHECK_FALSE(s.execute("feature.boundary_fill", {{"tools", Json::array()}}).ok);
+}
+
 TEST_CASE("Design commands: Move with Create Copy leaves the original (Fusion: Move/Copy)", "[commands][cad]")
 {
     commands::Session s;

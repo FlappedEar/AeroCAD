@@ -944,6 +944,10 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/move_copy.ui
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(app_move_copy_test PROPERTIES LABELS gui TIMEOUT 60)
+    add_test(NAME app_boundary_fill_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/boundary_fill.ui
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(app_boundary_fill_test PROPERTIES LABELS gui TIMEOUT 60)
     add_test(NAME app_feature_dialog_checkbox_test
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/feature_dialog_checkbox.ui
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})

@@ -1,0 +1,26 @@
+# Boundary Fill (Fusion: Create > Boundary Fill) with real clicks:
+#  - two overlapping boxes; Create > Boundary Fill opens the dialog;
+#  - a click on each box picks it as a tool; OK makes one new body of the three enclosed spaces (same total volume
+#    as the union), the tools stay; one undo removes it.
+# Run: AeroCAD --ui-script <this file>
+Qt.createQmlObject('import QtQuick; Item { objectName: "bfTest"; visible: false; function clickAt(x, y, z) { const v = viewport.viewPoint(Qt.vector3d(x, y, z)); const p = viewport.mapToItem(null, v.x, v.y); ui.click(p.x, p.y) } function bodies() { return controller.execute("timeline.list").result.bodies } }', window.contentItem)
+ui.wait(800)
+(() => { const a = controller.execute("feature.box", { corner: [0, 0, 0], size: [20, 20, 20] }); const b = controller.execute("feature.box", { corner: [10, 0, 0], size: [20, 20, 20] }); if (!a.ok || !b.ok) ui.fail("setup"); viewport.fitAll() })()
+ui.wait(500)
+(() => { if (!ui.clickText("Create")) ui.fail("no Create menu") })()
+ui.wait(400)
+(() => { if (!ui.clickText("Boundary Fill")) ui.fail("no Boundary Fill in the Create menu") })()
+ui.wait(400)
+(() => { ui.log("dialog " + featureDialog.visible + " type " + featureDialog.type); if (!featureDialog.visible || featureDialog.type !== "boundary_fill") ui.fail("Boundary Fill did not open") })()
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "bfTest").clickAt(5, 10, 20) })()
+ui.wait(500)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "bfTest").clickAt(27, 10, 20) })()
+ui.wait(800)
+(() => { ui.log("tools " + JSON.stringify(featureDialog.values.tools)); if ((featureDialog.values.tools || []).length !== 2) ui.fail("the two clicks did not pick both boxes") })()
+ui.shot("build/boundary-fill-preview.png")
+(() => { if (!ui.clickText("OK")) ui.fail("no OK button") })()
+ui.wait(1000)
+(() => { const b = Array.from(window.contentItem.children).find(c => c.objectName === "bfTest").bodies(); ui.log("bodies " + JSON.stringify(b.map(x => [x.name, Math.round(x.volume)]))); if (b.length !== 3) ui.fail("expected 3 bodies, got " + b.length); if (Math.abs(b[2].volume - 12000) > 1) ui.fail("the new body is not the union of the spaces: " + b[2].volume) })()
+(() => { undoAction.trigger() })()
+ui.wait(500)
+(() => { const n = Array.from(window.contentItem.children).find(c => c.objectName === "bfTest").bodies().length; ui.log("Ctrl+Z: " + n + " bodies"); if (n !== 2) ui.fail("one undo did not remove the new body") })()
