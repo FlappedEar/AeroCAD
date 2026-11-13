@@ -4382,6 +4382,18 @@ TEST_CASE("Design commands: Rib (CAD-271)", "[commands][cad]")
         CHECK_FALSE(s.execute("feature.rib", {{"path", {{"sketch", line}}}, {"thickness", 4}, {"extent", "far"}, {"depth", 5}}).ok);
     }
 
+    SECTION("to next body: a picked face follows the body when it is edited")
+    {
+        const auto plate = run(s, "feature.box", {{"corner", {-10, -10, 30}}, {"size", {80, 30, 5}}}).at("id").get<std::uint64_t>();
+        const auto r = run(s, "feature.rib", {{"path", {{"sketch", line}}}, {"thickness", 4}, {"extent", "to_object"},
+                                              {"to", {{"body", plate}, {"faces", {{{"point", {25, 0, 30}}}}}}}, {"operation", "new_body"}});
+        const auto id = r.at("bodies").back().at("id").get<std::uint64_t>();
+        CHECK(s.design().bodies().at(id).shape.bounds().max.z == Approx(30).margin(1e-6));
+        // The plate moves down by 10: its underside, the picked face, is now at z = 20.
+        run(s, "feature.edit", {{"id", plate}, {"params", {{"corner", {-10, -10, 20}}}}});
+        CHECK(s.design().bodies().at(id).shape.bounds().max.z == Approx(20).margin(1e-6));
+    }
+
     SECTION("to next body, parallel: the wall reaches along the plane up to the body")
     {
         run(s, "feature.box", {{"corner", {-10, 25, -10}}, {"size", {70, 10, 20}}});

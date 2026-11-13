@@ -765,7 +765,7 @@ void addTopologyHints(const cad::Design& d, const Json& bodyRef, Json& items, bo
 }
 
 /// Topology hints for the picked references of fillet / chamfer (edges), shell (faces) and an
-/// extrude up to faces of a body (to.faces).
+/// extrude or rib up to faces of a body (to.faces), and a construction axis through an edge or face.
 Json describeTopologyRefs(const cad::Design& d, const std::string& type, Json params)
 {
     if ((type == "fillet" || type == "chamfer") && params.contains("edges") && params.contains("body"))
@@ -773,9 +773,19 @@ Json describeTopologyRefs(const cad::Design& d, const std::string& type, Json pa
     else if ((type == "shell" || type == "press_pull" || type == "delete_faces" || type == "draft" || type == "thread" || type == "split_face") && params.contains("faces") &&
              params.contains("body"))
         addTopologyHints(d, params["body"], params["faces"], false);
-    else if (type == "extrude" && params.contains("to") && params["to"].is_object() &&
+    else if ((type == "extrude" || type == "rib") && params.contains("to") && params["to"].is_object() &&
              params["to"].contains("faces") && params["to"].contains("body"))
         addTopologyHints(d, params["to"]["body"], params["to"]["faces"], false);
+    else if (type == "axis") {
+        // The edge or face an axis goes through: {body, point} gets a hint that follows the body.
+        for (const char* key : {"edge", "face"}) {
+            if (params.contains(key) && params[key].is_object() && params[key].contains("body") && !params[key].contains("index")) {
+                Json one = Json::array({params[key]});
+                addTopologyHints(d, one[0]["body"], one, std::string(key) == "edge");
+                params[key] = one[0];
+            }
+        }
+    }
     return params;
 }
 
