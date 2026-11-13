@@ -1,0 +1,28 @@
+# Align (Fusion: Modify > Align) with real clicks:
+#  - a click selects the small box; Modify > Align opens the dialog on it;
+#  - a click on its top face fills "Face of this body" (it ends up facing down, on the big box), a click on the top of the big box fills the target;
+#  - OK drops the small box onto the big one (one undo step), Ctrl+Z brings it back.
+# Run: AeroCAD --ui-script <this file>
+Qt.createQmlObject('import QtQuick; Item { objectName: "alTest"; visible: false; function clickAt(x, y, z) { const v = viewport.viewPoint(Qt.vector3d(x, y, z)); const p = viewport.mapToItem(null, v.x, v.y); ui.click(p.x, p.y) } function minZ() { return controller.execute("timeline.list").result.bodies[1].bounds.min[2] } }', window.contentItem)
+ui.wait(800)
+(() => { const a = controller.execute("feature.box", { corner: [0, 0, 0], size: [40, 40, 10] }); const b = controller.execute("feature.box", { corner: [60, 5, 30], size: [10, 10, 10] }); if (!a.ok || !b.ok) ui.fail("setup"); viewport.fitAll() })()
+ui.wait(500)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "alTest").clickAt(65, 10, 40) })()
+ui.wait(300)
+(() => { if (!ui.clickText("Modify")) ui.fail("no Modify menu") })()
+ui.wait(400)
+(() => { if (!ui.clickText("Align")) ui.fail("no Align in the Modify menu") })()
+ui.wait(400)
+(() => { ui.log("dialog " + featureDialog.visible + " type " + featureDialog.type + " body " + featureDialog.values.body); if (!featureDialog.visible || featureDialog.type !== "align") ui.fail("Align did not open"); if (featureDialog.values.body === undefined) ui.fail("Align did not take the selected body") })()
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "alTest").clickAt(65, 10, 40) })()
+ui.wait(600)
+(() => { Array.from(window.contentItem.children).find(c => c.objectName === "alTest").clickAt(20, 20, 10) })()
+ui.wait(800)
+(() => { ui.log("face " + JSON.stringify(featureDialog.values.face) + " to " + JSON.stringify(featureDialog.values.to)); if (!featureDialog.values.face || !featureDialog.values.to) ui.fail("the two clicks did not fill both faces") })()
+ui.shot("build/align-preview.png")
+(() => { if (!ui.clickText("OK")) ui.fail("no OK button") })()
+ui.wait(800)
+(() => { const z = Array.from(window.contentItem.children).find(c => c.objectName === "alTest").minZ(); ui.log("after OK: min z " + z + ", undo '" + controller.undoText + "'"); if (Math.abs(z - 10) > 1e-3) ui.fail("the box did not land on the big one: min z " + z) })()
+(() => { undoAction.trigger() })()
+ui.wait(500)
+(() => { const z = Array.from(window.contentItem.children).find(c => c.objectName === "alTest").minZ(); ui.log("Ctrl+Z: min z " + z); if (Math.abs(z - 30) > 1e-3) ui.fail("one undo did not put the box back: " + z) })()

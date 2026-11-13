@@ -457,6 +457,10 @@ QtObject {
             return { id: id, text: qsTr("Draft faces"), icon: "shell", enabled: editableSolid(info),
                      reason: qsTr("Only solids have faces to tilt."),
                      tip: qsTr("Draft: tilts the faces you click by an angle from a fixed plane, so the part comes out of a mould.") }
+        case "align":
+            return { id: id, text: qsTr("Align"), icon: "move", enabled: editableSolid(info),
+                     reason: qsTr("Only solids can be aligned."),
+                     tip: qsTr("Align: turns and moves this body so a flat face of it lies on a flat face of another body.") }
         case "splitFace":
             return { id: id, text: qsTr("Split Face"), icon: "section", enabled: editableSolid(info),
                      reason: qsTr("Only solids have faces to split."),
@@ -691,7 +695,7 @@ QtObject {
                               text: qsTr("Every visible solid gets its own STL for the printer and STEP for CAD, in a folder you choose. Hide what you do not want printed."),
                               actions: [a("exportForPrint")] }] }
         const change = { title: qsTr("Change the shape"), steps: [],
-                         actions: [a("editStep"), a("sketchOnFace"), a("pressPull"), a("fillet"), a("chamfer"), a("shell"), a("hole"), a("combine"), a("split"), a("splitFace"), a("deleteFaces"), a("draft")] }
+                         actions: [a("editStep"), a("sketchOnFace"), a("pressPull"), a("fillet"), a("chamfer"), a("shell"), a("hole"), a("combine"), a("split"), a("splitFace"), a("align"), a("deleteFaces"), a("draft")] }
         return { title: roleName(r),
                  intro: onSurface ? qsTr("A solid made on the scan, as a step in the design timeline. Export it for printing, or keep shaping it; Edit step changes its outline or thickness.")
                       : editable ? qsTr("A solid in the design timeline. Add features to it; every step can be edited later in the timeline at the bottom.")
@@ -705,7 +709,7 @@ QtObject {
                                 actions: [a("exportForPrint"), a("export")] },
                               { title: qsTr("Or keep designing"), done: false,
                                 text: qsTr("Round or bevel its edges right away, or make it editable for holes and cuts; the changes appear in the timeline."),
-                                actions: [a("fillet"), a("chamfer"), a("combine"), a("split"), a("splitFace"), a("deleteFaces"), a("draft"), a("solidToBody")] }] },
+                                actions: [a("fillet"), a("chamfer"), a("combine"), a("split"), a("splitFace"), a("align"), a("deleteFaces"), a("draft"), a("solidToBody")] }] },
                         { title: qsTr("More"), steps: [], actions: [...fitted, a("scale"), a("hide"), a("isolate"), a("appearance"), a("rename"), a("delete")] }] }
     }
 
@@ -932,6 +936,7 @@ QtObject {
         case "hole": return host.openFeature("hole")
         case "combine": return host.openFeature("combine")
         case "split": return host.openFeature("split")
+        case "align": return host.openFeature("align")
         case "splitFace": return host.openFeature("split_face")
         case "deleteFaces": return host.openFeature("delete_faces")
         case "draft": return host.openFeature("draft")

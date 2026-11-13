@@ -4931,6 +4931,60 @@ TEST_CASE("Design commands: thread (Fusion: Create > Thread)", "[commands][cad]"
     }
 }
 
+TEST_CASE("Design commands: align lays a face of a body on a face of another (Fusion: Align)", "[commands][cad]")
+{
+    const auto bounds = [](commands::Session& s, const char* name) {
+        const Json list = run(s, "timeline.list");
+        for (const auto& b : list.at("bodies"))
+            if (b.at("name") == name)
+                return b.at("bounds");
+        return Json();
+    };
+    commands::Session s;
+    run(s, "feature.box", {{"corner", {0, 0, 0}}, {"size", {40, 40, 10}}});
+    run(s, "feature.box", {{"corner", {100, 100, 100}}, {"size", {10, 10, 10}}});
+    SECTION("the bottom face drops onto the top face, same footprint")
+    {
+        run(s, "feature.align", {{"body", "Body2"}, {"face", {{"point", {105, 105, 100}}}}, {"to", {{"body", "Body1"}, {"point", {20, 20, 10}}}}});
+        const Json b = bounds(s, "Body2");
+        CHECK(b.at("min").at(2).get<double>() == Catch::Approx(10).margin(1e-6));
+        CHECK(b.at("max").at(2).get<double>() == Catch::Approx(20).margin(1e-6));
+        CHECK(b.at("min").at(0).get<double>() == Catch::Approx(100).margin(1e-6));
+    }
+    SECTION("centre and offset")
+    {
+        run(s, "feature.align", {{"body", "Body2"}, {"face", {{"point", {105, 105, 100}}}}, {"to", {{"body", "Body1"}, {"point", {20, 20, 10}}}},
+                                 {"center", true}, {"offset", 2}});
+        const Json b = bounds(s, "Body2");
+        CHECK(b.at("min").at(2).get<double>() == Catch::Approx(12).margin(1e-6));
+        CHECK(b.at("min").at(0).get<double>() == Catch::Approx(15).margin(1e-6));
+        CHECK(b.at("max").at(1).get<double>() == Catch::Approx(25).margin(1e-6));
+    }
+    SECTION("a side face is turned onto the face, and a flipped one faces the same way")
+    {
+        run(s, "feature.align", {{"body", "Body2"}, {"face", {{"point", {110, 105, 105}}}}, {"to", {{"body", "Body1"}, {"point", {20, 20, 10}}}}});
+        const Json b = bounds(s, "Body2");
+        CHECK(b.at("min").at(2).get<double>() == Catch::Approx(10).margin(1e-6));
+        CHECK(b.at("max").at(2).get<double>() == Catch::Approx(20).margin(1e-6));
+        // The +X side face now faces down: it opposes the +Z top face, so the body stands on it. Same volume.
+        CHECK(run(s, "timeline.list").at("bodies").at(1).at("volume").get<double>() == Catch::Approx(1000).epsilon(1e-6));
+    }
+    SECTION("opposed normals turn half way round; errors are clear")
+    {
+        run(s, "feature.align", {{"body", "Body2"}, {"face", {{"point", {105, 105, 110}}}}, {"to", {{"body", "Body1"}, {"point", {20, 20, 10}}}}});
+        CHECK(bounds(s, "Body2").at("min").at(2).get<double>() == Catch::Approx(10).margin(1e-6));
+        CHECK_FALSE(s.execute("feature.align", {{"body", "Body2"}, {"face", {{"point", {105, 105, 110}}}}, {"to", {{"body", "Body2"}, {"point", {105, 105, 100}}}}}).ok);
+        CHECK_FALSE(s.execute("feature.align", {{"body", "Body2"}, {"face", {{"body", "Body1"}, {"point", {20, 20, 10}}}}, {"to", "XY"}}).ok);
+    }
+    SECTION("onto an origin plane")
+    {
+        run(s, "feature.align", {{"body", "Body2"}, {"face", {{"point", {105, 105, 100}}}}, {"to", "XY"}});
+        // The body's bottom face faces down like the plane's back side: the box stands on the XY plane.
+        CHECK(bounds(s, "Body2").at("min").at(2).get<double>() == Catch::Approx(0).margin(1e-6));
+        CHECK(bounds(s, "Body2").at("max").at(2).get<double>() == Catch::Approx(10).margin(1e-6));
+    }
+}
+
 TEST_CASE("Design commands: split face keeps one solid and cuts the picked face (Fusion: Split Face)", "[commands][cad]")
 {
     const auto faceCount = [](commands::Session& s) {

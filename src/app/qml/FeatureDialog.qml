@@ -360,6 +360,13 @@ Pane {
             { key: "factor_x", type: "expr", label: qsTr("X factor"), init: 1, showIf: v => v.scaleType === "non_uniform" },
             { key: "factor_y", type: "expr", label: qsTr("Y factor"), init: 1, showIf: v => v.scaleType === "non_uniform" },
             { key: "factor_z", type: "expr", label: qsTr("Z factor"), init: 1, showIf: v => v.scaleType === "non_uniform" }] },
+        align: { title: qsTr("Align"), command: "feature.align", fields: [
+            { key: "body", type: "body", label: qsTr("Body to move") },
+            { key: "face", type: "planePick", label: qsTr("Face of this body"), hint: qsTr("Click the flat face that should lie on the other"), required: true },
+            { key: "to", type: "planePick", label: qsTr("Face or plane to lie on"), hint: qsTr("Click a flat face of another body, or choose a plane"), required: true },
+            { key: "offset", type: "expr", label: qsTr("Gap"), init: 0 },
+            { key: "center", type: "bool", label: qsTr("Centre on the face") },
+            { key: "flip", type: "bool", label: qsTr("Face the same way") }] },
         split_face: { title: qsTr("Split Face"), command: "feature.split_face", fields: [
             { key: "body", type: "body", label: qsTr("Body") },
             { key: "faces", type: "facePicks", label: qsTr("Faces to split"), hint: qsTr("Click the faces the plane cuts"), required: true },
