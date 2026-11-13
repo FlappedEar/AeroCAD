@@ -82,6 +82,18 @@ struct PathFrame {
 [[nodiscard]] Shape extrudeToObject(const Shape& faces, const core::Vec3& direction, const Shape& target,
                                     const std::vector<std::size_t>& targetFaces = {}, double reach = 0.0);
 
+/// A flat square face of side 2 * `halfSize` centred on `origin`, facing `normal`: a plane as a
+/// tool for operations that take a shape (Extrude To Object, Replace Face).
+[[nodiscard]] Shape planeFace(const core::Vec3& origin, const core::Vec3& normal, double halfSize);
+
+/// Fusion: Modify > Replace Face. Each flat face of the solid `shape` (indices as in faces())
+/// moves onto `target` (or its faces `targetFaces`): where the tool lies out of the face the body
+/// grows to it, where it lies inside the body is cut back to it (a tilted plane can do both). The
+/// tool must cover the whole face along its normal; the side faces end at the tool as straight
+/// extensions along that normal. Throws ModelingError for curved faces or a tool that is not reached.
+[[nodiscard]] Shape replaceFaces(const Shape& shape, const std::vector<std::size_t>& faceIndices, const Shape& target,
+                                 const std::vector<std::size_t>& targetFaces = {});
+
 /// Revolves faces about an axis by `angleDegrees` (360 for a full revolution).
 [[nodiscard]] Shape revolve(const Shape& faces, const core::Vec3& axisOrigin, const core::Vec3& axisDirection,
                             double angleDegrees);

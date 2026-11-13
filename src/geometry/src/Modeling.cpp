@@ -829,6 +829,173 @@ Shape extrudeToObject(const Shape& faces, const core::Vec3& direction, const Sha
     });
 }
 
+Shape planeFace(const core::Vec3& origin, const core::Vec3& normal, double halfSize)
+{
+    const core::Vec3 n = normal.normalized();
+    if (n.length() < 0.5)
+        throw ModelingError("Plane face: zero normal");
+    if (!(halfSize > 0.0))
+        throw ModelingError("Plane face: the size must be positive");
+    return guarded("Plane face", [&] {
+        BRepBuilderAPI_MakeFace make(gp_Pln(toPnt(origin), gp_Dir(n.x, n.y, n.z)), -halfSize, halfSize, -halfSize, halfSize);
+        if (!make.IsDone())
+            throw ModelingError("Plane face failed");
+        return wrapShape(make.Face());
+    });
+}
+
+Shape replaceFaces(const Shape& shape, const std::vector<std::size_t>& faceIndices, const Shape& target,
+                   const std::vector<std::size_t>& targetFaces)
+{
+    const TopoDS_Shape& s = occ(shape, "Replace Face");
+    const TopoDS_Shape& t = occ(target, "Replace Face");
+    if (faceIndices.empty())
+        throw ModelingError("Replace Face: pick a face");
+    if (!hasSubShapes(s, TopAbs_SOLID))
+        throw ModelingError("Replace Face: the body is not a solid");
+    return guarded("Replace Face", [&] {
+        // Every picked face is found again by its centre and normal after the faces before it
+        // have been replaced (face indices change with the topology).
+        struct Ref {
+            std::size_t index;
+            core::Vec3 center;
+            core::Vec3 normal;
+        };
+        std::vector<Ref> refs;
+        const auto infos = faces(shape);
+        for (const std::size_t i : faceIndices) {
+            if (i >= infos.size())
+                throw ModelingError("Replace Face: no face " + std::to_string(i));
+            if (!facePlane(shape, i))
+                throw ModelingError("Replace Face: face " + std::to_string(i)
+                                    + " is curved; only flat faces can be replaced (a curved face moves with Press Pull)");
+            refs.push_back({i, infos[i].center, infos[i].normal});
+        }
+        // The cutting tool: the picked faces of the target, or all of it.
+        TopoDS_Shape tool = t;
+        if (!targetFaces.empty()) {
+            const auto tmap = mapOf(t, TopAbs_FACE);
+            TopoDS_Compound c;
+            BRep_Builder b;
+            b.MakeCompound(c);
+            for (const std::size_t i : targetFaces) {
+                if (i >= static_cast<std::size_t>(tmap.Extent()))
+                    throw ModelingError("Replace Face: no tool face " + std::to_string(i));
+                b.Add(c, tmap(static_cast<int>(i) + 1));
+            }
+            tool = c;
+        }
+        Bnd_Box box;
+        BRepBndLib::Add(s, box);
+        BRepBndLib::Add(tool, box);
+        const double length = 2.0 * std::sqrt(box.SquareExtent()) + 1.0;
+        const double tol = 1e-6 * std::max(1.0, length);
+        Shape current = shape;
+        for (const Ref& ref : refs) {
+            const auto now = faces(current);
+            std::optional<std::size_t> found;
+            double best = 0.0;
+            for (const auto& f : now) {
+                if (f.type != "plane" || f.normal.dot(ref.normal) < 0.999)
+                    continue;
+                const double d = (f.center - ref.center).length();
+                if (std::abs((f.center - ref.center).dot(ref.normal)) > 1e-4 * std::max(1.0, d))
+                    continue;
+                if (!found || d < best) {
+                    found = f.index;
+                    best = d;
+                }
+            }
+            if (!found)
+                throw ModelingError("Replace Face: face " + std::to_string(ref.index) + " is gone after the faces replaced before it");
+            const auto fmap = mapOf(occ(current, "Replace Face"), TopAbs_FACE);
+            const TopoDS_Face& face = TopoDS::Face(fmap(static_cast<int>(*found) + 1));
+            const gp_Vec up(ref.normal.x * length, ref.normal.y * length, ref.normal.z * length);
+            // The face swept along its normal (`sign` 1) or against it (-1), cut by the tool: the
+            // pieces that start on the face and do not reach the far end lie between the face and
+            // the tool. Out of the face that is what the body grows by, into the body what it loses.
+            auto between = [&](double sign) {
+                BRepPrimAPI_MakePrism prism(face, up * sign, true);
+                if (!prism.IsDone())
+                    throw ModelingError("Replace Face failed");
+                TopTools_ListOfShape args, tools;
+                args.Append(prism.Shape());
+                tools.Append(tool);
+                BRepAlgoAPI_Splitter splitter;
+                splitter.SetArguments(args);
+                splitter.SetTools(tools);
+                splitter.SetRunParallel(false);
+                splitter.Build();
+                if (!splitter.IsDone() || splitter.HasErrors())
+                    throw ModelingError("Replace Face: cutting at the tool failed");
+                gp_Trsf toFar;
+                toFar.SetTranslation(up * sign);
+                const TopoDS_Shape farCap = BRepBuilderAPI_Transform(face, toFar, true).Shape();
+                TopoDS_Compound kept;
+                BRep_Builder bld;
+                bld.MakeCompound(kept);
+                bool any = false;
+                for (TopExp_Explorer e(splitter.Shape(), TopAbs_SOLID); e.More(); e.Next()) {
+                    GProp_GProps props;
+                    BRepGProp::VolumeProperties(e.Current(), props);
+                    if (std::abs(props.Mass()) < 1e-9)
+                        continue;
+                    BRepExtrema_DistShapeShape start(e.Current(), face);
+                    BRepExtrema_DistShapeShape far(e.Current(), farCap);
+                    if (start.IsDone() && start.Value() <= tol && far.IsDone() && far.Value() > tol) {
+                        bld.Add(kept, e.Current());
+                        any = true;
+                    }
+                }
+                return any ? std::optional<TopoDS_Shape>(kept) : std::nullopt;
+            };
+            // The tool has to separate the two ends of the face's column everywhere: a tool that
+            // covers only part of the face would leave the rest of it in place.
+            {
+                gp_Trsf toBottom, toTop;
+                toBottom.SetTranslation(up * -1.0);
+                toTop.SetTranslation(up);
+                const TopoDS_Shape bottom = BRepBuilderAPI_Transform(face, toBottom, true).Shape();
+                const TopoDS_Shape top = BRepBuilderAPI_Transform(face, toTop, true).Shape();
+                BRepPrimAPI_MakePrism column(bottom, up * 2.0, true);
+                if (!column.IsDone())
+                    throw ModelingError("Replace Face failed");
+                TopTools_ListOfShape args, tools;
+                args.Append(column.Shape());
+                tools.Append(tool);
+                BRepAlgoAPI_Splitter splitter;
+                splitter.SetArguments(args);
+                splitter.SetTools(tools);
+                splitter.SetRunParallel(false);
+                splitter.Build();
+                if (!splitter.IsDone() || splitter.HasErrors())
+                    throw ModelingError("Replace Face: cutting at the tool failed");
+                for (TopExp_Explorer e(splitter.Shape(), TopAbs_SOLID); e.More(); e.Next()) {
+                    BRepExtrema_DistShapeShape low(e.Current(), bottom);
+                    BRepExtrema_DistShapeShape high(e.Current(), top);
+                    if (low.IsDone() && low.Value() <= tol && high.IsDone() && high.Value() <= tol)
+                        throw ModelingError("Replace Face: the tool does not cover the whole of face " + std::to_string(ref.index)
+                                            + " along its normal");
+                }
+            }
+            const auto grow = between(1.0);
+            const auto cut = between(-1.0);
+            if (!grow && !cut)
+                throw ModelingError("Replace Face: the tool does not cross over face " + std::to_string(ref.index)
+                                    + " along its normal (it must cover the whole face, and not lie on it)");
+            Shape next = current;
+            if (grow)
+                next = boolean(next, wrapShape(*grow), BooleanOp::Union);
+            if (cut)
+                next = boolean(next, wrapShape(*cut), BooleanOp::Cut);
+            if (next.isNull() || next.solidCount() == 0)
+                throw ModelingError("Replace Face: nothing is left of the body");
+            current = std::move(next);
+        }
+        return current;
+    });
+}
+
 Shape revolve(const Shape& faces, const core::Vec3& axisOrigin, const core::Vec3& axisDirection, double angleDegrees)
 {
     const TopoDS_Shape& s = occ(faces, "Revolve");
