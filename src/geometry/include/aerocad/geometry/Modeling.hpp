@@ -184,6 +184,13 @@ struct SplitResult {
 [[nodiscard]] Shape splitFaces(const Shape& shape, const std::vector<std::size_t>& faceIndices, const core::Vec3& origin,
                                const core::Vec3& normal);
 
+/// Closed spaces enclosed by the tools (Fusion: Create > Boundary Fill): solids, shells or
+/// faces cut each other and every bounded cell between them becomes a solid. Throws
+/// ModelingError when nothing is enclosed.
+[[nodiscard]] std::vector<Shape> boundaryFill(const std::vector<Shape>& tools);
+/// True when `point` is strictly inside the solid.
+[[nodiscard]] bool containsPoint(const Shape& solid, const core::Vec3& point);
+
 /// True when the shape passes the B-rep validity check.
 [[nodiscard]] bool isValid(const Shape& shape);
 

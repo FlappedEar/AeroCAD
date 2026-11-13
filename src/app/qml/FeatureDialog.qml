@@ -284,6 +284,9 @@ Pane {
             { key: "body", type: "body", label: qsTr("Body") },
             { key: "faces", type: "facePicks", label: qsTr("Faces to remove"), hint: qsTr("Click faces (none: closed hollow)") },
             { key: "thickness", type: "expr", label: qsTr("Thickness"), init: 1 }] },
+        boundary_fill: { title: qsTr("Boundary Fill"), command: "feature.boundary_fill", fields: [
+            { key: "tools", type: "toolPicks", label: qsTr("Tool bodies"), hint: qsTr("Click the bodies or surfaces that enclose the space"), required: true },
+            { key: "removeTools", type: "bool", label: qsTr("Remove tools") }] },
         combine: { title: qsTr("Combine"), command: "feature.combine", fields: [
             { key: "target", type: "targetPick", label: qsTr("Target body"), hint: qsTr("Click the body to change") },
             { key: "tools", type: "toolPicks", label: qsTr("Tool bodies"), hint: qsTr("Click bodies, a surface or the scan") },

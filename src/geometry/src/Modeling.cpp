@@ -13,7 +13,9 @@
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Defeaturing.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
+#include <BOPAlgo_MakerVolume.hxx>
 #include <BRepAlgoAPI_Section.hxx>
+#include <BRepClass3d_SolidClassifier.hxx>
 #include <BRepAlgoAPI_Splitter.hxx>
 #include <BRepFeat_SplitShape.hxx>
 #include <BRepBndLib.hxx>
@@ -1627,6 +1629,42 @@ Shape splitFaces(const Shape& shape, const std::vector<std::size_t>& faceIndices
             throw ModelingError("Split Face: the plane only touches the picked face(s) at an edge; move it into the face");
         return wrapShape(result);
     });
+}
+
+std::vector<Shape> boundaryFill(const std::vector<Shape>& tools)
+{
+    if (tools.empty())
+        throw ModelingError("Boundary Fill: pick at least one tool body or surface");
+    return guarded("Boundary Fill", [&] {
+        BOPAlgo_MakerVolume maker;
+        TopTools_ListOfShape args;
+        for (const auto& t : tools)
+            args.Append(occ(t, "Boundary Fill"));
+        maker.SetArguments(args);
+        maker.SetIntersect(true);
+        maker.Perform();
+        if (maker.HasErrors())
+            throw ModelingError("Boundary Fill failed: the tools do not enclose a closed space");
+        std::vector<Shape> cells;
+        for (TopExp_Explorer e(maker.Shape(), TopAbs_SOLID); e.More(); e.Next()) {
+            GProp_GProps props;
+            BRepGProp::VolumeProperties(e.Current(), props);
+            if (std::abs(props.Mass()) < 1e-9)
+                continue;
+            cells.push_back(wrapShape(e.Current()));
+        }
+        if (cells.empty())
+            throw ModelingError("Boundary Fill: the tools do not enclose a closed space (add faces to close it)");
+        return cells;
+    });
+}
+
+bool containsPoint(const Shape& solid, const core::Vec3& point)
+{
+    if (solid.isNull())
+        return false;
+    BRepClass3d_SolidClassifier classifier(solid.impl()->shape, toPnt(point), 1e-7);
+    return classifier.State() == TopAbs_IN;
 }
 
 bool isValid(const Shape& shape)

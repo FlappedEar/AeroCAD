@@ -399,8 +399,9 @@ TEST_CASE("tools/list is compact: shared schemas listed once, no schema boilerpl
     // Trim existing descriptions before raising it again.
     // Lowered by about 1.7 kB when the result-format text of simulation_results / _field / _compare moved
     // into the agent_guide topic "results" (CAD-240); 158.3 kB then.)
-    // Raised 158500 -> 160000 for Split Face and Align (CAD-279/280) after trimming five unrelated descriptions.
-    CHECK(all.size() < 160000);
+    // Raised 158500 -> 160000 for Split Face and Align (CAD-279/280) after trimming five unrelated descriptions,
+    // then to 161000 for Move copy and Boundary Fill (CAD-281/282).
+    CHECK(all.size() < 161000);
     CHECK(all.find("additionalProperties") == std::string::npos);
     CHECK(all.find("sketch.curves") == std::string::npos); // parameter descriptions name tools too
     const Json* create = nullptr;

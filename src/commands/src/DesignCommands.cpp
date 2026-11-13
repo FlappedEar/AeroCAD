@@ -2669,6 +2669,19 @@ void registerFeatureCommands(CommandRegistry& r)
                        {"center", {{"type", "boolean"}, {"description", "Also centre it on the target."}}}},
                       {"body", "face", "to"});
 
+    addFeatureCommand(r, "boundary_fill", "Boundary Fill",
+                      "Fills the closed spaces enclosed by tool bodies or surfaces (Fusion: Create > Boundary Fill) "
+                      "with a new body, one solid per space, e.g. the gap between a part and a surface.",
+                      {{"tools", {{"type", "array"}, {"minItems", 1}, {"items", {{"oneOf", Json::array({bodyRefSchema("Tool body or surface."),
+                                                                    {{"type", "object"},
+                                                                     {"properties", {{"part", {{"type", "integer"}, {"minimum", 1}, {"description", "Imported part id."}}}}},
+                                                                     {"required", {"part"}}}})}}},
+                                  {"description", "Bodies, surfaces or {part: id} that bound the spaces."}}},
+                       {"cells", {{"type", "array"},
+                                  {"description", "Spaces to keep: a point [x, y, z] (or {point}) inside each, or a space index; default all."}}},
+                       {"removeTools", {{"type", "boolean"}, {"description", "Delete the tools afterwards."}}}},
+                      {"tools"});
+
     addFeatureCommand(r, "scale", "Scale",
                       "Scales a body (Fusion: Modify > Scale): `factor`, or `factor_x` / `_y` / `_z` (missing: 1), about `center`.",
                       {{"body", bodyRefSchema("Body to scale.")},
