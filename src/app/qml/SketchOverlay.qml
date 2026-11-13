@@ -1001,7 +1001,9 @@ Item {
     function arcSlotGeometry(pts) {
         const s = pts[0], e = pts[1], m = pts[2]
         const d = 2 * (s[0] * (e[1] - m[1]) + e[0] * (m[1] - s[1]) + m[0] * (s[1] - e[1]))
-        if (Math.abs(d) < 1e-12)
+        // Nearly collinear points make an enormous circle: refuse relative to the size of the triangle.
+        const spread = Math.max(dist(s, e), dist(s, m), dist(e, m))
+        if (Math.abs(d) < 1e-9 * spread * spread)
             return null
         const sq = p => p[0] * p[0] + p[1] * p[1]
         const c = [(sq(s) * (e[1] - m[1]) + sq(e) * (m[1] - s[1]) + sq(m) * (s[1] - e[1])) / d,
@@ -2007,6 +2009,10 @@ Item {
                             if (i === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y)
                         }
                     }
+                } else if (root.tool === "arc_slot_3pt" && pts.length >= 3 && root.arcSlotGeometry(pts) === null) {
+                    // The three points are in a line: no arc yet, only the line between start and end.
+                    const q0 = root.toScreen(pts[0]), q1 = root.toScreen(pts[1])
+                    ctx.moveTo(q0.x, q0.y); ctx.lineTo(q1.x, q1.y)
                 } else if ((root.tool === "arc_slot" || root.tool === "arc_slot_3pt") && pts.length >= 3) {
                     // The centre line's arc while the end is placed; the whole slot when the width is.
                     const g3 = root.tool === "arc_slot_3pt" ? root.arcSlotGeometry(pts) : null

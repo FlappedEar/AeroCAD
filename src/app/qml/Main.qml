@@ -292,7 +292,7 @@ ApplicationWindow {
         SketchMenuItem { action: polygonAction; icon.source: Theme.iconUrl("polygon") }
         SketchMenuItem { action: slotAction; icon.source: Theme.iconUrl("slot") }
         SketchMenuItem { action: arcSlotAction; icon.source: Theme.iconUrl("arc-slot") }
-        SketchMenuItem { action: arcSlot3Action; icon.source: Theme.iconUrl("arc-slot") }
+        SketchMenuItem { action: arcSlot3Action; icon.source: Theme.iconUrl("arc-slot-3pt") }
         SketchMenuItem { action: splineAction; icon.source: Theme.iconUrl("spline") }
         SketchMenuItem { action: cpSplineAction; icon.source: Theme.iconUrl("cp-spline") }
         SketchMenuItem { action: pointAction; icon.source: Theme.iconUrl("point") }
@@ -2313,7 +2313,7 @@ ApplicationWindow {
                 ToolCommand { action: centerArcAction; text: qsTr("Center Arc"); iconName: "center-arc" }
                 ToolCommand { action: tangentArcAction; text: qsTr("Tangent Arc"); iconName: "tangent-arc" }
                 ToolCommand { action: arcSlotAction; text: qsTr("Arc Slot"); iconName: "arc-slot" }
-                ToolCommand { action: arcSlot3Action; text: qsTr("3-Point Arc Slot"); iconName: "arc-slot" }
+                ToolCommand { action: arcSlot3Action; text: qsTr("3-Point Arc Slot"); iconName: "arc-slot-3pt" }
                 // Fusion: Create > Rectangular / Circular Pattern.
                 ToolCommand { action: sketchRectangularPatternAction; text: qsTr("Rectangular Pattern"); iconName: "pattern" }
                 ToolCommand { action: sketchCircularPatternAction; text: qsTr("Circular Pattern"); iconName: "circular-pattern" }
