@@ -936,6 +936,10 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/split_face.ui
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(app_split_face_test PROPERTIES LABELS gui TIMEOUT 60)
+    add_test(NAME app_align_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/align.ui
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(app_align_test PROPERTIES LABELS gui TIMEOUT 60)
     add_test(NAME app_feature_dialog_checkbox_test
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/feature_dialog_checkbox.ui
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})

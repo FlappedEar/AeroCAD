@@ -1587,7 +1587,13 @@ Shape splitFaces(const Shape& shape, const std::vector<std::size_t>& faceIndices
         BRepBndLib::Add(s, box);
         const double size = 2.0 * std::sqrt(box.SquareExtent()) + 1.0;
         const gp_Pnt o = toPnt(origin);
-        const gp_Pln plane(o, n);
+        // The square of the plane is centred on the body's projection onto it, so a body far from
+        // the plane's origin (sideways) is still covered.
+        double xmin = 0, ymin = 0, zmin = 0, xmax = 0, ymax = 0, zmax = 0;
+        box.Get(xmin, ymin, zmin, xmax, ymax, zmax);
+        const gp_Pnt c((xmin + xmax) / 2, (ymin + ymax) / 2, (zmin + zmax) / 2);
+        const gp_Pnt centre = c.Translated(gp_Vec(n) * (gp_Vec(c, o) * gp_Vec(n)));
+        const gp_Pln plane(centre, n);
         const TopoDS_Face tool = BRepBuilderAPI_MakeFace(plane, -size, size, -size, size).Face();
         // Cut the picked faces along their intersection with the plane. The solid, its
         // volume and its other faces stay as they are; only the picked faces get more edges.

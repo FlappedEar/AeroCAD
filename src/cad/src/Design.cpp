@@ -132,7 +132,7 @@ const std::vector<std::string>& Design::featureTypes()
     static const std::vector<std::string> types{"sketch", "extrude", "revolve", "fillet", "chamfer",
                                                 "shell",  "combine", "box",     "cylinder", "sphere", "torus", "base_body", "hole",
                                                 "mirror",  "rectangular_pattern", "circular_pattern", "path_pattern", "pipe", "rib", "coil", "loft", "sweep", "plane",
-                                                "part_on_surface", "fin_on_surface", "move", "scale", "press_pull", "split", "split_face", "delete_faces", "draft", "thread",
+                                                "part_on_surface", "fin_on_surface", "move", "scale", "press_pull", "align", "split", "split_face", "delete_faces", "draft", "thread",
                                                 "fit_selection", "fit_regions", "trim_by_sketch", "offset_surface", "thicken_surface"};
     return types;
 }
@@ -4322,6 +4322,51 @@ void Design::evaluateFeature(const Feature& f)
             tf = core::Affine::translationBy(ev.vec3(p.at("translate"))).after(tf);
         if (factor != 1.0)
             body.shape = geometry::scaled(body.shape, factor, c);
+        body.shape = geometry::transformed(body.shape, tf);
+    } else if (f.type == "align") {
+        // Fusion: Modify > Align: turns and moves a body so a planar face of it lies flat against
+        // a plane or planar face of another body (faces opposing, like parts mated together).
+        Body& body = bodyRef(required(p, "body"));
+        const Json& faceRef = required(p, "face");
+        Json spec = Json::object({{"body", p.at("body")}});
+        if (faceRef.is_number_integer()) {
+            spec["index"] = faceRef;
+        } else if (faceRef.is_object() && (has(faceRef, "point") || has(faceRef, "index"))) {
+            if (has(faceRef, "body") && bodyRef(faceRef.at("body")).id != body.id)
+                throw DesignError("The face to align must be a face of the body that moves; the plane or face to align to is `to`");
+            spec[has(faceRef, "index") ? "index" : "point"] = faceRef.at(has(faceRef, "index") ? "index" : "point");
+        } else {
+            throw DesignError("face is a face index, {point: [x, y, z]} or {index} on the body");
+        }
+        const Plane from = resolvePlane(spec).normalized();
+        const Json& toRef = required(p, "to");
+        const Plane to = resolvePlane(toRef).normalized();
+        if (toRef.is_object() && has(toRef, "body") && bodyRef(toRef.at("body")).id == body.id)
+            throw DesignError("A body cannot be aligned to its own face");
+        const bool flip = p.value("flip", false);
+        if (!(to.normal.length() > 1e-9) || !(from.normal.length() > 1e-9))
+            throw DesignError("Align: the plane has no direction (zero normal)");
+        const core::Vec3 want = flip ? to.normal : to.normal * -1.0;
+        // Smallest turn taking the face normal to the wanted direction; a half turn about any
+        // axis square to it when they are opposed.
+        const core::Vec3 n1 = from.normal;
+        core::Mat3 rot{};
+        const core::Vec3 axis = n1.cross(want);
+        if (axis.length() > 1e-9) {
+            rot = core::Mat3::rotation(axis.normalized(), std::atan2(axis.length(), n1.dot(want)));
+        } else if (n1.dot(want) < 0.0) {
+            core::Vec3 any = std::abs(n1.x) < 0.9 ? core::Vec3{1, 0, 0} : core::Vec3{0, 1, 0};
+            rot = core::Mat3::rotation(n1.cross(any).normalized(), std::numbers::pi);
+        }
+        core::Affine tf{rot, from.origin - rot * from.origin};
+        // Then slide the turned face onto the plane, `offset` mm clear of it along its normal.
+        // With `center` its centre also moves over the target face's centre.
+        const core::Vec3 centre = tf.apply(from.origin);
+        const core::Vec3 gap = to.origin - centre;
+        core::Vec3 shift = to.normal * (to.normal.dot(gap) + ev.num(p, "offset", 0.0));
+        if (p.value("center", false))
+            shift = shift + (gap - to.normal * to.normal.dot(gap));
+        tf = core::Affine::translationBy(shift).after(tf);
         body.shape = geometry::transformed(body.shape, tf);
     } else if (f.type == "scale") {
         // Fusion: Modify > Scale. Uniform (`factor`) or non-uniform (`factor_x`, `_y`, `_z`; a

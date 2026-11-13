@@ -2655,6 +2655,19 @@ void registerFeatureCommands(CommandRegistry& r)
                        {"center", point3("Rotation and scale centre [x, y, z] in mm.")}},
                       {"body"});
 
+    addFeatureCommand(r, "align", "Align",
+                      "Turns and moves a body so a planar face of it lies flat on a plane or planar face of another "
+                      "body (Fusion: Align), faces opposing like mated parts.",
+                      {{"body", bodyRefSchema("Body to move.")},
+                       {"face", {{"type", Json::array({"integer", "object"})},
+                                 {"description", "Planar face: index or {point}."}}},
+                       {"to", {{"type", Json::array({"string", "object"})},
+                               {"description", "Plane to lie on: a face {body, index | point}, a construction plane or \"XY\" / \"XZ\" / \"YZ\"."}}},
+                       {"offset", numberOrExpr("Gap left between the faces (mm), default 0.")},
+                       {"flip", {{"type", "boolean"}, {"description", "Same direction instead of opposing."}}},
+                       {"center", {{"type", "boolean"}, {"description", "Also centre it on the target."}}}},
+                      {"body", "face", "to"});
+
     addFeatureCommand(r, "scale", "Scale",
                       "Scales a body (Fusion: Modify > Scale): `factor`, or `factor_x` / `_y` / `_z` (missing: 1), about `center`.",
                       {{"body", bodyRefSchema("Body to scale.")},
