@@ -922,11 +922,13 @@ Pane {
                 return
             if (key === "face" && type === "align") {
                 // The body may already be moved by the preview: look the face up on the body as it
-                // was before this step and store its index (a move keeps the topology).
+                // was before this step (a move keeps the topology) and store the centre of that face
+                // there, a point that still finds the face if earlier steps change the topology.
                 const at = [point.x, point.y, point.z].map(x => Math.round(x * 1e4) / 1e4)
                 const before = editId ? editId : (previewFeatureId > 0 ? previewFeatureId : 0)
                 const r = controller.execute("body.faces", Object.assign({ body: values.body, point: at }, before ? { before: before } : {}))
-                setValue(key, r.ok && r.result.nearest ? { index: r.result.nearest.index } : { point: at })
+                const face = r.ok && r.result.nearest ? r.result.faces.find(x => x.index === r.result.nearest.index) : null
+                setValue(key, { point: face && face.center ? face.center.map(x => Math.round(x * 1e4) / 1e4) : at })
             } else if (part.kind === "plane")
                 setValue(key, { plane: part.featureId })
             else if ((part = asBody(part)))

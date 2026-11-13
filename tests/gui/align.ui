@@ -26,8 +26,8 @@ ui.wait(800)
 (() => { undoAction.trigger() })()
 ui.wait(500)
 (() => { const z = Array.from(window.contentItem.children).find(c => c.objectName === "alTest").minZ(); ui.log("Ctrl+Z: min z " + z); if (Math.abs(z - 30) > 1e-3) ui.fail("one undo did not put the box back: " + z) })()
-# Picking the source face again while the preview has already moved the body: the face is stored by index and
-# found on the body as it was before the step. The first pick is the top face (z=40) and the preview turns the box
+# Picking the source face again while the preview has already moved the body: the face is looked up on the body before the step and stored as a point
+# (the centre of that face), so it still finds the face if earlier steps change the topology. The first pick is the top face (z=40) and the preview turns the box
 # upside down on the big one; the face now on top (z=20) is the box's original bottom face (normal -Z).
 (() => { Array.from(window.contentItem.children).find(c => c.objectName === "alTest").clickAt(65, 10, 40) })()
 ui.wait(300)
@@ -39,9 +39,9 @@ ui.wait(400)
 ui.wait(500)
 (() => { Array.from(window.contentItem.children).find(c => c.objectName === "alTest").clickAt(20, 20, 10) })()
 ui.wait(800)
-(() => { const f = featureDialog.values.face; ui.log("first pick " + JSON.stringify(f)); if (!f || f.index === undefined) ui.fail("the source face is not stored by index") })()
+(() => { const f = featureDialog.values.face; ui.log("first pick " + JSON.stringify(f)); if (!f || f.point === undefined) ui.fail("the source face is not stored as a point") })()
 (() => { featureDialog.pickKey = "face"; Array.from(window.contentItem.children).find(c => c.objectName === "alTest").clickAt(65, 10, 20) })()
 ui.wait(800)
-(() => { const f = featureDialog.values.face; ui.log("second pick " + JSON.stringify(f)); if (!f || f.index === undefined) ui.fail("re-pick failed"); const r = controller.execute("body.faces", { body: featureDialog.values.body, before: featureDialog.previewFeatureId }); if (!r.ok) ui.fail("faces before: " + r.error); const n = r.result.faces.find(x => x.index === f.index).normal; ui.log("original normal " + JSON.stringify(n)); if (n[2] > -0.9) ui.fail("the re-pick did not find the box's bottom face: " + JSON.stringify(n)) })()
+(() => { const f = featureDialog.values.face; ui.log("second pick " + JSON.stringify(f)); if (!f || f.point === undefined) ui.fail("re-pick failed"); const r = controller.execute("body.faces", { body: featureDialog.values.body, point: f.point, before: featureDialog.previewFeatureId }); if (!r.ok) ui.fail("faces before: " + r.error); const n = r.result.faces.find(x => x.index === r.result.nearest.index).normal; ui.log("original normal " + JSON.stringify(n)); if (n[2] > -0.9) ui.fail("the re-pick did not find the box's bottom face: " + JSON.stringify(n)) })()
 (() => { if (!ui.clickText("Cancel")) ui.fail("no Cancel button") })()
 ui.wait(500)
