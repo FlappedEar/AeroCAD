@@ -47,7 +47,7 @@ Pane {
     readonly property var distanceArrow: {
         if (type === "fillet" || type === "chamfer" || type === "shell" || type === "press_pull")
             return sizeArrow()
-        if (type !== "extrude" || values.sketch === undefined || values.extent === "to_object")
+        if (type !== "extrude" || values.sketch === undefined || values.extent === "to_object" || (values.extent || "").startsWith("all"))
             return null
         const d = Number(values.distance)
         if (!isFinite(d))
@@ -216,10 +216,11 @@ Pane {
         extrude: { title: qsTr("Extrude"), command: "feature.extrude", fields: [
             { key: "sketch", type: "sketch", label: qsTr("Sketch") },
             { key: "points", type: "profilePicks", label: qsTr("Profiles"), hint: qsTr("All profiles (click inside profiles to pick)") },
-            { key: "distance", type: "expr", label: qsTr("Distance"), init: 10, showIf: v => v.extent !== "to_object" },
+            { key: "distance", type: "expr", label: qsTr("Distance"), init: 10, showIf: v => v.extent !== "to_object" && !(v.extent || "").startsWith("all") },
             { key: "extent", type: "choice", label: qsTr("Extent"), init: "one_side", options: [
                 { value: "one_side", label: qsTr("One Side") }, { value: "symmetric", label: qsTr("Symmetric") },
-                { value: "two_sides", label: qsTr("Two Sides") }, { value: "to_object", label: qsTr("To Object") }] },
+                { value: "two_sides", label: qsTr("Two Sides") }, { value: "to_object", label: qsTr("To Object") },
+                { value: "all", label: qsTr("All") }, { value: "all_two_sides", label: qsTr("All, Both Sides") }] },
             { key: "to", type: "objectPick", label: qsTr("Object"), hint: qsTr("Click the face, body, surface or scan to extrude up to"),
               showIf: v => v.extent === "to_object" },
             { key: "distance2", type: "expr", label: qsTr("Distance 2"), showIf: v => v.extent === "two_sides" },

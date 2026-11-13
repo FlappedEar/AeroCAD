@@ -4930,3 +4930,29 @@ TEST_CASE("Design commands: thread (Fusion: Create > Thread)", "[commands][cad]"
         CHECK_FALSE(c.execute("feature.thread", {{"body", "Body1"}, {"faces", {face}}, {"pitch", 1}, {"handedness", "sideways"}}).ok);
     }
 }
+
+TEST_CASE("Design commands: extrude extent All cuts through every body (Fusion: Extent All)", "[commands][cad]")
+{
+    const auto volume = [](commands::Session& s) {
+        const Json bodies = run(s, "timeline.list").at("bodies");
+        return bodies.at(0).at("volume").get<double>();
+    };
+    for (const std::string extent : {"all", "all_two_sides"}) {
+        commands::Session s;
+        run(s, "feature.box", {{"corner", {0, 0, 0}}, {"size", {40, 40, 20}}});
+        // A 10 x 10 square in the XY plane halfway up: the hole goes the whole way down (flip) or both ways.
+        const auto id = run(s, "sketch.create",
+                            {{"plane", {{"origin", {0, 0, 10}}, {"normal", {0, 0, 1}}, {"xDir", {1, 0, 0}}}},
+                             {"curves", Json::array({{{"type", "rectangle"}, {"corner", {15, 15}}, {"width", 10}, {"height", 10}}})}})
+                            .at("id").get<std::uint64_t>();
+        run(s, "feature.extrude", {{"sketch", id}, {"extent", extent}, {"flip", true}, {"operation", "cut"}, {"bodies", Json::array({"Body1"})}});
+        const double expected = extent == "all" ? 32000.0 - 10 * 10 * 10 : 32000.0 - 10 * 10 * 20;
+        INFO(extent);
+        CHECK(volume(s) == Approx(expected).epsilon(1e-4));
+    }
+    commands::Session s;
+    run(s, "feature.box", {{"corner", {0, 0, 0}}, {"size", {40, 40, 20}}});
+    const auto id = run(s, "sketch.create", {{"plane", "XY"}, {"curves", Json::array({{{"type", "rectangle"}, {"corner", {15, 15}}, {"width", 10}, {"height", 10}}})}})
+                        .at("id").get<std::uint64_t>();
+    CHECK_FALSE(s.execute("feature.extrude", {{"sketch", id}, {"extent", "everything"}, {"distance", 5}}).ok);
+}

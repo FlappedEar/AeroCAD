@@ -1,0 +1,21 @@
+# Extrude with Extent All (Fusion: Extent > All): a 10 mm square sketched halfway up a 40 x 40 x 20 block
+# cuts a hole through it, downwards, without a distance being typed; the Distance field is hidden.
+# Run: AeroCAD --ui-script <this file>
+ui.wait(800)
+(() => { let r = controller.execute("feature.box", { corner: [0, 0, 0], size: [40, 40, 20] }); if (!r.ok) ui.fail("box: " + r.error); r = controller.execute("sketch.create", { plane: { origin: [0, 0, 10], normal: [0, 0, 1], xDir: [1, 0, 0] }, curves: [{ type: "rectangle", corner: [15, 15], width: 10, height: 10 }] }); if (!r.ok) ui.fail("sketch: " + r.error) })()
+ui.wait(300)
+(() => { viewport.restoreCameraState({ pivot: [20, 20, 10], pitch: -30, yaw: 30, distance: 160, orthographic: false }) })()
+ui.wait(300)
+(() => { if (!ui.clickText("SOLID")) ui.fail("no SOLID tab") })()
+ui.wait(300)
+(() => { if (!ui.clickText("Extrude")) ui.fail("no Extrude button") })()
+ui.wait(800)
+(() => { featureDialog.setValue("extent", "all"); featureDialog.setValue("flip", true); featureDialog.setValue("operation", "cut") })()
+ui.wait(1000)
+ui.shot("extrude-all.png")
+(() => { if (featureDialog.error) ui.fail("dialog error: " + featureDialog.error) })()
+(() => { if (!ui.clickText("OK")) ui.fail("no OK button") })()
+ui.wait(1000)
+(() => { const tl = controller.execute("timeline.list").result; const v = tl.bodies[0].volume; const want = 32000 - 10 * 10 * 10; ui.log("volume " + v.toFixed(1) + " want " + want); if (Math.abs(v - want) > 1) ui.fail("Extent All did not cut down through the block: " + v); const f = tl.features.find(x => x.type === "extrude"); if (!f || f.params.extent !== "all") ui.fail("the extent is not stored: " + JSON.stringify(f && f.params)); featureDialog.open("extrude", f.params, f.id) })()
+ui.wait(500)
+(() => { if (featureDialog.values.extent !== "all") ui.fail("reopened extrude lost its extent: " + JSON.stringify(featureDialog.values)) })()

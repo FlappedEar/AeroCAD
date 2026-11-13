@@ -4023,14 +4023,35 @@ void Design::evaluateFeature(const Feature& f)
             applyOperation(unionAll(solids));
             return;
         }
-        double d1 = ev.num(p, "distance");
+        double d1 = 0.0;
         double d2 = 0.0;
-        if (extent == "symmetric")
-            d2 = d1;
-        else if (extent == "two_sides")
-            d2 = ev.num(p, "distance2");
-        else if (extent != "one_side")
-            throw DesignError("Unknown extent '" + extent + "' (one_side, symmetric, two_sides, to_object)");
+        if (extent == "all" || extent == "all_two_sides") {
+            // Fusion: Extent "All": through every body at this point of the timeline, one way or both ways.
+            // Far enough to leave the biggest box around the profile and all bodies, wherever they are.
+            core::BoundingBox reach;
+            for (const auto& face : faces) {
+                const auto b = face.bounds();
+                reach.extend(b.min);
+                reach.extend(b.max);
+            }
+            for (const auto& [_, body] : m_bodies) {
+                if (body.shape.isNull())
+                    continue;
+                const auto b = body.shape.bounds();
+                reach.extend(b.min);
+                reach.extend(b.max);
+            }
+            d1 = 2.0 * (reach.max - reach.min).length() + 1.0;
+            d2 = extent == "all_two_sides" ? d1 : 0.0;
+        } else {
+            d1 = ev.num(p, "distance");
+            if (extent == "symmetric")
+                d2 = d1;
+            else if (extent == "two_sides")
+                d2 = ev.num(p, "distance2");
+            else if (extent != "one_side")
+                throw DesignError("Unknown extent '" + extent + "' (one_side, symmetric, two_sides, to_object, all, all_two_sides)");
+        }
         std::vector<geometry::Shape> solids;
         for (const auto& face : faces)
             solids.push_back(geometry::extrude(face, dir, d1, d2, taper));
