@@ -4965,6 +4965,14 @@ TEST_CASE("Design commands: split face keeps one solid and cuts the picked face 
         const Json bodies = run(s, "timeline.list").at("bodies");
         CHECK(bodies.at(0).at("volume").get<double>() == Catch::Approx(32000 + 30 * 40 * 5).margin(0.5));
     }
+    SECTION("a body far from the plane's origin is still split")
+    {
+        commands::Session s;
+        run(s, "feature.box", {{"corner", {0, 5000, 0}}, {"size", {40, 40, 20}}});
+        const Json faces = run(s, "body.faces", {{"body", "Body1"}, {"point", {20, 5020, 20}}});
+        run(s, "feature.split_face", {{"body", "Body1"}, {"faces", {faces.at("nearest").at("index")}}, {"plane", "YZ"}, {"offset", 10}});
+        CHECK(faceCount(s) == 7);
+    }
     SECTION("a plane that misses the face is an error")
     {
         commands::Session s;
