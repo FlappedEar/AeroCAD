@@ -1,0 +1,9 @@
+# CAD-277: pressing OK in Fillet / Chamfer / Press Pull / Draft / Delete Face before anything is
+# picked says what to pick in plain words ("Fillet: pick the edges"), not the command's
+# parameter error. Run: AeroCAD --ui-script <this file>
+ui.wait(800)
+(() => { const r = controller.execute("feature.box", { size: [20, 20, 20] }); if (!r.ok) ui.fail("box: " + r.error) })()
+ui.wait(300)
+(() => { for (const [type, word] of [["fillet", "edges"], ["chamfer", "edges"], ["press_pull", "faces"], ["draft", "faces"], ["delete_faces", "faces"]]) { featureDialog.open(type, {}, 0); featureDialog.apply(); const e = featureDialog.error; ui.log(type + " -> " + e); if (!e || e.indexOf("pick the " + word) < 0) ui.fail(type + ": unhelpful message: " + e); else if (/params\.|indices from/.test(e)) ui.fail(type + ": raw command error shown: " + e); featureDialog.close() } })()
+(() => { const b = controller.execute("document.parts").result.parts.find(p => p.kind === "body"); featureDialog.open("fillet", { body: b.featureId, edges: [{ point: [10, 0, 0] }], radius: 1 }, 0); featureDialog.apply(); if (featureDialog.error) ui.fail("a fillet with a picked edge was refused: " + featureDialog.error); featureDialog.close() })()
+ui.log("required picks done")

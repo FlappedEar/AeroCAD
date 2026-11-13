@@ -239,11 +239,11 @@ Pane {
             { key: "operation", type: "choice", label: qsTr("Operation"), init: "new_body", options: operations }] },
         fillet: { title: qsTr("Fillet"), command: "feature.fillet", fields: [
             { key: "body", type: "body", label: qsTr("Body") },
-            { key: "edges", type: "edgePicks", label: qsTr("Edges"), hint: qsTr("Click near edges of the body") },
+            { key: "edges", type: "edgePicks", label: qsTr("Edges"), hint: qsTr("Click near edges of the body"), required: true },
             { key: "radius", type: "expr", label: qsTr("Radius"), init: 1 }] },
         chamfer: { title: qsTr("Chamfer"), command: "feature.chamfer", fields: [
             { key: "body", type: "body", label: qsTr("Body") },
-            { key: "edges", type: "edgePicks", label: qsTr("Edges"), hint: qsTr("Click near edges of the body") },
+            { key: "edges", type: "edgePicks", label: qsTr("Edges"), hint: qsTr("Click near edges of the body"), required: true },
             { key: "type", type: "choice", label: qsTr("Chamfer type"), init: "equal_distance", options: [
                 { value: "equal_distance", label: qsTr("Equal distance") },
                 { value: "two_distances", label: qsTr("Two distances") },
@@ -254,16 +254,16 @@ Pane {
             { key: "flip", type: "bool", label: qsTr("Flip"), showIf: v => v.type !== undefined && v.type !== "equal_distance" }] },
         press_pull: { title: qsTr("Press Pull"), command: "feature.press_pull", fields: [
             { key: "body", type: "body", label: qsTr("Body") },
-            { key: "faces", type: "facePicks", label: qsTr("Faces"), hint: qsTr("Click faces to move") },
+            { key: "faces", type: "facePicks", label: qsTr("Faces"), hint: qsTr("Click faces to move"), required: true },
             { key: "distance", type: "expr", label: qsTr("Distance (negative: push in)"), init: 5 }] },
         draft: { title: qsTr("Draft"), command: "feature.draft", fields: [
             { key: "body", type: "body", label: qsTr("Body") },
-            { key: "faces", type: "facePicks", label: qsTr("Faces to tilt"), hint: qsTr("Click the side faces") },
+            { key: "faces", type: "facePicks", label: qsTr("Faces to tilt"), hint: qsTr("Click the side faces"), required: true },
             { key: "plane", type: "planePick", label: qsTr("Fixed plane"), init: "XY", hint: qsTr("Origin plane, construction plane, or click a planar face") },
             { key: "angle", type: "expr", label: qsTr("Angle (deg, negative: outwards)"), init: 3 }] },
         delete_faces: { title: qsTr("Delete Face"), command: "feature.delete_faces", fields: [
             { key: "body", type: "body", label: qsTr("Body") },
-            { key: "faces", type: "facePicks", label: qsTr("Faces to delete"), hint: qsTr("Click every face of the hole, fillet or boss") }] },
+            { key: "faces", type: "facePicks", label: qsTr("Faces to delete"), hint: qsTr("Click every face of the hole, fillet or boss"), required: true }] },
         shell: { title: qsTr("Shell"), command: "feature.shell", fields: [
             { key: "body", type: "body", label: qsTr("Body") },
             { key: "faces", type: "facePicks", label: qsTr("Faces to remove"), hint: qsTr("Click faces (none: closed hollow)") },
@@ -905,7 +905,8 @@ Pane {
     function submit(quiet) {
         // A field the command would otherwise default (Midplane's planes fall back to XY)
         // must be filled in: nothing is made until it is.
-        const missing = spec.fields.find(f => f.required && values[f.key] === undefined)
+        const empty = f => values[f.key] == null || (Array.isArray(values[f.key]) && values[f.key].length === 0)
+        const missing = spec.fields.find(f => f.required && !(f.showIf && !f.showIf(values)) && empty(f))
         if (missing)
             return { ok: false, error: qsTr("%1: pick the %2").arg(spec.title).arg(missing.label.toLowerCase()) }
         const run = (name, args) => quiet ? controller.preview(name, args) : controller.execute(name, args)
