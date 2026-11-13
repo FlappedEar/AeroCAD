@@ -21,6 +21,7 @@ enum class PartKind {
     Body,     ///< Solid or surface produced by the design timeline (CAD features).
     Sketch,   ///< Sketch of the design timeline (curves and profiles).
     Plane,    ///< Construction plane of the design timeline (drawn as a square).
+    Axis,     ///< Construction axis of the design timeline (drawn as a long thin bar).
 };
 
 /// A body in the project: an imported reference model or (later) a designed part.

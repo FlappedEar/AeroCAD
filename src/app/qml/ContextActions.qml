@@ -39,11 +39,11 @@ QtObject {
     // --- Classification ----------------------------------------------------------------
 
     /// "mesh" (scan), "surface" (fitted NURBS surface), "solid" (imported exact solid),
-    /// "body" (timeline body), "sketch", "plane" (construction plane), or "" (nothing selected).
+    /// "body" (timeline body), "sketch", "plane" (construction plane), "axis" (construction axis), or "" (nothing selected).
     function role(info) {
         if (!info || !info.id)
             return ""
-        if (info.kind === "sketch" || info.kind === "plane")
+        if (info.kind === "sketch" || info.kind === "plane" || info.kind === "axis")
             return info.kind
         if (info.hasBrep && (info.faces ?? 0) > 0 && (info.solids ?? 0) === 0)
             return "surface"
@@ -64,11 +64,12 @@ QtObject {
 
     function roleName(r) {
         return ({ mesh: qsTr("Scan (mesh)"), surface: qsTr("Surface"), solid: qsTr("Solid"),
-                  body: qsTr("Body"), sketch: qsTr("Sketch"), plane: qsTr("Construction plane") })[r] || ""
+                  body: qsTr("Body"), sketch: qsTr("Sketch"), plane: qsTr("Construction plane"),
+                  axis: qsTr("Construction axis") })[r] || ""
     }
 
     function roleIcon(r) {
-        return ({ mesh: "mesh", surface: "surface", solid: "body", body: "body", sketch: "sketch", plane: "plane" })[r] || "tool"
+        return ({ mesh: "mesh", surface: "surface", solid: "body", body: "body", sketch: "sketch", plane: "plane", axis: "axis" })[r] || "tool"
     }
 
     /// Sketches of the document, newest first: [{ name, featureId, partId }].
@@ -393,6 +394,12 @@ QtObject {
                      reason: qsTr("This plane has no step in the timeline."),
                      tip: qsTr("Changes the plane's base, offset or angle; sketches on it follow.") }
         }
+        case "editAxis": {
+            const f = timelineFeature(info.featureId)
+            return { id: id, text: qsTr("Edit axis"), icon: "axis", enabled: !!f,
+                     reason: qsTr("This axis has no step in the timeline."),
+                     tip: qsTr("Changes how the axis is defined; features that turn about it follow.") }
+        }
         case "editSketch":
             return { id: id, text: qsTr("Edit sketch"), icon: "sketch", enabled: true,
                      tip: qsTr("Opens the sketch again to change curves and dimensions.") }
@@ -496,7 +503,7 @@ QtObject {
         case "moveRotate": {
             const r = role(info)
             return { id: id, text: qsTr("Move / Rotate / Scale"), icon: "move",
-                     enabled: r !== "sketch" && r !== "" && info.kind !== "plane",
+                     enabled: r !== "sketch" && r !== "" && info.kind !== "plane" && info.kind !== "axis",
                      reason: qsTr("Move the solid the sketch belongs to instead."),
                      tip: r === "body"
                           ? qsTr("Drag the arrows, rings or the middle square in the view; the body follows live. Enter applies it as a timeline step, Esc cancels. Shortcut M.")
@@ -656,6 +663,11 @@ QtObject {
                                  actions: [a("thicken")] }] },
                          { title: qsTr("More"), steps: [], actions: [...fitted, a("sketchFin"), a("offset"), a("cutWithThis"),
                                info.kind === "body" ? a("editStep") : a("scale"), a("export"), a("hide"), a("isolate"), a("appearance"), a("rename"), a("delete")] }] }
+        }
+        if (r === "axis") {
+            return { title: roleName(r),
+                     intro: qsTr("A reference line to turn features about (Revolve, Circular Pattern, Move). It is not part of the model and is not exported."),
+                     sections: [{ title: qsTr("More"), steps: [], actions: [a("editAxis"), a("hide"), a("rename"), a("delete")] }] }
         }
         if (r === "plane") {
             return { title: roleName(r),
@@ -918,7 +930,8 @@ QtObject {
         case "finishSketch": return host.finishSketch(true)
         case "editSketch": return host.editFeature({ type: "sketch", id: info.featureId })
         case "sketchOnPlane": return host.createSketch({ plane: { plane: info.featureId } })
-        case "editPlane": {
+        case "editPlane":
+        case "editAxis": {
             const f = timelineFeature(info.featureId)
             return f ? host.editFeature(f) : null
         }

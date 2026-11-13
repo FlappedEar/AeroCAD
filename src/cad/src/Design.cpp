@@ -131,7 +131,7 @@ const std::vector<std::string>& Design::featureTypes()
 {
     static const std::vector<std::string> types{"sketch", "extrude", "revolve", "fillet", "chamfer",
                                                 "shell",  "combine", "box",     "cylinder", "sphere", "torus", "base_body", "hole",
-                                                "mirror",  "rectangular_pattern", "circular_pattern", "path_pattern", "pipe", "rib", "coil", "loft", "sweep", "plane",
+                                                "mirror",  "rectangular_pattern", "circular_pattern", "path_pattern", "pipe", "rib", "coil", "loft", "sweep", "plane", "axis",
                                                 "part_on_surface", "fin_on_surface", "move", "scale", "press_pull", "align", "boundary_fill", "split", "split_face", "delete_faces", "draft", "thread",
                                                 "fit_selection", "fit_regions", "trim_by_sketch", "offset_surface", "thicken_surface"};
     return types;
@@ -3764,6 +3764,21 @@ void Design::evaluateFeature(const Feature& f)
         return pl;
     };
 
+    // A construction axis `ref` {feature: id or name} (Fusion: Construct > Axis) as a point on it
+    // and its unit direction.
+    auto axisFeature = [&](const Json& ref, core::Vec3& origin, core::Vec3& dir) {
+        const Json& id = ref.at("feature");
+        const ConstructionAxis* found = nullptr;
+        for (const auto& [_, a] : m_axes) {
+            if ((id.is_number_integer() && a.id == id.get<FeatureId>()) || (id.is_string() && a.name == id.get<std::string>()))
+                found = &a;
+        }
+        if (found == nullptr)
+            throw DesignError("No construction axis " + id.dump() + " at this point of the timeline");
+        origin = found->origin;
+        dir = found->direction;
+    };
+
     auto resolveIndices = [&](const geometry::Shape& shape, const Json& list, bool edgesWanted) {
         std::vector<std::size_t> out;
         if (!list.is_array() || list.empty())
@@ -4095,6 +4110,8 @@ void Design::evaluateFeature(const Feature& f)
                 throw DesignError("Curve " + std::to_string(idx) + " of " + sk->name + " is not a line");
             origin = sk->plane.toWorld(sk->curves[idx].points[0]);
             dir = sk->plane.toWorld(sk->curves[idx].points[1]) - origin;
+        } else if (has(axis, "feature")) {
+            axisFeature(axis, origin, dir);
         } else {
             origin = ev.vec3(axis, "origin", {});
             dir = ev.vec3(axis, "direction", {0, 0, 1});
@@ -4377,6 +4394,7 @@ void Design::evaluateFeature(const Feature& f)
         const double angle = ev.num(p, "angle", 0.0);
         if (std::abs(angle) > 1e-12) {
             core::Vec3 axis{0, 0, 1};
+            core::Vec3 pivot = c; // a construction axis turns about itself, not about `center`
             const Json a = p.value("axis", Json("Z"));
             if (a.is_string()) {
                 const std::string n = lower(a.get<std::string>());
@@ -4386,13 +4404,15 @@ void Design::evaluateFeature(const Feature& f)
                     axis = {0, 1, 0};
                 else if (n != "z")
                     throw DesignError("Unknown axis '" + a.get<std::string>() + "' (X, Y, Z or [x, y, z])");
+            } else if (has(a, "feature")) {
+                axisFeature(a, pivot, axis);
             } else {
                 axis = ev.vec3(a);
             }
             if (axis.length() < 1e-12)
                 throw DesignError("Rotation axis is zero");
             const core::Mat3 rot = core::Mat3::rotation(axis.normalized(), angle * std::numbers::pi / 180.0);
-            tf = core::Affine{rot, c - rot * c};
+            tf = core::Affine{rot, pivot - rot * pivot};
         }
         if (has(p, "translate"))
             tf = core::Affine::translationBy(ev.vec3(p.at("translate"))).after(tf);
@@ -4520,6 +4540,8 @@ void Design::evaluateFeature(const Feature& f)
                 const Json axis = p.value("axis", Json("Z"));
                 if (axis.is_string()) {
                     dir = direction(axis, {0, 0, 1});
+                } else if (has(axis, "feature")) {
+                    axisFeature(axis, origin, dir);
                 } else {
                     origin = ev.vec3(axis, "origin", {});
                     dir = ev.vec3(axis, "direction", {0, 0, 1});
@@ -5020,6 +5042,108 @@ void Design::evaluateFeature(const Feature& f)
         if (!box.isEmpty())
             size = std::max(size, 0.6 * (box.max - box.min).length());
         m_planes[f.id] = {f.id, f.name, pl, size};
+    } else if (f.type == "axis") {
+        // Fusion: Construct > Axis Through Two Points, Through Edge, Perpendicular to Face,
+        // Through Cylinder/Cone/Torus Face, At Intersection of Two Planes.
+        const bool twoPoints = has(p, "from") || has(p, "to");
+        const int modes = int(twoPoints) + int(has(p, "line")) + int(has(p, "edge")) + int(has(p, "face")) + int(has(p, "plane"));
+        if (modes != 1)
+            throw DesignError("Give exactly one of from + to, line, edge, face or plane (+ plane2)");
+        if (has(p, "plane2") && !has(p, "plane"))
+            throw DesignError("plane2 goes with plane");
+        if (has(p, "plane2") && has(p, "point"))
+            throw DesignError("`point` goes with a single plane, not with plane2");
+        core::Vec3 origin{};
+        core::Vec3 dir{0, 0, 1};
+        // The body and the topology index of an `edge` / `face` {body, index | point}.
+        auto topologyRef = [&](const Json& ref, bool edge, const Body*& body) {
+            if (!ref.is_object() || !has(ref, "body"))
+                throw DesignError(std::string("`") + (edge ? "edge" : "face") + "` must be {body, index or point}");
+            body = &bodyRef(ref.at("body"));
+            if (has(ref, "index"))
+                return ref.at("index").get<std::size_t>();
+            const auto idx = matchTopology(body->shape, ref, edge, ev);
+            if (!idx)
+                throw DesignError(std::string("No ") + (edge ? "edge" : "face") + " near " + ref.dump());
+            return *idx;
+        };
+        if (twoPoints) {
+            if (!has(p, "from") || !has(p, "to"))
+                throw DesignError("An axis through two points needs both `from` and `to`");
+            origin = ev.vec3(p.at("from"));
+            dir = ev.vec3(p.at("to")) - origin;
+            if (dir.length() < 1e-9)
+                throw DesignError("The 2 points of the axis are the same");
+        } else if (has(p, "line")) {
+            // A world axis ("X", "Y", "Z"), or a line {origin, direction} (what clicking an edge gives).
+            const Json& line = p.at("line");
+            if (line.is_object() && has(line, "feature")) {
+                axisFeature(line, origin, dir); // a copy of another construction axis
+            } else if (line.is_string()) {
+                const std::string a = lower(line.get<std::string>());
+                if (a != "x" && a != "y" && a != "z")
+                    throw DesignError("Unknown axis '" + line.get<std::string>() + "' (X, Y, Z or {origin, direction})");
+                dir = a == "x" ? core::Vec3{1, 0, 0} : a == "y" ? core::Vec3{0, 1, 0} : core::Vec3{0, 0, 1};
+            } else {
+                origin = ev.vec3(line, "origin", {});
+                dir = ev.vec3(line, "direction", {0, 0, 1});
+            }
+            if (dir.length() < 1e-9)
+                throw DesignError("The axis direction is zero");
+        } else if (has(p, "edge")) {
+            const Body* body = nullptr;
+            const std::size_t idx = topologyRef(p.at("edge"), true, body);
+            const auto infos = geometry::edges(body->shape);
+            if (idx >= infos.size())
+                throw DesignError("No edge " + std::to_string(idx) + " on " + body->name);
+            const auto& e = infos[idx];
+            if (!e.hasAxis)
+                throw DesignError("Edge " + std::to_string(idx) + " of " + body->name + " is a " + e.type +
+                                  ": only straight and circular edges have an axis");
+            origin = e.axisOrigin;
+            dir = e.axisDirection;
+        } else if (has(p, "face")) {
+            const Body* body = nullptr;
+            const std::size_t idx = topologyRef(p.at("face"), false, body);
+            const auto infos = geometry::faces(body->shape);
+            if (idx >= infos.size())
+                throw DesignError("No face " + std::to_string(idx) + " on " + body->name);
+            const auto& fc = infos[idx];
+            if (!fc.hasAxis)
+                throw DesignError("Face " + std::to_string(idx) + " of " + body->name + " is a " + fc.type +
+                                  ": use a cylinder, cone or torus face");
+            origin = fc.axisOrigin;
+            dir = fc.axisDirection;
+        } else if (has(p, "plane2")) {
+            const Plane a = resolvePlane(p.at("plane")).normalized();
+            const Plane b = resolvePlane(p.at("plane2")).normalized();
+            const core::Vec3 cross = a.normal.cross(b.normal);
+            if (cross.length() < 1e-9)
+                throw DesignError("The 2 planes are parallel: they have no line in common");
+            dir = cross;
+            // A point of the line: n1 d1 + n2 d2 combined with the cross product.
+            const double d1 = a.normal.dot(a.origin);
+            const double d2 = b.normal.dot(b.origin);
+            origin = (b.normal.cross(cross) * d1 + cross.cross(a.normal) * d2) * (1.0 / cross.dot(cross));
+        } else {
+            // Perpendicular to a plane or planar face, through `point` (default the plane's origin).
+            const Plane pl = resolvePlane(p.at("plane")).normalized();
+            dir = pl.normal;
+            origin = has(p, "point") ? ev.vec3(p.at("point")) : pl.origin;
+        }
+        // Drawn a bit longer than the bodies built so far, like a construction plane.
+        core::BoundingBox box;
+        for (const auto& [_, b] : m_bodies) {
+            const core::BoundingBox bb = b.shape.bounds();
+            if (!bb.isEmpty()) {
+                box.extend(bb.min);
+                box.extend(bb.max);
+            }
+        }
+        double size = 25.0;
+        if (!box.isEmpty())
+            size = std::max(size, 0.6 * (box.max - box.min).length());
+        m_axes[f.id] = {f.id, f.name, origin, dir.normalized(), size};
     } else if (auto custom = m_evaluators.find(f.type); custom != m_evaluators.end()) {
         evaluateExternal(f, custom->second);
     } else {
@@ -5211,6 +5335,7 @@ void Design::regenerate()
     m_bodies.clear();
     m_sketches.clear();
     m_planes.clear();
+    m_axes.clear();
     m_statuses.clear();
     m_reports.clear();
     m_usedKeys.clear();
@@ -5453,6 +5578,32 @@ void Design::syncDocument(model::Document& document)
             outline.push_back(c[(i + 1) % 4]);
         }
         wanted[id] = {id, model::PartKind::Plane, cp.name, std::nullopt, std::move(mesh), std::move(outline), false};
+    }
+    for (const auto& [id, ca] : m_axes) {
+        // A thin four-sided bar along the axis: something to see and to click.
+        const core::Vec3 d = ca.direction.normalized();
+        const core::Vec3 helper = std::abs(d.z) < 0.9 ? core::Vec3{0, 0, 1} : core::Vec3{1, 0, 0};
+        const core::Vec3 u = d.cross(helper).normalized();
+        const core::Vec3 v = d.cross(u).normalized();
+        const double r = std::max(0.4, ca.size * 0.02);
+        const core::Vec3 a = ca.origin - d * ca.size;
+        const core::Vec3 b = ca.origin + d * ca.size;
+        const std::array<core::Vec3, 4> ring{u * r, v * r, u * -r, v * -r};
+        auto mesh = std::make_shared<core::TriangleMesh>();
+        for (const auto& c : ring)
+            mesh->addVertex(a + c);
+        for (const auto& c : ring)
+            mesh->addVertex(b + c);
+        for (std::uint32_t i = 0; i < 4; ++i) {
+            const std::uint32_t j = (i + 1) % 4;
+            mesh->addTriangle(i, j, 4 + j);
+            mesh->addTriangle(i, 4 + j, 4 + i);
+        }
+        mesh->addTriangle(0, 2, 1);
+        mesh->addTriangle(0, 3, 2);
+        mesh->addTriangle(4, 5, 6);
+        mesh->addTriangle(4, 6, 7);
+        wanted[id] = {id, model::PartKind::Axis, ca.name, std::nullopt, std::move(mesh), std::vector<core::Vec3>{a, b}, false};
     }
 
     // Remember user-controlled settings of every timeline part, so a part that disappears

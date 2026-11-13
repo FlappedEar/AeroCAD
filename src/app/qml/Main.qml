@@ -451,7 +451,7 @@ ApplicationWindow {
         const features = [], parts = []
         for (const id of selectedExisting()) {
             const info = controller.partInfo(id)
-            if (info.kind === "body" || info.kind === "sketch" || info.kind === "plane") {
+            if (info.kind === "body" || info.kind === "sketch" || info.kind === "plane" || info.kind === "axis") {
                 if (features.indexOf(info.featureId) < 0)
                     features.push(info.featureId)
             } else {
@@ -809,7 +809,7 @@ ApplicationWindow {
                 selectBodyOfFeature(b.featureId)
             }
         }
-        const combineTool = type === "combine" && info.id && info.kind !== "sketch" && info.kind !== "plane"
+        const combineTool = type === "combine" && info.id && info.kind !== "sketch" && info.kind !== "plane" && info.kind !== "axis"
                             && !((info.solids ?? 0) > 0)
         if (combineTool) {
             // A surface or the scan selected: it is the tool that cuts a body to its shape.
@@ -1414,6 +1414,8 @@ ApplicationWindow {
     Action { id: splitAction; text: qsTr("Spli&t Body"); enabled: !window.activeSketch; onTriggered: window.openFeature("split") }
     Action { id: combineAction; text: qsTr("Co&mbine"); onTriggered: window.openFeature("combine") }
     Action { id: planeAction; text: qsTr("Construction &Plane"); enabled: !window.activeSketch; onTriggered: window.openFeature("plane") }
+    // Fusion: Construct > Axis (a line to turn features about).
+    Action { id: axisAction; text: qsTr("Construction &Axis"); enabled: !window.activeSketch; onTriggered: window.openFeature("axis") }
     // Fusion: Construct > Midplane (halfway between two parallel faces or planes).
     Action { id: midplaneAction; text: qsTr("&Midplane"); enabled: !window.activeSketch; onTriggered: window.openFeature("midplane") }
     Action { id: loftAction; text: qsTr("&Loft"); enabled: !window.activeSketch; onTriggered: window.openFeature("loft") }
@@ -1796,6 +1798,7 @@ ApplicationWindow {
             title: qsTr("C&onstruct")
             MenuItem { action: planeAction }
             MenuItem { action: midplaneAction }
+            MenuItem { action: axisAction }
         }
         Menu {
             title: qsTr("&Modify")
@@ -2137,6 +2140,7 @@ ApplicationWindow {
                 caption: qsTr("CONSTRUCT")
                 ToolCommand { action: planeAction; text: qsTr("Plane"); iconName: "plane" }
                 ToolCommand { action: midplaneAction; text: qsTr("Midplane"); iconName: "plane" }
+                ToolCommand { action: axisAction; text: qsTr("Axis"); iconName: "axis" }
             }
             ToolSeparator {}
             ToolGroup {

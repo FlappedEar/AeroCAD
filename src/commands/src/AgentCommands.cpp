@@ -240,6 +240,7 @@ void registerProjectContext(CommandRegistry& r)
                                    {"kind", p.kind == model::PartKind::Body     ? "body"
                                             : p.kind == model::PartKind::Sketch ? "sketch"
                                             : p.kind == model::PartKind::Plane  ? "plane"
+                                            : p.kind == model::PartKind::Axis   ? "axis"
                                                                                 : "imported"},
                                    {"featureId", p.featureId},
                                    {"source", p.source},
@@ -347,11 +348,10 @@ void registerViewCommands(CommandRegistry& r)
                        {"maximum", 2000},
                        {"description", "Longest side of the image in pixels (default 1024)."}};
     r.add({"view.screenshot", "Screenshot",
-           "Shows you what the user sees: returns an image of the AeroCAD 3D view (or the whole window), optionally "
-           "after turning the camera (direction) and framing a part or an area first. Use it to check a result "
-           "(did the fin land on the bumper? is the sketch where you meant it?), to find where to work on a scan, "
-           "and before telling the user that something is done. The result also lists the camera, the visible parts "
-           "and the size of the image; view_pick turns pixel positions in it into 3D points on the model.",
+           "Shows you what the user sees: an image of the AeroCAD 3D view (or the whole window), optionally after "
+           "turning the camera (direction) and framing a part or an area. Use it to check a result and before "
+           "telling the user that something is done. The result also lists the camera, the visible parts and the "
+           "image size; view_pick turns pixel positions in it into 3D points on the model.",
            objectSchema(shot)},
           [](CommandContext&, const Json&) -> Json { throw CommandError(kNeedsWindow); });
 

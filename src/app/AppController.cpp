@@ -195,7 +195,7 @@ QString AppController::partOpenWarning(quint64 id) const
 {
     const model::Part* p = part(id);
     if (p == nullptr || !p->mesh || p->mesh->isEmpty() || p->kind == model::PartKind::Sketch ||
-        p->kind == model::PartKind::Plane)
+        p->kind == model::PartKind::Plane || p->kind == model::PartKind::Axis)
         return {};
     // A scan can have millions of triangles: check each mesh once, a big one in the
     // background (meshChecksChanged follows) so an edit never waits for it.
@@ -851,6 +851,7 @@ QVariantMap AppController::partInfo(quint64 id) const
         {QStringLiteral("kind"), p->kind == model::PartKind::Body     ? QStringLiteral("body")
                                  : p->kind == model::PartKind::Sketch ? QStringLiteral("sketch")
                                  : p->kind == model::PartKind::Plane  ? QStringLiteral("plane")
+                                 : p->kind == model::PartKind::Axis   ? QStringLiteral("axis")
                                                                       : QStringLiteral("imported")},
         {QStringLiteral("featureId"), QVariant::fromValue<qulonglong>(p->featureId)},
         {QStringLiteral("faces"), QVariant::fromValue<qulonglong>(p->shape ? p->shape->faceCount() : 0)},

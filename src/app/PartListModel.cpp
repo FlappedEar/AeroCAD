@@ -47,6 +47,7 @@ QVariant PartListModel::data(const QModelIndex& index, int role) const
         case model::PartKind::Body: return QStringLiteral("body");
         case model::PartKind::Sketch: return QStringLiteral("sketch");
         case model::PartKind::Plane: return QStringLiteral("plane");
+        case model::PartKind::Axis: return QStringLiteral("axis");
         case model::PartKind::Imported: break;
         }
         return QStringLiteral("imported");

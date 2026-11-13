@@ -2,6 +2,7 @@
 #include "aerocad/commands/Session.hpp"
 #include "aerocad/geometry/Modeling.hpp"
 #include "aerocad/geometry/Sketch.hpp"
+#include "aerocad/core/Path.hpp"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -9,6 +10,8 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <filesystem>
+#include <random>
 #include <numbers>
 #include <set>
 #include <utility>
@@ -5021,6 +5024,140 @@ TEST_CASE("Design commands: boundary fill makes a body of the enclosed spaces (F
         const auto r = s.execute("feature.boundary_fill", {{"tools", {"Body1", {{"part", imported.at("id")}}}}});
         CHECK_FALSE(r.ok);
         CHECK(r.error.find("no exact shape") != std::string::npos);
+    }
+}
+
+TEST_CASE("Design commands: construction axis (Fusion: Construct > Axis)", "[commands][cad]")
+{
+    const auto close = [](const Json& v, double x, double y, double z) {
+        return v.at(0).get<double>() == Approx(x).margin(1e-6) && v.at(1).get<double>() == Approx(y).margin(1e-6) &&
+               v.at(2).get<double>() == Approx(z).margin(1e-6);
+    };
+    commands::Session s;
+    SECTION("through two points, and an unusable pair")
+    {
+        const Json r = run(s, "feature.axis", {{"from", {10, 0, 0}}, {"to", {10, 0, 5}}});
+        CHECK(close(r.at("axis").at("origin"), 10, 0, 0));
+        CHECK(close(r.at("axis").at("direction"), 0, 0, 1));
+        CHECK_FALSE(s.execute("feature.axis", {{"from", {1, 2, 3}}, {"to", {1, 2, 3}}}).ok);
+        CHECK_FALSE(s.execute("feature.axis", {{"from", {1, 2, 3}}}).ok);
+        CHECK_FALSE(s.execute("feature.axis", {{"plane2", "XY"}}).ok);
+        const Json y = run(s, "feature.axis", {{"line", "Y"}});
+        CHECK(close(y.at("axis").at("direction"), 0, 1, 0));
+        const Json given = run(s, "feature.axis", {{"line", {{"origin", {1, 2, 3}}, {"direction", {0, 0, 2}}}}});
+        CHECK(close(given.at("axis").at("origin"), 1, 2, 3));
+        CHECK(close(given.at("axis").at("direction"), 0, 0, 1));
+        CHECK_FALSE(s.execute("feature.axis", {{"line", "W"}}).ok);
+        // A copy of another axis, and `point` does not go with two planes.
+        const Json copy = run(s, "feature.axis", {{"line", {{"feature", given.at("id")}}}});
+        CHECK(close(copy.at("axis").at("origin"), 1, 2, 3));
+        CHECK_FALSE(s.execute("feature.axis", {{"plane", "XY"}, {"plane2", "XZ"}, {"point", {1, 1, 1}}}).ok);
+    }
+    SECTION("exactly one way to define it")
+    {
+        CHECK_FALSE(s.execute("feature.axis", Json::object()).ok);
+        CHECK_FALSE(s.execute("feature.axis", {{"from", {0, 0, 0}}, {"to", {1, 0, 0}}, {"plane", "XY"}}).ok);
+    }
+    SECTION("at the intersection of two planes")
+    {
+        const Json r = run(s, "feature.axis", {{"plane", "XY"}, {"plane2", "XZ"}});
+        CHECK(std::abs(r.at("axis").at("direction").at(0).get<double>()) == Approx(1).margin(1e-9));
+        CHECK(r.at("axis").at("origin").at(1).get<double>() == Approx(0).margin(1e-9));
+        CHECK(r.at("axis").at("origin").at(2).get<double>() == Approx(0).margin(1e-9));
+        // Planes offset from the origin: z = 5 and y = 3 meet along the line y = 3, z = 5.
+        const Json up = run(s, "feature.plane", {{"base", "XY"}, {"offset", 5}});
+        const Json side = run(s, "feature.plane", {{"base", "XZ"}, {"offset", 3}});
+        const Json r2 = run(s, "feature.axis", {{"plane", {{"plane", up.at("id")}}}, {"plane2", {{"plane", side.at("id")}}}});
+        const Json o = r2.at("axis").at("origin");
+        const Json d = r2.at("axis").at("direction");
+        CHECK(std::abs(d.at(0).get<double>()) == Approx(1).margin(1e-9));
+        CHECK(std::abs(o.at(1).get<double>()) == Approx(3).margin(1e-9));
+        CHECK(o.at(2).get<double>() == Approx(5).margin(1e-9));
+        CHECK_FALSE(s.execute("feature.axis", {{"plane", "XY"}, {"plane2", "XY"}}).ok);
+    }
+    SECTION("perpendicular to a plane through a point")
+    {
+        const Json r = run(s, "feature.axis", {{"plane", "XY"}, {"point", {4, 5, 6}}});
+        CHECK(close(r.at("axis").at("origin"), 4, 5, 6));
+        CHECK(std::abs(r.at("axis").at("direction").at(2).get<double>()) == Approx(1).margin(1e-9));
+        const Json plain = run(s, "feature.axis", {{"plane", "YZ"}});
+        CHECK(std::abs(plain.at("axis").at("direction").at(0).get<double>()) == Approx(1).margin(1e-9));
+    }
+    SECTION("through a straight or circular edge and a cylinder face")
+    {
+        run(s, "feature.box", {{"corner", {0, 0, 0}}, {"size", {10, 20, 30}}});
+        // The edge along Y at x = 0, z = 0.
+        const Json e = run(s, "feature.axis", {{"edge", {{"body", "Body1"}, {"point", {0, 10, 0}}}}});
+        CHECK(std::abs(e.at("axis").at("direction").at(1).get<double>()) == Approx(1).margin(1e-9));
+        CHECK(e.at("axis").at("origin").at(0).get<double>() == Approx(0).margin(1e-9));
+        run(s, "feature.cylinder", {{"center", {50, 50, 0}}, {"radius", 5}, {"height", 20}});
+        const Json c = run(s, "feature.axis", {{"face", {{"body", "Body2"}, {"point", {55, 50, 10}}}}});
+        CHECK(c.at("axis").at("origin").at(0).get<double>() == Approx(50).margin(1e-6));
+        CHECK(c.at("axis").at("origin").at(1).get<double>() == Approx(50).margin(1e-6));
+        CHECK(std::abs(c.at("axis").at("direction").at(2).get<double>()) == Approx(1).margin(1e-9));
+        // A flat face has no axis; a missing body is an error.
+        CHECK_FALSE(s.execute("feature.axis", {{"face", {{"body", "Body1"}, {"point", {5, 10, 30}}}}}).ok);
+        CHECK_FALSE(s.execute("feature.axis", {{"edge", {{"body", "Nope"}, {"index", 0}}}}).ok);
+    }
+    SECTION("it is a part in the document, saved with the project and not exported or simulated")
+    {
+        const Json r = run(s, "feature.axis", {{"from", {0, 0, 0}}, {"to", {0, 0, 5}}});
+        const auto id = r.at("id").get<std::uint64_t>();
+        const model::Part* part = nullptr;
+        for (const auto& q : s.document().parts())
+            if (q.featureId == id)
+                part = &q;
+        REQUIRE(part != nullptr);
+        CHECK(part->kind == model::PartKind::Axis);
+        REQUIRE(part->mesh != nullptr);
+        CHECK(part->mesh->triangleCount() == 12);
+        const auto file = std::filesystem::temp_directory_path() / ("aerocad_axis_" + std::to_string(std::random_device{}()) + ".aerocad");
+        REQUIRE(s.execute("project.save", {{"path", core::pathToUtf8(file)}}).ok);
+        commands::Session reopened;
+        REQUIRE(reopened.execute("project.open", {{"path", core::pathToUtf8(file)}}).ok);
+        bool found = false;
+        for (const auto& q : reopened.document().parts())
+            found = found || (q.featureId == id && q.kind == model::PartKind::Axis);
+        CHECK(found);
+        std::error_code ec;
+        std::filesystem::remove(file, ec);
+        CHECK_FALSE(s.execute("part.duplicate", {{"id", part->id}}).ok);
+        CHECK_FALSE(s.execute("simulation.run", {{"id", part->id}}).ok);
+    }
+    SECTION("revolve, circular pattern and move turn about it")
+    {
+        // A vertical axis at x = 100.
+        const Json ax = run(s, "feature.axis", {{"from", {100, 0, 0}}, {"to", {100, 0, 1}}});
+        const auto id = ax.at("id").get<std::uint64_t>();
+        run(s, "feature.box", {{"corner", {110, 0, 0}}, {"size", {10, 10, 10}}});
+        run(s, "feature.circular_pattern", {{"body", "Body1"}, {"axis", {{"feature", id}}}, {"count", 4}, {"operation", "new_body"}});
+        const Json after = run(s, "timeline.list");
+        // Four boxes (the original and three copies) in one body; the copies sit round the axis.
+        const auto last = after.at("bodies").back().at("bounds");
+        CHECK(last.at("min").at(0).get<double>() < 90);
+        CHECK(last.at("max").at(0).get<double>() > 109);
+        // Move: a quarter turn about the axis by name moves the box from +X of it to +Y of it.
+        run(s, "feature.box", {{"corner", {110, -5, 0}}, {"size", {10, 10, 10}}});
+        const std::string name = ax.at("name").get<std::string>();
+        run(s, "feature.move", {{"body", "Body3"}, {"axis", {{"feature", name}}}, {"angle", 90}});
+        const Json moved = run(s, "timeline.list");
+        for (const auto& b : moved.at("bodies")) {
+            if (b.at("name") != "Body3")
+                continue;
+            // The box centre (115, 0) is 15 from the axis; a quarter turn puts it at (100, 15).
+            const auto mn = b.at("bounds").at("min");
+            const auto mx = b.at("bounds").at("max");
+            CHECK((mn.at(0).get<double>() + mx.at(0).get<double>()) / 2 == Approx(100).margin(1e-6));
+            CHECK((mn.at(1).get<double>() + mx.at(1).get<double>()) / 2 == Approx(15).margin(1e-6));
+        }
+        // An axis that is not there.
+        CHECK_FALSE(s.execute("feature.move", {{"body", "Body3"}, {"axis", {{"feature", 999}}}, {"angle", 90}}).ok);
+        // Revolve a profile about it: a 10 x 10 square 10 away from the axis gives a ring of 100 * 2 pi * 15.
+        const auto sk = run(s, "sketch.create", {{"plane", "XZ"},
+                                                  {"curves", Json::array({{{"type", "rectangle"}, {"corner", {110, 0}}, {"width", 10}, {"height", 10}}})}})
+                            .at("id").get<std::uint64_t>();
+        const Json rev = run(s, "feature.revolve", {{"sketch", sk}, {"axis", {{"feature", id}}}});
+        CHECK(rev.at("bodies").back().at("volume").get<double>() == Approx(100 * 2 * 3.14159265358979 * 15).epsilon(1e-4));
     }
 }
 

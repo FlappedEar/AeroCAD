@@ -34,6 +34,7 @@ struct PickFilter {
         return (kind == "body" && part.kind == model::PartKind::Body)
                || (kind == "sketch" && part.kind == model::PartKind::Sketch)
                || (kind == "plane" && part.kind == model::PartKind::Plane)
+               || (kind == "axis" && part.kind == model::PartKind::Axis)
                || (kind == "imported" && part.kind == model::PartKind::Imported);
     }
 };

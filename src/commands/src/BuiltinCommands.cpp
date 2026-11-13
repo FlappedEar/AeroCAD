@@ -219,8 +219,9 @@ void registerPartCommands(CommandRegistry& r)
           [](CommandContext& ctx, const Json& params) {
               model::Document& doc = ctx.document;
               const model::Part& source = requirePart(doc, params);
-              if (source.kind == model::PartKind::Sketch || source.kind == model::PartKind::Plane)
-                  throw CommandError("Cannot duplicate a sketch or plane: copy the body made from it");
+              if (source.kind == model::PartKind::Sketch || source.kind == model::PartKind::Plane ||
+                  source.kind == model::PartKind::Axis)
+                  throw CommandError("Cannot duplicate a sketch, plane or axis: copy the body made from it");
               if (!source.mesh)
                   throw CommandError("Part has no geometry to copy");
               // `source` dangles once addPart() reallocates the part list.

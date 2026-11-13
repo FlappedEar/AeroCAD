@@ -234,7 +234,7 @@ Pane {
         revolve: { title: qsTr("Revolve"), command: "feature.revolve", fields: [
             { key: "sketch", type: "sketch", label: qsTr("Sketch") },
             { key: "points", type: "profilePicks", label: qsTr("Profiles"), hint: qsTr("All profiles (click inside profiles to pick)") },
-            { key: "axis", type: "axisPick", label: qsTr("Axis"), init: "Z", hint: qsTr("Click a sketch line, an edge or a cylindrical face") },
+            { key: "axis", type: "axisPick", label: qsTr("Axis"), init: "Z", hint: qsTr("Click a sketch line, an edge, a cylindrical face or a construction axis") },
             { key: "extent", type: "choice", label: qsTr("Direction"), init: "one_side", options: [
                 { value: "one_side", label: qsTr("One Side") }, { value: "symmetric", label: qsTr("Symmetric") },
                 { value: "two_sides", label: qsTr("Two Sides") }] },
@@ -349,6 +349,18 @@ Pane {
             { key: "axis", type: "choice", label: qsTr("Rotation axis"), init: "x", options: [
                 { value: "x", label: qsTr("Plane X axis") }, { value: "y", label: qsTr("Plane Y axis") }],
               showIf: v => Number(v.angle) !== 0 }] },
+        axis: { title: qsTr("Construction Axis"), command: "feature.axis", fields: [
+            { key: "mode", type: "choice", label: qsTr("Through"), init: "line", local: true, options: [
+                { value: "line", label: qsTr("Edge, cylinder or axis") }, { value: "points", label: qsTr("Two points") },
+                { value: "plane", label: qsTr("Perpendicular to a plane") }, { value: "planes", label: qsTr("Intersection of two planes") }] },
+            { key: "line", type: "axisPick", label: qsTr("Axis"), init: "Z", hint: qsTr("Click an edge, a cylindrical face or a construction axis"),
+              showIf: v => v.mode === "line" },
+            { key: "from", type: "vec3", label: qsTr("From"), init: [0, 0, 0], showIf: v => v.mode === "points" },
+            { key: "to", type: "vec3", label: qsTr("To"), init: [0, 0, 10], showIf: v => v.mode === "points" },
+            { key: "plane", type: "planePick", label: qsTr("Plane"), init: "XY", hint: qsTr("Origin plane, construction plane, or click a planar face"),
+              showIf: v => v.mode === "plane" || v.mode === "planes" },
+            { key: "plane2", type: "planePick", label: qsTr("Second plane"), init: "XZ", hint: qsTr("Origin plane, construction plane, or click a planar face"),
+              showIf: v => v.mode === "planes" }] },
         move: { title: qsTr("Move/Rotate"), command: "feature.move", fields: [
             { key: "body", type: "body", label: qsTr("Body") },
             { key: "axis", type: "choice", label: qsTr("Rotate about"), init: "Z", options: axes },
@@ -396,7 +408,7 @@ Pane {
             { key: "operation", type: "choice", label: qsTr("Operation"), init: "join", options: patternOperations }] },
         circular_pattern: { title: qsTr("Circular Pattern"), command: "feature.circular_pattern", fields: [
             { key: "body", type: "body", label: qsTr("Body") },
-            { key: "axis", type: "axisPick", label: qsTr("Axis"), init: "Z", hint: qsTr("Click an edge or a cylindrical face") },
+            { key: "axis", type: "axisPick", label: qsTr("Axis"), init: "Z", hint: qsTr("Click an edge, a cylindrical face or a construction axis") },
             { key: "count", type: "expr", label: qsTr("Quantity"), init: 6 },
             { key: "angle", type: "expr", label: qsTr("Total angle (deg)"), init: 360 },
             { key: "operation", type: "choice", label: qsTr("Operation"), init: "join", options: patternOperations }] },
@@ -550,6 +562,11 @@ Pane {
         // A hole made at sketch points is edited with that placement.
         if (featureType === "hole" && initial && initial.sketch !== undefined && initial.placement === undefined)
             v.placement = "sketch"
+        // The way a construction axis is defined is inferred from what it stores.
+        if (initial && featureType === "axis") {
+            v.mode = initial.from !== undefined ? "points" : initial.plane2 !== undefined ? "planes"
+                   : initial.plane !== undefined ? "plane" : "line"
+        }
         // Sizing modes that are not stored as such are inferred from the stored parameters, so that
         // reopening a feature and pressing OK does not swap in the other mode's defaults.
         if (initial && featureType === "coil") {
@@ -799,10 +816,13 @@ Pane {
             // Only bodies (not the preview) take the click: planes, sketches and scans in
             // front are clicked through.
             const parts = controller.execute("document.parts")
-            const ids = parts.ok ? parts.result.parts.filter(p => p.kind === "body" && p.featureId !== previewFeatureId).map(p => p.id) : []
+            const ids = parts.ok ? parts.result.parts.filter(p => (p.kind === "body" && p.featureId !== previewFeatureId)
+                                                              || (p.kind === "axis" && p.featureId !== editId)).map(p => p.id) : []
             const hit = view.pickPartAmong(x, y, ids)
             const info = hit ? controller.partInfo(hit.partId) : null
-            if (info && info.kind === "body")
+            if (info && info.kind === "axis")
+                axis = { feature: info.featureId }
+            else if (info && info.kind === "body")
                 axis = edgeAxis(info.featureId, hit.point, 8 * view.worldPerPixelAt(hit.point))
         }
         if (!axis) {
@@ -1269,7 +1289,11 @@ Pane {
                 Layout.fillWidth: true
                 readonly property var items: {
                     const out = [{ name: "X", value: "X" }, { name: "Y", value: "Y" }, { name: "Z", value: "Z" }]
-                    if (current && typeof current === "object")
+                    for (const f of root.timeline.features) {
+                        if (f.type === "axis" && f.status === "ok" && f.id !== root.editId)
+                            out.push({ name: f.name, value: { feature: f.id } })
+                    }
+                    if (current && typeof current === "object" && current.feature === undefined)
                         out.push({ name: current.line !== undefined ? qsTr("Sketch line %1").arg(current.line + 1)
                                                                    : qsTr("Picked axis"), value: current })
                     return out

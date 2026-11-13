@@ -106,7 +106,8 @@ std::vector<const model::Part*> selectParts(const model::Document& doc, const Js
     } else {
         // Sketch profiles and construction planes are helpers, not geometry to export.
         for (const auto& p : doc.parts()) {
-            if (p.visible && p.kind != model::PartKind::Sketch && p.kind != model::PartKind::Plane)
+            if (p.visible && p.kind != model::PartKind::Sketch && p.kind != model::PartKind::Plane &&
+                p.kind != model::PartKind::Axis)
                 parts.push_back(&p);
         }
         if (parts.empty())

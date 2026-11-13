@@ -549,6 +549,8 @@ Json addedFeature(cad::Design& d, const model::Document& doc, cad::FeatureId id)
         const auto& pl = it->second.plane;
         j["plane"] = {{"origin", vec(pl.origin)}, {"normal", vec(pl.normal)}, {"xDir", vec(pl.xDir)}};
     }
+    if (auto it = d.axes().find(id); it != d.axes().end())
+        j["axis"] = {{"origin", vec(it->second.origin)}, {"direction", vec(it->second.direction)}};
     return j;
 }
 
@@ -1623,10 +1625,8 @@ void registerSketchCommands(CommandRegistry& r)
 {
     r.add({"sketch.create", "Create Sketch",
            "Creates a 2D sketch on a standard plane, an arbitrary plane, a planar face of a body or over a curved "
-           "surface or scan (surface: best-fit plane), with curves "
-           "(lines, rectangles, circles, arcs, polygons, slots, splines). Closed regions become profiles for "
-           "extrude/revolve. Dimensions can be expressions using user parameters (parameter.set), so editing a "
-           "parameter updates the model.",
+           "surface or scan (surface: best-fit plane), with curves. Closed regions become profiles for "
+           "extrude/revolve. Dimensions can be expressions using user parameters (parameter.set).",
            objectSchema({{"plane", planeSchema()},
                          {"face", faceRefSchema()},
                          {"surface", surfaceRefSchema()},
@@ -2561,8 +2561,8 @@ void registerFeatureCommands(CommandRegistry& r)
         merged(profileSelection(),
                {{"axis", {{"type", Json::array({"string", "object"})},
                           {"description", "\"X\", \"Y\", \"Z\" (world axes through the origin, default Z), "
-                                          "{line: curve index of a sketch line} or {origin: [x,y,z], direction: "
-                                          "[x,y,z]}."}}},
+                                          "{line: curve index of a sketch line}, {feature: construction axis} or "
+                                          "{origin: [x,y,z], direction: [x,y,z]}."}}},
                 {"extent", {{"type", "string"},
                             {"enum", {"one_side", "symmetric", "two_sides"}},
                             {"description", "one_side (default); symmetric: `angle` in total, half each side; two_sides: "
@@ -2649,7 +2649,8 @@ void registerFeatureCommands(CommandRegistry& r)
                       "translation.",
                       {{"body", bodyRefSchema("Body to move.")},
                        {"translate", point3("Offset [dx, dy, dz] in mm.")},
-                       {"axis", directionSchema},
+                       {"axis", {{"type", Json::array({"string", "array", "object"})},
+                                 {"description", "\"X\", \"Y\", \"Z\", [x, y, z] or {feature: construction axis} (turns about that line)."}}},
                        {"angle", numberOrExpr("Rotation in degrees (right-hand rule about the axis).")},
                        {"scale", numberOrExpr("Uniform scale factor about `center` (default 1).")},
                        {"center", point3("Rotation and scale centre [x, y, z] in mm.")},
@@ -2762,7 +2763,7 @@ void registerFeatureCommands(CommandRegistry& r)
                       "angle spreads the instances evenly.",
                       {{"body", bodyRefSchema("Body to pattern.")},
                        {"axis", {{"type", Json::array({"string", "object"})},
-                                 {"description", "\"X\", \"Y\", \"Z\" (default) or {origin, direction}."}}},
+                                 {"description", "\"X\", \"Y\", \"Z\" (default), {feature: construction axis} or {origin, direction}."}}},
                        {"count", numberOrExpr("Number of instances, including the body.")},
                        {"angle", numberOrExpr("Total angle in degrees, default 360.")},
                        {"operation", patternOperation}},
@@ -2807,6 +2808,23 @@ void registerFeatureCommands(CommandRegistry& r)
              {"base2", basePlane},
              {"points", {{"type", "array"}, {"minItems", 3}, {"maxItems", 3}, {"items", point3("Point.")},
                          {"description", "Three points the plane passes through (instead of base)."}}}},
+            Json::array());
+
+        const Json topoRef{{"type", "object"}, {"description", "{body, index or point}."}};
+        addFeatureCommand(
+            r, "axis", "Construction Axis",
+            "Creates a construction axis (Fusion: Construct > Axis) to turn about: axis {feature: id or name} in revolve, "
+            "circular_pattern, move. Give one of from + to (two points), line (\"X\"/\"Y\"/\"Z\" or {origin, direction}), "
+            "edge (straight or circular), face (cylinder, cone, torus) or plane (perpendicular to it, through `point`; "
+            "with plane2: where the two planes meet).",
+            {{"from", point3("Start point.")},
+             {"to", point3("Second point.")},
+             {"line", {{"type", Json::array({"string", "object"})}, {"description", "\"X\", \"Y\", \"Z\", {origin, direction} or {feature: construction axis}."}}},
+             {"edge", topoRef},
+             {"face", topoRef},
+             {"plane", basePlane},
+             {"plane2", basePlane},
+             {"point", point3("With plane: where the axis starts.")}},
             Json::array());
     }
 

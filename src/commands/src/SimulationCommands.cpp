@@ -140,6 +140,8 @@ RunInput collectInput(CommandContext& ctx, const Json& params)
         throw CommandError("'" + part->name + "' is a sketch; simulate a body or an imported part");
     if (part->kind == model::PartKind::Plane)
         throw CommandError("'" + part->name + "' is a construction plane; simulate a body or an imported part");
+    if (part->kind == model::PartKind::Axis)
+        throw CommandError("'" + part->name + "' is a construction axis; simulate a body or an imported part");
     in.geometry.part = *part->mesh;
     in.source.partId = part->id;
     in.source.partName = part->name;
@@ -153,7 +155,8 @@ RunInput collectInput(CommandContext& ctx, const Json& params)
         if (cp == nullptr)
             throw CommandError("No part with id " + std::to_string(cid) + " (context)");
         // Sketches and construction planes are drawing aids, not walls in the flow (CAD-130).
-        if (cp->mesh && cp->kind != model::PartKind::Sketch && cp->kind != model::PartKind::Plane)
+        if (cp->mesh && cp->kind != model::PartKind::Sketch && cp->kind != model::PartKind::Plane &&
+            cp->kind != model::PartKind::Axis)
             in.geometry.context.append(*cp->mesh);
         in.source.contextPartIds.push_back(cid);
     }
