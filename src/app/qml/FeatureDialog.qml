@@ -718,6 +718,11 @@ Pane {
             delete v[key]
         else
             v[key] = value
+        // A construction axis is defined once: choosing a line drops an edge or face it was picked from.
+        if (type === "axis" && key === "line") {
+            delete v.edge
+            delete v.face
+        }
         // Revolve Two Sides: both angles must fit in one turn, so the default full turn gives way
         // (and comes back when the direction changes again, unless the angle was edited).
         if (key === "angle")
@@ -830,6 +835,10 @@ Pane {
             return false
         }
         setValue(pickKey, axis)
+        if (type === "axis" && lastAxisRef && !axis.line && !axis.feature) {
+            const v = Object.assign({}, values, lastAxisRef)
+            values = v
+        }
         return true
     }
 
@@ -837,11 +846,16 @@ Pane {
     /// the point (a straight edge along itself, a circular one through its centre along its
     /// normal), else the axis of the cylinder / cone / torus face there, else the nearest
     /// straight or circular edge of the body (Fusion: Axis through edge / cylinder face).
+    property var lastAxisRef: null
     function edgeAxis(featureId, point, tol) {
+        lastAxisRef = null
         const er = controller.execute("body.edges", { body: featureId })
         if (!er.ok)
             return null
         const r4 = x => Math.round(x * 1e4) / 1e4
+        // A construction axis keeps what it was picked from (an edge or a face of the body), so it
+        // follows the body when that is edited.
+        const edgeRef = e => { lastAxisRef = { edge: { body: featureId, point: e.middle.map(r4) } }; return axisOf(e.axis) }
         const axisOf = a => ({ origin: a.origin.map(r4), direction: a.direction.map(r4) })
         const dot = (u, v) => u[0] * v[0] + u[1] * v[1] + u[2] * v[2]
         const p = [point.x, point.y, point.z]
@@ -882,15 +896,17 @@ Pane {
             if (dist < bestD) { best = e; bestD = dist }
         }
         if (best && bestD <= tol)
-            return axisOf(best.axis)
+            return edgeRef(best)
         const fr = controller.execute("body.faces", { body: featureId, point: [p[0], p[1], p[2]] })
         if (fr.ok && fr.result.nearest) {
             const f = fr.result.faces.find(x => x.index === fr.result.nearest.index)
-            if (f && f.axis)
+            if (f && f.axis) {
+                lastAxisRef = { face: { body: featureId, point: p.map(r4) } }
                 return axisOf(f.axis)
+            }
         }
         // Nothing under the click (a flat face, say): the nearest edge when it is close, else nothing.
-        return best && bestD <= 5 * tol ? axisOf(best.axis) : null
+        return best && bestD <= 5 * tol ? edgeRef(best) : null
     }
 
     /// Viewport pick while the dialog is open: `part` is controller.partInfo().
@@ -1026,6 +1042,8 @@ Pane {
             return { ok: false, error: qsTr("%1: pick the %2").arg(spec.title).arg(missing.label.toLowerCase()) }
         const run = (name, args) => quiet ? controller.preview(name, args) : controller.execute(name, args)
         const params = Object.assign({}, values)
+        if (type === "axis" && (params.edge !== undefined || params.face !== undefined))
+            delete params.line // the picked edge or face is the definition
         for (const f of spec.fields) {
             if (f.local || (f.showIf && !f.showIf(values)))
                 delete params[f.key]
@@ -1287,20 +1305,25 @@ Pane {
             spacing: 2
             ComboBox {
                 Layout.fillWidth: true
+                readonly property var topoRef: root.type === "axis" ? (root.values.edge !== undefined ? root.values.edge : root.values.face) : undefined
                 readonly property var items: {
                     const out = [{ name: "X", value: "X" }, { name: "Y", value: "Y" }, { name: "Z", value: "Z" }]
+                    if (topoRef) {
+                        const b = root.timeline.bodies.find(x => x.id === topoRef.body)
+                        out.push({ name: (root.values.edge !== undefined ? qsTr("Edge of %1") : qsTr("Face of %1")).arg(b ? b.name : topoRef.body), value: topoRef })
+                    }
                     for (const f of root.timeline.features) {
                         if (f.type === "axis" && f.status === "ok" && f.id !== root.editId)
                             out.push({ name: f.name, value: { feature: f.id } })
                     }
-                    if (current && typeof current === "object" && current.feature === undefined)
+                    if (current && typeof current === "object" && current.feature === undefined && !topoRef)
                         out.push({ name: current.line !== undefined ? qsTr("Sketch line %1").arg(current.line + 1)
                                                                    : qsTr("Picked axis"), value: current })
                     return out
                 }
                 model: items.map(i => i.name)
-                currentIndex: items.findIndex(i => JSON.stringify(i.value) === JSON.stringify(current))
-                onActivated: index => root.setValue(field.key, items[index].value)
+                currentIndex: items.findIndex(i => topoRef ? i.value === topoRef : JSON.stringify(i.value) === JSON.stringify(current))
+                onActivated: index => { if (items[index].value !== topoRef) root.setValue(field.key, items[index].value) }
             }
             Button {
                 Layout.fillWidth: true
