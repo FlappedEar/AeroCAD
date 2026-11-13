@@ -4665,6 +4665,59 @@ TEST_CASE("Design commands: sketch stretch (CAD-274)", "[commands][cad]")
         CHECK(c[1].at("points")[0][0].get<double>() == Approx(100).margin(1e-6));
     }
 
+    SECTION("joined corners, a dimensioned circle and one corner of a rectangle (review)")
+    {
+        // A corner joined by coincident constraints, with the window over it.
+        const auto poly = run(s, "sketch.create",
+                              {{"plane", "XY"},
+                               {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {30, 0}}},
+                                                       {{"type", "line"}, {"start", {30, 0}}, {"end", {30, 20}}}})},
+                               {"constraints", Json::array({{{"type", "coincident"},
+                                                             {"points", Json::array({{{"curve", 0}, {"point", "end"}}, {{"curve", 1}, {"point", "start"}}})}}})}})
+                              .at("id").get<std::uint64_t>();
+        run(s, "sketch.stretch", {{"sketch", poly}, {"window", {{25, -5}, {35, 5}}}, {"dx", 10}, {"dy", 5}});
+        const Json c = curves(poly);
+        CHECK(c[0].at("points")[1][0].get<double>() == Approx(40).margin(1e-6));
+        CHECK(c[0].at("points")[1][1].get<double>() == Approx(5).margin(1e-6));
+        CHECK(c[1].at("points")[0][0].get<double>() == Approx(40).margin(1e-6));
+        CHECK(c[1].at("points")[1][1].get<double>() == Approx(20).margin(1e-6)); // the far end stayed
+
+        // A circle with a radius dimension, wholly inside the window.
+        const auto ring = run(s, "sketch.create",
+                              {{"plane", "XY"}, {"curves", Json::array({{{"type", "circle"}, {"center", {20, 20}}, {"radius", 5}}})},
+                               {"constraints", Json::array({{{"type", "radius"}, {"curve", 0}, {"value", 5}}})}})
+                              .at("id").get<std::uint64_t>();
+        run(s, "sketch.stretch", {{"sketch", ring}, {"window", {{10, 10}, {30, 30}}}, {"dx", 4}});
+        CHECK(curves(ring)[0].at("points")[0][0].get<double>() == Approx(24).margin(1e-6));
+
+        // The window over one corner of a rectangle moves just that corner.
+        const auto box = run(s, "sketch.create",
+                             {{"plane", "XY"},
+                              {"curves", Json::array({{{"type", "rectangle"}, {"corner", {0, 0}}, {"width", 40}, {"height", 20}}})}})
+                             .at("id").get<std::uint64_t>();
+        run(s, "sketch.stretch", {{"sketch", box}, {"window", {{35, 15}, {45, 25}}}, {"dx", 5}, {"dy", 10}});
+        double right = -1e9, top = -1e9, left = 1e9, bottom = 1e9;
+        for (const auto& cv : curves(box))
+            for (const auto& q : cv.at("points")) {
+                right = std::max(right, q[0].get<double>());
+                top = std::max(top, q[1].get<double>());
+                left = std::min(left, q[0].get<double>());
+                bottom = std::min(bottom, q[1].get<double>());
+            }
+        CHECK(right == Approx(45).margin(1e-6));
+        CHECK(top == Approx(30).margin(1e-6));
+        CHECK(left == Approx(0).margin(1e-6));
+        CHECK(bottom == Approx(0).margin(1e-6));
+    }
+
+    SECTION("a window that is not two corners is refused")
+    {
+        const auto id = run(s, "sketch.create",
+                            {{"plane", "XY"}, {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {50, 0}}}})}})
+                            .at("id").get<std::uint64_t>();
+        CHECK_FALSE(s.execute("sketch.stretch", {{"sketch", id}, {"window", {{1}, {2, 3}}}, {"dx", 5}}).ok);
+    }
+
     SECTION("an empty window, and a window held by constraints, are refused")
     {
         const auto id = run(s, "sketch.create",

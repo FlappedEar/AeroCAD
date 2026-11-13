@@ -2133,6 +2133,9 @@ void registerSketchCommands(CommandRegistry& r)
           [](CommandContext& ctx, const Json& params) {
               const auto id = params.at("sketch").get<cad::FeatureId>();
               const Json& w = params.at("window");
+              for (const auto& corner : w)
+                  if (!corner.is_array() || corner.size() != 2 || !corner[0].is_number() || !corner[1].is_number())
+                      throw CommandError("window is two corners [[u, v], [u, v]] of numbers");
               designChange(ctx, "Stretch Sketch", [&](cad::Design& d) {
                   (void)sketchFeature(d, id);
                   d.stretchSketch(id, {w.at(0).at(0).get<double>(), w.at(0).at(1).get<double>()},
