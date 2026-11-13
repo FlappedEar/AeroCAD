@@ -4905,6 +4905,15 @@ void Design::evaluateFeature(const Feature& f)
         for (const auto& sec : required(p, "sections")) {
             FeatureId sid = 0;
             std::size_t profile = 0;
+            if (sec.is_object() && sec.contains("point")) {
+                // A point (first or last section): the loft closes to it, like a nose or a wing tip.
+                if (sec.contains("sketch"))
+                    throw DesignError("A loft section is a sketch (with a profile) or a point, not both");
+                if (!sec.at("point").is_array() || sec.at("point").size() != 3)
+                    throw DesignError("A loft point is [x, y, z]");
+                sections.push_back(geometry::pointShape(ev.vec3(sec.at("point"))));
+                continue;
+            }
             if (sec.is_number_integer()) {
                 sid = sec.get<FeatureId>();
             } else {
