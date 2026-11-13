@@ -896,6 +896,10 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/feature_dialog_checkbox.ui
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(app_feature_dialog_checkbox_test PROPERTIES LABELS gui TIMEOUT 60)
+    add_test(NAME app_feature_dialog_required_picks_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/feature_dialog_required_picks.ui
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(app_feature_dialog_required_picks_test PROPERTIES LABELS gui TIMEOUT 60)
     add_test(NAME app_hole_sketch_points_test
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/hole_sketch_points.ui
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
