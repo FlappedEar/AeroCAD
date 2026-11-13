@@ -271,6 +271,11 @@ public:
     /// coordinates) while the solver moves the free degrees of freedom, and the sketch keeps
     /// the result. Throws DesignError (design unchanged) when the constraints do not allow it.
     void moveSketchPoint(FeatureId sketch, const Json& point, const geometry::Vec2& to);
+    /// Stretch (Fusion: Sketch > Modify > Stretch): the sketch points inside the window (two
+    /// corners, sketch coordinates) move by `delta`; curves wholly inside move, curves crossing
+    /// its edge stretch, as far as the constraints allow. Throws DesignError (design
+    /// unchanged) when the window holds no point or the constraints do not allow it.
+    void stretchSketch(FeatureId sketch, const geometry::Vec2& windowMin, const geometry::Vec2& windowMax, const geometry::Vec2& delta);
     /// Moves, turns, scales or copies sketch curves (Fusion: Sketch > Move/Copy, Sketch
     /// Scale) to `place`. A move holds the curves' points there while the solver moves what
     /// they are connected to, like a drag; a copy adds the moved curves at the end, with the

@@ -69,6 +69,7 @@ Item {
     /// Move/Copy tool (Fusion: Sketch > Move/Copy, M): `curves` are to be moved by dx, dy
     /// and turned by `angle` (degrees) about their middle; with `copy`, copies are added.
     signal moveRequested(var curves, real dx, real dy, real angle, bool copy)
+    signal stretchRequested(var window, real dx, real dy)
     /// Curves the Move/Copy tool moves (the selection when it started), the turn it adds
     /// and whether it copies.
     property var moveCurves: []
@@ -238,7 +239,7 @@ Item {
     /// Ends the curve being drawn (a line chain) or the constraint pick, as Esc does. A
     /// spline is kept as an open spline through the points clicked so far.
     function endCurrent() {
-        if (tool === "spline")
+        if (tool === "spline" || tool === "cp_spline")
             finishSpline(false)
         reset()
         constraintLayer.reset()
@@ -665,8 +666,11 @@ Item {
         case "conic":
         case "slot": return 3
         case "arc_slot": return 4
+        case "arc_slot_3pt": return 4
         case "elliptical_arc": return 5
-        case "spline": return Infinity // ended with Enter, a double-click or the first point
+        case "spline": return Infinity
+        case "cp_spline": return Infinity // ended with Enter, a double-click or the first point
+        case "stretch": return 4
         default: return 2
         }
     }
@@ -958,6 +962,20 @@ Item {
                 return null
             return { type: "arc_slot", center: a, radius: round6(r), width: width, start_angle: round6(from), end_angle: round6(to) }
         }
+        case "arc_slot_3pt": {
+            // Start and end of the centre line, a point on its arc, then a point for the width.
+            if (pts.length < 4)
+                return null
+            const g = arcSlotGeometry(pts)
+            if (g === null)
+                return null
+            const radial = 2 * Math.abs(dist(g.c, pts[3]) - g.r)
+            if (!(sizeGiven(dim, 0, radial)))
+                return null
+            const width = dim && dim.length > 0 ? dim[0] : round6(radial)
+            return { type: "arc_slot", center: g.c, radius: round6(g.r), width: width,
+                     start_angle: round6(g.from * 180 / Math.PI), end_angle: round6(g.to * 180 / Math.PI) }
+        }
         case "slot": {
             if (pts.length < 3)
                 return null
@@ -978,12 +996,78 @@ Item {
         return null
     }
 
+    /// The circle of a three-point arc slot, from the start, end and a point on the arc (pts[0..2]):
+    /// { c, r, from, to } (radians, counter-clockwise from `from` to `to`), or null on a straight line.
+    function arcSlotGeometry(pts) {
+        const s = pts[0], e = pts[1], m = pts[2]
+        const d = 2 * (s[0] * (e[1] - m[1]) + e[0] * (m[1] - s[1]) + m[0] * (s[1] - e[1]))
+        // Nearly collinear points make an enormous circle: refuse relative to the size of the triangle.
+        const spread = Math.max(dist(s, e), dist(s, m), dist(e, m))
+        if (Math.abs(d) < 1e-9 * spread * spread)
+            return null
+        const sq = p => p[0] * p[0] + p[1] * p[1]
+        const c = [(sq(s) * (e[1] - m[1]) + sq(e) * (m[1] - s[1]) + sq(m) * (s[1] - e[1])) / d,
+                   (sq(s) * (m[0] - e[0]) + sq(e) * (s[0] - m[0]) + sq(m) * (e[0] - s[0])) / d]
+        const ang = p => Math.atan2(p[1] - c[1], p[0] - c[0])
+        const wrap = a => { while (a < 0) a += 2 * Math.PI; while (a >= 2 * Math.PI) a -= 2 * Math.PI; return a }
+        const ccw = wrap(ang(m) - ang(s)) < wrap(ang(e) - ang(s))
+        const from = ccw ? ang(s) : ang(e)
+        let to = ccw ? ang(e) : ang(s)
+        while (to <= from) to += 2 * Math.PI
+        return { c: c, r: dist(c, s), from: from, to: to }
+    }
+
     /// Ends the spline being drawn: an open one needs 2 fit points, a closed one 3.
     function finishSpline(closed) {
-        if (points.length >= (closed ? 3 : 2))
+        if (tool === "cp_spline") {
+            // A control point spline needs 3 control points (degree 2), 4 or more make it cubic.
+            if (points.length >= 3)
+                emitCurve({ type: "control_spline", points: points, closed: closed, degree: Math.min(3, points.length - 1) })
+        } else if (points.length >= (closed ? 3 : 2)) {
             emitCurve({ type: "spline", points: points, closed: closed })
+        }
         points = []
         canvas.requestPaint()
+    }
+
+    /// Preview of the B-spline of a control polygon (clamped open, or periodic closed), as the
+    /// command makes it: degree 3, or 2 with only 3 points.
+    function controlSplinePreview(pts, closed) {
+        const n = pts.length
+        if (n < 3)
+            return pts
+        const d = Math.min(3, n - 1)
+        const poles = pts.slice()
+        if (closed)
+            for (let i = 0; i < d; ++i)
+                poles.push(pts[i])
+        const np = poles.length
+        const knots = []
+        for (let j = 0; j < np + d + 1; ++j)
+            knots.push(closed ? j : (j <= d ? 0 : (j >= np ? np - d : j - d)))
+        const lo = knots[d], hi = knots[np]
+        const evalAt = u => {
+            let k = d
+            while (k < np - 1 && u >= knots[k + 1])
+                ++k
+            const c = []
+            for (let j = 0; j <= d; ++j)
+                c.push(poles[j + k - d])
+            for (let r = 1; r <= d; ++r) {
+                for (let j = d; j >= r; --j) {
+                    const a = knots[j + k - d], b = knots[j + 1 + k - r]
+                    const w = b > a ? (u - a) / (b - a) : 0
+                    c[j] = [(1 - w) * c[j - 1][0] + w * c[j][0], (1 - w) * c[j - 1][1] + w * c[j][1]]
+                }
+            }
+            return c[d]
+        }
+        const total = (closed ? n : np - d) * 16
+        const out = []
+        for (let i = 0; i < total; ++i)
+            out.push(evalAt(lo + (hi - lo) * i / total))
+        out.push(closed ? out[0] : poles[np - 1])
+        return out
     }
 
     /// Smooth preview through fit points (centripetal Catmull-Rom); the finished spline
@@ -1068,6 +1152,23 @@ Item {
         }
         if (tool === "rectangular_pattern")
             return // set in the panel
+        if (tool === "stretch") {
+            // Fusion: Stretch. Two corners of the window, then a base point and where it goes.
+            if (points.length < 3) {
+                if (points.length === 1 && dist(points[0], p) < 1e-9)
+                    return
+                points = points.concat([p])
+            } else {
+                const window = [points[0], points[1]], from = points[2]
+                points = []
+                if (Math.abs(p[0] - from[0]) > 1e-9 || Math.abs(p[1] - from[1]) > 1e-9) {
+                    toolRequested("")
+                    stretchRequested(window, p[0] - from[0], p[1] - from[1])
+                }
+            }
+            canvas.requestPaint()
+            return
+        }
         if (tool === "move") {
             // From a base point to where it goes.
             if (points.length === 0) {
@@ -1101,7 +1202,7 @@ Item {
             return
         }
         const pts = points.concat([p])
-        if (tool === "spline") {
+        if (tool === "spline" || tool === "cp_spline") {
             // As in Fusion: a click on the first point closes the spline; a second click
             // on the last point (a double-click) ends it open.
             if (points.length >= 3 && dist(points[0], p) < 1e-9)
@@ -1560,7 +1661,7 @@ Item {
             if (!cancelPointDrag())
                 endCurrent()
             event.accepted = true
-        } else if (tool === "spline" && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)) {
+        } else if ((tool === "spline" || tool === "cp_spline") && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)) {
             finishSpline(false)
             event.accepted = true
         } else if ((tool === "circular_pattern" || tool === "rectangular_pattern") && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)) {
@@ -1571,7 +1672,7 @@ Item {
             // Enter still applies the factor typed (and previewed).
             applyScale(scaleFactor)
             event.accepted = true
-        } else if (active && !constraintTool && tool !== "spline" && tool !== "tangent_arc" && (points.length > 0 || tool === "offset" || tool === "move" || tool === "scale") && /^[0-9.(\-]$/.test(event.text)) {
+        } else if (active && !constraintTool && tool !== "spline" && tool !== "cp_spline" && tool !== "tangent_arc" && (points.length > 0 || tool === "offset" || tool === "move" || tool === "scale") && /^[0-9.(\-]$/.test(event.text)) {
             dimension.text = event.text
             dimension.forceActiveFocus()
             event.accepted = true
@@ -1645,6 +1746,31 @@ Item {
                     ctx.globalAlpha = 1
                 }
             }
+            // Stretch: the window, and the move from the base point to the cursor.
+            if (root.tool === "stretch" && root.points.length >= 1) {
+                const corner2 = root.points.length >= 2 ? root.points[1] : root.hover
+                if (corner2) {
+                    const a = root.toScreen(root.points[0]), b = root.toScreen(corner2)
+                    ctx.lineWidth = 1.5
+                    ctx.strokeStyle = Theme.accent
+                    ctx.fillStyle = Theme.accent
+                    ctx.setLineDash([5, 4])
+                    ctx.globalAlpha = 0.9
+                    ctx.strokeRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y))
+                    ctx.globalAlpha = 0.12
+                    ctx.fillRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y))
+                    ctx.setLineDash([])
+                    ctx.globalAlpha = 1
+                }
+                if (root.points.length === 3 && root.hover) {
+                    const a = root.toScreen(root.points[2]), b = root.toScreen(root.hover)
+                    ctx.lineWidth = 2
+                    ctx.beginPath()
+                    ctx.moveTo(a.x, a.y)
+                    ctx.lineTo(b.x, b.y)
+                    ctx.stroke()
+                }
+            }
             // Sketch Scale: the curves at the typed factor, and the point that stays.
             if (root.tool === "scale" && root.scaleCurves.length > 0) {
                 const pivot = root.scalePoint !== null ? root.scalePoint : root.curvesMiddle(root.scaleCurves)
@@ -1707,7 +1833,28 @@ Item {
                         const q = root.toScreen(uv[i])
                         if (i === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y)
                     }
-                } else if (root.tool === "line" || root.tool === "text" || (pts.length === 2 && (root.tool === "arc" || root.tool === "slot" || root.tool === "arc_slot" || root.tool === "circle_3point"
+                } else if (root.tool === "cp_spline") {
+                    // The control polygon (dashed) and the curve it makes.
+                    const closing = root.points.length >= 3 && root.hover !== null && root.dist(root.points[0], root.hover) < 1e-9
+                    const cps = closing ? root.points : pts
+                    ctx.setLineDash([4, 4])
+                    ctx.globalAlpha = 0.6
+                    ctx.beginPath()
+                    for (let i = 0; i < cps.length; ++i) {
+                        const q = root.toScreen(cps[i])
+                        if (i === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y)
+                    }
+                    if (closing) ctx.closePath()
+                    ctx.stroke()
+                    ctx.setLineDash([])
+                    ctx.globalAlpha = 1
+                    ctx.beginPath()
+                    const uv = root.controlSplinePreview(cps, closing)
+                    for (let i = 0; i < uv.length; ++i) {
+                        const q = root.toScreen(uv[i])
+                        if (i === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y)
+                    }
+                } else if (root.tool === "line" || root.tool === "text" || (pts.length === 2 && (root.tool === "arc" || root.tool === "slot" || root.tool === "arc_slot" || root.tool === "arc_slot_3pt" || root.tool === "circle_3point"
                                                                           || root.tool === "rectangle_3point" || root.tool === "ellipse" || root.tool === "elliptical_arc"
                                                                           || root.tool === "conic"))) {
                     ctx.moveTo(s[0].x, s[0].y)
@@ -1862,13 +2009,18 @@ Item {
                             if (i === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y)
                         }
                     }
-                } else if (root.tool === "arc_slot" && pts.length >= 3) {
+                } else if (root.tool === "arc_slot_3pt" && pts.length >= 3 && root.arcSlotGeometry(pts) === null) {
+                    // The three points are in a line: no arc yet, only the line between start and end.
+                    const q0 = root.toScreen(pts[0]), q1 = root.toScreen(pts[1])
+                    ctx.moveTo(q0.x, q0.y); ctx.lineTo(q1.x, q1.y)
+                } else if ((root.tool === "arc_slot" || root.tool === "arc_slot_3pt") && pts.length >= 3) {
                     // The centre line's arc while the end is placed; the whole slot when the width is.
-                    const c0 = pts[0], r0 = root.dist(c0, pts[1])
+                    const g3 = root.tool === "arc_slot_3pt" ? root.arcSlotGeometry(pts) : null
+                    const c0 = g3 ? g3.c : pts[0], r0 = g3 ? g3.r : root.dist(c0, pts[1])
                     const ang = p => Math.atan2(p[1] - c0[1], p[0] - c0[0])
                     const ccw = (pts[1][0] - c0[0]) * (pts[2][1] - c0[1]) - (pts[1][1] - c0[1]) * (pts[2][0] - c0[0]) >= 0
-                    let from = ccw ? ang(pts[1]) : ang(pts[2])
-                    let to = ccw ? ang(pts[2]) : ang(pts[1])
+                    let from = g3 ? g3.from : ccw ? ang(pts[1]) : ang(pts[2])
+                    let to = g3 ? g3.to : ccw ? ang(pts[2]) : ang(pts[1])
                     while (to <= from) to += 2 * Math.PI
                     const arc = (rad, a0, a1) => {
                         for (let i = 0; i <= 48; ++i) {
@@ -1998,6 +2150,10 @@ Item {
                     : root.tool === "move" ? (root.points.length === 0
                         ? qsTr("Move/Copy %n curve(s): click a base point, or type dx, dy and press Enter", "", root.moveCurves.length)
                         : qsTr("Move/Copy: click where the base point goes"))
+                    : root.tool === "stretch" ? (root.points.length < 2
+                        ? qsTr("Stretch: click the two corners of a window around the points to move")
+                        : root.points.length === 2 ? qsTr("Stretch: click a base point")
+                        : qsTr("Stretch: click where the base point goes"))
                     : root.tool === "scale" ? (root.scalePoint === null
                         ? qsTr("Sketch Scale %n curve(s): type the factor and press Enter (about their middle), or click the point that stays", "", root.scaleCurves.length)
                         : qsTr("Sketch Scale: type the factor and press Enter (click again to move the point that stays)"))
@@ -2035,7 +2191,9 @@ Item {
                                                  : root.polygonMode === "circumscribed" ? qsTr("Circumscribed polygon: click the centre and the middle of a side; type the radius")
                                                  : qsTr("Polygon: click centre and a corner; type the radius"))
                     : root.tool === "spline" ? qsTr("Spline: click fit points; Enter, a double-click or Esc ends it, the first point closes it")
+                    : root.tool === "cp_spline" ? qsTr("Control point spline: click control points; Enter, a double-click or Esc ends it, the first point closes it")
                     : root.tool === "arc_slot" ? qsTr("Arc slot: click the centre, the start of the centre line, its end, then the width")
+                    : root.tool === "arc_slot_3pt" ? qsTr("3-point arc slot: click the start and the end of the centre line, a point on its arc, then the width")
                     : root.slotMode === "overall" ? qsTr("Overall slot: click both far ends, then the width")
                     : root.slotMode === "center_point" ? qsTr("Center point slot: click the middle, the centre of one end, then the width")
                     : qsTr("Slot: click both centres, then the width")
@@ -2073,7 +2231,7 @@ Item {
                 }
             }
             RowLayout {
-                visible: root.active && !root.constraintTool && root.tool !== "trim" && root.tool !== "circular_pattern" && root.tool !== "rectangular_pattern" && root.tool !== "extend" && root.tool !== "break" && root.tool !== "point" && root.tool !== "mirror" && root.tool !== "fillet" && root.tool !== "chamfer" && root.tool !== "project" && root.tool !== "intersect" && root.tool !== "spline" && root.tool !== "elliptical_arc"
+                visible: root.active && !root.constraintTool && root.tool !== "trim" && root.tool !== "circular_pattern" && root.tool !== "rectangular_pattern" && root.tool !== "extend" && root.tool !== "break" && root.tool !== "point" && root.tool !== "mirror" && root.tool !== "fillet" && root.tool !== "chamfer" && root.tool !== "project" && root.tool !== "intersect" && root.tool !== "stretch" && root.tool !== "spline" && root.tool !== "cp_spline" && root.tool !== "elliptical_arc"
                          && root.tool !== "tangent_arc"
                          && root.tool !== "circle_3point" && root.tool !== "circle_2tangent" && root.tool !== "circle_3tangent"
                 Label { text: root.tool === "rectangle" || root.tool === "center_rectangle" ? qsTr("Width, height")

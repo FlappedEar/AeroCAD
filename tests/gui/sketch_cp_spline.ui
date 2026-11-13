@@ -1,0 +1,25 @@
+# CAD-274: Control Point Spline (Fusion: Create > Spline > Control Point Spline) from the sketch CREATE menu with
+# real clicks: control points, Enter ends an open one, a click on the first point closes it. The curve is
+# smooth, starts and ends on the end control points and stays off the inner ones.
+# Run: AeroCAD --ui-script <this file>
+ui.wait(800)
+Qt.createQmlObject('import QtQuick; Item { objectName: "cpTest"; visible: false; function at(u, v) { const o = viewport.sketchOverlay; const q = o.toScreen([u, v]); return o.mapToItem(null, q.x, q.y) } function clickAt(u, v) { const p = at(u, v); ui.click(p.x, p.y) } function curves() { return controller.execute("sketch.curves", { sketch: activeSketch.id }).result.curves } }', window.contentItem)
+(() => { window.createSketch({ plane: "XY" }); if (!window.activeSketch) ui.fail("no sketch") })()
+ui.wait(800)
+(() => { viewport.restoreCameraState({ pivot: [30, 10, 0], pitch: -90, yaw: 0, distance: 160, orthographic: false }) })()
+ui.wait(400)
+(() => { if (!ui.clickText("CREATE")) ui.fail("no CREATE menu on the ribbon") })()
+ui.wait(400)
+(() => { if (!ui.clickText("Control Point Spline")) ui.fail("no Control Point Spline in the CREATE menu"); if (sketchTool !== "cp_spline") ui.fail("the tool did not start: " + sketchTool) })()
+ui.wait(300)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cpTest"); t.clickAt(0, 0); t.clickAt(20, 40); t.clickAt(40, 0); t.clickAt(60, 40); const p = t.at(80, 0); ui.move(p.x, p.y) })()
+ui.wait(300)
+ui.shot("sketch-cp-spline-preview.png")
+(() => { if (viewport.sketchOverlay.points.length !== 4) ui.fail("expected 4 control points while drawing, got " + JSON.stringify(viewport.sketchOverlay.points)) })()
+ui.key("Return")
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cpTest"); const c = t.curves(); const s = c[c.length - 1]; ui.log("control spline: " + c.length + " curve(s), " + s.points.length + " points"); if (c.length !== 1 || s.kind !== "spline" || s.closed) ui.fail("Enter did not make an open spline: " + JSON.stringify(c)); const f = s.points[0], l = s.points[s.points.length - 1]; if (Math.hypot(f[0], f[1]) > 1e-6 || Math.hypot(l[0] - 60, l[1] - 40) > 1e-6) ui.fail("it does not start and end on the end control points: " + JSON.stringify([f, l])); if (s.points.some(q => Math.hypot(q[0] - 20, q[1] - 40) < 1e-3)) ui.fail("it passes through an inner control point"); if (sketchTool !== "cp_spline") ui.fail("the tool ended with the spline") })()
+# A closed one: a click on the first point.
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cpTest"); t.clickAt(0, -20); t.clickAt(40, -20); t.clickAt(40, -60); t.clickAt(0, -60); t.clickAt(0, -20) })()
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "cpTest"); const c = t.curves(); const s = c[c.length - 1]; if (c.length !== 2 || s.kind !== "spline" || !s.closed) ui.fail("the first point did not close the control point spline: " + JSON.stringify(c.slice(1))) })()

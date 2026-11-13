@@ -720,6 +720,21 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_arc_slot.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_sketch_arc_slot_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-274: Stretch.
+    add_test(NAME app_sketch_stretch_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_stretch.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_sketch_stretch_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-274: Control Point Spline.
+    add_test(NAME app_sketch_cp_spline_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_cp_spline.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_sketch_cp_spline_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-273: 3-Point Arc Slot.
+    add_test(NAME app_sketch_arc_slot_3pt_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_arc_slot_3pt.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_sketch_arc_slot_3pt_test PROPERTIES LABELS gui TIMEOUT 60)
     # CAD-273: Circle 2-Tangent / 3-Tangent also to arcs and circles.
     add_test(NAME app_sketch_circle_tangent_arcs_test
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_circle_tangent_arcs.ui
@@ -896,6 +911,10 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/feature_dialog_checkbox.ui
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(app_feature_dialog_checkbox_test PROPERTIES LABELS gui TIMEOUT 60)
+    add_test(NAME app_feature_dialog_required_picks_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/feature_dialog_required_picks.ui
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(app_feature_dialog_required_picks_test PROPERTIES LABELS gui TIMEOUT 60)
     add_test(NAME app_hole_sketch_points_test
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/hole_sketch_points.ui
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})

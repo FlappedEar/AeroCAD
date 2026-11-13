@@ -4535,3 +4535,197 @@ TEST_CASE("Design commands: arc slot (CAD-273)", "[commands][cad]")
             CHECK_FALSE(s.execute("sketch.create", {{"plane", "XY"}, {"curves", Json::array({item})}}).ok);
     }
 }
+
+TEST_CASE("Design commands: control point spline (CAD-274)", "[commands][cad]")
+{
+    commands::Session s;
+    auto samples = [&](std::uint64_t id) {
+        const Json c = run(s, "sketch.curves", {{"sketch", id}});
+        REQUIRE(c.at("curves").size() == 1);
+        REQUIRE(c.at("curves")[0].at("kind") == "spline");
+        return c.at("curves")[0].at("points");
+    };
+
+    SECTION("four control points make a cubic Bezier through the end points")
+    {
+        const auto id = run(s, "sketch.create",
+                            {{"plane", "XY"},
+                             {"curves", Json::array({{{"type", "control_spline"}, {"points", {{0, 0}, {10, 20}, {30, 20}, {40, 0}}}}})}})
+                            .at("id").get<std::uint64_t>();
+        const Json p = samples(id);
+        CHECK(p.front()[0].get<double>() == Approx(0).margin(1e-9));
+        CHECK(p.front()[1].get<double>() == Approx(0).margin(1e-9));
+        CHECK(p.back()[0].get<double>() == Approx(40).margin(1e-9));
+        CHECK(p.back()[1].get<double>() == Approx(0).margin(1e-9));
+        // The middle of the Bezier is (P0 + 3 P1 + 3 P2 + P3) / 8 = (20, 15).
+        const Json& mid = p[p.size() / 2];
+        CHECK(mid[0].get<double>() == Approx(20).margin(1e-6));
+        CHECK(mid[1].get<double>() == Approx(15).margin(1e-6));
+    }
+
+    SECTION("the curve stays inside the control polygon and does not pass through inner control points")
+    {
+        const auto id = run(s, "sketch.create",
+                            {{"plane", "XY"},
+                             {"curves", Json::array({{{"type", "control_spline"}, {"points", {{0, 0}, {10, 30}, {20, 0}, {30, 30}, {40, 0}}}}})}})
+                            .at("id").get<std::uint64_t>();
+        const Json p = samples(id);
+        double top = 0;
+        for (const auto& q : p)
+            top = std::max(top, q[1].get<double>());
+        CHECK(top < 30);
+        CHECK(top > 5);
+    }
+
+    SECTION("a closed control point spline is a closed loop")
+    {
+        const auto id = run(s, "sketch.create",
+                            {{"plane", "XY"},
+                             {"curves", Json::array({{{"type", "control_spline"}, {"closed", true},
+                                                      {"points", {{0, 0}, {40, 0}, {40, 40}, {0, 40}}}}})}})
+                            .at("id").get<std::uint64_t>();
+        const Json c = run(s, "sketch.curves", {{"sketch", id}}).at("curves")[0];
+        CHECK(c.at("kind") == "spline");
+        // A uniform periodic cubic B-spline of a square is the rounded square inside it.
+        double lo = 1e9, hi = -1e9;
+        for (const auto& q : c.at("points")) {
+            lo = std::min(lo, q[0].get<double>());
+            hi = std::max(hi, q[0].get<double>());
+        }
+        CHECK(lo > 0);
+        CHECK(hi < 40);
+    }
+
+    SECTION("too few control points, and a bad degree, are errors")
+    {
+        CHECK_FALSE(s.execute("sketch.create",
+                              {{"plane", "XY"},
+                               {"curves", Json::array({{{"type", "control_spline"}, {"points", {{0, 0}, {10, 10}, {20, 0}}}}})}})
+                        .ok);
+        CHECK(s.execute("sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "control_spline"}, {"degree", 2}, {"points", {{0, 0}, {10, 10}, {20, 0}}}}})}})
+                  .ok);
+        CHECK_FALSE(s.execute("sketch.create",
+                              {{"plane", "XY"},
+                               {"curves", Json::array({{{"type", "control_spline"}, {"degree", 9}, {"points", {{0, 0}, {10, 10}, {20, 0}}}}})}})
+                        .ok);
+    }
+}
+
+TEST_CASE("Design commands: sketch stretch (CAD-274)", "[commands][cad]")
+{
+    commands::Session s;
+    auto curves = [&](std::uint64_t id) { return run(s, "sketch.curves", {{"sketch", id}}).at("curves"); };
+
+    SECTION("a window over the top of a rectangle stretches it")
+    {
+        const auto id = run(s, "sketch.create",
+                            {{"plane", "XY"},
+                             {"curves", Json::array({{{"type", "rectangle"}, {"corner", {0, 0}}, {"width", 40}, {"height", 20}}})}})
+                            .at("id").get<std::uint64_t>();
+        run(s, "sketch.stretch", {{"sketch", id}, {"window", {{-5, 15}, {45, 25}}}, {"dy", 10}});
+        double lo = 1e9, hi = -1e9, left = 1e9, right = -1e9;
+        for (const auto& c : curves(id))
+            for (const auto& q : c.at("points")) {
+                lo = std::min(lo, q[1].get<double>());
+                hi = std::max(hi, q[1].get<double>());
+                left = std::min(left, q[0].get<double>());
+                right = std::max(right, q[0].get<double>());
+            }
+        CHECK(lo == Approx(0).margin(1e-6));
+        CHECK(hi == Approx(30).margin(1e-6)); // taller by 10, the bottom stayed
+        CHECK(left == Approx(0).margin(1e-6));
+        CHECK(right == Approx(40).margin(1e-6)); // as wide as before
+    }
+
+    SECTION("a line crossing the window edge keeps its far end")
+    {
+        const auto id = run(s, "sketch.create",
+                            {{"plane", "XY"}, {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {50, 0}}}})}})
+                            .at("id").get<std::uint64_t>();
+        run(s, "sketch.stretch", {{"sketch", id}, {"window", {{40, -5}, {60, 5}}}, {"dx", 10}});
+        const Json p = curves(id)[0].at("points");
+        CHECK(p[0][0].get<double>() == Approx(0).margin(1e-6));
+        CHECK(p[1][0].get<double>() == Approx(60).margin(1e-6));
+    }
+
+    SECTION("curves wholly inside the window move, others stay")
+    {
+        const auto id = run(s, "sketch.create",
+                            {{"plane", "XY"},
+                             {"curves", Json::array({{{"type", "circle"}, {"center", {20, 20}}, {"radius", 5}},
+                                                     {{"type", "circle"}, {"center", {100, 20}}, {"radius", 5}}})}})
+                            .at("id").get<std::uint64_t>();
+        run(s, "sketch.stretch", {{"sketch", id}, {"window", {{10, 10}, {30, 30}}}, {"dx", 7}, {"dy", -3}});
+        const Json c = curves(id);
+        CHECK(c[0].at("points")[0][0].get<double>() == Approx(27).margin(1e-6));
+        CHECK(c[0].at("points")[0][1].get<double>() == Approx(17).margin(1e-6));
+        CHECK(c[0].at("radius").get<double>() == Approx(5).margin(1e-6));
+        CHECK(c[1].at("points")[0][0].get<double>() == Approx(100).margin(1e-6));
+    }
+
+    SECTION("joined corners, a dimensioned circle and one corner of a rectangle (review)")
+    {
+        // A corner joined by coincident constraints, with the window over it.
+        const auto poly = run(s, "sketch.create",
+                              {{"plane", "XY"},
+                               {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {30, 0}}},
+                                                       {{"type", "line"}, {"start", {30, 0}}, {"end", {30, 20}}}})},
+                               {"constraints", Json::array({{{"type", "coincident"},
+                                                             {"points", Json::array({{{"curve", 0}, {"point", "end"}}, {{"curve", 1}, {"point", "start"}}})}}})}})
+                              .at("id").get<std::uint64_t>();
+        run(s, "sketch.stretch", {{"sketch", poly}, {"window", {{25, -5}, {35, 5}}}, {"dx", 10}, {"dy", 5}});
+        const Json c = curves(poly);
+        CHECK(c[0].at("points")[1][0].get<double>() == Approx(40).margin(1e-6));
+        CHECK(c[0].at("points")[1][1].get<double>() == Approx(5).margin(1e-6));
+        CHECK(c[1].at("points")[0][0].get<double>() == Approx(40).margin(1e-6));
+        CHECK(c[1].at("points")[1][1].get<double>() == Approx(20).margin(1e-6)); // the far end stayed
+
+        // A circle with a radius dimension, wholly inside the window.
+        const auto ring = run(s, "sketch.create",
+                              {{"plane", "XY"}, {"curves", Json::array({{{"type", "circle"}, {"center", {20, 20}}, {"radius", 5}}})},
+                               {"constraints", Json::array({{{"type", "radius"}, {"curve", 0}, {"value", 5}}})}})
+                              .at("id").get<std::uint64_t>();
+        run(s, "sketch.stretch", {{"sketch", ring}, {"window", {{10, 10}, {30, 30}}}, {"dx", 4}});
+        CHECK(curves(ring)[0].at("points")[0][0].get<double>() == Approx(24).margin(1e-6));
+
+        // The window over one corner of a rectangle moves just that corner.
+        const auto box = run(s, "sketch.create",
+                             {{"plane", "XY"},
+                              {"curves", Json::array({{{"type", "rectangle"}, {"corner", {0, 0}}, {"width", 40}, {"height", 20}}})}})
+                             .at("id").get<std::uint64_t>();
+        run(s, "sketch.stretch", {{"sketch", box}, {"window", {{35, 15}, {45, 25}}}, {"dx", 5}, {"dy", 10}});
+        double right = -1e9, top = -1e9, left = 1e9, bottom = 1e9;
+        for (const auto& cv : curves(box))
+            for (const auto& q : cv.at("points")) {
+                right = std::max(right, q[0].get<double>());
+                top = std::max(top, q[1].get<double>());
+                left = std::min(left, q[0].get<double>());
+                bottom = std::min(bottom, q[1].get<double>());
+            }
+        CHECK(right == Approx(45).margin(1e-6));
+        CHECK(top == Approx(30).margin(1e-6));
+        CHECK(left == Approx(0).margin(1e-6));
+        CHECK(bottom == Approx(0).margin(1e-6));
+    }
+
+    SECTION("a window that is not two corners is refused")
+    {
+        const auto id = run(s, "sketch.create",
+                            {{"plane", "XY"}, {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {50, 0}}}})}})
+                            .at("id").get<std::uint64_t>();
+        CHECK_FALSE(s.execute("sketch.stretch", {{"sketch", id}, {"window", {{1}, {2, 3}}}, {"dx", 5}}).ok);
+    }
+
+    SECTION("an empty window, and a window held by constraints, are refused")
+    {
+        const auto id = run(s, "sketch.create",
+                            {{"plane", "XY"}, {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {50, 0}}}})}})
+                            .at("id").get<std::uint64_t>();
+        CHECK_FALSE(s.execute("sketch.stretch", {{"sketch", id}, {"window", {{100, 100}, {120, 120}}}, {"dx", 5}}).ok);
+        run(s, "sketch.add_constraints", {{"sketch", id}, {"constraints", Json::array({{{"type", "fix"}, {"curve", 0}}})}});
+        CHECK_FALSE(s.execute("sketch.stretch", {{"sketch", id}, {"window", {{40, -5}, {60, 5}}}, {"dx", 10}}).ok);
+        CHECK(curves(id)[0].at("points")[1][0].get<double>() == Approx(50).margin(1e-6));
+    }
+}

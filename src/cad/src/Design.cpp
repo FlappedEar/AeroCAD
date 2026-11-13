@@ -623,6 +623,54 @@ SketchConstraint parseConstraint(const Eval& ev, const Json& j)
     return c;
 }
 
+/// Points along the B-spline of a control polygon (Fusion: Spline > Control Point Spline): a clamped
+/// open curve (starts and ends on the first and last control point) or a closed periodic one, of the
+/// given degree, `perSpan` points per knot span. The sketch keeps it as a spline through these points.
+std::vector<Vec2> sampleControlSpline(const std::vector<Vec2>& ctrl, int degree, bool closed, int perSpan)
+{
+    const int n = static_cast<int>(ctrl.size());
+    std::vector<Vec2> poles = ctrl;
+    if (closed)
+        for (int i = 0; i < degree; ++i)
+            poles.push_back(ctrl[static_cast<std::size_t>(i)]);
+    const int np = static_cast<int>(poles.size());
+    std::vector<double> knots(static_cast<std::size_t>(np + degree + 1));
+    for (int j = 0; j < np + degree + 1; ++j) {
+        if (closed)
+            knots[static_cast<std::size_t>(j)] = j;
+        else
+            knots[static_cast<std::size_t>(j)] = j <= degree ? 0.0 : (j >= np ? double(np - degree) : double(j - degree));
+    }
+    const double lo = knots[static_cast<std::size_t>(degree)], hi = knots[static_cast<std::size_t>(np)];
+    auto eval = [&](double u) {
+        int k = degree;
+        while (k < np - 1 && u >= knots[static_cast<std::size_t>(k + 1)])
+            ++k;
+        std::vector<Vec2> d(static_cast<std::size_t>(degree + 1));
+        for (int j = 0; j <= degree; ++j)
+            d[static_cast<std::size_t>(j)] = poles[static_cast<std::size_t>(j + k - degree)];
+        for (int r = 1; r <= degree; ++r) {
+            for (int j = degree; j >= r; --j) {
+                const double a = knots[static_cast<std::size_t>(j + k - degree)];
+                const double b = knots[static_cast<std::size_t>(j + 1 + k - r)];
+                const double w = b > a ? (u - a) / (b - a) : 0.0;
+                auto& dj = d[static_cast<std::size_t>(j)];
+                const auto& dp = d[static_cast<std::size_t>(j - 1)];
+                dj = {(1 - w) * dp.x + w * dj.x, (1 - w) * dp.y + w * dj.y};
+            }
+        }
+        return d[static_cast<std::size_t>(degree)];
+    };
+    const int spans = closed ? n : np - degree;
+    const int total = spans * perSpan;
+    std::vector<Vec2> out;
+    for (int i = 0; i < total; ++i)
+        out.push_back(eval(lo + (hi - lo) * i / total));
+    if (!closed)
+        out.push_back(poles.back());
+    return out;
+}
+
 /// Appends the curves of one sketch item. `implicit` receives the constraints that the
 /// shape implies (a rectangle has horizontal and vertical sides, a slot tangent ends), so
 /// that dimensions added later keep the shape, like Fusion's sketch tools.
@@ -883,6 +931,22 @@ void appendCurves(const Eval& ev, const Json& item, std::vector<SketchCurve>& ou
         for (const auto& p : required(item, "points"))
             c.points.push_back(ev.vec2(p));
         c.closed = item.value("closed", false);
+        push(c);
+    } else if (type == "control_spline") {
+        std::vector<Vec2> ctrl;
+        for (const auto& p : required(item, "points"))
+            ctrl.push_back(ev.vec2(p));
+        const bool closed = item.value("closed", false);
+        if (item.contains("degree") && !item["degree"].is_number_integer())
+            throw DesignError("A control point spline has an integer degree from 2 to 5");
+        const int degree = item.value("degree", 3);
+        if (degree < 2 || degree > 5)
+            throw DesignError("A control point spline has degree 2 to 5");
+        if (static_cast<int>(ctrl.size()) < degree + 1)
+            throw DesignError("A degree " + std::to_string(degree) + " control point spline needs at least " + std::to_string(degree + 1) +
+                              " control points");
+        SketchCurve c{SketchCurve::Kind::Spline, sampleControlSpline(ctrl, degree, closed, 12)};
+        c.closed = closed;
         push(c);
     } else {
         throw DesignError("Unknown sketch curve type '" + type + "'");
@@ -1489,11 +1553,17 @@ Json itemFromSolved(const Json& item, const SketchCurve* c, std::size_t n)
         out["width"] = outer - inner;
         out["start_angle"] = std::atan2(c[0].points[0].y - ctr.y, c[0].points[0].x - ctr.x) / kDegToRad;
         out["end_angle"] = std::atan2(c[0].points[2].y - ctr.y, c[0].points[2].x - ctr.x) / kDegToRad;
-    } else if (type == "spline") {
+    } else if (type == "spline" || type == "control_spline") {
         Json pts = Json::array();
         for (const auto& q : c[0].points)
             pts.push_back(pt(q));
         out["points"] = pts;
+        if (type == "control_spline") {
+            // Once moved by the solver it is an ordinary spline through its sampled points.
+            out["type"] = "spline";
+            out["closed"] = c[0].closed;
+            out.erase("degree");
+        }
     } else if (type == "point") {
         out["at"] = pt(c[0].points[0]);
     } else if (type == "ellipse") {
@@ -1973,6 +2043,81 @@ std::vector<std::pair<std::size_t, std::size_t>> itemRanges(const Eval& ev, cons
 
 
 } // namespace
+
+void Design::stretchSketch(FeatureId sketchId, const geometry::Vec2& windowMin, const geometry::Vec2& windowMax,
+                           const geometry::Vec2& delta)
+{
+    if (!std::isfinite(delta.x) || !std::isfinite(delta.y))
+        throw DesignError("The stretch distance must be a number");
+    const State before = m_state;
+    keepSolvedSketch(sketchId);
+    Feature& f = m_state.features[indexOf(sketchId)];
+    if (f.type != "sketch")
+        throw DesignError("Feature " + std::to_string(sketchId) + " is not a sketch");
+    auto it = m_sketches.find(sketchId);
+    if (it == m_sketches.end())
+        throw DesignError(f.name + " is not evaluated");
+    const std::vector<SketchCurve> curves = it->second.curves;
+    const double lox = std::min(windowMin.x, windowMax.x), hix = std::max(windowMin.x, windowMax.x);
+    const double loy = std::min(windowMin.y, windowMax.y), hiy = std::max(windowMin.y, windowMax.y);
+    constexpr double tol = 1e-9;
+    auto inside = [&](const Vec2& q) { return q.x >= lox - tol && q.x <= hix + tol && q.y >= loy - tol && q.y <= hiy + tol; };
+
+    // Hold every point inside the window where it goes; the rest is left to the solver, so curves
+    // crossing the window edge stretch (a line keeps its far end, a rectangle its other corners)
+    // and curves wholly inside move. Fusion: Sketch > Modify > Stretch.
+    Json constraints = f.params.value("constraints", Json::array());
+    Json held = constraints;
+    std::size_t holds = 0;
+    for (std::size_t i = 0; i < curves.size(); ++i) {
+        const auto refs = curvePointRefs(curves[i], i);
+        bool all = !refs.empty();
+        for (const Json& ref : refs)
+            all = all && inside(curvePointAt(curves[i], ref));
+        for (const Json& ref : refs) {
+            const Vec2 at = curvePointAt(curves[i], ref);
+            if (!inside(at))
+                continue;
+            const Vec2 to{at.x + delta.x, at.y + delta.y};
+            held.push_back({{"type", "fix"}, {"points", Json::array({ref})}, {"at", Json::array({Json::array({to.x, to.y})})}});
+            ++holds;
+        }
+        if (all && curves[i].kind == SketchCurve::Kind::Circle)
+            held.push_back({{"type", "radius"}, {"curve", i}, {"value", curves[i].radius}});
+        if (all && (curves[i].kind == SketchCurve::Kind::Ellipse || curves[i].kind == SketchCurve::Kind::EllipticalArc))
+            held.push_back({{"type", "minor_radius"}, {"curve", i}, {"value", curves[i].radius}});
+    }
+    if (holds == 0)
+        throw DesignError("The window holds no sketch points: drag it over the geometry to stretch");
+    const Eval ev{*this};
+    Json items = f.params.value("curves", Json::array());
+    const auto ranges = itemRanges(ev, items, curves.size(), f.name);
+    for (std::size_t k = 0; k < items.size(); ++k) {
+        if (lower(items[k].at("type").get<std::string>()) != "polygon")
+            continue;
+        const auto [first, count] = ranges[k];
+        const double turn = 360.0 / static_cast<double>(count);
+        for (std::size_t i = 0; i + 1 < count; ++i)
+            held.push_back({{"type", "angle"}, {"curves", Json::array({first + i, first + i + 1})}, {"value", turn}});
+    }
+    f.params["constraints"] = held;
+    regenerate();
+    const FeatureStatus st = status(sketchId);
+    it = m_sketches.find(sketchId);
+    if (st.state == FeatureStatus::State::Error || it == m_sketches.end()) {
+        m_state = before;
+        regenerate();
+        throw DesignError("That cannot stretch: the constraints hold the geometry (" + st.message + ")");
+    }
+    const Json newItems = itemsFromSolved(ev, items, &curves, it->second.curves, false);
+    Feature& g = m_state.features[indexOf(sketchId)];
+    g.params["curves"] = newItems;
+    if (constraints.empty() && !before.features[indexOf(sketchId)].params.contains("constraints"))
+        g.params.erase("constraints");
+    else
+        g.params["constraints"] = constraints;
+    regenerateChecked(sketchId, before);
+}
 
 void Design::moveSketchCurves(FeatureId sketchId, const std::vector<std::size_t>& picked, const SketchPlacement& place,
                               bool copy)
