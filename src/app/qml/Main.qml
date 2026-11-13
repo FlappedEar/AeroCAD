@@ -293,6 +293,7 @@ ApplicationWindow {
         SketchMenuItem { action: slotAction; icon.source: Theme.iconUrl("slot") }
         SketchMenuItem { action: arcSlotAction; icon.source: Theme.iconUrl("arc-slot") }
         SketchMenuItem { action: splineAction; icon.source: Theme.iconUrl("spline") }
+        SketchMenuItem { action: cpSplineAction; icon.source: Theme.iconUrl("cp-spline") }
         SketchMenuItem { action: pointAction; icon.source: Theme.iconUrl("point") }
         SketchMenuItem { action: dimensionAction; icon.source: Theme.iconUrl("dimension") }
         MenuSeparator {}
@@ -1499,6 +1500,7 @@ ApplicationWindow {
     Action { id: tangentArcAction; text: qsTr("&Tangent Arc"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "tangent_arc"; onTriggered: window.sketchTool_("tangent_arc") }
     Action { id: centerArcAction; text: qsTr("C&enter Point Arc"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "center_arc"; onTriggered: window.sketchTool_("center_arc") }
     Action { id: pointAction; text: qsTr("Poin&t"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "point"; onTriggered: window.sketchTool_("point") }
+    Action { id: cpSplineAction; text: qsTr("Control Point Spline"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "cp_spline"; onTriggered: window.sketchTool_("cp_spline") }
     Action { id: splineAction; text: qsTr("Spli&ne"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "spline"; onTriggered: window.sketchTool_("spline") }
     Action { id: arcSlotAction; text: qsTr("&Arc Slot"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "arc_slot"; onTriggered: window.sketchTool_("arc_slot") }
     Action { id: slotAction; text: qsTr("Sl&ot"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "slot"; onTriggered: window.sketchTool_("slot") }
@@ -1819,6 +1821,7 @@ ApplicationWindow {
             MenuItem { action: slotAction }
             MenuItem { action: arcSlotAction }
             MenuItem { action: splineAction }
+            MenuItem { action: cpSplineAction }
             MenuItem { action: pointAction }
             MenuSeparator {}
             MenuItem { action: sketchFilletAction }
@@ -2297,6 +2300,7 @@ ApplicationWindow {
                 ToolCommand { action: circle3PointAction; text: qsTr("3-Point Circle"); iconName: "circle-3point" }
                 ToolCommand { action: circle2TangentAction; text: qsTr("2-Tangent Circle"); iconName: "circle-2tangent" }
                 ToolCommand { action: circle3TangentAction; text: qsTr("3-Tangent Circle"); iconName: "circle-3tangent" }
+                ToolCommand { action: cpSplineAction; text: qsTr("Control Point Spline"); iconName: "cp-spline" }
                 ToolCommand { action: ellipseAction; text: qsTr("Ellipse"); iconName: "ellipse" }
                 ToolCommand { action: ellipticalArcAction; text: qsTr("Elliptical Arc"); iconName: "elliptical_arc" }
                 ToolCommand { action: conicAction; text: qsTr("Conic Curve"); iconName: "conic" }

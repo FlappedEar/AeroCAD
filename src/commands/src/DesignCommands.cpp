@@ -210,9 +210,10 @@ Json curveSchema()
          "(polygon left of start -> end); slot {start, end, width, mode?} (overall: start, end are the far points) "
          "or {mode: center_point, center, end, width}; spline {points, closed?}; point {at} (a sketch point: no edge, no profile; "
          "it joins a curve end at the same place); tangent_arc {from: {curve, point: start | end}, end} "
-         "(sketch.add_curves only: an arc leaving the end of a line or arc tangentially, kept tangent); "
-         "tangent_circle {curves, near, radius?} (add_curves only: a circle tangent to 2 or 3 lines, arcs or circles); "
-         "arc_slot {center, radius, width, start_angle, end_angle} (slot along an arc). "
+         "(add_curves only: an arc leaving a line or arc end tangentially); "
+         "tangent_circle {curves, near, radius?} (add_curves only: tangent to 2 or 3 lines, arcs or circles); "
+         "arc_slot {center, radius, width, start_angle, end_angle} (slot along an arc); "
+         "control_spline {points (control polygon), degree? 2-5, closed?}. "
          "conic {start, end, apex, rho?} (tangent at its ends to the lines towards apex); "
          "text {at, text, height?, angle?, font?, bold?, italic?} (letters are profiles; at = baseline start, "
          "height mm, default 5). "
@@ -222,7 +223,7 @@ Json curveSchema()
            {{"type", "string"},
             {"description", "Curve kind; selects which other fields apply."},
             {"enum", {"line", "rectangle", "center_rectangle", "three_point_rectangle", "circle", "arc", "center_arc", "polygon", "slot",
-                      "spline", "point", "tangent_arc", "tangent_circle", "arc_slot", "ellipse", "elliptical_arc", "conic", "text"}}}},
+                      "spline", "point", "tangent_arc", "tangent_circle", "arc_slot", "control_spline", "ellipse", "elliptical_arc", "conic", "text"}}}},
           {"curves", {{"type", "array"}, {"items", {{"type", "integer"}, {"minimum", 0}}},
                       {"description", "tangent_circle: 2 or 3 line, arc or circle indices (`radius` optional for 2)."}}},
           {"near", point2("tangent_circle: a point near the circle wanted.")},
@@ -260,8 +261,9 @@ Json curveSchema()
           {"apex", point2("conic: where its end tangents meet.")},
           {"rho", numberOrExpr("conic: 0 to 1, default 0.5 (parabola).")},
           {"points", {{"type", "array"}, {"items", point2("Fit point.")}, {"minItems", 2},
-                      {"description", "spline: fit points, at least 2."}}},
-          {"closed", {{"type", "boolean"}, {"description", "spline: true joins the last point to the first."}}},
+                      {"description", "spline: fit points (2+); control_spline: control points (degree + 1+)."}}},
+          {"closed", {{"type", "boolean"}, {"description", "spline, control_spline: true makes it a closed curve."}}},
+          {"degree", {{"type", "integer"}, {"minimum", 2}, {"maximum", 5}, {"description", "control_spline degree, default 3."}}},
           {"construction", {{"type", "boolean"}, {"description", "true = construction geometry, not part of profiles."}}},
           {"join_start",
            {{"type", "boolean"},

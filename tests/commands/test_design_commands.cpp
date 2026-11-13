@@ -4535,3 +4535,80 @@ TEST_CASE("Design commands: arc slot (CAD-273)", "[commands][cad]")
             CHECK_FALSE(s.execute("sketch.create", {{"plane", "XY"}, {"curves", Json::array({item})}}).ok);
     }
 }
+
+TEST_CASE("Design commands: control point spline (CAD-274)", "[commands][cad]")
+{
+    commands::Session s;
+    auto samples = [&](std::uint64_t id) {
+        const Json c = run(s, "sketch.curves", {{"sketch", id}});
+        REQUIRE(c.at("curves").size() == 1);
+        REQUIRE(c.at("curves")[0].at("kind") == "spline");
+        return c.at("curves")[0].at("points");
+    };
+
+    SECTION("four control points make a cubic Bezier through the end points")
+    {
+        const auto id = run(s, "sketch.create",
+                            {{"plane", "XY"},
+                             {"curves", Json::array({{{"type", "control_spline"}, {"points", {{0, 0}, {10, 20}, {30, 20}, {40, 0}}}}})}})
+                            .at("id").get<std::uint64_t>();
+        const Json p = samples(id);
+        CHECK(p.front()[0].get<double>() == Approx(0).margin(1e-9));
+        CHECK(p.front()[1].get<double>() == Approx(0).margin(1e-9));
+        CHECK(p.back()[0].get<double>() == Approx(40).margin(1e-9));
+        CHECK(p.back()[1].get<double>() == Approx(0).margin(1e-9));
+        // The middle of the Bezier is (P0 + 3 P1 + 3 P2 + P3) / 8 = (20, 15).
+        const Json& mid = p[p.size() / 2];
+        CHECK(mid[0].get<double>() == Approx(20).margin(1e-6));
+        CHECK(mid[1].get<double>() == Approx(15).margin(1e-6));
+    }
+
+    SECTION("the curve stays inside the control polygon and does not pass through inner control points")
+    {
+        const auto id = run(s, "sketch.create",
+                            {{"plane", "XY"},
+                             {"curves", Json::array({{{"type", "control_spline"}, {"points", {{0, 0}, {10, 30}, {20, 0}, {30, 30}, {40, 0}}}}})}})
+                            .at("id").get<std::uint64_t>();
+        const Json p = samples(id);
+        double top = 0;
+        for (const auto& q : p)
+            top = std::max(top, q[1].get<double>());
+        CHECK(top < 30);
+        CHECK(top > 5);
+    }
+
+    SECTION("a closed control point spline is a closed loop")
+    {
+        const auto id = run(s, "sketch.create",
+                            {{"plane", "XY"},
+                             {"curves", Json::array({{{"type", "control_spline"}, {"closed", true},
+                                                      {"points", {{0, 0}, {40, 0}, {40, 40}, {0, 40}}}}})}})
+                            .at("id").get<std::uint64_t>();
+        const Json c = run(s, "sketch.curves", {{"sketch", id}}).at("curves")[0];
+        CHECK(c.at("kind") == "spline");
+        // A uniform periodic cubic B-spline of a square is the rounded square inside it.
+        double lo = 1e9, hi = -1e9;
+        for (const auto& q : c.at("points")) {
+            lo = std::min(lo, q[0].get<double>());
+            hi = std::max(hi, q[0].get<double>());
+        }
+        CHECK(lo > 0);
+        CHECK(hi < 40);
+    }
+
+    SECTION("too few control points, and a bad degree, are errors")
+    {
+        CHECK_FALSE(s.execute("sketch.create",
+                              {{"plane", "XY"},
+                               {"curves", Json::array({{{"type", "control_spline"}, {"points", {{0, 0}, {10, 10}, {20, 0}}}}})}})
+                        .ok);
+        CHECK(s.execute("sketch.create",
+                        {{"plane", "XY"},
+                         {"curves", Json::array({{{"type", "control_spline"}, {"degree", 2}, {"points", {{0, 0}, {10, 10}, {20, 0}}}}})}})
+                  .ok);
+        CHECK_FALSE(s.execute("sketch.create",
+                              {{"plane", "XY"},
+                               {"curves", Json::array({{{"type", "control_spline"}, {"degree", 9}, {"points", {{0, 0}, {10, 10}, {20, 0}}}}})}})
+                        .ok);
+    }
+}
