@@ -292,6 +292,7 @@ ApplicationWindow {
         SketchMenuItem { action: polygonAction; icon.source: Theme.iconUrl("polygon") }
         SketchMenuItem { action: slotAction; icon.source: Theme.iconUrl("slot") }
         SketchMenuItem { action: arcSlotAction; icon.source: Theme.iconUrl("arc-slot") }
+        SketchMenuItem { action: arcSlot3Action; icon.source: Theme.iconUrl("arc-slot-3pt") }
         SketchMenuItem { action: splineAction; icon.source: Theme.iconUrl("spline") }
         SketchMenuItem { action: cpSplineAction; icon.source: Theme.iconUrl("cp-spline") }
         SketchMenuItem { action: pointAction; icon.source: Theme.iconUrl("point") }
@@ -1504,6 +1505,7 @@ ApplicationWindow {
     Action { id: cpSplineAction; text: qsTr("Control Point Spline"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "cp_spline"; onTriggered: window.sketchTool_("cp_spline") }
     Action { id: splineAction; text: qsTr("Spli&ne"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "spline"; onTriggered: window.sketchTool_("spline") }
     Action { id: arcSlotAction; text: qsTr("&Arc Slot"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "arc_slot"; onTriggered: window.sketchTool_("arc_slot") }
+    Action { id: arcSlot3Action; text: qsTr("3-Point Arc Slot"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "arc_slot_3pt"; onTriggered: window.sketchTool_("arc_slot_3pt") }
     Action { id: slotAction; text: qsTr("Sl&ot"); enabled: !!window.activeSketch; checkable: true; checked: window.sketchTool === "slot"; onTriggered: window.sketchTool_("slot") }
 
     // Scan area selection tools (shortcuts 1/2/3 are in Viewport.qml).
@@ -1821,6 +1823,7 @@ ApplicationWindow {
             MenuItem { action: polygonAction }
             MenuItem { action: slotAction }
             MenuItem { action: arcSlotAction }
+            MenuItem { action: arcSlot3Action }
             MenuItem { action: splineAction }
             MenuItem { action: cpSplineAction }
             MenuItem { action: pointAction }
@@ -2310,6 +2313,7 @@ ApplicationWindow {
                 ToolCommand { action: centerArcAction; text: qsTr("Center Arc"); iconName: "center-arc" }
                 ToolCommand { action: tangentArcAction; text: qsTr("Tangent Arc"); iconName: "tangent-arc" }
                 ToolCommand { action: arcSlotAction; text: qsTr("Arc Slot"); iconName: "arc-slot" }
+                ToolCommand { action: arcSlot3Action; text: qsTr("3-Point Arc Slot"); iconName: "arc-slot-3pt" }
                 // Fusion: Create > Rectangular / Circular Pattern.
                 ToolCommand { action: sketchRectangularPatternAction; text: qsTr("Rectangular Pattern"); iconName: "pattern" }
                 ToolCommand { action: sketchCircularPatternAction; text: qsTr("Circular Pattern"); iconName: "circular-pattern" }

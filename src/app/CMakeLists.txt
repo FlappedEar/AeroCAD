@@ -730,6 +730,11 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_cp_spline.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_sketch_cp_spline_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-273: 3-Point Arc Slot.
+    add_test(NAME app_sketch_arc_slot_3pt_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_arc_slot_3pt.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_sketch_arc_slot_3pt_test PROPERTIES LABELS gui TIMEOUT 60)
     # CAD-273: Circle 2-Tangent / 3-Tangent also to arcs and circles.
     add_test(NAME app_sketch_circle_tangent_arcs_test
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_circle_tangent_arcs.ui
