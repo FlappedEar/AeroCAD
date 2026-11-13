@@ -5663,12 +5663,18 @@ TEST_CASE("Design commands: replace face moves a flat face onto a plane or anoth
         CHECK_FALSE(s.execute("feature.replace_face", {{"body", "Body1"}, {"faces", {99}}, {"to", {{"plane", xyPlane}, {"offset", 30}}}}).ok);
         CHECK_FALSE(s.execute("feature.replace_face", {{"body", "Body1"}, {"faces", Json::array()}, {"to", {{"plane", xyPlane}}}}).ok);
         CHECK_FALSE(s.execute("feature.replace_face", {{"body", "Body1"}, {"faces", {top}}}).ok);
+        // A tool over only half of the face leaves the rest in place: refused, not half done.
+        run(s, "feature.box", {{"corner", {0, 0, 35}}, {"size", {20, 40, 5}}});
+        const auto partial = s.execute("feature.replace_face", {{"body", "Body1"}, {"faces", {top}},
+                                                                {"to", {{"body", "Body2"}, {"faces", {faceAt(s, "Body2", {10, 20, 35})}}}}});
+        CHECK_FALSE(partial.ok);
+        CHECK(partial.error.find("cover") != std::string::npos);
         // Its own faces are not a tool.
         CHECK_FALSE(s.execute("feature.replace_face", {{"body", "Body1"}, {"faces", {top}}, {"to", {{"body", "Body1"}}}}).ok);
         // A curved face is refused with a hint.
         run(s, "feature.cylinder", {{"center", {100, 0, 0}}, {"radius", 10}, {"height", 20}});
-        const int side = faceAt(s, "Body2", {110, 0, 10});
-        const auto r = s.execute("feature.replace_face", {{"body", "Body2"}, {"faces", {side}}, {"to", {{"plane", xyPlane}, {"offset", 30}}}});
+        const int side = faceAt(s, "Body3", {110, 0, 10});
+        const auto r = s.execute("feature.replace_face", {{"body", "Body3"}, {"faces", {side}}, {"to", {{"plane", xyPlane}, {"offset", 30}}}});
         CHECK_FALSE(r.ok);
         CHECK(r.error.find("curved") != std::string::npos);
         // Nothing was added by the failures.

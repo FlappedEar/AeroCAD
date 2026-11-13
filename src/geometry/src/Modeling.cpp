@@ -949,6 +949,35 @@ Shape replaceFaces(const Shape& shape, const std::vector<std::size_t>& faceIndic
                 }
                 return any ? std::optional<TopoDS_Shape>(kept) : std::nullopt;
             };
+            // The tool has to separate the two ends of the face's column everywhere: a tool that
+            // covers only part of the face would leave the rest of it in place.
+            {
+                gp_Trsf toBottom, toTop;
+                toBottom.SetTranslation(up * -1.0);
+                toTop.SetTranslation(up);
+                const TopoDS_Shape bottom = BRepBuilderAPI_Transform(face, toBottom, true).Shape();
+                const TopoDS_Shape top = BRepBuilderAPI_Transform(face, toTop, true).Shape();
+                BRepPrimAPI_MakePrism column(bottom, up * 2.0, true);
+                if (!column.IsDone())
+                    throw ModelingError("Replace Face failed");
+                TopTools_ListOfShape args, tools;
+                args.Append(column.Shape());
+                tools.Append(tool);
+                BRepAlgoAPI_Splitter splitter;
+                splitter.SetArguments(args);
+                splitter.SetTools(tools);
+                splitter.SetRunParallel(false);
+                splitter.Build();
+                if (!splitter.IsDone() || splitter.HasErrors())
+                    throw ModelingError("Replace Face: cutting at the tool failed");
+                for (TopExp_Explorer e(splitter.Shape(), TopAbs_SOLID); e.More(); e.Next()) {
+                    BRepExtrema_DistShapeShape low(e.Current(), bottom);
+                    BRepExtrema_DistShapeShape high(e.Current(), top);
+                    if (low.IsDone() && low.Value() <= tol && high.IsDone() && high.Value() <= tol)
+                        throw ModelingError("Replace Face: the tool does not cover the whole of face " + std::to_string(ref.index)
+                                            + " along its normal");
+                }
+            }
             const auto grow = between(1.0);
             const auto cut = between(-1.0);
             if (!grow && !cut)
