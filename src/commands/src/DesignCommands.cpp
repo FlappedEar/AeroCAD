@@ -768,7 +768,7 @@ Json describeTopologyRefs(const cad::Design& d, const std::string& type, Json pa
 {
     if ((type == "fillet" || type == "chamfer") && params.contains("edges") && params.contains("body"))
         addTopologyHints(d, params["body"], params["edges"], true);
-    else if ((type == "shell" || type == "press_pull" || type == "delete_faces" || type == "draft" || type == "thread") && params.contains("faces") &&
+    else if ((type == "shell" || type == "press_pull" || type == "delete_faces" || type == "draft" || type == "thread" || type == "split_face") && params.contains("faces") &&
              params.contains("body"))
         addTopologyHints(d, params["body"], params["faces"], false);
     else if (type == "extrude" && params.contains("to") && params["to"].is_object() &&
@@ -2208,10 +2208,10 @@ void registerSketchCommands(CommandRegistry& r)
 
     r.add({"sketch.rectangular_pattern", "Sketch Rectangular Pattern",
            "Copies sketch curves in rows and columns (Fusion: Sketch > Rectangular Pattern): `count_x` instances "
-           "`spacing_x` mm apart along the first direction and `count_y` instances `spacing_y` mm apart along the "
-           "second, the originals included (a negative spacing goes the other way). The first direction is the "
-           "sketch's x turned by `angle` degrees, the second is at right angles to it. The copies are added at "
-           "the end of sketch.curves with the constraints among them; they are not linked to the originals afterwards.",
+           "`spacing_x` mm apart along the first direction (the sketch's x turned by `angle` degrees), `count_y` "
+           "instances `spacing_y` mm apart at right angles, originals included (negative spacing goes the other "
+           "way). The copies are added at the end of sketch.curves with their constraints, not linked to the "
+           "originals.",
            objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
                          {"curves", {{"type", "array"}, {"items", {{"type", "integer"}}}, {"minItems", 1},
                                      {"description", "Curve indices from sketch.curves."}}},
@@ -2602,6 +2602,16 @@ void registerFeatureCommands(CommandRegistry& r)
                                                   "plane id or name}, {origin, normal}, or a planar face {body, index | point}."}}},
                        {"angle", numberOrExpr("Draft angle in degrees (negative leans the faces out).")}},
                       {"body", "faces", "angle"});
+
+    addFeatureCommand(r, "split_face", "Split Face",
+                      "Splits faces of a body along a plane (Fusion: Split Face); the body stays one solid, e.g. to "
+                      "press-pull only part of a face.",
+                      {{"body", bodyRefSchema("Body.")},
+                       {"faces", topologyListSchema("face")},
+                       {"plane", {{"type", Json::array({"string", "object"})},
+                                  {"description", "Splitting plane (as for split)."}}},
+                       {"offset", numberOrExpr("Offset of the plane along its normal (mm).")}},
+                      {"body", "faces"});
 
     addFeatureCommand(r, "thread", "Thread",
                       "A modeled screw thread on cylindrical faces (Fusion: Create > Thread): a helical V groove cut along "

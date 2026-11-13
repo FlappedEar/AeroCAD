@@ -360,6 +360,11 @@ Pane {
             { key: "factor_x", type: "expr", label: qsTr("X factor"), init: 1, showIf: v => v.scaleType === "non_uniform" },
             { key: "factor_y", type: "expr", label: qsTr("Y factor"), init: 1, showIf: v => v.scaleType === "non_uniform" },
             { key: "factor_z", type: "expr", label: qsTr("Z factor"), init: 1, showIf: v => v.scaleType === "non_uniform" }] },
+        split_face: { title: qsTr("Split Face"), command: "feature.split_face", fields: [
+            { key: "body", type: "body", label: qsTr("Body") },
+            { key: "faces", type: "facePicks", label: qsTr("Faces to split"), hint: qsTr("Click the faces the plane cuts"), required: true },
+            { key: "plane", type: "planePick", label: qsTr("Splitting plane"), init: "YZ", hint: qsTr("Origin plane, construction plane, or click a planar face") },
+            { key: "offset", type: "expr", label: qsTr("Offset"), init: 0 }] },
         split: { title: qsTr("Split Body"), command: "feature.split", fields: [
             { key: "body", type: "body", label: qsTr("Body to split") },
             { key: "plane", type: "planePick", label: qsTr("Splitting plane"), init: "YZ", hint: qsTr("Origin plane, construction plane, or click a planar face") },

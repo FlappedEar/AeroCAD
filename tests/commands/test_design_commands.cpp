@@ -4931,6 +4931,55 @@ TEST_CASE("Design commands: thread (Fusion: Create > Thread)", "[commands][cad]"
     }
 }
 
+TEST_CASE("Design commands: split face keeps one solid and cuts the picked face (Fusion: Split Face)", "[commands][cad]")
+{
+    const auto faceCount = [](commands::Session& s) {
+        const Json faces = run(s, "body.faces", {{"body", "Body1"}});
+        return faces.at("faces").size();
+    };
+    const auto topFace = [](commands::Session& s) {
+        const Json faces = run(s, "body.faces", {{"body", "Body1"}, {"point", {20, 20, 20}}});
+        return faces.at("nearest").at("index").get<int>();
+    };
+    SECTION("a plane through the top face adds a face and keeps the volume")
+    {
+        commands::Session s;
+        run(s, "feature.box", {{"corner", {0, 0, 0}}, {"size", {40, 40, 20}}});
+        REQUIRE(faceCount(s) == 6);
+        const int face = topFace(s);
+        run(s, "feature.split_face", {{"body", "Body1"}, {"faces", {face}}, {"plane", "YZ"}, {"offset", 10}});
+        CHECK(faceCount(s) == 7);
+        const Json bodies = run(s, "timeline.list").at("bodies");
+        REQUIRE(bodies.size() == 1);
+        CHECK(bodies.at(0).at("volume").get<double>() == Catch::Approx(32000).margin(0.01));
+    }
+    SECTION("the two halves of the face can be pressed separately")
+    {
+        commands::Session s;
+        run(s, "feature.box", {{"corner", {0, 0, 0}}, {"size", {40, 40, 20}}});
+        const int face = topFace(s);
+        run(s, "feature.split_face", {{"body", "Body1"}, {"faces", {face}}, {"plane", "YZ"}, {"offset", 10}});
+        // The half over x > 10 is 30 x 40; pull it 5 mm up.
+        const Json half = run(s, "body.faces", {{"body", "Body1"}, {"point", {30, 20, 20}}});
+        run(s, "feature.press_pull", {{"body", "Body1"}, {"faces", {half.at("nearest").at("index")}}, {"distance", 5}});
+        const Json bodies = run(s, "timeline.list").at("bodies");
+        CHECK(bodies.at(0).at("volume").get<double>() == Catch::Approx(32000 + 30 * 40 * 5).margin(0.5));
+    }
+    SECTION("a plane that misses the face is an error")
+    {
+        commands::Session s;
+        run(s, "feature.box", {{"corner", {0, 0, 0}}, {"size", {40, 40, 20}}});
+        const int face = topFace(s);
+        CHECK_FALSE(s.execute("feature.split_face", {{"body", "Body1"}, {"faces", {face}}, {"plane", "YZ"}, {"offset", 100}}).ok);
+        CHECK_FALSE(s.execute("feature.split_face", {{"body", "Body1"}, {"faces", {face}}, {"plane", "XY"}, {"offset", 20}}).ok);
+        CHECK_FALSE(s.execute("feature.split_face", {{"body", "Body1"}, {"faces", Json::array()}}).ok);
+        // A plane along the face's own edge only touches it, and a repeated index is the same face.
+        CHECK_FALSE(s.execute("feature.split_face", {{"body", "Body1"}, {"faces", {face}}, {"plane", "YZ"}, {"offset", 0}}).ok);
+        run(s, "feature.split_face", {{"body", "Body1"}, {"faces", {face, face}}, {"plane", "YZ"}, {"offset", 10}});
+        CHECK(faceCount(s) == 7);
+    }
+}
+
 TEST_CASE("Design commands: extrude extent All cuts through every body (Fusion: Extent All)", "[commands][cad]")
 {
     const auto volume = [](commands::Session& s) {
@@ -4994,5 +5043,14 @@ TEST_CASE("Design commands: counterbore and countersink holes (Fusion: Hole type
         CHECK_FALSE(s.execute("feature.hole", {{"body", "Body1"}, {"point", {5, 5, 12}}, {"diameter", 6}, {"hole_type", "countersink"},
                                                {"csink_diameter", 12}, {"csink_angle", 178}}).ok);
         CHECK_FALSE(s.execute("feature.hole", {{"body", "Body1"}, {"point", {5, 5, 12}}, {"diameter", 6}, {"hole_type", "slotted"}}).ok);
+    }
+    SECTION("a tiny hole with a very wide countersink still works (the cone is not cut past its apex)")
+    {
+        commands::Session s;
+        run(s, "feature.box", {{"corner", {0, 0, 0}}, {"size", {30, 30, 12}}});
+        const auto r = s.execute("feature.hole", {{"body", "Body1"}, {"point", {15, 15, 12}}, {"diameter", 0.3}, {"hole_type", "countersink"},
+                                                  {"csink_diameter", 1}, {"csink_angle", 174}});
+        INFO(r.error);
+        CHECK(r.ok);
     }
 }
