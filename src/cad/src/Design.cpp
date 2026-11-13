@@ -5039,19 +5039,53 @@ void Design::evaluateFeature(const Feature& f)
                 pl.origin = pl.origin + pl.normal * (pl.normal.dot(other.origin - pl.origin) * 0.5);
             }
             const double angle = ev.num(p, "angle", 0.0);
-            if (angle != 0.0) {
-                // Plane at angle: turned about the base plane's x or y axis through its origin.
-                const std::string axis = lower(p.value("axis", std::string("x")));
-                if (axis != "x" && axis != "y")
-                    throw DesignError("Plane axis must be \"x\" or \"y\" (of the base plane)");
-                const core::Vec3 k = axis == "x" ? pl.xDir : pl.yDir();
-                const double t = angle * std::numbers::pi / 180.0;
-                auto rotate = [&](const core::Vec3& v) {
-                    return v * std::cos(t) + k.cross(v) * std::sin(t) + k * (k.dot(v) * (1.0 - std::cos(t)));
-                };
-                pl.normal = rotate(pl.normal);
-                pl.xDir = rotate(pl.xDir);
-                pl = pl.normalized();
+            {
+                // Plane at angle: turned about the base plane's x or y axis through its origin, or
+                // (`about`) about any line: a world axis, an edge or a construction axis. The line
+                // is checked even when the angle is 0, so a bad one does not wait for a later edit.
+                core::Vec3 pivot = pl.origin;
+                core::Vec3 k{};
+                if (has(p, "about")) {
+                    if (has(p, "axis"))
+                        throw DesignError("Give the rotation line as either `axis` (of the base plane) or `about`, not both");
+                    const Json& a = p.at("about");
+                    core::Vec3 dir{0, 0, 1};
+                    if (a.is_string()) {
+                        const std::string name = lower(a.get<std::string>());
+                        if (name == "x")
+                            dir = {1, 0, 0};
+                        else if (name == "y")
+                            dir = {0, 1, 0};
+                        else if (name != "z")
+                            throw DesignError("Unknown rotation line '" + name + "' (X, Y, Z, {origin, direction} or {feature})");
+                        pivot = {};
+                    } else if (has(a, "feature")) {
+                        axisFeature(a, pivot, dir);
+                    } else if (has(a, "direction")) {
+                        pivot = ev.vec3(a, "origin", {});
+                        dir = ev.vec3(a, "direction", {0, 0, 1});
+                    } else {
+                        throw DesignError("`about` must be X, Y, Z, {origin, direction} or {feature}");
+                    }
+                    if (dir.length() < 1e-9)
+                        throw DesignError("The rotation line of the plane has no direction");
+                    k = dir.normalized();
+                } else {
+                    const std::string axis = lower(p.value("axis", std::string("x")));
+                    if (axis != "x" && axis != "y")
+                        throw DesignError("Plane axis must be \"x\" or \"y\" (of the base plane)");
+                    k = axis == "x" ? pl.xDir : pl.yDir();
+                }
+                if (angle != 0.0) {
+                    const double t = angle * std::numbers::pi / 180.0;
+                    auto rotate = [&](const core::Vec3& v) {
+                        return v * std::cos(t) + k.cross(v) * std::sin(t) + k * (k.dot(v) * (1.0 - std::cos(t)));
+                    };
+                    pl.origin = pivot + rotate(pl.origin - pivot);
+                    pl.normal = rotate(pl.normal);
+                    pl.xDir = rotate(pl.xDir);
+                    pl = pl.normalized();
+                }
             }
             pl.origin = pl.origin + pl.normal * ev.num(p, "offset", 0.0);
         }

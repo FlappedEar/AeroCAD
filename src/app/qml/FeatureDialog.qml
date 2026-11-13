@@ -346,9 +346,14 @@ Pane {
             { key: "base", type: "planePick", label: qsTr("Base plane"), init: "XY", hint: qsTr("Origin plane, construction plane, or click a planar face") },
             { key: "offset", type: "expr", label: qsTr("Offset"), init: 10 },
             { key: "angle", type: "expr", label: qsTr("Angle (deg)"), init: 0 },
+            { key: "turnAbout", type: "choice", label: qsTr("Turn about"), init: "plane", local: true, options: [
+                { value: "plane", label: qsTr("Plane X / Y axis") }, { value: "pick", label: qsTr("Edge or axis") }],
+              showIf: v => Number(v.angle) !== 0 },
             { key: "axis", type: "choice", label: qsTr("Rotation axis"), init: "x", options: [
                 { value: "x", label: qsTr("Plane X axis") }, { value: "y", label: qsTr("Plane Y axis") }],
-              showIf: v => Number(v.angle) !== 0 }] },
+              showIf: v => Number(v.angle) !== 0 && v.turnAbout !== "pick" },
+            { key: "about", type: "axisPick", label: qsTr("Edge or axis"), init: "Z", hint: qsTr("Click an edge, a cylindrical face or a construction axis"),
+              showIf: v => Number(v.angle) !== 0 && v.turnAbout === "pick" }] },
         axis: { title: qsTr("Construction Axis"), command: "feature.axis", fields: [
             { key: "mode", type: "choice", label: qsTr("Through"), init: "line", local: true, options: [
                 { value: "line", label: qsTr("Edge, cylinder or axis") }, { value: "points", label: qsTr("Two points") },
@@ -586,6 +591,8 @@ Pane {
             else if (initial.height !== undefined && initial.pitch === undefined)
                 v.coilType = "revolutions_height"
         }
+        if (initial && featureType === "plane" && initial.about !== undefined)
+            v.turnAbout = "pick"
         if (initial && featureType === "fillet" && initial.radius_end !== undefined)
             v.radiusType = "variable"
         if (initial && featureType === "scale" && (initial.factor_x !== undefined || initial.factor_y !== undefined || initial.factor_z !== undefined))
