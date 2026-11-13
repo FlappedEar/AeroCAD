@@ -5017,13 +5017,46 @@ void Design::evaluateFeature(const Feature& f)
         // Fusion: Construct > Offset Plane, Plane at Angle, Midplane, Plane Through Three Points.
         Plane pl;
         if (has(p, "path")) {
-            for (const char* other : {"points", "base", "base2", "angle", "axis", "about"})
+            for (const char* other : {"points", "base", "base2", "angle", "axis", "about", "tangent"})
                 if (has(p, other))
                     throw DesignError(std::string("A plane along a path takes `path`, `position` and `offset`, not `") + other + "`");
         } else if (has(p, "position")) {
             throw DesignError("`position` goes with `path`");
         }
-        if (has(p, "path")) {
+        if (has(p, "tangent")) {
+            // Tangent Plane: touches a curved face at `tangent.point` (a point on or near the face: where
+            // it should touch), its normal pointing out of the body; `offset` moves it along that normal.
+            for (const char* other : {"points", "base", "base2", "angle", "axis", "about"})
+                if (has(p, other))
+                    throw DesignError(std::string("A tangent plane takes `tangent` and `offset`, not `") + other + "`");
+            const Json& ref = p.at("tangent");
+            if (!ref.is_object() || !has(ref, "body") || !has(ref, "point"))
+                throw DesignError("`tangent` must be {body, point}: click a curved face of a body where the plane should touch it");
+            const Body& body = bodyRef(ref.at("body"));
+            std::size_t idx = 0;
+            if (has(ref, "index")) {
+                if (!ref.at("index").is_number_unsigned())
+                    throw DesignError("`tangent.index` must be a face index (0 or more)");
+                idx = ref.at("index").get<std::size_t>();
+            } else {
+                const auto found = matchTopology(body.shape, ref, false, ev);
+                if (!found)
+                    throw DesignError("No face near " + ref.dump() + " on " + body.name);
+                idx = *found;
+            }
+            const auto infos = geometry::faces(body.shape);
+            if (idx >= infos.size())
+                throw DesignError(body.name + " has no face " + std::to_string(idx));
+            const core::Vec3 near = ev.vec3(ref.at("point"));
+            const auto sp = geometry::faceSurfaceNear(body.shape, idx, near);
+            if (!sp)
+                throw DesignError("The surface of face " + std::to_string(idx) + " of " + body.name + " has no normal there");
+            pl.origin = sp->point;
+            pl.normal = sp->normal;
+            pl.xDir = std::abs(sp->normal.z) < 0.9 ? core::Vec3{0, 0, 1}.cross(sp->normal) : core::Vec3{1, 0, 0};
+            pl = pl.normalized();
+            pl.origin = pl.origin + pl.normal * ev.num(p, "offset", 0.0);
+        } else if (has(p, "path")) {
             // Plane Along Path: perpendicular to the path at `position` (fraction of its length).
             // The path only guides the plane, so its sketch stays visible (pathEdgesOf would hide it).
             const auto pathSketch = m_sketches.find(required(p.at("path"), "sketch").get<FeatureId>());

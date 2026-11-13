@@ -150,7 +150,7 @@ QtObject {
         "combine": "combine", "split body": "section", "split face": "section", "boundary fill": "combine", "align": "move", "delete face": "delete", "draft": "shell", "thread": "thread", "parameters": "parameters", "show/hide": "visible", "delete": "delete",
         "selected": "export", "all": "export", "export": "export", "fit": "fit", "home": "home",
         "ortho": "ortho", "sweep": "sweep", "loft": "loft", "mirror": "mirror", "pattern": "pattern",
-        "circular pattern": "circular-pattern", "plane": "plane", "midplane": "plane", "plane on path": "plane", "axis": "axis", "measure": "measure",
+        "circular pattern": "circular-pattern", "plane": "plane", "midplane": "plane", "plane on path": "plane", "tangent plane": "plane", "axis": "axis", "measure": "measure",
         "clearance": "clearance", "section": "section", "deviation": "deviation",
         "thickness": "thickness", "a/b": "variants", "new": "duplicate", "variant": "variants"
     })
@@ -177,6 +177,7 @@ QtObject {
         "shell": qsTr("Hollow out a body, leaving walls of the thickness you type."),
         "move/rotate": qsTr("Turn the selected part about an axis and move it by a distance (Fusion: Move/Copy, M)."),
         "combine": qsTr("Join, cut or intersect two bodies."),
+        "tangent plane": qsTr("Add a construction plane that touches a curved face (cylinder, cone, sphere) where you click it (Fusion: Tangent Plane)."),
         "plane on path": qsTr("Add a construction plane perpendicular to a sketch path at a position along it, e.g. for a section sketch (Fusion: Plane Along Path)."),
         "midplane": qsTr("Add a construction plane halfway between two parallel faces or planes, e.g. a part's symmetry plane (Fusion: Midplane)."),
         "thread": qsTr("Screw thread on a cylinder or in a hole: pick the cylindrical face, set the pitch (Fusion: Thread)."),
