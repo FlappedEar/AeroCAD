@@ -203,14 +203,13 @@ Json curveSchema()
         {"type", "object"},
         {"description",
          "A sketch curve. type selects the fields: line {start, end}; rectangle {corner, width, height} or "
-         "{corner, opposite}; center_rectangle {center, width, height}; three_point_rectangle {start, end, height} (a side "
-         "at any angle, then the other side; height is signed, positive to the left of start -> end); circle {center, radius | diameter}; "
+         "{corner, opposite}; center_rectangle {center, width, height}; three_point_rectangle {start, end, height} (signed: "
+         "positive to the left of start -> end); circle {center, radius | diameter}; "
          "arc {start, through, end} (three-point arc); center_arc {center, radius, startAngle, endAngle} "
-         "(degrees, counter-clockwise); polygon {center, radius, sides, angle?, mode?} (circumscribed: radius to a side) or {mode: edge, start, end, sides} "
-         "(polygon left of start -> end); slot {start, end, width, mode?} (overall: start, end are the far points) "
+         "(degrees, counter-clockwise); polygon {center, radius, sides, angle?, mode?} (circumscribed: radius to a side) or {mode: edge, start, end, sides} (left of start -> end); slot {start, end, width, mode?} (overall: start, end are the far points) "
          "or {mode: center_point, center, end, width}; spline {points, closed?}; point {at} (a sketch point: no edge, no profile; "
-         "it joins a curve end at the same place); tangent_arc {from: {curve, point: start | end}, end} "
-         "(add_curves only: an arc leaving a line or arc end tangentially); "
+         "joins a curve end there); tangent_arc {from: {curve, point: start | end}, end} "
+         "(add_curves only: leaves a line or arc end tangentially); "
          "tangent_circle {curves, near, radius?} (add_curves only: tangent to 2 or 3 lines, arcs or circles); "
          "arc_slot {center, radius, width, start_angle, end_angle} (slot along an arc); "
          "control_spline {points (control polygon), degree? 2-5, closed?}. "
@@ -262,7 +261,7 @@ Json curveSchema()
           {"rho", numberOrExpr("conic: 0 to 1, default 0.5 (parabola).")},
           {"points", {{"type", "array"}, {"items", point2("Fit point.")}, {"minItems", 2},
                       {"description", "spline: fit points (2+); control_spline: control points (degree + 1+)."}}},
-          {"closed", {{"type", "boolean"}, {"description", "spline, control_spline: true makes it a closed curve."}}},
+          {"closed", {{"type", "boolean"}, {"description", "spline, control_spline: closed curve."}}},
           {"degree", {{"type", "integer"}, {"minimum", 2}, {"maximum", 5}, {"description", "control_spline degree, default 3."}}},
           {"construction", {{"type", "boolean"}, {"description", "true = construction geometry, not part of profiles."}}},
           {"join_start",
@@ -365,16 +364,15 @@ Json operationSchema(bool withNewBody = true)
                               : Json::array({"join", "cut", "intersect"});
     return Json{{"type", "string"},
                 {"enum", values},
-                {"description", "What to do with the result (Fusion's Operation): new_body (default), join, cut or "
-                                "intersect. join/cut/intersect act on `bodies`, or on all bodies the result "
-                                "touches."}};
+                {"description", "Fusion's Operation: new_body (default), join, cut or intersect; the last three act on "
+                                "`bodies`, or every body the result touches."}};
 }
 
 Json bodiesSchema()
 {
     return Json{{"type", "array"},
                 {"items", bodyRefSchema("Body.")},
-                {"description", "Target bodies for join/cut/intersect. Default: every body the result touches."}};
+                {"description", "Bodies to join/cut/intersect (default: every body touched)."}};
 }
 
 Json topologyListSchema(const std::string& what)
@@ -382,10 +380,8 @@ Json topologyListSchema(const std::string& what)
     return Json{{"type", "array"},
                 {"items", {{"type", Json::array({"integer", "object"})}}},
                 {"minItems", 1},
-                {"description", what + " to use: indices from body." + what + "s, or {point: [x,y,z]} to take the " +
-                                    what + " nearest to a point. Point references are stored with the point relative "
-                                    "to the body's bounding box and the " + what + "'s direction and type, so they "
-                                    "follow the body when earlier dimensions change."}};
+                {"description", what + " indices (body." + what + "s) or {point: [x,y,z]} for the " + what +
+                                    " nearest to it; point references follow the body when earlier dimensions change."}};
 }
 
 Json profileSelection()
@@ -772,7 +768,7 @@ Json describeTopologyRefs(const cad::Design& d, const std::string& type, Json pa
 {
     if ((type == "fillet" || type == "chamfer") && params.contains("edges") && params.contains("body"))
         addTopologyHints(d, params["body"], params["edges"], true);
-    else if ((type == "shell" || type == "press_pull" || type == "delete_faces" || type == "draft") && params.contains("faces") &&
+    else if ((type == "shell" || type == "press_pull" || type == "delete_faces" || type == "draft" || type == "thread") && params.contains("faces") &&
              params.contains("body"))
         addTopologyHints(d, params["body"], params["faces"], false);
     else if (type == "extrude" && params.contains("to") && params["to"].is_object() &&
@@ -1788,7 +1784,7 @@ void registerSketchCommands(CommandRegistry& r)
     r.add({"sketch.project", "Project",
            "Projects edges of a body onto a sketch's plane (Fusion: Sketch > Project): lines, circles and arcs "
            "parallel to the plane stay so, other edges become splines. The curves are added at the end of "
-           "sketch.curves, fixed where they are; they do not follow later changes of the body.",
+           "sketch.curves, fixed where they are, not linked to the body.",
            objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
                          {"body", bodyRefSchema("Body whose edges are projected.")},
                          {"edges", {{"type", "array"}, {"minItems", 1},
@@ -1806,9 +1802,8 @@ void registerSketchCommands(CommandRegistry& r)
           });
 
     r.add({"sketch.intersect", "Intersect",
-           "Adds the curves where a body is cut by a sketch's plane (Fusion: Sketch > Intersect), e.g. the outline "
-           "of a wing section: lines, circles and arcs stay so, other curves become splines. They are added at the "
-           "end of sketch.curves, fixed where they are; they do not follow later changes of the body.",
+           "Adds the curves where a body is cut by a sketch's plane (Fusion: Intersect): lines, circles and arcs stay so, other curves become splines. They are added at the "
+           "end of sketch.curves, fixed where they are, not linked to the body.",
            objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
                          {"body", bodyRefSchema("Body cut by the sketch plane.")}},
                         {"sketch", "body"}),
@@ -2120,12 +2115,12 @@ void registerSketchCommands(CommandRegistry& r)
           });
 
     r.add({"sketch.stretch", "Sketch Stretch",
-           "Stretch (Fusion: Sketch > Modify > Stretch): points inside the `window` move by `dx`, `dy`; curves wholly "
-           "inside move, those crossing its edge stretch. Refused if the window is empty or constraints hold it.",
+           "Stretch (Fusion): points inside `window` move by `dx`, `dy`; curves wholly inside move, those crossing "
+           "its edge stretch. Refused if empty or held by constraints.",
            objectSchema({{"sketch", featureIdSchema("Sketch feature id.")},
                          {"window", {{"type", "array"}, {"minItems", 2}, {"maxItems", 2},
                                      {"items", {{"type", "array"}, {"items", {{"type", "number"}}}}},
-                                     {"description", "Opposite corners [[u, v], [u, v]] (mm)."}}},
+                                     {"description", "Opposite corners [[u, v], [u, v]]."}}},
                          {"dx", {{"type", "number"}, {"description", "Move along x (mm), default 0."}}},
                          {"dy", {{"type", "number"}, {"description", "Move along y (mm), default 0."}}}},
                         {"sketch", "window"}),
@@ -2608,6 +2603,18 @@ void registerFeatureCommands(CommandRegistry& r)
                        {"angle", numberOrExpr("Draft angle in degrees (negative leans the faces out).")}},
                       {"body", "faces", "angle"});
 
+    addFeatureCommand(r, "thread", "Thread",
+                      "A modeled screw thread on cylindrical faces (Fusion: Create > Thread): a helical V groove cut along "
+                      "the axis, inwards on an outer cylinder (its diameter stays the major one), outwards in a hole.",
+                      {{"body", bodyRefSchema("Body.")},
+                       {"faces", topologyListSchema("face")},
+                       {"pitch", numberOrExpr("Distance between turns (mm).")},
+                       {"depth", numberOrExpr("Groove depth (mm), default 0.6134 * pitch.")},
+                       {"length", numberOrExpr("Threaded length from the lower end, default the whole face.")},
+                       {"handedness", {{"type", "string"}, {"enum", {"right", "left"}}, {"description", "Default right."}}},
+                       {"flip", {{"type", "boolean"}, {"description", "Start at the other end."}}}},
+                      {"body", "faces", "pitch"});
+
     addFeatureCommand(r, "delete_faces", "Delete Face",
                       "Removes faces of a body and heals the gap from the neighbouring faces (Fusion: Modify > "
                       "Delete on faces): pick all faces of a hole, fillet or boss to make it disappear, e.g. to "
@@ -2768,7 +2775,8 @@ void registerFeatureCommands(CommandRegistry& r)
                       "rounded with the picked edge; a radius that does not fit is reported with the largest that does.",
                       {{"body", bodyRefSchema("Body.")},
                        {"edges", topologyListSchema("edge")},
-                       {"radius", numberOrExpr("Radius (mm).")}},
+                       {"radius", numberOrExpr("Radius (mm); variable: at the edge start.")},
+                       {"radius_end", numberOrExpr("Radius at the edge end (variable).")}},
                       {"body", "edges", "radius"});
 
     addFeatureCommand(r, "chamfer", "Chamfer",

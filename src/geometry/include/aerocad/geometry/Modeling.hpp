@@ -93,7 +93,11 @@ enum class BooleanOp { Union, Cut, Intersect };
 /// When the radius does not fit, the error names the largest radius that does (when one
 /// is found), e.g. "Fillet: a 5 mm radius does not fit these edges; the largest that
 /// works is about 2.4 mm".
-[[nodiscard]] Shape fillet(const Shape& shape, const std::vector<std::size_t>& edgeIndices, double radius);
+/// With `endRadius` > 0 the radius runs linearly from `radius` at the start of each edge (as
+/// edges() gives it) to `endRadius` at its end (Fusion: variable radius fillet); the hint then
+/// scales both.
+[[nodiscard]] Shape fillet(const Shape& shape, const std::vector<std::size_t>& edgeIndices, double radius,
+                           double endRadius = 0.0);
 
 /// Chamfer types, as in Fusion's Chamfer dialog.
 enum class ChamferType {
@@ -146,6 +150,15 @@ struct ChamferOptions {
 /// axis. Throws ModelingError when the turns would overlap (pitch <= section size).
 [[nodiscard]] Shape coil(const core::Vec3& origin, const core::Vec3& axis, double helixRadius, double pitch,
                          double revolutions, double sectionSize, bool square = false, bool leftHanded = false);
+
+/// A modeled thread on cylindrical faces (Fusion: Create > Thread): a helical V groove of the given
+/// `pitch` and `depth` (default 0.6134 * pitch, the ISO external thread depth) cut into each face along
+/// its axis, over `length` from its lower end (<= 0: the whole face; `flip`: from the other end). An
+/// outer cylinder keeps its diameter as the major diameter and is cut inwards; a hole keeps its diameter
+/// as the minor diameter and is cut outwards. Throws ModelingError for a face that is not a cylinder,
+/// a face too short for the pitch, or a depth that does not fit.
+[[nodiscard]] Shape thread(const Shape& shape, const std::vector<std::size_t>& faceIndices, double pitch, double depth = 0.0,
+                           double length = 0.0, bool leftHanded = false, bool flip = false);
 
 /// Draft (Fusion: Modify > Draft): tilts each face by `angleDegrees` about the line where it
 /// meets the fixed (neutral) plane through `planeOrigin` with `pullDirection` as its normal.

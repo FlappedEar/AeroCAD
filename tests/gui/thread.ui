@@ -1,0 +1,24 @@
+# Thread (Fusion: Create > Thread) from the SOLID tab: a 10 mm pin is threaded with a 2 mm pitch by
+# clicking its side in the view; the groove removes material and the pin keeps its diameter. Reopening
+# the feature keeps its settings.
+# Run: AeroCAD --ui-script <this file>
+ui.wait(800)
+(() => { const r = controller.execute("feature.cylinder", { center: [0, 0, 0], radius: 5, height: 24 }); if (!r.ok) ui.fail("pin: " + r.error) })()
+ui.wait(300)
+(() => { viewport.restoreCameraState({ pivot: [0, 0, 12], pitch: -10, yaw: 20, distance: 90, orthographic: false }) })()
+ui.wait(300)
+(() => { if (!ui.clickText("SOLID")) ui.fail("no SOLID tab") })()
+ui.wait(300)
+(() => { if (!ui.clickText("CREATE")) ui.log("no CREATE caption menu") })()
+ui.wait(300)
+(() => { if (!ui.clickText("Thread")) ui.fail("no Thread command") })()
+ui.wait(800)
+(() => { const r = controller.execute("body.faces", { body: 1 }).result.faces.find(f => f.type === "cylinder"); featureDialog.setValue("faces", [{ point: [5, 0, 12] }]); featureDialog.setValue("pitch", 2) })()
+ui.wait(1200)
+ui.shot("thread.png")
+(() => { if (featureDialog.error) ui.fail("dialog error: " + featureDialog.error) })()
+(() => { if (!ui.clickText("OK")) ui.fail("no OK button") })()
+ui.wait(1500)
+(() => { const tl = controller.execute("timeline.list").result; const f = tl.features.find(x => x.type === "thread"); if (!f) ui.fail("no thread feature"); const v = tl.bodies[0].volume; const full = Math.PI * 25 * 24; ui.log("volume " + v.toFixed(1) + " of " + full.toFixed(1)); if (!(v < full - 100 && v > full - 900)) ui.fail("the thread removed " + (full - v) + " mm3"); featureDialog.open("thread", f.params, f.id) })()
+ui.wait(500)
+(() => { if (Number(featureDialog.values.pitch) !== 2) ui.fail("reopened thread lost its pitch: " + JSON.stringify(featureDialog.values)) })()

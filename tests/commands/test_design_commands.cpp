@@ -4781,3 +4781,152 @@ TEST_CASE("Design commands: body.faces and body.edges give axes of cylinders, ci
     }
     CHECK(found);
 }
+
+TEST_CASE("Design commands: variable radius fillet runs from the start of the edge to its end", "[commands][cad]")
+{
+    const auto blendZ = [](commands::Session& s) {
+        double sum = 0, weight = 0;
+        const Json faces = run(s, "body.faces", {{"body", "Body1"}});
+        for (const auto& f : faces.at("faces")) {
+            if (f.at("type") == "plane")
+                continue;
+            sum += f.at("center")[2].get<double>() * f.at("area").get<double>();
+            weight += f.at("area").get<double>();
+        }
+        REQUIRE(weight > 0);
+        return sum / weight;
+    };
+    for (const bool reversed : {false, true}) {
+        commands::Session s;
+        run(s, "feature.box", {{"corner", {0, 0, 0}}, {"size", {20, 20, 20}}});
+        // The vertical edge at the origin corner; body.edges gives its start and end.
+        const Json edges = run(s, "body.edges", {{"body", "Body1"}});
+        int index = -1;
+        bool startLow = false;
+        for (const auto& e : edges.at("edges")) {
+            const auto a = e.at("start"), b = e.at("end");
+            if (std::abs(a[0].get<double>()) < 1e-9 && std::abs(a[1].get<double>()) < 1e-9 && std::abs(b[0].get<double>()) < 1e-9
+                && std::abs(b[1].get<double>()) < 1e-9 && e.at("type") == "line") {
+                index = e.at("index").get<int>();
+                startLow = a[2].get<double>() < b[2].get<double>();
+            }
+        }
+        REQUIRE(index >= 0);
+        // Small radius at the edge start, large at its end: the blend is bigger around the end.
+        run(s, "feature.fillet", {{"body", "Body1"}, {"edges", {index}}, {"radius", reversed ? 6 : 1}, {"radius_end", reversed ? 1 : 6}});
+        const double z = blendZ(s);
+        CHECK(((z > 10.0) == (startLow != reversed)));
+    }
+    commands::Session s;
+    run(s, "feature.box", {{"corner", {0, 0, 0}}, {"size", {20, 20, 20}}});
+    CHECK_FALSE(s.execute("feature.fillet", {{"body", "Body1"}, {"edges", {0}}, {"radius", 1}, {"radius_end", -2}}).ok);
+    CHECK_FALSE(s.execute("feature.fillet", {{"body", "Body1"}, {"edges", {0}}, {"radius", 1}, {"radius_end", 0}}).ok);
+}
+
+TEST_CASE("Design commands: variable fillet radius follows body.edges start and end on every edge", "[commands][cad]")
+{
+    for (int index = 0; index < 12; ++index) {
+        commands::Session s;
+        run(s, "feature.box", {{"corner", {0, 0, 0}}, {"size", {20, 20, 20}}});
+        const Json edges = run(s, "body.edges", {{"body", "Body1"}});
+        const Json& e = edges.at("edges").at(index);
+        const auto a = e.at("start"), b = e.at("end");
+        run(s, "feature.fillet", {{"body", "Body1"}, {"edges", {index}}, {"radius", 1}, {"radius_end", 6}});
+        // The blend face is the only one that is not a plane; its centre lies towards the end of the edge.
+        const Json faces = run(s, "body.faces", {{"body", "Body1"}});
+        double along = 0;
+        int blends = 0;
+        for (const auto& f : faces.at("faces")) {
+            if (f.at("type") == "plane")
+                continue;
+            ++blends;
+            double dot = 0, len2 = 0;
+            for (int k = 0; k < 3; ++k) {
+                const double d = b[k].get<double>() - a[k].get<double>();
+                dot += (f.at("center")[k].get<double>() - e.at("middle")[k].get<double>()) * d;
+                len2 += d * d;
+            }
+            along = dot / std::sqrt(len2);
+        }
+        INFO("edge " << index);
+        CHECK(blends == 1);
+        CHECK(along > 0.5);
+    }
+}
+
+
+TEST_CASE("Design commands: thread (Fusion: Create > Thread)", "[commands][cad]")
+{
+    const auto bodyVolume = [](commands::Session& s, const char* body) {
+        const Json bodies = run(s, "timeline.list").at("bodies");
+        for (const auto& b : bodies)
+            if (b.at("name") == body)
+                return b.at("volume").get<double>();
+        return -1.0;
+    };
+    const auto cylinderFace = [](commands::Session& s, const char* body) {
+        const Json faces = run(s, "body.faces", {{"body", body}});
+        for (const auto& f : faces.at("faces"))
+            if (f.at("type") == "cylinder")
+                return f.at("index").get<int>();
+        return -1;
+    };
+    SECTION("an outer cylinder is cut inwards and keeps its diameter")
+    {
+        commands::Session s;
+        run(s, "feature.cylinder", {{"center", {0, 0, 0}}, {"radius", 5}, {"height", 20}});
+        const double before = bodyVolume(s, "Body1");
+        const int face = cylinderFace(s, "Body1");
+        REQUIRE(face >= 0);
+        run(s, "feature.thread", {{"body", "Body1"}, {"faces", {face}}, {"pitch", 2}});
+        const double after = bodyVolume(s, "Body1");
+        // A 1.2 mm deep V groove of about 0.8 * pitch at the surface over ~8 turns removes roughly
+        // turns * 2 pi r * (0.5 * (0.8 + 0.1) * 2 * 1.2) mm3 ~ 8 * 31.4 * 1.1 = 280 mm3 (less: it narrows inwards).
+        const double removed = before - after;
+        INFO("removed " << removed);
+        CHECK(removed > 80.0);
+        CHECK(removed < 400.0);
+        CHECK(run(s, "timeline.list").at("bodies").size() == 1);
+    }
+    SECTION("a hole is cut outwards, left-handed and flipped threads work too")
+    {
+        commands::Session s;
+        run(s, "feature.box", {{"corner", {0, 0, 0}}, {"size", {30, 30, 12}}});
+        run(s, "feature.hole", {{"body", "Body1"}, {"point", {15, 15, 12}}, {"diameter", 8}});
+        const double before = bodyVolume(s, "Body1");
+        const int face = cylinderFace(s, "Body1");
+        REQUIRE(face >= 0);
+        run(s, "feature.thread", {{"body", "Body1"}, {"faces", {face}}, {"pitch", 1.5}, {"handedness", "left"}, {"flip", true}});
+        const double removed = before - bodyVolume(s, "Body1");
+        INFO("removed " << removed);
+        CHECK(removed > 60.0); // the groove cut material from the wall (inwards it would only graze the bore)
+        CHECK(removed < 300.0);
+        // Right-handed, from the other end and with a length: about the same groove, only shorter.
+        commands::Session r;
+        run(r, "feature.box", {{"corner", {0, 0, 0}}, {"size", {30, 30, 12}}});
+        run(r, "feature.hole", {{"body", "Body1"}, {"point", {15, 15, 12}}, {"diameter", 8}});
+        run(r, "feature.thread", {{"body", "Body1"}, {"faces", {cylinderFace(r, "Body1")}}, {"pitch", 1.5}});
+        const double right = before - bodyVolume(r, "Body1");
+        CHECK(right == Approx(removed).epsilon(0.03)); // mirror images remove the same material
+        commands::Session part;
+        run(part, "feature.box", {{"corner", {0, 0, 0}}, {"size", {30, 30, 12}}});
+        run(part, "feature.hole", {{"body", "Body1"}, {"point", {15, 15, 12}}, {"diameter", 8}});
+        run(part, "feature.thread", {{"body", "Body1"}, {"faces", {cylinderFace(part, "Body1")}}, {"pitch", 1.5}, {"length", 6}});
+        const double shorter = before - bodyVolume(part, "Body1");
+        CHECK(shorter > 20.0);
+        CHECK(shorter < 0.65 * right);
+    }
+    SECTION("a face that is not a cylinder, a missing pitch and a too long pitch are reported")
+    {
+        commands::Session s;
+        run(s, "feature.box", {{"corner", {0, 0, 0}}, {"size", {10, 10, 10}}});
+        CHECK_FALSE(s.execute("feature.thread", {{"body", "Body1"}, {"faces", {0}}, {"pitch", 2}}).ok);
+        commands::Session c;
+        run(c, "feature.cylinder", {{"center", {0, 0, 0}}, {"radius", 5}, {"height", 4}});
+        const int face = cylinderFace(c, "Body1");
+        CHECK_FALSE(c.execute("feature.thread", {{"body", "Body1"}, {"faces", {face}}, {"pitch", 6}}).ok);
+        CHECK_FALSE(c.execute("feature.thread", {{"body", "Body1"}, {"faces", {face}}, {"pitch", 0}}).ok);
+        CHECK_FALSE(c.execute("feature.thread", {{"body", "Body1"}, {"faces", {face}}, {"pitch", 1}, {"length", -2}}).ok);
+        CHECK_FALSE(c.execute("feature.thread", {{"body", "Body1"}, {"faces", {face}}, {"pitch", 1}, {"handedness", "sideways"}}).ok);
+    }
+}

@@ -240,7 +240,10 @@ Pane {
         fillet: { title: qsTr("Fillet"), command: "feature.fillet", fields: [
             { key: "body", type: "body", label: qsTr("Body") },
             { key: "edges", type: "edgePicks", label: qsTr("Edges"), hint: qsTr("Click near edges of the body"), required: true },
-            { key: "radius", type: "expr", label: qsTr("Radius"), init: 1 }] },
+            { key: "radiusType", type: "choice", label: qsTr("Radius type"), init: "constant", local: true, options: [
+                { value: "constant", label: qsTr("Constant") }, { value: "variable", label: qsTr("Variable (start to end)") }] },
+            { key: "radius", type: "expr", label: qsTr("Radius"), init: 1 },
+            { key: "radius_end", type: "expr", label: qsTr("End radius"), init: 2, showIf: v => v.radiusType === "variable" }] },
         chamfer: { title: qsTr("Chamfer"), command: "feature.chamfer", fields: [
             { key: "body", type: "body", label: qsTr("Body") },
             { key: "edges", type: "edgePicks", label: qsTr("Edges"), hint: qsTr("Click near edges of the body"), required: true },
@@ -261,6 +264,15 @@ Pane {
             { key: "faces", type: "facePicks", label: qsTr("Faces to tilt"), hint: qsTr("Click the side faces"), required: true },
             { key: "plane", type: "planePick", label: qsTr("Fixed plane"), init: "XY", hint: qsTr("Origin plane, construction plane, or click a planar face") },
             { key: "angle", type: "expr", label: qsTr("Angle (deg, negative: outwards)"), init: 3 }] },
+        thread: { title: qsTr("Thread"), command: "feature.thread", fields: [
+            { key: "body", type: "body", label: qsTr("Body") },
+            { key: "faces", type: "facePicks", label: qsTr("Cylindrical faces"), hint: qsTr("Click the cylinder or hole to thread"), required: true },
+            { key: "pitch", type: "expr", label: qsTr("Pitch"), init: 1.5 },
+            { key: "depth", type: "expr", label: qsTr("Depth (0: automatic)"), init: 0 },
+            { key: "length", type: "expr", label: qsTr("Length (0: whole face)"), init: 0 },
+            { key: "handedness", type: "choice", label: qsTr("Handedness"), init: "right", options: [
+                { value: "right", label: qsTr("Right") }, { value: "left", label: qsTr("Left") }] },
+            { key: "flip", type: "bool", label: qsTr("Start at the other end") }] },
         delete_faces: { title: qsTr("Delete Face"), command: "feature.delete_faces", fields: [
             { key: "body", type: "body", label: qsTr("Body") },
             { key: "faces", type: "facePicks", label: qsTr("Faces to delete"), hint: qsTr("Click every face of the hole, fillet or boss"), required: true }] },
@@ -514,6 +526,8 @@ Pane {
             else if (initial.height !== undefined && initial.pitch === undefined)
                 v.coilType = "revolutions_height"
         }
+        if (initial && featureType === "fillet" && initial.radius_end !== undefined)
+            v.radiusType = "variable"
         if (initial && featureType === "scale" && (initial.factor_x !== undefined || initial.factor_y !== undefined || initial.factor_z !== undefined))
             v.scaleType = "non_uniform"
         if (!featureId) {
