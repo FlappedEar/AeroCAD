@@ -230,7 +230,7 @@ Pane {
         revolve: { title: qsTr("Revolve"), command: "feature.revolve", fields: [
             { key: "sketch", type: "sketch", label: qsTr("Sketch") },
             { key: "points", type: "profilePicks", label: qsTr("Profiles"), hint: qsTr("All profiles (click inside profiles to pick)") },
-            { key: "axis", type: "axisPick", label: qsTr("Axis"), init: "Z", hint: qsTr("Click a sketch line or a straight edge") },
+            { key: "axis", type: "axisPick", label: qsTr("Axis"), init: "Z", hint: qsTr("Click a sketch line, an edge or a cylindrical face") },
             { key: "extent", type: "choice", label: qsTr("Direction"), init: "one_side", options: [
                 { value: "one_side", label: qsTr("One Side") }, { value: "symmetric", label: qsTr("Symmetric") },
                 { value: "two_sides", label: qsTr("Two Sides") }] },
@@ -356,7 +356,7 @@ Pane {
             { key: "operation", type: "choice", label: qsTr("Operation"), init: "join", options: patternOperations }] },
         circular_pattern: { title: qsTr("Circular Pattern"), command: "feature.circular_pattern", fields: [
             { key: "body", type: "body", label: qsTr("Body") },
-            { key: "axis", type: "choice", label: qsTr("Axis"), init: "Z", options: axes },
+            { key: "axis", type: "axisPick", label: qsTr("Axis"), init: "Z", hint: qsTr("Click an edge or a cylindrical face") },
             { key: "count", type: "expr", label: qsTr("Quantity"), init: 6 },
             { key: "angle", type: "expr", label: qsTr("Total angle (deg)"), init: 360 },
             { key: "operation", type: "choice", label: qsTr("Operation"), init: "join", options: patternOperations }] },
@@ -757,37 +757,74 @@ Pane {
             const hit = view.pickPartAmong(x, y, ids)
             const info = hit ? controller.partInfo(hit.partId) : null
             if (info && info.kind === "body")
-                axis = edgeAxis(info.featureId, hit.point)
+                axis = edgeAxis(info.featureId, hit.point, 8 * view.worldPerPixelAt(hit.point))
         }
         if (!axis) {
-            controller.showStatus(qsTr("Click a line of the sketch or a straight edge of a body"))
+            controller.showStatus(qsTr("Click a line of the sketch, an edge or a cylindrical face of a body"))
             return false
         }
         setValue(pickKey, axis)
         return true
     }
 
-    /// The straight edge of body `featureId` nearest to `point`, as {origin, direction}.
-    function edgeAxis(featureId, point) {
+    /// The axis at `point` of body `featureId`, as {origin, direction}: an edge within `tol` of
+    /// the point (a straight edge along itself, a circular one through its centre along its
+    /// normal), else the axis of the cylinder / cone / torus face there, else the nearest
+    /// straight or circular edge of the body (Fusion: Axis through edge / cylinder face).
+    function edgeAxis(featureId, point, tol) {
         const er = controller.execute("body.edges", { body: featureId })
         if (!er.ok)
             return null
+        const r4 = x => Math.round(x * 1e4) / 1e4
+        const axisOf = a => ({ origin: a.origin.map(r4), direction: a.direction.map(r4) })
+        const dot = (u, v) => u[0] * v[0] + u[1] * v[1] + u[2] * v[2]
+        const p = [point.x, point.y, point.z]
         let best = null, bestD = Infinity
+        const cross = (u, v) => [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]]
         for (const e of er.result.edges) {
-            if (e.type !== "line")
-                continue
-            const a = e.start, b = e.end
-            const ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]]
-            const ap = [point.x - a[0], point.y - a[1], point.z - a[2]]
-            const l2 = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2]
-            const t = l2 > 0 ? Math.max(0, Math.min(1, (ap[0] * ab[0] + ap[1] * ab[1] + ap[2] * ab[2]) / l2)) : 0
-            const dist = Math.hypot(ap[0] - t * ab[0], ap[1] - t * ab[1], ap[2] - t * ab[2])
+            if (!e.axis || e.seam)
+                continue // a cylinder's seam is not an edge to take an axis from
+            let dist
+            if (e.type === "line") {
+                const a = e.start
+                const ab = [e.end[0] - a[0], e.end[1] - a[1], e.end[2] - a[2]]
+                const ap = [p[0] - a[0], p[1] - a[1], p[2] - a[2]]
+                const l2 = dot(ab, ab)
+                const t = l2 > 0 ? Math.max(0, Math.min(1, dot(ap, ab) / l2)) : 0
+                dist = Math.hypot(ap[0] - t * ab[0], ap[1] - t * ab[1], ap[2] - t * ab[2])
+            } else {
+                // A circle: the distance to the ring, from the height over its plane and the radial gap.
+                const c = e.axis.origin, n = e.axis.direction
+                const radius = Math.hypot(e.start[0] - c[0], e.start[1] - c[1], e.start[2] - c[2])
+                const cp = [p[0] - c[0], p[1] - c[1], p[2] - c[2]]
+                const h = dot(cp, n)
+                const radial = Math.hypot(cp[0] - h * n[0], cp[1] - h * n[1], cp[2] - h * n[2])
+                dist = Math.hypot(h, radial - radius)
+                // An arc covers only part of the ring: a point beside it is near an end at best.
+                const open = Math.hypot(e.end[0] - e.start[0], e.end[1] - e.start[1], e.end[2] - e.start[2]) > 1e-6
+                if (open && radial > 1e-9) {
+                    const u = [e.start[0] - c[0], e.start[1] - c[1], e.start[2] - c[2]]
+                    const w = cross(n, u)
+                    const ang = q => { const d = [q[0] - c[0], q[1] - c[1], q[2] - c[2]]; return (Math.atan2(dot(d, w), dot(d, u)) + 2 * Math.PI) % (2 * Math.PI) }
+                    const aEnd = ang(e.end), aMid = ang(e.middle), aP = ang(p)
+                    const inside = aMid < aEnd ? aP <= aEnd : aP >= aEnd
+                    if (!inside)
+                        dist = Math.min(Math.hypot(p[0] - e.start[0], p[1] - e.start[1], p[2] - e.start[2]),
+                                        Math.hypot(p[0] - e.end[0], p[1] - e.end[1], p[2] - e.end[2]))
+                }
+            }
             if (dist < bestD) { best = e; bestD = dist }
         }
-        if (!best)
-            return null
-        const r4 = x => Math.round(x * 1e4) / 1e4
-        return { origin: best.start.map(r4), direction: [0, 1, 2].map(i => r4(best.end[i] - best.start[i])) }
+        if (best && bestD <= tol)
+            return axisOf(best.axis)
+        const fr = controller.execute("body.faces", { body: featureId, point: [p[0], p[1], p[2]] })
+        if (fr.ok && fr.result.nearest) {
+            const f = fr.result.faces.find(x => x.index === fr.result.nearest.index)
+            if (f && f.axis)
+                return axisOf(f.axis)
+        }
+        // Nothing under the click (a flat face, say): the nearest edge when it is close, else nothing.
+        return best && bestD <= 5 * tol ? axisOf(best.axis) : null
     }
 
     /// Viewport pick while the dialog is open: `part` is controller.partInfo().
@@ -1176,7 +1213,7 @@ Pane {
                     const out = [{ name: "X", value: "X" }, { name: "Y", value: "Y" }, { name: "Z", value: "Z" }]
                     if (current && typeof current === "object")
                         out.push({ name: current.line !== undefined ? qsTr("Sketch line %1").arg(current.line + 1)
-                                                                   : qsTr("Picked edge"), value: current })
+                                                                   : qsTr("Picked axis"), value: current })
                     return out
                 }
                 model: items.map(i => i.name)
