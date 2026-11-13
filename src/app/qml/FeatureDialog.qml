@@ -428,8 +428,7 @@ Pane {
             { key: "revolutions", type: "expr", label: qsTr("Revolutions"), init: 5, showIf: v => v.coilType !== "height_pitch" },
             { key: "pitch", type: "expr", label: qsTr("Pitch"), init: 8, showIf: v => v.coilType !== "revolutions_height" },
             { key: "height", type: "expr", label: qsTr("Height"), init: 40, showIf: v => v.coilType !== "revolutions_pitch" },
-            { key: "axis", type: "choice", label: qsTr("Axis"), init: "Z", options: [
-                { value: "X", label: qsTr("X") }, { value: "Y", label: qsTr("Y") }, { value: "Z", label: qsTr("Z") }] },
+            { key: "axis", type: "axisPick", label: qsTr("Axis"), init: "Z", hint: qsTr("Click an edge, a cylindrical face or a construction axis; the coil starts on it") },
             { key: "section", type: "choice", label: qsTr("Section"), init: "circular", options: [
                 { value: "circular", label: qsTr("Circular") }, { value: "square", label: qsTr("Square") }] },
             { key: "handedness", type: "choice", label: qsTr("Handedness"), init: "right", options: [
@@ -1075,6 +1074,19 @@ Pane {
                 }
                 if (type === "cylinder" && feature.params.radius !== undefined)
                     patch.radius = null
+                // A picked axis replaces the stored one: the merge patch would keep the old
+                // variant's keys ({feature} next to a newly picked {origin, direction}).
+                for (const f of spec.fields) {
+                    const old = feature.params[f.key], now = params[f.key]
+                    if (f.type === "axisPick" && old && now && typeof old === "object" && typeof now === "object"
+                            && !Array.isArray(old) && !Array.isArray(now)) {
+                        const merged = Object.assign({}, now)
+                        for (const k in old)
+                            if (!(k in now))
+                                merged[k] = null
+                        patch[f.key] = merged
+                    }
+                }
             }
             r = run("feature.edit", { id: editId, params: patch })
         } else {

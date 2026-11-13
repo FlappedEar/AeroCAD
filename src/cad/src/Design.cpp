@@ -4570,18 +4570,35 @@ void Design::evaluateFeature(const Feature& f)
     } else if (f.type == "coil") {
         // Fusion: Create > Coil. A spring: `diameter` is the outer diameter of the coil, any two of
         // `revolutions`, `pitch` and `height` fix its length.
-        const core::Vec3 center = ev.vec3(p, "center", {});
+        core::Vec3 center = ev.vec3(p, "center", {});
         core::Vec3 axis{0, 0, 1};
         if (has(p, "axis")) {
             const Json& a = p.at("axis");
-            if (a.is_string()) {
+            if (a.is_object()) {
+                // An edge, a cylindrical face or a construction axis: {origin, direction} | {feature}.
+                // The coil starts on that axis unless `center` says otherwise.
+                core::Vec3 origin{}, dir{0, 0, 1};
+                if (has(a, "feature")) {
+                    axisFeature(a, origin, dir);
+                } else if (has(a, "direction")) {
+                    origin = ev.vec3(a, "origin", {});
+                    dir = ev.vec3(a, "direction", {0, 0, 1});
+                } else {
+                    throw DesignError("The coil axis object needs {feature} or {origin, direction}");
+                }
+                if (dir.length() < 1e-9)
+                    throw DesignError("The coil axis direction must not be zero");
+                axis = dir;
+                if (!has(p, "center"))
+                    center = origin;
+            } else if (a.is_string()) {
                 const std::string name = lower(a.get<std::string>());
                 if (name == "x")
                     axis = {1, 0, 0};
                 else if (name == "y")
                     axis = {0, 1, 0};
                 else if (name != "z")
-                    throw DesignError("Unknown axis '" + name + "' (X, Y, Z or [x, y, z])");
+                    throw DesignError("Unknown axis '" + name + "' (X, Y, Z, [x, y, z], {origin, direction} or {feature})");
             } else {
                 axis = ev.vec3(a);
             }
