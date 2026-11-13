@@ -489,7 +489,22 @@ Pane {
         checkEnvironment()
     }
 
+    /// A run row button is held down (CAD-174). Rebuilding the list now would destroy the pressed
+    /// button before its release, and the click would be lost; the refresh waits for the release.
+    property int rowButtonsDown: 0
+    property bool refreshDeferred: false
+    function rowButtonPressed(down) {
+        rowButtonsDown = Math.max(0, rowButtonsDown + (down ? 1 : -1))
+        // After the click handler that follows the release.
+        if (rowButtonsDown === 0 && refreshDeferred)
+            Qt.callLater(refreshRuns)
+    }
     function refreshRuns() {
+        if (rowButtonsDown > 0) {
+            refreshDeferred = true
+            return
+        }
+        refreshDeferred = false
         const r = controller.execute("simulation.list")
         if (!r.ok)
             return
@@ -1700,6 +1715,8 @@ Pane {
                                 focusPolicy: Qt.NoFocus
                                 ToolTip.visible: hovered
                                 ToolTip.text: qsTr("Rename run")
+                                onPressedChanged: root.rowButtonPressed(pressed)
+                                Component.onDestruction: if (pressed) root.rowButtonPressed(false)
                                 onClicked: root.startRename(runRow.modelData)
                             }
                             ToolButton {
@@ -1710,6 +1727,8 @@ Pane {
                                 enabled: !runRow.isA
                                 ToolTip.visible: hovered
                                 ToolTip.text: qsTr("Compare with A")
+                                onPressedChanged: root.rowButtonPressed(pressed)
+                                Component.onDestruction: if (pressed) root.rowButtonPressed(false)
                                 onClicked: {
                                     root.compareRun = checked ? runRow.modelData.id : ""
                                     root.loadFieldStats()
@@ -1721,6 +1740,8 @@ Pane {
                             ToolButton {
                                 visible: runRow.modelData.state === "running"
                                 text: qsTr("Cancel")
+                                onPressedChanged: root.rowButtonPressed(pressed)
+                                Component.onDestruction: if (pressed) root.rowButtonPressed(false)
                                 onClicked: root.confirmRunAction("cancel", runRow.modelData.id)
                             }
                             ToolButton {
@@ -1728,6 +1749,8 @@ Pane {
                                 text: "✕"
                                 ToolTip.visible: hovered
                                 ToolTip.text: qsTr("Delete run")
+                                onPressedChanged: root.rowButtonPressed(pressed)
+                                Component.onDestruction: if (pressed) root.rowButtonPressed(false)
                                 onClicked: root.confirmRunAction("delete", runRow.modelData.id)
                             }
                         }

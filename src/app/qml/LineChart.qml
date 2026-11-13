@@ -78,16 +78,16 @@ Item {
         if (!p || p.empty || px < p.left - 4 || px > p.left + p.w + 4)
             return null
         const xv = p.xmin + (px - p.left) / p.w * (p.xmax - p.xmin)
-        const nearest = s => {
+        const nearest = (s, target) => {
             let best = -1
             for (let i = 0; i < s.x.length; ++i)
-                if (best < 0 || Math.abs(s.x[i] - xv) < Math.abs(s.x[best] - xv))
+                if (best < 0 || Math.abs(s.x[i] - target) < Math.abs(s.x[best] - target))
                     best = i
             return best
         }
         let at = null
         for (const s of series) {
-            const i = nearest(s)
+            const i = nearest(s, xv)
             if (i >= 0 && (at === null || Math.abs(s.x[i] - xv) < Math.abs(at - xv)))
                 at = s.x[i]
         }
@@ -102,8 +102,10 @@ Item {
                 continue
             }
             let i = s.x.indexOf(at)
+            // Nearest to the displayed x, not to the pointer: the crosshair and the title are
+            // at `at`, so a series sampled elsewhere must not jump to the pointer's side.
             if (i < 0)
-                i = nearest(s)
+                i = nearest(s, at)
             const y = s.y[i]
             const t = y === null || y === undefined ? NaN : p.tr(y)
             values.push({ name: s.name, color: s.color, value: y, ownX: s.x[i] === at ? null : s.x[i],
