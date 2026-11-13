@@ -4971,6 +4971,13 @@ TEST_CASE("Design commands: boundary fill makes a body of the enclosed spaces (F
         CHECK(volumes(s).size() == 1);
     }
     CHECK_FALSE(s.execute("feature.boundary_fill", {{"tools", Json::array()}}).ok);
+    SECTION("an imported part is accepted by the schema (a plain mesh is then refused for lacking an exact shape)")
+    {
+        const Json imported = run(s, "document.import", {{"path", std::string(AEROCAD_TEST_DATA_DIR) + "/tetrahedron.stl"}});
+        const auto r = s.execute("feature.boundary_fill", {{"tools", {"Body1", {{"part", imported.at("id")}}}}});
+        CHECK_FALSE(r.ok);
+        CHECK(r.error.find("no exact shape") != std::string::npos);
+    }
 }
 
 TEST_CASE("Design commands: Move with Create Copy leaves the original (Fusion: Move/Copy)", "[commands][cad]")

@@ -2672,8 +2672,11 @@ void registerFeatureCommands(CommandRegistry& r)
     addFeatureCommand(r, "boundary_fill", "Boundary Fill",
                       "Fills the closed spaces enclosed by tool bodies or surfaces (Fusion: Create > Boundary Fill) "
                       "with a new body, one solid per space, e.g. the gap between a part and a surface.",
-                      {{"tools", {{"type", "array"}, {"minItems", 1}, {"items", bodyRefSchema("Tool body or surface.")},
-                                  {"description", "Bodies or surfaces that bound the spaces."}}},
+                      {{"tools", {{"type", "array"}, {"minItems", 1}, {"items", {{"oneOf", Json::array({bodyRefSchema("Tool body or surface."),
+                                                                    {{"type", "object"},
+                                                                     {"properties", {{"part", {{"type", "integer"}, {"minimum", 1}, {"description", "Imported part id."}}}}},
+                                                                     {"required", {"part"}}}})}}},
+                                  {"description", "Bodies, surfaces or {part: id} that bound the spaces."}}},
                        {"cells", {{"type", "array"},
                                   {"description", "Spaces to keep: a point [x, y, z] (or {point}) inside each, or a space index; default all."}}},
                        {"removeTools", {{"type", "boolean"}, {"description", "Delete the tools afterwards."}}}},
