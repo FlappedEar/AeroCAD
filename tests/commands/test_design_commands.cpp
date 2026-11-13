@@ -4405,6 +4405,15 @@ TEST_CASE("Design commands: Rib (CAD-271)", "[commands][cad]")
         const auto up = run(s, "feature.rib", {{"path", {{"sketch", apart}}}, {"thickness", 2}, {"extent", "to_object"},
                                                {"to", {{"body", "Body3"}}}, {"operation", "new_body"}});
         CHECK(up.at("bodies").back().at("volume").get<double>() == Approx((20 + 40) * 2 * 12).epsilon(1e-4));
+        // Two joined lines plus a separate one: the separate wall must not be dropped.
+        const auto mixed = run(s, "sketch.create",
+                               {{"plane", "XY"},
+                                {"curves", Json::array({{{"type", "line"}, {"start", {200, 0}}, {"end", {220, 0}}},
+                                                        {{"type", "line"}, {"start", {220, 0}}, {"end", {220, 20}}},
+                                                        {{"type", "line"}, {"start", {200, 50}}, {"end", {240, 50}}}})}})
+                               .at("id").get<std::uint64_t>();
+        const auto m = run(s, "feature.rib", {{"path", {{"sketch", mixed}}}, {"thickness", 2}, {"depth", 5}, {"operation", "new_body"}});
+        CHECK(m.at("bodies").back().at("volume").get<double>() == Approx((20 + 20 + 40) * 2 * 5).epsilon(0.03));
     }
 
     SECTION("to next body: a picked face follows the body when it is edited")

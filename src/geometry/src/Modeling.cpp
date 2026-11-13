@@ -396,8 +396,14 @@ std::vector<Shape> splitPaths(const Shape& pathEdges)
         // Curves that already form one connected path stay exactly as drawn (order and direction),
         // so a plain rib keeps its geometry; only a path that falls apart is split into its pieces.
         try {
-            pathWire(pathEdges, "Rib");
-            return std::vector<Shape>{pathEdges};
+            // MakeWire can finish with only the first connected piece, so count the edges it kept.
+            const auto edgeCount = [](const TopoDS_Shape& shape) {
+                TopTools_IndexedMapOfShape edges;
+                TopExp::MapShapes(shape, TopAbs_EDGE, edges);
+                return edges.Extent();
+            };
+            if (edgeCount(pathWire(pathEdges, "Rib")) == edgeCount(path))
+                return std::vector<Shape>{pathEdges};
         } catch (const ModelingError&) {
         }
         Handle(TopTools_HSequenceOfShape) edges = new TopTools_HSequenceOfShape;
@@ -507,8 +513,23 @@ Shape thickenCurves(const Shape& pathEdges, double thickness, const core::Vec3& 
             if (left.IsNull() || right.IsNull())
                 throw ModelingError(tooThick);
             TopoDS_Vertex l0, l1, r0, r1;
-            TopExp::Vertices(left, l0, l1);
-            TopExp::Vertices(right, r0, r1);
+            // TopExp::Vertices on a wire trusts the order of its edges, which an offset does not
+            // keep, so the two ends are the vertices that only one edge touches.
+            const auto openEnds = [&](const TopoDS_Wire& w, TopoDS_Vertex& a, TopoDS_Vertex& b) {
+                TopTools_IndexedDataMapOfShapeListOfShape ancestors;
+                TopExp::MapShapesAndAncestors(w, TopAbs_VERTEX, TopAbs_EDGE, ancestors);
+                bool first = true;
+                for (int k = 1; k <= ancestors.Extent(); ++k) {
+                    if (ancestors.FindFromIndex(k).Extent() != 1)
+                        continue;
+                    (first ? a : b) = TopoDS::Vertex(ancestors.FindKey(k));
+                    first = false;
+                }
+                if (first || b.IsNull())
+                    throw ModelingError(tooThick);
+            };
+            openEnds(left, l0, l1);
+            openEnds(right, r0, r1);
             // Pair each end of one side with the nearer end of the other.
             const gp_Pnt pl0 = BRep_Tool::Pnt(l0), pl1 = BRep_Tool::Pnt(l1);
             const bool same = pl0.Distance(BRep_Tool::Pnt(r0)) + pl1.Distance(BRep_Tool::Pnt(r1)) <=
