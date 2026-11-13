@@ -666,6 +666,7 @@ Item {
         case "conic":
         case "slot": return 3
         case "arc_slot": return 4
+        case "arc_slot_3pt": return 4
         case "elliptical_arc": return 5
         case "spline": return Infinity
         case "cp_spline": return Infinity // ended with Enter, a double-click or the first point
@@ -961,6 +962,20 @@ Item {
                 return null
             return { type: "arc_slot", center: a, radius: round6(r), width: width, start_angle: round6(from), end_angle: round6(to) }
         }
+        case "arc_slot_3pt": {
+            // Start and end of the centre line, a point on its arc, then a point for the width.
+            if (pts.length < 4)
+                return null
+            const g = arcSlotGeometry(pts)
+            if (g === null)
+                return null
+            const radial = 2 * Math.abs(dist(g.c, pts[3]) - g.r)
+            if (!(sizeGiven(dim, 0, radial)))
+                return null
+            const width = dim && dim.length > 0 ? dim[0] : round6(radial)
+            return { type: "arc_slot", center: g.c, radius: round6(g.r), width: width,
+                     start_angle: round6(g.from * 180 / Math.PI), end_angle: round6(g.to * 180 / Math.PI) }
+        }
         case "slot": {
             if (pts.length < 3)
                 return null
@@ -979,6 +994,25 @@ Item {
         }
         }
         return null
+    }
+
+    /// The circle of a three-point arc slot, from the start, end and a point on the arc (pts[0..2]):
+    /// { c, r, from, to } (radians, counter-clockwise from `from` to `to`), or null on a straight line.
+    function arcSlotGeometry(pts) {
+        const s = pts[0], e = pts[1], m = pts[2]
+        const d = 2 * (s[0] * (e[1] - m[1]) + e[0] * (m[1] - s[1]) + m[0] * (s[1] - e[1]))
+        if (Math.abs(d) < 1e-12)
+            return null
+        const sq = p => p[0] * p[0] + p[1] * p[1]
+        const c = [(sq(s) * (e[1] - m[1]) + sq(e) * (m[1] - s[1]) + sq(m) * (s[1] - e[1])) / d,
+                   (sq(s) * (m[0] - e[0]) + sq(e) * (s[0] - m[0]) + sq(m) * (e[0] - s[0])) / d]
+        const ang = p => Math.atan2(p[1] - c[1], p[0] - c[0])
+        const wrap = a => { while (a < 0) a += 2 * Math.PI; while (a >= 2 * Math.PI) a -= 2 * Math.PI; return a }
+        const ccw = wrap(ang(m) - ang(s)) < wrap(ang(e) - ang(s))
+        const from = ccw ? ang(s) : ang(e)
+        let to = ccw ? ang(e) : ang(s)
+        while (to <= from) to += 2 * Math.PI
+        return { c: c, r: dist(c, s), from: from, to: to }
     }
 
     /// Ends the spline being drawn: an open one needs 2 fit points, a closed one 3.
@@ -1818,7 +1852,7 @@ Item {
                         const q = root.toScreen(uv[i])
                         if (i === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y)
                     }
-                } else if (root.tool === "line" || root.tool === "text" || (pts.length === 2 && (root.tool === "arc" || root.tool === "slot" || root.tool === "arc_slot" || root.tool === "circle_3point"
+                } else if (root.tool === "line" || root.tool === "text" || (pts.length === 2 && (root.tool === "arc" || root.tool === "slot" || root.tool === "arc_slot" || root.tool === "arc_slot_3pt" || root.tool === "circle_3point"
                                                                           || root.tool === "rectangle_3point" || root.tool === "ellipse" || root.tool === "elliptical_arc"
                                                                           || root.tool === "conic"))) {
                     ctx.moveTo(s[0].x, s[0].y)
@@ -1973,13 +2007,14 @@ Item {
                             if (i === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y)
                         }
                     }
-                } else if (root.tool === "arc_slot" && pts.length >= 3) {
+                } else if ((root.tool === "arc_slot" || root.tool === "arc_slot_3pt") && pts.length >= 3) {
                     // The centre line's arc while the end is placed; the whole slot when the width is.
-                    const c0 = pts[0], r0 = root.dist(c0, pts[1])
+                    const g3 = root.tool === "arc_slot_3pt" ? root.arcSlotGeometry(pts) : null
+                    const c0 = g3 ? g3.c : pts[0], r0 = g3 ? g3.r : root.dist(c0, pts[1])
                     const ang = p => Math.atan2(p[1] - c0[1], p[0] - c0[0])
                     const ccw = (pts[1][0] - c0[0]) * (pts[2][1] - c0[1]) - (pts[1][1] - c0[1]) * (pts[2][0] - c0[0]) >= 0
-                    let from = ccw ? ang(pts[1]) : ang(pts[2])
-                    let to = ccw ? ang(pts[2]) : ang(pts[1])
+                    let from = g3 ? g3.from : ccw ? ang(pts[1]) : ang(pts[2])
+                    let to = g3 ? g3.to : ccw ? ang(pts[2]) : ang(pts[1])
                     while (to <= from) to += 2 * Math.PI
                     const arc = (rad, a0, a1) => {
                         for (let i = 0; i <= 48; ++i) {
@@ -2152,6 +2187,7 @@ Item {
                     : root.tool === "spline" ? qsTr("Spline: click fit points; Enter, a double-click or Esc ends it, the first point closes it")
                     : root.tool === "cp_spline" ? qsTr("Control point spline: click control points; Enter, a double-click or Esc ends it, the first point closes it")
                     : root.tool === "arc_slot" ? qsTr("Arc slot: click the centre, the start of the centre line, its end, then the width")
+                    : root.tool === "arc_slot_3pt" ? qsTr("3-point arc slot: click the start and the end of the centre line, a point on its arc, then the width")
                     : root.slotMode === "overall" ? qsTr("Overall slot: click both far ends, then the width")
                     : root.slotMode === "center_point" ? qsTr("Center point slot: click the middle, the centre of one end, then the width")
                     : qsTr("Slot: click both centres, then the width")

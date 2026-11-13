@@ -1,0 +1,22 @@
+# CAD-273: 3-Point Arc Slot (Fusion: Slot > Three Point Arc Slot) from the sketch CREATE menu with real clicks: the start and end of the centre line, a point on its arc, then the width.
+# Run: AeroCAD --ui-script <this file>
+Qt.createQmlObject('import QtQuick; Item { objectName: "psTest"; visible: false; function find(i, name) { if (!i) return null; if (i.objectName === name && i.visible) return i; const ch = i.children || []; for (let k = 0; k < ch.length; ++k) { const r = find(ch[k], name); if (r) return r } return null } function at(q) { const o = viewport.sketchOverlay; const p = o.toScreen(q); return o.mapToItem(null, p.x, p.y) } function clickAt(q) { const w = at(q); ui.move(w.x, w.y); ui.wait(80); ui.click(w.x, w.y); ui.wait(150) } function moveTo(q) { const w = at(q); ui.move(w.x, w.y); ui.wait(150) } function curves() { return controller.execute("sketch.curves", { sketch: activeSketch.id }).result.curves } function pick(box, label) { const b = find(window.contentItem, box); if (!b) return false; const p = b.mapToItem(null, b.width / 2, b.height / 2); ui.click(p.x, p.y); ui.wait(300); return ui.clickText(label) } }', window.contentItem)
+ui.wait(800)
+(() => { window.createSketch({ plane: "XY" }); if (!window.activeSketch) ui.fail("no sketch") })()
+ui.wait(800)
+(() => { viewport.restoreCameraState({ pivot: [25, 50, 0], pitch: -90, yaw: 0, distance: 200, orthographic: false }) })()
+ui.wait(400)
+(() => { if (!ui.clickText("CREATE")) ui.fail("no CREATE menu on the ribbon") })()
+ui.wait(400)
+(() => { if (!ui.clickText("3-Point Arc Slot")) ui.fail("no 3-Point Arc Slot in the CREATE menu") })()
+ui.wait(300)
+(() => { if (sketchTool !== "arc_slot_3pt") ui.fail("3-Point Arc Slot did not start: " + sketchTool) })()
+# The centre line runs from (50,0) to (0,50) through (30,40) (radius 50 about the origin); the width is set by a click at radius 55 (10 wide).
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "psTest"); t.clickAt([50, 0]); t.clickAt([0, 50]); t.moveTo([30, 40]) })()
+ui.shot("sketch-arc-slot-3pt-preview.png")
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "psTest"); t.clickAt([30, 40]); t.moveTo([55, 0]) })()
+ui.shot("sketch-arc-slot-3pt-width-preview.png")
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "psTest"); t.clickAt([55, 0]) })()
+ui.wait(600)
+(() => { const t = Array.from(window.contentItem.children).find(c => c.objectName === "psTest"); const c = t.curves(); const r = controller.execute("sketch.profiles", { sketch: activeSketch.id }).result.profiles; const want = 2 * (Math.PI / 2) * 50 * 5 + Math.PI * 25; ui.log("3-point arc slot: " + c.length + " curves, " + r.length + " profile(s), area " + (r.length ? r[0].area.toFixed(3) : "-") + " want " + want.toFixed(3)); if (c.length !== 4 || r.length !== 1 || Math.abs(r[0].area - want) > want * 0.01) ui.fail("the 3-point arc slot is not what was drawn") })()
+ui.shot("sketch-arc-slot-3pt.png")
