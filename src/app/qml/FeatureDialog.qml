@@ -597,6 +597,9 @@ Pane {
             else if (initial.height !== undefined && initial.pitch === undefined)
                 v.coilType = "revolutions_height"
         }
+        // A plane made without `position` (command, MCP) is at the path start: reopening it must keep that.
+        if (initial && featureType === "plane_path" && initial.position === undefined)
+            v.position = 0
         if (initial && featureType === "plane" && initial.about !== undefined)
             v.turnAbout = "pick"
         if (initial && featureType === "fillet" && initial.radius_end !== undefined)
