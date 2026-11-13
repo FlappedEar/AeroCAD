@@ -5742,6 +5742,22 @@ TEST_CASE("Design commands: sweep twist, end scale and parallel orientation (Fus
         CHECK_FALSE(bad.ok);
         CHECK(bad.error.find("smooth") != std::string::npos);
     }
+    SECTION("a hollow duct narrowing from 3 to 2 inches along a bend (brake duct)")
+    {
+        commands::Session s;
+        // A ring (outer 76.2 mm, 3 mm wall) swept along a 100 mm line and a tangent quarter arc of radius 80 mm, scaled to 2/3.
+        const Json prof = run(s, "sketch.create", {{"plane", "XY"}, {"curves", Json::array({{{"type", "circle"}, {"center", {0, 0}}, {"radius", 38.1}},
+                                                                                           {{"type", "circle"}, {"center", {0, 0}}, {"radius", 35.1}}})}});
+        const Json path = run(s, "sketch.create", {{"plane", "XZ"}, {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {0, 100}}}})}});
+        run(s, "sketch.add_curves", {{"sketch", path.at("id")}, {"curves", Json::array({{{"type", "tangent_arc"}, {"from", {{"curve", 0}, {"point", "end"}}}, {"end", {80, 180}}}})}});
+        const Json r = run(s, "feature.sweep", {{"sketch", prof.at("id")}, {"points", Json::array({Json::array({36.6, 0})})},
+                                                {"path", {{"sketch", path.at("id")}}}, {"end_scale", 2.0 / 3.0}});
+        const double wall = std::numbers::pi * (38.1 * 38.1 - 35.1 * 35.1);
+        const double length = 100 + 80 * std::numbers::pi / 2;
+        // The ring's area shrinks with the square of the scale, which falls linearly from 1 to 2/3 along the path.
+        CHECK(r.at("bodies").at(0).at("volume").get<double>() == Catch::Approx(wall * length * (1 - 1.0 / 3 + 1.0 / 27)).epsilon(0.01));
+        CHECK(r.at("bodies").at(0).at("faces").get<int>() == 4);
+    }
     SECTION("a twist over the limit or a profile with two holes is an error")
     {
         commands::Session s;
