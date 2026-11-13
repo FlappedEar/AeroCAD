@@ -5962,6 +5962,34 @@ TEST_CASE("Design commands: Loft to a point", "[commands][cad]")
         refused(Json::array({{{"sketch", ring.at("id")}, {"profile", best}}, {{"point", {0, 0, 60}}}}), "hole");
     }
     {
+        // A sketch holding one sketch point ends the loft (Fusion: a sketch point), at its place on the sketch's plane.
+        commands::Session s;
+        const auto base = square(s, 0, 20);
+        const auto tip = run(s, "sketch.create",
+                             {{"plane", "XY"}, {"offset", 30}, {"curves", Json::array({{{"type", "point"}, {"at", {0, 0}}}})}})
+                             .at("id");
+        const auto r = run(s, "feature.loft", {{"sections", Json::array({base, tip})}});
+        CHECK(r.at("bodies")[0].at("volume").get<double>() == Approx(400.0 * 30 / 3).epsilon(1e-3));
+        CHECK(r.at("bodies")[0].at("bounds").at("max")[2].get<double>() == Approx(30).margin(1e-3));
+        // A point away from the origin of a plane that is itself offset (and a sketch point in the middle is refused).
+        const auto tip2 = run(s, "sketch.create",
+                              {{"plane", "XY"}, {"offset", 50}, {"curves", Json::array({{{"type", "point"}, {"at", {7, 3}}}})}})
+                              .at("id");
+        const auto r2 = run(s, "feature.loft", {{"sections", Json::array({base, tip2})}, {"operation", "new_body"}});
+        CHECK(r2.at("bodies").back().at("bounds").at("max")[2].get<double>() == Approx(50).margin(1e-3));
+        const auto mid = s.execute("feature.loft", {{"sections", Json::array({base, tip2, tip})}});
+        CHECK_FALSE(mid.ok);
+        CHECK(mid.error.find("first and the last") != std::string::npos);
+        // A sketch with a point and a line is neither a profile nor a point.
+        const auto two = run(s, "sketch.create",
+                             {{"plane", "XY"}, {"offset", 40},
+                              {"curves", Json::array({{{"type", "point"}, {"at", {0, 0}}}, {{"type", "line"}, {"start", {1, 1}}, {"end", {5, 5}}}})}})
+                             .at("id");
+        const auto bad = s.execute("feature.loft", {{"sections", Json::array({base, two})}});
+        CHECK_FALSE(bad.ok);
+        CHECK(bad.error.find("single point") != std::string::npos);
+    }
+    {
         // Round profiles, ruled and an open surface also close to a point.
         commands::Session s;
         const auto disk = run(s, "sketch.create",
