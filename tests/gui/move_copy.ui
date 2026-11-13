@@ -1,0 +1,16 @@
+# Move/Rotate dialog with "Create copy" (Fusion: Move/Copy > Create Copy): the dialog is opened by the feature
+# API of the window (openFeature "move"), the copy checkbox leaves the original and adds a second body.
+# Run: AeroCAD --ui-script <this file>
+ui.wait(800)
+(() => { const b = controller.execute("feature.box", { size: [10, 10, 10] }); if (!b.ok) ui.fail("setup"); viewport.fitAll() })()
+ui.wait(500)
+(() => { window.openFeature("move") })()
+ui.wait(400)
+(() => { ui.log("dialog " + featureDialog.visible + " type " + featureDialog.type); if (!featureDialog.visible || featureDialog.type !== "move") ui.fail("Move did not open"); const box = controller.execute("timeline.list").result.features.find(f => f.type === "box"); featureDialog.setValue("body", box.id); featureDialog.setValue("angle", 0); featureDialog.setValue("translate", [30, 0, 0]); featureDialog.setValue("copy", true) })()
+ui.wait(600)
+(() => { if (!ui.clickText("OK")) ui.fail("no OK button") })()
+ui.wait(800)
+(() => { const bodies = controller.execute("timeline.list").result.bodies; ui.log("bodies " + JSON.stringify(bodies.map(b => b.bounds.min))); if (bodies.length !== 2) ui.fail("the copy did not add a body: " + bodies.length); if (Math.abs(bodies[0].bounds.min[0]) > 1e-3 || Math.abs(bodies[1].bounds.min[0] - 30) > 1e-3) ui.fail("original moved or copy misplaced") })()
+(() => { undoAction.trigger() })()
+ui.wait(500)
+(() => { const n = controller.execute("timeline.list").result.bodies.length; ui.log("Ctrl+Z: " + n + " bodies"); if (n !== 1) ui.fail("one undo did not remove the copy") })()

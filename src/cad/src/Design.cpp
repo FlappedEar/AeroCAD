@@ -4320,9 +4320,13 @@ void Design::evaluateFeature(const Feature& f)
         }
         if (has(p, "translate"))
             tf = core::Affine::translationBy(ev.vec3(p.at("translate"))).after(tf);
-        if (factor != 1.0)
-            body.shape = geometry::scaled(body.shape, factor, c);
-        body.shape = geometry::transformed(body.shape, tf);
+        // Create Copy (Fusion): the moved shape becomes a new body and the original stays.
+        geometry::Shape moved = factor != 1.0 ? geometry::scaled(body.shape, factor, c) : body.shape;
+        moved = geometry::transformed(moved, tf);
+        if (p.value("copy", false))
+            newBody(std::move(moved));
+        else
+            body.shape = std::move(moved);
     } else if (f.type == "align") {
         // Fusion: Modify > Align: turns and moves a body so a planar face of it lies flat against
         // a plane or planar face of another body (faces opposing, like parts mated together).

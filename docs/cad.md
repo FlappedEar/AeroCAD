@@ -120,7 +120,7 @@ rebuilding, AeroCAD reports the problem; Undo restores the previous source.
 | `feature.sweep` | Sweep | profiles of `sketch` moved along `path` {sketch, curves} (default: all curves of the path sketch) |
 | `feature.loft` | Loft | `sections`: sketch ids or {sketch, profile}, in order; `solid`, `ruled` |
 | `feature.mirror` | Mirror | `body`, `plane` XY / XZ / YZ / {origin, normal} / planar face, `offset`; join or new_body |
-| `feature.move` | Move/Rotate/Scale | `body`, `scale` (uniform factor, default 1), `axis` X / Y / Z or [x, y, z], `angle` (deg); scale and rotation about `center` (default the body's box centre), then `translate` [dx, dy, dz] (Fusion: Move/Copy, M) |
+| `feature.move` | Move/Rotate/Scale | `body`, `scale` (uniform factor, default 1), `axis` X / Y / Z or [x, y, z], `angle` (deg); scale and rotation about `center` (default the body's box centre), then `translate` [dx, dy, dz]; `copy: true` adds the moved body as a new one and leaves the original (Fusion: Move/Copy, M) |
 | `feature.rectangular_pattern` | Rectangular Pattern | `direction`, `count`, `spacing`, optional `direction2` / `count2` / `spacing2` |
 | `feature.path_pattern` | Pattern on Path | `body`, `path` {sketch, curves}, `count` (2-1000), `distance_type` extent (default; `distance` = length the instances cover, default the rest of the path) / spacing (`distance` between instances), `start` (fraction of the path, 0 to < 1), `orientation` identical / path_direction, `flip`, `operation` join / new_body; an error when the instances run off the path |
 | `feature.pipe` | Pipe | `path` {sketch, curves}, `diameter` (or `radius`), `section` circular (default) / square, `thickness` (wall; 0: solid), `operation` new_body / join / cut |

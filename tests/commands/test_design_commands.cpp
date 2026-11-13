@@ -4931,6 +4931,20 @@ TEST_CASE("Design commands: thread (Fusion: Create > Thread)", "[commands][cad]"
     }
 }
 
+TEST_CASE("Design commands: Move with Create Copy leaves the original (Fusion: Move/Copy)", "[commands][cad]")
+{
+    commands::Session s;
+    run(s, "feature.box", {{"corner", {0, 0, 0}}, {"size", {10, 10, 10}}});
+    run(s, "feature.move", {{"body", "Body1"}, {"translate", {50, 0, 0}}, {"copy", true}});
+    const Json list = run(s, "timeline.list");
+    REQUIRE(list.at("bodies").size() == 2);
+    CHECK(list.at("bodies").at(0).at("bounds").at("min").at(0).get<double>() == Catch::Approx(0).margin(1e-6));
+    CHECK(list.at("bodies").at(1).at("bounds").at("min").at(0).get<double>() == Catch::Approx(50).margin(1e-6));
+    // Without it the body itself moves.
+    run(s, "feature.move", {{"body", "Body1"}, {"translate", {0, 20, 0}}});
+    CHECK(run(s, "timeline.list").at("bodies").size() == 2);
+}
+
 TEST_CASE("Design commands: align lays a face of a body on a face of another (Fusion: Align)", "[commands][cad]")
 {
     const auto bounds = [](commands::Session& s, const char* name) {

@@ -351,7 +351,8 @@ Pane {
             { key: "axis", type: "choice", label: qsTr("Rotate about"), init: "Z", options: axes },
             { key: "angle", type: "expr", label: qsTr("Angle (deg)"), init: 90 },
             { key: "translate", type: "vec3", label: qsTr("Move by"), init: [0, 0, 0] },
-            { key: "scale", type: "expr", label: qsTr("Scale (factor)"), init: 1 }] },
+            { key: "scale", type: "expr", label: qsTr("Scale (factor)"), init: 1 },
+            { key: "copy", type: "bool", label: qsTr("Create copy") }] },
         scale: { title: qsTr("Scale"), command: "feature.scale", fields: [
             { key: "body", type: "body", label: qsTr("Body") },
             { key: "scaleType", type: "choice", label: qsTr("Type"), init: "uniform", local: true, options: [
