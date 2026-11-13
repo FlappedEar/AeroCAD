@@ -917,6 +917,9 @@ Pane {
             if (part.kind === "body" && part.featureId === previewFeatureId)
                 return
             const key = pickKey
+            // Align's first pick must be a face of the body that moves.
+            if (key === "face" && type === "align" && (part.kind !== "body" || part.featureId !== values.body))
+                return
             if (part.kind === "plane")
                 setValue(key, { plane: part.featureId })
             else if ((part = asBody(part)))

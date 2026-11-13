@@ -4969,6 +4969,21 @@ TEST_CASE("Design commands: align lays a face of a body on a face of another (Fu
         // The +X side face now faces down: it opposes the +Z top face, so the body stands on it. Same volume.
         CHECK(run(s, "timeline.list").at("bodies").at(1).at("volume").get<double>() == Catch::Approx(1000).epsilon(1e-6));
     }
+    SECTION("flip: the face looks the same way as the target and the gap counts from it")
+    {
+        // The small box's top face (+Z) on the big box's top face (+Z), same direction: the box stands on its own
+        // top face turned over, so it keeps its orientation and its top face is at z = 10 + 3.
+        run(s, "feature.align", {{"body", "Body2"}, {"face", 0}, {"to", {{"body", "Body1"}, {"point", {20, 20, 10}}}}, {"flip", true}, {"offset", 3}});
+        const Json faces = run(s, "body.faces", {{"body", "Body2"}});
+        bool found = false;
+        for (const auto& f : faces.at("faces")) {
+            if (f.at("normal").at(2).get<double>() > 0.99) {
+                found = true;
+                CHECK(f.at("center").at(2).get<double>() == Catch::Approx(13).margin(1e-6));
+            }
+        }
+        CHECK(found);
+    }
     SECTION("opposed normals turn half way round; errors are clear")
     {
         run(s, "feature.align", {{"body", "Body2"}, {"face", {{"point", {105, 105, 110}}}}, {"to", {{"body", "Body1"}, {"point", {20, 20, 10}}}}});

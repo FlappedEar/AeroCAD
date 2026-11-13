@@ -4344,6 +4344,8 @@ void Design::evaluateFeature(const Feature& f)
         if (toRef.is_object() && has(toRef, "body") && bodyRef(toRef.at("body")).id == body.id)
             throw DesignError("A body cannot be aligned to its own face");
         const bool flip = p.value("flip", false);
+        if (!(to.normal.length() > 1e-9) || !(from.normal.length() > 1e-9))
+            throw DesignError("Align: the plane has no direction (zero normal)");
         const core::Vec3 want = flip ? to.normal : to.normal * -1.0;
         // Smallest turn taking the face normal to the wanted direction; a half turn about any
         // axis square to it when they are opposed.
