@@ -4364,6 +4364,50 @@ TEST_CASE("Design commands: Rib (CAD-271)", "[commands][cad]")
         CHECK_FALSE(s.execute("feature.rib", {{"path", {{"sketch", ring}}}, {"thickness", 4}, {"depth", 10}, {"direction", "parallel"}}).ok);
     }
 
+    SECTION("to next body: the wall grows until it reaches the body (Fusion: Rib, To Next)")
+    {
+        run(s, "feature.box", {{"corner", {-10, -10, 30}}, {"size", {80, 30, 5}}});
+        const auto r = run(s, "feature.rib", {{"path", {{"sketch", line}}}, {"thickness", 4}, {"extent", "to_object"},
+                                              {"to", {{"body", "Body1"}}}, {"operation", "new_body"}});
+        const auto id = r.at("bodies").back().at("id").get<std::uint64_t>();
+        CHECK(s.design().bodies().at(id).shape.volume() == Approx(50 * 4 * 30).epsilon(1e-4));
+        CHECK(s.design().bodies().at(id).shape.bounds().max.z == Approx(30).margin(1e-6));
+        // Nothing to reach: an error. A missing target is an error too.
+        CHECK_FALSE(s.execute("feature.rib", {{"path", {{"sketch", line}}}, {"thickness", 4}, {"extent", "to_object"},
+                                              {"to", {{"body", "Body1"}}}, {"flip", true}, {"operation", "new_body"}}).ok);
+        CHECK_FALSE(s.execute("feature.rib", {{"path", {{"sketch", line}}}, {"thickness", 4}, {"extent", "to_object"}}).ok);
+        CHECK_FALSE(s.execute("feature.rib", {{"path", {{"sketch", line}}}, {"thickness", 4}, {"extent", "far"}, {"depth", 5}}).ok);
+    }
+
+    SECTION("to next body, parallel: the wall reaches along the plane up to the body")
+    {
+        run(s, "feature.box", {{"corner", {-10, 25, -10}}, {"size", {70, 10, 20}}});
+        const auto r = run(s, "feature.rib", {{"path", {{"sketch", line}}}, {"thickness", 4}, {"direction", "parallel"},
+                                              {"extent", "to_object"}, {"to", {{"body", "Body1"}}}, {"operation", "new_body"}});
+        const auto id = r.at("bodies").back().at("id").get<std::uint64_t>();
+        CHECK(s.design().bodies().at(id).shape.volume() == Approx(50 * 25 * 4).epsilon(1e-4));
+        const auto b = s.design().bodies().at(id).shape.bounds();
+        CHECK(b.max.y == Approx(25).margin(1e-6));
+        CHECK(b.min.z == Approx(-2).margin(1e-6));
+    }
+
+    SECTION("to next body, parallel, along a bent path (several faces)")
+    {
+        const auto bent = run(s, "sketch.create",
+                              {{"plane", "XY"},
+                               {"curves", Json::array({{{"type", "line"}, {"start", {0, 0}}, {"end", {30, 0}}},
+                                                       {{"type", "line"}, {"start", {30, 0}}, {"end", {50, 10}}}})}})
+                              .at("id").get<std::uint64_t>();
+        run(s, "feature.box", {{"corner", {-10, 40, -10}}, {"size", {80, 10, 20}}});
+        const auto r = run(s, "feature.rib", {{"path", {{"sketch", bent}}}, {"thickness", 4}, {"direction", "parallel"},
+                                              {"extent", "to_object"}, {"to", {{"body", "Body1"}}}, {"operation", "new_body"}});
+        const auto id = r.at("bodies").back().at("id").get<std::uint64_t>();
+        const auto b = s.design().bodies().at(id).shape.bounds();
+        CHECK(b.max.y == Approx(40).margin(1e-6));
+        CHECK(b.min.y == Approx(0).margin(1e-6));
+        CHECK(s.design().bodies().at(id).shape.volume() > 4 * 40 * 30);
+    }
+
     SECTION("bad values are errors")
     {
         CHECK_FALSE(s.execute("feature.rib", {{"path", {{"sketch", line}}}, {"thickness", 0}, {"depth", 10}}).ok);
