@@ -56,6 +56,8 @@
 #include <BRepOffsetAPI_MakeThickSolid.hxx>
 #include <BRepOffsetAPI_ThruSections.hxx>
 #include <BRepTools.hxx>
+#include <ShapeAnalysis_FreeBounds.hxx>
+#include <TopTools_HSequenceOfShape.hxx>
 #include <gp_Ax2.hxx>
 #include <gp_Ax3.hxx>
 #include <gp_Pln.hxx>
@@ -387,6 +389,39 @@ TopoDS_Wire pathWire(const Shape& pathEdges, const char* what)
 }
 } // namespace
 
+std::vector<Shape> splitPaths(const Shape& pathEdges)
+{
+    const TopoDS_Shape& path = occ(pathEdges, "Rib");
+    return guarded("Rib", [&] {
+        // Curves that already form one connected path stay exactly as drawn (order and direction),
+        // so a plain rib keeps its geometry; only a path that falls apart is split into its pieces.
+        try {
+            // MakeWire can finish with only the first connected piece, so count the edges it kept.
+            const auto edgeCount = [](const TopoDS_Shape& shape) {
+                TopTools_IndexedMapOfShape edges;
+                TopExp::MapShapes(shape, TopAbs_EDGE, edges);
+                return edges.Extent();
+            };
+            if (edgeCount(pathWire(pathEdges, "Rib")) == edgeCount(path))
+                return std::vector<Shape>{pathEdges};
+        } catch (const ModelingError&) {
+        }
+        Handle(TopTools_HSequenceOfShape) edges = new TopTools_HSequenceOfShape;
+        for (TopExp_Explorer ex(path, TopAbs_EDGE); ex.More(); ex.Next())
+            edges->Append(ex.Current());
+        if (edges->IsEmpty())
+            throw ModelingError("Rib: the path has no curves");
+        Handle(TopTools_HSequenceOfShape) wires;
+        ShapeAnalysis_FreeBounds::ConnectEdgesToWires(edges, 1e-6, Standard_False, wires);
+        std::vector<Shape> out;
+        for (int i = 1; i <= wires->Length(); ++i)
+            out.push_back(wrapShape(wires->Value(i)));
+        if (out.empty())
+            throw ModelingError("Rib: the path curves could not be joined");
+        return out;
+    });
+}
+
 namespace {
 /// The first wire of an offset result (null when there is none).
 TopoDS_Wire firstWire(const TopoDS_Shape& s)
@@ -478,8 +513,23 @@ Shape thickenCurves(const Shape& pathEdges, double thickness, const core::Vec3& 
             if (left.IsNull() || right.IsNull())
                 throw ModelingError(tooThick);
             TopoDS_Vertex l0, l1, r0, r1;
-            TopExp::Vertices(left, l0, l1);
-            TopExp::Vertices(right, r0, r1);
+            // TopExp::Vertices on a wire trusts the order of its edges, which an offset does not
+            // keep, so the two ends are the vertices that only one edge touches.
+            const auto openEnds = [&](const TopoDS_Wire& w, TopoDS_Vertex& a, TopoDS_Vertex& b) {
+                TopTools_IndexedDataMapOfShapeListOfShape ancestors;
+                TopExp::MapShapesAndAncestors(w, TopAbs_VERTEX, TopAbs_EDGE, ancestors);
+                bool first = true;
+                for (int k = 1; k <= ancestors.Extent(); ++k) {
+                    if (ancestors.FindFromIndex(k).Extent() != 1)
+                        continue;
+                    (first ? a : b) = TopoDS::Vertex(ancestors.FindKey(k));
+                    first = false;
+                }
+                if (first || b.IsNull())
+                    throw ModelingError(tooThick);
+            };
+            openEnds(left, l0, l1);
+            openEnds(right, r0, r1);
             // Pair each end of one side with the nearer end of the other.
             const gp_Pnt pl0 = BRep_Tool::Pnt(l0), pl1 = BRep_Tool::Pnt(l1);
             const bool same = pl0.Distance(BRep_Tool::Pnt(r0)) + pl1.Distance(BRep_Tool::Pnt(r1)) <=

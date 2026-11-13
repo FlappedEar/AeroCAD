@@ -728,3 +728,21 @@ TEST_CASE("Spline samples follow the interpolated curve through the fit points",
     line.points = {{0, 0}, {1, 0}};
     CHECK_THROWS_AS(sampleSpline(line), ModelingError);
 }
+
+TEST_CASE("Rib: an open path of several curves becomes one band", "[geometry][rib]")
+{
+    Plane xy;
+    xy.origin = {0, 0, 0};
+    xy.normal = {0, 0, 1};
+    xy.xDir = {1, 0, 0};
+    const auto volumeOf = [&](const std::vector<SketchCurve>& curves) {
+        const auto outline = thickenCurves(curveEdges(xy, curves), 2.0, {0, 0, 1});
+        return extrude(outline, {0, 0, 5}, 5.0).volume();
+    };
+    // Two collinear lines: 40 x 2 x 5.
+    CHECK(volumeOf({line({0, 0}, {20, 0}), line({20, 0}, {40, 0})}) == Approx(400.0).epsilon(1e-4));
+    // An L: the band is 40 long and 2 wide, give or take the rounded outer corner.
+    CHECK(volumeOf({line({0, 0}, {20, 0}), line({20, 0}, {20, 20})}) == Approx(400.0).epsilon(0.03));
+    // A U of three lines: 60 long.
+    CHECK(volumeOf({line({0, 0}, {20, 0}), line({20, 0}, {20, 20}), line({20, 20}, {0, 20})}) == Approx(600.0).epsilon(0.03));
+}

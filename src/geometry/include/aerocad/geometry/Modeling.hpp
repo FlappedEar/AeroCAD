@@ -48,6 +48,10 @@ struct PathFrame {
 [[nodiscard]] Shape thickenCurves(const Shape& pathEdges, double thickness, const core::Vec3& planeNormal);
 [[nodiscard]] Shape curveWall(const Shape& pathEdges, const core::Vec3& direction, double distance);
 
+/// The connected pieces of a set of curve edges, each as its own shape (curves that share an end
+/// point belong together; crossing curves stay apart). One piece for a normal path.
+[[nodiscard]] std::vector<Shape> splitPaths(const Shape& pathEdges);
+
 /// Length of a path of connected edges (mm); throws ModelingError when they do not connect.
 [[nodiscard]] double pathLength(const Shape& pathEdges);
 

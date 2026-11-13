@@ -1424,6 +1424,7 @@ ApplicationWindow {
     // Fusion: Create > Boundary Fill (the spaces enclosed by bodies or surfaces).
     Action { id: boundaryFillAction; text: qsTr("&Boundary Fill"); enabled: !window.activeSketch; onTriggered: window.openFeature("boundary_fill") }
     Action { id: coilAction; text: qsTr("Co&il"); enabled: !window.activeSketch; onTriggered: window.openFeature("coil") }
+    Action { id: webAction; text: qsTr("&Web"); enabled: !window.activeSketch; onTriggered: window.openFeature("web") }
     Action { id: ribAction; text: qsTr("&Rib"); enabled: !window.activeSketch; onTriggered: window.openFeature("rib") }
     Action { id: pipeAction; text: qsTr("P&ipe"); enabled: !window.activeSketch; onTriggered: window.openFeature("pipe") }
     Action { id: sweepAction; text: qsTr("S&weep"); enabled: !window.activeSketch; onTriggered: window.openFeature("sweep") }
@@ -1776,6 +1777,7 @@ ApplicationWindow {
             MenuItem { action: sweepAction }
             MenuItem { action: pipeAction }
             MenuItem { action: ribAction }
+            MenuItem { action: webAction }
             MenuItem { action: coilAction }
             MenuItem { action: threadAction }
             MenuItem { action: boundaryFillAction }
@@ -2110,6 +2112,7 @@ ApplicationWindow {
                 ToolCommand { action: sweepAction; text: qsTr("Sweep"); iconName: "sweep" }
                 ToolCommand { action: pipeAction; text: qsTr("Pipe"); iconName: "pipe" }
                 ToolCommand { action: ribAction; text: qsTr("Rib"); iconName: "rib" }
+                ToolCommand { action: webAction; text: qsTr("Web"); iconName: "rib" }
                 ToolCommand { action: coilAction; text: qsTr("Coil"); iconName: "coil" }
                 ToolCommand { action: threadAction; text: qsTr("Thread"); iconName: "thread" }
                 ToolCommand { action: boundaryFillAction; text: qsTr("Boundary Fill"); iconName: "combine" }

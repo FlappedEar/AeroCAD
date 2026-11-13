@@ -4382,6 +4382,40 @@ TEST_CASE("Design commands: Rib (CAD-271)", "[commands][cad]")
         CHECK_FALSE(s.execute("feature.rib", {{"path", {{"sketch", line}}}, {"thickness", 4}, {"extent", "far"}, {"depth", 5}}).ok);
     }
 
+    SECTION("a web: curves that cross or stand apart are walls of one body (Fusion: Web)")
+    {
+        const auto cross = run(s, "sketch.create",
+                               {{"plane", "XY"},
+                                {"curves", Json::array({{{"type", "line"}, {"start", {-25, 0}}, {"end", {25, 0}}},
+                                                        {{"type", "line"}, {"start", {0, -25}}, {"end", {0, 25}}}})}})
+                               .at("id").get<std::uint64_t>();
+        const auto r = run(s, "feature.rib", {{"path", {{"sketch", cross}}}, {"thickness", 4}, {"depth", 10}});
+        REQUIRE(r.at("bodies").size() == 1);
+        // Two 50 x 4 walls share a 4 x 4 square: 2 * 2000 - 160.
+        CHECK(r.at("bodies")[0].at("volume").get<double>() == Approx(2 * 50 * 4 * 10 - 4 * 4 * 10).epsilon(1e-4));
+        const auto apart = run(s, "sketch.create",
+                               {{"plane", "XY"},
+                                {"curves", Json::array({{{"type", "line"}, {"start", {100, 0}}, {"end", {120, 0}}},
+                                                        {{"type", "line"}, {"start", {100, 30}}, {"end", {140, 30}}}})}})
+                               .at("id").get<std::uint64_t>();
+        const auto w = run(s, "feature.rib", {{"path", {{"sketch", apart}}}, {"thickness", 2}, {"depth", 5}, {"direction", "parallel"}});
+        CHECK(w.at("bodies").back().at("volume").get<double>() == Approx((20 + 40) * 5 * 2).epsilon(1e-4));
+        // A web to the next body: both walls reach the plate above.
+        run(s, "feature.box", {{"corner", {90, -10, 12}}, {"size", {60, 60, 3}}});
+        const auto up = run(s, "feature.rib", {{"path", {{"sketch", apart}}}, {"thickness", 2}, {"extent", "to_object"},
+                                               {"to", {{"body", "Body3"}}}, {"operation", "new_body"}});
+        CHECK(up.at("bodies").back().at("volume").get<double>() == Approx((20 + 40) * 2 * 12).epsilon(1e-4));
+        // Two joined lines plus a separate one: the separate wall must not be dropped.
+        const auto mixed = run(s, "sketch.create",
+                               {{"plane", "XY"},
+                                {"curves", Json::array({{{"type", "line"}, {"start", {200, 0}}, {"end", {220, 0}}},
+                                                        {{"type", "line"}, {"start", {220, 0}}, {"end", {220, 20}}},
+                                                        {{"type", "line"}, {"start", {200, 50}}, {"end", {240, 50}}}})}})
+                               .at("id").get<std::uint64_t>();
+        const auto m = run(s, "feature.rib", {{"path", {{"sketch", mixed}}}, {"thickness", 2}, {"depth", 5}, {"operation", "new_body"}});
+        CHECK(m.at("bodies").back().at("volume").get<double>() == Approx((20 + 20 + 40) * 2 * 5).epsilon(0.03));
+    }
+
     SECTION("to next body: a picked face follows the body when it is edited")
     {
         const auto plate = run(s, "feature.box", {{"corner", {-10, -10, 30}}, {"size", {80, 30, 5}}}).at("id").get<std::uint64_t>();
