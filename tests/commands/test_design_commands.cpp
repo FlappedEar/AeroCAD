@@ -4729,3 +4729,39 @@ TEST_CASE("Design commands: sketch stretch (CAD-274)", "[commands][cad]")
         CHECK(curves(id)[0].at("points")[1][0].get<double>() == Approx(50).margin(1e-6));
     }
 }
+
+TEST_CASE("Design commands: body.faces and body.edges give axes of cylinders, circles and lines", "[commands][cad]")
+{
+    commands::Session s;
+    run(s, "feature.cylinder", {{"center", {30, 0, 0}}, {"radius", 10}, {"height", 20}});
+    const auto along = [](const Json& axis, double x, double y) {
+        const Json& d = axis.at("direction");
+        return axis.at("origin")[0].get<double>() == Approx(x).margin(1e-6) && axis.at("origin")[1].get<double>() == Approx(y).margin(1e-6)
+               && std::abs(d[2].get<double>()) == Approx(1.0).margin(1e-6);
+    };
+    const Json faces = run(s, "body.faces", {{"body", "Body1"}});
+    int cylinders = 0;
+    for (const auto& f : faces.at("faces")) {
+        if (f.at("type") == "cylinder") {
+            ++cylinders;
+            REQUIRE(f.contains("axis"));
+            CHECK(along(f.at("axis"), 30, 0));
+        } else {
+            CHECK_FALSE(f.contains("axis")); // caps are planes
+        }
+    }
+    CHECK(cylinders == 1);
+    const Json edges = run(s, "body.edges", {{"body", "Body1"}});
+    int circles = 0, lines = 0;
+    for (const auto& e : edges.at("edges")) {
+        REQUIRE(e.contains("axis"));
+        if (e.at("type") == "circle") {
+            ++circles;
+            CHECK(along(e.at("axis"), 30, 0)); // through the centre, along the normal
+        } else if (e.at("type") == "line") {
+            ++lines;
+        }
+    }
+    CHECK(circles == 2);
+    CHECK(lines == 1); // the seam
+}

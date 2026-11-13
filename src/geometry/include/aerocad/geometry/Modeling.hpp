@@ -182,6 +182,10 @@ struct FaceInfo {
     core::Vec3 center{};
     /// Outward normal at the centre (for planar faces: the plane normal).
     core::Vec3 normal{};
+    /// Axis of a cylinder, cone or torus face (a point on it and its direction).
+    bool hasAxis = false;
+    core::Vec3 axisOrigin{};
+    core::Vec3 axisDirection{};
 };
 
 struct EdgeInfo {
@@ -191,6 +195,10 @@ struct EdgeInfo {
     core::Vec3 start{};
     core::Vec3 end{};
     core::Vec3 middle{};
+    /// Axis of a line (through it) or circle (through its centre, along its normal) edge.
+    bool hasAxis = false;
+    core::Vec3 axisOrigin{};
+    core::Vec3 axisDirection{};
 };
 
 /// Faces / edges of a shape, indexed in a stable order for a given shape. Indices are

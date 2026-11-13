@@ -22,6 +22,7 @@
 #include <Geom_CylindricalSurface.hxx>
 #include <Geom2d_Line.hxx>
 #include <gp_Circ.hxx>
+#include <gp_Lin.hxx>
 #include <gp_Dir2d.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
@@ -1517,6 +1518,18 @@ std::vector<FaceInfo> faces(const Shape& shape)
         gp_Pnt c;
         info.normal = faceNormalAt(f, c);
         info.center = toVec(c);
+        const BRepAdaptor_Surface surf(f);
+        gp_Ax1 ax;
+        switch (surf.GetType()) {
+        case GeomAbs_Cylinder: ax = surf.Cylinder().Axis(); info.hasAxis = true; break;
+        case GeomAbs_Cone: ax = surf.Cone().Axis(); info.hasAxis = true; break;
+        case GeomAbs_Torus: ax = surf.Torus().Axis(); info.hasAxis = true; break;
+        default: break;
+        }
+        if (info.hasAxis) {
+            info.axisOrigin = toVec(ax.Location());
+            info.axisDirection = {ax.Direction().X(), ax.Direction().Y(), ax.Direction().Z()};
+        }
         out.push_back(info);
     }
     return out;
@@ -1540,6 +1553,17 @@ std::vector<EdgeInfo> edges(const Shape& shape)
         info.start = toVec(c.Value(c.FirstParameter()));
         info.end = toVec(c.Value(c.LastParameter()));
         info.middle = toVec(c.Value((c.FirstParameter() + c.LastParameter()) / 2));
+        if (c.GetType() == GeomAbs_Line) {
+            const gp_Lin l = c.Line();
+            info.hasAxis = true;
+            info.axisOrigin = toVec(l.Location());
+            info.axisDirection = {l.Direction().X(), l.Direction().Y(), l.Direction().Z()};
+        } else if (c.GetType() == GeomAbs_Circle) {
+            const gp_Ax1 ax = c.Circle().Axis();
+            info.hasAxis = true;
+            info.axisOrigin = toVec(ax.Location());
+            info.axisDirection = {ax.Direction().X(), ax.Direction().Y(), ax.Direction().Z()};
+        }
         out.push_back(info);
     }
     return out;
