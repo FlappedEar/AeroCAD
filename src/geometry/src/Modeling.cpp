@@ -1377,8 +1377,10 @@ Shape thread(const Shape& shape, const std::vector<std::size_t>& faceIndices, do
     const TopoDS_Shape& s = occ(shape, "Thread");
     if (!std::isfinite(pitch) || pitch <= 0.0)
         throw ModelingError("Thread: the pitch must be positive");
-    if (!std::isfinite(depth) || depth < 0.0 || !std::isfinite(length))
+    if (!std::isfinite(depth) || depth < 0.0)
         throw ModelingError("Thread: the depth must be positive");
+    if (!std::isfinite(length) || length < 0.0)
+        throw ModelingError("Thread: the length must be positive (0: the whole face)");
     if (faceIndices.empty())
         throw ModelingError("Thread: pick a cylindrical face");
     if (depth <= 0.0)

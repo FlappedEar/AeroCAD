@@ -4096,6 +4096,8 @@ void Design::evaluateFeature(const Feature& f)
         Body& b = bodyRef(required(p, "body"));
         const auto idx = resolveIndices(b.shape, required(p, "edges"), true);
         if (f.type == "fillet") {
+            if (has(p, "radius_end") && !(ev.num(p, "radius_end") > 0.0))
+                throw DesignError("The end radius of a variable fillet must be positive");
             b.shape = geometry::fillet(b.shape, idx, ev.num(p, "radius"), ev.num(p, "radius_end", 0.0));
         } else {
             geometry::ChamferOptions o;

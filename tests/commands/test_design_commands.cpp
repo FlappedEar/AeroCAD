@@ -4820,6 +4820,7 @@ TEST_CASE("Design commands: variable radius fillet runs from the start of the ed
     commands::Session s;
     run(s, "feature.box", {{"corner", {0, 0, 0}}, {"size", {20, 20, 20}}});
     CHECK_FALSE(s.execute("feature.fillet", {{"body", "Body1"}, {"edges", {0}}, {"radius", 1}, {"radius_end", -2}}).ok);
+    CHECK_FALSE(s.execute("feature.fillet", {{"body", "Body1"}, {"edges", {0}}, {"radius", 1}, {"radius_end", 0}}).ok);
 }
 
 TEST_CASE("Design commands: variable fillet radius follows body.edges start and end on every edge", "[commands][cad]")
@@ -4898,8 +4899,22 @@ TEST_CASE("Design commands: thread (Fusion: Create > Thread)", "[commands][cad]"
         run(s, "feature.thread", {{"body", "Body1"}, {"faces", {face}}, {"pitch", 1.5}, {"handedness", "left"}, {"flip", true}});
         const double removed = before - bodyVolume(s, "Body1");
         INFO("removed " << removed);
-        CHECK(removed > 20.0); // the groove cut material from the wall
+        CHECK(removed > 60.0); // the groove cut material from the wall (inwards it would only graze the bore)
         CHECK(removed < 300.0);
+        // Right-handed, from the other end and with a length: about the same groove, only shorter.
+        commands::Session r;
+        run(r, "feature.box", {{"corner", {0, 0, 0}}, {"size", {30, 30, 12}}});
+        run(r, "feature.hole", {{"body", "Body1"}, {"point", {15, 15, 12}}, {"diameter", 8}});
+        run(r, "feature.thread", {{"body", "Body1"}, {"faces", {cylinderFace(r, "Body1")}}, {"pitch", 1.5}});
+        const double right = before - bodyVolume(r, "Body1");
+        CHECK(right == Approx(removed).epsilon(0.03)); // mirror images remove the same material
+        commands::Session part;
+        run(part, "feature.box", {{"corner", {0, 0, 0}}, {"size", {30, 30, 12}}});
+        run(part, "feature.hole", {{"body", "Body1"}, {"point", {15, 15, 12}}, {"diameter", 8}});
+        run(part, "feature.thread", {{"body", "Body1"}, {"faces", {cylinderFace(part, "Body1")}}, {"pitch", 1.5}, {"length", 6}});
+        const double shorter = before - bodyVolume(part, "Body1");
+        CHECK(shorter > 20.0);
+        CHECK(shorter < 0.65 * right);
     }
     SECTION("a face that is not a cylinder, a missing pitch and a too long pitch are reported")
     {
@@ -4911,6 +4926,7 @@ TEST_CASE("Design commands: thread (Fusion: Create > Thread)", "[commands][cad]"
         const int face = cylinderFace(c, "Body1");
         CHECK_FALSE(c.execute("feature.thread", {{"body", "Body1"}, {"faces", {face}}, {"pitch", 6}}).ok);
         CHECK_FALSE(c.execute("feature.thread", {{"body", "Body1"}, {"faces", {face}}, {"pitch", 0}}).ok);
+        CHECK_FALSE(c.execute("feature.thread", {{"body", "Body1"}, {"faces", {face}}, {"pitch", 1}, {"length", -2}}).ok);
         CHECK_FALSE(c.execute("feature.thread", {{"body", "Body1"}, {"faces", {face}}, {"pitch", 1}, {"handedness", "sideways"}}).ok);
     }
 }

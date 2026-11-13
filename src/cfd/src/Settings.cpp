@@ -191,8 +191,9 @@ Json settingsSchema()
           {"enum", {"+X", "-X", "+Y", "-Y"}},
           {"description", "Direction the air flows in, model axes (Z up). Default +Y (air hits the side seen in "
                           "the Front view)."}}},
-        {"yaw", num("Crosswind yaw in degrees, -30..30 (default 0): the air turns this far counter-clockwise, seen "
-                    "from above, from flowDirection. Forces are in wind axes.")},
+        {"yaw", num("Yaw (crosswind) in degrees, -30..30 (default 0): the air turns this far counter-clockwise, "
+                    "seen from above, from flowDirection. Forces are in wind axes; a moving floor moves along "
+                    "flowDirection at speed * cos(yaw), and rotating wheels roll with it.")},
         {"mesh",
          {{"type", "string"},
           {"enum", {"coarse", "medium", "fine"}},
@@ -207,11 +208,13 @@ Json settingsSchema()
           {"description", "The floor moves with the air like a road (default true); false = fixed wind-tunnel "
                           "floor."}}},
         {"groundHeight",
-         num("Floor height in model Z, mm (default: just below the lowest point; not above the part).")},
+         num("Floor height in model Z, mm (default: just below the lowest point). Not above the part; context "
+             "parts such as supports may reach below it.")},
         {"rotatingWheels",
          {{"type", "boolean"},
-          {"description", "Roll the wheels standing on the part's bottom with the moving floor (default false; "
-                          "needs ground and groundMoving)."}}},
+          {"description", "Turn the wheels with the moving floor: wheels standing on the part's bottom are found, "
+                          "the floor touches the tyres and their surfaces move with it (default false; needs "
+                          "ground and groundMoving)."}}},
         {"referenceArea", num("Reference area for Cd/Cl in m^2 (default: frontal area of the part).")},
         {"referenceLength", num("Reference length in m (default: part length along the flow).")},
         {"kinematicViscosity", num("Kinematic viscosity in m^2/s (default 1.5e-5, air).")},
