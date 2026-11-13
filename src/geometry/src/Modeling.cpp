@@ -292,10 +292,19 @@ Shape loft(const std::vector<Shape>& sections, bool solid, bool ruled)
     // Outer boundary of every section, plus its holes. Rings (one hole in every section)
     // are lofted as outer loft minus inner loft; other hole layouts cannot be matched
     // between sections reliably and are rejected instead of being silently filled.
-    std::vector<TopoDS_Wire> outer;
-    std::vector<std::vector<TopoDS_Wire>> holes;
-    for (const auto& sec : sections) {
-        const TopoDS_Shape& s = occ(sec, "Loft");
+    // The first and last section may be a point (a vertex): the loft closes to it.
+    std::vector<TopoDS_Shape> ends(sections.size()); // the wire of a profile, the vertex of a point
+    std::vector<bool> isPoint(sections.size(), false);
+    std::vector<std::vector<TopoDS_Wire>> holes; // of the profiles only (not of the points)
+    for (std::size_t i = 0; i < sections.size(); ++i) {
+        const TopoDS_Shape& s = occ(sections[i], "Loft");
+        if (s.ShapeType() == TopAbs_VERTEX) {
+            if (i != 0 && i + 1 != sections.size())
+                throw ModelingError("Loft: only the first and the last section can be a point");
+            ends[i] = s;
+            isPoint[i] = true;
+            continue;
+        }
         TopExp_Explorer ex(s, TopAbs_FACE);
         if (!ex.More())
             throw ModelingError("Loft: every section must be a closed profile");
@@ -304,13 +313,30 @@ Shape loft(const std::vector<Shape>& sections, bool solid, bool ruled)
         if (ex.More())
             throw ModelingError("Loft: every section must be a single profile");
         const TopoDS_Wire out = BRepTools::OuterWire(face);
-        outer.push_back(out);
+        ends[i] = out;
         std::vector<TopoDS_Wire> inner;
         for (TopExp_Explorer w(face, TopAbs_WIRE); w.More(); w.Next()) {
             if (!w.Current().IsSame(out))
                 inner.push_back(TopoDS::Wire(w.Current()));
         }
         holes.push_back(std::move(inner));
+    }
+    if (holes.empty())
+        throw ModelingError("Loft: at least one section must be a profile, not a point");
+    // A point in the plane of its neighbouring profile leaves a flat loft.
+    for (std::size_t i = 0; i < sections.size(); ++i) {
+        if (!isPoint[i])
+            continue;
+        const std::size_t next = i == 0 ? 1 : i - 1;
+        if (isPoint[next])
+            throw ModelingError("Loft: a point cannot be next to a point");
+        TopExp_Explorer fx(occ(sections[next], "Loft"), TopAbs_FACE);
+        const BRepAdaptor_Surface surf(TopoDS::Face(fx.Current()));
+        if (surf.GetType() == GeomAbs_Plane) {
+            const gp_Pln pl = surf.Plane();
+            if (pl.Distance(BRep_Tool::Pnt(TopoDS::Vertex(ends[i]))) < 1e-6)
+                throw ModelingError("Loft: the point lies in the plane of the neighbouring profile");
+        }
     }
     const std::size_t holeCount = holes.front().size();
     for (const auto& h : holes) {
@@ -321,12 +347,18 @@ Shape loft(const std::vector<Shape>& sections, bool solid, bool ruled)
         throw ModelingError("Loft: profiles with more than one hole are not supported yet");
     if (holeCount == 1 && !solid)
         throw ModelingError("Loft: profiles with a hole need a solid loft");
+    if (holeCount == 1 && std::find(isPoint.begin(), isPoint.end(), true) != isPoint.end())
+        throw ModelingError("Loft: a loft to a point cannot have profiles with a hole");
 
-    auto thruSections = [&](const std::vector<TopoDS_Wire>& wires) {
+    auto thruSections = [&](const std::vector<TopoDS_Shape>& wires) {
         return guarded("Loft", [&] {
             BRepOffsetAPI_ThruSections thru(solid, ruled, 1e-6);
-            for (const auto& w : wires)
-                thru.AddWire(w);
+            for (const auto& w : wires) {
+                if (w.ShapeType() == TopAbs_VERTEX)
+                    thru.AddVertex(TopoDS::Vertex(w));
+                else
+                    thru.AddWire(TopoDS::Wire(w));
+            }
             thru.CheckCompatibility(true);
             thru.Build();
             if (!thru.IsDone())
@@ -334,14 +366,19 @@ Shape loft(const std::vector<Shape>& sections, bool solid, bool ruled)
             return wrapShape(thru.Shape());
         });
     };
-    Shape result = thruSections(outer);
+    Shape result = thruSections(ends);
     if (holeCount == 1) {
-        std::vector<TopoDS_Wire> inner;
+        std::vector<TopoDS_Shape> inner;
         for (const auto& h : holes)
             inner.push_back(h.front());
         result = boolean(result, thruSections(inner), BooleanOp::Cut);
     }
     return result;
+}
+
+Shape pointShape(const core::Vec3& point)
+{
+    return wrapShape(BRepBuilderAPI_MakeVertex(toPnt(point)).Vertex());
 }
 
 Shape sweep(const Shape& profileFaces, const Shape& pathEdges)

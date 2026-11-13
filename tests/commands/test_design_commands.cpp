@@ -5895,3 +5895,82 @@ TEST_CASE("Design commands: Sketch Airfoil (NACA 4-digit)", "[commands][cad]")
         CHECK(r.error.empty());
     }
 }
+
+TEST_CASE("Design commands: Loft to a point", "[commands][cad]")
+{
+    auto square = [](commands::Session& s, double z, double side) {
+        return run(s, "sketch.create",
+                   {{"plane", "XY"}, {"offset", z},
+                    {"curves", Json::array({{{"type", "center_rectangle"}, {"center", {0, 0}}, {"width", side}, {"height", side}}})}})
+            .at("id");
+    };
+    {
+        // A pyramid: base 20 x 20, apex 30 above: a third of base area times height.
+        commands::Session s;
+        const auto base = square(s, 0, 20);
+        const auto r = run(s, "feature.loft", {{"sections", Json::array({base, {{"point", {0, 0, 30}}}})}});
+        INFO(r.dump());
+        CHECK(r.at("bodies")[0].at("volume").get<double>() == Approx(400.0 * 30 / 3).epsilon(1e-3));
+    }
+    {
+        // A point first (the other way round), with a middle section: a spindle point -> 40 wide -> point.
+        commands::Session s;
+        const auto mid = square(s, 20, 40);
+        const auto r = run(s, "feature.loft", {{"sections", Json::array({{{"point", {0, 0, 0}}}, mid, {{"point", {0, 0, 40}}}})}});
+        INFO(r.dump());
+        // Smooth through the three sections the width is a parabola 40 (1 - u^2), u from -1 to 1:
+        // the volume is 1600 x 20 x 16/15 = 34133 (straight cones would be 21333).
+        CHECK(r.at("bodies")[0].at("volume").get<double>() == Approx(34133.3).epsilon(0.01));
+    }
+    {
+        // An expression in the point: the apex follows the parameter.
+        commands::Session s;
+        run(s, "parameter.set", {{"name", "h"}, {"expression", "30"}});
+        const auto base = square(s, 0, 20);
+        run(s, "feature.loft", {{"sections", Json::array({base, {{"point", {0, 0, "h"}}}})}});
+        run(s, "parameter.set", {{"name", "h"}, {"expression", "60"}});
+        const Json t = run(s, "timeline.list");
+        INFO(t.dump());
+        CHECK(t.at("features")[1].at("status") == "ok");
+        CHECK(t.at("bodies")[0].at("bounds").at("max")[2].get<double>() == Approx(60).margin(1e-3));
+    }
+    {
+        commands::Session s;
+        const auto base = square(s, 0, 20);
+        const auto top = square(s, 10, 10);
+        auto refused = [&](const Json& sections, const std::string& why) {
+            const auto r = s.execute("feature.loft", {{"sections", sections}});
+            INFO(sections.dump());
+            CHECK_FALSE(r.ok);
+            CHECK(r.error.find(why) != std::string::npos);
+        };
+        refused(Json::array({base, {{"point", {0, 0, 5}}}, top}), "first and the last");
+        refused(Json::array({{{"point", {0, 0, 0}}}, {{"point", {0, 0, 9}}}}), "must be a profile");
+        refused(Json::array({base, {{"point", {0, 0, 0}}}}), "plane of the neighbouring profile");
+        refused(Json::array({base, {{"point", {0, 0}}}}), "[x, y, z]");
+        refused(Json::array({base, {{"sketch", top}, {"point", {0, 0, 5}}}}), "not both");
+        // A ring (a hole) cannot close to a point.
+        const auto ring = run(s, "sketch.create",
+                              {{"plane", "XY"}, {"offset", 40},
+                               {"curves", Json::array({{{"type", "circle"}, {"center", {0, 0}}, {"radius", 8}},
+                                                       {{"type", "circle"}, {"center", {0, 0}}, {"radius", 4}}})}});
+        const auto ringProfiles = run(s, "sketch.profiles", {{"sketch", ring.at("id")}}).at("profiles");
+        std::size_t best = 0;
+        for (const auto& p : ringProfiles)
+            if (p.at("area").get<double>() < 3.14159 * 64 - 1 && p.at("area").get<double>() > 3.14159 * 64 - 80)
+                best = p.at("index").get<std::size_t>();
+        refused(Json::array({{{"sketch", ring.at("id")}, {"profile", best}}, {{"point", {0, 0, 60}}}}), "hole");
+    }
+    {
+        // Round profiles, ruled and an open surface also close to a point.
+        commands::Session s;
+        const auto disk = run(s, "sketch.create",
+                              {{"plane", "XY"}, {"curves", Json::array({{{"type", "circle"}, {"center", {0, 0}}, {"radius", 10}}})}})
+                              .at("id");
+        const auto cone = run(s, "feature.loft", {{"sections", Json::array({disk, {{"point", {0, 0, 30}}}})}, {"ruled", true}});
+        CHECK(cone.at("bodies")[0].at("volume").get<double>() == Approx(3.14159265 * 100 * 30 / 3).epsilon(1e-3));
+        const auto open = run(s, "feature.loft", {{"sections", Json::array({disk, {{"point", {5, 0, 20}}}})}, {"solid", false}, {"operation", "new_body"}});
+        INFO(open.dump());
+        CHECK(open.at("bodies").size() >= 1);
+    }
+}

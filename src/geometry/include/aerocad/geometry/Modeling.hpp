@@ -29,8 +29,12 @@ namespace aerocad::geometry {
 
 /// Loft through planar profile faces (Fusion: Loft), in order. `solid` closes the ends;
 /// `ruled` uses straight segments between sections. Profiles with one hole each (rings) give
-/// a hollow loft; other hole layouts throw ModelingError.
+/// a hollow loft; other hole layouts throw ModelingError. The first and the last section may be
+/// a pointShape(): the loft closes to that point (a nose, a wing tip).
 [[nodiscard]] Shape loft(const std::vector<Shape>& sections, bool solid = true, bool ruled = false);
+
+/// A single point as a shape (a loft end).
+[[nodiscard]] Shape pointShape(const core::Vec3& point);
 
 /// Sweeps profile faces along a path of connected edges (Fusion: Sweep).
 [[nodiscard]] Shape sweep(const Shape& profileFaces, const Shape& pathEdges);
