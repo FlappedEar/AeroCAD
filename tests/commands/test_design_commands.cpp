@@ -4493,6 +4493,36 @@ TEST_CASE("Design commands: Coil (CAD-271)", "[commands][cad]")
         CHECK(b.at("bodies").back().at("volume").get<double>() == Approx(sectionArea * 2 * pi * 13 * 5).epsilon(2e-3));
     }
 
+    SECTION("about a construction axis or an {origin, direction} axis: the coil starts on it")
+    {
+        const Json ax = run(s, "feature.axis", {{"from", {100, 50, 0}}, {"to", {100, 50, 10}}});
+        const auto r = run(s, "feature.coil",
+                           {{"diameter", 30}, {"section_size", 4}, {"revolutions", 5}, {"pitch", 8}, {"axis", {{"feature", ax.at("id")}}}});
+        const auto b = s.design().bodies().at(r.at("bodies")[0].at("id").get<std::uint64_t>()).shape.bounds();
+        CHECK(0.5 * (b.min.x + b.max.x) == Approx(100).margin(0.5));
+        CHECK(0.5 * (b.min.y + b.max.y) == Approx(50).margin(0.5));
+        CHECK(b.min.z == Approx(-2).margin(1e-3));
+        CHECK(r.at("bodies")[0].at("volume").get<double>() == Approx(sectionArea * 2 * pi * 13 * 5).epsilon(2e-3));
+        const auto g = run(s, "feature.coil",
+                           {{"diameter", 30}, {"section_size", 4}, {"revolutions", 5}, {"pitch", 8},
+                            {"axis", {{"origin", {0, 0, 0}}, {"direction", {1, 0, 0}}}}, {"operation", "new_body"}});
+        const auto gb = s.design().bodies().at(g.at("bodies").back().at("id").get<std::uint64_t>()).shape.bounds();
+        CHECK(gb.max.x >= 40 + 2 - 1e-3);
+        CHECK_FALSE(s.execute("feature.coil", {{"diameter", 30}, {"section_size", 4}, {"revolutions", 5}, {"pitch", 8},
+                                               {"axis", {{"feature", 9999}}}}).ok);
+        // An object that names no axis, or a zero direction, is an error instead of the Z axis.
+        CHECK_FALSE(s.execute("feature.coil", {{"diameter", 30}, {"section_size", 4}, {"revolutions", 5}, {"pitch", 8},
+                                               {"axis", {{"line", 2}}}}).ok);
+        CHECK_FALSE(s.execute("feature.coil", {{"diameter", 30}, {"section_size", 4}, {"revolutions", 5}, {"pitch", 8},
+                                               {"axis", {{"origin", {0, 0, 0}}, {"direction", {0, 0, 0}}}}}).ok);
+        // An explicit `center` places the coil's start there, whatever the axis origin.
+        const auto c = run(s, "feature.coil",
+                           {{"diameter", 30}, {"section_size", 4}, {"revolutions", 5}, {"pitch", 8}, {"center", {0, 0, 0}},
+                            {"axis", {{"feature", ax.at("id")}}}, {"operation", "new_body"}});
+        const auto cb = s.design().bodies().at(c.at("bodies").back().at("id").get<std::uint64_t>()).shape.bounds();
+        CHECK(0.5 * (cb.min.x + cb.max.x) == Approx(0).margin(0.5));
+    }
+
     SECTION("a square wire, a left-handed coil about X")
     {
         const auto r = run(s, "feature.coil",

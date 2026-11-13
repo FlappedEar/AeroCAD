@@ -2729,7 +2729,9 @@ void registerFeatureCommands(CommandRegistry& r)
                       "A spring (Fusion: Create > Coil): a round or square wire winding about an axis. Give two of "
                       "revolutions, pitch and height.",
                       {{"center", point3("Start centre [x, y, z] (default origin).")},
-                       {"axis", {{"type", Json::array({"string", "array"})}, {"description", "X, Y, Z (default) or [x, y, z]."}}},
+                       {"axis", {{"type", Json::array({"string", "array", "object"})},
+                                 {"description", "X, Y, Z (default), [x, y, z], {origin, direction} or {feature} (construction axis; "
+                                                 "the coil then starts on it unless center is given)."}}},
                        {"diameter", numberOrExpr("Outer diameter of the coil (mm).")},
                        {"section_size", numberOrExpr("Wire diameter (square: side), mm.")},
                        {"revolutions", numberOrExpr("Turns.")},
