@@ -940,6 +940,7 @@ void appendCurves(const Eval& ev, const Json& item, std::vector<SketchCurve>& ou
             digits.insert(0, digits.size() < 4 ? 4 - digits.size() : 0, '0'); // 12 -> 0012
         } else if (code.is_string()) {
             digits = lower(code.get<std::string>());
+            digits.erase(std::remove_if(digits.begin(), digits.end(), [](unsigned char c) { return std::isspace(c); }), digits.end());
             if (digits.rfind("naca", 0) == 0)
                 digits.erase(0, 4);
         }

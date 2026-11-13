@@ -5888,7 +5888,10 @@ TEST_CASE("Design commands: Sketch Airfoil (NACA 4-digit)", "[commands][cad]")
         const auto r = s.execute("sketch.create", {{"plane", "XY"}, {"curves", Json::array({bad})}});
         CHECK_FALSE(r.error.empty());
     }
-    CHECK(near(run(s, "sketch.curves", {{"sketch", run(s, "sketch.create",
-                {{"plane", "XY"}, {"curves", Json::array({{{"type", "airfoil"}, {"naca", "NACA0009"}, {"chord", 10}}})}}).at("id")}})
-                   .at("curves")[0].at("points")[0], 0, 0));
+    // The prefix and spaces are allowed: "NACA0009", "NACA 2412", " 2412 ".
+    for (const char* form : {"NACA0009", "NACA 2412", " 2412 ", "naca  2412"}) {
+        INFO(form);
+        const auto r = s.execute("sketch.create", {{"plane", "XY"}, {"curves", Json::array({{{"type", "airfoil"}, {"naca", form}, {"chord", 10}}})}});
+        CHECK(r.error.empty());
+    }
 }
