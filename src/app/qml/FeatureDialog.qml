@@ -905,8 +905,8 @@ Pane {
     function submit(quiet) {
         // A field the command would otherwise default (Midplane's planes fall back to XY)
         // must be filled in: nothing is made until it is.
-        const empty = f => values[f.key] === undefined || (Array.isArray(values[f.key]) && values[f.key].length === 0)
-        const missing = spec.fields.find(f => f.required && empty(f))
+        const empty = f => values[f.key] == null || (Array.isArray(values[f.key]) && values[f.key].length === 0)
+        const missing = spec.fields.find(f => f.required && !(f.showIf && !f.showIf(values)) && empty(f))
         if (missing)
             return { ok: false, error: qsTr("%1: pick the %2").arg(spec.title).arg(missing.label.toLowerCase()) }
         const run = (name, args) => quiet ? controller.preview(name, args) : controller.execute(name, args)
