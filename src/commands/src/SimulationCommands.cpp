@@ -507,14 +507,10 @@ void registerSimulationCommands(CommandRegistry& r)
 
     r.add(
         {"simulation.results", "Simulation results",
-         "Results of a run: summary (Cd, Cl, Cs; drag, lift, side force in N, averaged over the last 20 % of the "
-         "iterations; for a car with two axles frontLiftN, rearLiftN, frontShare; with rotating wheels the wheels' own "
-         "wheelDragN, wheelLiftN), histories per iteration, residuals, quality checks (mesh, mass balance, residuals, "
-         "force "
-         "convergence) and the simulation conditions. Summary values are null until the run finishes successfully "
-         "with complete finite force/coefficient outputs; finalResults gives availability and reasons. "
-         "Histories remain available and provisional is true until final results are available. While the run is "
-         "running, current gives the same means over the iterations recorded so far (never final; null otherwise).",
+         "Results of a run: summary (Cd, Cl, Cs and the forces in N, averaged over the last 20 % of the iterations), "
+         "histories per iteration, residuals, quality checks and the simulation conditions. Summary values are null "
+         "until the run finishes successfully; provisional, current and finalResults say what is final. "
+         "Fields: agent_guide topic results.",
          objectSchema({{"run", runIdParam()},
                        {"maxPoints",
                         {{"type", "integer"},
@@ -577,16 +573,10 @@ void registerSimulationCommands(CommandRegistry& r)
           });
 
     r.add({"simulation.field", "Simulation field summary",
-           "Statistics of a result field in model coordinates (mm): surface (pressure on the part: p, Cp, "
-           "pressure in Pa), sectionHorizontal / sectionVertical (velocity sections through the part centre: speed "
-           "in m/s, Cp), a plane of a section stack (sectionX_<i> across the flow, sectionY_<i> vertical along "
-           "it, sectionZ_<i> horizontal; positions in simulation.results fields.sections), wake (isosurface of zero "
-           "total pressure, Cp0 = 0, around and behind the part: speed, Cp), vortices (vortex cores: isosurface of "
-           "the Q-criterion at 20 (U / L)^2, from three surface cells off the part: speed, Cp) or streamlines. "
-           "available = false until the run has written it. Scalars have min, max, "
-           "mean and the 2nd/98th percentiles p02/p98. With compare (run B) and kind surface: the pressure "
-           "difference B - A on run's part surface (dCp, dpressure in Pa), NaN where B's part has no surface "
-           "within 1 % of the part size.",
+           "Statistics of a result field in model coordinates (mm): kind surface, a velocity or section plane, wake, "
+           "vortices or streamlines; with compare (run B) and kind surface the pressure difference B - A. "
+           "available = false until the run has written it. Scalars have min, max, mean, p02 and p98. "
+           "The kinds: agent_guide topic results.",
            objectSchema({{"run", runIdParam()},
                          {"kind",
                           {{"type", "string"},
@@ -614,21 +604,10 @@ void registerSimulationCommands(CommandRegistry& r)
           });
 
     r.add({"simulation.compare", "Compare simulations",
-           "A/B comparison of two runs: drag/lift/side force differences in N and %, efficiency L/D (|lift|/drag), "
-           "per force and coefficient the iteration swing of A plus B (noise) and whether the difference is within it "
-           "(withinNoise), "
-           "for two cars front/rear axle lift and balance (front share of lift in %, difference in percentage points) "
-           "and the rotating wheels' own drag/lift (wheelDragN, wheelLiftN), "
-           "coefficients on a shared reference area, whether the conditions match (settings such as speed, direction, "
-           "mesh and preset, and "
-           "the resolved setup: surroundings/context geometry, flow domain and engine; unknownConditions lists what an "
-           "older run did not record), quality of both, "
-           "and shared colour scale ranges. Both runs need successful completion and complete finite force/coefficient "
-           "outputs; otherwise verdict is not comparable, deltas/scales are empty, and states/reasons explain why. "
-           "Verdict \"different domains\" when the only difference is the flow domain of a target-part variant. "
-           "meshSensitivity tells whether the difference holds on another mesh level (A and B run there too, see "
-           "simulation.refine); verdict \"difference inconclusive\" when refinement changes it about as much as its "
-           "size.",
+           "A/B comparison of two runs: force and coefficient differences, whether each is within the iteration swing "
+           "(withinNoise), whether the conditions match, quality of both, shared colour scale ranges and a verdict. "
+           "Read the verdict before drawing conclusions. Both runs need successful completion; otherwise the "
+           "verdict is not comparable and states/reasons explain why. Fields: agent_guide topic results.",
            objectSchema({{"a", runIdParam("Run A (baseline).")}, {"b", runIdParam("Run B (variant).")}}, {"a", "b"})},
           [](CommandContext& ctx, const Json& params) {
               const std::string a = requireRun(ctx, params, "a");

@@ -113,15 +113,27 @@ void IpcServer::revokeAll(const QString& reason)
     m_connections.clear();
     for (QLocalSocket* s : sockets) {
         s->disconnect(this);
-        connect(s, &QLocalSocket::disconnected, s, &QObject::deleteLater);
-        send(s, {{"event", "revoked"}, {"reason", reason.toStdString()}});
-        s->flush();
-        s->disconnectFromServer();
-        if (s->state() == QLocalSocket::UnconnectedState)
-            s->deleteLater();
+        if (s == m_handling) {
+            // Its command is still running (project.new ends its own grant): the reply goes
+            // out first, then this socket is revoked (handleMessage).
+            m_revokeAfterReply = true;
+            m_revokeAfterReplyReason = reason;
+            continue;
+        }
+        sendRevoked(s, reason);
     }
     if (!sockets.isEmpty())
         emit clientsChanged();
+}
+
+void IpcServer::sendRevoked(QLocalSocket* s, const QString& reason)
+{
+    connect(s, &QLocalSocket::disconnected, s, &QObject::deleteLater);
+    send(s, {{"event", "revoked"}, {"reason", reason.toStdString()}});
+    s->flush();
+    s->disconnectFromServer();
+    if (s->state() == QLocalSocket::UnconnectedState)
+        s->deleteLater();
 }
 
 void IpcServer::onNewConnection()
@@ -216,10 +228,20 @@ void IpcServer::handleMessage(QLocalSocket* socket, const QByteArray& line)
     }
     const nlohmann::json params = message.value("params", nlohmann::json::object());
     const Client client = m_connections.value(socket).info;
+    m_handling = socket;
+    m_revokeAfterReply = false;
     nlohmann::json response = m_handler(client, message["command"].get<std::string>(), params);
+    m_handling = nullptr;
     response["id"] = id;
-    if (m_connections.contains(socket))
+    if (m_connections.contains(socket)) {
         send(socket, response);
+    } else if (m_revokeAfterReply) {
+        // The command ended this client's own grant: it still gets the command's result, then
+        // the revoked event, so the next call says why access ended (CAD-222).
+        send(socket, response);
+        sendRevoked(socket, m_revokeAfterReplyReason);
+    }
+    m_revokeAfterReply = false;
 }
 
 void IpcServer::send(QLocalSocket* socket, const nlohmann::json& message)

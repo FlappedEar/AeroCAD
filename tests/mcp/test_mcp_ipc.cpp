@@ -247,12 +247,14 @@ TEST_CASE("One MCP client rebinds after New and explicit fresh consent", "[mcp][
     mcp::IpcClient client(endpoint, QStringLiteral("Persistent agent"));
     REQUIRE(client.execute("feature.box", {{"size", {30, 20, 10}}}).ok);
 
-    // New executes under the old grant, then closes that grant before another call can run.
-    CHECK_FALSE(client.execute("project.new", Json::object()).ok);
-    CHECK(client.isRevoked());
+    // New executes under the old grant and closes that grant before another call can run. The
+    // agent still receives New's own result (CAD-222); its next call says why access ended.
+    const auto created = client.execute("project.new", Json::object());
+    CHECK(created.ok);
     CHECK(server.calls() == 2);
     const auto denied = client.execute("feature.box", {{"size", {1, 2, 3}}});
     CHECK_FALSE(denied.ok);
+    CHECK(client.isRevoked());
     CHECK(denied.error.find("Allow AI agents to use this project") != std::string::npos);
     CHECK(server.calls() == 2);
 
@@ -327,6 +329,9 @@ TEST_CASE("Revocation drops pipelined commands and another client's queued reque
     // on the wire when access is revoked. Neither it nor the first client's next line runs.
     send(second, queued);
     server.resumeRevokeCommand();
+    // The first client's own command ended the grant: it gets that command's reply first
+    // (CAD-222), then the revoked event; the pipelined line after it never runs.
+    CHECK(receive(first).value("id", 0) == 2);
     CHECK(receive(first).value("event", "") == "revoked");
     CHECK(receive(second).value("event", "") == "revoked");
     CHECK(server.clientCount() == 0);

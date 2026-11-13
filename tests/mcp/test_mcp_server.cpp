@@ -298,7 +298,7 @@ TEST_CASE("agent_guide recipes name only tools and parameters that exist", "[mcp
     const Json r = f.request("tools/call", {{"name", "agent_guide"}, {"arguments", Json::object()}});
     REQUIRE(r.at("result").at("isError") == false);
     const Json guide = Json::parse(r.at("result").at("content")[0].at("text").get<std::string>()).at("guide");
-    for (const char* topic : {"basics", "scan", "sketch_on_surface", "fin", "solid", "cfd", "variants", "export"})
+    for (const char* topic : {"basics", "scan", "sketch_on_surface", "fin", "solid", "cfd", "results", "variants", "export"})
         CHECK(guide.contains(topic));
     // Every "name_with_underscore {" in a recipe is a tool, and every key in its braces is
     // one of that tool's parameters.
@@ -396,8 +396,10 @@ TEST_CASE("tools/list is compact: shared schemas listed once, no schema boilerpl
     // then to 155000 for tangent circles and Scale (CAD-270/271), to 159000 for Pipe, Rib, Coil and Sketch Intersect (after sharing
     // the path schema, threshold 200), to 160000 for arc slots, tangent circles to arcs and control point splines:
     // each new feature adds about 1 to 1.5 kB.
-    // Trim existing descriptions before raising it again.)
-    CHECK(all.size() < 160000);
+    // Trim existing descriptions before raising it again.
+    // Lowered by about 1.7 kB when the result-format text of simulation_results / _field / _compare moved
+    // into the agent_guide topic "results" (CAD-240); 158.3 kB then.)
+    CHECK(all.size() < 158500);
     CHECK(all.find("additionalProperties") == std::string::npos);
     CHECK(all.find("sketch.curves") == std::string::npos); // parameter descriptions name tools too
     const Json* create = nullptr;
