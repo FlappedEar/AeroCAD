@@ -816,6 +816,12 @@ if(AEROCAD_BUILD_TESTS)
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/part_ridge.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_part_ridge_test PROPERTIES LABELS gui TIMEOUT 90)
+    # CAD-25: arrows in the 3D view for the ridge height and its fades.
+    add_test(NAME app_part_ridge_handles_test
+        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl
+                --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/part_ridge_handles.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_part_ridge_handles_test PROPERTIES LABELS gui TIMEOUT 120)
     # Full Round fillet from the SOLID tab.
     add_test(NAME app_fillet_full_round_test
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/fillet_full_round.ui

@@ -26,8 +26,8 @@ ui.wait(400)
 ui.key("Return")
 ui.wait(4000)
 (() => { const info = window.selectionInfo; if (info.kind !== "body") { ui.fail("the new part is not selected: " + info.kind); return } const n = contextActions.nextAction(info); ui.log("NEXT " + (n ? n.id : "none")); if (!n || n.id !== "sketchOnFace") ui.fail("Sketch on a face is not the next step of the part: " + (n ? n.id : "none")); if (window.currentRibbonTab !== "solid") ui.fail("the SOLID tab did not open for the new part: " + window.currentRibbonTab); const g = contextActions.guide(info); const titles = g.sections.map(x => x.title + (x.collapsed ? "*" : "")); ui.log("SECTIONS " + titles.join(" | ")); if (titles[0] !== "Design on this part" || !g.sections.some(x => x.collapsed)) ui.fail("the part guide is not the design guide with folded tools: " + titles) })()
-# CAD-293: the part lies inside the scan, so the scan is hidden for the part to show (and be pickable).
-(() => { const parts = controller.execute("document.parts").result.parts; const scan = parts.find(p => p.kind === "imported"); if (!scan || scan.visible) ui.fail("the scan still covers the new part") })()
+# CAD-293: the part stands out of the scan by default, so the scan stays shown; it is hidden only for a part inside it.
+(() => { const parts = controller.execute("document.parts").result.parts; const scan = parts.find(p => p.kind === "imported"); if (!scan || !scan.visible) ui.fail("the scan was hidden although the part stands out of it") })()
 ui.shot("part-on-scan-design.png")
 ui.shot("/mnt/project-files/ux/part-design-centre.png")
 # Create Sketch offers the part just made (CAD-268): its button starts a sketch on it.

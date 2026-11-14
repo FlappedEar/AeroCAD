@@ -1,0 +1,29 @@
+# CAD-25: the ridge of a part made on a scan is shaped with arrows in the 3D view. With Shape the top ticked,
+# Part on Surface shows an arrow for the ridge height and one for each fade; dragging an arrow head sets the
+# field, and the part follows. The scan is the dome; the outline is a 60 x 30 mm rectangle on its top.
+# Run: AeroCAD dome_scan.stl --ui-script <this file>
+ui.wait(1500)
+(() => { const p = controller.execute("document.parts").result.parts[0]; window.selectPart(p.id) })()
+ui.wait(300)
+(() => { const b = window.selectionInfo; const sk = controller.execute("sketch.create", { surface: { part: b.id, point: [b.center[0], b.center[1], b.center[2] + b.sizeZ / 2] }, curves: [{ type: "center_rectangle", center: [0, 0], width: 60, height: 30 }] }); if (!sk.ok) ui.fail("sketch: " + sk.error); if (!featureDialog.open("part_on_surface", { sketch: sk.result.id }, 0)) ui.fail("no Part on Surface dialog") })()
+ui.wait(600)
+(() => { if (featureDialog.values.side !== "outside") ui.fail("the part does not stand out of the scan by default: " + featureDialog.values.side); if (featureDialog.extraArrows.length !== 0) ui.fail("arrows shown before Shape the top is ticked") })()
+(() => { featureDialog.setValue("shaping", true); featureDialog.setValue("thickness", 2) })()
+ui.wait(3000)
+(() => { viewport.restoreCameraState({ pivot: [0, 0, 0], pitch: -35, yaw: 20, distance: 220, orthographic: false }) })()
+ui.wait(800)
+(() => { const a = featureDialog.extraArrows; ui.log("ARROWS " + JSON.stringify(a.map(x => [x.id, x.distance]))); if (a.length !== 3) ui.fail("expected the ridge and two fade arrows, got " + a.length); if (featureDialog.values.ridge_height != 3) ui.fail("ridge height is " + featureDialog.values.ridge_height) })()
+ui.shot("part-ridge-arrows.png")
+# Drag the ridge arrow head 20 pixels further out along its direction.
+(() => { const a = featureDialog.extraArrows.find(x => x.id === "ridge_height"); const base = Qt.vector3d(a.base[0], a.base[1], a.base[2]); const dir = Qt.vector3d(a.direction[0], a.direction[1], a.direction[2]); const tip = base.plus(dir.times(Math.abs(a.distance) > 1e-9 ? a.distance : viewport.controller.sceneRadius * 0.1)); const p0 = viewport.viewPoint(tip); const p1 = viewport.viewPoint(tip.plus(dir.times(1))); const px = Math.hypot(p1.x - p0.x, p1.y - p0.y); if (px < 0.5) { ui.fail("the ridge arrow does not point into the view"); return } const w0 = viewport.mapToItem(null, p0.x, p0.y); const k = 6; ui.log("DRAG ridge from " + featureDialog.values.ridge_height + " by 6 mm"); ui.drag(w0.x, w0.y, w0.x + (p1.x - p0.x) * k, w0.y + (p1.y - p0.y) * k, "left", "", 20) })()
+ui.wait(1500)
+(() => { const h = Number(featureDialog.values.ridge_height); ui.log("ridge height now " + h); if (!(h > 8)) ui.fail("dragging the ridge arrow did not raise the ridge: " + h) })()
+# The fade-out arrow: drag it to about 15 mm.
+(() => { const a = featureDialog.extraArrows.find(x => x.id === "fade_out"); const base = Qt.vector3d(a.base[0], a.base[1], a.base[2]); const dir = Qt.vector3d(a.direction[0], a.direction[1], a.direction[2]); const tip = base.plus(dir.times(Math.abs(a.distance) > 1e-9 ? a.distance : viewport.controller.sceneRadius * 0.1)); const p0 = viewport.viewPoint(tip); const p1 = viewport.viewPoint(tip.plus(dir.times(1))); const px = Math.hypot(p1.x - p0.x, p1.y - p0.y); if (px < 0.5) { ui.fail("the fade arrow does not point into the view"); return } const w0 = viewport.mapToItem(null, p0.x, p0.y); const k = 15; ui.drag(w0.x, w0.y, w0.x + (p1.x - p0.x) * k, w0.y + (p1.y - p0.y) * k, "left", "", 20) })()
+ui.wait(1500)
+(() => { const f = Number(featureDialog.values.fade_out); ui.log("fade out now " + f); if (!(f > 13)) ui.fail("dragging the fade-out arrow did not set it: " + f) })()
+ui.shot("part-ridge-arrows-dragged.png")
+(() => { if (featureDialog.error) ui.fail("dialog error: " + featureDialog.error) })()
+(() => { if (!ui.clickText("OK")) ui.fail("no OK button") })()
+ui.wait(2500)
+(() => { const tl = controller.execute("timeline.list").result; const f = tl.features.find(x => x.type === "part_on_surface"); if (!f || f.status !== "ok") ui.fail("part step: " + JSON.stringify(f)); if (!(f.params.ridge_height > 8) || !(f.params.fade_out > 13)) ui.fail("the dragged values were not kept: " + JSON.stringify(f.params)); if (!f.report.shaping || !f.report.shaping.arrows) ui.fail("no handles in the report") })()

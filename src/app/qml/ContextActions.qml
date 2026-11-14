@@ -422,8 +422,8 @@ QtObject {
                      tip: qsTr("In one step: cuts the outline out of the surface it was drawn on and thickens it into a solid that follows the curvature."),
                      params: [...(onScan ? [_sketchParam(sk)] : []),
                               _num("thickness", qsTr("Thickness"), 2, "mm"),
-                              _choice("side", qsTr("Direction"), [{ value: "inside", label: qsTr("Into the surface") },
-                                                                  { value: "outside", label: qsTr("Out of the surface") },
+                              _choice("side", qsTr("Direction"), [{ value: "outside", label: qsTr("Out of the surface") },
+                                                                  { value: "inside", label: qsTr("Into the surface") },
                                                                   { value: "both", label: qsTr("Both sides, centred") }])] }
         }
         case "extrude": {
@@ -929,12 +929,12 @@ QtObject {
         case "offset": return _selectResult(controller.execute("surface.offset", { id: pid, distance: v.distance }))
         case "partOnSurface": {
             const sketch = info.kind === "sketch" ? info.featureId : v.sketch
-            const r = controller.execute("surface.part_from_sketch", { sketch: sketch, thickness: v.thickness, side: v.side || "inside" })
+            const r = controller.execute("surface.part_from_sketch", { sketch: sketch, thickness: v.thickness, side: v.side || "outside" })
             if (r.ok)
                 host.ribbonTab = "solid"
             if (r.ok) {
                 // Inside or across the surface the part would be covered by the scan: show it alone.
-                if ((v.side || "inside") !== "outside") {
+                if ((v.side || "outside") !== "outside") {
                     const on = controller.execute("sketch.profiles", { sketch: sketch })
                     if (on.ok && on.result.onSurface)
                         controller.execute("part.set_visible", { id: on.result.onSurface.part, visible: false })
