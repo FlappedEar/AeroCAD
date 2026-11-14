@@ -2483,6 +2483,8 @@ ApplicationWindow {
             unpickableBody: featureDialog.visible ? featureDialog.previewFeatureId : -1
             distanceArrow: featureDialog.visible ? featureDialog.distanceArrow : null
             onDistanceArrowDragged: t => featureDialog.dragDistance(t)
+            extraArrows: featureDialog.visible ? featureDialog.extraArrows : []
+            onExtraArrowDragged: (id, t) => featureDialog.dragExtra(id, t)
             simulationFields: window.simulationVisible ? simulationPanel.viewportFields : []
             hiddenPartIds: window.simulationVisible ? simulationPanel.hiddenPartIds : []
             overlayLines: measurePanel.keptLines.concat(measurePanel.overlayLines)
@@ -2955,6 +2957,7 @@ ApplicationWindow {
                             visible: !(window.partOnSurfaceSketch && window.partOnSurfaceSketch.across)
                             Layout.preferredWidth: 120
                             model: [qsTr("Inward"), qsTr("Outward"), qsTr("Both sides")]
+                            currentIndex: 1 // a part designed on a scan stands out of it, where it is seen and picked
                         }
                     }
                     RowLayout {

@@ -167,6 +167,36 @@ Pane {
         return { base: edge.middle, direction: arr(dir) }
     }
 
+    /// Where the part on a scan was last shaped (the preview's report): the arrows of its ridge height and fades.
+    property var shapingArrows: null
+
+    /// Part on Surface with Shape the top: the arrows of the ridge height and the two fades, at the places the
+    /// last preview gave and with the lengths now in the fields (so they follow a drag at once).
+    readonly property var extraArrows: {
+        if (type !== "part_on_surface" || !values.shaping || !shapingArrows)
+            return []
+        const out = []
+        const names = { ridge_height: qsTr("Ridge"), fade_in: qsTr("Fade in"), fade_out: qsTr("Fade out") }
+        for (const id of ["ridge_height", "fade_in", "fade_out"]) {
+            const a = shapingArrows[id]
+            if (!a || (id !== "ridge_height" && !(Number(values.ridge_height) !== 0)))
+                continue
+            const d = Number(values[id])
+            out.push({ id: id, base: a.base, direction: a.direction, distance: isFinite(d) ? d : a.distance, label: names[id] })
+        }
+        return out
+    }
+
+    /// An extra arrow was dragged to signed length `t` (mm).
+    function dragExtra(id, t) {
+        if (type !== "part_on_surface")
+            return
+        const v = Object.assign({}, values)
+        // The ridge may be a groove (negative); a fade is a length.
+        v[id] = id === "ridge_height" ? (Math.abs(t) < 0.01 ? 0.01 : Math.round(t * 1e4) / 1e4) : Math.max(0, Math.round(t * 1e4) / 1e4)
+        values = v
+    }
+
     /// The distance arrow was dragged to signed distance `t` (mm): set Distance and Flip.
     function dragDistance(t) {
         if (type === "press_pull") {
@@ -518,16 +548,16 @@ Pane {
             { key: "side", type: "choice", label: qsTr("Direction"), init: "outside", options: [
                 { value: "outside", label: qsTr("Out of the surface") }, { value: "inside", label: qsTr("Into the surface") },
                 { value: "both", label: qsTr("Both sides") }] }] },
-        part_on_surface: { title: qsTr("Part on Surface"), command: "surface.part_from_sketch", slow: true, fields: [
+        part_on_surface: { title: qsTr("Part on Surface"), command: "surface.part_from_sketch", fields: [
             { key: "sketch", type: "sketch", label: qsTr("Outline sketch") },
             { key: "thickness", type: "expr", label: qsTr("Thickness"), init: 2 },
-            { key: "side", type: "choice", label: qsTr("Direction"), init: "inside", options: [
-                { value: "inside", label: qsTr("Into the surface") }, { value: "outside", label: qsTr("Out of the surface") },
+            { key: "side", type: "choice", label: qsTr("Direction"), init: "outside", options: [
+                { value: "outside", label: qsTr("Out of the surface") }, { value: "inside", label: qsTr("Into the surface") },
                 { value: "both", label: qsTr("Both sides") }] },
             // Shaping the top (scan only): a ridge with fade-out and a taper, behind one checkbox so the plain
             // part stays a three-field dialog. 0 means none; unchecked, none of it is sent.
             { key: "shaping", type: "bool", label: qsTr("Shape the top (ridge, taper)"), init: false, local: true },
-            { key: "ridge_height", type: "expr", label: qsTr("Ridge height (mm)"), init: 0, showIf: v => !!v.shaping },
+            { key: "ridge_height", type: "expr", label: qsTr("Ridge height (mm)"), init: 3, showIf: v => !!v.shaping },
             { key: "ridge_position", type: "expr", label: qsTr("Ridge position (0..1)"), init: 0.5, showIf: v => !!v.shaping && Number(v.ridge_height) !== 0 },
             { key: "ridge_width", type: "expr", label: qsTr("Ridge width (mm, 0: whole)"), init: 0, showIf: v => !!v.shaping && Number(v.ridge_height) !== 0 },
             { key: "fade_in", type: "expr", label: qsTr("Fade in (mm)"), init: 0, showIf: v => !!v.shaping && Number(v.ridge_height) !== 0 },
@@ -583,6 +613,7 @@ Pane {
         // Earlier features may have changed the body since the arrow was last placed.
         sizeArrowPlace.key = ""
         sizeArrowPlace.place = null
+        shapingArrows = null
         // A plane made halfway between two (Construct > Midplane) is edited in its own dialog.
         if (featureType === "plane" && featureId && initial && initial.base2 !== undefined)
             featureType = "midplane"
@@ -602,8 +633,12 @@ Pane {
             for (const k in initial)
                 v[k] = initial[k]
         }
+        // A step saved with only a taper has no ridge: the dialog's default ridge height is for steps without shaping.
+        if (featureType === "part_on_surface" && initial && initial.ridge_height === undefined && Number(initial.thickness_end) > 0)
+            v.ridge_height = 0
         if (featureType === "part_on_surface")
-            v.shaping = Number(v.ridge_height) !== 0 || Number(v.thickness_end) !== 0
+            v.shaping = !!initial && (Number(initial.ridge_height) !== 0 && initial.ridge_height !== undefined
+                                      || Number(initial.thickness_end) !== 0 && initial.thickness_end !== undefined)
         if (featureType === "cylinder" && v.radius !== undefined) {
             // The dialog edits the diameter; a radius given through the API is converted
             // (and removed on apply) so that it does not compete with the default diameter.
@@ -736,6 +771,9 @@ Pane {
         const r = submit(true)
         previewApplied = r.ok
         previewFeatureId = r.ok && r.result ? r.result.id : -1
+        // A new step reports `shaping` at the top; an edited one (feature.edit) inside its `report`.
+        const shaped = r.ok && r.result ? (r.result.shaping || (r.result.report && r.result.report.shaping)) : null
+        shapingArrows = shaped && shaped.arrows ? shaped.arrows : null
         // Incomplete input (no edges picked yet, ...) is normal while editing: those errors
         // are shown when OK is pressed. A complete feature that fails (a fillet radius that
         // does not fit) is reported right away, like Fusion's dialog warning.

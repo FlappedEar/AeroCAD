@@ -26,10 +26,10 @@ ui.wait(600)
 ui.clickText("Finish Sketch")
 ui.wait(800)
 (() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "goldenJourney"); t.s.sketch = t.run("timeline.list").features.find(f => f.type === "sketch"); if (!t.s.sketch) t.fail("2 outline: no sketch in the timeline"); t.pass(2, "outline on the scan") })()
-# 3 Part on surface: Create in the pane. The part is selected, visible, and the scan no longer covers it (CAD-293).
+# 3 Part on surface: Create in the pane. The part is selected and visible, and it stands out of the scan (CAD-293).
 ui.clickText("Create")
 ui.wait(5000)
-(() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "goldenJourney"); const info = window.selectionInfo; if (info.kind !== "body") { t.fail("3 part: the new part is not selected (" + info.kind + ")"); return } t.s.body = info.id; t.s.volume0 = info.volume; if (t.part(t.s.scan).visible) t.fail("3 part: the scan still covers the new part (CAD-293)"); if (!t.part(info.id).visible) t.fail("3 part: the part is hidden"); t.pass(3, "part on surface") })()
+(() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "goldenJourney"); const info = window.selectionInfo; if (info.kind !== "body") { t.fail("3 part: the new part is not selected (" + info.kind + ")"); return } t.s.body = info.id; t.s.volume0 = info.volume; if (!t.part(t.s.scan).visible) t.fail("3 part: the scan was hidden although the part stands out of it (CAD-293)"); if (!t.part(info.id).visible) t.fail("3 part: the part is hidden"); t.pass(3, "part on surface") })()
 
 # 4 Edit the part (Edit step): change the thickness; the part follows.
 ui.clickText("Edit step")
@@ -64,8 +64,8 @@ ui.wait(300)
 (() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "goldenJourney"); const sk = t.run("timeline.list").features.filter(f => f.type === "sketch"); if (sk.length < 2) return; const r = controller.execute("feature.extrude", { sketch: sk[sk.length - 1].id, distance: 1.5 }); ui.log("EXTRUDE " + JSON.stringify(r).slice(0, 300)); if (r.ok) t.pass("5b", "extrude the outline on the part"); else t.fail("5b extrude: " + r.error) })()
 # 6 Round an edge of the part (a CAD edit that follows the part).
 (() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "goldenJourney"); window.selectPart(t.s.body); const name = t.part(t.s.body).name; const e = t.run("body.edges", { body: name }); if (e.edges.length < 4) { t.fail("6 fillet: the part has no edges"); return } const r = controller.execute("feature.fillet", { body: name, edges: [e.edges[0].index], radius: 0.5 }); if (r.ok) t.pass(6, "round an edge"); else t.gap(6, "round an edge", "CAD-294: " + r.error) })()
-# 7 Aero shape: a ridge or lip with a fade-out on the part (CAD-24, CAD-25).
-(() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "goldenJourney"); const f = t.run("timeline.list").features.find(x => x.type === "part_on_surface"); const params = f ? Object.keys(f.params).join(",") : ""; if (/ridge|height_profile|fade/.test(params)) t.pass(7, "aero shape"); else t.gap(7, "aero shape (ridge, lip, fade-out)", "CAD-24, CAD-25") })()
+# 7 Aero shape: the part got a ridge with a fade-out in step 4b (CAD-24); its handles are tested in part_ridge_handles.ui (CAD-25).
+(() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "goldenJourney"); const f = t.run("timeline.list").features.find(x => x.type === "part_on_surface"); if (!f || !(f.params.ridge_height > 0) || !(f.params.fade_out > 0)) t.fail("7 aero shape: the part has no ridge with a fade-out: " + (f ? JSON.stringify(f.params) : "no step")); else if (!f.report || !f.report.shaping || !(f.report.shaping.peak > 0)) t.fail("7 aero shape: no shaping report"); else t.pass(7, "aero shape (ridge, lip, fade-out)") })()
 # 8 Wind tunnel: the SIMULATE panel opens and plans a run for the part (no solver is started).
 ui.clickText("SIMULATE")
 ui.wait(400)
