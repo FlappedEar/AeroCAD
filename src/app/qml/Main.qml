@@ -771,7 +771,9 @@ ApplicationWindow {
         partOnSurfaceSketch = null
         if (offerPart && activeSketch) {
             const r = controller.execute("sketch.profiles", { sketch: activeSketch.id })
-            if (r.ok && r.result.onSurface && r.result.profiles.length > 0)
+            // Not for a sketch on a solid body (the part made on a scan): that one is for Extrude.
+            if (r.ok && r.result.onSurface && r.result.profiles.length > 0
+                    && controller.partInfo(r.result.onSurface.part).kind !== "body")
                 partOnSurfaceSketch = { id: activeSketch.id, part: r.result.onSurface.part,
                                         across: !!r.result.onSurface.across }
         }

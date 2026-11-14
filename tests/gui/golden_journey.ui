@@ -48,8 +48,8 @@ ui.wait(1500)
 ui.wait(600)
 (() => { if (window.activeSketch) ui.clickText("Finish Sketch") })()
 ui.wait(800)
-# Finishing a sketch on the part still offers Part on surface (CAD-296): decline it.
-(() => { if (window.partOnSurfaceSketch) { ui.log("GJ note: Part on surface offered after a sketch on the part (CAD-296)"); ui.clickText("Not now") } })()
+# Finishing a sketch on the part does not offer Part on surface (CAD-296): that is for scans.
+(() => { if (window.partOnSurfaceSketch) ui.fail("Part on surface offered after a sketch on the part (CAD-296)") })()
 ui.wait(300)
 # 5b Extrude that outline: a CAD edit on the part (a boss).
 (() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "goldenJourney"); const sk = t.run("timeline.list").features.filter(f => f.type === "sketch"); if (sk.length < 2) return; const r = controller.execute("feature.extrude", { sketch: sk[sk.length - 1].id, distance: 1.5 }); ui.log("EXTRUDE " + JSON.stringify(r).slice(0, 300)); if (r.ok) t.pass("5b", "extrude the outline on the part"); else t.fail("5b extrude: " + r.error) })()
