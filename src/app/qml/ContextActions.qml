@@ -95,7 +95,7 @@ QtObject {
     /// is Extrude (add or cut), the wrap onto the body's curved skin is the other way (CAD-296).
     function sketchOnBody(featureId) {
         const part = sketchSurface(featureId)
-        return part > 0 && controller.partInfo(part).kind === "body"
+        return part > 0 && controller.partInfo(part).kind === "body" && !sketchAcross(featureId)
     }
 
     /// True for a sketch drawn across a surface (a fin).

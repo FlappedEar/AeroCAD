@@ -773,7 +773,7 @@ ApplicationWindow {
             const r = controller.execute("sketch.profiles", { sketch: activeSketch.id })
             // Not for a sketch on a solid body (the part made on a scan): that one is for Extrude.
             if (r.ok && r.result.onSurface && r.result.profiles.length > 0
-                    && controller.partInfo(r.result.onSurface.part).kind !== "body")
+                    && (r.result.onSurface.across || controller.partInfo(r.result.onSurface.part).kind !== "body"))
                 partOnSurfaceSketch = { id: activeSketch.id, part: r.result.onSurface.part,
                                         across: !!r.result.onSurface.across }
         }
@@ -2523,7 +2523,10 @@ ApplicationWindow {
                     const snapped = viewport.snappedClick
                     viewport.snappedClick = false
                     const at = [point.x, point.y, point.z]
-                    if (info.kind === "body") {
+                    if (info.kind === "body" && sketchAcross.checked) {
+                        // A fin stands across the part's surface (CAD-298).
+                        window.createSketch({ surface: { part: id, point: at, across: true, angle: window.finAngle() } })
+                    } else if (info.kind === "body") {
                         // A flat face takes the sketch on it; a curved one (a part made on the
                         // scan) takes it over its best-fit plane, to extrude or cut from.
                         if (!window.createSketch({ face: { body: info.featureId, point: at } })

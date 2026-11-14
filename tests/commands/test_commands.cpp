@@ -979,13 +979,27 @@ TEST_CASE("Part on surface: one step from an outline over a scan to a solid", "[
         INFO(onSolid.toJson().dump());
         REQUIRE(onSolid.ok);
         CHECK(onSolid.data.at("volume").get<double>() > 1.0);
-        double solidTop = -1e300;
+        double solidTop = -1e300, solidX = 0, solidY = 0;
         const auto listed = session.execute("document.parts");
         REQUIRE(listed.ok);
         for (const auto& p : listed.data.at("parts"))
-            if (p.at("id") == solidId)
-                solidTop = p.at("bounds").at("max")[2].get<double>();
+            if (p.at("id") == solidId) {
+                const auto& bb = p.at("bounds");
+                solidTop = bb.at("max")[2].get<double>();
+                solidX = 0.5 * (bb.at("min")[0].get<double>() + bb.at("max")[0].get<double>());
+                solidY = 0.5 * (bb.at("min")[1].get<double>() + bb.at("max")[1].get<double>());
+            }
         CHECK(onSolid.data.at("bounds").at("max")[2].get<double>() > solidTop - 1e-6);
+
+        // A fin stands on the solid's skin too (CAD-298): drawn across the surface above its top.
+        auto finSketch = session.execute(
+            "sketch.create", {{"surface", {{"part", solidId}, {"point", {solidX, solidY, solidTop}}, {"across", true}}},
+                              {"curves", Json::array({{{"type", "rectangle"}, {"corner", {-2, -4}}, {"width", 6}, {"height", 8}}})}});
+        REQUIRE(finSketch.ok);
+        auto fin = session.execute("surface.fin_from_sketch", {{"sketch", finSketch.data.at("id")}, {"thickness", 1.0}});
+        INFO(fin.toJson().dump());
+        REQUIRE(fin.ok);
+        CHECK(fin.data.at("volume").get<double>() > 1.0);
     }
 
     CHECK_FALSE(session.execute("surface.part_from_sketch", {{"sketch", 99}, {"thickness", 2.0}}).ok);
