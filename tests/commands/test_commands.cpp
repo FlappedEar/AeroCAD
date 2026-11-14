@@ -980,7 +980,9 @@ TEST_CASE("Part on surface: one step from an outline over a scan to a solid", "[
         REQUIRE(onSolid.ok);
         CHECK(onSolid.data.at("volume").get<double>() > 1.0);
         double solidTop = -1e300;
-        for (const auto& p : session.execute("document.parts").data.at("parts"))
+        const auto listed = session.execute("document.parts");
+        REQUIRE(listed.ok);
+        for (const auto& p : listed.data.at("parts"))
             if (p.at("id") == solidId)
                 solidTop = p.at("bounds").at("max")[2].get<double>();
         CHECK(onSolid.data.at("bounds").at("max")[2].get<double>() > solidTop - 1e-6);
