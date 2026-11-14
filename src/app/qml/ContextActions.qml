@@ -919,9 +919,16 @@ QtObject {
             const r = controller.execute("surface.part_from_sketch", { sketch: sketch, thickness: v.thickness, side: v.side || "inside" })
             if (r.ok)
                 host.ribbonTab = "solid"
-            if (r.ok)
-                controller.showStatus(qsTr("Part \"%1\" created on the surface. It is now the body you design on: click a face and Sketch on a face, or use the SOLID tab. Hide the scan (eye icon in the Browser) to see the part on its own.")
+            if (r.ok) {
+                // Inside or across the surface the part would be covered by the scan: show it alone.
+                if ((v.side || "inside") !== "outside") {
+                    const on = controller.execute("sketch.profiles", { sketch: sketch })
+                    if (on.ok && on.result.onSurface)
+                        controller.execute("part.set_visible", { id: on.result.onSurface.part, visible: false })
+                }
+                controller.showStatus(qsTr("Part \"%1\" created on the surface. It is now the body you design on: click a face and Sketch on a face, or use the SOLID tab. The scan is hidden so the part shows (eye icon in the Browser brings it back).")
                                       .arg(r.result.name))
+            }
             return _selectResult(r)
         }
         case "finOnSurface": {
