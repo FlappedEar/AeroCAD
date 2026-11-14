@@ -6110,3 +6110,70 @@ TEST_CASE("Design commands: Sketch Airfoil from coordinates (.dat)", "[commands]
         CHECK_FALSE(r.error.empty());
     }
 }
+
+TEST_CASE("Design commands: Full Round fillet", "[commands][cad]")
+{
+    commands::Session s;
+    // A 100 x 40 x 4 plate: the face y = 0 (100 x 4) is rounded away between its two long edges.
+    run(s, "feature.box", {{"corner", {0, 0, 0}}, {"size", {100, 40, 4}}});
+    const Json edges = run(s, "body.edges", {{"body", 1}}).at("edges");
+    auto along = [&](double y, double z) -> std::size_t {
+        for (const auto& e : edges) {
+            const auto& a = e.at("start");
+            const auto& b = e.at("end");
+            if (std::abs(a[0].get<double>() - b[0].get<double>()) > 50 && std::abs(a[1].get<double>() - y) < 1e-6 &&
+                std::abs(a[2].get<double>() - z) < 1e-6)
+                return e.at("index").get<std::size_t>();
+        }
+        FAIL("no edge at y " << y << " z " << z);
+        return 0;
+    };
+    const auto lower = along(0, 0), upper = along(0, 4);
+    const auto r = run(s, "feature.fillet", {{"body", 1}, {"edges", {lower, upper}}, {"full_round", true}});
+    INFO(r.dump());
+    const Json& body = r.at("bodies")[0];
+    // The section 40 x 4 loses two corners of radius 2: 2 (1 - pi / 4) 2^2 = 1.7168 mm2 along 100 mm.
+    CHECK(body.at("volume").get<double>() == Approx(16000 - 171.68).epsilon(2e-4));
+    CHECK(body.at("faces").get<int>() == 7); // the flat face is gone: two half rounds meet where it was
+    // The rounded end is a half circle: nothing is left at y = 0 but its tip, which stays on the plate's end.
+    const Json faces = run(s, "body.faces", {{"body", 1}}).at("faces");
+    int cylinders = 0;
+    for (const auto& f : faces) {
+        if (f.at("type") == "cylinder") {
+            ++cylinders;
+            CHECK(f.at("area").get<double>() == Approx(3.14159265 * 2 * 100 / 2).epsilon(1e-3));
+        }
+    }
+    CHECK(cylinders == 2);
+    // The step undoes.
+    run(s, "edit.undo");
+    CHECK(run(s, "timeline.list").at("bodies")[0].at("volume").get<double>() == Approx(16000));
+
+    // Refused: a radius, one edge, edges that do not bound one face, edges that are not parallel.
+    auto refused = [&](const Json& params, const std::string& why) {
+        Json p = {{"body", 1}, {"full_round", true}};
+        for (const auto& [k, v] : params.items())
+            p[k] = v;
+        const auto bad = s.execute("feature.fillet", p);
+        INFO(p.dump());
+        CHECK_FALSE(bad.ok);
+        CHECK(bad.error.find(why) != std::string::npos);
+    };
+    refused({{"edges", {lower, upper}}, {"radius", 1}}, "no radius");
+    refused({{"edges", {lower}}}, "two edges");
+    refused({{"edges", {lower, along(40, 4)}}}, "bound one face");
+    // The bottom face (z = 0) is bounded by `lower` and by the 40 mm edge at x = 0: they are not parallel.
+    std::size_t across = 0;
+    for (const auto& e : edges) {
+        const auto& a = e.at("start");
+        const auto& b = e.at("end");
+        if (std::abs(a[1].get<double>() - b[1].get<double>()) > 30 && std::abs(a[0].get<double>()) < 1e-6 &&
+            std::abs(a[2].get<double>()) < 1e-6 && std::abs(b[2].get<double>()) < 1e-6)
+            across = e.at("index").get<std::size_t>();
+    }
+    REQUIRE(across != 0);
+    refused({{"edges", {lower, across}}}, "parallel");
+    // Without full_round a radius is still required, and full_round is a boolean.
+    CHECK_FALSE(s.execute("feature.fillet", {{"body", 1}, {"edges", {lower}}}).ok);
+    CHECK_FALSE(s.execute("feature.fillet", {{"body", 1}, {"edges", {lower, upper}}, {"full_round", "yes"}}).ok);
+}

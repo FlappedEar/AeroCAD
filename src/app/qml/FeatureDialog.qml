@@ -79,7 +79,7 @@ Pane {
     }
 
     /// The value the size arrow of Fillet / Chamfer / Shell drags.
-    readonly property string sizeKey: type === "fillet" ? "radius" : type === "shell" ? "thickness" : type === "press_pull" ? "distance"
+    readonly property string sizeKey: type === "fillet" ? (values.full_round ? "" : "radius") : type === "shell" ? "thickness" : type === "press_pull" ? "distance"
                                      : type === "chamfer" && (values.type === undefined || values.type === "equal_distance") ? "distance" : ""
 
     /// Fillet / Chamfer: an arrow on the first picked edge, into the corner between its faces;
@@ -244,10 +244,11 @@ Pane {
         fillet: { title: qsTr("Fillet"), command: "feature.fillet", fields: [
             { key: "body", type: "body", label: qsTr("Body") },
             { key: "edges", type: "edgePicks", label: qsTr("Edges"), hint: qsTr("Click near edges of the body"), required: true },
-            { key: "radiusType", type: "choice", label: qsTr("Radius type"), init: "constant", local: true, options: [
+            { key: "full_round", type: "bool", label: qsTr("Full round (the two edges of a narrow face)") },
+            { key: "radiusType", type: "choice", label: qsTr("Radius type"), init: "constant", local: true, showIf: v => !v.full_round, options: [
                 { value: "constant", label: qsTr("Constant") }, { value: "variable", label: qsTr("Variable (start to end)") }] },
-            { key: "radius", type: "expr", label: qsTr("Radius"), init: 1 },
-            { key: "radius_end", type: "expr", label: qsTr("End radius"), init: 2, showIf: v => v.radiusType === "variable" }] },
+            { key: "radius", type: "expr", label: qsTr("Radius"), init: 1, showIf: v => !v.full_round },
+            { key: "radius_end", type: "expr", label: qsTr("End radius"), init: 2, showIf: v => !v.full_round && v.radiusType === "variable" }] },
         chamfer: { title: qsTr("Chamfer"), command: "feature.chamfer", fields: [
             { key: "body", type: "body", label: qsTr("Body") },
             { key: "edges", type: "edgePicks", label: qsTr("Edges"), hint: qsTr("Click near edges of the body"), required: true },

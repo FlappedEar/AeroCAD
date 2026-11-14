@@ -804,6 +804,11 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/fillet_variable.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_fillet_variable_test PROPERTIES LABELS gui TIMEOUT 60)
+    # Full Round fillet from the SOLID tab.
+    add_test(NAME app_fillet_full_round_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/fillet_full_round.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_fillet_full_round_test PROPERTIES LABELS gui TIMEOUT 60)
     # Circular Pattern axis picked from a cylindrical face or an edge in the view.
     add_test(NAME app_circular_pattern_axis_pick_test
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/circular_pattern_axis_pick.ui

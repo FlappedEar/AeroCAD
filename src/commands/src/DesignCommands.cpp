@@ -207,14 +207,14 @@ Json curveSchema()
          "positive to the left of start -> end); circle {center, radius | diameter}; "
          "arc {start, through, end} (three-point arc); center_arc {center, radius, startAngle, endAngle} "
          "(degrees, counter-clockwise); polygon {center, radius, sides, angle?, mode?} (circumscribed: radius to a side) or {mode: edge, start, end, sides} (left of start -> end); slot {start, end, width, mode?} (overall: start, end are the far points) "
-         "or {mode: center_point, center, end, width}; spline {points, closed?}; point {at} (a sketch point: no edge, no profile; "
+         "or {mode: center_point, center, end, width}; spline {points, closed?}; point {at} (no edge, no profile; "
          "joins a curve end there); tangent_arc {from: {curve, point: start | end}, end} "
          "(add_curves only: leaves a line or arc end tangentially); "
          "tangent_circle {curves, near, radius?} (add_curves only: tangent to 2 or 3 lines, arcs or circles); "
          "arc_slot {center, radius, width, start_angle, end_angle} (slot along an arc); "
          "control_spline {points (control polygon), degree? 2-5, closed?}. "
-         "conic {start, end, apex, rho?} (tangent at its ends to the lines towards apex); "
-         "airfoil {naca \"2412\" | dat (.dat file text) | coordinates, chord, at? (leading edge), angle?}; "
+         "conic {start, end, apex, rho?} (tangent at its ends to the lines to apex); "
+         "airfoil {naca \"2412\" | dat | coordinates, chord, at? (leading edge), angle?}; "
          "text {at, text, height?, angle?, font?, bold?, italic?} (letters are profiles; at = baseline start, "
          "height mm, default 5). "
          "construction: true excludes it from profiles."},
@@ -259,10 +259,10 @@ Json curveSchema()
           {"bold", {{"type", "boolean"}, {"description", "text: bold."}}},
           {"italic", {{"type", "boolean"}, {"description", "text: italic."}}},
           {"apex", point2("conic: where its end tangents meet.")},
-          {"naca", {{"type", Json::array({"string", "integer"})}, {"description", "airfoil: NACA 4-digit code."}}},
-          {"dat", {{"type", "string"}, {"description", "airfoil: .dat text (Selig or Lednicer)."}}},
-          {"coordinates", {{"type", "array"}, {"items", point2("Point.")}, {"description", "airfoil: [x, y], Selig order."}}},
-          {"chord", numberOrExpr("airfoil: chord length (mm).")},
+          {"naca", {{"type", Json::array({"string", "integer"})}, {"description", "4-digit code."}}},
+          {"dat", {{"type", "string"}, {"description", ".dat text (Selig or Lednicer)."}}},
+          {"coordinates", {{"type", "array"}, {"items", point2("Point.")}, {"description", "[x, y], Selig order."}}},
+          {"chord", numberOrExpr("Chord length (mm).")},
           {"rho", numberOrExpr("conic: 0 to 1, default 0.5 (parabola).")},
           {"points", {{"type", "array"}, {"items", point2("Fit point.")}, {"minItems", 2},
                       {"description", "spline: fit points (2+); control_spline: control points (degree + 1+)."}}},
@@ -2814,7 +2814,7 @@ void registerFeatureCommands(CommandRegistry& r)
         {{"sections", {{"type", "array"},
                        {"minItems", 2},
                        {"items", {{"type", Json::array({"integer", "object"})}}},
-                       {"description", "Sketch ids, {sketch, profile}; first/last may be {point: [x, y, z]} or a one-point sketch."}}},
+                       {"description", "Sketch ids or {sketch, profile}; first/last may be {point: [x, y, z]}."}}},
          {"solid", {{"type", "boolean"}, {"description", "Closed solid (default) or open surface."}}},
          {"ruled", {{"type", "boolean"}, {"description", "Straight sections between profiles."}}},
          {"operation", operationSchema()},
@@ -2874,13 +2874,15 @@ void registerFeatureCommands(CommandRegistry& r)
             Json::array());
     }
 
-    addFeatureCommand(r, "fillet", "Fillet", "Rounds edges of a body with a constant radius (Fusion: Fillet, shortcut F). Tangent chains are "
-                      "rounded with the picked edge; a radius that does not fit is reported with the largest that does.",
+    addFeatureCommand(r, "fillet", "Fillet", "Rounds edges of a body (Fusion: Fillet). Tangent chains are rounded with the picked edge; "
+                      "a radius that does not fit is reported with the largest that does.",
                       {{"body", bodyRefSchema("Body.")},
                        {"edges", topologyListSchema("edge")},
                        {"radius", numberOrExpr("Radius (mm); variable: at the edge start.")},
-                       {"radius_end", numberOrExpr("Radius at the edge end (variable).")}},
-                      {"body", "edges", "radius"});
+                       {"radius_end", numberOrExpr("Radius at the edge end (variable).")},
+                       {"full_round", {{"type", "boolean"},
+                                       {"description", "Round away the flat face between two parallel edges (no radius)."}}}},
+                      {"body", "edges"});
 
     addFeatureCommand(r, "chamfer", "Chamfer",
                       "Bevels edges of a body (Fusion: Chamfer): equal distance (default), two distances, or a "
