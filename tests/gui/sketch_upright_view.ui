@@ -9,3 +9,7 @@ ui.wait(800)
 (() => { const s = window.activeSketch; const k = Math.SQRT1_2; window.activeSketch = Object.assign({}, s, { xDir: [k, k, 0], yDir: [-k, k, 0] }); window.lookAtSketch(null) })()
 ui.wait(2500)
 (() => { const o = viewport.sketchOverlay; const at = (x, y) => o.screenToLocal(o.width / 2 + x, o.height / 2 + y); const a = at(0, 0), r = at(60, 0), d = at(0, 40); ui.log("upright: right -> " + JSON.stringify([r[0] - a[0], r[1] - a[1]]) + " down -> " + JSON.stringify([d[0] - a[0], d[1] - a[1]])); if (!(r[0] - a[0] > 1e-3) || Math.abs(r[1] - a[1]) > 0.05 * (r[0] - a[0])) ui.fail("screen right is not the sketch X axis"); if (!(d[1] - a[1] < -1e-3) || Math.abs(d[0] - a[0]) > 0.05 * Math.abs(d[1] - a[1])) ui.fail("screen down is not the sketch -Y axis") })()
+# A tilted plane (25 degrees off horizontal) keeps its face-on view: the X axis is not forced (no camera roll).
+(() => { const s = window.activeSketch; const n = [0, 0.422618, 0.906308]; window.activeSketch = Object.assign({}, s, { normal: n, xDir: [1, 0, 0], yDir: [0, 0.906308, -0.422618] }); window.lookAtSketch(null) })()
+ui.wait(2500)
+(() => { const v = viewport.viewerDirection(); const dot = v[1] * 0.422618 + v[2] * 0.906308 + v[0] * 0; ui.log("tilted: viewer " + JSON.stringify(v) + " dot " + dot); if (dot < 0.999) ui.fail("a tilted sketch is not viewed face-on (dot " + dot + ")") })()
