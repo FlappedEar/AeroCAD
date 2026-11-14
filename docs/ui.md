@@ -422,6 +422,7 @@ nobody needs to know the commands beforehand:
   the SOLID tab and is the body to design on: its guide offers Sketch on a face (the next
   step), Move faces, Edit step, Round / Bevel edges, Hollow out, Hole, the rarer face tools
   folded under *More shape tools*, and **Export for printing** last under Output. Part on
+  surface on a body is called **Extrude along surface** in the sketch guide: unlike Extrude it follows the curved surface (outward adds a layer, inward makes a cut-out). Part on
   surface hides the scan when the part lies inside or across it (the default), so the new part is
   visible and can be picked; the eye icon in the Browser brings the scan back.
 - Toolbar tooltips explain each command under its name (`Theme.commandHelps`).
