@@ -972,10 +972,20 @@ TEST_CASE("Part on surface: one step from an outline over a scan to a solid", "[
                                                                 {"width", 8},
                                                                 {"height", 4}}})}});
         REQUIRE(second.ok);
-        // Not silently built on the scan underneath: a solid is no surface to cut from.
-        auto onSolid = session.execute("surface.part_from_sketch", {{"sketch", second.data.at("id")}, {"thickness", 1.0}});
+        // A solid is no surface to cut from, but the new part hugs its visible skin (CAD-293), not
+        // the scan underneath: outside it, the layer lies on the solid's top.
+        auto onSolid = session.execute("surface.part_from_sketch",
+                                       {{"sketch", second.data.at("id")}, {"thickness", 1.0}, {"side", "outside"}});
         INFO(onSolid.toJson().dump());
-        CHECK_FALSE(onSolid.ok);
+        REQUIRE(onSolid.ok);
+        CHECK(onSolid.data.at("volume").get<double>() > 1.0);
+        double solidTop = -1e300;
+        const auto listed = session.execute("document.parts");
+        REQUIRE(listed.ok);
+        for (const auto& p : listed.data.at("parts"))
+            if (p.at("id") == solidId)
+                solidTop = p.at("bounds").at("max")[2].get<double>();
+        CHECK(onSolid.data.at("bounds").at("max")[2].get<double>() > solidTop - 1e-6);
     }
 
     CHECK_FALSE(session.execute("surface.part_from_sketch", {{"sketch", 99}, {"thickness", 2.0}}).ok);

@@ -158,4 +158,6 @@ core -------+                 transforms, primitives).
   hole filling. CGAL's GPL packages are compatible with GPL-3.0-or-later. It will be added
   with the first feature that uses it (region selection / base surface, CAD-67).
 - Large-mesh performance and picking limits (CAD-11).
-- Background jobs (imports currently run on the UI thread).
+- Background jobs: imports and large surface fits already run on a worker thread with progress and
+  Cancel (CAD-259); modelling, regeneration and the full export check still run on the UI thread
+  (CAD-30).

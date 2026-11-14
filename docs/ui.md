@@ -421,7 +421,9 @@ nobody needs to know the commands beforehand:
   use), so nobody has to find the sketch in the Browser. A part or fin made on a scan opens
   the SOLID tab and is the body to design on: its guide offers Sketch on a face (the next
   step), Move faces, Edit step, Round / Bevel edges, Hollow out, Hole, the rarer face tools
-  folded under *More shape tools*, and **Export for printing** last under Output.
+  folded under *More shape tools*, and **Export for printing** last under Output. Part on
+  surface hides the scan when the part lies inside or across it (the default), so the new part is
+  visible and can be picked; the eye icon in the Browser brings the scan back.
 - Toolbar tooltips explain each command under its name (`Theme.commandHelps`).
 
 ![Guide for a scan with an area selected](images/ui/guide-scan.png)

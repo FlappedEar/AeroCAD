@@ -637,12 +637,19 @@ std::pair<Json, Json> surfaceSketchPlane(const model::Document& doc, const Json&
 
     // Orient the normal the way the triangles face (area-weighted average normal).
     core::Vec3 facing;
+    double totalArea = 0.0;
     for (const std::size_t t : triangles) {
         const auto& tri = mesh.triangles()[t];
         const auto& v = mesh.vertices();
-        facing = facing + (v[tri[1]] - v[tri[0]]).cross(v[tri[2]] - v[tri[0]]);
+        const core::Vec3 cross = (v[tri[1]] - v[tri[0]]).cross(v[tri[2]] - v[tri[0]]);
+        facing = facing + cross;
+        totalArea += cross.length();
     }
     core::Vec3 normal = fit->normal;
+    if (!ref.contains("facing") && facing.length() < 0.02 * totalArea) {
+        // A closed solid faces every way (the sides cancel): up, else along X, unless told.
+        facing = std::abs(normal.z) > 0.2 ? core::Vec3{0, 0, 1} : core::Vec3{1, 0, 0};
+    }
     if (ref.contains("facing")) {
         // A closed solid has no single side: the caller says which (e.g. towards the viewer).
         const auto& f = ref.at("facing");

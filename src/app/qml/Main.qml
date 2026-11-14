@@ -771,7 +771,9 @@ ApplicationWindow {
         partOnSurfaceSketch = null
         if (offerPart && activeSketch) {
             const r = controller.execute("sketch.profiles", { sketch: activeSketch.id })
-            if (r.ok && r.result.onSurface && r.result.profiles.length > 0)
+            // Not for a sketch on a solid body (the part made on a scan): that one is for Extrude.
+            if (r.ok && r.result.onSurface && r.result.profiles.length > 0
+                    && controller.partInfo(r.result.onSurface.part).kind !== "body")
                 partOnSurfaceSketch = { id: activeSketch.id, part: r.result.onSurface.part,
                                         across: !!r.result.onSurface.across }
         }
@@ -2888,8 +2890,11 @@ ApplicationWindow {
                         visible: info.kind === "body" && contextActions.madeOnSurface(info) && !sketchAcross.checked
                         highlighted: true
                         text: qsTr("On %1").arg(info.name ?? "")
-                        onClicked: if (window.createSketch({ surface: { part: window.selectedPartId, facing: viewport.viewerDirection() } }))
-                            window.controller.showStatus(qsTr("Sketch on %1 (its best-fit plane). Draw the outline, then Extrude it to add material or cut.").arg(info.name))
+                        onClicked: {
+                            const name = info.name // the pane (and so `info`) closes with the sketch
+                            if (window.createSketch({ surface: { part: window.selectedPartId, facing: viewport.viewerDirection() } }))
+                                window.controller.showStatus(qsTr("Sketch on %1 (its best-fit plane). Draw the outline, then Extrude it to add material or cut.").arg(name))
+                        }
                     }
                     Button {
                         readonly property var info: window.pickingSketchPlane ? window.selectedInfo() : ({})
@@ -3033,6 +3038,9 @@ ApplicationWindow {
                                           side: ["inside", "outside", "both"][partSide.currentIndex] })
                                 if (!r.ok)
                                     return
+                                // A part under or across the surface would be covered by the scan: show it alone.
+                                if (!fin && partSide.currentIndex !== 1)
+                                    window.controller.execute("part.set_visible", { id: window.partOnSurfaceSketch.part, visible: false })
                                 window.partOnSurfaceSketch = null
                                 window.selectPart(r.result.id)
                                 if (fin && r.result.warnings.length > 0)
@@ -3049,7 +3057,7 @@ ApplicationWindow {
                                 else if (r.result.warnings.length > 0)
                                     window.controller.showStatus(qsTr("Part \"%1\": %2").arg(r.result.name).arg(r.result.warnings[0]))
                                 else
-                                    window.controller.showStatus(qsTr("Part \"%1\": %2 mm thick, %3 cm²")
+                                    window.controller.showStatus(qsTr("Part \"%1\": %2 mm thick, %3 cm². The scan is hidden so the part shows (eye icon in the Browser brings it back).")
                                         .arg(r.result.name).arg(t).arg((r.result.area / 100).toFixed(1)))
                             }
                         }

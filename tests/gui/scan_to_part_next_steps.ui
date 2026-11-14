@@ -26,6 +26,8 @@ ui.wait(400)
 ui.key("Return")
 ui.wait(4000)
 (() => { const info = window.selectionInfo; if (info.kind !== "body") { ui.fail("the new part is not selected: " + info.kind); return } const n = contextActions.nextAction(info); ui.log("NEXT " + (n ? n.id : "none")); if (!n || n.id !== "sketchOnFace") ui.fail("Sketch on a face is not the next step of the part: " + (n ? n.id : "none")); if (window.currentRibbonTab !== "solid") ui.fail("the SOLID tab did not open for the new part: " + window.currentRibbonTab); const g = contextActions.guide(info); const titles = g.sections.map(x => x.title + (x.collapsed ? "*" : "")); ui.log("SECTIONS " + titles.join(" | ")); if (titles[0] !== "Design on this part" || !g.sections.some(x => x.collapsed)) ui.fail("the part guide is not the design guide with folded tools: " + titles) })()
+# CAD-293: the part lies inside the scan, so the scan is hidden for the part to show (and be pickable).
+(() => { const parts = controller.execute("document.parts").result.parts; const scan = parts.find(p => p.kind === "imported"); if (!scan || scan.visible) ui.fail("the scan still covers the new part") })()
 ui.shot("part-on-scan-design.png")
 ui.shot("/mnt/project-files/ux/part-design-centre.png")
 # Create Sketch offers the part just made (CAD-268): its button starts a sketch on it.
@@ -35,6 +37,7 @@ ui.shot("/mnt/project-files/ux/create-sketch-on-part.png")
 (() => { const find = (it) => { if (it.objectName === "sketchOnPartButton") return it; for (const c of Array.from(it.children ?? [])) { const r = find(c); if (r) return r } return null }; const btn = find(window.contentItem); if (!btn || !btn.visible) ui.fail("no On part button"); const cb = (function f(it) { if (it.objectName === "sketchAcross") return it; for (const c of Array.from(it.children ?? [])) { const r = f(c); if (r) return r } return null })(window.contentItem); cb.checked = true; if (btn.visible) ui.fail("the On part button is offered for a fin"); cb.checked = false; if (!btn.visible) ui.fail("the On part button did not come back") })()
 (() => { if (!ui.clickText("On Sketch1 part")) ui.fail("no 'On Sketch1 part' button in Create Sketch") })()
 ui.wait(1200)
+(() => { if (controller.statusMessage.indexOf("Sketch on Sketch1 part") !== 0) ui.fail("the status does not name the part: " + controller.statusMessage) })()
 (() => { if (!window.activeSketch) ui.fail("the sketch on the part did not start") ; else { const n = window.activeSketch.normal, d = viewport.viewerDirection(); const dot = n[0] * d[0] + n[1] * d[1] + n[2] * d[2]; ui.log("SKETCH ON PART " + JSON.stringify(n) + " facing the viewer " + dot.toFixed(2)); if (dot <= 0) ui.fail("the sketch on the part faces away from the viewer") } })()
 ui.key("R")
 ui.wait(300)
@@ -42,14 +45,22 @@ ui.wait(300)
 ui.wait(600)
 ui.clickText("Finish Sketch")
 ui.wait(800)
-(() => { const r = controller.execute("sketch.profiles", { sketch: window.selectionInfo.featureId ?? 0 }); ui.log("after finish kind " + window.selectionInfo.kind) })()
+# A sketch drawn on the part is for Extrude: no Part on surface offer (CAD-296), the sketch's
+# guide leads with Extrude and keeps the wrap as the other way.
+(() => { if (window.partOnSurfaceSketch) ui.fail("Part on surface is offered after a sketch on the part"); const sk = controller.execute("document.parts").result.parts.filter(p => p.kind === "sketch").pop(); const g = contextActions.guide(controller.partInfo(sk.id)); const next = contextActions.nextAction(controller.partInfo(sk.id)); ui.log("SKETCH GUIDE " + JSON.stringify(g.sections[0].steps.map(t => t.title)) + " next " + (next ? next.id : "none")); if (!next || next.id !== "extrude") ui.fail("the sketch on the part does not lead with Extrude: " + (next ? next.id : "none")); if (!g.sections[0].steps.some(t => t.actions.some(a => a.id === "partOnSurface"))) ui.fail("the wrap is not offered as the other way") })()
+# The outline drawn on the part wraps onto its curved face (CAD-293): a new part that hugs the
+# visible skin, outside it (to add an emboss or a rib).
+(() => { const parts0 = controller.execute("document.parts").result.parts; const base = parts0.find(p => p.kind === "body"); const sk = controller.execute("timeline.list").result.features.filter(f => f.type === "sketch").pop(); const r = controller.execute("surface.part_from_sketch", { sketch: sk.id, thickness: 2, side: "outside" }); if (!r.ok) { ui.fail("the outline on the part did not wrap onto it: " + r.error); return } const b = r.result.bounds, bb = base.bounds; ui.log("WRAP " + JSON.stringify([b.min[2], b.max[2], bb.max[2]])); if (!(r.result.volume > 1) || !(b.max[2] > bb.max[2] - 1e-6)) ui.fail("the wrapped part is not on top of the part: " + JSON.stringify([b, bb])) })()
 ui.log("create sketch on part done")
+# The wrapped part overlaps the part (the export check would ask): hide it, print the part.
+(() => { const w = controller.execute("document.parts").result.parts.find(p => p.name === "Sketch2 part"); if (!w) { ui.fail("the wrapped part is not in the document"); return } controller.execute("part.set_visible", { id: w.id, visible: false }) })()
+ui.wait(300)
 # The guide's button opens the print folder picker; accept it with a folder (/tmp: Linux and macOS CI).
 ui.clickText("Export for printing…")
 ui.wait(500)
 (() => { if (!printFolderDialog.visible) ui.fail("Export for printing did not open the folder picker") })()
 printFolderDialog.selectedFolder = "file:///tmp/aerocad-scan-to-part-print"
 printFolderDialog.accept()
-ui.wait(1500)
+ui.wait(2000)
 (() => { const m = controller.statusMessage; ui.log("PRINT " + m); if (!/^1 part\(s\) written/.test(m)) ui.fail("the part was not exported for printing: " + m) })()
 ui.log("scan to part next steps done")
