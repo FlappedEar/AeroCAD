@@ -676,11 +676,14 @@ ApplicationWindow {
         return isFinite(a) ? a : 0
     }
 
+    /// Creates a sketch; false (the pane stays open and the error shows) when it cannot be made.
     function createSketch(params) {
-        pickingSketchPlane = false
         const r = controller.execute("sketch.create", params)
-        if (r.ok)
+        if (r.ok) {
+            pickingSketchPlane = false
             enterSketch(r.result.id)
+        }
+        return r.ok
     }
 
     /// Reloads the solved curves and constraints of the active sketch; snap points are
@@ -2518,9 +2521,13 @@ ApplicationWindow {
                     const snapped = viewport.snappedClick
                     viewport.snappedClick = false
                     const at = [point.x, point.y, point.z]
-                    if (info.kind === "body")
-                        window.createSketch({ face: { body: info.featureId, point: at } })
-                    else if (info.kind === "plane")
+                    if (info.kind === "body") {
+                        // A flat face takes the sketch on it; a curved one (a part made on the
+                        // scan) takes it over its best-fit plane, to extrude or cut from.
+                        if (!window.createSketch({ face: { body: info.featureId, point: at } })
+                                && window.createSketch({ surface: { part: id, point: at, facing: viewport.viewerDirection() } }))
+                            window.controller.showStatus(qsTr("%1 is curved here: the sketch lies on its best-fit plane. Draw the outline, then Extrude it to add material or cut.").arg(info.name))
+                    } else if (info.kind === "plane")
                         window.createSketch({ plane: { plane: info.featureId } })
                     else if (info.kind === "imported")
                         // A fitted surface or a scan: sketch over its best-fit plane, then
@@ -2843,7 +2850,7 @@ ApplicationWindow {
                 ColumnLayout {
                     Label { text: qsTr("Create Sketch"); font.weight: Font.DemiBold; font.pixelSize: Theme.fontTitle }
                     Label {
-                        text: qsTr("Click a planar face of a body, a fitted surface or a scan\n(sketch over its best-fit plane), or pick an origin plane:")
+                        text: qsTr("Click the part, surface or scan you want to draw on.\nOn a curved one the sketch lies on its best-fit plane.\nOr pick a standard plane:")
                         color: Theme.textMuted
                     }
                     RowLayout {
@@ -2872,6 +2879,17 @@ ApplicationWindow {
                         visible: sketchAcross.checked
                         text: qsTr("Click where the fin stands. Draw its side view above the surface line,\nwith the root a little below it; the root is cut to the surface.")
                         color: Theme.textMuted
+                    }
+                    // The part just made on the scan: one click starts a sketch on it.
+                    Button {
+                        readonly property var info: window.pickingSketchPlane ? window.selectedInfo() : ({})
+                        objectName: "sketchOnPartButton"
+                        // Not for a fin: its plane stands across the surface (click the surface).
+                        visible: info.kind === "body" && contextActions.madeOnSurface(info) && !sketchAcross.checked
+                        highlighted: true
+                        text: qsTr("On %1").arg(info.name ?? "")
+                        onClicked: if (window.createSketch({ surface: { part: window.selectedPartId, facing: viewport.viewerDirection() } }))
+                            window.controller.showStatus(qsTr("Sketch on %1 (its best-fit plane). Draw the outline, then Extrude it to add material or cut.").arg(info.name))
                     }
                     Button {
                         readonly property var info: window.pickingSketchPlane ? window.selectedInfo() : ({})

@@ -495,6 +495,12 @@ Item {
         updateClipping()
     }
 
+    /// Unit vector (model space) from the view's target to the camera: the side the viewer sees.
+    function viewerDirection() {
+        const p = cameraInput.pitch * Math.PI / 180, y = cameraInput.yaw * Math.PI / 180
+        return [Math.cos(p) * Math.sin(y), -Math.cos(p) * Math.cos(y), -Math.sin(p)]
+    }
+
     /// The camera in model coordinates (mm, Z up), for an AI agent.
     function agentCamera() {
         const p = cameraInput.pivot.position

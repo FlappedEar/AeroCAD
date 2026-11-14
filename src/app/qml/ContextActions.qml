@@ -435,7 +435,7 @@ QtObject {
         // Body / solid
         case "sketchOnFace":
             return { id: id, text: qsTr("Sketch on a face"), icon: "sketch", enabled: true,
-                     primary: info.kind === "body" && !madeOnSurface(info),
+                     primary: info.kind === "body",
                      tip: qsTr("Click a flat face of the body to draw on it, e.g. the outline of a pocket or a boss.") }
         case "fillet":
             return { id: id, text: qsTr("Round edges"), icon: "fillet", enabled: editableSolid(info),
@@ -501,7 +501,7 @@ QtObject {
         case "exportForPrint":
             // Bodies too: a part or fin made on a scan is a timeline body (CAD-131).
             return { id: id, text: qsTr("Export for printing…"), icon: "export", enabled: role(info) === "solid" || role(info) === "body",
-                     primary: role(info) === "solid" || madeOnSurface(info),
+                     primary: role(info) === "solid",
                      reason: qsTr("Only solids can be printed."),
                      tip: qsTr("Writes every visible solid (e.g. all the fins) to a folder you choose, each as its own STL for the printer and STEP for CAD. Hide what you do not want printed.") }
         case "moveRotate": {
@@ -704,20 +704,23 @@ QtObject {
         }
         // body / solid
         const editable = r === "body"
-        // A part or fin made on a scan is finished: printing comes first (CAD-131).
         const onSurface = editable && madeOnSurface(info)
-        const print = { title: qsTr("Use it"), steps: [
+        const print = { title: qsTr("Output"), steps: [
                             { title: qsTr("Export for printing"), done: false,
                               text: qsTr("Every visible solid gets its own STL for the printer and STEP for CAD, in a folder you choose. Hide what you do not want printed."),
                               actions: [a("exportForPrint")] }] }
-        const change = { title: qsTr("Change the shape"), steps: [],
-                         actions: [a("editStep"), a("sketchOnFace"), a("pressPull"), a("fillet"), a("chamfer"), a("shell"), a("hole"), a("combine"), a("split"), a("splitFace"), a("replaceFace"), a("align"), a("deleteFaces"), a("draft")] }
+        // An editable body is the centre of the design: sketch on its faces, then extrude or
+        // cut, round, drill, combine. The rarer face tools are folded away.
+        const design = { title: qsTr("Design on this part"), steps: [], actions: [a("sketchOnFace"), a("pressPull"), a("editStep")] }
+        const finish = { title: qsTr("Edges and holes"), steps: [], actions: [a("fillet"), a("chamfer"), a("shell"), a("hole")] }
+        const more = { title: qsTr("More shape tools"), collapsed: true, steps: [],
+                       actions: [a("combine"), a("split"), a("splitFace"), a("replaceFace"), a("align"), a("deleteFaces"), a("draft")] }
         return { title: roleName(r),
-                 intro: onSurface ? qsTr("A solid made on the scan, as a step in the design timeline. Export it for printing, or keep shaping it; Edit step changes its outline or thickness.")
+                 intro: onSurface ? qsTr("The working body of your design, made on the scan (which stays as a reference). Click one of its faces and Sketch on a face, then Extrude to add or cut; round edges and drill holes here or on the SOLID tab. Edit step changes its outline or thickness.")
                       : editable ? qsTr("A solid in the design timeline. Add features to it; every step can be edited later in the timeline at the bottom.")
                                  : qsTr("An exact solid from a file or a fit. Make it editable to add fillets, holes and cuts, or export it as it is."),
                  sections: editable
-                     ? [...(onSurface ? [print, change] : [change, print]),
+                     ? [design, finish, more, print,
                         { title: qsTr("More"), steps: [], actions: [a("export"), a("hide"), a("isolate"), a("appearance"), a("rename"), a("delete")] }]
                      : [{ title: qsTr("Use it"), steps: [
                               { title: qsTr("Export for printing or CAD"), done: false,
@@ -915,7 +918,9 @@ QtObject {
             const sketch = info.kind === "sketch" ? info.featureId : v.sketch
             const r = controller.execute("surface.part_from_sketch", { sketch: sketch, thickness: v.thickness, side: v.side || "inside" })
             if (r.ok)
-                controller.showStatus(qsTr("Part \"%1\" created on the surface. Hide the scan (eye icon in the Browser) to see it on its own. Next: export it.")
+                host.ribbonTab = "solid"
+            if (r.ok)
+                controller.showStatus(qsTr("Part \"%1\" created on the surface. It is now the body you design on: click a face and Sketch on a face, or use the SOLID tab. Hide the scan (eye icon in the Browser) to see the part on its own.")
                                       .arg(r.result.name))
             return _selectResult(r)
         }
@@ -924,10 +929,12 @@ QtObject {
             const r = controller.execute("surface.fin_from_sketch", { sketch: sketch, thickness: v.thickness, rootFillet: v.rootFillet || 0,
                                                                           count: Math.max(1, Math.round(v.count || 1)), spacing: v.spacing || 40,
                                                                           mirror: !!v.mirror && v.mirror !== "no", mirrorPlane: v.mirror && v.mirror !== "no" ? v.mirror : "auto" })
+            if (r.ok)
+                host.ribbonTab = "solid"
             if (r.ok && r.result.warnings.length > 0)
                 controller.showStatus(qsTr("Fin \"%1\": %2").arg(r.result.name).arg(r.result.warnings[0]))
             else if (r.ok)
-                controller.showStatus(qsTr("Fin \"%1\": %2 mm thick, %3 cm³. Next: export it.")
+                controller.showStatus(qsTr("Fin \"%1\": %2 mm thick, %3 cm³. It is a body now: Sketch on a face, or the SOLID tab, to keep designing.")
                                       .arg(r.result.name).arg(v.thickness).arg((r.result.volume / 1000).toFixed(1)))
             return _selectResult(r)
         }
