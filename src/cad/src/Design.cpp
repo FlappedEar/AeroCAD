@@ -4378,7 +4378,16 @@ void Design::evaluateFeature(const Feature& f)
     } else if (f.type == "fillet" || f.type == "chamfer") {
         Body& b = bodyRef(required(p, "body"));
         const auto idx = resolveIndices(b.shape, required(p, "edges"), true);
-        if (f.type == "fillet") {
+        if (f.type == "fillet" && has(p, "full_round") && !p.at("full_round").is_boolean())
+            throw DesignError("full_round must be true or false");
+        if (f.type == "fillet" && p.value("full_round", false)) {
+            // Fusion: Full Round: the two edges of a narrow face, rounded with half its width.
+            if (has(p, "radius") || has(p, "radius_end"))
+                throw DesignError("A full round fillet has no radius: it takes up the whole face between the edges");
+            b.shape = geometry::fullRoundFillet(b.shape, idx);
+        } else if (f.type == "fillet") {
+            if (!has(p, "radius"))
+                throw DesignError("Fillet needs a radius, or full_round for two edges of one narrow face");
             if (has(p, "radius_end") && !(ev.num(p, "radius_end") > 0.0))
                 throw DesignError("The end radius of a variable fillet must be positive");
             b.shape = geometry::fillet(b.shape, idx, ev.num(p, "radius"), ev.num(p, "radius_end", 0.0));

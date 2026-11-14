@@ -95,6 +95,7 @@
 #include <iomanip>
 #include <sstream>
 #include <numbers>
+#include <optional>
 
 namespace aerocad::geometry {
 
@@ -1328,6 +1329,70 @@ Shape fillet(const Shape& shape, const std::vector<std::size_t>& edgeIndices, do
         mk.Build();
         return mk.IsDone() ? mk.Shape() : TopoDS_Shape();
     }));
+}
+
+Shape fullRoundFillet(const Shape& shape, const std::vector<std::size_t>& edgeIndices)
+{
+    const TopoDS_Shape& s = occ(shape, "Full Round Fillet");
+    if (edgeIndices.size() != 2)
+        throw ModelingError("Full Round Fillet: pick the two edges of a narrow face (one on each side)");
+    const auto picked = pickedEdges(s, edgeIndices, "Full Round Fillet");
+    TopTools_IndexedDataMapOfShapeListOfShape edgeFaces;
+    TopExp::MapShapesAndAncestors(s, TopAbs_EDGE, TopAbs_FACE, edgeFaces);
+    // The face between them: the one both edges bound.
+    TopoDS_Face centre;
+    const auto& faces1 = edgeFaces.FindFromKey(picked[0]);
+    const auto& faces2 = edgeFaces.FindFromKey(picked[1]);
+    for (const TopoDS_Shape& f1 : faces1) {
+        for (const TopoDS_Shape& f2 : faces2) {
+            if (f1.IsSame(f2)) {
+                centre = TopoDS::Face(f1);
+                break;
+            }
+        }
+        if (!centre.IsNull())
+            break;
+    }
+    if (centre.IsNull())
+        throw ModelingError("Full Round Fillet: the two edges must bound one face (the face that is rounded away)");
+    const BRepAdaptor_Surface surf(centre);
+    if (surf.GetType() != GeomAbs_Plane)
+        throw ModelingError("Full Round Fillet: the face between the edges must be flat");
+    BRepAdaptor_Curve c1(picked[0]), c2(picked[1]);
+    if (c1.GetType() != GeomAbs_Line || c2.GetType() != GeomAbs_Line)
+        throw ModelingError("Full Round Fillet: the two edges must be straight");
+    const gp_Lin l1 = c1.Line(), l2 = c2.Line();
+    if (gp_Vec(l1.Direction()).Crossed(gp_Vec(l2.Direction())).Magnitude() > 1e-6)
+        throw ModelingError("Full Round Fillet: the two edges must be parallel (the rounded face has a constant width)");
+    const double width = l1.Distance(gp_Pnt(l2.Location()));
+    if (width < 1e-6)
+        throw ModelingError("Full Round Fillet: the two edges are the same line");
+    // The two fillets meet along the middle of the face: a radius of exactly half the width leaves OCCT
+    // nothing to build on, so the fillet is a hair smaller and the sliver of face left is removed after.
+    const double eps = std::min(1e-3, width * 5e-4);
+    const Shape rounded = fillet(shape, edgeIndices, width / 2 - eps);
+    const gp_Pln plane = surf.Plane();
+    const auto infos = faces(rounded);
+    std::optional<std::size_t> sliver;
+    double smallest = std::numeric_limits<double>::infinity();
+    for (const auto& f : infos) {
+        if (f.type != "plane")
+            continue;
+        const gp_Vec n(f.normal.x, f.normal.y, f.normal.z);
+        if (std::abs(std::abs(n.Dot(gp_Vec(plane.Axis().Direction()))) - 1.0) > 1e-7)
+            continue;
+        if (plane.Distance(gp_Pnt(f.center.x, f.center.y, f.center.z)) > 1e-5)
+            continue;
+        if (f.area < smallest) {
+            smallest = f.area;
+            sliver = f.index;
+        }
+    }
+    // Its width is 2 eps; a coplanar face of the body that is larger is some other face.
+    const double length = std::max(c1.LastParameter() - c1.FirstParameter(), c2.LastParameter() - c2.FirstParameter());
+    if (!sliver || smallest > 4 * eps * length)
+        throw ModelingError("Full Round Fillet: the face between the edges did not shrink to a sliver; the edges may not span the whole face");
+    return deleteFaces(rounded, {*sliver});
 }
 
 Shape chamfer(const Shape& shape, const std::vector<std::size_t>& edgeIndices, const ChamferOptions& options)
