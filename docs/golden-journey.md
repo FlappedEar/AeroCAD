@@ -26,7 +26,7 @@ merges, change the step in the script from a gap to a hard check.
 
 | Step | State | Issue |
 |---|---|---|
-| 7 aero shape (ridge, lip, fade-out) | GAP | CAD-24, CAD-25 |
+| 7 aero shape (ridge, lip, fade-out) | PASS | CAD-24, CAD-25 (Edit step > Shape the top: ridge and fade-out, step 4b in the script) |
 
 Known defect the script works around (drop the workaround when fixed): finishing a sketch drawn on
 the part offers Part on surface again (CAD-296).
