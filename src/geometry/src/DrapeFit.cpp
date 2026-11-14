@@ -714,7 +714,7 @@ SkinFit fitSkin(const core::MeshProjector& scan, const DrapeArea& area, const Dr
 } // namespace
 
 DrapedPart partOnScan(const core::MeshProjector& scan, const DrapeArea& area, const std::vector<Shape>& outlines,
-                      double thickness, ThickenSide side, const DrapeFitOptions& options)
+                      double thickness, ThickenSide side, const DrapeFitOptions& options, const DrapeShaping& shaping)
 {
     const auto started = std::chrono::steady_clock::now();
     if (!(thickness > 0.0))
@@ -743,12 +743,89 @@ DrapedPart partOnScan(const core::MeshProjector& scan, const DrapeArea& area, co
         upper = solvePoles(rollBall(skin, raster, 0.5 * thickness), raster, fitU, fitV, pu, pv);
         break;
     }
+    int upperU = pu, upperV = pv, lowerU = pu, lowerV = pv;
+    if (shaping.outerLift || shaping.thicknessDelta) {
+        // The shaped surfaces are solved again from the skin plus the shaping, on a control net fine
+        // enough for it (the net of the skin alone is as coarse as the skin allows).
+        const double wide = area.u1 - area.u0, high = area.v1 - area.v0;
+        // The shaping is sampled where the skin is, so a feature has to span a few samples to be there at all.
+        const double sample = std::max(raster.du, raster.dv);
+        if (shaping.featureSize > 0.0 && shaping.featureSize < 2.0 * sample)
+            throw SurfaceFitError("The ridge or its fade is too narrow for this scan's sampling here: make the width and "
+                                  "the fade lengths at least " + std::to_string(std::ceil(2.0 * sample * 10.0) / 10.0) +
+                                  " mm");
+        const double spacing = std::max({2.0 * raster.du, 2.0 * raster.dv, shaping.featureSize / 5.0,
+                                         std::max(wide, high) / 200.0});
+        const int su = std::clamp(static_cast<int>(std::ceil(wide / spacing)) + 3, pu, raster.nu);
+        const int sv = std::clamp(static_cast<int>(std::ceil(high / spacing)) + 3, pv, raster.nv);
+        const AxisFit shapeU(raster.nu, su), shapeV(raster.nv, sv);
+        // The fitted skin at the samples: what the shaped surfaces are built on, so that they stay in step
+        // with the surface lying on the scan (the raw samples carry the scan's noise).
+        std::vector<double> smooth(skin.size());
+        for (int j = 0; j < raster.nv; ++j) {
+            const auto& wv = fitV.weights(j);
+            const int fv = fitV.first(j);
+            for (int i = 0; i < raster.nu; ++i) {
+                const auto& wu = fitU.weights(i);
+                const int fu = fitU.first(i);
+                double z = 0.0;
+                for (int b = 0; b < 4; ++b)
+                    for (int a = 0; a < 4; ++a)
+                        z += wv[static_cast<std::size_t>(b)] * wu[static_cast<std::size_t>(a)] *
+                             skinPoles[static_cast<std::size_t>(fv + b) * pu + static_cast<std::size_t>(fu + a)];
+                smooth[raster.at(i, j)] = z;
+            }
+        }
+        // A change of thickness is along the surface's normal, a height over the sketch plane is steeper by
+        // sqrt(1 + slope^2) where the skin is inclined to it.
+        std::vector<double> steep(skin.size(), 1.0);
+        for (int j = 0; j < raster.nv; ++j)
+            for (int i = 0; i < raster.nu; ++i) {
+                const int i0 = std::max(i - 1, 0), i1 = std::min(i + 1, raster.nu - 1);
+                const int j0 = std::max(j - 1, 0), j1 = std::min(j + 1, raster.nv - 1);
+                const double gx = (smooth[raster.at(i1, j)] - smooth[raster.at(i0, j)]) / ((i1 - i0) * raster.du);
+                const double gy = (smooth[raster.at(i, j1)] - smooth[raster.at(i, j0)]) / ((j1 - j0) * raster.dv);
+                steep[raster.at(i, j)] = std::sqrt(1.0 + gx * gx + gy * gy);
+            }
+        // f(u, v, steepness).
+        auto shaped = [&](const std::vector<double>& base, const std::function<double(double, double, double)>& f) {
+            std::vector<double> h = base;
+            for (int j = 0; j < raster.nv; ++j)
+                for (int i = 0; i < raster.nu; ++i)
+                    h[raster.at(i, j)] += f(area.u0 + i * raster.du, area.v0 + j * raster.dv, steep[raster.at(i, j)]);
+            return solvePoles(h, raster, shapeU, shapeV, su, sv);
+        };
+        // The taper goes to the surface away from the scan; both share it when the part is on both sides.
+        const double upperShare = side == ThickenSide::Outside ? 1.0 : side == ThickenSide::Both ? 0.5 : 0.0;
+        const double lowerShare = side == ThickenSide::Inside ? 1.0 : side == ThickenSide::Both ? 0.5 : 0.0;
+        const auto delta = [&](double u, double v, double share) {
+            return shaping.thicknessDelta ? share * shaping.thicknessDelta(u, v) : 0.0;
+        };
+        const auto lift = [&](double u, double v) { return shaping.outerLift ? shaping.outerLift(u, v) : 0.0; };
+        // Only the shaped surfaces are solved again, from the unshaped height field plus the shaping.
+        // The one lying on the scan keeps the skin fit.
+        if (shaping.outerLift || (shaping.thicknessDelta && upperShare > 0.0)) {
+            const std::vector<double> flat = side == ThickenSide::Inside    ? smooth
+                                             : side == ThickenSide::Outside ? rollBall(smooth, raster, thickness)
+                                                                            : rollBall(smooth, raster, 0.5 * thickness);
+            upper = shaped(flat, [&](double u, double v, double k) { return lift(u, v) + k * delta(u, v, upperShare); });
+            upperU = su;
+            upperV = sv;
+        }
+        if (shaping.thicknessDelta && lowerShare > 0.0) {
+            const std::vector<double> flat = side == ThickenSide::Inside ? rollBall(smooth, raster, -thickness)
+                                                                         : rollBall(smooth, raster, -0.5 * thickness);
+            lower = shaped(flat, [&](double u, double v, double k) { return -k * delta(u, v, lowerShare); });
+            lowerU = su;
+            lowerV = sv;
+        }
+    }
     result.report.milliseconds =
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
 
     try {
-        const auto bottom = makeSurface(area, lower, pu, pv);
-        const auto top = makeSurface(area, upper, pu, pv);
+        const auto bottom = makeSurface(area, lower, lowerU, lowerV);
+        const auto top = makeSurface(area, upper, upperU, upperV);
         const gp_Pln plane(gp_Ax3(gp_Pnt(area.origin.x, area.origin.y, area.origin.z),
                                   gp_Dir(area.normal.x, area.normal.y, area.normal.z),
                                   gp_Dir(area.x.x, area.x.y, area.x.z)));

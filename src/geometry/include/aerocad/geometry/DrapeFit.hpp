@@ -6,6 +6,7 @@
 #include "aerocad/geometry/Offset.hpp"
 #include "aerocad/geometry/Shape.hpp"
 
+#include <functional>
 #include <vector>
 
 namespace aerocad::geometry {
@@ -60,6 +61,20 @@ struct DrapeFitReport {
     double milliseconds = 0.0;
 };
 
+/// How the part departs from a plain sheet of constant thickness, as functions of the sketch
+/// coordinates (u, v) in mm. Both are optional; empty means zero.
+struct DrapeShaping {
+    /// Raises (negative: lowers) the outer surface, the one facing away from the scan: a ridge or
+    /// strake standing on the part. Mm along the normal.
+    std::function<double(double, double)> outerLift;
+    /// Added to the thickness, on the surface that is not on the scan (the inner one for an
+    /// inside part): a part that tapers.
+    std::function<double(double, double)> thicknessDelta;
+    /// The smallest feature the functions have to be followed to, mm: the shaped surfaces get
+    /// control points at a fraction of it.
+    double featureSize = 0.0;
+};
+
 struct DrapedPart {
     Shape solid;       ///< One solid per outline.
     double skinArea = 0.0; ///< mm2, the side lying on the scan.
@@ -78,7 +93,7 @@ struct DrapedPart {
 /// Throws SurfaceFitError (SurfaceFit.hpp) when the scan is not under the area.
 [[nodiscard]] DrapedPart partOnScan(const core::MeshProjector& scan, const DrapeArea& area,
                                     const std::vector<Shape>& outlines, double thickness, ThickenSide side,
-                                    const DrapeFitOptions& options = {});
+                                    const DrapeFitOptions& options = {}, const DrapeShaping& shaping = {});
 
 /// Just the skin of the scan over the area's rectangle, as one B-spline face (a height field
 /// over the area, the first surface met from outside, holes bridged), e.g. to cut the root of

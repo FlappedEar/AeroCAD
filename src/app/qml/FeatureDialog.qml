@@ -523,7 +523,20 @@ Pane {
             { key: "thickness", type: "expr", label: qsTr("Thickness"), init: 2 },
             { key: "side", type: "choice", label: qsTr("Direction"), init: "inside", options: [
                 { value: "inside", label: qsTr("Into the surface") }, { value: "outside", label: qsTr("Out of the surface") },
-                { value: "both", label: qsTr("Both sides") }] }] },
+                { value: "both", label: qsTr("Both sides") }] },
+            // Shaping the top (scan only): a ridge with fade-out and a taper, behind one checkbox so the plain
+            // part stays a three-field dialog. 0 means none; unchecked, none of it is sent.
+            { key: "shaping", type: "bool", label: qsTr("Shape the top (ridge, taper)"), init: false, local: true },
+            { key: "ridge_height", type: "expr", label: qsTr("Ridge height (mm)"), init: 0, showIf: v => !!v.shaping },
+            { key: "ridge_position", type: "expr", label: qsTr("Ridge position (0..1)"), init: 0.5, showIf: v => !!v.shaping && Number(v.ridge_height) !== 0 },
+            { key: "ridge_width", type: "expr", label: qsTr("Ridge width (mm, 0: whole)"), init: 0, showIf: v => !!v.shaping && Number(v.ridge_height) !== 0 },
+            { key: "fade_in", type: "expr", label: qsTr("Fade in (mm)"), init: 0, showIf: v => !!v.shaping && Number(v.ridge_height) !== 0 },
+            { key: "fade_out", type: "expr", label: qsTr("Fade out (mm)"), init: 0, showIf: v => !!v.shaping && Number(v.ridge_height) !== 0 },
+            { key: "thickness_end", type: "expr", label: qsTr("End thickness (mm, 0: constant)"), init: 0, showIf: v => !!v.shaping },
+            { key: "along", type: "choice", label: qsTr("Runs along"), init: "auto",
+              showIf: v => !!v.shaping && (Number(v.ridge_height) !== 0 || Number(v.thickness_end) !== 0), options: [
+                { value: "auto", label: qsTr("The longer side") }, { value: "x", label: qsTr("Sketch X") },
+                { value: "y", label: qsTr("Sketch Y") }] }] },
         fin_on_surface: { title: qsTr("Fin on Surface"), command: "surface.fin_from_sketch", slow: true, fields: [
             { key: "sketch", type: "sketch", label: qsTr("Fin sketch") },
             { key: "thickness", type: "expr", label: qsTr("Thickness"), init: 3 },
@@ -589,6 +602,8 @@ Pane {
             for (const k in initial)
                 v[k] = initial[k]
         }
+        if (featureType === "part_on_surface")
+            v.shaping = Number(v.ridge_height) !== 0 || Number(v.thickness_end) !== 0
         if (featureType === "cylinder" && v.radius !== undefined) {
             // The dialog edits the diameter; a radius given through the API is converted
             // (and removed on apply) so that it does not compete with the default diameter.
