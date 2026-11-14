@@ -771,7 +771,9 @@ Pane {
         const r = submit(true)
         previewApplied = r.ok
         previewFeatureId = r.ok && r.result ? r.result.id : -1
-        shapingArrows = r.ok && r.result && r.result.shaping && r.result.shaping.arrows ? r.result.shaping.arrows : null
+        // A new step reports `shaping` at the top; an edited one (feature.edit) inside its `report`.
+        const shaped = r.ok && r.result ? (r.result.shaping || (r.result.report && r.result.report.shaping)) : null
+        shapingArrows = shaped && shaped.arrows ? shaped.arrows : null
         // Incomplete input (no edges picked yet, ...) is normal while editing: those errors
         // are shown when OK is pressed. A complete feature that fails (a fillet radius that
         // does not fit) is reported right away, like Fusion's dialog warning.
