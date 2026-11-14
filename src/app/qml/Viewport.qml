@@ -471,12 +471,18 @@ Item {
 
     /// Looks at the model from `direction` (model space, Z up): the ViewCube's face, edge and
     /// corner views. Keeps the current target and zoom.
-    function setViewDirection(direction) {
+    /// `right` (optional, model space): the direction that should point to the right of the
+    /// screen. Only a view from above or below (nearly along Z) can honour it, because the
+    /// camera has no roll: there the yaw is free, so the sketch's X axis can run left to right.
+    function setViewDirection(direction, right) {
         // Model (x, y, z) is (x, z, -y) in Qt Quick 3D's Y-up scene; the camera sits on the
         // pivot's +Z axis, i.e. at (cos p sin y, -sin p, cos p cos y) for pitch p and yaw y.
         const d = Qt.vector3d(direction.x, direction.z, -direction.y).normalized()
         const pitch = -Math.asin(Math.max(-1, Math.min(1, d.y))) * 180 / Math.PI
-        const yaw = Math.abs(d.y) > 0.9999 ? 0 : Math.atan2(d.x, d.z) * 180 / Math.PI
+        let yaw = Math.abs(d.y) > 0.9999 ? 0 : Math.atan2(d.x, d.z) * 180 / Math.PI
+        // The camera's right is (cos yaw, sin yaw, 0) in model space.
+        if (right && Math.abs(d.y) > 0.9 && Math.hypot(right.x, right.y) > 0.1)
+            yaw = Math.atan2(right.y, right.x) * 180 / Math.PI
         cameraInput.animateTo(pitch, yaw)
     }
 

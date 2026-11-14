@@ -1,0 +1,11 @@
+# CAD-300: looking at a sketch from above or below turns the view so the sketch's X axis runs
+# left to right (no roll in the camera: a rectangle dragged corner to corner on the screen must
+# be a real rectangle, not a sliver along a diagonal axis). Real scans give diagonal X axes
+# (the long side of the area), so the sketch plane here is turned 45 degrees on purpose.
+# Run: AeroCAD --ui-script <this file>
+ui.wait(800)
+(() => { window.createSketch({ plane: "XY" }); if (!window.activeSketch) ui.fail("no sketch") })()
+ui.wait(800)
+(() => { const s = window.activeSketch; const k = Math.SQRT1_2; window.activeSketch = Object.assign({}, s, { xDir: [k, k, 0], yDir: [-k, k, 0] }); window.lookAtSketch(null) })()
+ui.wait(2500)
+(() => { const o = viewport.sketchOverlay; const at = (x, y) => o.screenToLocal(o.width / 2 + x, o.height / 2 + y); const a = at(0, 0), r = at(60, 0), d = at(0, 40); ui.log("upright: right -> " + JSON.stringify([r[0] - a[0], r[1] - a[1]]) + " down -> " + JSON.stringify([d[0] - a[0], d[1] - a[1]])); if (!(r[0] - a[0] > 1e-3) || Math.abs(r[1] - a[1]) > 0.05 * (r[0] - a[0])) ui.fail("screen right is not the sketch X axis"); if (!(d[1] - a[1] < -1e-3) || Math.abs(d[0] - a[0]) > 0.05 * Math.abs(d[1] - a[1])) ui.fail("screen down is not the sketch -Y axis") })()

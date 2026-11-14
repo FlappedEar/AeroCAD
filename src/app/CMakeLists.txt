@@ -630,6 +630,11 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_elliptical_arc.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_sketch_elliptical_arc_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-300: a sketch viewed from above has its X axis running left to right.
+    add_test(NAME app_sketch_upright_view_test
+        COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_upright_view.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_sketch_upright_view_test PROPERTIES LABELS gui TIMEOUT 60)
     # CAD-263: Sketch Text with real clicks.
     add_test(NAME app_sketch_text_test
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_text.ui
