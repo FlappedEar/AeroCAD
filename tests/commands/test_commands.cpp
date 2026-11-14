@@ -1416,8 +1416,55 @@ TEST_CASE("Part on surface: a ridge with fade-out and a taper shape the top of t
     CHECK_FALSE(make({{"thickness_end", -1.0}}).ok);
     CHECK_FALSE(make({{"ridge_height", 3.0}, {"along", "z"}}).ok);
     CHECK_FALSE(make({{"ridge_height", 3.0}, {"along", 1}}).ok);
+    // A ridge narrower than the scan's sampling is refused rather than lost.
+    CHECK_FALSE(make({{"ridge_height", 3.0}, {"ridge_width", 0.3}}).ok);
     // A groove narrower than the check's grid is still found along its bottom.
     CHECK_FALSE(make({{"ridge_height", -1.9}, {"ridge_width", 0.4}}).ok);
+}
+
+TEST_CASE("Part on surface: a taper is a thickness along the normal of a steep scan", "[commands][fit]")
+{
+    commands::Session session;
+    std::vector<core::Vec3> v;
+    std::vector<core::TriangleMesh::Triangle> t;
+    const int nx = 60;
+    const int ny = 30;
+    for (int j = 0; j <= ny; ++j)
+        for (int i = 0; i <= nx; ++i)
+            v.push_back({double(i), double(j), -0.05 * (i - 30) * (i - 30)}); // up to 1.5 slope under the outline
+    auto idx = [](int i, int j) { return static_cast<std::uint32_t>(j * (nx + 1) + i); };
+    for (int j = 0; j < ny; ++j)
+        for (int i = 0; i < nx; ++i) {
+            t.push_back({idx(i, j), idx(i + 1, j), idx(i + 1, j + 1)});
+            t.push_back({idx(i, j), idx(i + 1, j + 1), idx(i, j + 1)});
+        }
+    model::Part sheet;
+    sheet.name = "Steep";
+    sheet.mesh = std::make_shared<const core::TriangleMesh>(core::TriangleMesh(std::move(v), std::move(t)));
+    const auto scanId = session.document().addPart(sheet);
+    auto sk = session.execute("sketch.create",
+                              {{"surface", {{"part", scanId}, {"point", {30, 15, 0}}}},
+                               {"curves", Json::array({{{"type", "center_rectangle"}, {"center", {0, 0}}, {"width", 30}, {"height", 12}}})}});
+    REQUIRE(sk.ok);
+    auto make = [&](Json extra) {
+        Json p = {{"sketch", sk.data.at("id")}, {"thickness", 2.0}, {"side", "outside"}};
+        for (const auto& [k, val] : extra.items())
+            p[k] = val;
+        auto r = session.execute("surface.part_from_sketch", p);
+        INFO(r.toJson().dump());
+        REQUIRE(r.ok);
+        return r.data.at("volume").get<double>();
+    };
+    const double flat = make(Json::object());
+    const double tapered = make({{"thickness_end", 4.0}});
+    // Thickness 2 + 2 s / 30 along the normal, over the skin's area: 12 * integral of (2 s / 30) sqrt(1 + g^2) dx.
+    double expected = 0.0;
+    const int steps = 3000;
+    for (int k = 0; k < steps; ++k) {
+        const double x = -15.0 + 30.0 * (k + 0.5) / steps;
+        expected += 12.0 * (2.0 * (x + 15.0) / 30.0) * std::sqrt(1.0 + 0.01 * x * x) * 30.0 / steps;
+    }
+    CHECK(tapered - flat == Approx(expected).epsilon(0.05));
 }
 
 TEST_CASE("Part on surface on a timeline body is rebuilt from the body, also when the project opens", "[commands][fit][timeline]")
