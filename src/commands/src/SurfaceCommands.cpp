@@ -309,6 +309,11 @@ cad::FeatureEvaluator::Output partOnSurface(const model::Document& doc, const ca
     } else if (!source->mesh || source->mesh->triangleCount() == 0) {
         throw CommandError("Part " + std::to_string(partId) + " has no surface");
     }
+    // A solid (a part made earlier, to add a rib or an emboss on it, or a cut-out to combine):
+    // the new part hugs its visible skin along the sketch normal, like a scan's.
+    if (scan == nullptr && source->shape && source->shape->solidCount() > 0 && source->mesh &&
+        source->mesh->triangleCount() > 0)
+        scan = source;
 
     geometry::Shape solid;
     double area = 0.0;

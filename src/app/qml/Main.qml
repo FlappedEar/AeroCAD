@@ -771,7 +771,9 @@ ApplicationWindow {
         partOnSurfaceSketch = null
         if (offerPart && activeSketch) {
             const r = controller.execute("sketch.profiles", { sketch: activeSketch.id })
-            if (r.ok && r.result.onSurface && r.result.profiles.length > 0)
+            // Not for a sketch on a solid body (the part made on a scan): that one is for Extrude.
+            if (r.ok && r.result.onSurface && r.result.profiles.length > 0
+                    && controller.partInfo(r.result.onSurface.part).kind !== "body")
                 partOnSurfaceSketch = { id: activeSketch.id, part: r.result.onSurface.part,
                                         across: !!r.result.onSurface.across }
         }
@@ -2888,8 +2890,11 @@ ApplicationWindow {
                         visible: info.kind === "body" && contextActions.madeOnSurface(info) && !sketchAcross.checked
                         highlighted: true
                         text: qsTr("On %1").arg(info.name ?? "")
-                        onClicked: if (window.createSketch({ surface: { part: window.selectedPartId, facing: viewport.viewerDirection() } }))
-                            window.controller.showStatus(qsTr("Sketch on %1 (its best-fit plane). Draw the outline, then Extrude it to add material or cut.").arg(info.name))
+                        onClicked: {
+                            const name = info.name // the pane (and so `info`) closes with the sketch
+                            if (window.createSketch({ surface: { part: window.selectedPartId, facing: viewport.viewerDirection() } }))
+                                window.controller.showStatus(qsTr("Sketch on %1 (its best-fit plane). Draw the outline, then Extrude it to add material or cut.").arg(name))
+                        }
                     }
                     Button {
                         readonly property var info: window.pickingSketchPlane ? window.selectedInfo() : ({})

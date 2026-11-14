@@ -91,6 +91,13 @@ QtObject {
         return r.ok && r.result.onSurface ? (r.result.onSurface.part ?? 0) : 0
     }
 
+    /// True for a sketch drawn on a solid body (e.g. the part made on a scan): its next step
+    /// is Extrude (add or cut), the wrap onto the body's curved skin is the other way (CAD-296).
+    function sketchOnBody(featureId) {
+        const part = sketchSurface(featureId)
+        return part > 0 && controller.partInfo(part).kind === "body"
+    }
+
     /// True for a sketch drawn across a surface (a fin).
     function sketchAcross(featureId) {
         if (!(featureId > 0))
@@ -410,7 +417,7 @@ QtObject {
             const ok = onScan ? sk.length > 0 : sketchHasProfiles(info.featureId)
             const newest = onScan ? sketchesOn(info)[0] : null
             return { id: id, text: qsTr("Part on surface"), icon: "thickness", enabled: ok,
-                     primary: onScan ? ok && !newest.across : true,
+                     primary: onScan ? ok && !newest.across : !sketchOnBody(info.featureId),
                      reason: onScan ? qsTr("Draw the outline first (step 1).") : qsTr("The sketch needs a closed outline."),
                      tip: qsTr("In one step: cuts the outline out of the surface it was drawn on and thickens it into a solid that follows the curvature."),
                      params: [...(onScan ? [_sketchParam(sk)] : []),
@@ -421,7 +428,7 @@ QtObject {
         }
         case "extrude": {
             const ok = info.kind !== "sketch" || sketchHasProfiles(info.featureId)
-            return { id: id, text: qsTr("Extrude"), icon: "extrude", enabled: ok, primary: !(info.kind === "sketch" && sketchSurface(info.featureId) > 0),
+            return { id: id, text: qsTr("Extrude"), icon: "extrude", enabled: ok, primary: !(info.kind === "sketch" && sketchSurface(info.featureId) > 0 && !sketchOnBody(info.featureId)),
                      reason: qsTr("The sketch needs a closed outline."),
                      tip: qsTr("Pulls the closed outline straight out into a solid (or cuts with it). Shortcut E.") }
         }
@@ -683,7 +690,8 @@ QtObject {
                                 { title: qsTr("More"), steps: [], actions: [a("editPlane"), a("hide"), a("rename"), a("delete")] }] }
         }
         if (r === "sketch") {
-            const onSurface = sketchSurface(info.featureId) > 0
+            const onBody = sketchOnBody(info.featureId)
+            const onSurface = sketchSurface(info.featureId) > 0 && !onBody
             const fin = onSurface && sketchAcross(info.featureId)
             const steps = []
             if (fin)
@@ -695,8 +703,13 @@ QtObject {
                              text: qsTr("The sketch was drawn on a surface or scan. This cuts the outline out of it and thickens it in one step."),
                              actions: [a("partOnSurface")] })
             steps.push({ title: onSurface ? qsTr("Or make a flat solid") : qsTr("Make a solid"), done: false,
-                         text: qsTr("Extrude pulls the outline straight out; Revolve spins it around an axis."),
+                         text: onBody ? qsTr("Extrude pulls the outline out of the part, or cuts it into it; Revolve spins it around an axis.")
+                                      : qsTr("Extrude pulls the outline straight out; Revolve spins it around an axis."),
                          actions: [a("extrude"), a("revolve")] })
+            if (onBody)
+                steps.push({ title: qsTr("Or wrap it onto the part"), done: false,
+                             text: qsTr("Gives the outline a thickness that follows the part's curved surface (outward adds a layer, inward makes a cut-out to Combine)."),
+                             actions: [a("partOnSurface")] })
             return { title: roleName(r),
                      intro: qsTr("A 2D drawing. Closed outlines (profiles) can become solids."),
                      sections: [{ title: qsTr("Next step"), steps: steps, actions: [] },
