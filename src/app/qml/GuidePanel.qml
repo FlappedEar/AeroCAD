@@ -46,6 +46,8 @@ ColumnLayout {
         delegate: ColumnLayout {
             id: section
             required property var modelData
+            /// A collapsed section (rarely used tools) opens on a click on its title.
+            property bool open: false
             Layout.fillWidth: true
             Layout.topMargin: Theme.space2
             spacing: Theme.space2
@@ -53,7 +55,13 @@ ColumnLayout {
             Text {
                 visible: section.modelData.title.length > 0
                 Layout.fillWidth: true
-                text: section.modelData.title.toUpperCase()
+                text: (section.modelData.collapsed ? (section.open ? "▾ " : "▸ ") : "") + section.modelData.title.toUpperCase()
+                MouseArea {
+                    anchors.fill: parent
+                    enabled: !!section.modelData.collapsed
+                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                    onClicked: section.open = !section.open
+                }
                 color: Theme.textMuted
                 font.pixelSize: Theme.fontCaption
                 font.weight: Font.DemiBold
@@ -136,7 +144,7 @@ ColumnLayout {
             }
 
             Flow {
-                visible: section.modelData.actions.length > 0
+                visible: section.modelData.actions.length > 0 && (!section.modelData.collapsed || section.open)
                 Layout.fillWidth: true
                 spacing: Theme.space1
                 Repeater {

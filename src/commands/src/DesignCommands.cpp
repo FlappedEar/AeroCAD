@@ -568,8 +568,7 @@ Json surfaceRefSchema()
          "of {part}'s region selection when it has one, else of the area within `radius` of `point` (a scan), "
          "else of the whole part (a fitted surface). The plane's normal points the way the surface faces, its "
          "X axis along the long side of the area, and it sits just above the area so the whole outline is "
-         "visible. Project the outline back onto the curved surface with surface.trim_by_sketch. The resolved "
-         "plane is stored, so the sketch does not move when the part changes."},
+         "visible. The resolved plane is stored, so the sketch does not move when the part changes."},
         {"properties",
          {{"part", {{"type", "integer"}, {"minimum", 1}, {"description", "Part id (document.parts)."}}},
           {"point", point3("Clicked point on the part.")},
@@ -578,6 +577,7 @@ Json surfaceRefSchema()
             {"exclusiveMinimum", 0},
             {"description", "Size of the area around `point` (mm). Default: a tenth of the part's size."}}},
           {"useSelection", {{"type", "boolean"}, {"description", "Use the region selection (default when set)."}}},
+          {"facing", point3("Face the plane this way (a closed solid).")},
           {"across",
            {{"type", "boolean"},
             {"description",
@@ -643,6 +643,11 @@ std::pair<Json, Json> surfaceSketchPlane(const model::Document& doc, const Json&
         facing = facing + (v[tri[1]] - v[tri[0]]).cross(v[tri[2]] - v[tri[0]]);
     }
     core::Vec3 normal = fit->normal;
+    if (ref.contains("facing")) {
+        // A closed solid has no single side: the caller says which (e.g. towards the viewer).
+        const auto& f = ref.at("facing");
+        facing = {f.at(0).get<double>(), f.at(1).get<double>(), f.at(2).get<double>()};
+    }
     if (facing.dot(normal) < 0.0)
         normal = normal * -1.0;
     if (ref.value("across", false)) {

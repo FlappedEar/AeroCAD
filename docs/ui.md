@@ -290,8 +290,9 @@ imported meshes; see [scans.md](scans.md).
 
 See [cad.md](cad.md) for the timeline and the commands behind the tools.
 
-- **Create Sketch**: click a planar face of a body, a scan or a fitted surface, or pick
-  XY / XZ / YZ. A click into a hole of a scan (a grille opening) takes the surface next to
+- **Create Sketch**: click a face of a body, a scan or a fitted surface, or pick XY / XZ / YZ.
+  On a curved body (a part made on a scan) the sketch lies on its best-fit plane, facing the
+  viewer; the **On <part>** button does the same for the selected part. A click into a hole of a scan (a grille opening) takes the surface next to
   it, within 4 degrees of the click, and the status bar says so. The view turns to look at
   the sketch. Tools: Line (chains; Esc or right-click › End Curve ends), Rectangle, Circle, 2-Point
   Circle (both ends of a diameter), 3-Point Circle (three points on it), Arc
@@ -417,8 +418,10 @@ nobody needs to know the commands beforehand:
   when they overlap, so the guide continues with the next step.
 - On a scan, an outline (or a fin) already drawn on it marks the drawing step done and
   gives the next step its button (Part on surface / Fin on surface, with the sketch to
-  use), so nobody has to find the sketch in the Browser. A part or fin made on a scan
-  offers **Export for printing** as its next step.
+  use), so nobody has to find the sketch in the Browser. A part or fin made on a scan opens
+  the SOLID tab and is the body to design on: its guide offers Sketch on a face (the next
+  step), Move faces, Edit step, Round / Bevel edges, Hollow out, Hole, the rarer face tools
+  folded under *More shape tools*, and **Export for printing** last under Output.
 - Toolbar tooltips explain each command under its name (`Theme.commandHelps`).
 
 ![Guide for a scan with an area selected](images/ui/guide-scan.png)
