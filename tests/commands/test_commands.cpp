@@ -1339,6 +1339,87 @@ TEST_CASE("Part on surface is a timeline step: edit, follow the sketch, delete, 
     }
 }
 
+TEST_CASE("Part on surface: a ridge with fade-out and a taper shape the top of the part on a curved scan", "[commands][fit]")
+{
+    commands::Session session;
+    std::vector<core::Vec3> v;
+    std::vector<core::TriangleMesh::Triangle> t;
+    const int nx = 60;
+    const int ny = 30;
+    for (int j = 0; j <= ny; ++j)
+        for (int i = 0; i <= nx; ++i)
+            v.push_back({double(i), double(j), -0.005 * (i - 30) * (i - 30)});
+    auto idx = [](int i, int j) { return static_cast<std::uint32_t>(j * (nx + 1) + i); };
+    for (int j = 0; j < ny; ++j)
+        for (int i = 0; i < nx; ++i) {
+            t.push_back({idx(i, j), idx(i + 1, j), idx(i + 1, j + 1)});
+            t.push_back({idx(i, j), idx(i + 1, j + 1), idx(i, j + 1)});
+        }
+    model::Part sheet;
+    sheet.name = "Wing";
+    sheet.mesh = std::make_shared<const core::TriangleMesh>(core::TriangleMesh(std::move(v), std::move(t)));
+    const auto scanId = session.document().addPart(sheet);
+    auto sk = session.execute("sketch.create",
+                              {{"surface", {{"part", scanId}, {"point", {30, 15, 0}}}},
+                               {"curves", Json::array({{{"type", "center_rectangle"}, {"center", {0, 0}}, {"width", 30}, {"height", 12}}})}});
+    REQUIRE(sk.ok);
+    const Json sketch = sk.data.at("id");
+    auto make = [&](Json extra) {
+        Json p = {{"sketch", sketch}, {"thickness", 2.0}, {"side", "outside"}};
+        for (const auto& [k, val] : extra.items())
+            p[k] = val;
+        auto r = session.execute("surface.part_from_sketch", p);
+        INFO(r.toJson().dump());
+        return r;
+    };
+    const auto flat = make(Json::object());
+    REQUIRE(flat.ok);
+    const double v0 = flat.data.at("volume").get<double>();
+    const double top0 = flat.data.at("bounds").at("max").at(2).get<double>();
+    CHECK_FALSE(flat.data.contains("shaping"));
+
+    // A ridge down the middle of the 30 x 12 part, 6 mm high, ending in a 8 mm fade-out. Its cross section
+    // averages half its height over the 12 mm, the fade-out takes 0.5 of its length: 6 * 12 * 0.5 * 26.
+    const auto ridge = make({{"ridge_height", 6.0}, {"fade_out", 8.0}});
+    REQUIRE(ridge.ok);
+    CHECK(ridge.data.at("volume").get<double>() - v0 == Approx(6.0 * 12.0 * 0.5 * 26.0).epsilon(0.06));
+    CHECK(ridge.data.at("bounds").at("max").at(2).get<double>() - top0 == Approx(6.0).margin(0.6));
+    CHECK(ridge.data.at("shaping").at("along") == "x");
+    CHECK(ridge.data.at("shaping").at("peak").get<double>() == Approx(6.0));
+    // Without the fade-out the ridge is as high at the end of the part, so it holds more.
+    const auto abrupt = make({{"ridge_height", 6.0}});
+    REQUIRE(abrupt.ok);
+    CHECK(abrupt.data.at("volume").get<double>() - v0 == Approx(6.0 * 12.0 * 0.5 * 30.0).epsilon(0.06));
+    CHECK(abrupt.data.at("volume").get<double>() > ridge.data.at("volume").get<double>() + 100.0);
+    // A narrow ridge, 4 mm wide at its base, off the middle: 6 * 4 * 0.5 * 30.
+    const auto strake = make({{"ridge_height", 6.0}, {"ridge_width", 4.0}, {"ridge_position", 0.25}});
+    REQUIRE(strake.ok);
+    CHECK(strake.data.at("volume").get<double>() - v0 == Approx(6.0 * 4.0 * 0.5 * 30.0).epsilon(0.08));
+    // A taper from 2 mm to 4 mm along the part adds one more millimetre on average over the area (12 x 30).
+    const auto tapered = make({{"thickness_end", 4.0}});
+    REQUIRE(tapered.ok);
+    CHECK(tapered.data.at("volume").get<double>() - v0 == Approx(1.0 * 12.0 * 30.0).epsilon(0.08));
+    // A part on the inside of the scan takes the same ridge on its outer face.
+    const auto insideFlat = make({{"side", "inside"}});
+    REQUIRE(insideFlat.ok);
+    const auto inside = make({{"side", "inside"}, {"ridge_height", 6.0}});
+    REQUIRE(inside.ok);
+    CHECK(inside.data.at("bounds").at("max").at(2).get<double>() -
+              insideFlat.data.at("bounds").at("max").at(2).get<double>() == Approx(6.0).margin(0.6));
+    CHECK(inside.data.at("volume").get<double>() == Approx(v0 + 6.0 * 12.0 * 0.5 * 30.0).epsilon(0.06));
+
+    // Refused: a ridge that cuts the part through, values out of range, a fade longer than the part.
+    CHECK_FALSE(make({{"ridge_height", -2.0}}).ok);
+    CHECK_FALSE(make({{"ridge_height", 3.0}, {"ridge_position", 1.5}}).ok);
+    CHECK_FALSE(make({{"ridge_height", 3.0}, {"fade_in", 20.0}, {"fade_out", 20.0}}).ok);
+    CHECK_FALSE(make({{"fade_out", 5.0}}).ok);
+    CHECK_FALSE(make({{"thickness_end", -1.0}}).ok);
+    CHECK_FALSE(make({{"ridge_height", 3.0}, {"along", "z"}}).ok);
+    CHECK_FALSE(make({{"ridge_height", 3.0}, {"along", 1}}).ok);
+    // A groove narrower than the check's grid is still found along its bottom.
+    CHECK_FALSE(make({{"ridge_height", -1.9}, {"ridge_width", 0.4}}).ok);
+}
+
 TEST_CASE("Part on surface on a timeline body is rebuilt from the body, also when the project opens", "[commands][fit][timeline]")
 {
     commands::Session session;

@@ -164,6 +164,125 @@ double positive(const cad::Design& d, const Json& params, const char* key)
     return v;
 }
 
+/// A number or an expression with user parameters.
+Json shapeParam(const std::string& description)
+{
+    return Json{{"type", Json::array({"number", "string"})}, {"description", description}};
+}
+
+/// The shaping of Part on surface (ridge, fade, taper) from the params, over an outline whose
+/// bounds in sketch coordinates are `box` = {u0, v0, u1, v1}. Empty when no shaping is asked for.
+geometry::DrapeShaping shapingOf(const cad::Design& d, const Json& params, double thickness,
+                                 const std::array<double, 4>& box, Json& report)
+{
+    geometry::DrapeShaping out;
+    auto number = [&](const char* key, double fallback) {
+        return params.contains(key) ? d.evaluate(params.at(key)) : fallback;
+    };
+    const double height = number("ridge_height", 0.0);
+    const double position = number("ridge_position", 0.5);
+    const double width = number("ridge_width", 0.0);
+    const double fadeIn = number("fade_in", 0.0);
+    const double fadeOut = number("fade_out", 0.0);
+    const double thicknessEnd = number("thickness_end", 0.0);
+    const bool taper = thicknessEnd > 0.0;
+    if (!std::isfinite(height) || !std::isfinite(position) || !std::isfinite(width) || !std::isfinite(fadeIn) ||
+        !std::isfinite(fadeOut) || !std::isfinite(thicknessEnd))
+        throw CommandError("The ridge and taper values must be numbers");
+    if (position < 0.0 || position > 1.0)
+        throw CommandError("ridge_position must be between 0 (one side of the outline) and 1 (the other)");
+    if (width < 0.0)
+        throw CommandError("ridge_width must not be negative (0: the whole part)");
+    if (fadeIn < 0.0 || fadeOut < 0.0)
+        throw CommandError("fade_in and fade_out must not be negative");
+    if (thicknessEnd < 0.0)
+        throw CommandError("thickness_end must not be negative (0: constant thickness)");
+    const bool ridge = height != 0.0;
+    if (!ridge && !taper) {
+        if (fadeIn > 0.0 || fadeOut > 0.0 || width > 0.0)
+            throw CommandError("A ridge needs ridge_height (not 0); fade_in, fade_out and ridge_width only shape it");
+        return out;
+    }
+    // The ridge runs along the longer side of the outline unless `along` says x or y (sketch axes).
+    const double sizeU = box[2] - box[0], sizeV = box[3] - box[1];
+    if (params.contains("along") && !params.at("along").is_string())
+        throw CommandError("along must be auto, x or y");
+    const std::string alongName = params.value("along", std::string("auto"));
+    if (alongName != "auto" && alongName != "x" && alongName != "y")
+        throw CommandError("along must be auto, x or y");
+    const bool alongU = alongName == "x" || (alongName == "auto" && sizeU >= sizeV);
+    const double length = alongU ? sizeU : sizeV, across = alongU ? sizeV : sizeU;
+    if (fadeIn + fadeOut > length + 1e-9)
+        throw CommandError("fade_in + fade_out is longer than the part (" + std::to_string(length) + " mm)");
+    const double lo = alongU ? box[0] : box[1], cLo = alongU ? box[1] : box[0];
+    // Smooth 0 to 1 (zero slope and curvature at both ends), so a ridge meets the surface without a crease.
+    auto smooth = [](double t) {
+        t = std::clamp(t, 0.0, 1.0);
+        return t * t * t * (t * (6.0 * t - 15.0) + 10.0);
+    };
+    auto ridgeAt = [=](double u, double v) {
+        const double s = (alongU ? u : v) - lo, c = (alongU ? v : u) - cLo;
+        double fade = 1.0;
+        if (fadeIn > 0.0)
+            fade *= smooth(s / fadeIn);
+        if (fadeOut > 0.0)
+            fade *= smooth((length - s) / fadeOut);
+        const double centre = position * across;
+        double profile;
+        if (width > 0.0) {
+            profile = smooth(1.0 - std::abs(c - centre) / (0.5 * width));
+        } else if (c <= centre) {
+            profile = centre < 1e-9 ? 1.0 : smooth(c / centre);
+        } else {
+            profile = across - centre < 1e-9 ? 1.0 : smooth((across - c) / (across - centre));
+        }
+        return height * fade * profile;
+    };
+    auto taperAt = [=](double u, double v) {
+        const double s = std::clamp(((alongU ? u : v) - lo) / std::max(length, 1e-9), 0.0, 1.0);
+        return (thicknessEnd - thickness) * s;
+    };
+    if (ridge)
+        out.outerLift = ridgeAt;
+    if (taper)
+        out.thicknessDelta = taperAt;
+    // The narrowest slope of the ridge's cross section: its width, or the nearer side of the crest (the
+    // whole width when the crest is at an edge).
+    double nearSide = across;
+    for (const double side : {position * across, (1.0 - position) * across})
+        if (side > 1e-9)
+            nearSide = std::min(nearSide, side);
+    out.featureSize = ridge ? (width > 0.0 ? width : nearSide) : 0.0;
+    if (ridge && fadeOut > 0.0)
+        out.featureSize = out.featureSize > 0.0 ? std::min(out.featureSize, fadeOut) : fadeOut;
+    if (ridge && fadeIn > 0.0)
+        out.featureSize = out.featureSize > 0.0 ? std::min(out.featureSize, fadeIn) : fadeIn;
+    // The part must stay a solid: look for the thinnest place.
+    double thinnest = std::numeric_limits<double>::max();
+    auto look = [&](double u, double v) {
+        double t = thickness;
+        if (ridge)
+            t += ridgeAt(u, v);
+        if (taper)
+            t += taperAt(u, v);
+        thinnest = std::min(thinnest, t);
+    };
+    for (int j = 0; j <= 80; ++j)
+        for (int i = 0; i <= 80; ++i)
+            look(box[0] + sizeU * i / 80.0, box[1] + sizeV * j / 80.0);
+    // A narrow ridge falls between the grid's points: also walk along its crest, where it is highest (or deepest).
+    for (int k = 0; k <= 400; ++k) {
+        const double s = length * k / 400.0, c = position * across;
+        look(alongU ? lo + s : cLo + c, alongU ? cLo + c : lo + s);
+    }
+    if (thinnest < 0.2)
+        throw CommandError("The ridge or taper leaves the part " + std::to_string(thinnest) +
+                           " mm thick at its thinnest; keep it at least 0.2 mm");
+    report = {{"along", alongU ? "x" : "y"}, {"length", length}, {"across", across}, {"thinnest", thinnest},
+              {"peak", ridge ? std::abs(height) : 0.0}};
+    return out;
+}
+
 /// The surface part a sketch-made part stands on: `id`, else the part the sketch was made on.
 model::PartId surfacePartOf(const cad::Design& d, const Json& params)
 {
@@ -298,6 +417,7 @@ cad::FeatureEvaluator::Output partOnSurface(const model::Document& doc, const ca
         outlineArea += geometry::area(o);
     const double tolerance = params.value("tolerance", geometry::SurfaceFitOptions{}.tolerance);
     Json fitReport;
+    Json shapingReport;
     Json warnings = Json::array();
     // A fitted surface remembers the scan it came from: build the part on the scan
     // itself, whatever area the earlier fit covered.
@@ -316,6 +436,7 @@ cad::FeatureEvaluator::Output partOnSurface(const model::Document& doc, const ca
         // The part follows the skin seen along the sketch normal.
         const auto [u0, v0, u1, v1] = outlineBounds(sk.plane, outlines);
         const double margin = std::max(10.0, 0.05 * std::max(u1 - u0, v1 - v0));
+        const auto shaping = shapingOf(d, params, thickness, {u0, v0, u1, v1}, shapingReport);
         geometry::DrapeArea drape;
         drape.origin = sk.plane.origin;
         drape.x = sk.plane.xDir;
@@ -333,7 +454,7 @@ cad::FeatureEvaluator::Output partOnSurface(const model::Document& doc, const ca
         options.tolerance = tolerance;
         try {
             const core::MeshProjector projector(*scan->mesh, sk.plane.normal);
-            auto part = geometry::partOnScan(projector, drape, outlines, thickness, side, options);
+            auto part = geometry::partOnScan(projector, drape, outlines, thickness, side, options, shaping);
             solid = part.solid;
             area = part.skinArea;
             const auto& rep = part.report;
@@ -359,6 +480,9 @@ cad::FeatureEvaluator::Output partOnSurface(const model::Document& doc, const ca
             throw CommandError(std::string("Could not make the part on the scan: ") + e.what());
         }
     } else {
+        for (const char* key : {"ridge_height", "ridge_width", "fade_in", "fade_out", "thickness_end"})
+            if (params.contains(key) && !(d.evaluate(params.at(key)) == 0.0))
+                throw CommandError("A ridge or taper needs a part built on a scan: this surface has no scan behind it");
         geometry::Shape skin;
         try {
             skin = geometry::trimSurface(*source->shape, outlines, sk.plane.normal, true, true);
@@ -377,6 +501,8 @@ cad::FeatureEvaluator::Output partOnSurface(const model::Document& doc, const ca
                   {"warnings", warnings}};
     if (!fitReport.is_null())
         out.report["fit"] = fitReport;
+    if (!shapingReport.is_null())
+        out.report["shaping"] = shapingReport;
     return out;
 }
 
@@ -1308,6 +1434,13 @@ void registerSurfaceCommands(CommandRegistry& r)
                          {"tolerance",
                           {{"type", "number"}, {"exclusiveMinimum", 0}, {"description", "Fit tolerance (scan), mm. Default 0.25. On a noisy scan the fit also counts as within it "
                                            "when what is left is the scan's own noise (fit.scanNoise, fit.withinScanNoise)."}}},
+                         {"ridge_height", shapeParam("Shaping (scan only): ridge standing on the outer surface, mm.")},
+                         {"ridge_position", shapeParam("0..1 across the part, default 0.5.")},
+                         {"ridge_width", shapeParam("Ridge base width, mm; 0 (default): the whole part.")},
+                         {"fade_in", shapeParam("Length (mm) at the start along which the ridge rises from 0.")},
+                         {"fade_out", shapeParam("Length (mm) at the end along which the ridge falls to 0.")},
+                         {"thickness_end", shapeParam("Taper: thickness at the end along (mm); 0: constant.")},
+                         {"along", {{"type", "string"}, {"enum", {"auto", "x", "y"}}, {"description", "Sketch axis the ridge and taper run along; default the longer side."}}},
                          {"name", {{"type", "string"}, {"description", "Name of the new part."}}}},
                         {"sketch", "thickness"}),
            true},

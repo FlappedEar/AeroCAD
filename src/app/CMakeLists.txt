@@ -804,6 +804,12 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/fillet_variable.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_fillet_variable_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-24/25: ridge, fade-out and taper of a part made on a scan, typed in the Part on Surface dialog.
+    add_test(NAME app_part_ridge_test
+        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl
+                --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/part_ridge.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_part_ridge_test PROPERTIES LABELS gui TIMEOUT 90)
     # Full Round fillet from the SOLID tab.
     add_test(NAME app_fillet_full_round_test
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/fillet_full_round.ui

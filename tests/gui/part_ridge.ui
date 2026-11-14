@@ -1,0 +1,26 @@
+# Aero shaping of a part made on a scan (CAD-24, CAD-25): Part on Surface with a ridge, its fade-out and a
+# taper, typed in the dialog. The part holds more than the plain sheet; the Ridge fields only show once there
+# is a ridge height, unticking Shape the top sends nothing, and Edit step brings the values back.
+# Run: AeroCAD dome_scan.stl --ui-script <this file>
+ui.wait(1500)
+(() => { const p = controller.execute("document.parts").result.parts[0]; window.selectPart(p.id) })()
+ui.wait(300)
+(() => { const b = window.selectionInfo; const sk = controller.execute("sketch.create", { surface: { part: b.id, point: [b.center[0], b.center[1], b.center[2] + b.sizeZ / 2] }, curves: [{ type: "center_rectangle", center: [0, 0], width: 40, height: 20 }] }); if (!sk.ok) ui.fail("sketch: " + sk.error); const flat = controller.execute("surface.part_from_sketch", { sketch: sk.result.id, thickness: 2, side: "outside" }); if (!flat.ok) ui.fail("flat part: " + flat.error); ui.log("flat volume " + flat.result.volume.toFixed(1)); controller.execute("edit.undo") })()
+ui.wait(800)
+(() => { const tl = controller.execute("timeline.list").result; if (tl.features.some(f => f.type === "part_on_surface")) ui.fail("the plain part was not undone") })()
+(() => { const tl = controller.execute("timeline.list").result; const sk = tl.features.find(f => f.type === "sketch"); if (!sk) ui.fail("no sketch left"); if (!featureDialog.open("part_on_surface", { sketch: sk.id }, 0)) ui.fail("no Part on Surface dialog") })()
+ui.wait(600)
+(() => { const shown = k => featureDialog.spec.fields.find(f => f.key === k).showIf(featureDialog.values); if (shown("ridge_height")) ui.fail("the ridge fields show before Shape the top is ticked"); featureDialog.setValue("shaping", true); if (!shown("ridge_height") || !shown("thickness_end")) ui.fail("ridge height and end thickness do not show once ticked"); if (shown("ridge_position")) ui.fail("Ridge position shown without a ridge height") })()
+(() => { featureDialog.setValue("thickness", 2); featureDialog.setValue("side", "outside"); featureDialog.setValue("ridge_height", 5); featureDialog.setValue("ridge_position", 0.4); featureDialog.setValue("fade_out", 10); featureDialog.setValue("thickness_end", 3) })()
+ui.wait(1500)
+ui.shot("part-ridge-dialog.png")
+(() => { if (featureDialog.error) ui.fail("dialog error: " + featureDialog.error) })()
+(() => { if (!ui.clickText("OK")) ui.fail("no OK button") })()
+ui.wait(2500)
+(() => { const tl = controller.execute("timeline.list").result; const f = tl.features.find(x => x.type === "part_on_surface"); if (!f) ui.fail("no part feature"); if (f.status !== "ok") ui.fail("part step: " + JSON.stringify(f.report)); const p = f.params; if (p.ridge_height != 5 || p.fade_out != 10 || p.thickness_end != 3) ui.fail("shaping not stored: " + JSON.stringify(p)); if (!f.report.shaping || f.report.shaping.peak !== 5) ui.fail("no shaping report: " + JSON.stringify(f.report)); ui.log("shaped volume " + f.report.volume.toFixed(1) + " " + JSON.stringify(f.report.shaping)); featureDialog.open("part_on_surface", f.params, f.id) })()
+ui.wait(500)
+(() => { const v = featureDialog.values; if (!v.shaping || v.ridge_height != 5 || v.ridge_position != 0.4 || v.thickness_end != 3) ui.fail("Edit step lost the shaping: " + JSON.stringify(v)); featureDialog.setValue("shaping", false) })()
+ui.wait(500)
+(() => { if (!ui.clickText("OK")) ui.fail("no OK button on edit") })()
+ui.wait(2500)
+(() => { const tl = controller.execute("timeline.list").result; const f = tl.features.find(x => x.type === "part_on_surface"); if (f.status !== "ok") ui.fail("edited part: " + JSON.stringify(f.report)); if (f.params.fade_out !== undefined || f.params.ridge_position !== undefined) ui.fail("hidden ridge fields still sent: " + JSON.stringify(f.params)); if (f.report.shaping) ui.fail("still shaped after Shape the top was unticked") })()
