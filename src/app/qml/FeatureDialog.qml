@@ -23,6 +23,8 @@ Pane {
     property var timeline: ({ features: [], bodies: [] })
 
     signal finished()
+    /// A new feature (not an edit) made or changed a body: the part id of the last one, so the app can select it (Fusion).
+    signal bodyMade(int partId)
 
     /// Picked edge / face points ([[x, y, z], ...]) to mark in the viewport.
     readonly property var pickedPoints: {
@@ -1152,12 +1154,16 @@ Pane {
             if (steps.length > 0)
                 controller.mergeHistoryIds(steps.concat([controller.historyTopId()]), spec.title)
             ownedSteps = []
+            const made = ((r.result || {}).bodies || []).filter(b => b.partId > 0)
+            const madePart = made.length > 0 && editId === 0 ? made[made.length - 1].partId : 0
             // A kept approximation (fit tolerance missed) or another caveat must not pass silently.
             const res = r.result || {}
             const warnings = res.warnings || (res.report && res.report.warnings) || []
             if (warnings.length > 0)
                 controller.showStatus(qsTr("%1: %2").arg(spec.title).arg(warnings[0]))
             close()
+            if (madePart > 0)
+                bodyMade(madePart)
         } else {
             error = r.error
         }
