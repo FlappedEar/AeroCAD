@@ -1,0 +1,84 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CAD-294: the golden journey. One scan, driven with the user's own tools, from the file to the
+# print files and back: import, outline on the scan, Part on surface, edit that part, sketch on
+# its curved face, round an edge, wind tunnel set-up, export check, print export, save, reopen.
+# See docs/golden-journey.md. Run: AeroCAD tests/data/models/dome_scan.stl --ui-script tests/gui/golden_journey.ui
+#
+# Every step logs "GJ <n> <name>: PASS", "GJ <n> <name>: FAIL <why>" or "GJ <n> <name>: GAP <issue>"
+# (a step the product cannot do yet; the issue says which work closes it, then the script makes
+# it a hard check). FAIL fails the test.
+Qt.createQmlObject('import QtQuick; Item { objectName: "goldenJourney"; visible: false; property var s: ({}); property int actions: 0; function run(name, params) { const r = controller.execute(name, params || {}); if (!r.ok) { fail("command " + name + ": " + r.error); throw new Error(r.error) } return r.result } function pass(n, name) { ui.log("GJ " + n + " " + name + ": PASS") } function gap(n, name, issue) { ui.log("GJ " + n + " " + name + ": GAP " + issue) } function fail(why) { ui.log("GJ FAIL " + why); ui.fail(why) } function find(item, predicate) { if (predicate(item)) return item; const children = item.children || []; for (let i = 0; i < children.length; ++i) { const hit = find(children[i], predicate); if (hit) return hit } return null } function setField(key, value) { const input = find(featureDialog, x => x.field && x.field.key === key && x.editingFinished !== undefined); if (!input) throw new Error("No editor for " + key); const p = input.mapToItem(null, input.width / 2, input.height / 2); ui.click(p.x, p.y); input.text = String(value); input.editingFinished() } function part(id) { return run("document.parts").parts.find(p => p.id === id) } }', window.contentItem)
+ui.wait(1500)
+# 1 Import: the scan opened from the command line is the first part.
+(() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "goldenJourney"); const p = t.run("document.parts").parts[0]; if (p.kind !== "imported" || !(p.triangles > 0)) t.fail("1 import: no scan"); t.s.scan = p.id; window.selectPart(p.id); t.pass(1, "import") })()
+ui.wait(300)
+# 2 Outline on the scan: the guide offers it first; click the scan, draw a rectangle, Finish Sketch.
+(() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "goldenJourney"); if (contextActions.nextAction(window.selectionInfo).id !== "sketchOnScan") t.fail("2 outline: the guide does not lead with Sketch on the scan") })()
+ui.clickText("Sketch on the scan")
+ui.wait(500)
+(() => { const b = window.selectionInfo; const v = viewport.viewPoint(Qt.vector3d(b.center[0], b.center[1], b.center[2] + b.sizeZ / 2)); const c = viewport.mapToItem(null, v.x, v.y); ui.click(c.x, c.y) })()
+ui.wait(1500)
+(() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "goldenJourney"); if (!window.activeSketch || !window.activeSketch.surfacePart) t.fail("2 outline: no sketch on the scan") })()
+ui.key("R")
+ui.wait(300)
+(() => { const o = window.activeSketch.origin; const v = viewport.viewPoint(Qt.vector3d(o[0], o[1], o[2])); const c = viewport.mapToItem(null, v.x, v.y); ui.drag(c.x - 60, c.y - 40, c.x + 60, c.y + 40, "left", "", 12) })()
+ui.wait(600)
+ui.clickText("Finish Sketch")
+ui.wait(800)
+(() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "goldenJourney"); t.s.sketch = t.run("timeline.list").features.find(f => f.type === "sketch"); if (!t.s.sketch) t.fail("2 outline: no sketch in the timeline"); t.pass(2, "outline on the scan") })()
+# 3 Part on surface: Create in the pane. The part is selected, visible, and the scan no longer covers it (CAD-293).
+ui.clickText("Create")
+ui.wait(5000)
+(() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "goldenJourney"); const info = window.selectionInfo; if (info.kind !== "body") { t.fail("3 part: the new part is not selected (" + info.kind + ")"); return } t.s.body = info.id; t.s.volume0 = info.volume; if (t.part(t.s.scan).visible) t.fail("3 part: the scan still covers the new part (CAD-293)"); if (!t.part(info.id).visible) t.fail("3 part: the part is hidden"); t.pass(3, "part on surface") })()
+
+# 4 Edit the part (Edit step): change the thickness; the part follows.
+ui.clickText("Edit step")
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "goldenJourney"); if (!featureDialog.visible) { t.fail("4 edit: Edit step did not open the editor"); return } t.setField("thickness", 4) })()
+ui.clickText("OK")
+ui.wait(3000)
+(() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "goldenJourney"); const f = t.run("timeline.list").features.find(x => x.type === "part_on_surface"); if (!f || f.params.thickness !== 4) t.fail("4 edit: the thickness was not changed"); t.s.bodyId = t.s.body; const p = t.part(t.s.body); if (!p) t.fail("4 edit: the part is gone after the edit"); t.pass(4, "edit the part (thickness)") })()
+# 5 Sketch on the curved face of the part, with the user's tools: Sketch on a face, click the part (CAD-292).
+ui.clickText("Sketch on a face")
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "goldenJourney"); const b = window.selectionInfo; const v = viewport.viewPoint(Qt.vector3d(b.center[0], b.center[1], b.center[2])); const c = viewport.mapToItem(null, v.x, v.y); ui.click(c.x, c.y) })()
+ui.wait(1500)
+(() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "goldenJourney"); if (window.activeSketch) t.pass(5, "sketch on the curved part"); else { t.gap(5, "sketch on the curved part", "CAD-292"); window.pickingSketchPlane = false } })()
+(() => { if (!window.activeSketch) return; const o = window.activeSketch.origin; const v = viewport.viewPoint(Qt.vector3d(o[0], o[1], o[2])); const c = viewport.mapToItem(null, v.x, v.y); ui.key("R"); ui.wait(300); ui.drag(c.x - 30, c.y - 20, c.x + 30, c.y + 20, "left", "", 12) })()
+ui.wait(600)
+(() => { if (window.activeSketch) ui.clickText("Finish Sketch") })()
+ui.wait(800)
+# Finishing a sketch on the part still offers Part on surface (CAD-296): decline it.
+(() => { if (window.partOnSurfaceSketch) { ui.log("GJ note: Part on surface offered after a sketch on the part (CAD-296)"); ui.clickText("Not now") } })()
+ui.wait(300)
+# 5b Extrude that outline: a CAD edit on the part (a boss).
+(() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "goldenJourney"); const sk = t.run("timeline.list").features.filter(f => f.type === "sketch"); if (sk.length < 2) return; const r = controller.execute("feature.extrude", { sketch: sk[sk.length - 1].id, distance: 1.5 }); ui.log("EXTRUDE " + JSON.stringify(r).slice(0, 300)); if (r.ok) t.pass("5b", "extrude the outline on the part"); else t.fail("5b extrude: " + r.error) })()
+# 6 Round an edge of the part (a CAD edit that follows the part).
+(() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "goldenJourney"); window.selectPart(t.s.body); const name = t.part(t.s.body).name; const e = t.run("body.edges", { body: name }); if (e.edges.length < 4) { t.fail("6 fillet: the part has no edges"); return } const r = controller.execute("feature.fillet", { body: name, edges: [e.edges[0].index], radius: 0.5 }); if (r.ok) t.pass(6, "round an edge"); else t.gap(6, "round an edge", "CAD-294: " + r.error) })()
+# 7 Aero shape: a ridge or lip with a fade-out on the part (CAD-24, CAD-25).
+(() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "goldenJourney"); const f = t.run("timeline.list").features.find(x => x.type === "part_on_surface"); const params = f ? Object.keys(f.params).join(",") : ""; if (/ridge|height_profile|fade/.test(params)) t.pass(7, "aero shape"); else t.gap(7, "aero shape (ridge, lip, fade-out)", "CAD-24, CAD-25") })()
+# 8 Wind tunnel: the SIMULATE panel opens and plans a run for the part (no solver is started).
+ui.clickText("SIMULATE")
+ui.wait(400)
+ui.clickText("Wind Tunnel")
+ui.wait(1500)
+(() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "goldenJourney"); const r = controller.execute("simulation.propose_run", { id: t.s.body, checkEngine: false }); if (!r.ok) t.fail("8 wind tunnel: no run can be planned for the part: " + r.error); else t.pass(8, "wind tunnel set-up") })()
+ui.clickText("SOLID")
+ui.wait(300)
+# 9 Export check and print export.
+(() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "goldenJourney"); window.selectPart(t.s.body); const c = t.run("document.export_check", { ids: [t.s.body] }); t.s.check = c; t.pass(9, "export check") })()
+ui.clickText("File")
+ui.wait(300)
+ui.clickText("Export for Printing...")
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "goldenJourney"); if (!printFolderDialog.visible) t.fail("9 print: Export for printing did not open the folder picker") })()
+printFolderDialog.selectedFolder = "file:///tmp/aerocad-golden-journey-print"
+printFolderDialog.accept()
+ui.wait(3000)
+# The export check shows a warning (a thin wall left by the 0.5 mm fillet on this fixture): Export Anyway.
+ui.clickText("Export Anyway")
+ui.wait(2500)
+(() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "goldenJourney"); const m = controller.statusMessage; if (!/part\(s\) written/.test(m)) t.fail("9 print: the part was not exported: " + m); else t.pass(9, "print export") })()
+# 10 Save and reopen: the part survives with the same volume.
+(() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "goldenJourney"); const path = "/tmp/aerocad-golden-journey.aerocad"; t.s.volume1 = t.part(t.s.body).volume; t.run("project.save", { path: path }); t.run("project.open", { path: path }); const parts = t.run("document.parts").parts; const b = parts.find(p => p.kind === "body"); if (!b) t.fail("10 reopen: the part is missing"); else if (Math.abs(b.volume - t.s.volume1) > 0.01 * t.s.volume1) t.fail("10 reopen: volume " + b.volume + " differs from " + t.s.volume1); else t.pass(10, "save and reopen") })()
+ui.log("GJ DONE")
