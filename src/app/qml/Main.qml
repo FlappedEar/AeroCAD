@@ -2883,7 +2883,9 @@ ApplicationWindow {
                     // The part just made on the scan: one click starts a sketch on it.
                     Button {
                         readonly property var info: window.pickingSketchPlane ? window.selectedInfo() : ({})
-                        visible: info.kind === "body" && contextActions.madeOnSurface(info)
+                        objectName: "sketchOnPartButton"
+                        // Not for a fin: its plane stands across the surface (click the surface).
+                        visible: info.kind === "body" && contextActions.madeOnSurface(info) && !sketchAcross.checked
                         highlighted: true
                         text: qsTr("On %1").arg(info.name ?? "")
                         onClicked: if (window.createSketch({ surface: { part: window.selectedPartId, facing: viewport.viewerDirection() } }))
