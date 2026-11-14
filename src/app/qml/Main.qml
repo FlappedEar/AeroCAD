@@ -749,7 +749,8 @@ ApplicationWindow {
         if (!activeSketch)
             return
         const n = activeSketch.normal
-        viewport.setViewDirection(Qt.vector3d(n[0], n[1], n[2]))
+        const x = activeSketch.xDir
+        viewport.setViewDirection(Qt.vector3d(n[0], n[1], n[2]), Qt.vector3d(x[0], x[1], x[2]))
         const at = point || activeSketch.onPoint
         if (at && controller.sceneRadius > 0)
             viewport.frameAround(at, controller.sceneRadius * 0.35)

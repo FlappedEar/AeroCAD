@@ -332,7 +332,7 @@ See [cad.md](cad.md) for the timeline and the commands behind the tools.
   In a sketch the right button works as in the
   rest of the view: right drag orbits (also while a line is being drawn) and a right click
   opens the sketch menu: **End Curve** (while drawing), the drawing tools, **Look At** (turn
-  the view to face the sketch), Fit All, Undo and **Finish Sketch**.
+  the view to face the sketch; from above or below it also turns it so the sketch's X axis runs left to right), Fit All, Undo and **Finish Sketch**.
 - **Constraints and dimensions** (in a sketch): **Sketch Dimension (D)**, click a line
   (length), a circle (diameter), an arc (radius), two points (distance), a point and a line
   (distance) or two lines (angle), type the value or an expression and press Enter. The

@@ -34,10 +34,19 @@ ui.wait(5000)
 # 4 Edit the part (Edit step): change the thickness; the part follows.
 ui.clickText("Edit step")
 ui.wait(500)
-(() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "goldenJourney"); if (!featureDialog.visible) { t.fail("4 edit: Edit step did not open the editor"); return } t.setField("thickness", 4); featureDialog.setValue("shaping", true); featureDialog.setValue("ridge_height", 3); featureDialog.setValue("fade_out", 8) })()
+(() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "goldenJourney"); if (!featureDialog.visible) { t.fail("4 edit: Edit step did not open the editor"); return } t.setField("thickness", 4) })()
 ui.clickText("OK")
 ui.wait(3000)
 (() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "goldenJourney"); const f = t.run("timeline.list").features.find(x => x.type === "part_on_surface"); if (!f || f.params.thickness !== 4) t.fail("4 edit: the thickness was not changed"); t.s.bodyId = t.s.body; const p = t.part(t.s.body); if (!p) t.fail("4 edit: the part is gone after the edit"); t.pass(4, "edit the part (thickness)") })()
+# 4b Aero shape (CAD-24, CAD-25): Edit step again, Shape the top: a ridge 2 mm high that fades out over 10 mm. The part gets taller.
+(() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "goldenJourney"); t.s.top4 = t.part(t.s.body).bounds.max[2] })()
+ui.clickText("Edit step")
+ui.wait(500)
+(() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "goldenJourney"); if (!featureDialog.visible) { t.fail("4b aero: Edit step did not open the editor"); return } featureDialog.setValue("shaping", true); featureDialog.setValue("ridge_height", 2); featureDialog.setValue("fade_out", 10) })()
+ui.wait(500)
+ui.clickText("OK")
+ui.wait(3000)
+(() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "goldenJourney"); const f = t.run("timeline.list").features.find(x => x.type === "part_on_surface"); if (!f || f.status !== "ok" || f.params.ridge_height !== 2 || f.params.fade_out !== 10) { t.fail("4b aero: the ridge was not applied: " + JSON.stringify(f)); return } if (!(t.part(t.s.body).bounds.max[2] > t.s.top4 + 0.5)) t.fail("4b aero: the ridge did not raise the part") })()
 # 5 Sketch on the curved face of the part, with the user's tools: Sketch on a face, click the part (CAD-292).
 ui.clickText("Sketch on a face")
 ui.wait(500)
@@ -55,7 +64,7 @@ ui.wait(300)
 (() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "goldenJourney"); const sk = t.run("timeline.list").features.filter(f => f.type === "sketch"); if (sk.length < 2) return; const r = controller.execute("feature.extrude", { sketch: sk[sk.length - 1].id, distance: 1.5 }); ui.log("EXTRUDE " + JSON.stringify(r).slice(0, 300)); if (r.ok) t.pass("5b", "extrude the outline on the part"); else t.fail("5b extrude: " + r.error) })()
 # 6 Round an edge of the part (a CAD edit that follows the part).
 (() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "goldenJourney"); window.selectPart(t.s.body); const name = t.part(t.s.body).name; const e = t.run("body.edges", { body: name }); if (e.edges.length < 4) { t.fail("6 fillet: the part has no edges"); return } const r = controller.execute("feature.fillet", { body: name, edges: [e.edges[0].index], radius: 0.5 }); if (r.ok) t.pass(6, "round an edge"); else t.gap(6, "round an edge", "CAD-294: " + r.error) })()
-# 7 Aero shape: the part got a ridge with a fade-out in the edit of step 4 (CAD-24); its handles are tested in part_ridge_handles.ui (CAD-25).
+# 7 Aero shape: the part got a ridge with a fade-out in step 4b (CAD-24); its handles are tested in part_ridge_handles.ui (CAD-25).
 (() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "goldenJourney"); const f = t.run("timeline.list").features.find(x => x.type === "part_on_surface"); if (!f || !(f.params.ridge_height > 0) || !(f.params.fade_out > 0)) t.fail("7 aero shape: the part has no ridge with a fade-out: " + (f ? JSON.stringify(f.params) : "no step")); else if (!f.report || !f.report.shaping || !(f.report.shaping.peak > 0)) t.fail("7 aero shape: no shaping report"); else t.pass(7, "aero shape (ridge, lip, fade-out)") })()
 # 8 Wind tunnel: the SIMULATE panel opens and plans a run for the part (no solver is started).
 ui.clickText("SIMULATE")

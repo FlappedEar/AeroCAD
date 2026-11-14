@@ -24,7 +24,9 @@ Each step prints `GJ <n> <name>: PASS`, `FAIL <why>` or `GAP <issue>`. FAIL fail
 GAP is a step the product cannot do yet; the issue says which work closes it. When that work
 merges, change the step in the script from a gap to a hard check (all steps are hard checks now).
 
-No step is a gap now; a step the product cannot do again prints GAP and the issue to close.
+| Step | State | Issue |
+|---|---|---|
+| 7 aero shape (ridge, lip, fade-out) | PASS | CAD-24, CAD-25 (Edit step > Shape the top: ridge and fade-out, step 4b in the script) |
 
 Known defect the script works around (drop the workaround when fixed): finishing a sketch drawn on
 the part offers Part on surface again (CAD-296).
