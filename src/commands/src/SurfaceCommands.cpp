@@ -911,7 +911,11 @@ cad::FeatureEvaluator::Output finOnSurface(const model::Document& doc, const cad
             };
             geometry::Shape solid;
             try {
-                if (source->shape && !source->shape->isNull()) {
+                if (source->shape && !source->shape->isNull() && source->shape->solidCount() > 0 && scanPart == source &&
+                    source->mesh && source->mesh->triangleCount() > 0) {
+                    // A solid (the part made on a scan): the fin stands on its visible skin.
+                    solid = finOn(fitUnder(*source, fillet));
+                } else if (source->shape && !source->shape->isNull()) {
                     try {
                         solid = finOn(*source->shape);
                     } catch (const geometry::OffsetError&) {

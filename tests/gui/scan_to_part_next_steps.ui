@@ -47,13 +47,29 @@ ui.clickText("Finish Sketch")
 ui.wait(800)
 # A sketch drawn on the part is for Extrude: no Part on surface offer (CAD-296), the sketch's
 # guide leads with Extrude and keeps the wrap as the other way.
-(() => { if (window.partOnSurfaceSketch) ui.fail("Part on surface is offered after a sketch on the part"); const sk = controller.execute("document.parts").result.parts.filter(p => p.kind === "sketch").pop(); const g = contextActions.guide(controller.partInfo(sk.id)); const next = contextActions.nextAction(controller.partInfo(sk.id)); ui.log("SKETCH GUIDE " + JSON.stringify(g.sections[0].steps.map(t => t.title)) + " next " + (next ? next.id : "none")); if (!next || next.id !== "extrude") ui.fail("the sketch on the part does not lead with Extrude: " + (next ? next.id : "none")); if (!g.sections[0].steps.some(t => t.actions.some(a => a.id === "partOnSurface"))) ui.fail("the wrap is not offered as the other way") })()
+(() => { if (window.partOnSurfaceSketch) ui.fail("Part on surface is offered after a sketch on the part"); const sk = controller.execute("document.parts").result.parts.filter(p => p.kind === "sketch").pop(); const g = contextActions.guide(controller.partInfo(sk.id)); const next = contextActions.nextAction(controller.partInfo(sk.id)); ui.log("SKETCH GUIDE " + JSON.stringify(g.sections[0].steps.map(t => t.title)) + " next " + (next ? next.id : "none")); if (!next || next.id !== "extrude") ui.fail("the sketch on the part does not lead with Extrude: " + (next ? next.id : "none")); if (!g.sections[0].steps.some(t => t.actions.some(a => a.id === "partOnSurface"))) ui.fail("the wrap is not offered as the other way"); if (!g.sections[0].steps.some(t => t.actions.some(a => a.id === "partOnSurface" && a.text === "Extrude along surface"))) ui.fail("the wrap is not named Extrude along surface") })()
 # The outline drawn on the part wraps onto its curved face (CAD-293): a new part that hugs the
 # visible skin, outside it (to add an emboss or a rib).
 (() => { const parts0 = controller.execute("document.parts").result.parts; const base = parts0.find(p => p.kind === "body"); const sk = controller.execute("timeline.list").result.features.filter(f => f.type === "sketch").pop(); const r = controller.execute("surface.part_from_sketch", { sketch: sk.id, thickness: 2, side: "outside" }); if (!r.ok) { ui.fail("the outline on the part did not wrap onto it: " + r.error); return } const b = r.result.bounds, bb = base.bounds; ui.log("WRAP " + JSON.stringify([b.min[2], b.max[2], bb.max[2]])); if (!(r.result.volume > 1) || !(b.max[2] > bb.max[2] - 1e-6)) ui.fail("the wrapped part is not on top of the part: " + JSON.stringify([b, bb])) })()
 ui.log("create sketch on part done")
+# A fin stands across the part's surface (CAD-298): Fin across the surface, click the part, draw
+# the side view, Finish Sketch offers Fin on surface, and the fin is made on the part.
+(() => { window.startCreateSketch(); const find = (it) => { if (it.objectName === "sketchAcross") return it; for (const c of Array.from(it.children ?? [])) { const r = find(c); if (r) return r } return null }; find(window.contentItem).checked = true })()
+ui.wait(300)
+(() => { const b = controller.execute("document.parts").result.parts.find(p => p.kind === "body" && p.name === "Sketch1 part"); const top = Qt.vector3d((b.bounds.min[0] + b.bounds.max[0]) / 2, (b.bounds.min[1] + b.bounds.max[1]) / 2, b.bounds.max[2]); const v = viewport.viewPoint(top); const c = viewport.mapToItem(null, v.x, v.y); ui.click(c.x, c.y) })()
+ui.wait(1200)
+(() => { if (!window.activeSketch || !window.activeSketch.across) ui.fail("no fin sketch on the part: " + JSON.stringify(window.activeSketch)) })()
+ui.key("R")
+ui.wait(300)
+(() => { const o = window.activeSketch.origin, v = viewport.viewPoint(Qt.vector3d(o[0], o[1], o[2])); const c = viewport.mapToItem(null, v.x, v.y); ui.drag(c.x - 20, c.y - 40, c.x + 20, c.y + 5, "left", "", 12) })()
+ui.wait(600)
+ui.clickText("Finish Sketch")
+ui.wait(800)
+(() => { if (!window.partOnSurfaceSketch || !window.partOnSurfaceSketch.across) ui.fail("Fin on surface is not offered after the fin sketch on the part") })()
+(() => { const sk = controller.execute("timeline.list").result.features.filter(f => f.type === "sketch").pop(); const f = controller.execute("surface.fin_from_sketch", { sketch: sk.id, thickness: 1.5 }); if (!f.ok) { ui.fail("no fin on the part: " + f.error); return } ui.log("FIN ON PART " + f.result.volume) })()
+ui.wait(500)
 # The wrapped part overlaps the part (the export check would ask): hide it, print the part.
-(() => { const w = controller.execute("document.parts").result.parts.find(p => p.name === "Sketch2 part"); if (!w) { ui.fail("the wrapped part is not in the document"); return } controller.execute("part.set_visible", { id: w.id, visible: false }) })()
+(() => { for (const p of controller.execute("document.parts").result.parts) if (p.kind === "body" && p.name !== "Sketch1 part") controller.execute("part.set_visible", { id: p.id, visible: false }) })()
 ui.wait(300)
 # The guide's button opens the print folder picker; accept it with a folder (/tmp: Linux and macOS CI).
 ui.clickText("Export for printing…")
