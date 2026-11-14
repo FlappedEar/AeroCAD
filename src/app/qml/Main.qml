@@ -2888,8 +2888,11 @@ ApplicationWindow {
                         visible: info.kind === "body" && contextActions.madeOnSurface(info) && !sketchAcross.checked
                         highlighted: true
                         text: qsTr("On %1").arg(info.name ?? "")
-                        onClicked: if (window.createSketch({ surface: { part: window.selectedPartId, facing: viewport.viewerDirection() } }))
-                            window.controller.showStatus(qsTr("Sketch on %1 (its best-fit plane). Draw the outline, then Extrude it to add material or cut.").arg(info.name))
+                        onClicked: {
+                            const name = info.name // the pane (and so `info`) closes with the sketch
+                            if (window.createSketch({ surface: { part: window.selectedPartId, facing: viewport.viewerDirection() } }))
+                                window.controller.showStatus(qsTr("Sketch on %1 (its best-fit plane). Draw the outline, then Extrude it to add material or cut.").arg(name))
+                        }
                     }
                     Button {
                         readonly property var info: window.pickingSketchPlane ? window.selectedInfo() : ({})
