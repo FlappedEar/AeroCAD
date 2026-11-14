@@ -23,7 +23,7 @@ Pane {
     property var timeline: ({ features: [], bodies: [] })
 
     signal finished()
-    /// A new feature (not an edit) made or changed a body: the part id of the last one, so the app can select it (Fusion).
+    /// A new feature (not an edit) made a new body: the part id of the newest one, so the app can select it (Fusion).
     signal bodyMade(int partId)
 
     /// Picked edge / face points ([[x, y, z], ...]) to mark in the viewport.
@@ -1148,13 +1148,15 @@ Pane {
     function apply() {
         previewTimer.stop()
         undoPreview()
+        // Bodies that exist before this step, to tell the one it makes from the others.
+        const before = new Set(((controller.execute("timeline.list").result || {}).bodies || []).map(b => b.id))
         const r = submit()
         if (r.ok) {
             const steps = ownedSteps.filter(id => controller.historyApplied(id))
             if (steps.length > 0)
                 controller.mergeHistoryIds(steps.concat([controller.historyTopId()]), spec.title)
             ownedSteps = []
-            const made = ((r.result || {}).bodies || []).filter(b => b.partId > 0)
+            const made = ((r.result || {}).bodies || []).filter(b => b.partId > 0 && !before.has(b.id))
             const madePart = made.length > 0 && editId === 0 ? made[made.length - 1].partId : 0
             // A kept approximation (fit tolerance missed) or another caveat must not pass silently.
             const res = r.result || {}
