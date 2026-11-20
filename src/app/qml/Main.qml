@@ -777,6 +777,14 @@ ApplicationWindow {
                     && (r.result.onSurface.across || controller.partInfo(r.result.onSurface.part).kind !== "body"))
                 partOnSurfaceSketch = { id: activeSketch.id, part: r.result.onSurface.part,
                                         across: !!r.result.onSurface.across }
+            // A closed outline drawn on the part: select it, so its guide leads on to Extrude (the
+            // part stays the one being designed on; Next on the part would only offer another sketch).
+            else if (r.ok && r.result.onSurface && !r.result.onSurface.across && r.result.profiles.length > 0) {
+                const parts = controller.execute("document.parts")
+                const sk = parts.ok ? parts.result.parts.find(p => p.kind === "sketch" && p.featureId === activeSketch.id) : null
+                if (sk)
+                    selectPart(sk.id)
+            }
         }
         activeSketch = null
         sketchTool = ""
@@ -2753,6 +2761,7 @@ ApplicationWindow {
 
             FeatureDialog {
                 id: featureDialog
+                onBodyMade: partId => window.selectPart(partId)
                 anchors.left: parent.left
                 anchors.top: parent.top
                 anchors.margins: 8

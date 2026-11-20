@@ -1,0 +1,14 @@
+# CAD-301: a body made from a feature dialog is selected (Fusion), and changing an older body
+# does not select an unrelated one. Run: AeroCAD --ui-script <this file>
+Qt.createQmlObject('import QtQuick; Item { objectName: "fsTest"; visible: false; property var a: null }', window.contentItem)
+ui.wait(800)
+(() => { for (const x of [0, 30]) { const sk = controller.execute("sketch.create", { plane: "XY", curves: [{ type: "center_rectangle", center: [x, 0], width: 10, height: 10 }] }); if (!sk.ok) ui.fail("sketch: " + sk.error); const r = controller.execute("feature.extrude", { sketch: sk.result.id, distance: 5 }); if (!r.ok) ui.fail("extrude: " + r.error) } })()
+ui.wait(500)
+(() => { const bodies = controller.execute("document.parts").result.parts.filter(p => p.kind === "body"); if (bodies.length !== 2) { ui.fail("expected two bodies, got " + bodies.length); return } window.selectPart(bodies[0].id); Array.from(window.contentItem.children).find(x => x.objectName === "fsTest").a = bodies[0] })()
+ui.wait(300)
+(() => { const a = Array.from(window.contentItem.children).find(x => x.objectName === "fsTest").a; featureDialog.open("fillet", { body: a.featureId, edges: [{ point: [5, 5, 2.5] }], radius: 1 }, 0); featureDialog.apply(); if (featureDialog.error) ui.fail("fillet refused: " + featureDialog.error) })()
+ui.wait(800)
+(() => { if (window.selectionInfo.id !== Array.from(window.contentItem.children).find(x => x.objectName === "fsTest").a.id) ui.fail("a fillet on the older body selected another one (" + window.selectionInfo.name + ")") })()
+(() => { const sk = controller.execute("sketch.create", { plane: "XY", curves: [{ type: "center_rectangle", center: [60, 0], width: 10, height: 10 }] }); if (!sk.ok) ui.fail("sketch: " + sk.error); featureDialog.open("extrude", { sketch: sk.result.id, distance: 5 }, 0); featureDialog.apply(); if (featureDialog.error) ui.fail("extrude refused: " + featureDialog.error) })()
+ui.wait(800)
+(() => { const bodies = controller.execute("document.parts").result.parts.filter(p => p.kind === "body"); const newest = bodies[bodies.length - 1]; if (bodies.length !== 3) ui.fail("expected three bodies, got " + bodies.length); if (window.selectionInfo.id !== newest.id) ui.fail("the new body was not selected (" + window.selectionInfo.name + ")") })()

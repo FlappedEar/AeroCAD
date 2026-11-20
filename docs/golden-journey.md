@@ -28,9 +28,6 @@ merges, change the step in the script from a gap to a hard check (all steps are 
 |---|---|---|
 | 7 aero shape (ridge, lip, fade-out) | PASS | CAD-24, CAD-25 (Edit step > Shape the top: ridge and fade-out, step 4b in the script) |
 
-Known defect the script works around (drop the workaround when fixed): finishing a sketch drawn on
-the part offers Part on surface again (CAD-296).
-
 Run it on a real bumper scan before a release: `python3 -I <gen_bumper.py> bumper.stl 2.5` makes a
 295k-triangle one (see the project files), then `scripts/golden-journey.sh build/release bumper.stl`.
 The usability gate CAD-37 (a person does the whole journey unaided in 15 minutes) is measured by
