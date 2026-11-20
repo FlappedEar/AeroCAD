@@ -1432,6 +1432,39 @@ TEST_CASE("Part on surface: a ridge with fade-out and a taper shape the top of t
               insideFlat.data.at("bounds").at("max").at(2).get<double>() == Approx(6.0).margin(0.6));
     CHECK(inside.data.at("volume").get<double>() == Approx(v0 + 6.0 * 12.0 * 0.5 * 30.0).epsilon(0.06));
 
+    // The ridge follows the outline: on a trapezoid 12 mm wide at one end and 4 mm at the other, it is centred
+    // on and as wide as the part where it stands (the cross section averages half the height).
+    auto trapezoid = session.execute(
+        "sketch.create",
+        {{"surface", {{"part", scanId}, {"point", {30, 15, 0}}}},
+         {"curves", Json::array({{{"type", "line"}, {"start", {-15, -6}}, {"end", {15, -2}}},
+                                 {{"type", "line"}, {"start", {15, -2}}, {"end", {15, 2}}},
+                                 {{"type", "line"}, {"start", {15, 2}}, {"end", {-15, 6}}},
+                                 {{"type", "line"}, {"start", {-15, 6}}, {"end", {-15, -6}}}})}});
+    REQUIRE(trapezoid.ok);
+    auto makeTrap = [&](Json extra) {
+        Json p = {{"sketch", trapezoid.data.at("id")}, {"thickness", 2.0}, {"side", "outside"}};
+        for (const auto& [k, val] : extra.items())
+            p[k] = val;
+        auto r = session.execute("surface.part_from_sketch", p);
+        INFO(r.toJson().dump());
+        REQUIRE(r.ok);
+        return r;
+    };
+    const double trap0 = makeTrap(Json::object()).data.at("volume").get<double>();
+    const auto trapRidge = makeTrap({{"ridge_height", 6.0}});
+    // 6 * 0.5 * (area of the trapezoid, 8 x 30 = 240), where the rectangle's reading would give more.
+    CHECK(trapRidge.data.at("volume").get<double>() - trap0 == Approx(6.0 * 0.5 * 240.0).epsilon(0.06));
+    // Fade-out measured from where the outline ends: 10 mm of the 30 mm part, half the height on average.
+    const auto trapFade = makeTrap({{"ridge_height", 6.0}, {"fade_out", 10.0}});
+    double fadedArea = 0.0; // the width of the outline times the fade-out, along the 30 mm
+    for (int k = 0; k < 3000; ++k) {
+        const double x = 30.0 * (k + 0.5) / 3000.0, q = std::clamp((30.0 - x) / 10.0, 0.0, 1.0);
+        fadedArea += (12.0 - 8.0 * x / 30.0) * q * q * q * (q * (6.0 * q - 15.0) + 10.0) * 30.0 / 3000.0;
+    }
+    CHECK(trapFade.data.at("volume").get<double>() - trap0 == Approx(6.0 * 0.5 * fadedArea).epsilon(0.06));
+    CHECK(trapRidge.data.at("shaping").contains("arrows"));
+
     // Refused: a ridge that cuts the part through, values out of range, a fade longer than the part.
     CHECK_FALSE(make({{"ridge_height", -2.0}}).ok);
     CHECK_FALSE(make({{"ridge_height", 3.0}, {"ridge_position", 1.5}}).ok);

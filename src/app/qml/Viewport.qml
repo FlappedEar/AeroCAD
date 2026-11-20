@@ -1865,27 +1865,29 @@ Item {
         return (k * w.dotProduct(r) - w.dotProduct(dir)) / den
     }
 
-    Item {
-        id: distanceHandle
-        objectName: "distanceArrow"
-        anchors.fill: parent
-        readonly property var arrow: root.distanceArrow
+    /// One drag arrow: from `arrow.base` along `arrow.direction`, `arrow.distance` long, with a grip on its head.
+    component ArrowHandle: Item {
+        id: handle
+        property var viewport
+        property var arrow: null
+        signal dragged(real distance)
+        signal released()
         readonly property var ends: {
-            cameraInput.pitch; cameraInput.yaw; cameraInput.distance; pivot.position; root.width; root.height
-            root.orthographic
+            const v = viewport
+            v.viewKey
             if (!arrow)
                 return null
             const o = Qt.vector3d(arrow.base[0], arrow.base[1], arrow.base[2])
             const n = Qt.vector3d(arrow.direction[0], arrow.direction[1], arrow.direction[2])
             // A zero distance still shows a short arrow to grab.
-            const len = Math.abs(arrow.distance) > 1e-9 ? arrow.distance : root.controller.sceneRadius * 0.1
-            return { o: root.viewPoint(o), tip: root.viewPoint(o.plus(n.times(len))) }
+            const len = Math.abs(arrow.distance) > 1e-9 ? arrow.distance : v.controller.sceneRadius * 0.1
+            return { o: v.viewPoint(o), tip: v.viewPoint(o.plus(n.times(len))) }
         }
         visible: !!ends
 
         Canvas {
             anchors.fill: parent
-            readonly property var ends: distanceHandle.ends
+            readonly property var ends: handle.ends
             onEndsChanged: requestPaint()
             onPaint: {
                 const ctx = getContext("2d")
@@ -1920,59 +1922,89 @@ Item {
                 // The distance next to the head, as Fusion shows it while dragging.
                 ctx.font = "bold 12px sans-serif"
                 ctx.fillStyle = Theme.text
-                ctx.fillText(Preferences.formatLength(distanceHandle.arrow.distance, Preferences.lengthUnit),
+                ctx.fillText((handle.arrow.label ? handle.arrow.label + " " : "")
+                             + Preferences.formatLength(handle.arrow.distance, Preferences.lengthUnit),
                              ends.tip.x + 20, ends.tip.y + 4)
             }
         }
         // Grab area on the arrow head.
         Rectangle {
-            id: distanceGrip
-            objectName: "distanceArrowGrip"
-            visible: !!distanceHandle.ends
-            x: distanceHandle.ends ? distanceHandle.ends.tip.x - width / 2 : 0
-            y: distanceHandle.ends ? distanceHandle.ends.tip.y - height / 2 : 0
+            id: grip
+            objectName: handle.objectName + "Grip"
+            visible: !!handle.ends
+            x: handle.ends ? handle.ends.tip.x - width / 2 : 0
+            y: handle.ends ? handle.ends.tip.y - height / 2 : 0
             width: 30
             height: 30
             radius: 15
-            color: distanceDrag.active || distanceHover.hovered ? Theme.accentSoft : "transparent"
+            color: gripDrag.active || gripHover.hovered ? Theme.accentSoft : "transparent"
             border.color: Theme.accent
             border.width: 1.5
             HoverHandler {
-                id: distanceHover
+                id: gripHover
                 cursorShape: Qt.SizeAllCursor
             }
             DragHandler {
-                id: distanceDrag
+                id: gripDrag
                 target: null
                 /// Where along the arrow the grab started, relative to its tip.
                 property real grabOffset: 0
                 onActiveChanged: {
-                    const a = root.distanceArrow
+                    const a = handle.arrow
                     if (active && a) {
                         // From the press, not from where the drag threshold was passed.
-                        const p = distanceGrip.mapToItem(root, centroid.pressPosition.x, centroid.pressPosition.y)
-                        const t = root.lineParameterAt(p.x, p.y, Qt.vector3d(a.base[0], a.base[1], a.base[2]),
-                                                       Qt.vector3d(a.direction[0], a.direction[1], a.direction[2]))
+                        const p = grip.mapToItem(handle.viewport, centroid.pressPosition.x, centroid.pressPosition.y)
+                        const t = handle.viewport.lineParameterAt(p.x, p.y, Qt.vector3d(a.base[0], a.base[1], a.base[2]),
+                                                                  Qt.vector3d(a.direction[0], a.direction[1], a.direction[2]))
                         grabOffset = isFinite(t) ? t - a.distance : 0
                     } else if (!active) {
-                        root.distanceArrowReleased()
+                        handle.released()
                     }
                 }
                 onCentroidChanged: {
-                    const a = root.distanceArrow
+                    const a = handle.arrow
                     if (!active || !a)
                         return
-                    const p = distanceGrip.mapToItem(root, centroid.position.x, centroid.position.y)
+                    const p = grip.mapToItem(handle.viewport, centroid.position.x, centroid.position.y)
                     const base = Qt.vector3d(a.base[0], a.base[1], a.base[2])
-                    const t = root.lineParameterAt(p.x, p.y, base, Qt.vector3d(a.direction[0], a.direction[1], a.direction[2]))
+                    const t = handle.viewport.lineParameterAt(p.x, p.y, base, Qt.vector3d(a.direction[0], a.direction[1], a.direction[2]))
                     if (!isFinite(t))
                         return
                     // Round to a step that follows the zoom (0.1 mm close up, 1 mm or more far away).
-                    const wpp = root.worldPerPixelAt(base)
+                    const wpp = handle.viewport.worldPerPixelAt(base)
                     const step = wpp < 0.05 ? 0.01 : wpp < 0.5 ? 0.1 : wpp < 5 ? 1 : 10
-                    root.distanceArrowDragged(Math.round((t - grabOffset) / step) * step)
+                    handle.dragged(Math.round((t - grabOffset) / step) * step)
                 }
             }
+        }
+    }
+
+    ArrowHandle {
+        id: distanceHandle
+        objectName: "distanceArrow"
+        anchors.fill: parent
+        viewport: root
+        arrow: root.distanceArrow
+        onDragged: d => root.distanceArrowDragged(d)
+        onReleased: root.distanceArrowReleased()
+    }
+
+    /// More arrows at once (up to four), each {id, base, direction, distance, label}: a ridge's height and its fades.
+    /// Dragging one emits extraArrowDragged(id, distance).
+    property var extraArrows: []
+    signal extraArrowDragged(string id, real distance)
+    // Fixed slots, not a model of the array: the array is rebuilt on every change of a field, and a Repeater
+    // that follows it would destroy the arrow under the mouse in the middle of its drag.
+    Repeater {
+        model: 4
+        delegate: ArrowHandle {
+            required property int index
+            readonly property var slot: index < root.extraArrows.length ? root.extraArrows[index] : null
+            objectName: "arrow_" + (slot ? slot.id : "none" + index)
+            anchors.fill: parent
+            viewport: root
+            arrow: slot
+            onDragged: d => { if (slot) root.extraArrowDragged(slot.id, d) }
         }
     }
 

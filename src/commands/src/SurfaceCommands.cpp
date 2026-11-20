@@ -170,10 +170,111 @@ Json shapeParam(const std::string& description)
     return Json{{"type", Json::array({"number", "string"})}, {"description", description}};
 }
 
-/// The shaping of Part on surface (ridge, fade, taper) from the params, over an outline whose
-/// bounds in sketch coordinates are `box` = {u0, v0, u1, v1}. Empty when no shaping is asked for.
+/// How far the outlines reach in sketch coordinates, line by line: along the part's axis `s` (the one the
+/// ridge runs along) and across it `c`. The ridge and its fades follow these, so an outline that is not a
+/// rectangle (a tapering or rounded one) gets a ridge that stays inside it.
+struct OutlineExtents {
+    static constexpr int kStations = 256;
+    double sLo = 0.0, sHi = 0.0, cLo = 0.0, cHi = 0.0; ///< Bounds of the outlines.
+    std::vector<double> acrossLo, acrossHi; ///< The c range at each s station (from sLo to sHi).
+    std::vector<double> alongLo, alongHi;   ///< The s range at each c station (from cLo to cHi).
+
+    /// Reads the table at `x` in [lo, hi], blending the two stations around it.
+    static double at(const std::vector<double>& table, double x, double lo, double hi)
+    {
+        const double f = std::clamp((x - lo) / std::max(hi - lo, 1e-12), 0.0, 1.0) * kStations;
+        const auto k = std::min(static_cast<std::size_t>(f), static_cast<std::size_t>(kStations - 1));
+        const double t = f - static_cast<double>(k);
+        return table[k] * (1.0 - t) + table[k + 1] * t;
+    }
+    [[nodiscard]] double acrossMin(double s) const { return at(acrossLo, s, sLo, sHi); }
+    [[nodiscard]] double acrossMax(double s) const { return at(acrossHi, s, sLo, sHi); }
+    [[nodiscard]] double alongMin(double c) const { return at(alongLo, c, cLo, cHi); }
+    [[nodiscard]] double alongMax(double c) const { return at(alongHi, c, cLo, cHi); }
+};
+
+OutlineExtents outlineExtents(const geometry::Plane& plane, const std::vector<geometry::Shape>& outlines, bool alongU,
+                              const std::array<double, 4>& box)
+{
+    constexpr int n = OutlineExtents::kStations;
+    OutlineExtents e;
+    e.sLo = alongU ? box[0] : box[1];
+    e.sHi = alongU ? box[2] : box[3];
+    e.cLo = alongU ? box[1] : box[0];
+    e.cHi = alongU ? box[3] : box[2];
+    const double none = std::numeric_limits<double>::quiet_NaN();
+    std::vector<core::TriangleMesh> meshes; // each outline once, for both tables
+    meshes.reserve(outlines.size());
+    for (const auto& o : outlines)
+        meshes.push_back(geometry::tessellate(o));
+    // One axis: for every station x of the table, the range of the other coordinate over the triangles.
+    auto fill = [&](std::vector<double>& lo, std::vector<double>& hi, double x0, double x1, bool xIsS) {
+        lo.assign(n + 1, std::numeric_limits<double>::max());
+        hi.assign(n + 1, std::numeric_limits<double>::lowest());
+        for (const auto& mesh : meshes) {
+            if (x1 - x0 < 1e-9) // a degenerate extent has no stations: the bounding box below
+                break;
+            for (const auto& tri : mesh.triangles()) {
+                std::array<std::array<double, 2>, 3> q{};
+                for (int k = 0; k < 3; ++k) {
+                    const auto uv = plane.toLocal(mesh.vertices()[tri[static_cast<std::size_t>(k)]]);
+                    q[static_cast<std::size_t>(k)] = xIsS == alongU ? std::array<double, 2>{uv.x, uv.y}
+                                                                    : std::array<double, 2>{uv.y, uv.x};
+                }
+                // q[k] = {x, y}: x runs along the table's axis.
+                const double xMin = std::min({q[0][0], q[1][0], q[2][0]}), xMax = std::max({q[0][0], q[1][0], q[2][0]});
+                const int kLo = std::max(0, static_cast<int>(std::ceil((xMin - x0) / (x1 - x0) * n - 1e-9)));
+                const int kHi = std::min(n, static_cast<int>(std::floor((xMax - x0) / (x1 - x0) * n + 1e-9)));
+                for (int k = kLo; k <= kHi; ++k) {
+                    const double x = x0 + (x1 - x0) * k / n;
+                    for (int a = 0; a < 3; ++a) {
+                        const auto& p = q[static_cast<std::size_t>(a)];
+                        const auto& r = q[static_cast<std::size_t>((a + 1) % 3)];
+                        if ((p[0] - x) * (r[0] - x) > 0.0)
+                            continue;
+                        const double y = std::abs(r[0] - p[0]) < 1e-12 ? p[1] : p[1] + (x - p[0]) / (r[0] - p[0]) * (r[1] - p[1]);
+                        lo[static_cast<std::size_t>(k)] = std::min(lo[static_cast<std::size_t>(k)], y);
+                        hi[static_cast<std::size_t>(k)] = std::max(hi[static_cast<std::size_t>(k)], y);
+                        if (std::abs(r[0] - p[0]) < 1e-12) { // an edge along the line: both its ends count
+                            lo[static_cast<std::size_t>(k)] = std::min(lo[static_cast<std::size_t>(k)], r[1]);
+                            hi[static_cast<std::size_t>(k)] = std::max(hi[static_cast<std::size_t>(k)], r[1]);
+                        }
+                    }
+                }
+            }
+        }
+        // Stations no triangle reaches (a gap between profiles, rounding at the very ends) take their neighbour's.
+        for (int k = 0; k <= n; ++k)
+            if (lo[static_cast<std::size_t>(k)] > hi[static_cast<std::size_t>(k)])
+                lo[static_cast<std::size_t>(k)] = hi[static_cast<std::size_t>(k)] = none;
+        auto fillGaps = [&](std::vector<double>& t) {
+            for (int k = 1; k <= n; ++k)
+                if (std::isnan(t[static_cast<std::size_t>(k)]))
+                    t[static_cast<std::size_t>(k)] = t[static_cast<std::size_t>(k - 1)];
+            for (int k = n - 1; k >= 0; --k)
+                if (std::isnan(t[static_cast<std::size_t>(k)]))
+                    t[static_cast<std::size_t>(k)] = t[static_cast<std::size_t>(k + 1)];
+        };
+        fillGaps(lo);
+        fillGaps(hi);
+        if (std::isnan(lo[0])) { // nothing found at all: the bounding box
+            lo.assign(n + 1, xIsS ? e.cLo : e.sLo);
+            hi.assign(n + 1, xIsS ? e.cHi : e.sHi);
+        }
+    };
+    fill(e.acrossLo, e.acrossHi, e.sLo, e.sHi, true);
+    fill(e.alongLo, e.alongHi, e.cLo, e.cHi, false);
+    return e;
+}
+
+/// The shaping of Part on surface (ridge, fade, taper) from the params, over outlines whose bounds in
+/// sketch coordinates are `box` = {u0, v0, u1, v1}. Empty when no shaping is asked for. The ridge follows
+/// the outlines themselves: its position and width are taken across the outline where it stands, and the
+/// fades start where the outline ends. `report` gets a summary and the places of the 3D handles, in sketch
+/// coordinates.
 geometry::DrapeShaping shapingOf(const cad::Design& d, const Json& params, double thickness,
-                                 const std::array<double, 4>& box, Json& report)
+                                 const std::array<double, 4>& box, const geometry::Plane& plane,
+                                 const std::vector<geometry::Shape>& outlines, Json& report)
 {
     geometry::DrapeShaping out;
     auto number = [&](const char* key, double fallback) {
@@ -212,32 +313,36 @@ geometry::DrapeShaping shapingOf(const cad::Design& d, const Json& params, doubl
         throw CommandError("along must be auto, x or y");
     const bool alongU = alongName == "x" || (alongName == "auto" && sizeU >= sizeV);
     const double length = alongU ? sizeU : sizeV, across = alongU ? sizeV : sizeU;
+    const auto ext = std::make_shared<const OutlineExtents>(outlineExtents(plane, outlines, alongU, box));
     if (fadeIn + fadeOut > length + 1e-9)
         throw CommandError("fade_in + fade_out is longer than the part (" + std::to_string(length) + " mm)");
-    const double lo = alongU ? box[0] : box[1], cLo = alongU ? box[1] : box[0];
     // Smooth 0 to 1 (zero slope and curvature at both ends), so a ridge meets the surface without a crease.
     auto smooth = [](double t) {
         t = std::clamp(t, 0.0, 1.0);
         return t * t * t * (t * (6.0 * t - 15.0) + 10.0);
     };
+    // Position along the ridge, and across it, of a sketch point.
     auto ridgeAt = [=](double u, double v) {
-        const double s = (alongU ? u : v) - lo, c = (alongU ? v : u) - cLo;
+        const double s = alongU ? u : v, c = alongU ? v : u;
+        const double lo = ext->acrossMin(s), hi = ext->acrossMax(s);
+        const double span = hi - lo;
         double fade = 1.0;
         if (fadeIn > 0.0)
-            fade *= smooth(s / fadeIn);
+            fade *= smooth((s - ext->alongMin(c)) / fadeIn);
         if (fadeOut > 0.0)
-            fade *= smooth((length - s) / fadeOut);
-        const double centre = position * across;
+            fade *= smooth((ext->alongMax(c) - s) / fadeOut);
+        const double centre = lo + position * span;
         double profile;
         if (width > 0.0) {
             profile = smooth(1.0 - std::abs(c - centre) / (0.5 * width));
         } else if (c <= centre) {
-            profile = centre < 1e-9 ? 1.0 : smooth(c / centre);
+            profile = centre - lo < 1e-9 ? 1.0 : smooth((c - lo) / (centre - lo));
         } else {
-            profile = across - centre < 1e-9 ? 1.0 : smooth((across - c) / (across - centre));
+            profile = hi - centre < 1e-9 ? 1.0 : smooth((hi - c) / (hi - centre));
         }
         return height * fade * profile;
     };
+    const double lo = ext->sLo;
     auto taperAt = [=](double u, double v) {
         const double s = std::clamp(((alongU ? u : v) - lo) / std::max(length, 1e-9), 0.0, 1.0);
         return (thicknessEnd - thickness) * s;
@@ -247,9 +352,18 @@ geometry::DrapeShaping shapingOf(const cad::Design& d, const Json& params, doubl
     if (taper)
         out.thicknessDelta = taperAt;
     // The narrowest slope of the ridge's cross section: its width, or the nearer side of the crest (the
-    // whole width when the crest is at an edge).
-    double nearSide = across;
-    for (const double side : {position * across, (1.0 - position) * across})
+    // whole width when the crest is at an edge); measured where the outline is typically wide (the 10th
+    // percentile of its width along the ridge, so a pointed end does not set it).
+    std::vector<double> spans;
+    for (int k = 0; k <= OutlineExtents::kStations; ++k) {
+        const auto uk = static_cast<std::size_t>(k);
+        if (ext->acrossHi[uk] - ext->acrossLo[uk] > 1e-6)
+            spans.push_back(ext->acrossHi[uk] - ext->acrossLo[uk]);
+    }
+    std::sort(spans.begin(), spans.end());
+    const double typicalAcross = spans.empty() ? across : spans[spans.size() / 10];
+    double nearSide = typicalAcross;
+    for (const double side : {position * typicalAcross, (1.0 - position) * typicalAcross})
         if (side > 1e-9)
             nearSide = std::min(nearSide, side);
     out.featureSize = ridge ? (width > 0.0 ? width : nearSide) : 0.0;
@@ -271,15 +385,31 @@ geometry::DrapeShaping shapingOf(const cad::Design& d, const Json& params, doubl
         for (int i = 0; i <= 80; ++i)
             look(box[0] + sizeU * i / 80.0, box[1] + sizeV * j / 80.0);
     // A narrow ridge falls between the grid's points: also walk along its crest, where it is highest (or deepest).
+    auto crest = [&](double s) { // the sketch point of the crest at along position s
+        const double centre = ext->acrossMin(s) + position * (ext->acrossMax(s) - ext->acrossMin(s));
+        return alongU ? std::array<double, 2>{s, centre} : std::array<double, 2>{centre, s};
+    };
     for (int k = 0; k <= 400; ++k) {
-        const double s = length * k / 400.0, c = position * across;
-        look(alongU ? lo + s : cLo + c, alongU ? cLo + c : lo + s);
+        const auto uv = crest(ext->sLo + length * k / 400.0);
+        look(uv[0], uv[1]);
     }
     if (thinnest < 0.2)
         throw CommandError("The ridge or taper leaves the part " + std::to_string(thinnest) +
                            " mm thick at its thinnest; keep it at least 0.2 mm");
+    // The handles: on the crest line, in the middle of the part and at its two ends.
+    const double midS = 0.5 * (ext->sLo + ext->sHi);
+    const auto mid = crest(midS);
+    const double midC = alongU ? mid[1] : mid[0];
+    auto at = [&](double s) { return alongU ? std::array<double, 2>{s, midC} : std::array<double, 2>{midC, s}; };
     report = {{"along", alongU ? "x" : "y"}, {"length", length}, {"across", across}, {"thinnest", thinnest},
-              {"peak", ridge ? std::abs(height) : 0.0}};
+              {"peak", ridge ? std::abs(height) : 0.0},
+              {"handles", {{"alongU", alongU},
+                           {"height", ridge ? height : 0.0},
+                           {"fadeIn", fadeIn},
+                           {"fadeOut", fadeOut},
+                           {"crest", mid},
+                           {"start", at(ext->alongMin(midC))},
+                           {"end", at(ext->alongMax(midC))}}}};
     return out;
 }
 
@@ -441,7 +571,7 @@ cad::FeatureEvaluator::Output partOnSurface(const model::Document& doc, const ca
         // The part follows the skin seen along the sketch normal.
         const auto [u0, v0, u1, v1] = outlineBounds(sk.plane, outlines);
         const double margin = std::max(10.0, 0.05 * std::max(u1 - u0, v1 - v0));
-        const auto shaping = shapingOf(d, params, thickness, {u0, v0, u1, v1}, shapingReport);
+        const auto shaping = shapingOf(d, params, thickness, {u0, v0, u1, v1}, sk.plane, outlines, shapingReport);
         geometry::DrapeArea drape;
         drape.origin = sk.plane.origin;
         drape.x = sk.plane.xDir;
@@ -475,6 +605,29 @@ cad::FeatureEvaluator::Output partOnSurface(const model::Document& doc, const ca
                          {"withinScanNoise", rep.withinScanNoise},
                          {"withinTolerance", drapeWithin(rep, tolerance)},
                          {"milliseconds", rep.milliseconds}};
+            if (shapingReport.contains("handles")) {
+                // The 3D handles, in world coordinates: on the outer surface of the part, where the crest is and
+                // where the outline ends along it.
+                Json& h = shapingReport["handles"];
+                const double lift = side == geometry::ThickenSide::Outside ? thickness
+                                    : side == geometry::ThickenSide::Both  ? 0.5 * thickness
+                                                                           : 0.0;
+                auto world = [&](const Json& uv) {
+                    const core::Vec3 p = sk.plane.origin + sk.plane.xDir * uv.at(0).get<double>() +
+                                         sk.plane.yDir() * uv.at(1).get<double>();
+                    const auto hit = projector.drop(p);
+                    const core::Vec3 skin = hit ? *hit : p;
+                    const core::Vec3 q = skin + sk.plane.normal * lift;
+                    return Json::array({q.x, q.y, q.z});
+                };
+                const core::Vec3 along = h.at("alongU").get<bool>() ? sk.plane.xDir : sk.plane.yDir();
+                auto dir = [](const core::Vec3& v) { return Json::array({v.x, v.y, v.z}); };
+                shapingReport["arrows"] = {
+                    {"ridge_height", {{"base", world(h.at("crest"))}, {"direction", dir(sk.plane.normal)},
+                                      {"distance", h.at("height")}}},
+                    {"fade_in", {{"base", world(h.at("start"))}, {"direction", dir(along)}, {"distance", h.at("fadeIn")}}},
+                    {"fade_out", {{"base", world(h.at("end"))}, {"direction", dir(along * -1.0)}, {"distance", h.at("fadeOut")}}}};
+            }
             if (!drapeWithin(rep, tolerance))
                 warnings.push_back(toleranceWarning(rep.p99Deviation, rep.maxDeviation, tolerance));
             if (rep.bridgedFraction > 0.05)
