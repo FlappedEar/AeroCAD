@@ -507,6 +507,10 @@ QtObject {
                      primary: false,
                      reason: qsTr("Sketches are not exported."),
                      tip: qsTr("Saves this part as STL or 3MF (3D printing) or STEP (CAD).") }
+        case "windTunnel":
+            return { id: id, text: qsTr("Wind tunnel…"), icon: "wind-tunnel", enabled: role(info) === "solid" || role(info) === "body",
+                     reason: qsTr("Only solids can be tested."),
+                     tip: qsTr("Opens the SIMULATE panel: it sets up an air flow around the visible solids (the part with the scan hidden or as the reference) and shows the forces and the pressure on the surface.") }
         case "exportForPrint":
             // Bodies too: a part or fin made on a scan is a timeline body (CAD-131).
             return { id: id, text: qsTr("Export for printing…"), icon: "export", enabled: role(info) === "solid" || role(info) === "body",
@@ -730,6 +734,7 @@ QtObject {
         // cut, round, drill, combine. The rarer face tools are folded away.
         const design = { title: qsTr("Design on this part"), steps: [], actions: [a("sketchOnFace"), a("pressPull"), a("editStep")] }
         const finish = { title: qsTr("Edges and holes"), steps: [], actions: [a("fillet"), a("chamfer"), a("shell"), a("hole")] }
+        const test = { title: qsTr("Test it"), steps: [], actions: [a("windTunnel")] }
         const more = { title: qsTr("More shape tools"), collapsed: true, steps: [],
                        actions: [a("combine"), a("split"), a("splitFace"), a("replaceFace"), a("align"), a("deleteFaces"), a("draft")] }
         return { title: roleName(r),
@@ -737,7 +742,7 @@ QtObject {
                       : editable ? qsTr("A solid in the design timeline. Add features to it; every step can be edited later in the timeline at the bottom.")
                                  : qsTr("An exact solid from a file or a fit. Make it editable to add fillets, holes and cuts, or export it as it is."),
                  sections: editable
-                     ? [design, finish, more, print,
+                     ? [design, finish, more, test, print,
                         { title: qsTr("More"), steps: [], actions: [a("export"), a("hide"), a("isolate"), a("appearance"), a("rename"), a("delete")] }]
                      : [{ title: qsTr("Use it"), steps: [
                               { title: qsTr("Export for printing or CAD"), done: false,
@@ -745,7 +750,10 @@ QtObject {
                                 actions: [a("exportForPrint"), a("export")] },
                               { title: qsTr("Or keep designing"), done: false,
                                 text: qsTr("Round or bevel its edges right away, or make it editable for holes and cuts; the changes appear in the timeline."),
-                                actions: [a("fillet"), a("chamfer"), a("combine"), a("split"), a("splitFace"), a("replaceFace"), a("align"), a("deleteFaces"), a("draft"), a("solidToBody")] }] },
+                                actions: [a("fillet"), a("chamfer"), a("combine"), a("split"), a("splitFace"), a("replaceFace"), a("align"), a("deleteFaces"), a("draft"), a("solidToBody")] },
+                              { title: qsTr("Or test it"), done: false,
+                                text: qsTr("Sets up an air flow around it and shows the forces and the pressure on its surface."),
+                                actions: [a("windTunnel")] }] },
                         { title: qsTr("More"), steps: [], actions: [...fitted, a("scale"), a("hide"), a("isolate"), a("appearance"), a("rename"), a("delete")] }] }
     }
 
@@ -993,6 +1001,7 @@ QtObject {
         // With several parts selected (Ctrl / Shift + click), Export, Hide and Delete act on all.
         case "export": return host.openExport(host.selectedPartIds.indexOf(pid) >= 0 ? host.selectedPartIds : [pid])
         case "exportForPrint": return host.openPrintExport()
+        case "windTunnel": host.simulationVisible = true; return null
         case "moveRotate": return host.startTransform(pid)
         case "zoomTo": return host.zoomToPart(pid)
         case "hide": return host.selectedPartIds.indexOf(pid) >= 0 ? host.toggleSelectedVisibility()
