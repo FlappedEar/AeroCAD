@@ -948,6 +948,7 @@ QtObject {
             const hostPart = info.kind === "sketch" && sketchOnBody(sketch) ? sketchSurface(sketch) : 0
             const joinIt = hostPart > 0 && (v.side || "outside") === "outside" && v.join !== "new"
             const stepBefore = controller.historyTopId()
+            let joinFailure = ""
             let r = controller.execute("surface.part_from_sketch", { sketch: sketch, thickness: v.thickness, side: v.side || "outside" })
             if (r.ok && joinIt) {
                 const stepLayer = controller.historyTopId()
@@ -958,7 +959,7 @@ QtObject {
                         controller.mergeHistoryIds([stepLayer, controller.historyTopId()], qsTr("Extrude along surface"))
                     r = { ok: true, result: Object.assign({}, r.result, { id: hostPart, name: controller.partInfo(hostPart).name }) }
                 } else {
-                    controller.showStatus(qsTr("The layer could not be joined (%1); it stays a separate body.").arg(joined.error))
+                    joinFailure = qsTr("The layer could not be joined (%1); it stays a separate body.").arg(joined.error)
                 }
             }
             if (r.ok)
@@ -970,10 +971,10 @@ QtObject {
                     if (on.ok && on.result.onSurface)
                         controller.execute("part.set_visible", { id: on.result.onSurface.part, visible: false })
                 }
-                controller.showStatus(joinIt && r.result.id === hostPart
+                controller.showStatus((joinFailure ? joinFailure + " " : "") + (joinIt && r.result.id === hostPart
                                       ? qsTr("The layer is joined to \"%1\". Sketch on a face, or the SOLID tab, to keep designing.").arg(r.result.name)
                                       : qsTr("Part \"%1\" created on the surface. It is now the body you design on: click a face and Sketch on a face, or use the SOLID tab. The scan is hidden so the part shows (eye icon in the Browser brings it back).")
-                                            .arg(r.result.name))
+                                            .arg(r.result.name)))
             }
             const selected = _selectResult(r)
             if (r.ok && r.result.id > 0)
