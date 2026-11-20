@@ -426,7 +426,10 @@ QtObject {
                               _num("thickness", qsTr("Thickness"), 2, "mm"),
                               _choice("side", qsTr("Direction"), [{ value: "outside", label: qsTr("Out of the surface") },
                                                                   { value: "inside", label: qsTr("Into the surface") },
-                                                                  { value: "both", label: qsTr("Both sides, centred") }])] }
+                                                                  { value: "both", label: qsTr("Both sides, centred") }]),
+                              // A layer on the part is part of it (Fusion: extruding from a face joins).
+                              ...(onBody ? [_choice("join", qsTr("Outward layer"), [{ value: "join", label: qsTr("Joins the part") },
+                                                                                    { value: "new", label: qsTr("Separate body") }])] : [])] }
         }
         case "extrude": {
             const ok = info.kind !== "sketch" || sketchHasProfiles(info.featureId)
@@ -941,7 +944,23 @@ QtObject {
         case "offset": return _selectResult(controller.execute("surface.offset", { id: pid, distance: v.distance }))
         case "partOnSurface": {
             const sketch = info.kind === "sketch" ? info.featureId : v.sketch
-            const r = controller.execute("surface.part_from_sketch", { sketch: sketch, thickness: v.thickness, side: v.side || "outside" })
+            // A sketch on the part: the layer is joined to it unless asked for a separate body.
+            const hostPart = info.kind === "sketch" && sketchOnBody(sketch) ? sketchSurface(sketch) : 0
+            const joinIt = hostPart > 0 && (v.side || "outside") === "outside" && v.join !== "new"
+            const stepBefore = controller.historyTopId()
+            let r = controller.execute("surface.part_from_sketch", { sketch: sketch, thickness: v.thickness, side: v.side || "outside" })
+            if (r.ok && joinIt) {
+                const stepLayer = controller.historyTopId()
+                const target = controller.partInfo(hostPart).featureId
+                const joined = controller.execute("feature.combine", { target: target, tools: [r.result.featureId], operation: "join" })
+                if (joined.ok) {
+                    if (stepLayer !== stepBefore)
+                        controller.mergeHistoryIds([stepLayer, controller.historyTopId()], qsTr("Extrude along surface"))
+                    r = { ok: true, result: Object.assign({}, r.result, { id: hostPart, name: controller.partInfo(hostPart).name }) }
+                } else {
+                    controller.showStatus(qsTr("The layer could not be joined (%1); it stays a separate body.").arg(joined.error))
+                }
+            }
             if (r.ok)
                 host.ribbonTab = "solid"
             if (r.ok) {
@@ -951,10 +970,15 @@ QtObject {
                     if (on.ok && on.result.onSurface)
                         controller.execute("part.set_visible", { id: on.result.onSurface.part, visible: false })
                 }
-                controller.showStatus(qsTr("Part \"%1\" created on the surface. It is now the body you design on: click a face and Sketch on a face, or use the SOLID tab. The scan is hidden so the part shows (eye icon in the Browser brings it back).")
-                                      .arg(r.result.name))
+                controller.showStatus(joinIt && r.result.id === hostPart
+                                      ? qsTr("The layer is joined to \"%1\". Sketch on a face, or the SOLID tab, to keep designing.").arg(r.result.name)
+                                      : qsTr("Part \"%1\" created on the surface. It is now the body you design on: click a face and Sketch on a face, or use the SOLID tab. The scan is hidden so the part shows (eye icon in the Browser brings it back).")
+                                            .arg(r.result.name))
             }
-            return _selectResult(r)
+            const selected = _selectResult(r)
+            if (r.ok && r.result.id > 0)
+                host.zoomToPart(r.result.id) // the view followed the sketch: show what was made
+            return selected
         }
         case "finOnSurface": {
             const sketch = info.kind === "sketch" ? info.featureId : v.sketch
