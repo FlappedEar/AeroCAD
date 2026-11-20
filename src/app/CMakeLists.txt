@@ -640,6 +640,11 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/feature_selects_new_body.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_feature_selects_new_body_test PROPERTIES LABELS gui TIMEOUT 60)
+    # CAD-303: Extrude along surface (outward) joins the layer to the part.
+    add_test(NAME app_extrude_along_surface_join_test
+        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/extrude_along_surface_join.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_extrude_along_surface_join_test PROPERTIES LABELS gui TIMEOUT 90)
     # CAD-263: Sketch Text with real clicks.
     add_test(NAME app_sketch_text_test
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/sketch_text.ui
