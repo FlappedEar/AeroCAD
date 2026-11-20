@@ -69,10 +69,12 @@ ui.wait(300)
 # 7 Aero shape: the part got a ridge with a fade-out in step 4b (CAD-24); its handles are tested in part_ridge_handles.ui (CAD-25).
 (() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "goldenJourney"); const f = t.run("timeline.list").features.find(x => x.type === "part_on_surface"); if (!f || !(f.params.ridge_height > 0) || !(f.params.fade_out > 0)) t.fail("7 aero shape: the part has no ridge with a fade-out: " + (f ? JSON.stringify(f.params) : "no step")); else if (!f.report || !f.report.shaping || !(f.report.shaping.peak > 0)) t.fail("7 aero shape: no shaping report"); else t.pass(7, "aero shape (ridge, lip, fade-out)") })()
 # 8 Wind tunnel: the SIMULATE panel opens and plans a run for the part (no solver is started).
-ui.clickText("SIMULATE")
-ui.wait(400)
-ui.clickText("Wind Tunnel")
+# The part's own guide leads to it (a new user finishing the part would not look for a SIMULATE tab).
+(() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "goldenJourney"); window.selectPart(t.s.body); const g = contextActions.guide(window.selectionInfo); const hit = g.sections.some(sec => (sec.actions || []).concat(...(sec.steps || []).map(st => st.actions || [])).some(a => a.id === "windTunnel" && a.enabled)); if (!hit) t.fail("8 wind tunnel: the part's guide does not offer it") })()
+ui.wait(300)
+ui.clickText("Wind tunnel…")
 ui.wait(1500)
+(() => { if (!window.simulationVisible) Array.from(window.contentItem.children).find(x => x.objectName === "goldenJourney").fail("8 wind tunnel: the guide button did not open the panel") })()
 (() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "goldenJourney"); const r = controller.execute("simulation.propose_run", { id: t.s.body, checkEngine: false }); if (!r.ok) t.fail("8 wind tunnel: no run can be planned for the part: " + r.error); else t.pass(8, "wind tunnel set-up") })()
 ui.clickText("SOLID")
 ui.wait(300)
