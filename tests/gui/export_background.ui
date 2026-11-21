@@ -13,11 +13,11 @@ ui.wait(30)
 ui.wait(200)
 (() => { const bg = Array.from(window.contentItem.children).find(x => x.objectName === "bgState"); if (bg.calls.length !== 1) ui.fail("the check reported " + bg.calls.length + " times"); const r = bg.calls[0]; if (!r.ok) ui.fail("the check failed: " + r.error); if (r.result.parts[0].name !== bg.name) ui.fail("the check saw the edit made while it ran: " + r.result.parts[0].name); if (window.scan.busy) ui.fail("still busy"); ui.log("CHECK " + r.result.summary) })()
 # 2 Cancel: the callback gets a cancelled result (the command test checks that nothing is written).
-(() => { const bg = Array.from(window.contentItem.children).find(x => x.objectName === "bgState"); bg.calls = []; const started = window.scan.runInBackground("document.export", { path: "/tmp/aerocad-export-background-cancelled.stl", ids: [bg.id] }, r => { const a = bg.calls.slice(); a.push(r); bg.calls = a }); if (!started) ui.fail("the export did not start"); window.scan.cancel(); window.scan.waitForFit() })()
+(() => { const bg = Array.from(window.contentItem.children).find(x => x.objectName === "bgState"); bg.calls = []; const started = window.scan.runInBackground("document.export", { path: "/tmp/aerocad-export-bg-cancelled-" + Date.now() + ".stl", ids: [bg.id] }, r => { const a = bg.calls.slice(); a.push(r); bg.calls = a }); if (!started) ui.fail("the export did not start"); window.scan.cancel(); window.scan.waitForFit() })()
 ui.wait(200)
 (() => { const bg = Array.from(window.contentItem.children).find(x => x.objectName === "bgState"); if (bg.calls.length !== 1 || !bg.calls[0].cancelled || bg.calls[0].ok) ui.fail("cancel not reported: " + JSON.stringify(bg.calls)); if (controller.statusMessage !== "Cancelled") ui.fail("cancel not shown: " + controller.statusMessage) })()
 # 3 The export dialog's writer: runs in the background, then reports like the direct export.
-(() => { const bg = Array.from(window.contentItem.children).find(x => x.objectName === "bgState"); window.writeExport("file:///tmp/aerocad-export-background.stl", [bg.id], ""); window.scan.waitForFit() })()
+(() => { const bg = Array.from(window.contentItem.children).find(x => x.objectName === "bgState"); window.writeExport("file:///tmp/aerocad-export-bg-" + Date.now() + ".stl", [bg.id], ""); window.scan.waitForFit() })()
 ui.wait(200)
 (() => { const m = controller.statusMessage; ui.log("EXPORT " + m); if (m.indexOf("Exported 1 part") !== 0) ui.fail("export not reported: " + m); if (window.scan.busy) ui.fail("still busy") })()
 # 4 Replacing the project while a check runs: its result is dropped.

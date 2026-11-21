@@ -396,7 +396,8 @@ void ScanController::finishTask()
 
     const commands::WorkOutcome& outcome = *job->outcome;
     QVariantMap result = toVariant(outcome.result.toJson()).toMap();
-    if (outcome.cancelled || job->cancel.load()) {
+    // A click on Cancel after the files started to be replaced does not undo the write.
+    if (outcome.cancelled || (job->cancel.load() && !job->writesFiles)) {
         m_app->showStatus(tr("Cancelled"));
         result = {{QStringLiteral("ok"), false},
                   {QStringLiteral("cancelled"), true},

@@ -2,6 +2,7 @@
 #include "aerocad/commands/Session.hpp"
 #include "aerocad/core/Path.hpp"
 #include "aerocad/geometry/Primitives.hpp"
+#include "aerocad/geometry/Tessellation.hpp"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -658,6 +659,19 @@ TEST_CASE("Export commands run as background work (CAD-30)", "[commands][export]
         const auto plan = s.plan("part.check", {{"id", clean}});
         REQUIRE(std::holds_alternative<commands::CommandResult>(plan));
         CHECK_FALSE(std::get<commands::CommandResult>(plan).ok);
+    }
+
+    SECTION("An exact body weighs more than its view mesh: it is meshed again for the file")
+    {
+        model::Part box;
+        box.name = "Box";
+        box.shape = geometry::makeBox(10, 20, 30);
+        box.mesh = std::make_shared<const core::TriangleMesh>(geometry::tessellate(*box.shape));
+        const std::size_t view = box.mesh->triangleCount();
+        const auto boxId = s.document().addPart(std::move(box));
+        auto plan = s.plan("document.export_check", {{"ids", {boxId}}, {"minWall", 0}});
+        REQUIRE(std::holds_alternative<commands::BackgroundWork>(plan));
+        CHECK(std::get<commands::BackgroundWork>(plan).weight == 20 * view);
     }
 
     SECTION("The planned work gives the result of the command, with progress")

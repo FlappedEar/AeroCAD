@@ -9,7 +9,7 @@ ui.wait(3000)
 (() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "bgLarge"); const p = controller.execute("document.parts").result.parts[0]; if (!p || !(p.triangles > 1000000)) ui.fail("no large scan: " + JSON.stringify(p)); t.ticks = 0; const started = window.scan.runInBackground("document.export_check", { format: "stl", minWall: 0 }, r => { const a = t.calls.slice(); a.push(r); t.calls = a }); if (!started) ui.fail("the check did not start"); if (!window.scan.busy) ui.fail("not busy: the check ran on the UI thread"); if (t.calls.length) ui.fail("the check ended before the UI could run") })()
 ui.wait(400)
 (() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "bgLarge"); ui.log("TICKS " + t.ticks + " busy " + window.scan.busy + " " + window.scan.progressText + " " + Math.round(window.scan.progress * 100)); if (t.ticks < 5) ui.fail("the UI thread was blocked: " + t.ticks + " timer ticks in 400 ms"); if (!window.scan.busy) ui.fail("the check ended within 400 ms; the scan is too small for this test") })()
-ui.shot("/tmp/aerocad-export-background-progress.png")
+ui.shot("/tmp/aerocad-export-bg-progress-" + Date.now() + ".png")
 # Cancel: ends quickly and delivers a cancelled result.
 (() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "bgLarge"); t.cancelAt = Date.now(); window.scan.cancel(); window.scan.waitForFit(); const took = Date.now() - t.cancelAt; ui.log("CANCEL took " + took + " ms"); if (took > 5000) ui.fail("cancel took " + took + " ms") })()
 ui.wait(200)

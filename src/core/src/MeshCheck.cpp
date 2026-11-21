@@ -193,7 +193,9 @@ std::size_t countNonManifoldVertices(const std::vector<TriangleMesh::Triangle>& 
             continue;
         seen.assign(list.size(), 0);
         auto indexOf = [&](std::uint32_t t) {
-            return static_cast<std::size_t>(std::find(list.begin(), list.end(), t) - list.begin());
+            // `list` is in increasing triangle order.
+            const auto at = std::lower_bound(list.begin(), list.end(), t);
+            return at != list.end() && *at == t ? static_cast<std::size_t>(at - list.begin()) : list.size();
         };
         std::size_t fans = 0;
         for (std::size_t start = 0; start < list.size(); ++start) {

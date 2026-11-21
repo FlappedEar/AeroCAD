@@ -34,6 +34,10 @@ namespace aerocad::commands {
 
 namespace {
 
+/// Meshes up to this many triangles are searched for self-intersections (a few seconds per
+/// million triangles); a bigger one is reported as not checked.
+constexpr std::size_t kMaxCrossingTriangles = 2'000'000;
+
 struct FileMeshes {
     std::deque<core::TriangleMesh> meshes;
     /// Triangles that still cut through each other in a mesh made here (CAD-95).
@@ -52,9 +56,13 @@ const core::TriangleMesh* fileMesh(const model::Part& p, FileMeshes& store, cons
         store.meshes.push_back(geometry::tessellate(*p.shape, geometry::printTessellation(*p.shape)));
         return &store.meshes.back();
     }
-    core::IntersectionRepair repaired = core::untangleSelfIntersections(
-        geometry::tessellate(*p.shape, geometry::printTessellation(*p.shape)), geometry::printDeflection(*p.shape), true,
-        job.cancelled);
+    core::TriangleMesh fine = geometry::tessellate(*p.shape, geometry::printTessellation(*p.shape));
+    if (fine.triangleCount() > kMaxCrossingTriangles) { // too big to search: reported as not checked
+        store.meshes.push_back(std::move(fine));
+        return &store.meshes.back();
+    }
+    core::IntersectionRepair repaired =
+        core::untangleSelfIntersections(fine, geometry::printDeflection(*p.shape), true, job.cancelled);
     store.meshes.push_back(std::move(repaired.mesh));
     store.crossings[&store.meshes.back()] = std::move(repaired.remaining);
     return &store.meshes.back();
@@ -82,10 +90,6 @@ struct CrossingVerdict {
     State state = State::NotApplicable;
     core::SelfIntersections found;
 };
-
-/// Meshes up to this many triangles are searched for self-intersections (a few seconds per
-/// million triangles); a bigger one is reported as not checked.
-constexpr std::size_t kMaxCrossingTriangles = 2'000'000;
 
 /// Crossings of `mesh`: from the repair when the mesh was made here, otherwise searched
 /// (closed meshes only), and cached in `store`.
@@ -287,12 +291,17 @@ std::shared_ptr<const std::vector<model::Part>> ownParts(const std::vector<const
     return owned;
 }
 
-/// A rough size of the work on `parts`, triangles (BackgroundWork::weight).
+/// A rough size of the work on `parts`, triangles (BackgroundWork::weight). An exact body is
+/// meshed again for the file about twenty times finer than the view mesh and its crossings are
+/// repaired, so its view triangles count that much more.
 std::size_t workWeight(const std::vector<model::Part>& parts)
 {
+    constexpr std::size_t kExactFactor = 20;
     std::size_t triangles = 0;
-    for (const model::Part& p : parts)
-        triangles += p.mesh ? p.mesh->triangleCount() : 0;
+    for (const model::Part& p : parts) {
+        const std::size_t own = p.mesh ? p.mesh->triangleCount() : 0;
+        triangles += p.shape && !p.shape->isNull() ? own * kExactFactor : own;
+    }
     return triangles;
 }
 
@@ -373,8 +382,9 @@ Json exportCheck(const std::vector<model::Part>& parts, const std::vector<Json>&
                 for (const auto& problem : c.problems())
                     meshProblems.push_back(problem);
             }
+            // A STEP file carries no mesh: nothing to cut through.
             job.progress(at(0.5), "Checking " + p->name + ": self-intersections…");
-            const CrossingVerdict crossing = crossingVerdict(*mesh, c, meshes, job);
+            const CrossingVerdict crossing = step ? CrossingVerdict{} : crossingVerdict(*mesh, c, meshes, job);
             if (crossing.state == CrossingVerdict::State::Done) {
                 r["selfIntersections"] = crossing.found.pairs;
                 if (crossing.found.any())
@@ -384,7 +394,7 @@ Json exportCheck(const std::vector<model::Part>& parts, const std::vector<Json>&
                 warningList.push_back("Self-intersections were not checked: the mesh has " +
                                       std::to_string(mesh->triangleCount()) + " triangles.");
             }
-            if (c.closed() && c.shells > 1)
+            if (!step && c.closed() && c.shells > 1)
                 warningList.push_back(std::to_string(c.shells) +
                                       " separate shells: one part should be one connected body, so export separate "
                                       "bodies as separate parts.");
