@@ -136,7 +136,15 @@ show up as a small share of thin surface.
 `document.export_check {format?, ids?, minWall?, print?}` writes nothing and returns
 `passed`, `canExport`, `summary` and per part `status` (ok / warning / error), `errors`,
 `warnings`, `watertight`, `manifold`, `validBrep`, `volume` and `minWall {thinnest, at,
-thinAreaPercent, limit}`.
+thinAreaPercent, limit}`, and for bodies with exact geometry `selfIntersections` (the number
+of triangle pairs of the export mesh that still cut through each other; a count above 0 is
+an error for printing and a warning otherwise).
+
+The export mesh of an exact body is made with a smallest element of 2.5 times the
+deflection, and the few-micron crossings that facets of faces meeting at a shallow angle
+(a fin's root fillet running out onto a scan surface) can still have are lifted by moving
+vertices by less than the deflection (CAD-95). The crossings are found with exact signs of
+the float coordinates, so the count is what a slicer sees in the file.
 
 Before **Export Anyway** writes, the application runs the check again. If the project,
 variant, document, exported part set, or wall limit changed, the updated report needs a

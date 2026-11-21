@@ -6,6 +6,7 @@
 #include "aerocad/commands/Session.hpp"
 #include "aerocad/core/Align.hpp"
 #include "aerocad/core/MeshCheck.hpp"
+#include "aerocad/core/MeshIntersect.hpp"
 #include "aerocad/core/Path.hpp"
 #include "aerocad/core/Symmetry.hpp"
 
@@ -541,4 +542,45 @@ TEST_CASE("A filleted canard is rebuilt in seconds when the scan under it moves"
         CHECK(body.at("volume").get<double>() > 0.5 * volume);
         CHECK(body.at("volume").get<double>() < 1.5 * volume);
     }
+}
+
+TEST_CASE("Printed fins do not cut through themselves", "[commands][fit][canard][export]")
+{
+    // CAD-95. The fins of a stacked, mirrored pair on a corner of the scan, thickness 4 mm and a
+    // 2 mm root fillet: their facets cut through each other by a few microns where the
+    // fillet runs out tangent onto the skin, unless the mesh is made carefully.
+    BumperScene scene;
+    const Json sk = scene.sketchAt(70.0, 120.0);
+    auto fins = scene.session.execute("surface.fin_from_sketch", {{"sketch", sk.at("id")},
+                                                                  {"thickness", 4.0},
+                                                                  {"rootFillet", 2.0},
+                                                                  {"count", 2},
+                                                                  {"spacing", -55.0},
+                                                                  {"mirror", true}});
+    REQUIRE(fins.ok);
+    const auto dir = std::filesystem::temp_directory_path() / ("aerocad_cross_" + std::to_string(std::random_device{}()));
+    struct Cleanup {
+        std::filesystem::path p;
+        ~Cleanup() { std::filesystem::remove_all(p); }
+    } cleanup{dir};
+    auto out = scene.session.execute("document.export_for_print", {{"folder", core::pathToUtf8(dir)}});
+    INFO(out.toJson().dump());
+    REQUIRE(out.ok);
+    std::size_t stls = 0;
+    for (const auto& f : out.data.at("files")) {
+        if (f.at("format") != "stl")
+            continue;
+        ++stls;
+        // Read the file back: what a slicer sees, not what the exporter meant to write.
+        commands::Session reader;
+        auto back = reader.execute("document.import", {{"path", f.at("path")}});
+        REQUIRE(back.ok);
+        const auto* part = reader.document().part(back.data.at("id").get<model::PartId>());
+        REQUIRE(part != nullptr);
+        const auto crossings = core::findSelfIntersections(*part->mesh);
+        INFO(f.at("path") << ": " << crossings.pairs << " crossing pairs, longest " << crossings.longest << " mm");
+        CHECK_FALSE(crossings.any());
+        CHECK(core::checkMesh(core::weldVertices(*part->mesh)).watertight());
+    }
+    CHECK(stls == 4);
 }

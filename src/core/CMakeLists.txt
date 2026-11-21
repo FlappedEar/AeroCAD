@@ -5,6 +5,7 @@ add_library(aerocad_core STATIC
     src/Measure.cpp
     src/MeshSelection.cpp
     src/MeshCheck.cpp
+    src/MeshIntersect.cpp
     src/MeshQuery.cpp
     src/MeshSection.cpp
     src/Triangulate.cpp

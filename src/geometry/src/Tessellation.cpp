@@ -5,6 +5,7 @@
 
 #include <BRepBuilderAPI_Copy.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
+#include <IMeshTools_Parameters.hxx>
 #include <BRepAdaptor_Curve.hxx>
 #include <BRep_Tool.hxx>
 #include <GCPnts_TangentialDeflection.hxx>
@@ -34,7 +35,14 @@ core::TriangleMesh tessellate(const Shape& shape, const TessellationParams& para
     const TopoDS_Shape s = BRepBuilderAPI_Copy(shape.impl()->shape, Standard_False, Standard_False).Shape();
     const double diag = shape.bounds().diagonal();
     const double linear = std::max(diag * params.relativeLinearDeflection, 1e-4);
-    BRepMesh_IncrementalMesh mesher(s, linear, false, params.angularDeflection, true);
+    IMeshTools_Parameters meshing;
+    meshing.Deflection = linear;
+    meshing.Angle = params.angularDeflection;
+    meshing.Relative = Standard_False;
+    meshing.InParallel = Standard_True;
+    if (params.minElementSize > 0.0)
+        meshing.MinSize = params.minElementSize;
+    BRepMesh_IncrementalMesh mesher(s, meshing);
 
     for (TopExp_Explorer ex(s, TopAbs_FACE); ex.More(); ex.Next()) {
         const TopoDS_Face& face = TopoDS::Face(ex.Current());
@@ -73,6 +81,16 @@ core::TriangleMesh tessellate(const Shape& shape, const TessellationParams& para
         }
     }
     return mesh;
+}
+
+double printDeflection(const Shape& shape)
+{
+    return std::max(shape.bounds().diagonal() * 0.0002, 1e-4);
+}
+
+TessellationParams printTessellation(const Shape& shape)
+{
+    return {0.0002, 0.15, 2.5 * printDeflection(shape)};
 }
 
 std::vector<core::Vec3> edgeSegments(const Shape& shape, const TessellationParams& params)
