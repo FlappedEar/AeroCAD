@@ -1,0 +1,86 @@
+# AeroCAD documentation site (GitHub Pages). Build locally:
+#   pip install -r docs/requirements.txt && mkdocs serve
+site_name: AeroCAD
+site_description: Design aero parts on a 3D scan of a car, test them in a wind tunnel, export them for printing.
+site_url: https://flappedear.github.io/aerocad/
+repo_url: https://github.com/flappedear/aerocad
+repo_name: flappedear/aerocad
+edit_uri: edit/main/docs/
+docs_dir: docs
+exclude_docs: |
+  COLLABORATION.md
+  requirements.txt
+  images/wiki/
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - search.suggest
+    - content.code.copy
+    - content.action.edit
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      toggle: { icon: material/weather-night, name: Dark mode }
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      toggle: { icon: material/weather-sunny, name: Light mode }
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.keys
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - tables
+  - attr_list
+  - toc: { permalink: true }
+# Reference pages are written for developers and link to source files outside docs/.
+validation:
+  links:
+    not_found: info
+    anchors: info
+    unrecognized_links: info
+nav:
+  - Home: index.md
+  - Start here:
+      - Install and run: manual/install.md
+      - The window and navigation: manual/interface.md
+  - Tutorial (golden path):
+      - Overview: manual/golden-path.md
+      - 1. Load the scan: manual/step-1-scan.md
+      - 2. Draw the outline: manual/step-2-outline.md
+      - 3. Create the part: manual/step-3-part.md
+      - 4. Sketch on the curved face: manual/step-4-sketch.md
+      - 5. Shape it (aero): manual/step-5-shape.md
+      - 6. Wind tunnel (CFD): manual/step-6-cfd.md
+      - 7. Export and save: manual/step-7-export.md
+  - Examples:
+      - Front splitter lip on a bumper: manual/example-lip.md
+      - Canards on a bumper corner: manual/example-canards.md
+      - Compare two designs (A/B): manual/example-ab.md
+  - Help:
+      - Troubleshooting: manual/troubleshooting.md
+      - Shortcuts: manual/shortcuts.md
+  - Reference:
+      - Units and editing a fitted surface: user-guide.md
+      - Scans: scans.md
+      - CAD (timeline, sketches, features): cad.md
+      - Wind tunnel (CFD): cfd.md
+      - CFD validation: cfd-validation.md
+      - Inspect: inspect.md
+      - Project file format: project-format.md
+      - AI agent access (MCP): mcp.md
+      - User interface conventions: ui.md
+      - The golden journey test: golden-journey.md
+  - Developers:
+      - Building: building.md
+      - macOS: macos.md
+      - Architecture: architecture.md

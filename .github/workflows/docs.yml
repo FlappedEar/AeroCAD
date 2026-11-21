@@ -1,0 +1,63 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Documentation site on GitHub Pages: https://flappedear.github.io/aerocad/
+# Built with MkDocs Material from docs/ + mkdocs.yml on every push to main that touches them.
+# One-time setup in the repository: Settings > Pages > Build and deployment > Source: GitHub Actions.
+# Pull requests only build the site (a broken page fails the check); they never deploy.
+name: Docs
+
+on:
+  pull_request:
+    paths: ["docs/**", "mkdocs.yml", ".github/workflows/docs.yml"]
+  push:
+    branches: [main]
+    paths: ["docs/**", "mkdocs.yml", ".github/workflows/docs.yml"]
+  workflow_dispatch:
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: docs/requirements.txt
+      - run: pip install -r docs/requirements.txt
+      - name: Build
+        run: mkdocs build --site-dir _site > build.log 2>&1 || { cat build.log; exit 1; }
+      - name: Fail on problems in the user manual
+        # Warnings fail the build. Dead links and images are only info-level for the developer
+        # reference pages (they link to source files outside docs/), but not for the manual.
+        run: |
+          cat build.log
+          if grep -E '^(WARNING|ERROR)' build.log; then exit 1; fi
+          if grep -E "Doc file '(index|manual/[a-z0-9-]+)\.md' contains" build.log; then exit 1; fi
+      - uses: actions/upload-pages-artifact@v4
+        if: github.ref == 'refs/heads/main'
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
