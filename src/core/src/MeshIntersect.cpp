@@ -149,6 +149,21 @@ inline int orient3(const double* a, const double* b, const double* c, const doub
     return sign(total);
 }
 
+/// The sign of orient3() when the floating-point filter decides it, 0 when it does not
+/// (which can also mean the points are coplanar).
+inline int orient3Filtered(const double* a, const double* b, const double* c, const double* d)
+{
+    const double adx = a[0] - d[0], bdx = b[0] - d[0], cdx = c[0] - d[0];
+    const double ady = a[1] - d[1], bdy = b[1] - d[1], cdy = c[1] - d[1];
+    const double adz = a[2] - d[2], bdz = b[2] - d[2], cdz = c[2] - d[2];
+    const double det = adx * (bdy * cdz - bdz * cdy) + ady * (bdz * cdx - bdx * cdz) + adz * (bdx * cdy - bdy * cdx);
+    const double permanent = (std::abs(bdy * cdz) + std::abs(bdz * cdy)) * std::abs(adx) +
+                             (std::abs(bdz * cdx) + std::abs(bdx * cdz)) * std::abs(ady) +
+                             (std::abs(bdx * cdy) + std::abs(bdy * cdx)) * std::abs(adz);
+    const double bound = (7.0 + 56.0 * kEps) * kEps * permanent;
+    return det > bound ? 1 : (-det > bound ? -1 : 0);
+}
+
 /// Sign of (b-a) x (c-a) in the plane.
 inline int orient2(double au, double av, double bu, double bv, double cu, double cv)
 {
@@ -385,6 +400,36 @@ std::optional<Hit> testPair(const Tris& tris, const std::vector<LV>& lv, std::ui
                 sharedB[shared] = b;
                 ++shared;
             }
+    if (shared <= 1) {
+        // Nearly every pair of neighbouring boxes is far apart in one of the planes: say so
+        // with plain doubles before any long double work. (Corners other than the shared one
+        // strictly on one side of the other plane can only touch it at the shared corner.)
+        auto point = [&](std::uint32_t v, double (&out)[3]) {
+            out[0] = static_cast<double>(lv[v].x);
+            out[1] = static_cast<double>(lv[v].y);
+            out[2] = static_cast<double>(lv[v].z);
+        };
+        auto oneSide = [&](const std::array<std::uint32_t, 3>& plane, const std::array<std::uint32_t, 3>& pts,
+                           int skip) {
+            double a[3], b[3], c[3], d[3];
+            point(plane[0], a);
+            point(plane[1], b);
+            point(plane[2], c);
+            int first = 0;
+            for (int k = 0; k < 3; ++k) {
+                if (k == skip)
+                    continue;
+                point(pts[static_cast<std::size_t>(k)], d);
+                const int side = exact::orient3Filtered(a, b, c, d);
+                if (side == 0 || (first != 0 && side != first))
+                    return false;
+                first = side;
+            }
+            return true;
+        };
+        if (oneSide(tb, ta, shared == 1 ? sharedA[0] : -1) || oneSide(ta, tb, shared == 1 ? sharedB[0] : -1))
+            return std::nullopt;
+    }
     if (shared == 3)
         return Hit{A[0], A[0], true};
     if (shared == 2) {

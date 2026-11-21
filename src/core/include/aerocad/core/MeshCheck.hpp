@@ -21,6 +21,10 @@ struct MeshCheck {
     std::size_t boundaryEdges = 0;
     /// Edges shared by more than two triangles.
     std::size_t nonManifoldEdges = 0;
+    /// Vertices where the triangles around them form more than one separate fan: two closed
+    /// bodies touching in a point, or a pinched surface. Every edge can be fine and the mesh
+    /// still is not a manifold solid (slicers and volume meshers reject it).
+    std::size_t nonManifoldVertices = 0;
     /// Edges shared by two triangles that traverse it in the same direction,
     /// i.e. neighbouring triangles with opposite winding.
     std::size_t inconsistentEdges = 0;
@@ -39,12 +43,12 @@ struct MeshCheck {
 
     /// Every edge is shared by exactly two triangles.
     [[nodiscard]] bool closed() const { return boundaryEdges == 0 && nonManifoldEdges == 0 && shells > 0; }
-    [[nodiscard]] bool manifold() const { return nonManifoldEdges == 0; }
+    [[nodiscard]] bool manifold() const { return nonManifoldEdges == 0 && nonManifoldVertices == 0; }
     /// Neighbouring triangles agree on winding, and for closed meshes normals point outwards.
     [[nodiscard]] bool oriented() const { return inconsistentEdges == 0 && invertedShells == 0; }
-    /// Closed, manifold, consistently and outward oriented, without degenerate triangles:
+    /// Closed, manifold (no vertex joining two fans either), consistently and outward oriented, without degenerate triangles:
     /// a watertight solid suitable for slicing or volume meshing.
-    [[nodiscard]] bool watertight() const { return closed() && oriented() && degenerateTriangles == 0; }
+    [[nodiscard]] bool watertight() const { return closed() && manifold() && oriented() && degenerateTriangles == 0; }
 
     /// Human-readable list of problems (empty when watertight()).
     [[nodiscard]] std::vector<std::string> problems() const;

@@ -59,13 +59,46 @@ const core::TriangleMesh* fileMesh(const model::Part& p, FileMeshes& store, bool
     return &store.meshes.back();
 }
 
-/// "3 triangles still cut through each other (up to 0.4 mm)" for a mesh made by fileMesh().
+/// "3 pairs of triangles cut through each other (up to 0.4 mm)" for the crossings of a mesh.
 std::string crossingText(const core::SelfIntersections& c)
 {
     std::ostringstream os;
-    os << std::fixed << std::setprecision(3) << c.pairs << (c.pairs == 1 ? " pair of triangles still cuts" : " pairs of triangles still cut")
-       << " through each other (up to " << c.longest << " mm)";
+    os << std::fixed << std::setprecision(3) << c.pairs
+       << (c.pairs == 1 ? " pair of triangles cuts" : " pairs of triangles cut") << " through each other (up to "
+       << c.longest << " mm)";
     return os.str();
+}
+
+/// What the export checks found about triangles passing through each other in the mesh that
+/// is written (CAD-32): the same verdict for the preview, export_check, strict export and
+/// print export.
+struct CrossingVerdict {
+    enum class State {
+        NotApplicable, ///< An open mesh is a surface, not a solid: nothing to intersect.
+        Unknown,       ///< Too many triangles to check in reasonable time. Never counted as passed.
+        Done,
+    };
+    State state = State::NotApplicable;
+    core::SelfIntersections found;
+};
+
+/// Meshes up to this many triangles are searched for self-intersections (a few seconds per
+/// million triangles); a bigger one is reported as not checked.
+constexpr std::size_t kMaxCrossingTriangles = 2'000'000;
+
+/// Crossings of `mesh`: from the repair when the mesh was made here, otherwise searched
+/// (closed meshes only), and cached in `store`.
+CrossingVerdict crossingVerdict(const core::TriangleMesh& mesh, const core::MeshCheck& check, FileMeshes& store)
+{
+    if (const auto it = store.crossings.find(&mesh); it != store.crossings.end())
+        return {CrossingVerdict::State::Done, it->second};
+    if (!check.closed())
+        return {};
+    if (mesh.triangleCount() > kMaxCrossingTriangles)
+        return {CrossingVerdict::State::Unknown, {}};
+    CrossingVerdict v{CrossingVerdict::State::Done, core::findSelfIntersections(mesh)};
+    store.crossings[&mesh] = v.found;
+    return v;
 }
 
 Json checkToJson(const core::MeshCheck& c)
@@ -311,11 +344,20 @@ Json exportCheck(const std::vector<const model::Part*>& parts, io::FileFormat fo
                 for (const auto& problem : c.problems())
                     meshProblems.push_back(problem);
             }
-            if (const auto found = meshes.crossings.find(mesh); found != meshes.crossings.end()) {
-                r["selfIntersections"] = found->second.pairs;
-                if (found->second.any())
-                    meshProblems.push_back(crossingText(found->second));
+            const CrossingVerdict crossing = crossingVerdict(*mesh, c, meshes);
+            if (crossing.state == CrossingVerdict::State::Done) {
+                r["selfIntersections"] = crossing.found.pairs;
+                if (crossing.found.any())
+                    meshProblems.push_back(crossingText(crossing.found));
+            } else if (crossing.state == CrossingVerdict::State::Unknown) {
+                r["selfIntersections"] = nullptr; // not checked: neither passed nor failed
+                warningList.push_back("Self-intersections were not checked: the mesh has " +
+                                      std::to_string(mesh->triangleCount()) + " triangles.");
             }
+            if (c.closed() && c.shells > 1)
+                warningList.push_back(std::to_string(c.shells) +
+                                      " separate shells: one part should be one connected body, so export separate "
+                                      "bodies as separate parts.");
             if (c.closed() && minWall > 0.0) {
                 const WallReport w = measureWalls(welded, minWall);
                 if (w.measured) {
@@ -478,14 +520,16 @@ void registerExport(CommandRegistry& r)
                   Json c = checkToJson(check);
                   c["id"] = p->id;
                   c["name"] = p->name;
-                  const auto found = meshes.crossings.find(item.mesh);
-                  if (found != meshes.crossings.end())
-                      c["selfIntersections"] = found->second.pairs;
+                  const CrossingVerdict crossing = crossingVerdict(*item.mesh, check, meshes);
+                  if (crossing.state == CrossingVerdict::State::Done)
+                      c["selfIntersections"] = crossing.found.pairs;
+                  else if (crossing.state == CrossingVerdict::State::Unknown)
+                      c["selfIntersections"] = nullptr;
                   checks.push_back(c);
                   for (const auto& problem : check.problems())
                       warnings.push_back(p->name + ": " + problem);
-                  if (found != meshes.crossings.end() && found->second.any())
-                      warnings.push_back(p->name + ": " + crossingText(found->second));
+                  if (crossing.state == CrossingVerdict::State::Done && crossing.found.any())
+                      warnings.push_back(p->name + ": " + crossingText(crossing.found));
               }
               if (requireValid && !warnings.empty()) {
                   std::string msg = "Export aborted, meshes are not watertight or cut through themselves:";
@@ -738,11 +782,12 @@ void registerExportForPrint(CommandRegistry& r)
                       if (mesh == nullptr) {
                           problems.push_back(p->name + ": no mesh");
                       } else {
-                          for (const auto& problem : core::checkMesh(core::weldVertices(*mesh)).problems())
+                          const core::MeshCheck check = core::checkMesh(core::weldVertices(*mesh));
+                          for (const auto& problem : check.problems())
                               problems.push_back(p->name + ": " + problem);
-                          if (const auto found = meshes.crossings.find(mesh);
-                              found != meshes.crossings.end() && found->second.any())
-                              problems.push_back(p->name + ": " + crossingText(found->second));
+                          const CrossingVerdict crossing = crossingVerdict(*mesh, check, meshes);
+                          if (crossing.state == CrossingVerdict::State::Done && crossing.found.any())
+                              problems.push_back(p->name + ": " + crossingText(crossing.found));
                       }
                   }
                   planned.push_back({p, mesh, stem});

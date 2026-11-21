@@ -223,3 +223,24 @@ TEST_CASE("Triangles collapsed to an edge are ignored by the topology", "[core][
     CHECK(welded.triangleCount() == 4);
     CHECK(checkMesh(welded).watertight());
 }
+
+TEST_CASE("Two closed bodies that touch in one point are not a manifold solid", "[core][check]")
+{
+    // Every edge of both cubes is used by exactly two triangles, yet the shared corner joins two fans.
+    TriangleMesh both = cube(0, 10);
+    both.append(translated(cube(0, 10), {10, 10, 10}));
+    const MeshCheck c = checkMesh(both);
+    CHECK(c.closed());
+    CHECK(c.shells == 2);
+    CHECK(c.nonManifoldVertices == 1);
+    CHECK_FALSE(c.manifold());
+    CHECK_FALSE(c.watertight());
+    REQUIRE_FALSE(c.problems().empty());
+
+    // Apart, or a plain cube: no such vertex.
+    TriangleMesh apart = cube(0, 10);
+    apart.append(translated(cube(0, 10), {20, 0, 0}));
+    CHECK(checkMesh(apart).nonManifoldVertices == 0);
+    CHECK(checkMesh(cube(0, 10)).nonManifoldVertices == 0);
+    CHECK(checkMesh(tetrahedron()).nonManifoldVertices == 0);
+}

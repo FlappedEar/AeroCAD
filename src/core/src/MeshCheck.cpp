@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "aerocad/core/MeshCheck.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <functional>
@@ -17,6 +18,8 @@ struct EdgeUse {
     std::uint32_t forward = 0;
     /// First triangle using the edge (for connectivity).
     std::uint32_t triangle = 0;
+    /// Second triangle using it, when there is one (a manifold edge has two).
+    std::uint32_t other = 0;
 };
 
 class DisjointSets {
@@ -160,6 +163,69 @@ void analyseShells(MeshCheck& check, const std::vector<Vec3>& verts, const std::
     }
 }
 
+/// Vertices whose triangles split into more than one fan. Two triangles are neighbours around
+/// a vertex when they share an edge that ends in it; edges used more than twice are already
+/// reported as non-manifold edges and do not join anything here.
+std::size_t countNonManifoldVertices(const std::vector<TriangleMesh::Triangle>& tris,
+                                     const std::vector<std::uint32_t>& remap,
+                                     const std::unordered_map<std::uint64_t, EdgeUse>& edges)
+{
+    auto key = [](std::uint32_t a, std::uint32_t b) {
+        return (static_cast<std::uint64_t>(std::min(a, b)) << 32) | std::max(a, b);
+    };
+    auto corners = [&](std::uint32_t t) {
+        return TriangleMesh::Triangle{remap[tris[t][0]], remap[tris[t][1]], remap[tris[t][2]]};
+    };
+    // Triangles around each vertex (compressed rows), collapsed triangles left out.
+    std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> around;
+    for (std::size_t t = 0; t < tris.size(); ++t) {
+        const auto c = corners(static_cast<std::uint32_t>(t));
+        if (c[0] == c[1] || c[1] == c[2] || c[0] == c[2])
+            continue;
+        for (const auto v : c)
+            around[v].push_back(static_cast<std::uint32_t>(t));
+    }
+    std::size_t bad = 0;
+    std::vector<std::uint32_t> stack;
+    std::vector<char> seen;
+    for (const auto& [vertex, list] : around) {
+        if (list.size() < 2)
+            continue;
+        seen.assign(list.size(), 0);
+        auto indexOf = [&](std::uint32_t t) {
+            return static_cast<std::size_t>(std::find(list.begin(), list.end(), t) - list.begin());
+        };
+        std::size_t fans = 0;
+        for (std::size_t start = 0; start < list.size(); ++start) {
+            if (seen[start])
+                continue;
+            ++fans;
+            seen[start] = 1;
+            stack.assign(1, list[start]);
+            while (!stack.empty()) {
+                const std::uint32_t t = stack.back();
+                stack.pop_back();
+                for (const std::uint32_t other : corners(t)) {
+                    if (other == vertex)
+                        continue;
+                    const auto it = edges.find(key(vertex, other));
+                    if (it == edges.end() || it->second.count != 2)
+                        continue;
+                    const std::uint32_t neighbour = it->second.triangle == t ? it->second.other : it->second.triangle;
+                    const std::size_t i = indexOf(neighbour);
+                    if (i < list.size() && !seen[i]) {
+                        seen[i] = 1;
+                        stack.push_back(neighbour);
+                    }
+                }
+            }
+        }
+        if (fans > 1)
+            ++bad;
+    }
+    return bad;
+}
+
 std::string plural(std::size_t n, const char* singular, const char* pluralForm)
 {
     return std::to_string(n) + " " + (n == 1 ? singular : pluralForm);
@@ -215,8 +281,11 @@ MeshCheck checkMesh(const TriangleMesh& mesh)
             EdgeUse& use = it->second;
             if (inserted)
                 use.triangle = static_cast<std::uint32_t>(t);
-            else
+            else {
                 components.unite(static_cast<std::uint32_t>(t), use.triangle);
+                if (use.count == 1)
+                    use.other = static_cast<std::uint32_t>(t);
+            }
             ++use.count;
             if (from < to)
                 ++use.forward;
@@ -233,6 +302,7 @@ MeshCheck checkMesh(const TriangleMesh& mesh)
             ++check.inconsistentEdges;
     }
 
+    check.nonManifoldVertices = countNonManifoldVertices(tris, remap, edges);
     analyseShells(check, verts, tris, remap, components);
     return check;
 }
@@ -276,6 +346,9 @@ std::vector<std::string> MeshCheck::problems() const
     if (nonManifoldEdges > 0)
         out.push_back("not manifold: " + plural(nonManifoldEdges, "edge shared by more than two triangles",
                                                 "edges shared by more than two triangles"));
+    if (nonManifoldVertices > 0)
+        out.push_back("not manifold: " + plural(nonManifoldVertices, "vertex where separate surface pieces touch",
+                                                "vertices where separate surface pieces touch"));
     if (inconsistentEdges > 0)
         out.push_back("inconsistent orientation: " +
                       plural(inconsistentEdges, "edge between flipped triangles", "edges between flipped triangles"));

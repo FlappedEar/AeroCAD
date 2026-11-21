@@ -140,6 +140,16 @@ thinAreaPercent, limit}`, and for bodies with exact geometry `selfIntersections`
 of triangle pairs of the export mesh that still cut through each other; a count above 0 is
 an error for printing and a warning otherwise).
 
+The check also looks for what edge counting cannot see (CAD-32): vertices where two fans of
+triangles meet (two bodies touching in a point: not manifold, so not watertight), triangles
+that pass through each other, which includes one shell cutting through another, and
+`shells` above 1 (a warning: one part should be one connected body, so separate bodies go
+out as separate parts). Intersections are searched in every closed mesh, also an imported
+one, up to 2 million triangles; a bigger mesh reports `selfIntersections: null` with a
+warning, meaning not checked (never passed). The same verdict is used by `document.export`
+with `requireValid` and by `document.export_for_print`. Not checked yet: whether a part
+collides with the scan it was made on.
+
 The export mesh of an exact body is made with a smallest element of 2.5 times the
 deflection, and the few-micron crossings that facets of faces meeting at a shallow angle
 (a fin's root fillet running out onto a scan surface) can still have are lifted by moving

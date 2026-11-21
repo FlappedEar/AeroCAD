@@ -15,6 +15,7 @@
 #include <random>
 #include <set>
 #include <string>
+#include <vector>
 
 #ifndef _WIN32
 #include <csignal>
@@ -542,4 +543,99 @@ TEST_CASE("document.export_check explains what blocks or weakens an export", "[c
         CHECK(p.data.at("canExport") == false);
         CHECK(p.data.at("parts").at(0).at("status") == "error");
     }
+}
+
+namespace {
+
+/// A mesh of closed cubes, one for each shift (edge length 10 mm, outward normals).
+model::PartId addCubes(commands::Session& s, const std::string& name, const std::vector<core::Vec3>& shifts)
+{
+    std::vector<core::Vec3> verts;
+    std::vector<core::TriangleMesh::Triangle> tris{{0, 2, 3}, {0, 3, 1}, {4, 5, 7}, {4, 7, 6}, {0, 1, 5}, {0, 5, 4},
+                                                   {2, 6, 7}, {2, 7, 3}, {0, 4, 6}, {0, 6, 2}, {1, 3, 7}, {1, 7, 5}};
+    std::vector<core::TriangleMesh::Triangle> all;
+    for (const auto& shift : shifts) {
+        const auto base = static_cast<std::uint32_t>(verts.size());
+        for (int i = 0; i < 8; ++i)
+            verts.push_back(core::Vec3{i & 1 ? 10.0 : 0.0, i & 2 ? 10.0 : 0.0, i & 4 ? 10.0 : 0.0} + shift);
+        for (auto t : tris)
+            all.push_back({base + t[0], base + t[1], base + t[2]});
+    }
+    model::Part p;
+    p.name = name;
+    p.mesh = std::make_shared<const core::TriangleMesh>(std::move(verts), std::move(all));
+    return s.document().addPart(std::move(p));
+}
+
+Json partReport(const commands::Json& result)
+{
+    return result.at("parts").at(0);
+}
+
+bool mentions(const Json& list, const std::string& text)
+{
+    for (const auto& item : list)
+        if (item.get<std::string>().find(text) != std::string::npos)
+            return true;
+    return false;
+}
+
+} // namespace
+
+TEST_CASE("The export check refuses meshes whose shells cut through each other (CAD-32)", "[commands][export]")
+{
+    // Every edge is used twice and the orientation is right, so the old check said "Ready to export".
+    commands::Session s;
+    const auto id = addCubes(s, "Overlap", {{0, 0, 0}, {5, 2, 3}});
+    const auto print = s.execute("document.export_check", {{"ids", {id}}, {"print", true}, {"minWall", 0}});
+    REQUIRE(print.ok);
+    CHECK_FALSE(print.data.at("canExport").get<bool>());
+    CHECK_FALSE(print.data.at("passed").get<bool>());
+    const Json report = partReport(print.data);
+    CHECK(report.at("selfIntersections").get<std::size_t>() > 0);
+    CHECK(mentions(report.at("errors"), "through each other"));
+
+    // Not for printing: a warning, and the strict export writes nothing.
+    const auto plain = s.execute("document.export_check", {{"ids", {id}}, {"minWall", 0}});
+    REQUIRE(plain.ok);
+    CHECK_FALSE(plain.data.at("passed").get<bool>());
+    TempDir dir;
+    const auto strict = s.execute("document.export", {{"path", dir.file("overlap.stl")}, {"ids", {id}}, {"requireValid", true}});
+    CHECK_FALSE(strict.ok);
+    CHECK_THAT(strict.error, ContainsSubstring("through each other"));
+    CHECK_FALSE(fs::exists(dir.file("overlap.stl")));
+    const auto printed = s.execute("document.export_for_print", {{"folder", dir.file("print")}, {"ids", {id}}});
+    CHECK_FALSE(printed.ok);
+    CHECK_THAT(printed.error, ContainsSubstring("through each other"));
+}
+
+TEST_CASE("The export check refuses bodies that touch in a point and tells about separate shells (CAD-32)",
+          "[commands][export]")
+{
+    commands::Session s;
+    const auto pinched = addCubes(s, "Pinched", {{0, 0, 0}, {10, 10, 10}});
+    const auto check = s.execute("document.export_check", {{"ids", {pinched}}, {"print", true}, {"minWall", 0}});
+    REQUIRE(check.ok);
+    CHECK_FALSE(check.data.at("canExport").get<bool>());
+    CHECK_FALSE(partReport(check.data).at("manifold").get<bool>());
+    CHECK(mentions(partReport(check.data).at("errors"), "touch"));
+
+    // Two cubes apart: nothing cuts through anything, but it is not one body.
+    const auto apart = addCubes(s, "Apart", {{0, 0, 0}, {30, 0, 0}});
+    const auto two = s.execute("document.export_check", {{"ids", {apart}}, {"print", true}, {"minWall", 0}});
+    REQUIRE(two.ok);
+    CHECK(two.data.at("canExport").get<bool>());
+    CHECK(partReport(two.data).at("selfIntersections").get<std::size_t>() == 0);
+    CHECK(mentions(partReport(two.data).at("warnings"), "separate shells"));
+}
+
+TEST_CASE("A single clean solid passes the intersection check (CAD-32)", "[commands][export]")
+{
+    commands::Session s;
+    const auto cube = addCubes(s, "Cube", {{0, 0, 0}});
+    const auto check = s.execute("document.export_check", {{"ids", {cube}}, {"format", "stl"}, {"minWall", 0}});
+    REQUIRE(check.ok);
+    INFO(check.toJson().dump());
+    CHECK(check.data.at("passed").get<bool>());
+    CHECK(partReport(check.data).at("selfIntersections").get<std::size_t>() == 0);
 }
