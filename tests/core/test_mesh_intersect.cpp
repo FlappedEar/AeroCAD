@@ -99,3 +99,10 @@ TEST_CASE("A crossing of a few microns is lifted by moving one vertex", "[core][
     CHECK(limited.remaining.pairs == 1);
     CHECK(limited.moved == 0);
 }
+
+TEST_CASE("Untangling an empty mesh gives an empty mesh", "[core][intersect]")
+{
+    const IntersectionRepair r = untangleSelfIntersections(TriangleMesh{}, 0.01);
+    CHECK(r.mesh.isEmpty());
+    CHECK_FALSE(r.remaining.any());
+}

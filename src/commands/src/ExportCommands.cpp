@@ -44,10 +44,14 @@ struct FileMeshes {
 /// view uses a coarser mesh), so a printed fillet or curved skin is smooth. A mesh made from
 /// facets of faces that meet at a shallow angle cuts through itself by a few microns; those
 /// crossings are lifted by moving vertices less than the deflection (CAD-95). Kept in `store`.
-const core::TriangleMesh* fileMesh(const model::Part& p, FileMeshes& store)
+const core::TriangleMesh* fileMesh(const model::Part& p, FileMeshes& store, bool repair = true)
 {
     if (!p.shape || p.shape->isNull())
         return p.mesh.get();
+    if (!repair) { // a STEP file does not carry the mesh
+        store.meshes.push_back(geometry::tessellate(*p.shape, geometry::printTessellation(*p.shape)));
+        return &store.meshes.back();
+    }
     core::IntersectionRepair repaired = core::untangleSelfIntersections(
         geometry::tessellate(*p.shape, geometry::printTessellation(*p.shape)), geometry::printDeflection(*p.shape));
     store.meshes.push_back(std::move(repaired.mesh));
@@ -59,8 +63,8 @@ const core::TriangleMesh* fileMesh(const model::Part& p, FileMeshes& store)
 std::string crossingText(const core::SelfIntersections& c)
 {
     std::ostringstream os;
-    os << c.pairs << (c.pairs == 1 ? " pair of triangles still cuts" : " pairs of triangles still cut")
-       << " through each other (up to " << std::setprecision(2) << c.longest << " mm)";
+    os << std::fixed << std::setprecision(3) << c.pairs << (c.pairs == 1 ? " pair of triangles still cuts" : " pairs of triangles still cut")
+       << " through each other (up to " << c.longest << " mm)";
     return os.str();
 }
 
@@ -283,7 +287,7 @@ Json exportCheck(const std::vector<const model::Part*>& parts, io::FileFormat fo
                                       "other CAD programs may not open it cleanly.");
         }
 
-        if (const core::TriangleMesh* mesh = fileMesh(*p, meshes); mesh != nullptr) {
+        if (const core::TriangleMesh* mesh = fileMesh(*p, meshes, !step); mesh != nullptr) {
             const core::TriangleMesh welded = core::weldVertices(*mesh);
             const core::MeshCheck c = core::checkMesh(welded);
             r["watertight"] = c.watertight();
@@ -474,18 +478,17 @@ void registerExport(CommandRegistry& r)
                   Json c = checkToJson(check);
                   c["id"] = p->id;
                   c["name"] = p->name;
+                  const auto found = meshes.crossings.find(item.mesh);
+                  if (found != meshes.crossings.end())
+                      c["selfIntersections"] = found->second.pairs;
                   checks.push_back(c);
                   for (const auto& problem : check.problems())
                       warnings.push_back(p->name + ": " + problem);
-                  if (const auto found = meshes.crossings.find(item.mesh); found != meshes.crossings.end()) {
-                      c["selfIntersections"] = found->second.pairs;
-                      checks.back() = c;
-                      if (found->second.any())
-                          warnings.push_back(p->name + ": " + crossingText(found->second));
-                  }
+                  if (found != meshes.crossings.end() && found->second.any())
+                      warnings.push_back(p->name + ": " + crossingText(found->second));
               }
               if (requireValid && !warnings.empty()) {
-                  std::string msg = "Export aborted, meshes are not watertight:";
+                  std::string msg = "Export aborted, meshes are not watertight or cut through themselves:";
                   for (const auto& w : warnings)
                       msg += "\n- " + w.get<std::string>();
                   throw CommandError(msg);
@@ -745,7 +748,7 @@ void registerExportForPrint(CommandRegistry& r)
                   planned.push_back({p, mesh, stem});
               }
               if (!problems.empty()) {
-                  std::string msg = "Nothing was written; not every part is a watertight solid:";
+                  std::string msg = "Nothing was written; not every part is a watertight solid without self-intersections:";
                   for (const auto& w : problems)
                       msg += "\n- " + w;
                   throw CommandError(msg);

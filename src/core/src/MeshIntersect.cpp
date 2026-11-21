@@ -146,6 +146,8 @@ public:
     {
         if (m_nodes.empty())
             return;
+        // A median split halves the triangle count at every level, so the depth is at most
+        // log2(count / 4) + 1 < 32 for any mesh that fits 32-bit indices.
         std::array<std::uint32_t, 128> stack{};
         std::size_t top = 0;
         stack[top++] = 0;
@@ -426,11 +428,18 @@ void nudgesFor(const Tris& tris, const std::vector<LV>& lv, std::uint32_t ia, st
 IntersectionRepair untangleSelfIntersections(const TriangleMesh& input, double maxMove, bool roundToFloat)
 {
     IntersectionRepair out;
-    TriangleMesh welded = weldVertices(input);
-    std::vector<Vec3> pos = welded.vertices();
+    out.mesh = input;
+    if (!input.isValid() || input.isEmpty())
+        return out;
+    // Round first, then merge: vertices that fall together as float are one in the file.
+    std::vector<Vec3> rounded = input.vertices();
     if (roundToFloat)
-        for (auto& v : pos)
+        for (auto& v : rounded)
             v = roundedToFloat(v);
+    TriangleMesh welded = weldVertices(TriangleMesh(std::move(rounded), input.triangles()));
+    if (welded.isEmpty())
+        return out;
+    std::vector<Vec3> pos = welded.vertices();
     const std::vector<Vec3> original = pos;
     const Tris tris = welded.triangles();
     const double extent = welded.bounds().diagonal();
