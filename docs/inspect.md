@@ -156,6 +156,11 @@ deflection, and the few-micron crossings that facets of faces meeting at a shall
 vertices by less than the deflection (CAD-95). The crossings are found with exact signs of
 the float coordinates, so the count is what a slicer sees in the file.
 
+In the application the check and the file write of a big mesh (20,000 triangles or more)
+run in the background (CAD-30): the window stays usable, a pane at the top shows what is
+being checked and **Cancel** stops it (nothing is written). The report is for the design as
+it was when the export started; edits made meanwhile are not part of it.
+
 Before **Export Anyway** writes, the application runs the check again. If the project,
 variant, document, exported part set, or wall limit changed, the updated report needs a
 new confirmation; a failed check writes nothing. An ordinary STL/3MF export of an open,

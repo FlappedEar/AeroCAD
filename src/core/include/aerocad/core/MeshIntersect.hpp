@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "aerocad/core/Cancel.hpp"
 #include "aerocad/core/Mesh.hpp"
 
 #include <cstddef>
@@ -39,9 +40,11 @@ struct SelfIntersections {
 /// when the free edge of one pierces the other. Pairs that merely touch are not reported;
 /// a crossing needs a segment longer than `minLength` mm (0: any positive length).
 /// The arithmetic is long double with no tolerance on the signs, so a crossing of a few
-/// microns on a part of metres is found as well as a large one.
+/// microns on a part of metres is found as well as a large one. `cancelled` is polled during
+/// the search; core::Cancelled is thrown when it returns true.
 [[nodiscard]] SelfIntersections findSelfIntersections(const TriangleMesh& mesh, double minLength = 0.0,
-                                                      std::size_t maxExamples = 16);
+                                                      std::size_t maxExamples = 16,
+                                                      const CancelCheck& cancelled = {});
 
 struct IntersectionRepair {
     /// The mesh with coinciding vertices merged and the crossings that could be lifted
@@ -62,8 +65,10 @@ struct IntersectionRepair {
 /// that survives rounding to float. No vertex moves further than `maxMove` mm from where it
 /// started (use the deflection the mesh was made with); crossings that would need more are
 /// left and reported in `remaining`. `roundToFloat` first rounds every vertex to float
-/// precision, as STL stores it, so the result is the same mesh as the file's.
+/// precision, as STL stores it, so the result is the same mesh as the file's. `cancelled` is
+/// polled as in findSelfIntersections().
 [[nodiscard]] IntersectionRepair untangleSelfIntersections(const TriangleMesh& mesh, double maxMove,
-                                                           bool roundToFloat = true);
+                                                           bool roundToFloat = true,
+                                                           const CancelCheck& cancelled = {});
 
 } // namespace aerocad::core

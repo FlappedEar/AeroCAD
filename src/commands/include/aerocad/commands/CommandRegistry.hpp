@@ -2,6 +2,7 @@
 #pragma once
 
 #include "aerocad/cad/Design.hpp"
+#include "aerocad/commands/BackgroundJob.hpp"
 #include "aerocad/model/Document.hpp"
 #include "aerocad/model/UndoStack.hpp"
 
@@ -12,6 +13,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 namespace aerocad::cfd {
@@ -98,6 +100,18 @@ public:
     /// Registers a command. Throws std::invalid_argument on duplicate names.
     void add(CommandInfo info, Handler handler);
 
+    /// Reads the document and returns the work of a command (see BackgroundWork). Throws
+    /// CommandError for bad parameters.
+    using Planner = std::function<BackgroundWork(CommandContext&, const Json& params)>;
+    /// Registers a command that can also run on a worker thread (CAD-30). Executing it
+    /// directly plans the work and runs it at once.
+    void addPlanned(CommandInfo info, Planner planner);
+    [[nodiscard]] bool isPlanned(std::string_view name) const;
+    /// Validates `params` and plans the command, on the calling thread: the work to run
+    /// elsewhere, or the failure execute() would have reported. An unplanned command fails.
+    [[nodiscard]] std::variant<BackgroundWork, CommandResult> plan(CommandContext& context, std::string_view name,
+                                                                   const Json& params = Json::object()) const;
+
     [[nodiscard]] bool contains(std::string_view name) const;
     /// Replaces the effects of a registered command. Throws std::invalid_argument for an
     /// unknown name.
@@ -117,7 +131,18 @@ private:
         Handler handler;
     };
     std::map<std::string, Entry, std::less<>> m_commands;
+    std::map<std::string, Planner, std::less<>> m_planners;
     Listener m_listener;
 };
+
+/// What running a command's work (BackgroundWork::run) came to.
+struct WorkOutcome {
+    CommandResult result;
+    bool cancelled = false; ///< Stopped by the user: `result` is a failure saying so.
+};
+
+/// Runs `work` as the command `name` would run it, turning its exceptions into a failure
+/// like CommandRegistry::execute(). Safe on any thread.
+[[nodiscard]] WorkOutcome runWork(std::string_view name, const BackgroundWork& work, const JobControl& control);
 
 } // namespace aerocad::commands

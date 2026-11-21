@@ -544,7 +544,8 @@ std::vector<LV> toLong(const std::vector<Vec3>& v)
 }
 
 /// findSelfIntersections() for a mesh whose coinciding vertices are already merged.
-SelfIntersections findInWelded(const TriangleMesh& mesh, double minLength, std::size_t maxExamples)
+SelfIntersections findInWelded(const TriangleMesh& mesh, double minLength, std::size_t maxExamples,
+                               const CancelCheck& cancelled = {})
 {
     SelfIntersections result;
     const Tris& tris = mesh.triangles();
@@ -555,7 +556,9 @@ SelfIntersections findInWelded(const TriangleMesh& mesh, double minLength, std::
     for (std::size_t i = 0; i < tris.size(); ++i)
         boxes[i] = boxOf(tris, lv, i, 0.0);
     const Bvh bvh(boxes);
-    for (std::size_t i = 0; i < tris.size(); ++i)
+    for (std::size_t i = 0; i < tris.size(); ++i) {
+        if ((i & 1023) == 0)
+            throwIfCancelled(cancelled);
         bvh.query(boxes[i], [&](std::uint32_t j) {
             if (j <= i)
                 return;
@@ -573,14 +576,16 @@ SelfIntersections findInWelded(const TriangleMesh& mesh, double minLength, std::
             if (result.examples.size() < maxExamples)
                 result.examples.push_back(c);
         });
+    }
     return result;
 }
 
 } // namespace
 
-SelfIntersections findSelfIntersections(const TriangleMesh& input, double minLength, std::size_t maxExamples)
+SelfIntersections findSelfIntersections(const TriangleMesh& input, double minLength, std::size_t maxExamples,
+                                        const CancelCheck& cancelled)
 {
-    return findInWelded(weldVertices(input), minLength, maxExamples);
+    return findInWelded(weldVertices(input), minLength, maxExamples, cancelled);
 }
 
 namespace {
@@ -632,7 +637,8 @@ void nudgesFor(const Tris& tris, const std::vector<LV>& lv, std::uint32_t ia, st
 
 } // namespace
 
-IntersectionRepair untangleSelfIntersections(const TriangleMesh& input, double maxMove, bool roundToFloat)
+IntersectionRepair untangleSelfIntersections(const TriangleMesh& input, double maxMove, bool roundToFloat,
+                                             const CancelCheck& cancelled)
 {
     IntersectionRepair out;
     out.mesh = input;
@@ -680,14 +686,16 @@ IntersectionRepair untangleSelfIntersections(const TriangleMesh& input, double m
 
     auto current = [&] {
         out.mesh = TriangleMesh(pos, tris);
-        out.remaining = findInWelded(out.mesh, 0.0, std::numeric_limits<std::size_t>::max());
+        out.remaining = findInWelded(out.mesh, 0.0, std::numeric_limits<std::size_t>::max(), cancelled);
     };
     for (int pass = 0; pass < 40; ++pass) {
+        throwIfCancelled(cancelled);
         current();
         if (!out.remaining.any())
             break;
         bool progress = false;
         for (const auto& c : out.remaining.examples) {
+            throwIfCancelled(cancelled);
             if (c.coplanar || !testPair(tris, lv, c.a, c.b, 0.0))
                 continue; // not a crossing any more after an earlier move of this pass
             std::vector<Nudge> options;

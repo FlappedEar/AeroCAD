@@ -8,6 +8,7 @@
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -15,6 +16,7 @@
 #include <random>
 #include <set>
 #include <string>
+#include <variant>
 #include <vector>
 
 #ifndef _WIN32
@@ -638,4 +640,117 @@ TEST_CASE("A single clean solid passes the intersection check (CAD-32)", "[comma
     INFO(check.toJson().dump());
     CHECK(check.data.at("passed").get<bool>());
     CHECK(partReport(check.data).at("selfIntersections").get<std::size_t>() == 0);
+}
+
+TEST_CASE("Export commands run as background work (CAD-30)", "[commands][export][background]")
+{
+    commands::Session s;
+    const auto overlap = addCubes(s, "Overlap", {{0, 0, 0}, {5, 2, 3}});
+    const auto clean = addCubes(s, "Clean", {{50, 0, 0}});
+    TempDir dir;
+
+    SECTION("Only the export commands can be planned")
+    {
+        CHECK(s.registry().isPlanned("document.export_check"));
+        CHECK(s.registry().isPlanned("document.export"));
+        CHECK(s.registry().isPlanned("document.export_for_print"));
+        CHECK_FALSE(s.registry().isPlanned("part.check"));
+        const auto plan = s.plan("part.check", {{"id", clean}});
+        REQUIRE(std::holds_alternative<commands::CommandResult>(plan));
+        CHECK_FALSE(std::get<commands::CommandResult>(plan).ok);
+    }
+
+    SECTION("The planned work gives the result of the command, with progress")
+    {
+        const Json params{{"ids", {overlap, clean}}, {"print", true}, {"minWall", 0}};
+        const auto direct = s.execute("document.export_check", params);
+        REQUIRE(direct.ok);
+        auto plan = s.plan("document.export_check", params);
+        REQUIRE(std::holds_alternative<commands::BackgroundWork>(plan));
+        const auto& work = std::get<commands::BackgroundWork>(plan);
+        CHECK(work.weight == 36);
+
+        std::vector<double> fractions;
+        std::string lastText;
+        commands::JobControl control;
+        control.onProgress = [&](double f, const std::string& text) {
+            fractions.push_back(f);
+            lastText = text;
+        };
+        const auto outcome = commands::runWork("document.export_check", work, control);
+        REQUIRE(outcome.result.ok);
+        CHECK_FALSE(outcome.cancelled);
+        CHECK(outcome.result.data == direct.data);
+        REQUIRE_FALSE(fractions.empty());
+        CHECK(std::is_sorted(fractions.begin(), fractions.end()));
+        CHECK(fractions.back() <= 1.0);
+        CHECK_THAT(lastText, ContainsSubstring("Clean"));
+    }
+
+    SECTION("The work belongs to the document as it was planned")
+    {
+        auto plan = s.plan("document.export_check", {{"ids", {clean}}, {"minWall", 0}});
+        REQUIRE(std::holds_alternative<commands::BackgroundWork>(plan));
+        // The user keeps editing while the check runs.
+        REQUIRE(s.execute("part.rename", {{"id", clean}, {"name", "Renamed"}}).ok);
+        REQUIRE(s.execute("part.remove", {{"id", overlap}}).ok);
+        const auto outcome = commands::runWork("document.export_check", std::get<commands::BackgroundWork>(plan), {});
+        REQUIRE(outcome.result.ok);
+        CHECK(partReport(outcome.result.data).at("name") == "Clean");
+    }
+
+    SECTION("Bad parameters and a stale approval are refused when planning")
+    {
+        const auto missing = s.plan("document.export", {{"path", dir.file("a.stl")}, {"ids", {9999}}});
+        REQUIRE(std::holds_alternative<commands::CommandResult>(missing));
+        CHECK_FALSE(std::get<commands::CommandResult>(missing).ok);
+        const auto stale = s.plan("document.export", {{"path", dir.file("a.stl")}, {"ids", {clean}}, {"expectedState", "old"}});
+        REQUIRE(std::holds_alternative<commands::CommandResult>(stale));
+        CHECK_THAT(std::get<commands::CommandResult>(stale).error, ContainsSubstring("changed after the check"));
+        const auto invalid = s.plan("document.export", {{"ids", {clean}}});
+        REQUIRE(std::holds_alternative<commands::CommandResult>(invalid));
+        CHECK_THAT(std::get<commands::CommandResult>(invalid).error, ContainsSubstring("Invalid parameters"));
+        CHECK_FALSE(fs::exists(dir.file("a.stl")));
+    }
+
+    SECTION("Cancel stops an export before it writes anything")
+    {
+        auto plan = s.plan("document.export", {{"path", dir.file("c.stl")}, {"ids", {clean}}});
+        REQUIRE(std::holds_alternative<commands::BackgroundWork>(plan));
+        commands::JobControl control;
+        control.cancelled = [] { return true; };
+        const auto outcome = commands::runWork("document.export", std::get<commands::BackgroundWork>(plan), control);
+        CHECK(outcome.cancelled);
+        CHECK_FALSE(outcome.result.ok);
+        CHECK_FALSE(fs::exists(dir.file("c.stl")));
+
+        auto printPlan = s.plan("document.export_for_print", {{"folder", dir.file("print")}, {"ids", {clean}}});
+        REQUIRE(std::holds_alternative<commands::BackgroundWork>(printPlan));
+        const auto printed = commands::runWork("document.export_for_print", std::get<commands::BackgroundWork>(printPlan), control);
+        CHECK(printed.cancelled);
+        CHECK_FALSE(fs::exists(dir.file("print") + "/Clean.stl"));
+    }
+
+    SECTION("Cancel stops the check between its steps")
+    {
+        auto plan = s.plan("document.export_check", {{"ids", {clean}}, {"minWall", 0}});
+        REQUIRE(std::holds_alternative<commands::BackgroundWork>(plan));
+        int polls = 0;
+        commands::JobControl control;
+        control.cancelled = [&] { return ++polls > 1; };
+        const auto outcome = commands::runWork("document.export_check", std::get<commands::BackgroundWork>(plan), control);
+        CHECK(outcome.cancelled);
+    }
+
+    SECTION("The planned work writes the same file as the command")
+    {
+        auto plan = s.plan("document.export", {{"path", dir.file("w.stl")}, {"ids", {clean}}});
+        REQUIRE(std::holds_alternative<commands::BackgroundWork>(plan));
+        const auto outcome = commands::runWork("document.export", std::get<commands::BackgroundWork>(plan), {});
+        REQUIRE(outcome.result.ok);
+        const auto direct = s.execute("document.export", {{"path", dir.file("d.stl")}, {"ids", {clean}}});
+        REQUIRE(direct.ok);
+        CHECK(fs::file_size(dir.file("w.stl")) == fs::file_size(dir.file("d.stl")));
+        CHECK(outcome.result.data.at("triangles") == direct.data.at("triangles"));
+    }
 }

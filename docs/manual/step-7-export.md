@@ -31,6 +31,11 @@ The thinnest wall allowed (0.8 mm) can be changed in Preferences. The buttons: *
 writes the files as they are, **Show Thin Walls** colours the thin places in the view, **Cancel**
 stops.
 
+A big part (a whole-car scan) takes a few seconds to check and write. The check runs in the
+background: a bar at the top of the view shows what is being checked, you can keep working, and
+**Cancel** in the bar stops it before anything is written. The report belongs to the design as it
+was when you started the export.
+
 Some problems **block** **Export for printing** instead of warning: a part that is not a closed
 solid (an open surface, or a mesh with open edges) cannot be printed, so the dialog lists the problem
 without an *Export Anyway* button and nothing is written. Repair or close the part first. The plain

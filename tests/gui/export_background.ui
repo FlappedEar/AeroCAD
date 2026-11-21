@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CAD-30: the export check and the file write of a large mesh run in the background: the
+# window stays usable, a pane shows the progress with Cancel, the check reports the document
+# as it was when it started, and Cancel writes nothing. The threshold is lowered so the small
+# dome scan counts as large.
+ui.wait(1200)
+(() => { window.scan.backgroundFitTriangles = 1; Qt.createQmlObject('import QtQuick; Item { objectName: "bgState"; visible: false; property var calls: []; property int id: 0; property string name: "" }', window.contentItem) })()
+# 1 The check runs on a worker thread; the document is edited while it runs.
+(() => { const bg = Array.from(window.contentItem.children).find(x => x.objectName === "bgState"); const p = controller.execute("document.parts").result.parts[0]; bg.id = p.id; bg.name = p.name; const started = window.scan.runInBackground("document.export_check", { format: "stl", minWall: 0 }, r => { const a = bg.calls.slice(); a.push(r); bg.calls = a }); if (!started) ui.fail("the check did not start"); if (!window.scan.busy) ui.fail("not busy while the check runs"); if (bg.calls.length) ui.fail("the check ended before the event loop ran"); controller.execute("part.rename", { id: p.id, name: "Renamed while checking" }) })()
+ui.wait(30)
+(() => { const find = (item, out) => { if (item.objectName === "backgroundJobPane") out.push(item); for (let k = 0; k < item.children.length; ++k) find(item.children[k], out); return out }; const panes = find(window.contentItem, []); ui.log("PANE " + panes.length + " busy " + window.scan.busy + " " + window.scan.progressText); if (window.scan.busy && (panes.length !== 1 || !panes[0].visible)) ui.fail("no progress pane while checking") })()
+(() => { window.scan.waitForFit() })()
+ui.wait(200)
+(() => { const bg = Array.from(window.contentItem.children).find(x => x.objectName === "bgState"); if (bg.calls.length !== 1) ui.fail("the check reported " + bg.calls.length + " times"); const r = bg.calls[0]; if (!r.ok) ui.fail("the check failed: " + r.error); if (r.result.parts[0].name !== bg.name) ui.fail("the check saw the edit made while it ran: " + r.result.parts[0].name); if (window.scan.busy) ui.fail("still busy"); ui.log("CHECK " + r.result.summary) })()
+# 2 Cancel: the callback gets a cancelled result (the command test checks that nothing is written).
+(() => { const bg = Array.from(window.contentItem.children).find(x => x.objectName === "bgState"); bg.calls = []; const started = window.scan.runInBackground("document.export", { path: "/tmp/aerocad-export-background-cancelled.stl", ids: [bg.id] }, r => { const a = bg.calls.slice(); a.push(r); bg.calls = a }); if (!started) ui.fail("the export did not start"); window.scan.cancel(); window.scan.waitForFit() })()
+ui.wait(200)
+(() => { const bg = Array.from(window.contentItem.children).find(x => x.objectName === "bgState"); if (bg.calls.length !== 1 || !bg.calls[0].cancelled || bg.calls[0].ok) ui.fail("cancel not reported: " + JSON.stringify(bg.calls)); if (controller.statusMessage !== "Cancelled") ui.fail("cancel not shown: " + controller.statusMessage) })()
+# 3 The export dialog's writer: runs in the background, then reports like the direct export.
+(() => { const bg = Array.from(window.contentItem.children).find(x => x.objectName === "bgState"); window.writeExport("file:///tmp/aerocad-export-background.stl", [bg.id], ""); window.scan.waitForFit() })()
+ui.wait(200)
+(() => { const m = controller.statusMessage; ui.log("EXPORT " + m); if (m.indexOf("Exported 1 part") !== 0) ui.fail("export not reported: " + m); if (window.scan.busy) ui.fail("still busy") })()
+# 4 Replacing the project while a check runs: its result is dropped.
+(() => { const bg = Array.from(window.contentItem.children).find(x => x.objectName === "bgState"); bg.calls = []; if (!window.scan.runInBackground("document.export_check", { format: "stl" }, r => { const a = bg.calls.slice(); a.push(r); bg.calls = a })) ui.fail("the check did not start"); controller.newProject(); window.scan.waitForFit() })()
+ui.wait(200)
+(() => { const bg = Array.from(window.contentItem.children).find(x => x.objectName === "bgState"); if (bg.calls.length !== 0) ui.fail("a result for the replaced project was delivered"); if (controller.statusMessage.indexOf("discarded") < 0) ui.fail("no note about the dropped result: " + controller.statusMessage) })()
+ui.log("export background done")

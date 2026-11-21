@@ -91,6 +91,14 @@ CommandResult Session::execute(std::string_view name, const Json& params)
     return result;
 }
 
+std::variant<BackgroundWork, CommandResult> Session::plan(std::string_view name, const Json& params)
+{
+    const OperationScope operation(m_operationDepth);
+    if (auto error = synchronizeSources())
+        return CommandResult::failure(*error);
+    return m_registry.plan(m_context, name, params);
+}
+
 CommandResult Session::preview(std::string_view name, const Json& params)
 {
     const OperationScope operation(m_operationDepth);

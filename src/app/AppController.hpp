@@ -133,6 +133,12 @@ public:
     /// revision, part set and format.
     Q_INVOKABLE QVariantMap exportFile(const QUrl& url, const QVariantList& ids = {},
                                       const QString& expectedState = {});
+    /// The document.export parameters exportFile() uses, for running the command in the
+    /// background (ScanController::runInBackground); finishExport() then reports its result
+    /// the way exportFile() does.
+    Q_INVOKABLE QVariantMap exportParams(const QUrl& url, const QVariantList& ids = {},
+                                        const QString& expectedState = {}) const;
+    Q_INVOKABLE QVariantMap finishExport(const QVariantMap& result, const QString& path);
     /// Local file path of a file-dialog URL, for commands that take a path.
     Q_INVOKABLE QString localPath(const QUrl& url) const;
     /// The text of a local file (UTF-8, at most 256 KB), or an empty string when it cannot be read.

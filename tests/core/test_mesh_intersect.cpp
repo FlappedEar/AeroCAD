@@ -141,3 +141,14 @@ TEST_CASE("Coplanar overlap is found where a determinant in long double rounds t
     CHECK(s.pairs == 1);
     CHECK(s.examples.front().coplanar);
 }
+
+TEST_CASE("The search and the repair stop when cancelled (CAD-30)", "[core][intersect]")
+{
+    const TriangleMesh crossing = joined(cube(0, 10), cube(0, 10, {5, 2, 3}));
+    const CancelCheck cancel = [] { return true; };
+    CHECK_THROWS_AS(findSelfIntersections(crossing, 0.0, 16, cancel), Cancelled);
+    CHECK_THROWS_AS(untangleSelfIntersections(crossing, 0.1, true, cancel), Cancelled);
+    // Not cancelled: the same result as without the check.
+    const CancelCheck never = [] { return false; };
+    CHECK(findSelfIntersections(crossing, 0.0, 16, never).pairs == findSelfIntersections(crossing).pairs);
+}

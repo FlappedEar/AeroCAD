@@ -29,6 +29,68 @@ void CommandRegistry::add(CommandInfo info, Handler handler)
         throw std::invalid_argument("CommandRegistry::add: duplicate command " + it->first);
 }
 
+void CommandRegistry::addPlanned(CommandInfo info, Planner planner)
+{
+    if (!planner)
+        throw std::invalid_argument("CommandRegistry::addPlanned: empty planner");
+    const std::string name = info.name;
+    add(std::move(info), [planner](CommandContext& context, const Json& params) {
+        const BackgroundWork work = planner(context, params);
+        return work.run(JobControl{});
+    });
+    m_planners.emplace(name, std::move(planner));
+}
+
+bool CommandRegistry::isPlanned(std::string_view name) const
+{
+    return m_planners.find(name) != m_planners.end();
+}
+
+std::variant<BackgroundWork, CommandResult> CommandRegistry::plan(CommandContext& context, std::string_view name,
+                                                                  const Json& params) const
+{
+    const auto planner = m_planners.find(name);
+    if (planner == m_planners.end())
+        return CommandResult::failure("Command cannot run in the background: " + std::string(name));
+    const CommandInfo& info = m_commands.find(name)->second.info;
+    const Json& effective = params.is_null() ? Json::object() : params;
+    if (auto err = validateParams(info.params, effective))
+        return CommandResult::failure("Invalid parameters for " + info.name + ": " + *err);
+    try {
+        try {
+            return planner->second(context, effective);
+        } catch (...) {
+            geometry::rethrowAsKernelError();
+        }
+    } catch (const CommandError& e) {
+        return CommandResult::failure(e.what());
+    } catch (const std::exception& e) {
+        return CommandResult::failure(info.name + " failed: " + e.what());
+    } catch (...) {
+        return CommandResult::failure(info.name + " failed: unknown error");
+    }
+}
+
+WorkOutcome runWork(std::string_view name, const BackgroundWork& work, const JobControl& control)
+{
+    const std::string command(name);
+    try {
+        try {
+            return {CommandResult::success(work.run(control)), false};
+        } catch (...) {
+            geometry::rethrowAsKernelError();
+        }
+    } catch (const core::Cancelled&) {
+        return {CommandResult::failure(command + " cancelled"), true};
+    } catch (const CommandError& e) {
+        return {CommandResult::failure(e.what()), false};
+    } catch (const std::exception& e) {
+        return {CommandResult::failure(command + " failed: " + e.what()), false};
+    } catch (...) {
+        return {CommandResult::failure(command + " failed: unknown error"), false};
+    }
+}
+
 bool CommandRegistry::contains(std::string_view name) const
 {
     return m_commands.find(name) != m_commands.end();
