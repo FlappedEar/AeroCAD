@@ -1239,7 +1239,7 @@ bool usableBlend(const TopoDS_Shape& result)
     // It must also mesh into a closed solid at the export resolution. A fillet that runs
     // into a curved face at a shallow angle (a fin edge down to the scan root) can leave
     // end faces too small to mesh: valid B-rep, but an open STL that cannot be printed.
-    const core::MeshCheck mesh = core::checkMesh(core::weldVertices(tessellate(wrapShape(result), {0.0002, 0.15})));
+    const core::MeshCheck mesh = core::checkMesh(core::weldVertices(tessellate(wrapShape(result), printTessellation(wrapShape(result)))));
     return mesh.closed();
 }
 

@@ -6,6 +6,7 @@
 
 #include "aerocad/cad/Design.hpp"
 #include "aerocad/core/MeshCheck.hpp"
+#include "aerocad/core/MeshIntersect.hpp"
 #include "aerocad/core/MeshQuery.hpp"
 #include "aerocad/core/Path.hpp"
 #include "aerocad/geometry/Modeling.hpp"
@@ -20,6 +21,9 @@
 #include <deque>
 #include <exception>
 #include <filesystem>
+#include <iomanip>
+#include <sstream>
+#include <unordered_map>
 #include <random>
 #include <string>
 #include <memory>
@@ -30,15 +34,38 @@ namespace aerocad::commands {
 
 namespace {
 
-/// The mesh written for a part: exact (B-rep) parts are tessellated finely for the file
-/// (0.02 % of their size, about 8 degrees per facet; the view uses a coarser mesh), so a
-/// printed fillet or curved skin is smooth. Kept in `store`.
-const core::TriangleMesh* fileMesh(const model::Part& p, std::deque<core::TriangleMesh>& store)
+struct FileMeshes {
+    std::deque<core::TriangleMesh> meshes;
+    /// Triangles that still cut through each other in a mesh made here (CAD-95).
+    std::unordered_map<const core::TriangleMesh*, core::SelfIntersections> crossings;
+};
+
+/// The mesh written for a part: exact (B-rep) parts are tessellated finely for the file (the
+/// view uses a coarser mesh), so a printed fillet or curved skin is smooth. A mesh made from
+/// facets of faces that meet at a shallow angle cuts through itself by a few microns; those
+/// crossings are lifted by moving vertices less than the deflection (CAD-95). Kept in `store`.
+const core::TriangleMesh* fileMesh(const model::Part& p, FileMeshes& store, bool repair = true)
 {
     if (!p.shape || p.shape->isNull())
         return p.mesh.get();
-    store.push_back(geometry::tessellate(*p.shape, {0.0002, 0.15}));
-    return &store.back();
+    if (!repair) { // a STEP file does not carry the mesh
+        store.meshes.push_back(geometry::tessellate(*p.shape, geometry::printTessellation(*p.shape)));
+        return &store.meshes.back();
+    }
+    core::IntersectionRepair repaired = core::untangleSelfIntersections(
+        geometry::tessellate(*p.shape, geometry::printTessellation(*p.shape)), geometry::printDeflection(*p.shape));
+    store.meshes.push_back(std::move(repaired.mesh));
+    store.crossings[&store.meshes.back()] = std::move(repaired.remaining);
+    return &store.meshes.back();
+}
+
+/// "3 triangles still cut through each other (up to 0.4 mm)" for a mesh made by fileMesh().
+std::string crossingText(const core::SelfIntersections& c)
+{
+    std::ostringstream os;
+    os << std::fixed << std::setprecision(3) << c.pairs << (c.pairs == 1 ? " pair of triangles still cuts" : " pairs of triangles still cut")
+       << " through each other (up to " << c.longest << " mm)";
+    return os.str();
 }
 
 Json checkToJson(const core::MeshCheck& c)
@@ -222,7 +249,7 @@ Json exportCheck(const std::vector<const model::Part*>& parts, io::FileFormat fo
     Json results = Json::array();
     std::size_t errors = 0;
     std::size_t warnings = 0;
-    std::deque<core::TriangleMesh> meshes;
+    FileMeshes meshes;
     const bool step = format == io::FileFormat::Step;
     for (const model::Part* p : parts) {
         Json errorList = Json::array();
@@ -260,7 +287,7 @@ Json exportCheck(const std::vector<const model::Part*>& parts, io::FileFormat fo
                                       "other CAD programs may not open it cleanly.");
         }
 
-        if (const core::TriangleMesh* mesh = fileMesh(*p, meshes); mesh != nullptr) {
+        if (const core::TriangleMesh* mesh = fileMesh(*p, meshes, !step); mesh != nullptr) {
             const core::TriangleMesh welded = core::weldVertices(*mesh);
             const core::MeshCheck c = core::checkMesh(welded);
             r["watertight"] = c.watertight();
@@ -283,6 +310,11 @@ Json exportCheck(const std::vector<const model::Part*>& parts, io::FileFormat fo
             } else if (!c.watertight()) {
                 for (const auto& problem : c.problems())
                     meshProblems.push_back(problem);
+            }
+            if (const auto found = meshes.crossings.find(mesh); found != meshes.crossings.end()) {
+                r["selfIntersections"] = found->second.pairs;
+                if (found->second.any())
+                    meshProblems.push_back(crossingText(found->second));
             }
             if (c.closed() && minWall > 0.0) {
                 const WallReport w = measureWalls(welded, minWall);
@@ -427,7 +459,7 @@ void registerExport(CommandRegistry& r)
               Json checks = Json::array();
               Json warnings = Json::array();
               std::vector<io::ExportItem> items;
-              std::deque<core::TriangleMesh> meshes;
+              FileMeshes meshes;
               std::size_t triangles = 0;
               for (const model::Part* p : parts) {
                   io::ExportItem item;
@@ -446,12 +478,17 @@ void registerExport(CommandRegistry& r)
                   Json c = checkToJson(check);
                   c["id"] = p->id;
                   c["name"] = p->name;
+                  const auto found = meshes.crossings.find(item.mesh);
+                  if (found != meshes.crossings.end())
+                      c["selfIntersections"] = found->second.pairs;
                   checks.push_back(c);
                   for (const auto& problem : check.problems())
                       warnings.push_back(p->name + ": " + problem);
+                  if (found != meshes.crossings.end() && found->second.any())
+                      warnings.push_back(p->name + ": " + crossingText(found->second));
               }
               if (requireValid && !warnings.empty()) {
-                  std::string msg = "Export aborted, meshes are not watertight:";
+                  std::string msg = "Export aborted, meshes are not watertight or cut through themselves:";
                   for (const auto& w : warnings)
                       msg += "\n- " + w.get<std::string>();
                   throw CommandError(msg);
@@ -682,7 +719,7 @@ void registerExportForPrint(CommandRegistry& r)
                   const core::TriangleMesh* mesh;
                   std::string stem;
               };
-              std::deque<core::TriangleMesh> meshes;
+              FileMeshes meshes;
               std::vector<Planned> planned;
               std::unordered_set<std::string> stems;
               std::vector<std::string> problems;
@@ -703,12 +740,15 @@ void registerExportForPrint(CommandRegistry& r)
                       } else {
                           for (const auto& problem : core::checkMesh(core::weldVertices(*mesh)).problems())
                               problems.push_back(p->name + ": " + problem);
+                          if (const auto found = meshes.crossings.find(mesh);
+                              found != meshes.crossings.end() && found->second.any())
+                              problems.push_back(p->name + ": " + crossingText(found->second));
                       }
                   }
                   planned.push_back({p, mesh, stem});
               }
               if (!problems.empty()) {
-                  std::string msg = "Nothing was written; not every part is a watertight solid:";
+                  std::string msg = "Nothing was written; not every part is a watertight solid without self-intersections:";
                   for (const auto& w : problems)
                       msg += "\n- " + w;
                   throw CommandError(msg);

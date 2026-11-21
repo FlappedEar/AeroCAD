@@ -4,7 +4,9 @@
 // test model set (CAD-22, tests/data/models) through the command layer only, the same calls
 // the UI and an MCP client make.
 #include "aerocad/commands/Session.hpp"
+#include "aerocad/core/MeshIntersect.hpp"
 #include "aerocad/core/Path.hpp"
+#include "aerocad/model/Document.hpp"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -84,6 +86,16 @@ Json reimportCheck(const std::string& path)
     commands::Session s;
     const Json part = run(s, "document.import", {{"path", path}});
     return run(s, "part.check", {{"id", part.at("id")}});
+}
+
+/// Triangles of an exported file that cut through each other (CAD-95).
+core::SelfIntersections reimportCrossings(const std::string& path)
+{
+    commands::Session s;
+    const Json part = run(s, "document.import", {{"path", path}});
+    const auto* p = s.document().part(part.at("id").get<model::PartId>());
+    REQUIRE(p != nullptr);
+    return core::findSelfIntersections(*p->mesh);
 }
 
 } // namespace
@@ -242,4 +254,11 @@ TEST_CASE("Workflow on an imperfect scan: open, noisy mesh with a hole", "[e2e][
         run(s, "document.export", {{"path", out}, {"ids", Json::array({solid.at("id")})}, {"requireValid", true}});
     CHECK(exported.at("warnings").empty());
     CHECK(reimportCheck(out).at("watertight").get<bool>());
+
+    // CAD-95: the printed mesh does not pass through itself.
+    const std::string stl = dir.file("patch.stl");
+    run(s, "document.export", {{"path", stl}, {"ids", Json::array({solid.at("id")})}, {"requireValid", true}});
+    const auto crossings = reimportCrossings(stl);
+    INFO(crossings.pairs << " crossing pairs, longest " << crossings.longest << " mm");
+    CHECK_FALSE(crossings.any());
 }
