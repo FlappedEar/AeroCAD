@@ -39,12 +39,12 @@ The script proves the path works; only a person can show it is findable. A teste
 
 Protocol:
 
-1. Give the tester only the goal: "Make an aero part on this bumper scan, check it in the wind tunnel, and export it for printing." No demo, no hints. Start the timer when the scan is opened.
+1. Give the tester only the goal: "Make an aero part on this bumper scan, check it in the wind tunnel, export it for printing, then save the project, reopen it and show me the part is still there." No demo, no hints. Start the timer when the scan is opened.
 2. The observer says nothing, and notes every point where the tester stops, asks, opens a wrong menu or undoes. Count user actions (clicks, key presses, drags) from import to each step.
-3. Stop at export, or at 15 minutes. Record the result below, with the build date and git hash from the About box.
+3. Stop the timer when the saved project has been reopened and the same part is back, or at 15 minutes. Record the result below, with the build date and git hash from the About box.
 4. Every stop of more than 30 seconds becomes a Jira issue (parent CAD-65, label ux), and is fixed before the next run.
 
-| Date | Tester | Scan | Time to export | Actions to the part | Stops (what and where) | Build |
+| Date | Tester | Scan | Time to reopen | Actions to the part | Stops (what and where) | Build |
 |---|---|---|---|---|---|---|
 | 2026-11-14 (script, not a person) | none | generated bumper | not timed | about 9 | none (script) | main at CAD-294 |
 
