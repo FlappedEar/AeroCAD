@@ -60,8 +60,7 @@ Click **Run CFD**. The run starts in the background:
 - The run list below the form shows the state and progress (meshing, then solver iterations).
 - You can keep working; the run continues even if you close the panel or the program, and is picked up
   again at the next start.
-- A coarse run of a small part takes minutes (three coarse runs of a 200 mm box finished within about 95 seconds on four cores); a fine run of a whole car takes hours (the F1 model on a
-  fine mesh took about 4 seconds per iteration on four cores). The run list shows how long it has
+- A coarse run of a small part takes a few minutes, a fine run of a whole car hours. Measured on four cores: three coarse runs of a 200 mm box finished within about 95 seconds, and the F1 model on a fine mesh took about 4 seconds per iteration (800 iterations at most). Fewer cores or a smaller Docker/Colima VM are slower. The run list shows how long it has
   run and, while solving, at most how long is left; it often stops sooner when it converges.
 - Several runs share the processors; more than fit wait in a queue and start by themselves.
 - **Cancel** stops a run (asked first; a stopped run cannot be resumed). **Delete** removes the run
@@ -81,7 +80,7 @@ Click the run, then the **Results** tab.
 |---|---|
 | **Drag**, **Lift**, **Side** (N) | Final forces: the mean over the last 20 % of the iterations. "± x" is how far the force still swings. A negative lift is **downforce** and is marked so. |
 | **Cd**, **Cl**, **Cs** | The same as coefficients on the reference area. |
-| **Efficiency L/D** | |lift| / drag. |
+| **Efficiency L/D** | Lift (absolute value) divided by drag. |
 | **Pressure / friction** | The two parts of the drag in N. |
 | **At speed** | Type another speed to scale the final forces to it (by speed squared, with the run's own Cd and Cl). |
 | **checks: ok / warning** | The quality verdict: mesh check, convergence, residuals, force stability. A warning lists what failed, for example *Not converged to the preset targets* or *Cd still changes by more than 2 % over the last 20 % of the iterations*. |

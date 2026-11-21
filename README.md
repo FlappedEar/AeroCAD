@@ -14,9 +14,9 @@ designing parts on top of an arbitrary 3D model, such as a scan of a bumper or a
 
 **Documentation:** https://flappedear.github.io/aerocad/ (tutorial with screenshots, examples, reference; source in `docs/`, `mkdocs.yml`).
 
-Status (2026-11-14): all seven steps work end to end and are developed in the open. Missing:
-the aero shaping step (ridge, lip, fade-out on a part made on a scan, CAD-24/CAD-25) and the
-unaided 15-minute usability check (CAD-37). The path that must always work is the
+Status (2026-11-21): all seven steps work end to end, including the aero shaping of a part made on a
+scan (ridge, fade-out, taper, CAD-24/CAD-25), and are developed in the open. Still open: the unaided
+15-minute usability check (CAD-37). The path that must always work is the
 [golden journey](docs/golden-journey.md); `scripts/golden-journey.sh` runs it against a build.
 Requirements, decisions and the plan are in the Confluence space AE; issues are in Jira project CAD.
 

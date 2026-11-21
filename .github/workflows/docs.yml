@@ -33,15 +33,23 @@ jobs:
           cache: pip
           cache-dependency-path: docs/requirements.txt
       - run: pip install -r docs/requirements.txt
-      - run: mkdocs build --site-dir _site
+      - name: Build
+        run: mkdocs build --site-dir _site > build.log 2>&1 || { cat build.log; exit 1; }
+      - name: Fail on problems in the user manual
+        # Warnings fail the build. Dead links and images are only info-level for the developer
+        # reference pages (they link to source files outside docs/), but not for the manual.
+        run: |
+          cat build.log
+          if grep -E '^(WARNING|ERROR)' build.log; then exit 1; fi
+          if grep -E "Doc file '(index|manual/[a-z0-9-]+)\.md' contains" build.log; then exit 1; fi
       - uses: actions/upload-pages-artifact@v4
-        if: github.event_name != 'pull_request'
+        if: github.ref == 'refs/heads/main'
         with:
           path: _site
 
   deploy:
     needs: build
-    if: github.event_name != 'pull_request'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
