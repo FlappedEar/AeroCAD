@@ -1,10 +1,13 @@
 # User guide
 
-The task-oriented user guide (import a scan, select a region, fit a surface, design a part
-on a curved surface, CAD tools, export, projects and variants) is on Confluence:
-[AeroCAD User Guide](https://kozucharkadiusz.atlassian.net/wiki/spaces/AE/pages/50429953/AeroCAD+User+Guide).
+The step-by-step guide is the **[tutorial](manual/golden-path.md)**: load a scan, draw an outline,
+create the part, sketch on its curved face, shape it, run the wind tunnel and export. The
+[window and navigation](manual/interface.md), the [shortcuts](manual/shortcuts.md) and
+[troubleshooting](manual/troubleshooting.md) are next to it.
 
-The screenshots it uses are in [images/guide](images/guide) and [images/ui](images/ui).
+The older, longer guide on Confluence
+([AeroCAD User Guide](https://kozucharkadiusz.atlassian.net/wiki/spaces/AE/pages/50429953/AeroCAD+User+Guide))
+is no longer kept up to date; this site is.
 
 For AI agent access, see [AI agent access (MCP)](mcp.md): explicitly grant access to the
 project shown in the panel. New, Open, recovery and application exit end that grant.

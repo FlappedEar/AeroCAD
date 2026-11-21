@@ -12,6 +12,8 @@ designing parts on top of an arbitrary 3D model, such as a scan of a bumper or a
 6. Run a CFD simulation separately and get charts.
 7. An AI agent (over MCP) can run the same operations as the user with explicit access to the current project/session; New, Open and recovery revoke it. See [docs/mcp.md](docs/mcp.md).
 
+**Documentation:** https://flappedear.github.io/aerocad/ (tutorial with screenshots, examples, reference; source in `docs/`, `mkdocs.yml`).
+
 Status (2026-11-14): all seven steps work end to end and are developed in the open. Missing:
 the aero shaping step (ridge, lip, fade-out on a part made on a scan, CAD-24/CAD-25) and the
 unaided 15-minute usability check (CAD-37). The path that must always work is the
