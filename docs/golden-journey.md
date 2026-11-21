@@ -30,5 +30,22 @@ merges, change the step in the script from a gap to a hard check (all steps are 
 
 Run it on a real bumper scan before a release: `python3 -I <gen_bumper.py> bumper.stl 2.5` makes a
 295k-triangle one (see the project files), then `scripts/golden-journey.sh build/release bumper.stl`.
-The usability gate CAD-37 (a person does the whole journey unaided in 15 minutes) is measured by
-hand against this list; the baseline on 2026-11-14 was about 9 user actions from import to the part.
+
+## Timed unaided run (CAD-37)
+
+The gate: a person who has not used AeroCAD does the whole journey above, unaided, in 15 minutes.
+The script proves the path works; only a person can show it is findable. A tester needs a build
+(`git pull`, build, or the app bundle), a scan (the bumper above or their own) and a timer.
+
+Protocol:
+
+1. Give the tester only the goal: "Make an aero part on this bumper scan, check it in the wind tunnel, export it for printing, then save the project, reopen it and show me the part is still there." No demo, no hints. Start the timer when the scan is opened.
+2. The observer says nothing, and notes every point where the tester stops, asks, opens a wrong menu or undoes. Count user actions (clicks, key presses, drags) from import to each step.
+3. Stop the timer when the saved project has been reopened and the same part is back, or at 15 minutes. Record the result below, with the build date and git hash from the About box.
+4. Every stop of more than 30 seconds becomes a Jira issue (parent CAD-65, label ux), and is fixed before the next run.
+
+| Date | Tester | Scan | Time to reopen | Actions to the part | Stops (what and where) | Build |
+|---|---|---|---|---|---|---|
+| 2026-11-14 (script, not a person) | none | generated bumper | not timed | about 9 | none (script) | main at CAD-294 |
+
+No unaided run by a person is recorded yet, so CAD-37 stays open.
