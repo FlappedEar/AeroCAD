@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Documentation site on GitHub Pages: https://flappedear.github.io/aerocad/
+# Documentation site on GitHub Pages: https://flappedear.github.io/AeroCAD/
 # Built with MkDocs Material from docs/ + mkdocs.yml on every push to main that touches them.
 # One-time setup in the repository: Settings > Pages > Build and deployment > Source: GitHub Actions.
 # Pull requests only build the site (a broken page fails the check); they never deploy.

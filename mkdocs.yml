@@ -2,7 +2,7 @@
 #   pip install -r docs/requirements.txt && mkdocs serve
 site_name: AeroCAD
 site_description: Design aero parts on a 3D scan of a car, test them in a wind tunnel, export them for printing.
-site_url: https://flappedear.github.io/aerocad/
+site_url: https://flappedear.github.io/AeroCAD/
 repo_url: https://github.com/flappedear/aerocad
 repo_name: flappedear/aerocad
 edit_uri: edit/main/docs/
