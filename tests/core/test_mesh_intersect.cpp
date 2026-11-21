@@ -4,6 +4,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <cmath>
 #include <utility>
 
 using namespace aerocad::core;
@@ -105,4 +106,38 @@ TEST_CASE("Untangling an empty mesh gives an empty mesh", "[core][intersect]")
     const IntersectionRepair r = untangleSelfIntersections(TriangleMesh{}, 0.01);
     CHECK(r.mesh.isEmpty());
     CHECK_FALSE(r.remaining.any());
+}
+
+TEST_CASE("Triangles sharing a corner cross when their cut ends on a border", "[core][intersect]")
+{
+    // The cut runs from the shared corner to (5, 5, 0), which lies on the border of the first.
+    const TriangleMesh mesh({{0, 0, 0}, {10, 0, 0}, {0, 10, 0}, {10, 10, 1}, {0, 0, -1}}, {{0, 1, 2}, {0, 3, 4}});
+    const SelfIntersections s = findSelfIntersections(mesh);
+    CHECK(s.pairs == 1);
+    CHECK(s.longest == Approx(std::sqrt(50.0)).epsilon(1e-9));
+    // Only the corner in common, the rest apart: no crossing.
+    CHECK_FALSE(findSelfIntersections(TriangleMesh({{0, 0, 0}, {10, 0, 0}, {0, 10, 0}, {-3, -3, 1}, {-4, -4, -1}},
+                                                   {{0, 1, 2}, {0, 3, 4}}))
+                    .any());
+}
+
+TEST_CASE("Coplanar overlap is found where a determinant in long double rounds the wrong way", "[core][intersect]")
+{
+    // A big flat triangle with coordinates that are exact in float, and a smaller one strictly inside it.
+    const double k = 1.0 / 65536.0;
+    const double xs[3] = {7584332 * k, 48068 * k, 3141192 * k};
+    const double ys[3] = {318812 * k, 111912 * k, 7942356 * k};
+    std::vector<Vec3> v;
+    for (int i = 0; i < 3; ++i)
+        v.push_back({xs[i], ys[i], xs[i] + ys[i]});
+    const double w[3][3] = {{0.5, 0.25, 0.25}, {0.25, 0.5, 0.25}, {0.25, 0.25, 0.5}};
+    for (const auto& weights : w) {
+        Vec3 p{};
+        for (int i = 0; i < 3; ++i)
+            p = p + v[static_cast<std::size_t>(i)] * weights[i];
+        v.push_back(p);
+    }
+    const SelfIntersections s = findSelfIntersections(TriangleMesh(v, {{0, 1, 2}, {3, 4, 5}}));
+    CHECK(s.pairs == 1);
+    CHECK(s.examples.front().coplanar);
 }

@@ -9,6 +9,7 @@
 #include <limits>
 #include <numeric>
 #include <optional>
+#include <vector>
 
 namespace aerocad::core {
 
@@ -37,11 +38,149 @@ struct LV {
 
 using Tri = std::array<LV, 3>;
 
+// Exact signs of the determinants the tests are made of (CAD-95 review: long double alone
+// rounds to the wrong sign for coplanar input). A floating-point filter decides the clear
+// cases; the rest is summed as non-overlapping expansions of doubles (Shewchuk), which is
+// exact. Inputs are always mesh vertices, i.e. doubles, so the conversions are exact too.
+namespace exact {
+
+using Expansion = std::vector<double>; ///< non-overlapping, increasing magnitude, no zeros
+
+inline void twoSum(double a, double b, double& x, double& y)
+{
+    x = a + b;
+    const double bv = x - a, av = x - bv;
+    y = (a - av) + (b - bv);
+}
+
+inline Expansion grow(const Expansion& e, double b)
+{
+    Expansion h;
+    h.reserve(e.size() + 1);
+    double q = b;
+    for (const double ei : e) {
+        double next, low;
+        twoSum(q, ei, next, low);
+        q = next;
+        if (low != 0.0)
+            h.push_back(low);
+    }
+    if (q != 0.0)
+        h.push_back(q);
+    return h;
+}
+
+inline Expansion add(Expansion a, const Expansion& b)
+{
+    for (const double bi : b)
+        a = grow(a, bi);
+    return a;
+}
+
+inline Expansion negate(Expansion a)
+{
+    for (auto& v : a)
+        v = -v;
+    return a;
+}
+
+inline Expansion scale(const Expansion& e, double b)
+{
+    Expansion out;
+    for (const double ei : e) {
+        const double hi = ei * b, lo = std::fma(ei, b, -hi);
+        if (lo != 0.0)
+            out = grow(out, lo);
+        if (hi != 0.0)
+            out = grow(out, hi);
+    }
+    return out;
+}
+
+inline Expansion mul(const Expansion& a, const Expansion& b)
+{
+    Expansion out;
+    for (const double ai : a)
+        out = add(std::move(out), scale(b, ai));
+    return out;
+}
+
+inline Expansion diff(double a, double b)
+{
+    double x, y;
+    twoSum(a, -b, x, y);
+    Expansion e;
+    if (y != 0.0)
+        e.push_back(y);
+    if (x != 0.0)
+        e.push_back(x);
+    return e;
+}
+
+inline int sign(const Expansion& e)
+{
+    return e.empty() ? 0 : (e.back() > 0 ? 1 : -1);
+}
+
+constexpr double kEps = 1.1102230246251565e-16; // 2^-53
+
+/// Sign of (a-d) . ((b-d) x (c-d)).
+inline int orient3(const double* a, const double* b, const double* c, const double* d)
+{
+    const double adx = a[0] - d[0], bdx = b[0] - d[0], cdx = c[0] - d[0];
+    const double ady = a[1] - d[1], bdy = b[1] - d[1], cdy = c[1] - d[1];
+    const double adz = a[2] - d[2], bdz = b[2] - d[2], cdz = c[2] - d[2];
+    const double det = adx * (bdy * cdz - bdz * cdy) + ady * (bdz * cdx - bdx * cdz) + adz * (bdx * cdy - bdy * cdx);
+    const double permanent = (std::abs(bdy * cdz) + std::abs(bdz * cdy)) * std::abs(adx) +
+                             (std::abs(bdz * cdx) + std::abs(bdx * cdz)) * std::abs(ady) +
+                             (std::abs(bdx * cdy) + std::abs(bdy * cdx)) * std::abs(adz);
+    const double bound = (7.0 + 56.0 * kEps) * kEps * permanent;
+    if (det > bound)
+        return 1;
+    if (-det > bound)
+        return -1;
+    const Expansion ex[3] = {diff(a[0], d[0]), diff(a[1], d[1]), diff(a[2], d[2])};
+    const Expansion bx[3] = {diff(b[0], d[0]), diff(b[1], d[1]), diff(b[2], d[2])};
+    const Expansion cx[3] = {diff(c[0], d[0]), diff(c[1], d[1]), diff(c[2], d[2])};
+    auto minor = [&](int i, int j) { return add(mul(bx[i], cx[j]), negate(mul(bx[j], cx[i]))); };
+    Expansion total = mul(ex[0], minor(1, 2));
+    total = add(std::move(total), mul(ex[1], minor(2, 0)));
+    total = add(std::move(total), mul(ex[2], minor(0, 1)));
+    return sign(total);
+}
+
+/// Sign of (b-a) x (c-a) in the plane.
+inline int orient2(double au, double av, double bu, double bv, double cu, double cv)
+{
+    const double left = (bu - au) * (cv - av), right = (bv - av) * (cu - au);
+    const double det = left - right;
+    const double bound = (3.0 + 16.0 * kEps) * kEps * (std::abs(left) + std::abs(right));
+    if (det > bound)
+        return 1;
+    if (-det > bound)
+        return -1;
+    const Expansion l = mul(diff(bu, au), diff(cv, av)), r = mul(diff(bv, av), diff(cu, au));
+    return sign(add(l, negate(r)));
+}
+
+} // namespace exact
+
 /// Sign-carrying volume of the tetrahedron abcd: positive when d lies below the plane of
-/// abc seen from the side its normal points to.
+/// abc seen from the side its normal points to. The sign is exact (the value is not: it is
+/// only used to place the crossing point, and is made to agree with the sign).
 LD orient(const LV& a, const LV& b, const LV& c, const LV& d)
 {
-    return (a - d).dot((b - d).cross(c - d));
+    const double pa[3] = {static_cast<double>(a.x), static_cast<double>(a.y), static_cast<double>(a.z)};
+    const double pb[3] = {static_cast<double>(b.x), static_cast<double>(b.y), static_cast<double>(b.z)};
+    const double pc[3] = {static_cast<double>(c.x), static_cast<double>(c.y), static_cast<double>(c.z)};
+    const double pd[3] = {static_cast<double>(d.x), static_cast<double>(d.y), static_cast<double>(d.z)};
+    const int sign = exact::orient3(pa, pb, pc, pd);
+    LD value = (a - d).dot((b - d).cross(c - d));
+    if (sign == 0)
+        return 0;
+    if ((value > 0) != (sign > 0) || value == 0)
+        value = sign * std::numeric_limits<LD>::min();
+    return value;
 }
 
 /// Where the segment PQ cuts the triangle. `strict`: only through its inside (not its
@@ -83,7 +222,9 @@ P2 project(const LV& p, int axis)
 
 LD orient2(const P2& a, const P2& b, const P2& c)
 {
-    return (b.u - a.u) * (c.v - a.v) - (b.v - a.v) * (c.u - a.u);
+    const int sign = exact::orient2(static_cast<double>(a.u), static_cast<double>(a.v), static_cast<double>(b.u),
+                                    static_cast<double>(b.v), static_cast<double>(c.u), static_cast<double>(c.v));
+    return static_cast<LD>(sign);
 }
 
 bool strictlyInside(const P2& p, const std::array<P2, 3>& t)
@@ -261,20 +402,41 @@ std::optional<Hit> testPair(const Tris& tris, const std::vector<LV>& lv, std::ui
         const LV& pa = A[static_cast<std::size_t>(fa)];
         const LV& pb = B[static_cast<std::size_t>(fb)];
         if (orient(e0, e1, pa, pb) == 0) {
-            const LV edge = e1 - e0;
-            if ((pa - e0).cross(edge).dot((pb - e0).cross(edge)) > 0)
+            const int axis = dominantAxis((e1 - e0).cross(pa - e0));
+            const LD sa = orient2(project(e0, axis), project(e1, axis), project(pa, axis));
+            const LD sb = orient2(project(e0, axis), project(e1, axis), project(pb, axis));
+            if (sa != 0 && sa == sb)
                 return Hit{e0, e1, true};
         }
         return std::nullopt;
     }
     if (shared == 1) {
-        const auto sa = static_cast<std::size_t>(sharedA[0]), sb = static_cast<std::size_t>(sharedB[0]);
-        const LV &a1 = A[(sa + 1) % 3], &a2 = A[(sa + 2) % 3], &b1 = B[(sb + 1) % 3], &b2 = B[(sb + 2) % 3];
-        LV at;
-        if (pierce(a1, a2, B, true, at) || pierce(b1, b2, A, true, at))
-            return Hit{A[sa], at, false};
-        if (orient(B[0], B[1], B[2], a1) == 0 && orient(B[0], B[1], B[2], a2) == 0 && coplanarOverlap(A, B))
-            return Hit{A[sa], A[sa], true};
+        // The triangles meet at the shared corner S, so they cross when they have any other
+        // point in common: where an edge of one goes through the other, border included.
+        const auto sa = static_cast<std::size_t>(sharedA[0]);
+        const LV& corner = A[sa];
+        LD best = 0;
+        LV farthest = corner;
+        for (std::size_t e = 0; e < 3; ++e) {
+            LV at;
+            for (int which = 0; which < 2; ++which) {
+                const bool found = which == 0 ? pierce(A[e], A[(e + 1) % 3], B, false, at)
+                                              : pierce(B[e], B[(e + 1) % 3], A, false, at);
+                if (!found)
+                    continue;
+                const LV d = at - corner;
+                const LD len = std::sqrt(d.dot(d));
+                if (len > best) {
+                    best = len;
+                    farthest = at;
+                }
+            }
+        }
+        if (best > static_cast<LD>(minLength) && best > 0)
+            return Hit{corner, farthest, false};
+        if (orient(B[0], B[1], B[2], A[(sa + 1) % 3]) == 0 && orient(B[0], B[1], B[2], A[(sa + 2) % 3]) == 0 &&
+            coplanarOverlap(A, B))
+            return Hit{corner, corner, true};
         return std::nullopt;
     }
     std::array<LV, 6> pts;
