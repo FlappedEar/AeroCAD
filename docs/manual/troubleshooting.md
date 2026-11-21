@@ -19,7 +19,7 @@
 | The panel warns about open edges of the part. | An open shell is not a solid. Close it with **MESH > Scan Tools > Repair** (increase *Fill holes up to*), or run only the closed part. |
 | The results say *checks: warning*. | Read the lines under the badge. A coarse mesh often is *not converged to the preset targets*; use it for A/B comparison, not for absolute numbers. Try the medium mesh. |
 | A run was stopped when I closed the program. | Runs continue in the background and are picked up at the next start. A queued run that never started is reported as stopped. |
-| **Export for printing** shows *Check before export*. | See [step 7](step-7-export.md#the-export-check). **Show Thin Walls** shows where; **Export Anyway** writes the files as they are. |
+| **Export for printing** shows *Check before export*. | See [step 7](step-7-export.md#the-export-check). **Show Thin Walls** shows where; **Export Anyway** writes the files as they are. A part that is not a closed solid blocks the print export (no *Export Anyway*): close it first. |
 | The file asks me to *Recover unsaved changes?* at start. | The program did not close properly. Recover brings back the autosaved copy. |
 
 ## Still stuck?

@@ -29,8 +29,13 @@ something:
 
 The thinnest wall allowed (0.8 mm) can be changed in Preferences. The buttons: **Export Anyway**
 writes the files as they are, **Show Thin Walls** colours the thin places in the view, **Cancel**
-stops. If a part is not a closed solid, the file is still written and the problems are listed,
-because slicers and CFD meshers may reject such files.
+stops.
+
+Some problems **block** **Export for printing** instead of warning: a part that is not a closed
+solid (an open surface, or a mesh with open edges) cannot be printed, so the dialog lists the problem
+without an *Export Anyway* button and nothing is written. Repair or close the part first. The plain
+exports below (STL, 3MF, STEP of the selected or all visible parts) only *warn* about an open mesh and
+still write the file, because a scan file or STEP geometry may be open on purpose.
 
 ![Exported](../images/manual/07-exported.png)
 
