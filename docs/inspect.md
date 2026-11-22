@@ -147,8 +147,18 @@ that pass through each other, which includes one shell cutting through another, 
 out as separate parts). Intersections are searched in every closed mesh, also an imported
 one, up to 2 million triangles; a bigger mesh reports `selfIntersections: null` with a
 warning, meaning not checked (never passed). The same verdict is used by `document.export`
-with `requireValid` and by `document.export_for_print`. Not checked yet: whether a part
-collides with the scan it was made on.
+with `requireValid` and by `document.export_for_print`.
+
+A part made on a scan (Part on surface, Fin on surface, or anything drawn on a sketch that sits on
+a scan) is also compared with that scan (CAD-304): `behindScan {deepest, percent, at}` is how far
+the part's points reach behind the scan surface, at which point, and the share of its points that
+do. Behind means on the side opposite to the direction the scan's triangles face. A share of 1 %
+or more, deeper than 0.5 mm (the scan's own roughness), is a warning ("Reaches behind the scan
+surface by up to ... It may collide with the car"), never an error. A part on the inside of the
+scan (the default of Part on surface) is not compared, because it is meant to go through. Points
+whose closest scan point is on the scan's border, and points next to triangles of the scan
+whose winding disagrees with their neighbours (flipped triangles), are not judged, because the
+side cannot be told there. A scan without a consistent winding therefore reports less, never more.
 
 The export mesh of an exact body is made with a smallest element of 2.5 times the
 deflection, and the few-micron crossings that facets of faces meeting at a shallow angle

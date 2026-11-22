@@ -9,6 +9,7 @@
 #include "aerocad/core/MeshIntersect.hpp"
 #include "aerocad/core/MeshQuery.hpp"
 #include "aerocad/core/Path.hpp"
+#include "aerocad/core/SkinCheck.hpp"
 #include "aerocad/geometry/Modeling.hpp"
 #include "aerocad/geometry/Tessellation.hpp"
 #include "aerocad/io/Export.hpp"
@@ -280,6 +281,37 @@ double round3(double v)
     return std::round(v * 1000.0) / 1000.0;
 }
 
+/// Parts further behind the scan surface than this are reported (CAD-304), mm: the scan's own
+/// roughness and the fit tolerance (0.25 mm) stay below it.
+constexpr double kSkinTolerance = 0.5;
+
+/// The scan a body's outline was drawn on, when the body is to be checked against it for reaching behind
+/// its surface (CAD-304): bodies built on a sketch drawn on a scan, except a Part on surface that stands
+/// on the inside by design (its default) and anything not made from such a sketch. Null otherwise.
+std::shared_ptr<const core::TriangleMesh> scanToCheck(const model::Part& part, const model::Document& doc,
+                                                      const cad::Design* design)
+{
+    if (design == nullptr || part.kind != model::PartKind::Body || part.featureId == 0)
+        return nullptr;
+    const cad::Feature* feature = design->feature(cad::featureOfBody(part.featureId));
+    if (feature == nullptr || !feature->params.is_object() || !feature->params.contains("sketch"))
+        return nullptr;
+    const std::string side =
+        feature->params.value("side", std::string(feature->type == "part_on_surface" ? "inside" : "outside"));
+    if (side == "inside")
+        return nullptr;
+    const auto& sketchRef = feature->params.at("sketch");
+    if (!sketchRef.is_number_unsigned())
+        return nullptr;
+    const cad::Feature* sketch = design->feature(sketchRef.get<cad::FeatureId>());
+    if (sketch == nullptr || sketch->type != "sketch" || !sketch->params.contains("onSurface") ||
+        !sketch->params.at("onSurface").is_object() || !sketch->params.at("onSurface").contains("part"))
+        return nullptr;
+    const model::Part* scan = doc.part(sketch->params.at("onSurface").at("part").get<model::PartId>());
+    // A fitted surface (it has exact geometry) is the part's own base, not a scan to stay clear of.
+    return scan != nullptr && !scan->shape ? scan->mesh : nullptr;
+}
+
 /// Copies of the parts a background job works on: it must not look at the live document, which
 /// the user may edit meanwhile. Meshes and shapes are shared, not copied.
 std::shared_ptr<const std::vector<model::Part>> ownParts(const std::vector<const model::Part*>& parts)
@@ -309,7 +341,11 @@ std::size_t workWeight(const std::vector<model::Part>& parts)
 /// is an error: printing needs a watertight mesh, STEP needs exact geometry.
 /// `fitReports` holds, per part, the report of the timeline step that made it (null when it has none), read
 /// from the design by the caller so that this can run away from it.
-Json exportCheck(const std::vector<model::Part>& parts, const std::vector<Json>& fitReports, io::FileFormat format,
+///
+/// `skins` holds, per part, the mesh of the scan its outline was drawn on when the part is to be checked
+/// against it (CAD-304, see scanToCheck), else null.
+Json exportCheck(const std::vector<model::Part>& parts, const std::vector<Json>& fitReports,
+                 const std::vector<std::shared_ptr<const core::TriangleMesh>>& skins, io::FileFormat format,
                  double minWall, bool print, const JobControl& job)
 {
     Json results = Json::array();
@@ -393,6 +429,23 @@ Json exportCheck(const std::vector<model::Part>& parts, const std::vector<Json>&
                 r["selfIntersections"] = nullptr; // not checked: neither passed nor failed
                 warningList.push_back("Self-intersections were not checked: the mesh has " +
                                       std::to_string(mesh->triangleCount()) + " triangles.");
+            }
+            if (skins[index] && !step) {
+                job.checkCancelled();
+                job.progress(at(0.6), "Checking " + p->name + ": against the scan…");
+                const core::BehindSkin behind = core::measureBehindSkin(*mesh, skins[index], kSkinTolerance, job.cancelled);
+                if (behind.examined > 0) {
+                    r["behindScan"] = Json{{"deepest", round3(behind.deepest)},
+                                           {"percent", round3(100.0 * behind.share())},
+                                           {"at", {round3(behind.at.x), round3(behind.at.y), round3(behind.at.z)}}};
+                    // A few stray points are the scan's roughness; the part is behind it when a share of it is.
+                    if (behind.share() >= 0.01)
+                        warningList.push_back("Reaches behind the scan surface by up to " + mm(behind.deepest) + " mm (at " +
+                                              mm(behind.at.x) + ", " + mm(behind.at.y) + ", " + mm(behind.at.z) + "; " +
+                                              std::to_string(static_cast<int>(std::lround(100.0 * behind.share()))) +
+                                              " % of its points, against the direction the scan faces). It may collide "
+                                              "with the car.");
+                }
             }
             if (!step && c.closed() && c.shells > 1)
                 warningList.push_back(std::to_string(c.shells) +
@@ -508,10 +561,13 @@ void registerCheck(CommandRegistry& r)
                 reports.push_back(ctx.design != nullptr && p->kind == model::PartKind::Body && p->featureId != 0
                                       ? ctx.design->status(cad::featureOfBody(p->featureId)).report
                                       : Json());
+            std::vector<std::shared_ptr<const core::TriangleMesh>> skins;
+            for (const model::Part* p : parts)
+                skins.push_back(scanToCheck(*p, ctx.document, ctx.design));
             const std::string state = exportState(ctx, parts, format, print);
             const auto owned = ownParts(parts);
             return BackgroundWork{workWeight(*owned), [=](const JobControl& job) {
-                                      Json result = exportCheck(*owned, reports, format, minWall, print, job);
+                                      Json result = exportCheck(*owned, reports, skins, format, minWall, print, job);
                                       result["state"] = state;
                                       return result;
                                   }};

@@ -7,6 +7,7 @@ add_library(aerocad_core STATIC
     src/MeshCheck.cpp
     src/MeshIntersect.cpp
     src/MeshQuery.cpp
+    src/SkinCheck.cpp
     src/MeshSection.cpp
     src/Triangulate.cpp
     src/Align.cpp

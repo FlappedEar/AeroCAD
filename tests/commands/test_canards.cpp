@@ -8,6 +8,8 @@
 #include "aerocad/core/MeshCheck.hpp"
 #include "aerocad/core/MeshIntersect.hpp"
 #include "aerocad/core/Path.hpp"
+#include "aerocad/core/MeshQuery.hpp"
+#include "aerocad/geometry/Tessellation.hpp"
 #include "aerocad/core/Symmetry.hpp"
 
 #include <catch2/catch_approx.hpp>
@@ -583,4 +585,32 @@ TEST_CASE("Printed fins do not cut through themselves", "[commands][fit][canard]
         CHECK(core::checkMesh(core::weldVertices(*part->mesh)).watertight());
     }
     CHECK(stls == 4);
+}
+
+TEST_CASE("Fins standing on the scan do not trip the check against the scan (CAD-304)",
+          "[commands][fit][canard][export]")
+{
+    // A fin's root is cut to the scan's surface: it touches the skin, it does not go behind it.
+    BumperScene scene;
+    const Json sk = scene.sketchAt(70.0, 120.0);
+    auto fins = scene.session.execute("surface.fin_from_sketch", {{"sketch", sk.at("id")},
+                                                                  {"thickness", 4.0},
+                                                                  {"rootFillet", 2.0},
+                                                                  {"count", 2},
+                                                                  {"spacing", -55.0},
+                                                                  {"mirror", true}});
+    REQUIRE(fins.ok);
+    auto check = scene.session.execute("document.export_check", {{"minWall", 0}});
+    INFO(check.toJson().dump());
+    REQUIRE(check.ok);
+    std::size_t judged = 0;
+    for (const auto& part : check.data.at("parts")) {
+        if (part.contains("behindScan")) {
+            ++judged;
+            CHECK(part.at("behindScan").at("percent").get<double>() < 1.0);
+        }
+        for (const auto& w : part.at("warnings"))
+            CHECK(w.get<std::string>().find("behind the scan") == std::string::npos);
+    }
+    CHECK(judged > 0);
 }
