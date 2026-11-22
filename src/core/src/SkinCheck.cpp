@@ -60,7 +60,9 @@ Vec3 sideNormal(const TriangleMesh& mesh, const MeshAdjacency& adjacency, std::u
                 total = total + unitNormal(mesh, cur) * std::acos(std::clamp(e1.dot(e2) / (l1 * l2), -1.0, 1.0));
             // Across the edge (corner, next) to the following triangle round the corner.
             const std::uint32_t next = adjacency.neighbours(cur)[at];
-            if (next == MeshAdjacency::none || next == t)
+            if (next == MeshAdjacency::none)
+                return {}; // an open fan: a corner of the scan's border, the side cannot be told
+            if (next == t)
                 break;
             cur = next;
         }
@@ -99,26 +101,30 @@ bool windingUncertain(const MeshAdjacency& adjacency, std::uint32_t t)
 
 } // namespace
 
-BehindSkin measureBehindSkin(const TriangleMesh& part, const std::shared_ptr<const TriangleMesh>& skin,
-                             double tolerance, const CancelCheck& cancelled)
+BehindSkin measureBehindSkin(const TriangleMesh& part, const SkinIndex& index, double tolerance,
+                             const CancelCheck& cancelled)
 {
     BehindSkin out;
-    if (!skin || skin->isEmpty() || part.isEmpty())
+    if (!index.skin || index.skin->isEmpty() || part.isEmpty())
         return out;
-    const MeshBvh bvh(skin);
-    const auto adjacency = adjacencyFor(skin);
+    const MeshBvh& bvh = index.bvh;
+    const MeshAdjacency& adjacency = *index.adjacency;
     const double reach = part.bounds().diagonal() + tolerance;
     const auto& vertices = part.vertices();
-    const auto& skinVertices = skin->vertices();
-    const auto& skinTriangles = skin->triangles();
+    const auto& skinVertices = index.skin->vertices();
+    const auto& skinTriangles = index.skin->triangles();
     constexpr std::size_t kMaxJudged = 200000;
+    // A regular stride could step over all the few vertices of a small face (a fin's root) that is the one
+    // reaching behind the scan, so one vertex of each block is picked, by a fixed hash of the block.
     const std::size_t stride = std::max<std::size_t>(1, vertices.size() / kMaxJudged);
     // A point this close to a border edge of the scan is "on the border".
     const double borderEps = std::max(1e-6, part.bounds().diagonal() * 1e-7);
 
-    for (std::size_t i = 0; i < vertices.size(); i += stride) {
-        if ((i / stride & 1023) == 0)
+    for (std::size_t block = 0, i = 0; i < vertices.size(); ++block, i = block * stride) {
+        if ((block & 1023) == 0)
             throwIfCancelled(cancelled);
+        if (stride > 1)
+            i = std::min(vertices.size() - 1, i + static_cast<std::size_t>((block * 2654435761ULL) >> 7) % stride);
         const Vec3& v = vertices[i];
         const auto closest = bvh.closestPoint(v, reach);
         if (!closest)
@@ -127,12 +133,12 @@ BehindSkin measureBehindSkin(const TriangleMesh& part, const std::shared_ptr<con
         const auto& tri = skinTriangles[t];
         bool onBorder = false;
         for (int slot = 0; slot < 3 && !onBorder; ++slot)
-            if (adjacency->neighbours(t)[static_cast<std::size_t>(slot)] == MeshAdjacency::none)
+            if (adjacency.neighbours(t)[static_cast<std::size_t>(slot)] == MeshAdjacency::none)
                 onBorder = segmentDistance(closest->point, skinVertices[tri[static_cast<std::size_t>(slot)]],
                                            skinVertices[tri[static_cast<std::size_t>((slot + 1) % 3)]]) < borderEps;
-        if (onBorder || windingUncertain(*adjacency, t))
+        if (onBorder || windingUncertain(adjacency, t))
             continue;
-        const Vec3 n = sideNormal(*skin, *adjacency, t, closest->point, borderEps * 10.0);
+        const Vec3 n = sideNormal(*index.skin, adjacency, t, closest->point, borderEps * 10.0);
         if (n.dot(n) == 0.0)
             continue;
         ++out.examined;
@@ -146,6 +152,14 @@ BehindSkin measureBehindSkin(const TriangleMesh& part, const std::shared_ptr<con
         }
     }
     return out;
+}
+
+BehindSkin measureBehindSkin(const TriangleMesh& part, const std::shared_ptr<const TriangleMesh>& skin,
+                             double tolerance, const CancelCheck& cancelled)
+{
+    if (!skin || skin->isEmpty() || part.isEmpty())
+        return {};
+    return measureBehindSkin(part, SkinIndex(skin), tolerance, cancelled);
 }
 
 } // namespace aerocad::core

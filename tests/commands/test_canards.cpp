@@ -7,10 +7,10 @@
 #include "aerocad/core/Align.hpp"
 #include "aerocad/core/MeshCheck.hpp"
 #include "aerocad/core/MeshIntersect.hpp"
-#include "aerocad/core/Path.hpp"
 #include "aerocad/core/MeshQuery.hpp"
-#include "aerocad/geometry/Tessellation.hpp"
+#include "aerocad/core/Path.hpp"
 #include "aerocad/core/Symmetry.hpp"
+#include "aerocad/geometry/Tessellation.hpp"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>

@@ -769,8 +769,7 @@ TEST_CASE("Export commands run as background work (CAD-30)", "[commands][export]
     }
 }
 
-TEST_CASE("The export check says when a part reaches behind the scan it was drawn on (CAD-304)",
-          "[commands][export]")
+TEST_CASE("The export check says when a part reaches behind the scan it was drawn on (CAD-304)", "[commands][export]")
 {
     commands::Session s;
     // A flat scan sheet facing +z with an outline on it.
@@ -790,9 +789,10 @@ TEST_CASE("The export check says when a part reaches behind the scan it was draw
     sheet.name = "Scan";
     sheet.mesh = std::make_shared<const core::TriangleMesh>(core::TriangleMesh(std::move(v), std::move(t)));
     const auto scanId = s.document().addPart(sheet);
-    auto sketch = s.execute("sketch.create", {{"surface", {{"part", scanId}, {"point", {30, 15, 0}}}},
-                                              {"curves", Json::array({{{"type", "center_rectangle"}, {"center", {0, 0}},
-                                                                       {"width", 20}, {"height", 10}}})}});
+    auto sketch = s.execute(
+        "sketch.create",
+        {{"surface", {{"part", scanId}, {"point", {30, 15, 0}}}},
+         {"curves", Json::array({{{"type", "center_rectangle"}, {"center", {0, 0}}, {"width", 20}, {"height", 10}}})}});
     REQUIRE(sketch.ok);
     const auto sketchId = sketch.data.at("id").get<std::uint64_t>();
 
@@ -802,7 +802,8 @@ TEST_CASE("The export check says when a part reaches behind the scan it was draw
         return r.data.at("parts").at(0);
     };
     auto made = [&](const char* side, double thickness) {
-        const auto r = s.execute("surface.part_from_sketch", {{"sketch", sketchId}, {"thickness", thickness}, {"side", side}});
+        const auto r =
+            s.execute("surface.part_from_sketch", {{"sketch", sketchId}, {"thickness", thickness}, {"side", side}});
         INFO(r.toJson().dump());
         REQUIRE(r.ok);
         return r.data.at("id").get<model::PartId>();
@@ -831,10 +832,31 @@ TEST_CASE("The export check says when a part reaches behind the scan it was draw
         CHECK(report.at("errors").empty());
         CHECK(report.at("status") == "warning");
         // Printing: still a warning, never an error.
-        const auto print = s.execute("document.export_check",
-                                     {{"ids", {report.at("id").get<model::PartId>()}}, {"print", true}, {"minWall", 0}});
+        const auto print =
+            s.execute("document.export_check",
+                      {{"ids", {report.at("id").get<model::PartId>()}}, {"print", true}, {"minWall", 0}});
         REQUIRE(print.ok);
         CHECK(print.data.at("parts").at(0).at("errors").empty());
+    }
+    SECTION("The scan is the one the step was given in `id`, not only the one the sketch was drawn on")
+    {
+        // A second sheet 5 mm below the first: a part standing on it lies behind the first sheet.
+        model::Part lower = sheet;
+        lower.name = "Lower scan";
+        std::vector<core::Vec3> shifted = sheet.mesh->vertices();
+        for (auto& p : shifted)
+            p.z -= 5.0;
+        lower.mesh = std::make_shared<const core::TriangleMesh>(core::TriangleMesh(shifted, sheet.mesh->triangles()));
+        const auto lowerId = s.document().addPart(lower);
+        const auto r = s.execute("surface.part_from_sketch",
+                                 {{"sketch", sketchId}, {"id", lowerId}, {"thickness", 3.0}, {"side", "outside"}});
+        INFO(r.toJson().dump());
+        REQUIRE(r.ok);
+        const Json report = check(r.data.at("id").get<model::PartId>());
+        INFO(report.dump());
+        REQUIRE(report.contains("behindScan"));
+        CHECK(report.at("behindScan").at("percent").get<double>() < 1.0);
+        CHECK_FALSE(mentions(report.at("warnings"), "behind the scan"));
     }
     SECTION("An extrusion of the outline into the scan is reported too")
     {

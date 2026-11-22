@@ -285,9 +285,18 @@ double round3(double v)
 /// roughness and the fit tolerance (0.25 mm) stay below it.
 constexpr double kSkinTolerance = 0.5;
 
+/// The part id as a JSON value holds it, 0 when it is not one.
+model::PartId partIdOf(const Json& j, const char* key)
+{
+    return j.is_object() && j.contains(key) && j.at(key).is_number_unsigned() ? j.at(key).get<model::PartId>() : 0;
+}
+
 /// The scan a body's outline was drawn on, when the body is to be checked against it for reaching behind
 /// its surface (CAD-304): bodies built on a sketch drawn on a scan, except a Part on surface that stands
-/// on the inside by design (its default) and anything not made from such a sketch. Null otherwise.
+/// on the inside by design (its default) and anything not made from such a sketch. The surface is found
+/// as the Part on surface / Fin on surface step finds it: the step's own `id` first, else the sketch's;
+/// a reference surface fitted to a scan stands for that scan. Null when there is none, or its params
+/// are not what the commands write (the check is optional, so it never fails the export check).
 std::shared_ptr<const core::TriangleMesh> scanToCheck(const model::Part& part, const model::Document& doc,
                                                       const cad::Design* design)
 {
@@ -296,21 +305,29 @@ std::shared_ptr<const core::TriangleMesh> scanToCheck(const model::Part& part, c
     const cad::Feature* feature = design->feature(cad::featureOfBody(part.featureId));
     if (feature == nullptr || !feature->params.is_object() || !feature->params.contains("sketch"))
         return nullptr;
-    const std::string side =
-        feature->params.value("side", std::string(feature->type == "part_on_surface" ? "inside" : "outside"));
+    const Json& sideParam = feature->params.contains("side") ? feature->params.at("side") : Json();
+    const std::string side = sideParam.is_string() ? sideParam.get<std::string>()
+                                                   : (feature->type == "part_on_surface" ? "inside" : "outside");
     if (side == "inside")
         return nullptr;
     const auto& sketchRef = feature->params.at("sketch");
     if (!sketchRef.is_number_unsigned())
         return nullptr;
     const cad::Feature* sketch = design->feature(sketchRef.get<cad::FeatureId>());
-    if (sketch == nullptr || sketch->type != "sketch" || !sketch->params.contains("onSurface") ||
-        !sketch->params.at("onSurface").is_object() || !sketch->params.at("onSurface").contains("part"))
+    if (sketch == nullptr || sketch->type != "sketch")
         return nullptr;
-    const model::Part* scan = doc.part(sketch->params.at("onSurface").at("part").get<model::PartId>());
-    // A fitted surface (it has exact geometry) is the part's own base, not a scan to stay clear of.
+    model::PartId id = partIdOf(feature->params, "id");
+    if (id == 0 && sketch->params.is_object() && sketch->params.contains("onSurface"))
+        id = partIdOf(sketch->params.at("onSurface"), "part");
+    const model::Part* scan = id != 0 ? doc.part(id) : nullptr;
+    if (scan != nullptr && model::fittedScanId(*scan) != 0)
+        scan = doc.part(model::fittedScanId(*scan));
+    // A body with exact geometry is a part of the design, not a scan to stay clear of.
     return scan != nullptr && !scan->shape ? scan->mesh : nullptr;
 }
+
+/// More triangles than this in a scan and the comparison with it is skipped (and said so).
+constexpr std::size_t kMaxSkinTriangles = 6'000'000;
 
 /// Copies of the parts a background job works on: it must not look at the live document, which
 /// the user may edit meanwhile. Meshes and shapes are shared, not copied.
@@ -352,6 +369,7 @@ Json exportCheck(const std::vector<model::Part>& parts, const std::vector<Json>&
     std::size_t errors = 0;
     std::size_t warnings = 0;
     FileMeshes meshes;
+    std::unordered_map<const core::TriangleMesh*, std::unique_ptr<core::SkinIndex>> skinIndexes;
     const bool step = format == io::FileFormat::Step;
     for (std::size_t index = 0; index < parts.size(); ++index) {
         const model::Part* p = &parts[index];
@@ -431,20 +449,30 @@ Json exportCheck(const std::vector<model::Part>& parts, const std::vector<Json>&
                                       std::to_string(mesh->triangleCount()) + " triangles.");
             }
             if (skins[index] && !step) {
-                job.checkCancelled();
-                job.progress(at(0.6), "Checking " + p->name + ": against the scan…");
-                const core::BehindSkin behind = core::measureBehindSkin(*mesh, skins[index], kSkinTolerance, job.cancelled);
-                if (behind.examined > 0) {
-                    r["behindScan"] = Json{{"deepest", round3(behind.deepest)},
-                                           {"percent", round3(100.0 * behind.share())},
-                                           {"at", {round3(behind.at.x), round3(behind.at.y), round3(behind.at.z)}}};
-                    // A few stray points are the scan's roughness; the part is behind it when a share of it is.
-                    if (behind.share() >= 0.01)
-                        warningList.push_back("Reaches behind the scan surface by up to " + mm(behind.deepest) + " mm (at " +
-                                              mm(behind.at.x) + ", " + mm(behind.at.y) + ", " + mm(behind.at.z) + "; " +
-                                              std::to_string(static_cast<int>(std::lround(100.0 * behind.share()))) +
-                                              " % of its points, against the direction the scan faces). It may collide "
-                                              "with the car.");
+                if (skins[index]->triangleCount() > kMaxSkinTriangles) {
+                    warningList.push_back("Not compared with the scan it was made on: the scan has " +
+                                          std::to_string(skins[index]->triangleCount()) + " triangles.");
+                } else {
+                    job.checkCancelled();
+                    job.progress(at(0.6), "Checking " + p->name + ": against the scan…");
+                    auto& skin = skinIndexes[skins[index].get()]; // built once for all the parts made on a scan
+                    if (!skin)
+                        skin = std::make_unique<core::SkinIndex>(skins[index]);
+                    const core::BehindSkin behind =
+                        core::measureBehindSkin(*mesh, *skin, kSkinTolerance, job.cancelled);
+                    if (behind.examined > 0) {
+                        r["behindScan"] = Json{{"deepest", round3(behind.deepest)},
+                                               {"percent", round3(100.0 * behind.share())},
+                                               {"at", {round3(behind.at.x), round3(behind.at.y), round3(behind.at.z)}}};
+                        // A few stray points are the scan's roughness; the part is behind it when a share of it is.
+                        if (behind.share() >= 0.01)
+                            warningList.push_back(
+                                "Reaches behind the scan surface by up to " + mm(behind.deepest) + " mm (at " +
+                                mm(behind.at.x) + ", " + mm(behind.at.y) + ", " + mm(behind.at.z) + "; " +
+                                std::to_string(static_cast<int>(std::lround(100.0 * behind.share()))) +
+                                " % of its points, against the direction the scan faces). It may collide with the "
+                                "car.");
+                    }
                 }
             }
             if (!step && c.closed() && c.shells > 1)
