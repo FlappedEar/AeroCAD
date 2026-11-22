@@ -26,6 +26,7 @@ something:
 |---|---|---|
 | **Approximation: its surface is up to X mm from the scan** | The part was fitted within more than the 0.25 mm tolerance (see [step 3](step-3-part.md#the-approximation-warning)). | Usually fine for a part that only has to fit well; check the numbers. |
 | **Walls thinner than 0.80 mm on N % of the surface** | Places the printer may not print. The dialog gives the thinnest wall and where it is. | Click **Show Thin Walls** to see them, then thicken the part (Edit step) or round the sharp edge that makes the sliver. |
+| **Reaches behind the scan surface by up to X mm** | Part of the body is on the far side of the scan it was drawn on, so it may collide with the car. Shown only when at least 1 % of its points are more than 0.5 mm behind. | Move or thin the part so it stays on the outside of the scan. The part on the inside of the scan (the default of Part on surface) is not compared. |
 
 The thinnest wall allowed (0.8 mm) can be changed in Preferences. The buttons: **Export Anyway**
 writes the files as they are, **Show Thin Walls** colours the thin places in the view, **Cancel**

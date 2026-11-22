@@ -768,3 +768,105 @@ TEST_CASE("Export commands run as background work (CAD-30)", "[commands][export]
         CHECK(outcome.result.data.at("triangles") == direct.data.at("triangles"));
     }
 }
+
+TEST_CASE("The export check says when a part reaches behind the scan it was drawn on (CAD-304)", "[commands][export]")
+{
+    commands::Session s;
+    // A flat scan sheet facing +z with an outline on it.
+    std::vector<core::Vec3> v;
+    std::vector<core::TriangleMesh::Triangle> t;
+    const int nx = 60, ny = 30;
+    for (int j = 0; j <= ny; ++j)
+        for (int i = 0; i <= nx; ++i)
+            v.push_back({double(i), double(j), 0.0});
+    auto idx = [&](int i, int j) { return static_cast<std::uint32_t>(j * (nx + 1) + i); };
+    for (int j = 0; j < ny; ++j)
+        for (int i = 0; i < nx; ++i) {
+            t.push_back({idx(i, j), idx(i + 1, j), idx(i + 1, j + 1)});
+            t.push_back({idx(i, j), idx(i + 1, j + 1), idx(i, j + 1)});
+        }
+    model::Part sheet;
+    sheet.name = "Scan";
+    sheet.mesh = std::make_shared<const core::TriangleMesh>(core::TriangleMesh(std::move(v), std::move(t)));
+    const auto scanId = s.document().addPart(sheet);
+    auto sketch = s.execute(
+        "sketch.create",
+        {{"surface", {{"part", scanId}, {"point", {30, 15, 0}}}},
+         {"curves", Json::array({{{"type", "center_rectangle"}, {"center", {0, 0}}, {"width", 20}, {"height", 10}}})}});
+    REQUIRE(sketch.ok);
+    const auto sketchId = sketch.data.at("id").get<std::uint64_t>();
+
+    auto check = [&](model::PartId id) {
+        const auto r = s.execute("document.export_check", {{"ids", {id}}, {"minWall", 0}});
+        REQUIRE(r.ok);
+        return r.data.at("parts").at(0);
+    };
+    auto made = [&](const char* side, double thickness) {
+        const auto r =
+            s.execute("surface.part_from_sketch", {{"sketch", sketchId}, {"thickness", thickness}, {"side", side}});
+        INFO(r.toJson().dump());
+        REQUIRE(r.ok);
+        return r.data.at("id").get<model::PartId>();
+    };
+
+    SECTION("A part that stands inside the skin by design is not compared with it")
+    {
+        const Json report = check(made("inside", 3.0));
+        CHECK_FALSE(report.contains("behindScan"));
+    }
+    SECTION("A part standing on the skin is judged and passes")
+    {
+        const Json report = check(made("outside", 3.0));
+        INFO(report.dump());
+        REQUIRE(report.contains("behindScan"));
+        CHECK(report.at("behindScan").at("percent").get<double>() < 1.0);
+        CHECK_FALSE(mentions(report.at("warnings"), "behind the scan"));
+    }
+    SECTION("A part that goes through the skin is reported, as a warning")
+    {
+        const Json report = check(made("both", 4.0));
+        INFO(report.dump());
+        REQUIRE(report.contains("behindScan"));
+        CHECK(report.at("behindScan").at("deepest").get<double>() == Approx(2.0).margin(0.1));
+        CHECK(mentions(report.at("warnings"), "behind the scan surface by up to 2"));
+        CHECK(report.at("errors").empty());
+        CHECK(report.at("status") == "warning");
+        // Printing: still a warning, never an error.
+        const auto print =
+            s.execute("document.export_check",
+                      {{"ids", {report.at("id").get<model::PartId>()}}, {"print", true}, {"minWall", 0}});
+        REQUIRE(print.ok);
+        CHECK(print.data.at("parts").at(0).at("errors").empty());
+    }
+    SECTION("The scan is the one the step was given in `id`, not only the one the sketch was drawn on")
+    {
+        // A second sheet 5 mm below the first: a part standing on it lies behind the first sheet.
+        model::Part lower = sheet;
+        lower.name = "Lower scan";
+        std::vector<core::Vec3> shifted = sheet.mesh->vertices();
+        for (auto& p : shifted)
+            p.z -= 5.0;
+        lower.mesh = std::make_shared<const core::TriangleMesh>(core::TriangleMesh(shifted, sheet.mesh->triangles()));
+        const auto lowerId = s.document().addPart(lower);
+        const auto r = s.execute("surface.part_from_sketch",
+                                 {{"sketch", sketchId}, {"id", lowerId}, {"thickness", 3.0}, {"side", "outside"}});
+        INFO(r.toJson().dump());
+        REQUIRE(r.ok);
+        const Json report = check(r.data.at("id").get<model::PartId>());
+        INFO(report.dump());
+        REQUIRE(report.contains("behindScan"));
+        CHECK(report.at("behindScan").at("percent").get<double>() < 1.0);
+        CHECK_FALSE(mentions(report.at("warnings"), "behind the scan"));
+    }
+    SECTION("An extrusion of the outline into the scan is reported too")
+    {
+        const auto r = s.execute("feature.extrude", {{"sketch", sketchId}, {"distance", -3.0}});
+        INFO(r.toJson().dump());
+        REQUIRE(r.ok);
+        const Json report = check(r.data.at("bodies").at(0).at("partId").get<model::PartId>());
+        INFO(report.dump());
+        REQUIRE(report.contains("behindScan"));
+        CHECK(report.at("behindScan").at("deepest").get<double>() == Approx(3.0).margin(0.1));
+        CHECK(mentions(report.at("warnings"), "behind the scan surface"));
+    }
+}

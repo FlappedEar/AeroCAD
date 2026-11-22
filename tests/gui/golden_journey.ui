@@ -79,7 +79,7 @@ ui.wait(1500)
 ui.clickText("SOLID")
 ui.wait(300)
 # 9 Export check and print export.
-(() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "goldenJourney"); window.selectPart(t.s.body); const c = t.run("document.export_check", { ids: [t.s.body] }); t.s.check = c; const crossing = c.parts.find(p => p.selfIntersections > 0); if (crossing) t.fail("9 export check: " + crossing.name + " cuts through itself (selfIntersections " + crossing.selfIntersections + ", CAD-95)"); t.pass(9, "export check") })()
+(() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "goldenJourney"); window.selectPart(t.s.body); const c = t.run("document.export_check", { ids: [t.s.body] }); t.s.check = c; const crossing = c.parts.find(p => p.selfIntersections > 0); if (crossing) t.fail("9 export check: " + crossing.name + " cuts through itself (selfIntersections " + crossing.selfIntersections + ", CAD-95)"); const behind = c.parts.find(p => (p.warnings || []).some(w => w.indexOf("behind the scan") >= 0)); if (behind) t.fail("9 export check: " + behind.name + " reaches behind the scan (CAD-304): " + JSON.stringify(behind.behindScan)); t.pass(9, "export check") })()
 ui.clickText("File")
 ui.wait(300)
 ui.clickText("Export for Printing...")

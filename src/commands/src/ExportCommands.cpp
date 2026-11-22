@@ -9,6 +9,7 @@
 #include "aerocad/core/MeshIntersect.hpp"
 #include "aerocad/core/MeshQuery.hpp"
 #include "aerocad/core/Path.hpp"
+#include "aerocad/core/SkinCheck.hpp"
 #include "aerocad/geometry/Modeling.hpp"
 #include "aerocad/geometry/Tessellation.hpp"
 #include "aerocad/io/Export.hpp"
@@ -280,6 +281,54 @@ double round3(double v)
     return std::round(v * 1000.0) / 1000.0;
 }
 
+/// Parts further behind the scan surface than this are reported (CAD-304), mm: the scan's own
+/// roughness and the fit tolerance (0.25 mm) stay below it.
+constexpr double kSkinTolerance = 0.5;
+
+/// The part id as a JSON value holds it, 0 when it is not one.
+model::PartId partIdOf(const Json& j, const char* key)
+{
+    return j.is_object() && j.contains(key) && j.at(key).is_number_unsigned() ? j.at(key).get<model::PartId>() : 0;
+}
+
+/// The scan a body's outline was drawn on, when the body is to be checked against it for reaching behind
+/// its surface (CAD-304): bodies built on a sketch drawn on a scan, except a Part on surface that stands
+/// on the inside by design (its default) and anything not made from such a sketch. The surface is found
+/// as the Part on surface / Fin on surface step finds it: the step's own `id` first, else the sketch's;
+/// a reference surface fitted to a scan stands for that scan. Null when there is none, or its params
+/// are not what the commands write (the check is optional, so it never fails the export check).
+std::shared_ptr<const core::TriangleMesh> scanToCheck(const model::Part& part, const model::Document& doc,
+                                                      const cad::Design* design)
+{
+    if (design == nullptr || part.kind != model::PartKind::Body || part.featureId == 0)
+        return nullptr;
+    const cad::Feature* feature = design->feature(cad::featureOfBody(part.featureId));
+    if (feature == nullptr || !feature->params.is_object() || !feature->params.contains("sketch"))
+        return nullptr;
+    const Json& sideParam = feature->params.contains("side") ? feature->params.at("side") : Json();
+    const std::string side = sideParam.is_string() ? sideParam.get<std::string>()
+                                                   : (feature->type == "part_on_surface" ? "inside" : "outside");
+    if (side == "inside")
+        return nullptr;
+    const auto& sketchRef = feature->params.at("sketch");
+    if (!sketchRef.is_number_unsigned())
+        return nullptr;
+    const cad::Feature* sketch = design->feature(sketchRef.get<cad::FeatureId>());
+    if (sketch == nullptr || sketch->type != "sketch")
+        return nullptr;
+    model::PartId id = partIdOf(feature->params, "id");
+    if (id == 0 && sketch->params.is_object() && sketch->params.contains("onSurface"))
+        id = partIdOf(sketch->params.at("onSurface"), "part");
+    const model::Part* scan = id != 0 ? doc.part(id) : nullptr;
+    if (scan != nullptr && model::fittedScanId(*scan) != 0)
+        scan = doc.part(model::fittedScanId(*scan));
+    // A body with exact geometry is a part of the design, not a scan to stay clear of.
+    return scan != nullptr && !scan->shape ? scan->mesh : nullptr;
+}
+
+/// More triangles than this in a scan and the comparison with it is skipped (and said so).
+constexpr std::size_t kMaxSkinTriangles = 6'000'000;
+
 /// Copies of the parts a background job works on: it must not look at the live document, which
 /// the user may edit meanwhile. Meshes and shapes are shared, not copied.
 std::shared_ptr<const std::vector<model::Part>> ownParts(const std::vector<const model::Part*>& parts)
@@ -294,7 +343,8 @@ std::shared_ptr<const std::vector<model::Part>> ownParts(const std::vector<const
 /// A rough size of the work on `parts`, triangles (BackgroundWork::weight). An exact body is
 /// meshed again for the file about twenty times finer than the view mesh and its crossings are
 /// repaired, so its view triangles count that much more.
-std::size_t workWeight(const std::vector<model::Part>& parts)
+std::size_t workWeight(const std::vector<model::Part>& parts,
+                       const std::vector<std::shared_ptr<const core::TriangleMesh>>& skins = {})
 {
     constexpr std::size_t kExactFactor = 20;
     std::size_t triangles = 0;
@@ -302,6 +352,11 @@ std::size_t workWeight(const std::vector<model::Part>& parts)
         const std::size_t own = p.mesh ? p.mesh->triangleCount() : 0;
         triangles += p.shape && !p.shape->isNull() ? own * kExactFactor : own;
     }
+    // A scan a part is compared with gets a search tree built once (CAD-304).
+    std::unordered_set<const core::TriangleMesh*> seen;
+    for (const auto& skin : skins)
+        if (skin && seen.insert(skin.get()).second)
+            triangles += skin->triangleCount();
     return triangles;
 }
 
@@ -309,13 +364,18 @@ std::size_t workWeight(const std::vector<model::Part>& parts)
 /// is an error: printing needs a watertight mesh, STEP needs exact geometry.
 /// `fitReports` holds, per part, the report of the timeline step that made it (null when it has none), read
 /// from the design by the caller so that this can run away from it.
-Json exportCheck(const std::vector<model::Part>& parts, const std::vector<Json>& fitReports, io::FileFormat format,
+///
+/// `skins` holds, per part, the mesh of the scan its outline was drawn on when the part is to be checked
+/// against it (CAD-304, see scanToCheck), else null.
+Json exportCheck(const std::vector<model::Part>& parts, const std::vector<Json>& fitReports,
+                 const std::vector<std::shared_ptr<const core::TriangleMesh>>& skins, io::FileFormat format,
                  double minWall, bool print, const JobControl& job)
 {
     Json results = Json::array();
     std::size_t errors = 0;
     std::size_t warnings = 0;
     FileMeshes meshes;
+    std::unordered_map<const core::TriangleMesh*, std::unique_ptr<core::SkinIndex>> skinIndexes;
     const bool step = format == io::FileFormat::Step;
     for (std::size_t index = 0; index < parts.size(); ++index) {
         const model::Part* p = &parts[index];
@@ -393,6 +453,33 @@ Json exportCheck(const std::vector<model::Part>& parts, const std::vector<Json>&
                 r["selfIntersections"] = nullptr; // not checked: neither passed nor failed
                 warningList.push_back("Self-intersections were not checked: the mesh has " +
                                       std::to_string(mesh->triangleCount()) + " triangles.");
+            }
+            if (skins[index] && !step) {
+                if (skins[index]->triangleCount() > kMaxSkinTriangles) {
+                    warningList.push_back("Not compared with the scan it was made on: the scan has " +
+                                          std::to_string(skins[index]->triangleCount()) + " triangles.");
+                } else {
+                    job.checkCancelled();
+                    job.progress(at(0.6), "Checking " + p->name + ": against the scan…");
+                    auto& skin = skinIndexes[skins[index].get()]; // built once for all the parts made on a scan
+                    if (!skin)
+                        skin = std::make_unique<core::SkinIndex>(skins[index]);
+                    const core::BehindSkin behind =
+                        core::measureBehindSkin(*mesh, *skin, kSkinTolerance, job.cancelled);
+                    if (behind.examined > 0) {
+                        r["behindScan"] = Json{{"deepest", round3(behind.deepest)},
+                                               {"percent", round3(100.0 * behind.share())},
+                                               {"at", {round3(behind.at.x), round3(behind.at.y), round3(behind.at.z)}}};
+                        // A few stray points are the scan's roughness; the part is behind it when a share of it is.
+                        if (behind.share() >= 0.01)
+                            warningList.push_back(
+                                "Reaches behind the scan surface by up to " + mm(behind.deepest) + " mm (at " +
+                                mm(behind.at.x) + ", " + mm(behind.at.y) + ", " + mm(behind.at.z) + "; " +
+                                std::to_string(static_cast<int>(std::lround(100.0 * behind.share()))) +
+                                " % of its points, against the direction the scan faces). It may collide with the "
+                                "car.");
+                    }
+                }
             }
             if (!step && c.closed() && c.shells > 1)
                 warningList.push_back(std::to_string(c.shells) +
@@ -508,10 +595,13 @@ void registerCheck(CommandRegistry& r)
                 reports.push_back(ctx.design != nullptr && p->kind == model::PartKind::Body && p->featureId != 0
                                       ? ctx.design->status(cad::featureOfBody(p->featureId)).report
                                       : Json());
+            std::vector<std::shared_ptr<const core::TriangleMesh>> skins;
+            for (const model::Part* p : parts)
+                skins.push_back(scanToCheck(*p, ctx.document, ctx.design));
             const std::string state = exportState(ctx, parts, format, print);
             const auto owned = ownParts(parts);
-            return BackgroundWork{workWeight(*owned), [=](const JobControl& job) {
-                                      Json result = exportCheck(*owned, reports, format, minWall, print, job);
+            return BackgroundWork{workWeight(*owned, skins), [=](const JobControl& job) {
+                                      Json result = exportCheck(*owned, reports, skins, format, minWall, print, job);
                                       result["state"] = state;
                                       return result;
                                   }};
@@ -551,74 +641,75 @@ void registerExport(CommandRegistry& r)
               const std::vector<const model::Part*> selected = selectParts(ctx.document, params);
               requireExportState(ctx, params, selected, format, false);
               const auto owned = ownParts(selected);
-              return BackgroundWork{workWeight(*owned), [=](const JobControl& job) {
-              const std::vector<model::Part>& parts = *owned;
+              return BackgroundWork{
+                  workWeight(*owned), [=](const JobControl& job) {
+                      const std::vector<model::Part>& parts = *owned;
 
-              Json checks = Json::array();
-              Json warnings = Json::array();
-              std::vector<io::ExportItem> items;
-              FileMeshes meshes;
-              std::size_t triangles = 0;
-              for (std::size_t index = 0; index < parts.size(); ++index) {
-                  const model::Part* p = &parts[index];
-                  job.checkCancelled();
-                  job.progress(static_cast<double>(index) / static_cast<double>(parts.size()) * 0.9,
-                               "Preparing " + p->name + "…");
-                  io::ExportItem item;
-                  item.name = p->name;
-                  item.mesh = format == io::FileFormat::Step ? p->mesh.get() : fileMesh(*p, meshes, job);
-                  item.shape = p->shape ? &*p->shape : nullptr;
-                  item.color = p->color;
-                  items.push_back(item);
+                      Json checks = Json::array();
+                      Json warnings = Json::array();
+                      std::vector<io::ExportItem> items;
+                      FileMeshes meshes;
+                      std::size_t triangles = 0;
+                      for (std::size_t index = 0; index < parts.size(); ++index) {
+                          const model::Part* p = &parts[index];
+                          job.checkCancelled();
+                          job.progress(static_cast<double>(index) / static_cast<double>(parts.size()) * 0.9,
+                                       "Preparing " + p->name + "…");
+                          io::ExportItem item;
+                          item.name = p->name;
+                          item.mesh = format == io::FileFormat::Step ? p->mesh.get() : fileMesh(*p, meshes, job);
+                          item.shape = p->shape ? &*p->shape : nullptr;
+                          item.color = p->color;
+                          items.push_back(item);
 
-                  if (format == io::FileFormat::Step || item.mesh == nullptr)
-                      continue;
-                  triangles += item.mesh->triangleCount();
-                  // Check what is written: the writers drop triangles collapsed to an edge or
-                  // a point (B-rep tessellations have them at singular points).
-                  const core::MeshCheck check = core::checkMesh(core::weldVertices(*item.mesh));
-                  Json c = checkToJson(check);
-                  c["id"] = p->id;
-                  c["name"] = p->name;
-                  const CrossingVerdict crossing = crossingVerdict(*item.mesh, check, meshes, job);
-                  if (crossing.state == CrossingVerdict::State::Done)
-                      c["selfIntersections"] = crossing.found.pairs;
-                  else if (crossing.state == CrossingVerdict::State::Unknown)
-                      c["selfIntersections"] = nullptr;
-                  checks.push_back(c);
-                  for (const auto& problem : check.problems())
-                      warnings.push_back(p->name + ": " + problem);
-                  if (crossing.state == CrossingVerdict::State::Done && crossing.found.any())
-                      warnings.push_back(p->name + ": " + crossingText(crossing.found));
-              }
-              if (requireValid && !warnings.empty()) {
-                  std::string msg = "Export aborted, meshes are not watertight or cut through themselves:";
-                  for (const auto& w : warnings)
-                      msg += "\n- " + w.get<std::string>();
-                  throw CommandError(msg);
-              }
+                          if (format == io::FileFormat::Step || item.mesh == nullptr)
+                              continue;
+                          triangles += item.mesh->triangleCount();
+                          // Check what is written: the writers drop triangles collapsed to an edge or
+                          // a point (B-rep tessellations have them at singular points).
+                          const core::MeshCheck check = core::checkMesh(core::weldVertices(*item.mesh));
+                          Json c = checkToJson(check);
+                          c["id"] = p->id;
+                          c["name"] = p->name;
+                          const CrossingVerdict crossing = crossingVerdict(*item.mesh, check, meshes, job);
+                          if (crossing.state == CrossingVerdict::State::Done)
+                              c["selfIntersections"] = crossing.found.pairs;
+                          else if (crossing.state == CrossingVerdict::State::Unknown)
+                              c["selfIntersections"] = nullptr;
+                          checks.push_back(c);
+                          for (const auto& problem : check.problems())
+                              warnings.push_back(p->name + ": " + problem);
+                          if (crossing.state == CrossingVerdict::State::Done && crossing.found.any())
+                              warnings.push_back(p->name + ": " + crossingText(crossing.found));
+                      }
+                      if (requireValid && !warnings.empty()) {
+                          std::string msg = "Export aborted, meshes are not watertight or cut through themselves:";
+                          for (const auto& w : warnings)
+                              msg += "\n- " + w.get<std::string>();
+                          throw CommandError(msg);
+                      }
 
-              // Nothing is written yet: Cancel still stops the export without a trace.
-              job.checkCancelled();
-              job.progress(0.9, "Writing " + core::pathToUtf8(path.filename()) + "…");
-              try {
-                  io::exportFile(path, items, format);
-              } catch (const io::ExportError& e) {
-                  throw CommandError(e.what());
-              }
+                      // Nothing is written yet: Cancel still stops the export without a trace.
+                      job.checkCancelled();
+                      job.progress(0.9, "Writing " + core::pathToUtf8(path.filename()) + "…");
+                      try {
+                          io::exportFile(path, items, format);
+                      } catch (const io::ExportError& e) {
+                          throw CommandError(e.what());
+                      }
 
-              Json ids = Json::array();
-              for (const model::Part& p : parts)
-                  ids.push_back(p.id);
-              Json out{{"path", core::pathToUtf8(path)},
-                       {"format", std::string(io::formatName(format))},
-                       {"ids", ids},
-                       {"checks", checks},
-                       {"warnings", warnings}};
-              if (format != io::FileFormat::Step)
-                  out["triangles"] = triangles;
-              return out;
-              }};
+                      Json ids = Json::array();
+                      for (const model::Part& p : parts)
+                          ids.push_back(p.id);
+                      Json out{{"path", core::pathToUtf8(path)},
+                               {"format", std::string(io::formatName(format))},
+                               {"ids", ids},
+                               {"checks", checks},
+                               {"warnings", warnings}};
+                      if (format != io::FileFormat::Step)
+                          out["triangles"] = triangles;
+                      return out;
+                  }};
           });
 }
 
@@ -810,96 +901,105 @@ void registerExportForPrint(CommandRegistry& r)
               if (!folder.is_absolute())
                   throw CommandError("Folder must be an absolute path: " + core::pathToUtf8(folder));
               const auto owned = ownParts(selected);
-              return BackgroundWork{workWeight(*owned), [=](const JobControl& job) {
-              const std::vector<model::Part>& parts = *owned;
-              std::error_code ec;
-              std::filesystem::create_directories(folder, ec);
-              if (!std::filesystem::is_directory(folder))
-                  throw CommandError("Cannot create the folder " + core::pathToUtf8(folder));
-              bool stl = true, step = true;
-              if (params.contains("formats")) {
-                  stl = step = false;
-                  for (const auto& f : params.at("formats")) {
-                      stl = stl || f == "stl";
-                      step = step || f == "step";
-                  }
-              }
-              // Check everything before writing anything.
-              struct Planned {
-                  const model::Part* part;
-                  const core::TriangleMesh* mesh;
-                  std::string stem;
-              };
-              FileMeshes meshes;
-              std::vector<Planned> planned;
-              std::unordered_set<std::string> stems;
-              std::vector<std::string> problems;
-              for (std::size_t index = 0; index < parts.size(); ++index) {
-                  const model::Part* p = &parts[index];
-                  job.checkCancelled();
-                  job.progress(static_cast<double>(index) / static_cast<double>(parts.size()) * 0.9,
-                               "Preparing " + p->name + "…");
-                  // Compared without case: on macOS and Windows "Fin" and "fin" are one file.
-                  auto folded = [](std::string s) {
-                      std::transform(s.begin(), s.end(), s.begin(),
-                                     [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-                      return s;
-                  };
-                  std::string stem = fileStem(p->name);
-                  for (int k = 2; !stems.insert(folded(stem)).second; ++k)
-                      stem = fileStem(p->name) + " " + std::to_string(k);
-                  const core::TriangleMesh* mesh = stl ? fileMesh(*p, meshes, job) : nullptr;
-                  if (stl) {
-                      if (mesh == nullptr) {
-                          problems.push_back(p->name + ": no mesh");
-                      } else {
-                          const core::MeshCheck check = core::checkMesh(core::weldVertices(*mesh));
-                          for (const auto& problem : check.problems())
-                              problems.push_back(p->name + ": " + problem);
-                          const CrossingVerdict crossing = crossingVerdict(*mesh, check, meshes, job);
-                          if (crossing.state == CrossingVerdict::State::Done && crossing.found.any())
-                              problems.push_back(p->name + ": " + crossingText(crossing.found));
+              return BackgroundWork{
+                  workWeight(*owned), [=](const JobControl& job) {
+                      const std::vector<model::Part>& parts = *owned;
+                      std::error_code ec;
+                      std::filesystem::create_directories(folder, ec);
+                      if (!std::filesystem::is_directory(folder))
+                          throw CommandError("Cannot create the folder " + core::pathToUtf8(folder));
+                      bool stl = true, step = true;
+                      if (params.contains("formats")) {
+                          stl = step = false;
+                          for (const auto& f : params.at("formats")) {
+                              stl = stl || f == "stl";
+                              step = step || f == "step";
+                          }
                       }
-                  }
-                  planned.push_back({p, mesh, stem});
-              }
-              if (!problems.empty()) {
-                  std::string msg = "Nothing was written; not every part is a watertight solid without self-intersections:";
-                  for (const auto& w : problems)
-                      msg += "\n- " + w;
-                  throw CommandError(msg);
-              }
+                      // Check everything before writing anything.
+                      struct Planned {
+                          const model::Part* part;
+                          const core::TriangleMesh* mesh;
+                          std::string stem;
+                      };
+                      FileMeshes meshes;
+                      std::vector<Planned> planned;
+                      std::unordered_set<std::string> stems;
+                      std::vector<std::string> problems;
+                      for (std::size_t index = 0; index < parts.size(); ++index) {
+                          const model::Part* p = &parts[index];
+                          job.checkCancelled();
+                          job.progress(static_cast<double>(index) / static_cast<double>(parts.size()) * 0.9,
+                                       "Preparing " + p->name + "…");
+                          // Compared without case: on macOS and Windows "Fin" and "fin" are one file.
+                          auto folded = [](std::string s) {
+                              std::transform(s.begin(), s.end(), s.begin(),
+                                             [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                              return s;
+                          };
+                          std::string stem = fileStem(p->name);
+                          for (int k = 2; !stems.insert(folded(stem)).second; ++k)
+                              stem = fileStem(p->name) + " " + std::to_string(k);
+                          const core::TriangleMesh* mesh = stl ? fileMesh(*p, meshes, job) : nullptr;
+                          if (stl) {
+                              if (mesh == nullptr) {
+                                  problems.push_back(p->name + ": no mesh");
+                              } else {
+                                  const core::MeshCheck check = core::checkMesh(core::weldVertices(*mesh));
+                                  for (const auto& problem : check.problems())
+                                      problems.push_back(p->name + ": " + problem);
+                                  const CrossingVerdict crossing = crossingVerdict(*mesh, check, meshes, job);
+                                  if (crossing.state == CrossingVerdict::State::Done && crossing.found.any())
+                                      problems.push_back(p->name + ": " + crossingText(crossing.found));
+                              }
+                          }
+                          planned.push_back({p, mesh, stem});
+                      }
+                      if (!problems.empty()) {
+                          std::string msg =
+                              "Nothing was written; not every part is a watertight solid without self-intersections:";
+                          for (const auto& w : problems)
+                              msg += "\n- " + w;
+                          throw CommandError(msg);
+                      }
 
-              Json files = Json::array();
-              Json warnings = Json::array();
-              std::vector<PrintFile> outputs;
-              for (const auto& pl : planned) {
-                  if (stl) {
-                      const auto path = folder / core::pathFromUtf8(pl.stem + ".stl");
-                      outputs.push_back({path, {pl.part->name, pl.mesh, nullptr}, io::FileFormat::Stl});
-                      files.push_back({{"id", pl.part->id}, {"format", "stl"}, {"path", core::pathToUtf8(path)},
-                                       {"triangles", pl.mesh->triangleCount()}});
-                  }
-                  if (step) {
-                      if (!pl.part->shape || pl.part->shape->isNull()) {
-                          warnings.push_back(pl.part->name + ": no exact geometry, so no STEP file");
-                          continue;
+                      Json files = Json::array();
+                      Json warnings = Json::array();
+                      std::vector<PrintFile> outputs;
+                      for (const auto& pl : planned) {
+                          if (stl) {
+                              const auto path = folder / core::pathFromUtf8(pl.stem + ".stl");
+                              outputs.push_back({path, {pl.part->name, pl.mesh, nullptr}, io::FileFormat::Stl});
+                              files.push_back({{"id", pl.part->id},
+                                               {"format", "stl"},
+                                               {"path", core::pathToUtf8(path)},
+                                               {"triangles", pl.mesh->triangleCount()}});
+                          }
+                          if (step) {
+                              if (!pl.part->shape || pl.part->shape->isNull()) {
+                                  warnings.push_back(pl.part->name + ": no exact geometry, so no STEP file");
+                                  continue;
+                              }
+                              const auto path = folder / core::pathFromUtf8(pl.stem + ".step");
+                              outputs.push_back({path,
+                                                 {pl.part->name, nullptr, &*pl.part->shape, pl.part->color},
+                                                 io::FileFormat::Step});
+                              files.push_back(
+                                  {{"id", pl.part->id}, {"format", "step"}, {"path", core::pathToUtf8(path)}});
+                          }
                       }
-                      const auto path = folder / core::pathFromUtf8(pl.stem + ".step");
-                      outputs.push_back({path, {pl.part->name, nullptr, &*pl.part->shape, pl.part->color}, io::FileFormat::Step});
-                      files.push_back({{"id", pl.part->id}, {"format", "step"}, {"path", core::pathToUtf8(path)}});
-                  }
-              }
-              // Nothing is written yet: Cancel still stops the export without a trace. Once the
-              // files are being replaced it must finish (or roll back) as a whole.
-              job.checkCancelled();
-              job.progress(0.9, "Writing the print files…");
-              const auto cleanupWarning = writePrintSet(folder, outputs);
-              if (!cleanupWarning.empty())
-                  warnings.push_back(cleanupWarning);
-              return Json{{"folder", core::pathToUtf8(folder)}, {"files", files}, {"warnings", warnings},
-                          {"parts", planned.size()}};
-              }};
+                      // Nothing is written yet: Cancel still stops the export without a trace. Once the
+                      // files are being replaced it must finish (or roll back) as a whole.
+                      job.checkCancelled();
+                      job.progress(0.9, "Writing the print files…");
+                      const auto cleanupWarning = writePrintSet(folder, outputs);
+                      if (!cleanupWarning.empty())
+                          warnings.push_back(cleanupWarning);
+                      return Json{{"folder", core::pathToUtf8(folder)},
+                                  {"files", files},
+                                  {"warnings", warnings},
+                                  {"parts", planned.size()}};
+                  }};
           });
 }
 
