@@ -159,6 +159,8 @@ scan (the default of Part on surface) is not compared, because it is meant to go
 whose closest scan point is on the scan's border, and points next to triangles of the scan
 whose winding disagrees with their neighbours (flipped triangles), are not judged, because the
 side cannot be told there. A scan without a consistent winding therefore reports less, never more.
+Only the vertices of the part's export mesh are judged (a big part is sampled), not the inside of its
+triangles, and a scan of more than 6 million triangles is not compared (a warning says so).
 
 The export mesh of an exact body is made with a smallest element of 2.5 times the
 deflection, and the few-micron crossings that facets of faces meeting at a shallow angle
