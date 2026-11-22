@@ -10,6 +10,7 @@
 #include "aerocad/commands/FitStage.hpp"
 #include "aerocad/commands/Session.hpp"
 #include "aerocad/core/Align.hpp"
+#include "aerocad/core/MeshSelection.hpp"
 #include "aerocad/core/MeshSimplify.hpp"
 #include "aerocad/core/Path.hpp"
 #include "aerocad/core/Units.hpp"
@@ -646,6 +647,13 @@ std::shared_ptr<const core::TriangleMesh> ScanController::displayMesh(const mode
                 emit self->displayMeshReady(id);
             },
             Qt::QueuedConnection);
+        // Sketch on the scan, brushing and region picks need the neighbours of its triangles;
+        // that takes about a second per 3 million triangles, so it is ready before the first
+        // one is asked for (CAD-305).
+        try {
+            (void)core::adjacencyFor(source);
+        } catch (...) { // only a head start: the sketch builds it itself (and reports) if this failed
+        }
     });
     connect(worker, &QThread::finished, worker, &QObject::deleteLater);
     worker->start(QThread::LowPriority);

@@ -46,7 +46,9 @@ private:
 
 /// Adjacency of `mesh`, computed once and cached for the few most recently used meshes.
 /// Meshes are immutable once shared, so the cache is keyed by the mesh object.
-/// Not thread-safe (UI thread only, like the document).
+/// Thread-safe: a call for a mesh whose adjacency another thread is building waits for that
+/// one (so it can be computed ahead on a worker thread, CAD-305). A big scan takes about a
+/// second.
 [[nodiscard]] std::shared_ptr<const MeshAdjacency> adjacencyFor(const std::shared_ptr<const TriangleMesh>& mesh);
 
 /// Index of the triangle closest to `point`, or std::nullopt for an empty mesh.

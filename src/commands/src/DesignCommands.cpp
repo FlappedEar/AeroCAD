@@ -619,8 +619,9 @@ std::pair<Json, Json> surfaceSketchPlane(const model::Document& doc, const Json&
         const auto& pt = ref.at("point");
         const core::Vec3 point{pt.at(0).get<double>(), pt.at(1).get<double>(), pt.at(2).get<double>()};
         const double radius = ref.value("radius", std::max(mesh.bounds().diagonal() * 0.1, 1e-3));
-        const core::MeshAdjacency adjacency(mesh);
-        for (const auto t : core::selectBrushDab(mesh, &adjacency, point, radius))
+        // Cached per mesh: building it takes about a second on a big scan.
+        const auto adjacency = core::adjacencyFor(part->mesh);
+        for (const auto t : core::selectBrushDab(mesh, adjacency.get(), point, radius))
             triangles.push_back(t);
         area = "area around the point";
     } else {

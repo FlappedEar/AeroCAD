@@ -175,5 +175,9 @@ core -------+                 transforms, primitives).
   (CAD-30) run on a worker thread with progress and Cancel. Measured with `aerocad-cmd` on a
   3 million triangle scan (set `AEROCAD_CMD_TIMING=1` to print milliseconds per command),
   modelling steps take 0.25 to 0.45 s (Part on surface, edits of its parameters, fillet);
-  the first Sketch on the scan takes 1.5 s (building its ray index) and still runs on the UI
-  thread; regeneration of the timeline is not moved off it.
+  the first Sketch on a scan took 1.5 s because it built the mesh's triangle neighbours
+  (`core::adjacencyFor`); that cache is now thread-safe and filled by the worker that makes the
+  scan's display mesh (CAD-305), so the first sketch takes 0.08 s on a 1.5 million triangle scan
+  in the real GUI. Timeline regeneration stays on the UI thread: a step edit or fillet
+  regenerates in 0.25 to 0.45 s on 3 million triangles, so moving the design off the UI thread
+  would cost more than it gains.
