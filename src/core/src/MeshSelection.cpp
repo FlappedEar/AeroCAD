@@ -4,8 +4,10 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <future>
 #include <limits>
 #include <map>
+#include <mutex>
 #include <numbers>
 #include <unordered_map>
 
@@ -127,25 +129,42 @@ std::shared_ptr<const MeshAdjacency> adjacencyFor(const std::shared_ptr<const Tr
 {
     struct Entry {
         std::weak_ptr<const TriangleMesh> mesh;
-        std::shared_ptr<const MeshAdjacency> adjacency;
+        std::shared_future<std::shared_ptr<const MeshAdjacency>> adjacency;
     };
+    static std::mutex mutex;
     static std::vector<Entry> cache; // most recently used first
     if (!mesh)
         return {};
-    for (auto it = cache.begin(); it != cache.end(); ++it) {
-        if (it->mesh.lock() == mesh) {
-            Entry hit = *it;
-            cache.erase(it);
-            cache.insert(cache.begin(), hit);
-            return hit.adjacency;
+    std::promise<std::shared_ptr<const MeshAdjacency>> promise;
+    {
+        const std::lock_guard lock(mutex);
+        for (auto it = cache.begin(); it != cache.end(); ++it) {
+            if (it->mesh.lock() == mesh) {
+                Entry hit = *it;
+                cache.erase(it);
+                cache.insert(cache.begin(), hit);
+                return hit.adjacency.get(); // waits when another thread is still building it
+            }
         }
+        cache.insert(cache.begin(), Entry{mesh, promise.get_future().share()});
+        constexpr std::size_t maxEntries = 4;
+        if (cache.size() > maxEntries)
+            cache.resize(maxEntries);
     }
-    auto adjacency = std::make_shared<const MeshAdjacency>(*mesh);
-    cache.insert(cache.begin(), Entry{mesh, adjacency});
-    constexpr std::size_t maxEntries = 4;
-    if (cache.size() > maxEntries)
-        cache.resize(maxEntries);
-    return adjacency;
+    // Built outside the lock: other meshes are not held up, and a second caller for this one
+    // waits on the future.
+    try {
+        auto adjacency = std::make_shared<const MeshAdjacency>(*mesh);
+        promise.set_value(adjacency);
+        return adjacency;
+    } catch (...) {
+        promise.set_exception(std::current_exception());
+        const std::lock_guard lock(mutex);
+        cache.erase(std::remove_if(cache.begin(), cache.end(),
+                                   [&](const Entry& e) { return e.mesh.lock() == mesh; }),
+                    cache.end());
+        throw;
+    }
 }
 
 std::optional<RayHit> raycast(const TriangleMesh& mesh, const Vec3& origin, const Vec3& direction)

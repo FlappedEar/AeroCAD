@@ -8,6 +8,7 @@
 #include <cmath>
 #include <numbers>
 #include <memory>
+#include <thread>
 #include <vector>
 
 using namespace aerocad::core;
@@ -170,6 +171,23 @@ TEST_CASE("Adjacency cache returns the same object for the same mesh", "[core][s
     CHECK(adjacencyFor(mesh) == a);
     auto other = std::make_shared<const TriangleMesh>(cube(2));
     CHECK(adjacencyFor(other) != a);
+}
+
+TEST_CASE("Adjacency is shared by threads asking for the same mesh (CAD-305)", "[core][selection]")
+{
+    auto mesh = std::make_shared<const TriangleMesh>(cube(40));
+    std::vector<std::shared_ptr<const MeshAdjacency>> got(4);
+    std::vector<std::thread> threads;
+    for (std::size_t i = 0; i < got.size(); ++i)
+        threads.emplace_back([&, i] { got[i] = adjacencyFor(mesh); });
+    for (auto& t : threads)
+        t.join();
+    for (const auto& a : got) {
+        REQUIRE(a != nullptr);
+        CHECK(a == got[0]); // one build, the others waited for it
+    }
+    CHECK(got[0]->triangleCount() == mesh->triangleCount());
+    CHECK(adjacencyFor(nullptr) == nullptr);
 }
 
 TEST_CASE("Lasso with an orthographic view", "[core][selection]")
