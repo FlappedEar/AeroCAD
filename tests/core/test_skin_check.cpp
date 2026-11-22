@@ -93,6 +93,27 @@ TEST_CASE("Points over triangles of inconsistent winding are not judged", "[core
     CHECK(part.examined > 0);
 }
 
+TEST_CASE("A part far behind the scan is judged, not missed", "[core][skin]")
+{
+    // 100 mm below the sheet, far more than the part's own size.
+    const BehindSkin far = measureBehindSkin(box(40, 60, 40, 60, -102, -100), sheet(), 0.5);
+    CHECK(far.examined == 8);
+    CHECK(far.behind == 8);
+    CHECK(far.deepest == Approx(102.0));
+}
+
+TEST_CASE("A box beyond a corner of the scan's border is not judged, whichever triangle is closest", "[core][skin]")
+{
+    // A fan of three triangles round the corner (0,0,0), open on one side: a boundary vertex.
+    std::vector<Vec3> v{{0, 0, 0}, {10, 0, 0}, {10, 10, 0}, {0, 10, 0}, {-10, 10, 0}};
+    std::vector<TriangleMesh::Triangle> t{{0, 1, 2}, {0, 2, 3}, {0, 3, 4}};
+    const auto fan = std::make_shared<const TriangleMesh>(std::move(v), std::move(t));
+    // Entirely beyond the border corner, under the plane.
+    const BehindSkin beyond = measureBehindSkin(box(-30, -10, -30, -10, -4, -2), fan, 0.5);
+    CHECK(beyond.examined == 0);
+    CHECK(beyond.behind == 0);
+}
+
 TEST_CASE("The skin check stops when cancelled", "[core][skin]")
 {
     CHECK_THROWS_AS(measureBehindSkin(box(40, 60, 40, 60, -2, 8), sheet(), 0.5, [] { return true; }), Cancelled);

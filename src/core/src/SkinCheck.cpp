@@ -109,7 +109,6 @@ BehindSkin measureBehindSkin(const TriangleMesh& part, const SkinIndex& index, d
         return out;
     const MeshBvh& bvh = index.bvh;
     const MeshAdjacency& adjacency = *index.adjacency;
-    const double reach = part.bounds().diagonal() + tolerance;
     const auto& vertices = part.vertices();
     const auto& skinVertices = index.skin->vertices();
     const auto& skinTriangles = index.skin->triangles();
@@ -126,7 +125,7 @@ BehindSkin measureBehindSkin(const TriangleMesh& part, const SkinIndex& index, d
         if (stride > 1)
             i = std::min(vertices.size() - 1, i + static_cast<std::size_t>((block * 2654435761ULL) >> 7) % stride);
         const Vec3& v = vertices[i];
-        const auto closest = bvh.closestPoint(v, reach);
+        const auto closest = bvh.closestPoint(v);
         if (!closest)
             continue;
         const auto t = static_cast<std::uint32_t>(closest->triangle);
