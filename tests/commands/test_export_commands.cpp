@@ -2,12 +2,14 @@
 #include "aerocad/commands/Session.hpp"
 #include "aerocad/core/Path.hpp"
 #include "aerocad/geometry/Primitives.hpp"
+#include "aerocad/geometry/Tessellation.hpp"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -15,6 +17,8 @@
 #include <random>
 #include <set>
 #include <string>
+#include <variant>
+#include <vector>
 
 #ifndef _WIN32
 #include <csignal>
@@ -541,5 +545,226 @@ TEST_CASE("document.export_check explains what blocks or weakens an export", "[c
         REQUIRE(p.ok);
         CHECK(p.data.at("canExport") == false);
         CHECK(p.data.at("parts").at(0).at("status") == "error");
+    }
+}
+
+namespace {
+
+/// A mesh of closed cubes, one for each shift (edge length 10 mm, outward normals).
+model::PartId addCubes(commands::Session& s, const std::string& name, const std::vector<core::Vec3>& shifts)
+{
+    std::vector<core::Vec3> verts;
+    std::vector<core::TriangleMesh::Triangle> tris{{0, 2, 3}, {0, 3, 1}, {4, 5, 7}, {4, 7, 6}, {0, 1, 5}, {0, 5, 4},
+                                                   {2, 6, 7}, {2, 7, 3}, {0, 4, 6}, {0, 6, 2}, {1, 3, 7}, {1, 7, 5}};
+    std::vector<core::TriangleMesh::Triangle> all;
+    for (const auto& shift : shifts) {
+        const auto base = static_cast<std::uint32_t>(verts.size());
+        for (int i = 0; i < 8; ++i)
+            verts.push_back(core::Vec3{i & 1 ? 10.0 : 0.0, i & 2 ? 10.0 : 0.0, i & 4 ? 10.0 : 0.0} + shift);
+        for (auto t : tris)
+            all.push_back({base + t[0], base + t[1], base + t[2]});
+    }
+    model::Part p;
+    p.name = name;
+    p.mesh = std::make_shared<const core::TriangleMesh>(std::move(verts), std::move(all));
+    return s.document().addPart(std::move(p));
+}
+
+Json partReport(const commands::Json& result)
+{
+    return result.at("parts").at(0);
+}
+
+bool mentions(const Json& list, const std::string& text)
+{
+    for (const auto& item : list)
+        if (item.get<std::string>().find(text) != std::string::npos)
+            return true;
+    return false;
+}
+
+} // namespace
+
+TEST_CASE("The export check refuses meshes whose shells cut through each other (CAD-32)", "[commands][export]")
+{
+    // Every edge is used twice and the orientation is right, so the old check said "Ready to export".
+    commands::Session s;
+    const auto id = addCubes(s, "Overlap", {{0, 0, 0}, {5, 2, 3}});
+    const auto print = s.execute("document.export_check", {{"ids", {id}}, {"print", true}, {"minWall", 0}});
+    REQUIRE(print.ok);
+    CHECK_FALSE(print.data.at("canExport").get<bool>());
+    CHECK_FALSE(print.data.at("passed").get<bool>());
+    const Json report = partReport(print.data);
+    CHECK(report.at("selfIntersections").get<std::size_t>() > 0);
+    CHECK(mentions(report.at("errors"), "through each other"));
+
+    // Not for printing: a warning, and the strict export writes nothing.
+    const auto plain = s.execute("document.export_check", {{"ids", {id}}, {"minWall", 0}});
+    REQUIRE(plain.ok);
+    CHECK_FALSE(plain.data.at("passed").get<bool>());
+    TempDir dir;
+    const auto strict = s.execute("document.export", {{"path", dir.file("overlap.stl")}, {"ids", {id}}, {"requireValid", true}});
+    CHECK_FALSE(strict.ok);
+    CHECK_THAT(strict.error, ContainsSubstring("through each other"));
+    CHECK_FALSE(fs::exists(dir.file("overlap.stl")));
+    const auto printed = s.execute("document.export_for_print", {{"folder", dir.file("print")}, {"ids", {id}}});
+    CHECK_FALSE(printed.ok);
+    CHECK_THAT(printed.error, ContainsSubstring("through each other"));
+}
+
+TEST_CASE("The export check refuses bodies that touch in a point and tells about separate shells (CAD-32)",
+          "[commands][export]")
+{
+    commands::Session s;
+    const auto pinched = addCubes(s, "Pinched", {{0, 0, 0}, {10, 10, 10}});
+    const auto check = s.execute("document.export_check", {{"ids", {pinched}}, {"print", true}, {"minWall", 0}});
+    REQUIRE(check.ok);
+    CHECK_FALSE(check.data.at("canExport").get<bool>());
+    CHECK_FALSE(partReport(check.data).at("manifold").get<bool>());
+    CHECK(mentions(partReport(check.data).at("errors"), "touch"));
+
+    // Two cubes apart: nothing cuts through anything, but it is not one body.
+    const auto apart = addCubes(s, "Apart", {{0, 0, 0}, {30, 0, 0}});
+    const auto two = s.execute("document.export_check", {{"ids", {apart}}, {"print", true}, {"minWall", 0}});
+    REQUIRE(two.ok);
+    CHECK(two.data.at("canExport").get<bool>());
+    CHECK(partReport(two.data).at("selfIntersections").get<std::size_t>() == 0);
+    CHECK(mentions(partReport(two.data).at("warnings"), "separate shells"));
+}
+
+TEST_CASE("A single clean solid passes the intersection check (CAD-32)", "[commands][export]")
+{
+    commands::Session s;
+    const auto cube = addCubes(s, "Cube", {{0, 0, 0}});
+    const auto check = s.execute("document.export_check", {{"ids", {cube}}, {"format", "stl"}, {"minWall", 0}});
+    REQUIRE(check.ok);
+    INFO(check.toJson().dump());
+    CHECK(check.data.at("passed").get<bool>());
+    CHECK(partReport(check.data).at("selfIntersections").get<std::size_t>() == 0);
+}
+
+TEST_CASE("Export commands run as background work (CAD-30)", "[commands][export][background]")
+{
+    commands::Session s;
+    const auto overlap = addCubes(s, "Overlap", {{0, 0, 0}, {5, 2, 3}});
+    const auto clean = addCubes(s, "Clean", {{50, 0, 0}});
+    TempDir dir;
+
+    SECTION("Only the export commands can be planned")
+    {
+        CHECK(s.registry().isPlanned("document.export_check"));
+        CHECK(s.registry().isPlanned("document.export"));
+        CHECK(s.registry().isPlanned("document.export_for_print"));
+        CHECK_FALSE(s.registry().isPlanned("part.check"));
+        const auto plan = s.plan("part.check", {{"id", clean}});
+        REQUIRE(std::holds_alternative<commands::CommandResult>(plan));
+        CHECK_FALSE(std::get<commands::CommandResult>(plan).ok);
+    }
+
+    SECTION("An exact body weighs more than its view mesh: it is meshed again for the file")
+    {
+        model::Part box;
+        box.name = "Box";
+        box.shape = geometry::makeBox(10, 20, 30);
+        box.mesh = std::make_shared<const core::TriangleMesh>(geometry::tessellate(*box.shape));
+        const std::size_t view = box.mesh->triangleCount();
+        const auto boxId = s.document().addPart(std::move(box));
+        auto plan = s.plan("document.export_check", {{"ids", {boxId}}, {"minWall", 0}});
+        REQUIRE(std::holds_alternative<commands::BackgroundWork>(plan));
+        CHECK(std::get<commands::BackgroundWork>(plan).weight == 20 * view);
+    }
+
+    SECTION("The planned work gives the result of the command, with progress")
+    {
+        const Json params{{"ids", {overlap, clean}}, {"print", true}, {"minWall", 0}};
+        const auto direct = s.execute("document.export_check", params);
+        REQUIRE(direct.ok);
+        auto plan = s.plan("document.export_check", params);
+        REQUIRE(std::holds_alternative<commands::BackgroundWork>(plan));
+        const auto& work = std::get<commands::BackgroundWork>(plan);
+        CHECK(work.weight == 36);
+
+        std::vector<double> fractions;
+        std::string lastText;
+        commands::JobControl control;
+        control.onProgress = [&](double f, const std::string& text) {
+            fractions.push_back(f);
+            lastText = text;
+        };
+        const auto outcome = commands::runWork("document.export_check", work, control);
+        REQUIRE(outcome.result.ok);
+        CHECK_FALSE(outcome.cancelled);
+        CHECK(outcome.result.data == direct.data);
+        REQUIRE_FALSE(fractions.empty());
+        CHECK(std::is_sorted(fractions.begin(), fractions.end()));
+        CHECK(fractions.back() <= 1.0);
+        CHECK_THAT(lastText, ContainsSubstring("Clean"));
+    }
+
+    SECTION("The work belongs to the document as it was planned")
+    {
+        auto plan = s.plan("document.export_check", {{"ids", {clean}}, {"minWall", 0}});
+        REQUIRE(std::holds_alternative<commands::BackgroundWork>(plan));
+        // The user keeps editing while the check runs.
+        REQUIRE(s.execute("part.rename", {{"id", clean}, {"name", "Renamed"}}).ok);
+        REQUIRE(s.execute("part.remove", {{"id", overlap}}).ok);
+        const auto outcome = commands::runWork("document.export_check", std::get<commands::BackgroundWork>(plan), {});
+        REQUIRE(outcome.result.ok);
+        CHECK(partReport(outcome.result.data).at("name") == "Clean");
+    }
+
+    SECTION("Bad parameters and a stale approval are refused when planning")
+    {
+        const auto missing = s.plan("document.export", {{"path", dir.file("a.stl")}, {"ids", {9999}}});
+        REQUIRE(std::holds_alternative<commands::CommandResult>(missing));
+        CHECK_FALSE(std::get<commands::CommandResult>(missing).ok);
+        const auto stale = s.plan("document.export", {{"path", dir.file("a.stl")}, {"ids", {clean}}, {"expectedState", "old"}});
+        REQUIRE(std::holds_alternative<commands::CommandResult>(stale));
+        CHECK_THAT(std::get<commands::CommandResult>(stale).error, ContainsSubstring("changed after the check"));
+        const auto invalid = s.plan("document.export", {{"ids", {clean}}});
+        REQUIRE(std::holds_alternative<commands::CommandResult>(invalid));
+        CHECK_THAT(std::get<commands::CommandResult>(invalid).error, ContainsSubstring("Invalid parameters"));
+        CHECK_FALSE(fs::exists(dir.file("a.stl")));
+    }
+
+    SECTION("Cancel stops an export before it writes anything")
+    {
+        auto plan = s.plan("document.export", {{"path", dir.file("c.stl")}, {"ids", {clean}}});
+        REQUIRE(std::holds_alternative<commands::BackgroundWork>(plan));
+        commands::JobControl control;
+        control.cancelled = [] { return true; };
+        const auto outcome = commands::runWork("document.export", std::get<commands::BackgroundWork>(plan), control);
+        CHECK(outcome.cancelled);
+        CHECK_FALSE(outcome.result.ok);
+        CHECK_FALSE(fs::exists(dir.file("c.stl")));
+
+        auto printPlan = s.plan("document.export_for_print", {{"folder", dir.file("print")}, {"ids", {clean}}});
+        REQUIRE(std::holds_alternative<commands::BackgroundWork>(printPlan));
+        const auto printed = commands::runWork("document.export_for_print", std::get<commands::BackgroundWork>(printPlan), control);
+        CHECK(printed.cancelled);
+        CHECK_FALSE(fs::exists(dir.file("print") + "/Clean.stl"));
+    }
+
+    SECTION("Cancel stops the check between its steps")
+    {
+        auto plan = s.plan("document.export_check", {{"ids", {clean}}, {"minWall", 0}});
+        REQUIRE(std::holds_alternative<commands::BackgroundWork>(plan));
+        int polls = 0;
+        commands::JobControl control;
+        control.cancelled = [&] { return ++polls > 1; };
+        const auto outcome = commands::runWork("document.export_check", std::get<commands::BackgroundWork>(plan), control);
+        CHECK(outcome.cancelled);
+    }
+
+    SECTION("The planned work writes the same file as the command")
+    {
+        auto plan = s.plan("document.export", {{"path", dir.file("w.stl")}, {"ids", {clean}}});
+        REQUIRE(std::holds_alternative<commands::BackgroundWork>(plan));
+        const auto outcome = commands::runWork("document.export", std::get<commands::BackgroundWork>(plan), {});
+        REQUIRE(outcome.result.ok);
+        const auto direct = s.execute("document.export", {{"path", dir.file("d.stl")}, {"ids", {clean}}});
+        REQUIRE(direct.ok);
+        CHECK(fs::file_size(dir.file("w.stl")) == fs::file_size(dir.file("d.stl")));
+        CHECK(outcome.result.data.at("triangles") == direct.data.at("triangles"));
     }
 }

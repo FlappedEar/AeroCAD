@@ -8,6 +8,7 @@
 #include "JsonBridge.hpp"
 
 #include "aerocad/commands/FitStage.hpp"
+#include "aerocad/commands/Session.hpp"
 #include "aerocad/core/Align.hpp"
 #include "aerocad/core/MeshSimplify.hpp"
 #include "aerocad/core/Path.hpp"
@@ -15,6 +16,7 @@
 #include "aerocad/io/Import.hpp"
 
 #include <QCoreApplication>
+#include <QJSEngine>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QEventLoop>
@@ -24,7 +26,9 @@
 #include <QThread>
 
 #include <limits>
+#include <mutex>
 #include <optional>
+#include <variant>
 #include <string>
 #include <utility>
 
@@ -55,6 +59,21 @@ struct ScanController::FitJob {
     bool cancelled = false;
 };
 
+struct ScanController::TaskJob {
+    QString command;
+    QJSValue done;
+    std::uint64_t generation = 0;
+    bool writesFiles = false;
+    commands::BackgroundWork work;
+    std::atomic<bool> cancel{false};
+    // Progress, written by the worker thread and read by the UI thread.
+    std::mutex mutex;
+    double fraction = -1.0;
+    QString text;
+    // Written by the worker thread, read after it finished.
+    std::optional<commands::WorkOutcome> outcome;
+};
+
 ScanController::ScanController(AppController* app, QObject* parent) : QObject(parent), m_app(app)
 {
     g_instance = this;
@@ -68,6 +87,10 @@ ScanController::ScanController(AppController* app, QObject* parent) : QObject(pa
     connect(&m_progressTimer, &QTimer::timeout, this, [this] {
         if (m_jobProgress)
             setProgress(m_jobProgress->load(), m_progressText);
+        if (m_task) {
+            std::lock_guard lock(m_task->mutex);
+            setProgress(m_task->fraction, m_task->text);
+        }
         if (m_fit && m_fit->command == QStringLiteral("surface.fit_regions")) {
             const int total = m_fit->total.load();
             const int done = std::min(m_fit->done.load(), total);
@@ -103,6 +126,12 @@ ScanController::~ScanController()
     if (m_fitJob != nullptr) {
         m_fitJob->wait();
         delete m_fitJob;
+    }
+    if (m_task)
+        m_task->cancel.store(true);
+    if (m_taskThread != nullptr) {
+        m_taskThread->wait();
+        delete m_taskThread;
     }
     if (g_instance == this)
         g_instance = nullptr;
@@ -198,7 +227,7 @@ void ScanController::startNextImport()
 {
     dropStaleImports();
     // One background job at a time: an import queued during a fit starts after it.
-    if (m_queue.isEmpty() || m_job != nullptr || m_fitJob != nullptr)
+    if (m_queue.isEmpty() || m_job != nullptr || m_fitJob != nullptr || m_task != nullptr)
         return;
     m_current = m_queue.takeFirst();
     m_jobProgress = std::make_shared<std::atomic<double>>(0.0);
@@ -300,6 +329,87 @@ void ScanController::cancel()
     cancelImport();
     if (m_fit)
         m_fit->cancel.store(true);
+    if (m_task)
+        m_task->cancel.store(true);
+}
+
+bool ScanController::runInBackground(const QString& command, const QVariantMap& params, const QJSValue& done)
+{
+    if (!m_app)
+        return false;
+    if (busy()) {
+        m_app->showStatus(tr("Wait for the running background task to finish, or cancel it."));
+        return false;
+    }
+    auto engineValue = [this](const QVariantMap& result) { return qjsEngine(this)->toScriptValue(result); };
+    auto call = [&done, &engineValue](const QVariantMap& result) {
+        QJSValue callback = done;
+        if (callback.isCallable())
+            callback.call(QJSValueList{engineValue(result)});
+    };
+    auto asMap = [](const commands::CommandResult& r) { return toVariant(r.toJson()).toMap(); };
+    auto planned = m_app->session().plan(command.toStdString(), toJson(params));
+    if (auto* failure = std::get_if<commands::CommandResult>(&planned)) {
+        call(asMap(*failure));
+        return true;
+    }
+    commands::BackgroundWork work = std::move(std::get<commands::BackgroundWork>(planned));
+    if (work.weight < static_cast<std::size_t>(m_backgroundFitTriangles)) {
+        // Small: it is done before the user could press Cancel.
+        call(asMap(commands::runWork(command.toStdString(), work, {}).result));
+        return true;
+    }
+    auto job = std::make_shared<TaskJob>();
+    job->command = command;
+    job->done = done;
+    job->generation = projectGeneration();
+    const auto* info = m_app->session().registry().info(command.toStdString());
+    job->writesFiles = info != nullptr && info->effects.writesFiles;
+    job->work = std::move(work);
+    m_task = job;
+    const std::string name = command.toStdString();
+    m_taskThread = QThread::create([job, name] {
+        commands::JobControl control;
+        control.cancelled = [job] { return job->cancel.load(); };
+        control.onProgress = [job](double fraction, const std::string& text) {
+            std::lock_guard lock(job->mutex);
+            job->fraction = fraction;
+            job->text = QString::fromStdString(text);
+        };
+        job->outcome = commands::runWork(name, job->work, control);
+    });
+    connect(m_taskThread, &QThread::finished, this, &ScanController::finishTask);
+    setProgress(-1.0, tr("Working…"));
+    m_progressTimer.start();
+    m_taskThread->start();
+    emit busyChanged();
+    return true;
+}
+
+void ScanController::finishTask()
+{
+    m_progressTimer.stop();
+    m_taskThread->deleteLater();
+    m_taskThread = nullptr;
+    std::shared_ptr<TaskJob> job = std::exchange(m_task, nullptr);
+    emit busyChanged();
+
+    const commands::WorkOutcome& outcome = *job->outcome;
+    QVariantMap result = toVariant(outcome.result.toJson()).toMap();
+    // A click on Cancel after the files started to be replaced does not undo the write.
+    if (outcome.cancelled || (job->cancel.load() && !job->writesFiles)) {
+        m_app->showStatus(tr("Cancelled"));
+        result = {{QStringLiteral("ok"), false},
+                  {QStringLiteral("cancelled"), true},
+                  {QStringLiteral("error"), tr("Cancelled")}};
+    }
+    auto engineValue = [this](const QVariantMap& r) { return qjsEngine(this)->toScriptValue(r); };
+    if (job->generation != projectGeneration() && !job->writesFiles) {
+        m_app->showStatus(tr("Result discarded: the project was replaced"));
+    } else if (job->done.isCallable()) {
+        job->done.call(QJSValueList{engineValue(result)});
+    }
+    startNextImport();
 }
 
 bool ScanController::fitInBackground(const QString& command, const QVariantMap& params, const QJSValue& then)
@@ -307,7 +417,7 @@ bool ScanController::fitInBackground(const QString& command, const QVariantMap& 
     if (!m_app)
         return false;
     if (busy()) {
-        m_app->showStatus(tr("Wait for the running import or fit to finish, or cancel it."));
+        m_app->showStatus(tr("Wait for the running background task to finish, or cancel it."));
         return false;
     }
     auto& session = m_app->session();
@@ -392,8 +502,11 @@ void ScanController::finishFit()
 
 void ScanController::waitForFit()
 {
-    while (m_fitJob != nullptr) {
-        m_fitJob->wait();
+    while (m_fitJob != nullptr || m_taskThread != nullptr) {
+        if (m_fitJob != nullptr)
+            m_fitJob->wait();
+        if (m_taskThread != nullptr)
+            m_taskThread->wait();
         QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
     }
 }

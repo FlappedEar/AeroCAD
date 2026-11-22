@@ -33,6 +33,8 @@ class AppController;
 ///   staged, then added through the document.import command on the UI thread);
 /// - background surface fits with progress and cancel (CAD-259), staged the same way for
 ///   the surface.fit_* commands;
+/// - background commands with progress and cancel (CAD-30): the export checks and writes of
+///   large meshes run on a worker thread through runInBackground();
 /// - display level of detail: meshes above `triangleBudget` are drawn decimated (computed
 ///   in the background) while the document keeps the full mesh for selection and fitting;
 /// - snapping picked points to the full-resolution mesh.
@@ -58,7 +60,7 @@ public:
     /// The application's instance (used by MeshGeometry); nullptr before construction.
     [[nodiscard]] static ScanController* instance();
 
-    [[nodiscard]] bool busy() const { return m_job != nullptr || m_fitJob != nullptr; }
+    [[nodiscard]] bool busy() const { return m_job != nullptr || m_fitJob != nullptr || m_task != nullptr; }
     [[nodiscard]] double progress() const { return m_progressValue; }
     [[nodiscard]] QString progressText() const { return m_progressText; }
     [[nodiscard]] QString importUnits() const { return m_importUnits; }
@@ -67,7 +69,8 @@ public:
     [[nodiscard]] int triangleBudget() const { return m_triangleBudget; }
     void setTriangleBudget(int budget);
     [[nodiscard]] QStringList unitSymbols() const;
-    /// Fits of at least this many triangles run in the background (lower in tests).
+    /// Fits, and commands run with runInBackground(), of at least this many triangles run in
+    /// the background (lower in tests).
     [[nodiscard]] int backgroundFitTriangles() const { return m_backgroundFitTriangles; }
     void setBackgroundFitTriangles(int triangles);
 
@@ -82,9 +85,20 @@ public:
     /// command, which takes the staged result. A smaller fit calls `then()` at once.
     /// Returns false (and calls nothing) while an import or another fit runs.
     Q_INVOKABLE bool fitInBackground(const QString& command, const QVariantMap& params, const QJSValue& then);
-    /// Cancels the running import or fit.
+    /// Runs `command` (one registered with CommandRegistry::addPlanned: document.export_check,
+    /// document.export, document.export_for_print) with `params`. The command is planned
+    /// here, on the UI thread, from the document as it is now; work of at least
+    /// backgroundFitTriangles triangles then runs on a worker thread with progress and Cancel
+    /// and the document may change meanwhile. `done(result)` is called on the UI thread with
+    /// what controller.execute() returns ({ok, result} or {ok: false, error}); it is called at
+    /// once when the work is small or the parameters are rejected. A cancelled job reports
+    /// {ok: false, cancelled: true, error}. A result for a project that was replaced meanwhile
+    /// is dropped when the command only reads (done is not called).
+    /// Returns false (and calls nothing) while an import, fit or another command runs.
+    Q_INVOKABLE bool runInBackground(const QString& command, const QVariantMap& params, const QJSValue& done);
+    /// Cancels the running import, fit or command.
     Q_INVOKABLE void cancel();
-    /// Blocks until a background fit is finished (scripts, tests).
+    /// Blocks until a background fit or command is finished (scripts, tests).
     Q_INVOKABLE void waitForFit();
     /// Blocks until queued imports are finished (scripts, smoke test). Returns false if one failed.
     bool waitForImports();
@@ -138,6 +152,7 @@ private:
     void dropStaleImports();
     void setProgress(double value, const QString& text);
     void finishFit();
+    void finishTask();
 
     QPointer<AppController> m_app;
     QList<ImportJob> m_queue;
@@ -169,6 +184,10 @@ private:
     struct FitJob;
     std::shared_ptr<FitJob> m_fit;
     QThread* m_fitJob = nullptr;
+    /// The background command (runInBackground).
+    struct TaskJob;
+    std::shared_ptr<TaskJob> m_task;
+    QThread* m_taskThread = nullptr;
     int m_backgroundFitTriangles = 20000;
 };
 

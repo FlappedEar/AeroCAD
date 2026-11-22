@@ -1062,9 +1062,18 @@ ApplicationWindow {
 
     // Warning consent applies only to the checked design, part set, format and wall
     // limit. Commands from an AI agent can change those while the modal is open.
+    // A big mesh is checked on a worker thread (CAD-30): the window stays usable and the
+    // progress pane has Cancel. `write(state)` follows a passed or approved check.
     function checkExport(request, write, approval) {
         const params = Object.assign({}, request, { minWall: Preferences.minWallThickness })
-        const c = window.controller.execute("document.export_check", params)
+        const started = window.scan.runInBackground("document.export_check", params, c => window.exportChecked(c, request, write, approval))
+        if (!started)
+            window.exportFailed(qsTr("Another background task is running. Wait for it to finish or cancel it, then export again."))
+    }
+
+    function exportChecked(c, request, write, approval) {
+        if (c.cancelled)
+            return
         if (!c.ok) {
             window.exportFailed(c.error)
             return
@@ -1088,10 +1097,16 @@ ApplicationWindow {
     }
 
     function writeExport(file, ids, state) {
-        const r = window.controller.exportFile(file, ids, state)
-        if (!r.ok) {
-            window.exportFailed(r.error)
-        }
+        const params = window.controller.exportParams(file, ids, state)
+        const started = window.scan.runInBackground("document.export", params, r => {
+            if (r.cancelled)
+                return
+            const done = window.controller.finishExport(r, params.path)
+            if (!done.ok)
+                window.exportFailed(done.error)
+        })
+        if (!started)
+            window.exportFailed(qsTr("Another background task is running. Wait for it to finish or cancel it, then export again."))
     }
 
     ExportCheckDialog {
@@ -1116,13 +1131,18 @@ ApplicationWindow {
     }
 
     function writePrintFiles(folder, state) {
-        const r = window.controller.execute("document.export_for_print", { folder: folder, expectedState: state })
-        if (!r.ok) {
-            window.exportFailed(r.error)
-            return
-        }
-        window.controller.showStatus(qsTr("%1 part(s) written to %2 (STL and STEP each)")
-                                     .arg(r.result.parts).arg(r.result.folder))
+        const started = window.scan.runInBackground("document.export_for_print", { folder: folder, expectedState: state }, r => {
+            if (r.cancelled)
+                return
+            if (!r.ok) {
+                window.exportFailed(r.error)
+                return
+            }
+            window.controller.showStatus(qsTr("%1 part(s) written to %2 (STL and STEP each)")
+                                         .arg(r.result.parts).arg(r.result.folder))
+        })
+        if (!started)
+            window.exportFailed(qsTr("Another background task is running. Wait for it to finish or cancel it, then export again."))
     }
 
     function openPrintExport() {
@@ -2827,8 +2847,8 @@ ApplicationWindow {
                 partId: window.selectedPartId
             }
 
-            // Import and surface fit progress (both run in the background; progress < 0: no
-            // steps to count).
+            // Import, surface fit and export progress (all run in the background; progress < 0:
+            // no steps to count).
             Pane {
                 objectName: "backgroundJobPane"
                 // Top centre, below the selection tools: the selection's context bar and the

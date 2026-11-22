@@ -45,6 +45,12 @@ public:
     /// Runs a command. A document-changing command first ends an active preview.
     CommandResult execute(std::string_view name, const Json& params = Json::object());
 
+    /// Plans a command that supports running on a worker thread (CommandRegistry::addPlanned)
+    /// for `params` as they are now: the work, or the failure execute() would have reported.
+    /// Everything that reads the document happens here, on the calling thread (CAD-30).
+    [[nodiscard]] std::variant<BackgroundWork, CommandResult> plan(std::string_view name,
+                                                                   const Json& params = Json::object());
+
     /// Runs a document-changing command as a temporary preview (feature dialogs). The
     /// previous preview is undone first. The preview never touches the history the user
     /// sees: ending it undoes the change and restores the undo/redo stack as it was before

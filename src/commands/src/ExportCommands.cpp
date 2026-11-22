@@ -6,6 +6,7 @@
 
 #include "aerocad/cad/Design.hpp"
 #include "aerocad/core/MeshCheck.hpp"
+#include "aerocad/core/MeshIntersect.hpp"
 #include "aerocad/core/MeshQuery.hpp"
 #include "aerocad/core/Path.hpp"
 #include "aerocad/geometry/Modeling.hpp"
@@ -20,6 +21,9 @@
 #include <deque>
 #include <exception>
 #include <filesystem>
+#include <iomanip>
+#include <sstream>
+#include <unordered_map>
 #include <random>
 #include <string>
 #include <memory>
@@ -30,15 +34,77 @@ namespace aerocad::commands {
 
 namespace {
 
-/// The mesh written for a part: exact (B-rep) parts are tessellated finely for the file
-/// (0.02 % of their size, about 8 degrees per facet; the view uses a coarser mesh), so a
-/// printed fillet or curved skin is smooth. Kept in `store`.
-const core::TriangleMesh* fileMesh(const model::Part& p, std::deque<core::TriangleMesh>& store)
+/// Meshes up to this many triangles are searched for self-intersections (a few seconds per
+/// million triangles); a bigger one is reported as not checked.
+constexpr std::size_t kMaxCrossingTriangles = 2'000'000;
+
+struct FileMeshes {
+    std::deque<core::TriangleMesh> meshes;
+    /// Triangles that still cut through each other in a mesh made here (CAD-95).
+    std::unordered_map<const core::TriangleMesh*, core::SelfIntersections> crossings;
+};
+
+/// The mesh written for a part: exact (B-rep) parts are tessellated finely for the file (the
+/// view uses a coarser mesh), so a printed fillet or curved skin is smooth. A mesh made from
+/// facets of faces that meet at a shallow angle cuts through itself by a few microns; those
+/// crossings are lifted by moving vertices less than the deflection (CAD-95). Kept in `store`.
+const core::TriangleMesh* fileMesh(const model::Part& p, FileMeshes& store, const JobControl& job, bool repair = true)
 {
     if (!p.shape || p.shape->isNull())
         return p.mesh.get();
-    store.push_back(geometry::tessellate(*p.shape, {0.0002, 0.15}));
-    return &store.back();
+    if (!repair) { // a STEP file does not carry the mesh
+        store.meshes.push_back(geometry::tessellate(*p.shape, geometry::printTessellation(*p.shape)));
+        return &store.meshes.back();
+    }
+    core::TriangleMesh fine = geometry::tessellate(*p.shape, geometry::printTessellation(*p.shape));
+    if (fine.triangleCount() > kMaxCrossingTriangles) { // too big to search: reported as not checked
+        store.meshes.push_back(std::move(fine));
+        return &store.meshes.back();
+    }
+    core::IntersectionRepair repaired =
+        core::untangleSelfIntersections(fine, geometry::printDeflection(*p.shape), true, job.cancelled);
+    store.meshes.push_back(std::move(repaired.mesh));
+    store.crossings[&store.meshes.back()] = std::move(repaired.remaining);
+    return &store.meshes.back();
+}
+
+/// "3 pairs of triangles cut through each other (up to 0.4 mm)" for the crossings of a mesh.
+std::string crossingText(const core::SelfIntersections& c)
+{
+    std::ostringstream os;
+    os << std::fixed << std::setprecision(3) << c.pairs
+       << (c.pairs == 1 ? " pair of triangles cuts" : " pairs of triangles cut") << " through each other (up to "
+       << c.longest << " mm)";
+    return os.str();
+}
+
+/// What the export checks found about triangles passing through each other in the mesh that
+/// is written (CAD-32): the same verdict for the preview, export_check, strict export and
+/// print export.
+struct CrossingVerdict {
+    enum class State {
+        NotApplicable, ///< An open mesh is a surface, not a solid: nothing to intersect.
+        Unknown,       ///< Too many triangles to check in reasonable time. Never counted as passed.
+        Done,
+    };
+    State state = State::NotApplicable;
+    core::SelfIntersections found;
+};
+
+/// Crossings of `mesh`: from the repair when the mesh was made here, otherwise searched
+/// (closed meshes only), and cached in `store`.
+CrossingVerdict crossingVerdict(const core::TriangleMesh& mesh, const core::MeshCheck& check, FileMeshes& store,
+                                const JobControl& job)
+{
+    if (const auto it = store.crossings.find(&mesh); it != store.crossings.end())
+        return {CrossingVerdict::State::Done, it->second};
+    if (!check.closed())
+        return {};
+    if (mesh.triangleCount() > kMaxCrossingTriangles)
+        return {CrossingVerdict::State::Unknown, {}};
+    CrossingVerdict v{CrossingVerdict::State::Done, core::findSelfIntersections(mesh, 0.0, 16, job.cancelled)};
+    store.crossings[&mesh] = v.found;
+    return v;
 }
 
 Json checkToJson(const core::MeshCheck& c)
@@ -214,17 +280,48 @@ double round3(double v)
     return std::round(v * 1000.0) / 1000.0;
 }
 
+/// Copies of the parts a background job works on: it must not look at the live document, which
+/// the user may edit meanwhile. Meshes and shapes are shared, not copied.
+std::shared_ptr<const std::vector<model::Part>> ownParts(const std::vector<const model::Part*>& parts)
+{
+    auto owned = std::make_shared<std::vector<model::Part>>();
+    owned->reserve(parts.size());
+    for (const model::Part* p : parts)
+        owned->push_back(*p);
+    return owned;
+}
+
+/// A rough size of the work on `parts`, triangles (BackgroundWork::weight). An exact body is
+/// meshed again for the file about twenty times finer than the view mesh and its crossings are
+/// repaired, so its view triangles count that much more.
+std::size_t workWeight(const std::vector<model::Part>& parts)
+{
+    constexpr std::size_t kExactFactor = 20;
+    std::size_t triangles = 0;
+    for (const model::Part& p : parts) {
+        const std::size_t own = p.mesh ? p.mesh->triangleCount() : 0;
+        triangles += p.shape && !p.shape->isNull() ? own * kExactFactor : own;
+    }
+    return triangles;
+}
+
 /// Checks parts before they are written (see document.export_check). `format` decides what
 /// is an error: printing needs a watertight mesh, STEP needs exact geometry.
-Json exportCheck(const std::vector<const model::Part*>& parts, io::FileFormat format, double minWall, bool print = false,
-                 const cad::Design* design = nullptr)
+/// `fitReports` holds, per part, the report of the timeline step that made it (null when it has none), read
+/// from the design by the caller so that this can run away from it.
+Json exportCheck(const std::vector<model::Part>& parts, const std::vector<Json>& fitReports, io::FileFormat format,
+                 double minWall, bool print, const JobControl& job)
 {
     Json results = Json::array();
     std::size_t errors = 0;
     std::size_t warnings = 0;
-    std::deque<core::TriangleMesh> meshes;
+    FileMeshes meshes;
     const bool step = format == io::FileFormat::Step;
-    for (const model::Part* p : parts) {
+    for (std::size_t index = 0; index < parts.size(); ++index) {
+        const model::Part* p = &parts[index];
+        const auto at = [&](double phase) { return (static_cast<double>(index) + phase) / static_cast<double>(parts.size()); };
+        job.checkCancelled();
+        job.progress(at(0.0), "Checking " + p->name + "…");
         Json errorList = Json::array();
         Json warningList = Json::array();
         const bool exact = p->shape && !p->shape->isNull();
@@ -235,15 +332,15 @@ Json exportCheck(const std::vector<const model::Part*>& parts, io::FileFormat fo
         if (step && !exact)
             errorList.push_back("Mesh only, STEP needs exact geometry. Export it as STL or 3MF, "
                                 "or turn it into a body first (Mesh to BRep).");
-        if (design != nullptr && p->kind == model::PartKind::Body && p->featureId != 0) {
-            const cad::FeatureStatus st = design->status(cad::featureOfBody(p->featureId));
-            if (st.report.is_object() && st.report.contains("fit") && st.report["fit"].is_object() &&
-                !st.report["fit"].value("withinTolerance", true)) {
-                const Json& fit = st.report["fit"];
+        {
+            const Json& report = fitReports[index];
+            if (report.is_object() && report.contains("fit") && report["fit"].is_object() &&
+                !report["fit"].value("withinTolerance", true)) {
+                const Json& fit = report["fit"];
                 r["approximate"] = true;
                 char text[200];
                 std::snprintf(text, sizeof text,
-                              st.report.value("fitInherited", false)
+                              report.value("fitInherited", false)
                                   ? "Approximation: the reference fit is up to %.3g mm from the scan, more than its "
                                     "requested tolerance of %.3g mm (before offset or thickness)."
                                   : "Approximation: its surface is up to %.3g mm from the scan, more than the requested "
@@ -260,7 +357,8 @@ Json exportCheck(const std::vector<const model::Part*>& parts, io::FileFormat fo
                                       "other CAD programs may not open it cleanly.");
         }
 
-        if (const core::TriangleMesh* mesh = fileMesh(*p, meshes); mesh != nullptr) {
+        if (const core::TriangleMesh* mesh = fileMesh(*p, meshes, job, !step); mesh != nullptr) {
+            job.progress(at(0.25), "Checking " + p->name + ": mesh…");
             const core::TriangleMesh welded = core::weldVertices(*mesh);
             const core::MeshCheck c = core::checkMesh(welded);
             r["watertight"] = c.watertight();
@@ -284,7 +382,25 @@ Json exportCheck(const std::vector<const model::Part*>& parts, io::FileFormat fo
                 for (const auto& problem : c.problems())
                     meshProblems.push_back(problem);
             }
+            // A STEP file carries no mesh: nothing to cut through.
+            job.progress(at(0.5), "Checking " + p->name + ": self-intersections…");
+            const CrossingVerdict crossing = step ? CrossingVerdict{} : crossingVerdict(*mesh, c, meshes, job);
+            if (crossing.state == CrossingVerdict::State::Done) {
+                r["selfIntersections"] = crossing.found.pairs;
+                if (crossing.found.any())
+                    meshProblems.push_back(crossingText(crossing.found));
+            } else if (crossing.state == CrossingVerdict::State::Unknown) {
+                r["selfIntersections"] = nullptr; // not checked: neither passed nor failed
+                warningList.push_back("Self-intersections were not checked: the mesh has " +
+                                      std::to_string(mesh->triangleCount()) + " triangles.");
+            }
+            if (!step && c.closed() && c.shells > 1)
+                warningList.push_back(std::to_string(c.shells) +
+                                      " separate shells: one part should be one connected body, so export separate "
+                                      "bodies as separate parts.");
             if (c.closed() && minWall > 0.0) {
+                job.checkCancelled();
+                job.progress(at(0.75), "Checking " + p->name + ": wall thickness…");
                 const WallReport w = measureWalls(welded, minWall);
                 if (w.measured) {
                     r["minWall"] = Json{{"thinnest", round3(w.thinnest)},
@@ -354,7 +470,7 @@ void registerCheck(CommandRegistry& r)
             return out;
         });
 
-    r.add(
+    r.addPlanned(
         {"document.export_check", "Check before export",
          "Checks parts before they are written to STL, 3MF or STEP and explains what is wrong: watertight "
          "and manifold mesh (printing needs a closed solid; an open mesh in a plain STL/3MF is a warning), exact "
@@ -385,16 +501,27 @@ void registerCheck(CommandRegistry& r)
             if (params.contains("format") && !print)
                 format = parseFormat(params, {});
             const auto parts = print ? selectPrintParts(ctx.document, params) : selectParts(ctx.document, params);
-            Json result = exportCheck(parts, format, params.value("minWall", kDefaultMinWall), print, ctx.design);
-            result["state"] = exportState(ctx, parts, format, print);
-            return result;
+            const double minWall = params.value("minWall", kDefaultMinWall);
+            // What the check reads from the live design and document is taken here.
+            std::vector<Json> reports;
+            for (const model::Part* p : parts)
+                reports.push_back(ctx.design != nullptr && p->kind == model::PartKind::Body && p->featureId != 0
+                                      ? ctx.design->status(cad::featureOfBody(p->featureId)).report
+                                      : Json());
+            const std::string state = exportState(ctx, parts, format, print);
+            const auto owned = ownParts(parts);
+            return BackgroundWork{workWeight(*owned), [=](const JobControl& job) {
+                                      Json result = exportCheck(*owned, reports, format, minWall, print, job);
+                                      result["state"] = state;
+                                      return result;
+                                  }};
         });
 
 }
 
 void registerExport(CommandRegistry& r)
 {
-    r.add({"document.export", "Export",
+    r.addPlanned({"document.export", "Export",
            "Exports parts to a file in millimetres: STL (binary, all parts merged), 3MF (one object per "
            "part, unit millimeter) or STEP (exact B-rep, only parts that have it, e.g. imported from "
            "STEP/IGES). Meshes are checked first (see part.check); problems are reported as warnings, "
@@ -421,18 +548,25 @@ void registerExport(CommandRegistry& r)
                   throw CommandError("Export path must be absolute: " + core::pathToUtf8(path));
               const io::FileFormat format = parseFormat(params, path);
               const bool requireValid = params.value("requireValid", false);
-              const std::vector<const model::Part*> parts = selectParts(ctx.document, params);
-              requireExportState(ctx, params, parts, format, false);
+              const std::vector<const model::Part*> selected = selectParts(ctx.document, params);
+              requireExportState(ctx, params, selected, format, false);
+              const auto owned = ownParts(selected);
+              return BackgroundWork{workWeight(*owned), [=](const JobControl& job) {
+              const std::vector<model::Part>& parts = *owned;
 
               Json checks = Json::array();
               Json warnings = Json::array();
               std::vector<io::ExportItem> items;
-              std::deque<core::TriangleMesh> meshes;
+              FileMeshes meshes;
               std::size_t triangles = 0;
-              for (const model::Part* p : parts) {
+              for (std::size_t index = 0; index < parts.size(); ++index) {
+                  const model::Part* p = &parts[index];
+                  job.checkCancelled();
+                  job.progress(static_cast<double>(index) / static_cast<double>(parts.size()) * 0.9,
+                               "Preparing " + p->name + "…");
                   io::ExportItem item;
                   item.name = p->name;
-                  item.mesh = format == io::FileFormat::Step ? p->mesh.get() : fileMesh(*p, meshes);
+                  item.mesh = format == io::FileFormat::Step ? p->mesh.get() : fileMesh(*p, meshes, job);
                   item.shape = p->shape ? &*p->shape : nullptr;
                   item.color = p->color;
                   items.push_back(item);
@@ -446,17 +580,27 @@ void registerExport(CommandRegistry& r)
                   Json c = checkToJson(check);
                   c["id"] = p->id;
                   c["name"] = p->name;
+                  const CrossingVerdict crossing = crossingVerdict(*item.mesh, check, meshes, job);
+                  if (crossing.state == CrossingVerdict::State::Done)
+                      c["selfIntersections"] = crossing.found.pairs;
+                  else if (crossing.state == CrossingVerdict::State::Unknown)
+                      c["selfIntersections"] = nullptr;
                   checks.push_back(c);
                   for (const auto& problem : check.problems())
                       warnings.push_back(p->name + ": " + problem);
+                  if (crossing.state == CrossingVerdict::State::Done && crossing.found.any())
+                      warnings.push_back(p->name + ": " + crossingText(crossing.found));
               }
               if (requireValid && !warnings.empty()) {
-                  std::string msg = "Export aborted, meshes are not watertight:";
+                  std::string msg = "Export aborted, meshes are not watertight or cut through themselves:";
                   for (const auto& w : warnings)
                       msg += "\n- " + w.get<std::string>();
                   throw CommandError(msg);
               }
 
+              // Nothing is written yet: Cancel still stops the export without a trace.
+              job.checkCancelled();
+              job.progress(0.9, "Writing " + core::pathToUtf8(path.filename()) + "…");
               try {
                   io::exportFile(path, items, format);
               } catch (const io::ExportError& e) {
@@ -464,8 +608,8 @@ void registerExport(CommandRegistry& r)
               }
 
               Json ids = Json::array();
-              for (const model::Part* p : parts)
-                  ids.push_back(p->id);
+              for (const model::Part& p : parts)
+                  ids.push_back(p.id);
               Json out{{"path", core::pathToUtf8(path)},
                        {"format", std::string(io::formatName(format))},
                        {"ids", ids},
@@ -474,6 +618,7 @@ void registerExport(CommandRegistry& r)
               if (format != io::FileFormat::Step)
                   out["triangles"] = triangles;
               return out;
+              }};
           });
 }
 
@@ -640,7 +785,7 @@ std::string writePrintSet(const std::filesystem::path& folder, const std::vector
 
 void registerExportForPrint(CommandRegistry& r)
 {
-    r.add({"document.export_for_print", "Export for printing",
+    r.addPlanned({"document.export_for_print", "Export for printing",
            "Writes each part to its own files in a folder, ready to print: <name>.stl (binary, mm, finely "
            "tessellated) and <name>.step (exact B-rep, for parts that have it), e.g. a set of canards. Every "
            "STL must be a watertight solid. All files are staged before existing files are replaced, and failed "
@@ -659,11 +804,14 @@ void registerExportForPrint(CommandRegistry& r)
                            {"description", "Default both."}}}},
                         {"folder"})},
           [](CommandContext& ctx, const Json& params) {
-              const std::vector<const model::Part*> parts = selectPrintParts(ctx.document, params);
-              requireExportState(ctx, params, parts, io::FileFormat::Stl, true);
+              const std::vector<const model::Part*> selected = selectPrintParts(ctx.document, params);
+              requireExportState(ctx, params, selected, io::FileFormat::Stl, true);
               const std::filesystem::path folder = core::pathFromUtf8(params.at("folder").get<std::string>());
               if (!folder.is_absolute())
                   throw CommandError("Folder must be an absolute path: " + core::pathToUtf8(folder));
+              const auto owned = ownParts(selected);
+              return BackgroundWork{workWeight(*owned), [=](const JobControl& job) {
+              const std::vector<model::Part>& parts = *owned;
               std::error_code ec;
               std::filesystem::create_directories(folder, ec);
               if (!std::filesystem::is_directory(folder))
@@ -682,11 +830,15 @@ void registerExportForPrint(CommandRegistry& r)
                   const core::TriangleMesh* mesh;
                   std::string stem;
               };
-              std::deque<core::TriangleMesh> meshes;
+              FileMeshes meshes;
               std::vector<Planned> planned;
               std::unordered_set<std::string> stems;
               std::vector<std::string> problems;
-              for (const model::Part* p : parts) {
+              for (std::size_t index = 0; index < parts.size(); ++index) {
+                  const model::Part* p = &parts[index];
+                  job.checkCancelled();
+                  job.progress(static_cast<double>(index) / static_cast<double>(parts.size()) * 0.9,
+                               "Preparing " + p->name + "…");
                   // Compared without case: on macOS and Windows "Fin" and "fin" are one file.
                   auto folded = [](std::string s) {
                       std::transform(s.begin(), s.end(), s.begin(),
@@ -696,19 +848,23 @@ void registerExportForPrint(CommandRegistry& r)
                   std::string stem = fileStem(p->name);
                   for (int k = 2; !stems.insert(folded(stem)).second; ++k)
                       stem = fileStem(p->name) + " " + std::to_string(k);
-                  const core::TriangleMesh* mesh = stl ? fileMesh(*p, meshes) : nullptr;
+                  const core::TriangleMesh* mesh = stl ? fileMesh(*p, meshes, job) : nullptr;
                   if (stl) {
                       if (mesh == nullptr) {
                           problems.push_back(p->name + ": no mesh");
                       } else {
-                          for (const auto& problem : core::checkMesh(core::weldVertices(*mesh)).problems())
+                          const core::MeshCheck check = core::checkMesh(core::weldVertices(*mesh));
+                          for (const auto& problem : check.problems())
                               problems.push_back(p->name + ": " + problem);
+                          const CrossingVerdict crossing = crossingVerdict(*mesh, check, meshes, job);
+                          if (crossing.state == CrossingVerdict::State::Done && crossing.found.any())
+                              problems.push_back(p->name + ": " + crossingText(crossing.found));
                       }
                   }
                   planned.push_back({p, mesh, stem});
               }
               if (!problems.empty()) {
-                  std::string msg = "Nothing was written; not every part is a watertight solid:";
+                  std::string msg = "Nothing was written; not every part is a watertight solid without self-intersections:";
                   for (const auto& w : problems)
                       msg += "\n- " + w;
                   throw CommandError(msg);
@@ -734,11 +890,16 @@ void registerExportForPrint(CommandRegistry& r)
                       files.push_back({{"id", pl.part->id}, {"format", "step"}, {"path", core::pathToUtf8(path)}});
                   }
               }
+              // Nothing is written yet: Cancel still stops the export without a trace. Once the
+              // files are being replaced it must finish (or roll back) as a whole.
+              job.checkCancelled();
+              job.progress(0.9, "Writing the print files…");
               const auto cleanupWarning = writePrintSet(folder, outputs);
               if (!cleanupWarning.empty())
                   warnings.push_back(cleanupWarning);
               return Json{{"folder", core::pathToUtf8(folder)}, {"files", files}, {"warnings", warnings},
                           {"parts", planned.size()}};
+              }};
           });
 }
 

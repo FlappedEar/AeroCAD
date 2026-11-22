@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# CAD-30: the export check of a 1.5 M triangle scan runs in the background: the window keeps
+# running (the event loop turns, the progress pane shows what is being checked), and Cancel
+# stops it at the end of the step it is in (the mesh check of a big scan is one step).
+# Run: AeroCAD <dense.stl from make_dense_mesh> --ui-script <this file>
+Qt.createQmlObject('import QtQuick; Item { objectName: "bgLarge"; visible: false; property var calls: []; property int ticks: 0; property real cancelAt: 0; Timer { interval: 20; running: true; repeat: true; onTriggered: ticks++ } }', window.contentItem)
+ui.wait(3000)
+(() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "bgLarge"); if (!controller.execute("document.parts").result.parts.length) ui.wait(5000) })()
+(() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "bgLarge"); const p = controller.execute("document.parts").result.parts[0]; if (!p || !(p.triangles > 1000000)) ui.fail("no large scan: " + JSON.stringify(p)); t.ticks = 0; const started = window.scan.runInBackground("document.export_check", { format: "stl", minWall: 0 }, r => { const a = t.calls.slice(); a.push(r); t.calls = a }); if (!started) ui.fail("the check did not start"); if (!window.scan.busy) ui.fail("not busy: the check ran on the UI thread"); if (t.calls.length) ui.fail("the check ended before the UI could run") })()
+ui.wait(400)
+(() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "bgLarge"); ui.log("TICKS " + t.ticks + " busy " + window.scan.busy + " " + window.scan.progressText + " " + Math.round(window.scan.progress * 100)); if (t.ticks < 5) ui.fail("the UI thread was blocked: " + t.ticks + " timer ticks in 400 ms"); if (!window.scan.busy) ui.fail("the check ended within 400 ms; the scan is too small for this test") })()
+ui.shot("/tmp/aerocad-export-bg-progress-" + Date.now() + ".png")
+# Cancel: ends quickly and delivers a cancelled result.
+(() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "bgLarge"); t.cancelAt = Date.now(); window.scan.cancel(); window.scan.waitForFit(); const took = Date.now() - t.cancelAt; ui.log("CANCEL took " + took + " ms"); if (took > 5000) ui.fail("cancel took " + took + " ms") })()
+ui.wait(200)
+(() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "bgLarge"); if (t.calls.length !== 1 || !t.calls[0].cancelled) ui.fail("cancel not reported: " + JSON.stringify(t.calls)); if (window.scan.busy) ui.fail("still busy after cancel") })()
+# Run it to the end: a result for the scan with its checks.
+(() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "bgLarge"); t.calls = []; if (!window.scan.runInBackground("document.export_check", { format: "stl", minWall: 0 }, r => { const a = t.calls.slice(); a.push(r); t.calls = a })) ui.fail("second check did not start"); window.scan.waitForFit() })()
+ui.wait(200)
+(() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "bgLarge"); if (t.calls.length !== 1 || !t.calls[0].ok) ui.fail("the check did not finish: " + JSON.stringify(t.calls).slice(0, 300)); ui.log("CHECK " + t.calls[0].result.summary) })()
+ui.log("export background large done")

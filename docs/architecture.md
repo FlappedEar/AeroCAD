@@ -97,6 +97,19 @@ core -------+                 transforms, primitives).
   `commands::FitStage` under a key of mesh, region and options, and the normal
   `surface.fit_*` command takes it, so the timeline step, undo and MCP behaviour stay the
   same. A result whose scan, selection or project changed meanwhile is discarded.
+- **Export in the background** (CAD-30): `document.export_check`, `document.export` and
+  `document.export_for_print` are registered with `CommandRegistry::addPlanned`. Their planner
+  runs on the UI thread, validates the parameters and the approval state, and copies the parts
+  it needs (meshes and shapes are shared, not copied) into a `commands::BackgroundWork`;
+  its `run` (tessellation, repair, mesh and intersection checks, writing) touches no document
+  and reports progress and polls Cancel through `commands::JobControl`, so the user may edit
+  meanwhile and the result is for the design as it was planned. `ScanController::runInBackground`
+  runs work of at least `backgroundFitTriangles` triangles on a worker thread and calls back on
+  the UI thread; smaller work runs at once. Executing the command directly (MCP, scripts,
+  tests) plans and runs it synchronously. Cancel is polled between parts and steps and inside
+  the intersection search; a step in progress (tessellating one part, welding a very large
+  mesh) ends first, and once files are being replaced the export finishes or rolls back as a
+  whole. A result for a project that was replaced meanwhile is dropped for the check.
 - **Offset / thicken** (`geometry/Offset`, commands `surface.offset`, `surface.thicken`):
   `BRepOffset_MakeSimpleOffset`, which offsets each face on its own surface (exact for
   the single-face base surfaces); with the solid flag it adds side walls and caps. The
@@ -158,6 +171,9 @@ core -------+                 transforms, primitives).
   hole filling. CGAL's GPL packages are compatible with GPL-3.0-or-later. It will be added
   with the first feature that uses it (region selection / base surface, CAD-67).
 - Large-mesh performance and picking limits (CAD-11).
-- Background jobs: imports and large surface fits already run on a worker thread with progress and
-  Cancel (CAD-259); modelling, regeneration and the full export check still run on the UI thread
-  (CAD-30).
+- Background jobs: imports, large surface fits (CAD-259) and the export check and file writes
+  (CAD-30) run on a worker thread with progress and Cancel. Measured with `aerocad-cmd` on a
+  3 million triangle scan (set `AEROCAD_CMD_TIMING=1` to print milliseconds per command),
+  modelling steps take 0.25 to 0.45 s (Part on surface, edits of its parameters, fillet);
+  the first Sketch on the scan takes 1.5 s (building its ray index) and still runs on the UI
+  thread; regeneration of the timeline is not moved off it.

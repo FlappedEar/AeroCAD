@@ -8,6 +8,8 @@
 // the first failing command (exit code 1); malformed input exits with code 2.
 #include "aerocad/commands/Session.hpp"
 
+#include <chrono>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <iterator>
@@ -49,9 +51,12 @@ int main(int argc, char** argv)
             return 2;
         }
         const std::string name = step["name"].get<std::string>();
+        const auto started = std::chrono::steady_clock::now();
         const auto result = session.execute(name, step.value("params", Json::object()));
         Json line = result.toJson();
         line["command"] = name;
+        if (std::getenv("AEROCAD_CMD_TIMING") != nullptr)
+            line["ms"] = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
         std::cout << line.dump() << "\n";
         if (!result.ok) {
             std::cerr << "aerocad-cmd: " << name << " failed: " << result.error << "\n";

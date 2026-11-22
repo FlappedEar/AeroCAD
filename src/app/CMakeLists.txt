@@ -432,6 +432,12 @@ if(AEROCAD_BUILD_TESTS)
                 --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/fit_background.ui
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(app_fit_background_test PROPERTIES LABELS gui TIMEOUT 90)
+    # CAD-30: the export check and write of a large mesh run in the background with progress and Cancel.
+    add_test(NAME app_export_background_test
+        COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl
+                --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/export_background.ui
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(app_export_background_test PROPERTIES LABELS gui TIMEOUT 90)
     # CAD-114: the outline step on a fitted surface (empty sketch, rectangle drawn by dragging).
     add_test(NAME app_surface_outline_drag_test
         COMMAND aerocad ${PROJECT_SOURCE_DIR}/tests/data/models/dome_scan.stl
@@ -998,6 +1004,11 @@ if(AEROCAD_BUILD_TESTS)
         COMMAND aerocad ${_dense} --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/large_model_navigation.ui
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(app_large_model_navigation_test PROPERTIES LABELS gui TIMEOUT 180
+                         FIXTURES_REQUIRED gui_dense FAIL_REGULAR_EXPRESSION "TypeError|ReferenceError")
+    add_test(NAME app_export_background_large_test
+        COMMAND aerocad ${_dense} --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/export_background_large.ui
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(app_export_background_large_test PROPERTIES LABELS gui TIMEOUT 180
                          FIXTURES_REQUIRED gui_dense FAIL_REGULAR_EXPRESSION "TypeError|ReferenceError")
     add_test(NAME app_shell_closed_test
         COMMAND aerocad --ui-script ${PROJECT_SOURCE_DIR}/tests/gui/shell_closed.ui
