@@ -2,12 +2,14 @@
 #include "aerocad/core/MeshSelection.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <functional>
 #include <future>
 #include <limits>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <numbers>
 #include <unordered_map>
 
@@ -127,15 +129,20 @@ MeshAdjacency::MeshAdjacency(const TriangleMesh& mesh)
 
 std::shared_ptr<const MeshAdjacency> adjacencyFor(const std::shared_ptr<const TriangleMesh>& mesh)
 {
+    using Future = std::shared_future<std::shared_ptr<const MeshAdjacency>>;
     struct Entry {
         std::weak_ptr<const TriangleMesh> mesh;
-        std::shared_future<std::shared_ptr<const MeshAdjacency>> adjacency;
+        Future adjacency;
+        std::uint64_t token = 0; ///< Tells this entry from a later one for the same mesh.
     };
     static std::mutex mutex;
     static std::vector<Entry> cache; // most recently used first
+    static std::uint64_t nextToken = 0;
     if (!mesh)
         return {};
     std::promise<std::shared_ptr<const MeshAdjacency>> promise;
+    std::uint64_t token = 0;
+    std::optional<Future> existing;
     {
         const std::lock_guard lock(mutex);
         for (auto it = cache.begin(); it != cache.end(); ++it) {
@@ -143,16 +150,27 @@ std::shared_ptr<const MeshAdjacency> adjacencyFor(const std::shared_ptr<const Tr
                 Entry hit = *it;
                 cache.erase(it);
                 cache.insert(cache.begin(), hit);
-                return hit.adjacency.get(); // waits when another thread is still building it
+                existing = hit.adjacency;
+                break;
             }
         }
-        cache.insert(cache.begin(), Entry{mesh, promise.get_future().share()});
-        constexpr std::size_t maxEntries = 4;
-        if (cache.size() > maxEntries)
-            cache.resize(maxEntries);
+        if (!existing) {
+            token = ++nextToken;
+            cache.insert(cache.begin(), Entry{mesh, promise.get_future().share(), token});
+            // Keep the few most recent, but never drop a build that is still running: a
+            // second caller would start it again.
+            constexpr std::size_t maxEntries = 4;
+            for (std::size_t i = cache.size(); i > maxEntries; --i) {
+                const auto last = cache.begin() + static_cast<std::ptrdiff_t>(i - 1);
+                if (last->adjacency.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+                    cache.erase(last);
+            }
+        }
     }
-    // Built outside the lock: other meshes are not held up, and a second caller for this one
-    // waits on the future.
+    // Waiting for another thread's build happens outside the lock, so other meshes are not
+    // held up; the build of this one too.
+    if (existing)
+        return existing->get();
     try {
         auto adjacency = std::make_shared<const MeshAdjacency>(*mesh);
         promise.set_value(adjacency);
@@ -160,8 +178,7 @@ std::shared_ptr<const MeshAdjacency> adjacencyFor(const std::shared_ptr<const Tr
     } catch (...) {
         promise.set_exception(std::current_exception());
         const std::lock_guard lock(mutex);
-        cache.erase(std::remove_if(cache.begin(), cache.end(),
-                                   [&](const Entry& e) { return e.mesh.lock() == mesh; }),
+        cache.erase(std::remove_if(cache.begin(), cache.end(), [&](const Entry& e) { return e.token == token; }),
                     cache.end());
         throw;
     }

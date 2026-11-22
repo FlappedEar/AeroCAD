@@ -650,7 +650,10 @@ std::shared_ptr<const core::TriangleMesh> ScanController::displayMesh(const mode
         // Sketch on the scan, brushing and region picks need the neighbours of its triangles;
         // that takes about a second per 3 million triangles, so it is ready before the first
         // one is asked for (CAD-305).
-        (void)core::adjacencyFor(source);
+        try {
+            (void)core::adjacencyFor(source);
+        } catch (...) { // only a head start: the sketch builds it itself (and reports) if this failed
+        }
     });
     connect(worker, &QThread::finished, worker, &QObject::deleteLater);
     worker->start(QThread::LowPriority);

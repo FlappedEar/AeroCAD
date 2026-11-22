@@ -5,6 +5,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <numbers>
 #include <memory>
@@ -175,11 +176,22 @@ TEST_CASE("Adjacency cache returns the same object for the same mesh", "[core][s
 
 TEST_CASE("Adjacency is shared by threads asking for the same mesh (CAD-305)", "[core][selection]")
 {
-    auto mesh = std::make_shared<const TriangleMesh>(cube(40));
+    // Big enough that the build takes a moment, so the others really wait for it; released
+    // together. A call for another mesh meanwhile is not held up by it.
+    auto mesh = std::make_shared<const TriangleMesh>(cube(300));
+    auto small = std::make_shared<const TriangleMesh>(cube(2));
+    const auto smallAdjacency = adjacencyFor(small);
+    std::atomic<bool> go{false};
     std::vector<std::shared_ptr<const MeshAdjacency>> got(4);
     std::vector<std::thread> threads;
     for (std::size_t i = 0; i < got.size(); ++i)
-        threads.emplace_back([&, i] { got[i] = adjacencyFor(mesh); });
+        threads.emplace_back([&, i] {
+            while (!go.load())
+                std::this_thread::yield();
+            got[i] = adjacencyFor(mesh);
+        });
+    go = true;
+    CHECK(adjacencyFor(small) == smallAdjacency);
     for (auto& t : threads)
         t.join();
     for (const auto& a : got) {
