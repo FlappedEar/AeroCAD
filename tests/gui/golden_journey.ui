@@ -88,8 +88,9 @@ ui.wait(500)
 printFolderDialog.selectedFolder = "file:///tmp/aerocad-golden-journey-print"
 printFolderDialog.accept()
 ui.wait(3000)
-# The export check shows a warning (a thin wall left by the 0.5 mm fillet on this fixture): Export Anyway.
-ui.clickText("Export Anyway")
+# The export check shows a warning on some scans (a thin wall left by the 0.5 mm fillet on the dome scan): Export Anyway.
+# On a scan where the check passes, the export runs without the dialog.
+(() => { if (exportCheckDialog.visible) ui.clickText(exportCheckDialog.check.passed ? "Export" : "Export Anyway") })()
 ui.wait(2500)
 (() => { const t = Array.from(window.contentItem.children).find(x => x.objectName === "goldenJourney"); const m = controller.statusMessage; if (!/part\(s\) written/.test(m)) t.fail("9 print: the part was not exported: " + m); else t.pass(9, "print export") })()
 # 10 Save and reopen: the part survives with the same volume.
